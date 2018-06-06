@@ -191,3 +191,14 @@ struct iguana_account // 12 bytes
     uint64_t balance; uint32_t lastunspentind; 
 } __attribute__((packed)); // pkind
 
+# Cmake build of marketmaker with linked etomic lib for ETH/ERC20 atomic swaps:
+1. Clone this repository.
+1. `git checkout etomic`
+1. `git submodule update --init --recursive`
+1. `mkdir build`
+1. `cd build`
+1. `cmake ..`
+1. `cmake --build . --target marketmaker`
+1. `cd exchanges/iguana`
+1. `export BOB_PK=YOUR_PRIVATE_KEY`
+1. `./marketmaker`

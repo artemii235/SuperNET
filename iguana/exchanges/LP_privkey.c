@@ -1,6 +1,6 @@
 
 /******************************************************************************
- * Copyright © 2014-2017 The SuperNET Developers.                             *
+ * Copyright © 2014-2018 The SuperNET Developers.                             *
  *                                                                            *
  * See the AUTHORS, DEVELOPER-AGREEMENT and LICENSE files at                  *
  * the top-level directory of this distribution for the individual copyright  *
@@ -251,10 +251,47 @@ int32_t LP_wifstr_valid(char *symbol,char *wifstr)
     return(0);
 }
 
+char *LP_convaddress(char *symbol,char *address,char *dest)
+{
+    struct iguana_info *coin,*destcoin; cJSON *retjson; char destaddress[64],coinaddr2[64]; uint8_t addrtype,rmd160[20],rmd160b[20];
+    if ( (coin= LP_coinfind(symbol)) == 0 || (destcoin= LP_coinfind(dest)) == 0 )
+        return(clonestr("{\"error\":\"both coins must be present\"}"));
+    retjson = cJSON_CreateObject();
+    jaddstr(retjson,"result","success");
+    jaddstr(retjson,"coin",symbol);
+    jaddstr(retjson,"address",address);
+    jaddstr(retjson,"destcoin",dest);
+    bitcoin_addr2rmd160(symbol,coin->taddr,&addrtype,rmd160,address);
+    if ( addrtype == coin->pubtype )
+    {
+        bitcoin_address(destcoin->symbol,destaddress,destcoin->taddr,destcoin->pubtype,rmd160,20);
+        bitcoin_addr2rmd160(destcoin->symbol,destcoin->taddr,&addrtype,rmd160b,destaddress);
+        bitcoin_address(coin->symbol,coinaddr2,coin->taddr,coin->pubtype,rmd160b,20);
+    }
+    else if ( addrtype == coin->p2shtype )
+    {
+        bitcoin_address(destcoin->symbol,destaddress,destcoin->taddr,destcoin->p2shtype,rmd160,20);
+        bitcoin_addr2rmd160(symbol,coin->taddr,&addrtype,rmd160b,destaddress);
+        bitcoin_address(destcoin->symbol,coinaddr2,coin->taddr,coin->p2shtype,rmd160b,20);
+    }
+    else
+    {
+        jaddstr(retjson,"error","invalid base58 prefix");
+        jaddnum(retjson,"invalid",addrtype);
+    }
+    if ( strcmp(address,coinaddr2) != 0 )
+    {
+        jaddstr(retjson,"error","checkaddress mismatch");
+        jaddstr(retjson,"checkaddress",coinaddr2);
+    }
+    jaddstr(retjson,"destaddress",destaddress);
+    return(jprint(retjson,1));
+}
+
 bits256 LP_privkeycalc(void *ctx,uint8_t *pubkey33,bits256 *pubkeyp,struct iguana_info *coin,char *passphrase,char *wifstr)
 {
     //static uint32_t counter;
-    bits256 privkey,userpub,zero,userpass,checkkey,tmpkey; char tmpstr[128]; cJSON *retjson; uint8_t tmptype; int32_t notarized; uint64_t nxtaddr;
+    bits256 privkey,userpub,zero,userpass,checkkey,tmpkey; char str[65],str2[65],tmpstr[128]; cJSON *retjson; uint8_t tmptype,sig[128]; int32_t notarized,siglen; uint64_t nxtaddr;
     if ( (wifstr == 0 || wifstr[0] == 0) && LP_wifstr_valid(coin->symbol,passphrase) > 0 )
     {
         wifstr = passphrase;
@@ -262,12 +299,17 @@ bits256 LP_privkeycalc(void *ctx,uint8_t *pubkey33,bits256 *pubkeyp,struct iguan
     }
     if ( passphrase != 0 && passphrase[0] != 0 )
     {
-        calc_NXTaddr(G.LP_NXTaddr,userpub.bytes,(uint8_t *)passphrase,(int32_t)strlen(passphrase));
-        conv_NXTpassword(privkey.bytes,pubkeyp->bytes,(uint8_t *)passphrase,(int32_t)strlen(passphrase));
-        privkey.bytes[0] &= 248, privkey.bytes[31] &= 127, privkey.bytes[31] |= 64;
-        //vcalc_sha256(0,checkkey.bytes,(uint8_t *)passphrase,(int32_t)strlen(passphrase));
-        //printf("SHA256.(%s) ",bits256_str(pstr,checkkey));
-        //printf("privkey.(%s)\n",bits256_str(pstr,privkey));
+        if ( strlen(passphrase) == 66 && passphrase[0] == '0' && passphrase[1] == 'x' && is_hexstr(passphrase+2,0) == 64 )
+        {
+            decode_hex(privkey.bytes,32,passphrase+2);
+            //printf("ETH style privkey.(%s)\n",passphrase);
+        }
+        else
+        {
+            calc_NXTaddr(G.LP_NXTaddr,userpub.bytes,(uint8_t *)passphrase,(int32_t)strlen(passphrase));
+            conv_NXTpassword(privkey.bytes,pubkeyp->bytes,(uint8_t *)passphrase,(int32_t)strlen(passphrase));
+            privkey.bytes[0] &= 248, privkey.bytes[31] &= 127, privkey.bytes[31] |= 64;
+        }
         bitcoin_priv2wif(coin->symbol,coin->wiftaddr,tmpstr,privkey,coin->wiftype);
         bitcoin_wif2priv(coin->symbol,coin->wiftaddr,&tmptype,&checkkey,tmpstr);
         if ( bits256_cmp(privkey,checkkey) != 0 )
@@ -294,6 +336,39 @@ bits256 LP_privkeycalc(void *ctx,uint8_t *pubkey33,bits256 *pubkeyp,struct iguan
         RS_encode(G.LP_NXTaddr,nxtaddr);
     }
     bitcoin_priv2pub(ctx,coin->symbol,coin->pubkey33,coin->smartaddr,privkey,coin->taddr,coin->pubtype);
+#ifndef NOTETOMIC
+    if ( coin->etomic[0] != 0 )
+    {
+        uint8_t check64[64],checktype,checkrmd160[20],rmd160[20]; char checkaddr[64],checkaddr2[64];
+        if ( LP_etomic_priv2pub(check64,privkey) == 0 )
+        {
+            if ( memcmp(check64,coin->pubkey33+1,32) == 0 )
+            {
+                if ( LP_etomic_priv2addr(checkaddr,privkey) == 0 && LP_etomic_pub2addr(checkaddr2,check64) == 0 && strcmp(checkaddr,checkaddr2) == 0 )
+                {
+                    //printf("addr is (%s)\n",checkaddr);
+                    strcpy(coin->smartaddr,checkaddr);
+                    decode_hex(checkrmd160,20,checkaddr+2);
+                    bitcoin_addr2rmd160(coin->symbol,coin->taddr,&checktype,rmd160,checkaddr);
+                    if ( memcmp(rmd160,checkrmd160,20) != 0 )
+                        printf("rmd160 doesnt match\n");
+                } else printf("error getting addr (%s) != (%s)\n",checkaddr,checkaddr2);
+            } else printf("pubkey 64 mismatch\n");
+        } else printf("error creating pubkey\n");
+    }
+#endif
+    OS_randombytes(tmpkey.bytes,sizeof(tmpkey));
+    siglen = 0;
+    if ( bits256_nonz(privkey) == 0 || (siglen= bitcoin_sign(ctx,coin->symbol,sig,tmpkey,privkey,0)) <= 0 )
+    {
+        printf("illegal privkey %s\n",bits256_str(str,privkey));
+        exit(0);
+    }
+    if ( bits256_nonz(privkey) != 0 && bitcoin_verify(ctx,sig,siglen,tmpkey,coin->pubkey33,33) != 0 )
+    {
+        printf("signature.[%d] for %s by %s didnt verify\n",siglen,bits256_str(str,tmpkey),bits256_str(str2,privkey));
+        exit(0);
+    }
     if ( coin->counter == 0 )
     {
         coin->counter++;
@@ -317,7 +392,7 @@ bits256 LP_privkeycalc(void *ctx,uint8_t *pubkey33,bits256 *pubkeyp,struct iguan
             printf("userpass.(%s)\n",bits256_str(G.USERPASS,userpub));
         }
     }
-    if ( coin->importedprivkey == 0 && coin->electrum == 0 && coin->userpass[0] != 0 && LP_getheight(&notarized,coin) > 0 )
+    if ( strcmp(coin->smartaddr,"RPZVpjptzfZnFZZoLnuSbfLexjtkhe6uvn") != 0 && coin->importedprivkey == 0 && coin->electrum == 0 && coin->userpass[0] != 0 && LP_getheight(&notarized,coin) > 0 )
     {
         memset(zero.bytes,0,sizeof(zero));
         LP_listunspent_issue(coin->symbol,coin->smartaddr,0,zero,zero);
@@ -340,6 +415,201 @@ bits256 LP_privkeycalc(void *ctx,uint8_t *pubkey33,bits256 *pubkeyp,struct iguan
     return(privkey);
 }
 
+void verus_utxos(struct iguana_info *coin,char *coinaddr)
+{
+    cJSON *array,*item; char buf[64],str[65]; int32_t i,m,vout,n=0; bits256 txid;
+    sprintf(buf,"[%d, 99999999, [\"%s\"]]",1,coinaddr);
+    array = bitcoin_json(coin,"listunspent",buf);
+    if ( array != 0 )
+    {
+        if ( (n= cJSON_GetArraySize(array)) > 0 )
+        {
+            for (i=m=0; i<n; i++)
+            {
+                item = jitem(array,i);
+                if ( fabs(jdouble(item,"amount") - 64.) < 0.00011 )
+                {
+                    txid = jbits256(item,"txid");
+                    vout = jint(item,"vout");
+                    printf("%d: %s/v%d\n",m,bits256_str(str,txid),vout);
+                    m++;
+                }
+            }
+        }
+        free_json(array);
+    }
+    printf("scanned %d utxos m.%d\n",n,m);
+}
+
+char *verusblocks()
+{
+    bits256 hash,txid; uint8_t script[44]; double value,avestakedsize,stakedval,RTu3sum,powsum,supply,possum,histo[1280],myhisto[1280]; int32_t num10,num17,num20,num16,num23000,numpow,numpos,num,locked,height,i,m,n,z,numstaked,posflag,npos,npow; char hashstr[64],firstaddr[64],stakingaddr[64],*addr0,*lastaddr,*hexstr; cJSON *blockjson,*txobj,*vouts,*vout,*vout1,*sobj,*addresses,*txs;
+    struct iguana_info *coin = LP_coinfind("VRSC");
+    if ( coin == 0 )
+        return(clonestr("{\"error\":\"VRSC not active\"}"));
+    char *coinaddr = "RHV2As4rox97BuE3LK96vMeNY8VsGRTmBj";
+    if ( strcmp(coinaddr,coin->smartaddr) != 0 )
+        return(clonestr("{\"error\":\"mismatched smartaddr\"}"));
+    //verus_utxos(coin,coin->smartaddr);
+    hash = LP_getbestblockhash(coin);
+    memset(histo,0,sizeof(histo));
+    memset(myhisto,0,sizeof(myhisto));
+    num23000 = num16 = num17 = num10 = num20 = numstaked = 0;
+    avestakedsize = possum = powsum = supply = RTu3sum = 0.;
+    numpow = numpos = num = npos = npow = 0;
+    if ( bits256_nonz(hash) != 0 )
+    {
+        bits256_str(hashstr,hash);
+        height = -1;
+        while ( (blockjson= LP_blockjson(&height,coin->symbol,hashstr,0)) != 0 )
+        {
+            num++;
+            stakedval = 0.;
+            height = juint(blockjson,"height");
+            if ( (txs= jarray(&n,blockjson,"tx")) != 0 )
+            {
+                txid = jbits256i(txs,0);
+                value = 0;
+                posflag = 0;
+                locked = 0;
+                lastaddr = addr0 = "";
+                memset(script,0,sizeof(script));
+                memset(firstaddr,0,sizeof(firstaddr));
+                memset(stakingaddr,0,sizeof(stakingaddr));
+                if ( (txobj= LP_gettx("verus",coin->symbol,txid,0)) != 0 )
+                {
+                    //printf("TX.(%s)\n",jprint(txobj,0));
+                    if ( (vouts= jarray(&m,txobj,"vout")) != 0 )
+                    {
+                        if ( (vout= jitem(vouts,0)) != 0 )
+                        {
+                            value = jdouble(vout,"value");
+                            supply += value;
+                            hexstr = 0;
+                            if ( m == 2 && (vout1= jitem(vouts,1)) != 0 )
+                            {
+                                // 6a2001039bbc0bb17576a9149a3af738444dd86b55c86752247aec2e7deb842688ac
+                                if ( jdouble(vout1,"value") == 0. && (sobj= jobj(vout1,"scriptPubKey")) != 0 && (hexstr= jstr(sobj,"hex")) != 0 && strlen(hexstr) <= 88 )
+                                {
+                                    if ( strlen(hexstr) == 68 )
+                                    {
+                                        decode_hex(script,34,hexstr);
+                                        bitcoin_address(coin->symbol,firstaddr,coin->taddr,coin->pubtype,&script[12],20);
+                                        //printf("%s\n",&hexstr[24]);
+                                    }
+                                    else
+                                    {
+                                        decode_hex(script,44,hexstr);
+                                        bitcoin_address(coin->symbol,firstaddr,coin->taddr,coin->pubtype,&script[10],33);
+                                    }
+                                    locked = ((int32_t)script[6] << 16) + ((int32_t)script[5] << 8) + script[4];
+                                    addr0 = firstaddr;
+                                } else printf("unexpected vout1.(%s) (%s).%d %.8f\n",jprint(vout1,0),hexstr!=0?hexstr:"",(int32_t)strlen(hexstr),jdouble(vout1,"value"));
+                            } else printf("coinbase without opret (%s)\n",jprint(vouts,0));
+                        }
+                    }
+                    free_json(txobj);
+                }
+                if ( n > 1 && (txobj= LP_gettx("verus",coin->symbol,jbits256i(txs,n-1),0)) != 0 )
+                {
+                    if ( (vouts= jarray(&m,txobj,"vout")) != 0 )
+                    {
+                        if ( (vout= jitem(vouts,0)) != 0 && m == 1 )
+                        {
+                            if ( (sobj= jobj(vout,"scriptPubKey")) != 0 && (addresses= jarray(&z,sobj,"addresses")) != 0 )
+                            {
+                                lastaddr = jstri(addresses,0);
+                                if ( lastaddr == 0 )
+                                    lastaddr = "";
+                                else
+                                {
+                                    strcpy(stakingaddr,lastaddr);
+                                    stakedval = jdouble(vout,"value");
+                                    avestakedsize += stakedval;
+                                    numstaked++;
+                                    //printf("stakedval %f\n",stakedval);
+                                    posflag = 1;
+                                    //printf("ht.%d found staking address.(%s) %.8f (%s)\n",height,stakingaddr,stakedval,jprint(vout,0));
+                                }
+                            } else printf("no addresses[0] in (%s) %s\n",jprint(vout,0),sobj!=0?jprint(sobj,0):"");
+                        } //else printf("n.%d m.%d no first out in lastvout.(%s)\n",n,m,jprint(txobj,0));
+                    } // else printf("cant find vout.(%s)\n",jprint(txobj,0));
+                    free_json(txobj);
+                }
+                if ( posflag != 0 )
+                {
+                    numpos++;
+                    if ( strcmp(coinaddr,stakingaddr) == 0 || strcmp("RTu3JZZKLJTcfNwBa19dWRagEfQq49STqC",stakingaddr) == 0 )
+                    {
+                        if (strcmp("RTu3JZZKLJTcfNwBa19dWRagEfQq49STqC",stakingaddr) == 0 )
+                            RTu3sum += value;
+                        possum += value, npos++;
+                        if ( num < 1500 )
+                            printf("ht.%-5d lock.%-7d PoS cb.(%s) stake.(%s) %.8f %.8f\n",height,locked,addr0,stakingaddr,value,stakedval);
+                        if ( height > 23000 )
+                        {
+                            char strbuf[64];
+                            sprintf(strbuf,"%.0f",stakedval);
+                            if ( strcmp(strbuf,"20") == 0 )
+                                num20++;
+                            else if ( strcmp(strbuf,"17") == 0 )
+                                num17++;
+                            else if ( strcmp(strbuf,"16") == 0 )
+                                num16++;
+                            else if ( strcmp(strbuf,"10") == 0 )
+                                num10++;
+                            else printf("got strbuf.(%s)\n",strbuf);
+                        }
+                    }
+                    else if ( 0 && num < 100 )
+                        printf("ht.%-5d lock.%-7d PoS cb.(%s) stake.(%s) %.8f %.8f\n",height,locked,addr0,stakingaddr,value,stakedval);
+                }
+                else
+                {
+                    numpow++;
+                    if ( num < 100 && strcmp(coinaddr,addr0) == 0 )
+                        printf("ht.%-5d lock.%-7d PoW coinbase.(%s) %.8f\n",height,locked,addr0,value);
+                    if ( strcmp(coinaddr,addr0) == 0 )
+                        powsum += value, npow++;
+                }
+                histo[locked/1000] += value;
+                if ( strcmp(coinaddr,addr0) == 0 || strcmp("RTu3JZZKLJTcfNwBa19dWRagEfQq49STqC",addr0) == 0 )
+                    myhisto[locked/1000] += value;
+            }
+            bits256_str(hashstr,jbits256(blockjson,"previousblockhash"));
+            free_json(blockjson);
+            if ( height == 5040 )
+                break;
+            else if ( height == 23000 )
+            {
+                num23000 = num;
+                printf("num10.%d num16.%d num17.%d num20.%d / num23000.%d -> %.2f%%  %.2f%%  %.2f%% %.2f%% [%.3f %.3f %.3f %.3f] %.3f ave %.8f\n",num10,num16,num17,num20,num23000,100.*(double)num10/num23000,100.*(double)num16/num23000,100.*(double)num17/num23000,100.*(double)num20/num23000,(100.*(double)num10/num23000)/2.87,(100.*(double)num16/num23000)/10.5,(100.*(double)num17/num23000)/4.88,(100.*(double)num20/num23000)/5.74,(100.*(double)(num10+num16+num17+num20)/num23000)/24,avestakedsize/numstaked);
+            }
+            else if ( (num % 1000) == 0 || (num < 1000 && (num % 100) == 0) )
+            {
+                printf("num.%d PoW %.2f%% %.0f %d v %d PoS %.2f%% %.0f -> %.0f supply %.0f PoW %.1f%% PoS %.1f%% both %.1f%% RTu3 %.8f %.1f%%\n",num,100.*(double)numpow/num,powsum,npow,npos,100.*(double)numpos/num,possum,powsum+possum,supply,100.*powsum/supply,100.*possum/supply,100.*(powsum+possum)/supply,RTu3sum,100.*RTu3sum/supply);
+            }
+        }
+    }
+    if ( num > 0 )
+    {
+        if ( 0 )
+        {
+            for (i=0; i<sizeof(histo)/sizeof(*histo); i++)
+                if ( histo[i] != 0 )
+                    printf("%d %.8f, ",i*1000,histo[i]);
+            printf("timelocked\n");
+            for (i=0; i<sizeof(myhisto)/sizeof(*myhisto); i++)
+                if ( myhisto[i] != 0 )
+                    printf("%d %.8f, ",i*1000,myhisto[i]);
+            printf("mytimelocked\n");
+        }
+        printf("num.%d PoW %.2f%% %.8f %d v %d PoS %.2f%% %.8f -> %.8f supply %.8f PoW %.1f%% PoS %.1f%% both %.1f%% RTu3sum %.8f %.1f%%\n",num,100.*(double)numpow/num,powsum,npow,npos,100.*(double)numpos/num,possum,powsum+possum,supply,100.*powsum/supply,100.*possum/supply,100.*(powsum+possum)/supply,RTu3sum,100.*RTu3sum/supply);
+        printf("num10.%d num16.%d num17.%d num20.%d / num23000.%d -> %.2f%%  %.2f%%  %.2f%% %.2f%% [%.3f %.3f %.3f %.3f] %.3f ave %.8f\n",num10,num16,num17,num20,num23000,100.*(double)num10/num23000,100.*(double)num16/num23000,100.*(double)num17/num23000,100.*(double)num20/num23000,(100.*(double)num10/num23000)/2.87,(100.*(double)num16/num23000)/10.5,(100.*(double)num17/num23000)/4.88,(100.*(double)num20/num23000)/5.74,(100.*(double)(num10+num16+num17+num20)/num23000)/24,avestakedsize/numstaked);
+    }
+    return(clonestr("{\"result\":\"success\"}"));
+}
+
 void LP_privkey_updates(void *ctx,int32_t pubsock,char *passphrase)
 {
     struct iguana_info *coin,*tmp; bits256 pubkey,privkey; uint8_t pubkey33[33]; int32_t initonly;
@@ -356,7 +626,9 @@ void LP_privkey_updates(void *ctx,int32_t pubsock,char *passphrase)
             coin->counter = 0;
             memset(coin->smartaddr,0,sizeof(coin->smartaddr));
             if ( bits256_nonz(privkey) == 0 || coin->smartaddr[0] == 0 )
+            {
                 privkey = LP_privkeycalc(ctx,pubkey33,&pubkey,coin,passphrase,"");
+            }
         }
         //printf("i.%d of %d\n",i,LP_numcoins);
         else if ( IAMLP == 0 || coin->inactive == 0 )
@@ -417,6 +689,7 @@ int32_t LP_passphrase_init(char *passphrase,char *gui,uint16_t netid,char *seedn
     LP_priceinfos_clear();
     G.USERPASS_COUNTER = counter;
     G.initializing = 0;
+    //LP_cmdchannels();
     return(0);
 }
 
@@ -460,7 +733,7 @@ int32_t JPG_encrypt(uint16_t ind,uint8_t encoded[JPG_ENCRYPTED_MAXSIZE],uint8_t 
     int32_t i; for (i=0; i<msglen; i++)
         printf("%02x",encoded[i]);
     printf(" encoded.%d\n",msglen);
-   return(msglen);
+    return(msglen);
 }
 
 uint8_t *JPG_decrypt(uint16_t *indp,int32_t *recvlenp,uint8_t space[JPG_ENCRYPTED_MAXSIZE + crypto_box_ZEROBYTES],uint8_t *encoded,bits256 privkey)
@@ -476,17 +749,58 @@ uint8_t *JPG_decrypt(uint16_t *indp,int32_t *recvlenp,uint8_t space[JPG_ENCRYPTE
     cipherlen = msglen - (len + crypto_box_NONCEBYTES);
     if ( cipherlen > 0 && cipherlen <= JPG_ENCRYPTED_MAXSIZE + crypto_box_ZEROBYTES )
     {
+        //int32_t i; for (i=0; i<cipherlen; i++)
+        //    printf("%02x",cipher[i]);
+        //printf(" cipherlen\n");
         if ( (extracted= _SuperNET_decipher(nonce,cipher,space,cipherlen,pubkey,privkey)) != 0 )
         {
-            int32_t i; for (i=0; i<msglen; i++)
-                printf("%02x",encoded[i]);
-            printf(" restored\n");
+            //int32_t i; for (i=0; i<msglen; i++)
+            //    printf("%02x",encoded[i]);
+            //printf(" restored\n");
             msglen = (cipherlen - crypto_box_ZEROBYTES);
             *recvlenp = msglen;
             *indp = ind;
         }
     } //else printf("cipher.%d too big for %d\n",cipherlen,JPG_ENCRYPTED_MAXSIZE + crypto_box_ZEROBYTES);
     return(extracted);
+}
+
+int32_t LP_opreturn_decrypt(uint16_t *ind16p,uint8_t *decoded,uint8_t *encoded,int32_t encodedlen,char *passphrase)
+{
+    bits256 privkey; int32_t msglen; uint8_t *extracted,space[JPG_ENCRYPTED_MAXSIZE + crypto_box_ZEROBYTES];
+    if ( passphrase != 0 && passphrase[0] != 0 )
+    {
+        vcalc_sha256(0,privkey.bytes,(uint8_t *)passphrase,(int32_t)strlen(passphrase));
+        msglen = ((int32_t)encoded[1] << 8) | encoded[0];
+        *ind16p = ((int32_t)encoded[3] << 8) | encoded[2];
+        if ( msglen == encodedlen && (extracted= JPG_decrypt(ind16p,&msglen,space,encoded,privkey)) != 0 )
+        {
+            memcpy(decoded,extracted,msglen);
+            return(msglen);
+        } else return(-1);
+    }
+    else
+    {
+        *ind16p = calc_crc32(0,extracted,encodedlen);
+        memcpy(decoded,extracted,encodedlen);
+        return(encodedlen);
+    }
+}
+
+int32_t LP_opreturn_encrypt(uint8_t *dest,int32_t maxsize,uint8_t *data,int32_t datalen,char *passphrase,uint16_t ind16)
+{
+    bits256 privkey; int32_t len; uint8_t encoded[JPG_ENCRYPTED_MAXSIZE];
+    vcalc_sha256(0,privkey.bytes,(uint8_t *)passphrase,(int32_t)strlen(passphrase));
+    if ( (len= JPG_encrypt(ind16,encoded,data,datalen,privkey)) > 0 )
+    {
+        //printf("datalen.%d -> len.%d max.%d\n",datalen,len,maxsize);
+        if ( len <= maxsize )
+        {
+            memcpy(dest,encoded,len);
+            return(len);
+        }
+    }
+    return(-1);
 }
 
 // from https://github.com/owencm/C-Steganography-Framework

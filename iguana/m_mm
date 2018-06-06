@@ -1,3 +1,14 @@
+#!/bin/bash
 cd secp256k1; ./m_unix; cd ..
 cd ../crypto777; ./m_LP; cd ../iguana
-gcc -g -o marketmaker -I../crypto777 exchanges/mm.c ../crypto777/cJSON.c mini-gmp.c groestl.c segwit_addr.c secp256k1.o ../agents/libcrypto777.a -lnanomsg -lcurl -lpthread  -lm
+
+nanomsg_lib="-lnanomsg"
+
+# Build static libnanomsg on macOS
+if [[ "$OSTYPE" == "darwin"* ]]; then
+	./build_static_nanomsg.sh
+	nanomsg_lib="../OSlibs/osx/$(uname -m)/libnanomsg-static.a"
+fi
+
+rm marketmaker
+gcc -g -o marketmaker -DNOTETOMIC -I../crypto777 exchanges/mm.c ../crypto777/cJSON.c mini-gmp.c keccak.c groestl.c segwit_addr.c secp256k1.o ../agents/libcrypto777.a $nanomsg_lib -lcurl -lpthread  -lm

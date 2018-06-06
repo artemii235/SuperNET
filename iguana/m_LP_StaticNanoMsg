@@ -2,11 +2,12 @@
 #./configure --enable-endomorphism --enable-module-ecdh --enable-module-schnorr --enable-module-rangeproof --enable-experimental --enable-module_recovery
 rm -f ../agents/iguana *.o
 git pull
+./build_static_nanomsg.sh
 cd secp256k1; ./m_unix; cd ..
 cd ../crypto777; make -f m_LP_StaticNanoMsg all; make -f m_LP_StaticNanoMsg clean; cd ../iguana
 
-clang -g -Wno-deprecated -c -O2 -DLIQUIDITY_PROVIDER=1 -DUSE_STATIC_NANOMSG *.c ../basilisk/basilisk.c ../gecko/gecko.c ../datachain/datachain.c
-clang -g -Wno-deprecated -c -DLIQUIDITY_PROVIDER=1 -DUSE_STATIC_NANOMSG  main.c iguana777.c iguana_bundles.c ../basilisk/basilisk.c iguana_ramchain.c
+clang -g -DNOTETOMIC -Wno-deprecated -c -O2 -DLIQUIDITY_PROVIDER=1 -DUSE_STATIC_NANOMSG *.c ../basilisk/basilisk.c ../gecko/gecko.c ../datachain/datachain.c
+clang -g -DNOTETOMIC -Wno-deprecated -c -DLIQUIDITY_PROVIDER=1 -DUSE_STATIC_NANOMSG  main.c iguana777.c iguana_bundles.c ../basilisk/basilisk.c iguana_ramchain.c
 
 
 clang -g -o ../agents/iguana *.o ../agents/libcrypto777.a ../OSlibs/linux/$(uname -m)/libnanomsg-static.a -lcurl -lssl -lcrypto -lpthread -lz -lm -lanl -lrt -lnsl

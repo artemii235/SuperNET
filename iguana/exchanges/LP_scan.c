@@ -1,6 +1,6 @@
 
 /******************************************************************************
- * Copyright © 2014-2017 The SuperNET Developers.                             *
+ * Copyright © 2014-2018 The SuperNET Developers.                             *
  *                                                                            *
  * See the AUTHORS, DEVELOPER-AGREEMENT and LICENSE files at                  *
  * the top-level directory of this distribution for the individual copyright  *
@@ -22,7 +22,8 @@
 int32_t LP_blockinit(struct iguana_info *coin,int32_t height)
 {
     int32_t i,iter,numtx,checkht=-1; cJSON *blockobj,*txs,*txobj; bits256 txid; struct LP_transaction *tx;
-    if ( (blockobj= LP_blockjson(&checkht,coin->symbol,0,height)) != 0 && checkht == height )
+    portable_mutex_lock(&LP_blockinit_mutex);
+    if ( (blockobj= LP_blockjson(&checkht,coin->symbol,0,height)) != 0 && (checkht == 0 || checkht == height) )
     {
         if ( (txs= jarray(&numtx,blockobj,"tx")) != 0 )
         {
@@ -52,9 +53,11 @@ int32_t LP_blockinit(struct iguana_info *coin,int32_t height)
         }
         free_json(blockobj);
     }
-    if ( checkht == height )
+    portable_mutex_unlock(&LP_blockinit_mutex);
+    if ( checkht == 0 || checkht == height )
         return(0);
-    else return(-1);
+    printf("%s blockinit error checkht.%d vs height.%d\n",ASSETCHAINS_SYMBOL,checkht,height);
+    return(-1);
 }
 
 int32_t LP_scanblockchain(struct iguana_info *coin,int32_t startheight,int32_t endheight)
@@ -446,7 +449,7 @@ int32_t LP_mempoolscan(char *symbol,bits256 searchtxid)
 
 int32_t LP_waitmempool(char *symbol,char *coinaddr,bits256 txid,int32_t vout,int32_t duration)
 {
-    struct iguana_info *coin; bits256 zero; cJSON *array,*item; uint32_t expiration,i,n; int32_t numconfirms = -1;
+    struct iguana_info *coin; bits256 zero; cJSON *array,*item; uint32_t expiration,i,n; int32_t num,numconfirms = -1;
     if ( (coin= LP_coinfind(symbol)) == 0 || coin->inactive != 0 )
     {
         printf("LP_waitmempool missing coin.%p or inactive\n",coin);
@@ -455,8 +458,8 @@ int32_t LP_waitmempool(char *symbol,char *coinaddr,bits256 txid,int32_t vout,int
     expiration = (uint32_t)time(NULL) + duration;
     while ( LP_STOP_RECEIVED == 0 )
     {
-        if ( LP_gettx_presence(symbol,txid) != 0 )
-            numconfirms = 0;
+        if ( LP_gettx_presence(&num,symbol,txid,coinaddr) != 0 )
+            numconfirms = num;
         else
         {
             if ( coin->electrum == 0 )

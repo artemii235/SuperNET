@@ -1,5 +1,5 @@
 /******************************************************************************
- * Copyright © 2014-2017 The SuperNET Developers.                             *
+ * Copyright © 2014-2018 The SuperNET Developers.                             *
  *                                                                            *
  * See the AUTHORS, DEVELOPER-AGREEMENT and LICENSE files at                  *
  * the top-level directory of this distribution for the individual copyright  *
@@ -499,7 +499,7 @@ struct iguana_info
     uint32_t fastfind; FILE *fastfps[0x100]; uint8_t *fast[0x100]; int32_t *fasttables[0x100]; long fastsizes[0x100];
     uint64_t instance_nonce,myservices,totalsize,totalrecv,totalpackets,sleeptime;
     int64_t mining,totalfees,TMPallocated,MAXRECVCACHE,MAXMEM,PREFETCHLAG,estsize,activebundles;
-    int32_t MAXPEERS,MAXPENDINGREQUESTS,MAXBUNDLES,MAXSTUCKTIME,active,closestbundle,numemitted,lastsweep,numemit,startutc,newramchain,numcached,cachefreed,helperdepth,startPEND,endPEND,enableCACHE,FULLNODE,VALIDATENODE,origbalanceswritten,balanceswritten,lastRTheight,RTdatabad;
+    int32_t MoMoMheight,MAXPEERS,MAXPENDINGREQUESTS,MAXBUNDLES,MAXSTUCKTIME,active,closestbundle,numemitted,lastsweep,numemit,startutc,newramchain,numcached,cachefreed,helperdepth,startPEND,endPEND,enableCACHE,FULLNODE,VALIDATENODE,origbalanceswritten,balanceswritten,lastRTheight,RTdatabad;
     bits256 balancehash,allbundles;
     uint32_t lastsync,parsetime,numiAddrs,lastpossible,bundlescount,savedblocks,backlog,spendvectorsaved,laststats,lastinv2,symbolcrc,spendvalidated; char VALIDATEDIR[512];
     int32_t longestchain,badlongestchain,longestchain_strange,RTramchain_busy,emitbusy,stuckiters,virtualchain,RTheight,RTreset_needed;
@@ -511,7 +511,7 @@ struct iguana_info
     struct OS_memspace TXMEM,MEM,MEMB[IGUANA_MAXBUNDLESIZE];
     queue_t acceptQ,hdrsQ,blocksQ,priorityQ,possibleQ,cacheQ,recvQ,msgrequestQ,jsonQ,finishedQ;
     double parsemillis,avetime; uint32_t Launched[8],Terminated[8];
-    portable_mutex_t peers_mutex,blocks_mutex,special_mutex,RTmutex,allcoins_mutex;
+    portable_mutex_t peers_mutex,blocks_mutex,special_mutex,RTmutex,allcoins_mutex,MoM_mutex;
     char changeaddr[64];
     struct iguana_bundle *bundles[IGUANA_MAXBUNDLES],*current,*lastpending;
     struct OS_memspace RTrawmem,RTmem,RThashmem; // struct iguana_ramchain RTramchain; 
@@ -528,7 +528,7 @@ struct iguana_info
 #ifdef DEPRECATED_HHUTXO
     struct iguana_hhaccount *accountstable;
 #endif
-    char lastdispstr[2048];
+    char lastdispstr[2048],getinfostr[64],validateaddress[64],estimatefeestr[64],signtxstr[64];
     double txidfind_totalmillis,txidfind_num,spendtxid_totalmillis,spendtxid_num;
     struct iguana_monitorinfo monitoring[256];
     int32_t notarychain,didaddresses;

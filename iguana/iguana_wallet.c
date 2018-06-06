@@ -1,5 +1,5 @@
 /******************************************************************************
- * Copyright © 2014-2017 The SuperNET Developers.                             *
+ * Copyright © 2014-2018 The SuperNET Developers.                             *
  *                                                                            *
  * See the AUTHORS, DEVELOPER-AGREEMENT and LICENSE files at                  *
  * the top-level directory of this distribution for the individual copyright  *
@@ -980,7 +980,7 @@ cJSON *iguana_privkeysjson(struct supernet_info *myinfo,struct iguana_info *coin
             if ( address != 0 )
             {
                 strcpy(&addresses[64 * n++],address);
-            } else printf("cant get address from.(%s)\n",jprint(item,0));
+            } //else printf("cant get address from.(%s)\n",jprint(item,0));
         }
         for (i=0; i<n; i++)
         {
@@ -1342,7 +1342,7 @@ ZERO_ARGS(bitcoinrpc,walletlock)
 
 TWOSTRINGS_AND_INT(bitcoinrpc,walletpassphrase,password,permanentfile,timeout)
 {
-    char *retstr;
+    char *retstr,*tmpstr; cJSON *retjson;
     if ( remoteaddr != 0 )
         return(clonestr("{\"error\":\"no remote\"}"));
     if ( timeout <= 0 )
@@ -1368,9 +1368,22 @@ TWOSTRINGS_AND_INT(bitcoinrpc,walletpassphrase,password,permanentfile,timeout)
         bitcoin_address(coin->changeaddr,coin->chain->pubtype,myinfo->persistent_pubkey33,33);
         if ( coin->FULLNODE < 0 )
         {
-            char wifstr[64];
-            bitcoin_priv2wif(wifstr,myinfo->persistent_priv,coin->chain->wiftype);
-            jumblr_importprivkey(myinfo,coin,wifstr);
+            char wifstr[64]; int32_t destvalid = 0; cJSON *ismine;
+            if ( (tmpstr= dpow_validateaddress(myinfo,coin,coin->changeaddr)) != 0 )
+            {
+                retjson = cJSON_Parse(tmpstr);
+                if ( (ismine= jobj(json,"ismine")) != 0 && is_cJSON_True(ismine) != 0 )
+                    destvalid = 1;
+                else destvalid = 0;
+                free(tmpstr);
+                free(retjson);
+                tmpstr = 0;
+            }
+            if ( destvalid == 0 )
+            {
+                bitcoin_priv2wif(wifstr,myinfo->persistent_priv,coin->chain->wiftype);
+                jumblr_importprivkey(myinfo,coin,wifstr);
+            }
         }
     }
     if ( bits256_nonz(myinfo->persistent_priv) != 0 )
@@ -1389,7 +1402,7 @@ TWOSTRINGS_AND_INT(bitcoinrpc,walletpassphrase,password,permanentfile,timeout)
 
 THREE_STRINGS(bitcoinrpc,encryptwallet,passphrase,password,permanentfile)
 {
-    char *retstr,buf[128],wifstr[128]; cJSON *retjson; int32_t need_KMD = 0,need_BTC = 0;
+    char *retstr,buf[128],wifstr[128]; cJSON *retjson; int32_t need_KMD = 0,need_BTC = 0,need_GAME = 0;
     if ( remoteaddr != 0 || coin == 0 )
         return(clonestr("{\"error\":\"no remote encrypt or no coin\"}"));
     iguana_walletlock(myinfo,coin);
@@ -1426,6 +1439,8 @@ THREE_STRINGS(bitcoinrpc,encryptwallet,passphrase,password,permanentfile)
             need_KMD = 1;
         if ( strcmp(coin->symbol,"BTC") != 0 )
             need_BTC = 1;
+        if ( strcmp(coin->symbol,"GAME") != 0 )
+            need_GAME = 1;
         if ( need_KMD != 0 && (coin= iguana_coinfind("KMD")) != 0 )
         {
             bitcoin_priv2wif(wifstr,waddr.privkey,coin->chain->wiftype);
@@ -1442,6 +1457,11 @@ THREE_STRINGS(bitcoinrpc,encryptwallet,passphrase,password,permanentfile)
         {
             bitcoin_priv2wif(wifstr,waddr.privkey,128);
             jaddstr(retjson,"BTCwif",wifstr);
+        }
+        if ( need_GAME != 0 && (coin= iguana_coinfind("GAME")) != 0 )
+        {
+            bitcoin_priv2wif(wifstr,waddr.privkey,coin->chain->wiftype);
+            jaddstr(retjson,"GAMEwif",wifstr);
         }
         /*if ( (dexstr= _dex_importaddress(myinfo,coin->symbol,waddr.coinaddr)) != 0 )
         {

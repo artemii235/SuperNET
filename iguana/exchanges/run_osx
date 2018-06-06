@@ -1,8 +1,0 @@
-#!/bin/bash
-source passphrase
-source coins
-pkill -15 marketmaker; 
-git pull;
-cd ..; 
-./m_mm;
-$1 ./marketmaker "{\"gui\":\"nogui\", \"profitmargin\":0.01, \"userhome\":\"/${HOME#"/"}/Library/Application\ Support\", \"passphrase\":\"$passphrase\", \"coins\":$coins}" &

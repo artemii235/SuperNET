@@ -1,6 +1,6 @@
 
 /******************************************************************************
- * Copyright © 2014-2017 The SuperNET Developers.                             *
+ * Copyright © 2014-2018 The SuperNET Developers.                             *
  *                                                                            *
  * See the AUTHORS, DEVELOPER-AGREEMENT and LICENSE files at                  *
  * the top-level directory of this distribution for the individual copyright  *
@@ -110,10 +110,14 @@ void LP_tradecommand_log(cJSON *argjson)
     }
     if ( logfp != 0 )
     {
-        jsonstr = jprint(argjson,0);
-        fprintf(logfp,"%s\n",jsonstr);
-        free(jsonstr);
-        fflush(logfp);
+        if ( (jsonstr= jprint(argjson,0)) != 0 )
+        {
+            if ( IPC_ENDPOINT >= 0 )
+                LP_queuecommand(0,jsonstr,IPC_ENDPOINT,-1,0);
+            fprintf(logfp,"%s\n",jsonstr);
+            free(jsonstr);
+            fflush(logfp);
+        }
     }
 }
 
@@ -471,7 +475,7 @@ int32_t LP_statslog_parsequote(char *method,cJSON *lineobj)
                         flag = 1;
                         break;
                     }
-                    if ( counter++ < 10 )
+                    if ( counter++ < 1 )
                         printf("error after delayed match\n");
                 }
             }
@@ -500,7 +504,7 @@ int32_t LP_statslog_parsequote(char *method,cJSON *lineobj)
         satoshis = j64bits(lineobj,"satoshis");
         if ( base == 0 || rel == 0 || satoshis == 0 )
         {
-            printf("quoteparse_error.(%s)\n",jprint(lineobj,0));
+            //printf("quoteparse_error.(%s)\n",jprint(lineobj,0));
             LP_parse_errors++;
             return(-1);
         }
@@ -674,7 +678,7 @@ char *LP_gettradestatus(uint64_t aliceid,uint32_t requestid,uint32_t quoteid)
             return(clonestr("{\"result\":\"success\"}"));
         }
     }
-    if ( (swapstr= basilisk_swapentry(requestid,quoteid,0)) != 0 )
+    if ( (swapstr= basilisk_swapentry(1,requestid,quoteid,0)) != 0 )
     {
         if ( (swapjson= cJSON_Parse(swapstr)) != 0 )
         {
@@ -727,7 +731,7 @@ int32_t LP_stats_dispiter(cJSON *array,struct LP_swapstats *sp,uint32_t starttim
 cJSON *LP_statslog_disp(uint32_t starttime,uint32_t endtime,char *refgui,bits256 refpubkey,char *refbase,char *refrel)
 {
     static int32_t rval;
-    cJSON *retjson,*array,*item,*reqjson; struct LP_pubkey_info *pubp,*ptmp; bits256 zero; uint32_t now; struct LP_swapstats *sp,*tmp; int32_t i,n,numtrades[LP_MAXPRICEINFOS]; uint64_t basevols[LP_MAXPRICEINFOS],relvols[LP_MAXPRICEINFOS];
+    cJSON *retjson,*array,*item; struct LP_pubkey_info *pubp,*ptmp; uint32_t now; struct LP_swapstats *sp,*tmp; int32_t i,n,numtrades[LP_MAXPRICEINFOS]; uint64_t basevols[LP_MAXPRICEINFOS],relvols[LP_MAXPRICEINFOS];
     if ( rval == 0 )
         rval = (LP_rand() % 300) + 60;
     if ( starttime > endtime )
@@ -754,14 +758,14 @@ cJSON *LP_statslog_disp(uint32_t starttime,uint32_t endtime,char *refgui,bits256
         else
         {
             LP_RTcount++;
-            if ( now > sp->lasttime+rval )
+            /*if ( now > sp->lasttime+rval )
             {
                 reqjson = cJSON_CreateObject();
                 jaddstr(reqjson,"method","gettradestatus");
                 jadd64bits(reqjson,"aliceid",sp->aliceid);
                 memset(zero.bytes,0,sizeof(zero));
                 LP_reserved_msg(0,"","",zero,jprint(reqjson,1));
-            }
+            }*/
         }
     }
     HASH_ITER(hh,LP_swapstats,sp,tmp)

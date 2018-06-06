@@ -1,6 +1,6 @@
 
 /******************************************************************************
- * Copyright © 2014-2017 The SuperNET Developers.                             *
+ * Copyright © 2014-2018 The SuperNET Developers.                             *
  *                                                                            *
  * See the AUTHORS, DEVELOPER-AGREEMENT and LICENSE files at                  *
  * the top-level directory of this distribution for the individual copyright  *
@@ -132,7 +132,7 @@ void LP_RTmetrics_swapsinfo(char *refbase,char *refrel,cJSON *swaps,int32_t nums
         quoteid = juint(item,"quoteid");
         LP_RTmetrics_pendingswap(srcpub,LP_kmdvalue(base,basesatoshis));
         LP_RTmetrics_pendingswap(destpub,LP_kmdvalue(rel,relsatoshis));
-        if ( 0 && (retstr= basilisk_swapentry(requestid,quoteid,0)) != 0 ) // no need for this
+        if ( 0 && (retstr= basilisk_swapentry(1,requestid,quoteid,0)) != 0 ) // no need for this
         {
             if ( (swapjson= cJSON_Parse(retstr)) != 0 )
             {

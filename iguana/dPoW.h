@@ -1,5 +1,5 @@
 /******************************************************************************
- * Copyright © 2014-2017 The SuperNET Developers.                             *
+ * Copyright © 2014-2018 The SuperNET Developers.                             *
  *                                                                            *
  * See the AUTHORS, DEVELOPER-AGREEMENT and LICENSE files at                  *
  * the top-level directory of this distribution for the individual copyright  *
@@ -16,17 +16,20 @@
 #ifndef INCLUDE_DPOW_H
 #define INCLUDE_DPOW_H
 
+//#define DPOW_MAXMOMDEPTH (1440 * 7)
+
 #define DPOW_FIRSTRATIFY 1000
 
+#define DPOW_MAXFREQ 100
 #define DPOW_CHECKPOINTFREQ 10
 #define DPOW_MINSIGS 13
 #define DPOW_MIN_ASSETCHAIN_SIGS 11
 //#define DPOW_M(bp) ((bp)->minsigs)  // (((bp)->numnotaries >> 1) + 1)
 #define DPOW_MODIND(bp,offset) (((((bp)->height / DPOW_CHECKPOINTFREQ) % (bp)->numnotaries) + (offset)) % (bp)->numnotaries)
-#define DPOW_VERSION 0x0781
-#define DPOW_UTXOSIZE 50000
+#define DPOW_VERSION 0x1782
+#define DPOW_UTXOSIZE dpow_utxosize(coin->symbol) //10000
 #define DPOW_MINOUTPUT 6000
-#define DPOW_DURATION 600
+#define DPOW_DURATION 1200
 #define DPOW_RATIFYDURATION (3600 * 24)
 
 //#define DPOW_ENTRIESCHANNEL ('e' | ('n' << 8) | ('t' << 16) | ('r' << 24))
@@ -46,8 +49,8 @@
 #define DPOW_MAXRELAYS 64
 #define DPOW_MAXSIGLEN 128
 
-#define DEX_VERSION 0x0105
-#define DPOW_SOCK 7775
+#define DEX_VERSION 0x0106
+#define DPOW_SOCKPORT 7775
 #define DEX_SOCK 7774
 #define PUB_SOCK 7773
 #define REP_SOCK 7772
@@ -102,17 +105,21 @@ struct dpow_checkpoint
     bits256 miner; uint32_t blocktime,timestamp;
 };
 
+struct dpow_recvdata { uint64_t recvmask,bestmask; int8_t bestk; };
+
 struct dpow_block
 {
-    bits256 hashmsg,desttxid,srctxid,beacon,commit;
+    bits256 hashmsg,desttxid,srctxid,beacon,commit,MoM;
     struct iguana_info *srccoin,*destcoin; char *opret_symbol;
     uint64_t destsigsmasks[DPOW_MAXRELAYS],srcsigsmasks[DPOW_MAXRELAYS];
     uint64_t recvmask,bestmask,ratifybestmask,ratifyrecvmask,pendingbestmask,pendingratifybestmask,ratifysigmasks[2];
+    struct dpow_recvdata recv[64];
     struct dpow_entry notaries[DPOW_MAXRELAYS];
-    uint32_t state,starttime,timestamp,waiting,sigcrcs[2],txidcrcs[2],utxocrcs[2],lastepoch,paxwdcrc;
+    uint32_t MoMdepth,state,starttime,timestamp,waiting,sigcrcs[2],txidcrcs[2],utxocrcs[2],lastepoch,paxwdcrc,lastnanosend;
     int32_t rawratifiedlens[2],height,numnotaries,numerrors,completed,minsigs,duration,numratified,isratify,require0,scores[DPOW_MAXRELAYS];
-    int8_t myind,bestk,ratifybestk,pendingbestk,pendingratifybestk;
+    int8_t myind,bestk,ratifybestk,pendingbestk,pendingratifybestk,matches,bestmatches;
     cJSON *ratified;
+    uint16_t CCid;
     uint8_t ratified_pubkeys[DPOW_MAXRELAYS][33],ratifysigs[2][DPOW_MAXSIGLEN],ratifysiglens[2];
     char handles[DPOW_MAXRELAYS][32];
     char signedtx[32768]; uint8_t ratifyrawtx[2][32768]; uint32_t pendingcrcs[2];
@@ -135,21 +142,32 @@ struct dpow_info
     struct dpow_hashheight approved[DPOW_FIFOSIZE],notarized[DPOW_FIFOSIZE];
     bits256 activehash,lastnotarized,srctx[DPOW_MAXTX],desttx[DPOW_MAXTX];
     uint32_t SRCREALTIME,lastsrcupdate,destupdated,srcconfirms,numdesttx,numsrctx,lastsplit,cancelratify;
-    int32_t lastheight,maxblocks,SRCHEIGHT,SHORTFLAG,ratifying;
+    int32_t lastheight,maxblocks,SRCHEIGHT,DESTHEIGHT,prevDESTHEIGHT,SHORTFLAG,ratifying,minsigs,freq;
     struct pax_transaction *PAX;
+    uint32_t fullCCid;
     portable_mutex_t paxmutex,dexmutex;
     uint32_t ipbits[128],numipbits;
-    struct dpow_block **blocks;
+    struct dpow_block **blocks,*currentbp;
 };
+
+struct komodo_ccdatapair { int32_t notarization_height; uint32_t MoMoMoffset; };
+
+struct komodo_ccdataMoMoM
+{
+    bits256 MoMoM;
+    int32_t kmdstarti,kmdendi,MoMoMdepth,numpairs,len;
+    struct komodo_ccdatapair *pairs;
+};
+
 uint64_t dpow_notarybestk(uint64_t refmask,struct dpow_block *bp,int8_t *lastkp);
-int32_t dpow_paxpending(uint8_t *hex,uint32_t *paxwdcrcp);
+int32_t dpow_paxpending(struct supernet_info *myinfo,uint8_t *hex,int32_t hexsize,uint32_t *paxwdcrcp,bits256 MoM,uint32_t MoMdepth,uint16_t CCid,int32_t src_or_dest,struct dpow_block *bp);
 void dex_updateclient(struct supernet_info *myinfo);
 char *dex_reqsend(struct supernet_info *myinfo,char *handler,uint8_t *data,int32_t datalen,int32_t M,char *field);
 char *basilisk_respond_addmessage(struct supernet_info *myinfo,uint8_t *key,int32_t keylen,uint8_t *data,int32_t datalen,int32_t sendping,uint32_t duration);
-int32_t dpow_getchaintip(struct supernet_info *myinfo,bits256 *blockhashp,uint32_t *blocktimep,bits256 *txs,uint32_t *numtxp,struct iguana_info *coin);
+int32_t dpow_getchaintip(struct supernet_info *myinfo,bits256 *merklerootp,bits256 *blockhashp,uint32_t *blocktimep,bits256 *txs,uint32_t *numtxp,struct iguana_info *coin);
 void dpow_send(struct supernet_info *myinfo,struct dpow_info *dp,struct dpow_block *bp,bits256 srchash,bits256 desthash,uint32_t channel,uint32_t msgbits,uint8_t *data,int32_t datalen);
 int32_t dpow_nanomsg_update(struct supernet_info *myinfo);
-int32_t dpow_haveutxo(struct supernet_info *myinfo,struct iguana_info *coin,bits256 *txidp,int32_t *voutp,char *coinaddr);
+int32_t dpow_haveutxo(struct supernet_info *myinfo,struct iguana_info *coin,bits256 *txidp,int32_t *voutp,char *coinaddr,char *srccoin);
 void komodo_assetcoins(int32_t fullnode,uint64_t mask);
 int32_t iguana_isnotarychain(char *symbol);
 

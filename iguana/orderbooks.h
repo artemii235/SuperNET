@@ -3236,7 +3236,7 @@ void prices777_RTupdate(double cryptovols[2][8][2],double RTmetals[4],double *RT
 
 int32_t prices777_getmatrix(double *basevals,double *btcusdp,double *btcdbtcp,double Hmatrix[32][32],double *RTprices,char *contracts[],int32_t num,uint32_t timestamp)
 {
-    int32_t i,j,c; char name[16]; double btcusd,btcdbtc;
+    int32_t i,j,c; char name[65]; double btcusd,btcdbtc;
     memcpy(Hmatrix,BUNDLE.data.ecbmatrix,sizeof(BUNDLE.data.ecbmatrix));
     prices777_calcmatrix(Hmatrix);
     /*for (i=0; i<32; i++)
@@ -3411,7 +3411,7 @@ void prices777_sim(uint32_t now,int32_t numiters)
 
 void prices777_getlist(char *retbuf)
 {
-    int32_t i,j; struct prices777 *prices; char pair[16],*jsonstr; cJSON *json,*array,*item;
+    int32_t i,j; struct prices777 *prices; char pair[130],*jsonstr; cJSON *json,*array,*item;
     json = cJSON_CreateObject();
     array = cJSON_CreateArray();
     for (i=0; i<sizeof(CURRENCIES)/sizeof(*CURRENCIES); i++)

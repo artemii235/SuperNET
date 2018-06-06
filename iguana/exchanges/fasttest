@@ -1,0 +1,6 @@
+#!/bin/bash
+source userpass
+curl --url "http://127.0.0.1:7783" --data "{\"queueid\":1,\"userpass\":\"$userpass\",\"method\":\"sleep\",\"seconds\":10}" &
+curl --url "http://127.0.0.1:7783" --data "{\"userpass\":\"$userpass\",\"method\":\"orderbook\",\"base\":\"REVS\",\"rel\":\"KMD\"}"
+curl --url "http://127.0.0.1:7783" --data "{\"userpass\":\"$userpass\",\"method\":\"orderbook\",\"base\":\"REVS\",\"rel\":\"KMD\"}"
+curl --url "http://127.0.0.1:7783" --data "{\"queueid\":2,\"userpass\":\"$userpass\",\"method\":\"getcoin\",\"coin\":\"REVS\",\"rel\":\"KMD\"}"

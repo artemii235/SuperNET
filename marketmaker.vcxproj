@@ -86,7 +86,7 @@
       </PrecompiledHeader>
       <WarningLevel>Level2</WarningLevel>
       <Optimization>Disabled</Optimization>
-      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;NATIVE_WINDOWS;WIN32;_DEBUG;_CONSOLE;IGUANA_LOG2PACKETSIZE=20;IGUANA_MAXPACKETSIZE=1572864;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;NATIVE_WINDOWS;WIN32;_DEBUG;_CONSOLE;IGUANA_LOG2PACKETSIZE=20;IGUANA_MAXPACKETSIZE=1572864;NOTETOMIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StructMemberAlignment>8Bytes</StructMemberAlignment>
       <AdditionalIncludeDirectories>.\iguana;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
@@ -103,7 +103,7 @@
       </PrecompiledHeader>
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
-      <PreprocessorDefinitions>_DEBUG;_CONSOLE;NATIVE_WINDOWS;WIN32;IGUANA_LOG2PACKETSIZE=20;IGUANA_MAXPACKETSIZE=1572864;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_DEBUG;_CONSOLE;NATIVE_WINDOWS;WIN32;IGUANA_LOG2PACKETSIZE=20;IGUANA_MAXPACKETSIZE=1572864;NOTETOMIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StructMemberAlignment>8Bytes</StructMemberAlignment>
     </ClCompile>
     <Link>
@@ -121,7 +121,7 @@
       <Optimization>MaxSpeed</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
-      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;NATIVE_WINDOWS;WIN32;_CONSOLE;NDEBUG;IGUANA_LOG2PACKETSIZE=20;IGUANA_MAXPACKETSIZE=1572864;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;NATIVE_WINDOWS;WIN32;_CONSOLE;NDEBUG;IGUANA_LOG2PACKETSIZE=20;IGUANA_MAXPACKETSIZE=1572864;NOTETOMIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StructMemberAlignment>8Bytes</StructMemberAlignment>
     </ClCompile>
     <Link>
@@ -141,7 +141,7 @@
       <Optimization>MaxSpeed</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
-      <PreprocessorDefinitions>WIN64;_WIN64;_CRT_SECURE_NO_WARNINGS;NATIVE_WINDOWS;WIN32;WIN32_LEAN_AND_MEAN;_CONSOLE;NDEBUG;IGUANA_LOG2PACKETSIZE=20;IGUANA_MAXPACKETSIZE=1572864;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN64;_WIN64;_CRT_SECURE_NO_WARNINGS;NATIVE_WINDOWS;WIN32;WIN32_LEAN_AND_MEAN;_CONSOLE;NDEBUG;IGUANA_LOG2PACKETSIZE=20;IGUANA_MAXPACKETSIZE=1572864;NOTETOMIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StructMemberAlignment>8Bytes</StructMemberAlignment>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
     </ClCompile>
@@ -249,6 +249,7 @@
     <ClCompile Include="crypto777\tweetnacl.c" />
     <ClCompile Include="iguana\exchanges\mm.c" />
     <ClCompile Include="iguana\groestl.c" />
+    <ClCompile Include="iguana\keccak.c" />
     <ClCompile Include="iguana\mini-gmp.c" />
     <ClCompile Include="iguana\secp256k1\src\secp256k1.c" />
     <ClCompile Include="iguana\segwit_addr.c" />

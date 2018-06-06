@@ -1,6 +1,6 @@
 
 /******************************************************************************
- * Copyright © 2014-2017 The SuperNET Developers.                             *
+ * Copyright © 2014-2018 The SuperNET Developers.                             *
  *                                                                            *
  * See the AUTHORS, DEVELOPER-AGREEMENT and LICENSE files at                  *
  * the top-level directory of this distribution for the individual copyright  *
@@ -52,7 +52,7 @@ void LP_tradebot_pauseall()
 void LP_tradebot_updatestats(struct LP_tradebot *bot,struct LP_tradebot_trade *tp)
 {
     char *swapstr,*status; int32_t flag; cJSON *swapjson;
-    if ( (swapstr= basilisk_swapentry(tp->requestid,tp->quoteid,1)) != 0 )
+    if ( (swapstr= basilisk_swapentry(0,tp->requestid,tp->quoteid,1)) != 0 )
     {
         flag = 0;
         if ( (swapjson= cJSON_Parse(swapstr)) != 0 )
@@ -322,7 +322,7 @@ void LP_tradebot_timeslice(void *ctx,struct LP_tradebot *bot)
     LP_tradebot_calcstats(bot);
     if ( bot->dead == 0 && bot->pause == 0 && bot->userpause == 0 && bot->numtrades < sizeof(bot->trades)/sizeof(*bot->trades) )
     {
-        if ( (liststr= LP_recent_swaps(0)) != 0 )
+        if ( (liststr= LP_recent_swaps(0,0)) != 0 )
         {
             if ( (retjson= cJSON_Parse(liststr)) != 0 )
             {
@@ -338,7 +338,7 @@ void LP_tradebot_timeslice(void *ctx,struct LP_tradebot *bot)
                     {
                         if ( remaining < 0.001 )
                             break;
-                        if ( (retstr= LP_autobuy(ctx,LP_myipaddr,LP_mypubsock,bot->base,bot->rel,bot->maxprice,remaining/i,0,0,G.gui,0,destpubkey,tradeid)) != 0 )
+                        if ( (retstr= LP_autobuy(ctx,0,LP_myipaddr,LP_mypubsock,bot->base,bot->rel,bot->maxprice,remaining/i,0,0,G.gui,0,destpubkey,tradeid,0)) != 0 )
                         {
                             if ( (retjson2= cJSON_Parse(retstr)) != 0 )
                             {

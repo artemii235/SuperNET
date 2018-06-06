@@ -1,0 +1,4 @@
+#!/bin/bash
+source userpass
+source passphrase
+curl --url "http://127.0.0.1:7783" --data "{\"netid\":9999,\"seednode\":\"5.9.253.204\",\"userpass\":\"1d8b27b21efabcd96571cd56f91a40fb9aa4cc623d273c63bf9223dc6f8cd81f\",\"method\":\"passphrase\",\"passphrase\":\"$passphrase\",\"gui\":\"nogui\"}"

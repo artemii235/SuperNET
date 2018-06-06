@@ -72,10 +72,14 @@ IF "%host%"=="VM-81" (
     mkdir package_content\win64
     copy /y Release\marketmaker.exe package_content\win32
     copy /y x64\Release\marketmaker.exe package_content\win64
+    copy /y x64\Release\libcurl.dll package_content\win64
+    copy /y x64\Release\nanomsg.dll package_content\win64
     echo Marketmaker_%LP_MAJOR_VERSION%.%LP_MINOR_VERSION%_%LP_BUILD_NUMBER%%GIT_COMMIT% > package_content\version.txt
     cd package_content
     "C:\Program Files\7-Zip\7z.exe" a C:\komodo\marketmaker_release\marketmaker_release.7z win32\marketmaker.exe
     "C:\Program Files\7-Zip\7z.exe" a C:\komodo\marketmaker_release\marketmaker_release.7z win64\marketmaker.exe
+    "C:\Program Files\7-Zip\7z.exe" a C:\komodo\marketmaker_release\marketmaker_release.7z win64\libcurl.dll
+    "C:\Program Files\7-Zip\7z.exe" a C:\komodo\marketmaker_release\marketmaker_release.7z win64\nanomsg.dll
     "C:\Program Files\7-Zip\7z.exe" a C:\komodo\marketmaker_release\marketmaker_release.7z version.txt
     cd ..
     rd package_content /s /q

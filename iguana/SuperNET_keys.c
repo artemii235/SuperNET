@@ -1,5 +1,5 @@
 /******************************************************************************
- * Copyright © 2014-2017 The SuperNET Developers.                             *
+ * Copyright © 2014-2018 The SuperNET Developers.                             *
  *                                                                            *
  * See the AUTHORS, DEVELOPER-AGREEMENT and LICENSE files at                  *
  * the top-level directory of this distribution for the individual copyright  *
@@ -310,13 +310,70 @@ int32_t _SuperNET_encryptjson(struct supernet_info *myinfo,char *destfname,char 
     return(0);
 }
 
+int32_t curve25519_donna(uint8_t *mypublic,const uint8_t *secret,const uint8_t *basepoint);
+
+static const char base58_chars[] = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
+int32_t iguana_wifstr_valid(char *wifstr)
+{
+    bits256 privkey,cmpkey; uint8_t wiftype; char cmpstr[128],cmpstr2[128]; int32_t i,len,n,a,A;
+    if ( (len= (int32_t)strlen(wifstr)) < 50 || len > 54 )
+    {
+        //printf("len.%d is wrong for wif %s\n",len,wifstr);
+        return(0);
+    }
+    memset(privkey.bytes,0,sizeof(privkey));
+    memset(cmpkey.bytes,0,sizeof(cmpkey));
+    for (i=n=a=A=0; wifstr[i]!=0; i++)
+    {
+        if ( strchr(base58_chars,wifstr[i]) == 0 )
+            return(0);
+        if ( wifstr[i] >= '1' && wifstr[i] <= '9' )
+            n++;
+        else if ( wifstr[i] >= 'A' && wifstr[i] <= 'Z' )
+            A++;
+        else if ( wifstr[i] >= 'a' && wifstr[i] <= 'z' )
+            a++;
+    }
+    if ( n == 0 || A == 0 || a == 0 )
+        return(0);
+    if ( A > 5*a || a > 5*A || a > n*20 || A > n*20 ) // unlikely it is a real wif
+    {
+        //printf("reject wif %s due to n.%d a.%d A.%d (%d %d %d %d)\n",wifstr,n,a,A,A > 5*a,a < 5*A,a > n*20,A > n*20);
+        return(0);
+    }
+    bitcoin_wif2priv(&wiftype,&privkey,wifstr);
+    bitcoin_priv2wif(cmpstr,privkey,wiftype);
+    if ( strcmp(cmpstr,wifstr) == 0 )
+    {
+        //printf("%s is valid wif\n",wifstr);
+        return(1);
+    }
+    else if ( bits256_nonz(privkey) != 0 )
+    {
+        bitcoin_wif2priv(&wiftype,&cmpkey,cmpstr);
+        bitcoin_priv2wiflong(cmpstr2,privkey,wiftype);
+        if ( bits256_cmp(privkey,cmpkey) == 0 )
+            return(1);
+       // char str[65],str2[65]; printf("mismatched wifstr %s -> %s -> %s %s %s\n",wifstr,bits256_str(str,privkey),cmpstr,bits256_str(str2,cmpkey),cmpstr2);
+    }
+    //char str[65]; printf("%s is not a wif, privkey.%s\n",wifstr,bits256_str(str,privkey));
+    return(0);
+}
+
 void SuperNET_setkeys(struct supernet_info *myinfo,void *pass,int32_t passlen,int32_t dosha256)
 {
-    bits256 hash;
+    static uint8_t basepoint[32] = {9}; bits256 hash; uint8_t addrtype,usedwif = 0;
     if ( dosha256 != 0 )
     {
         memcpy(myinfo->secret,pass,passlen+1);
-        myinfo->myaddr.nxt64bits = conv_NXTpassword(myinfo->persistent_priv.bytes,myinfo->myaddr.persistent.bytes,pass,passlen);
+        if ( iguana_wifstr_valid((char *)pass) > 0 )
+        {
+            usedwif = 1;
+            bitcoin_wif2priv(&addrtype,&myinfo->persistent_priv,(char *)pass);
+            curve25519_donna(myinfo->myaddr.persistent.bytes,myinfo->persistent_priv.bytes,basepoint);
+        }
+        else myinfo->myaddr.nxt64bits = conv_NXTpassword(myinfo->persistent_priv.bytes,myinfo->myaddr.persistent.bytes,pass,passlen);
     }
     else
     {
@@ -329,6 +386,8 @@ void SuperNET_setkeys(struct supernet_info *myinfo,void *pass,int32_t passlen,in
     bitcoin_pubkey33(myinfo->ctx,myinfo->persistent_pubkey33,myinfo->persistent_priv);
     bitcoin_address(myinfo->myaddr.BTC,0,myinfo->persistent_pubkey33,33);
     bitcoin_address(myinfo->myaddr.BTCD,60,myinfo->persistent_pubkey33,33);
+    if ( (0) && usedwif != 0 )
+        printf("usedwif for %s %s\n",myinfo->myaddr.BTCD,myinfo->myaddr.BTC);
 }
 
 void SuperNET_parsemyinfo(struct supernet_info *myinfo,cJSON *msgjson)

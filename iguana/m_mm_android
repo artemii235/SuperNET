@@ -1,0 +1,3 @@
+cd secp256k1; ./m_android; cd ..
+cd ../crypto777; ./m_android; cd ../iguana
+$CC2 -g -o marketmaker -I../crypto777 exchanges/mm.c ../crypto777/cJSON.c mini-gmp.c secp256k1.o ../agents/libcrypto777.a ../OSlibs/android/lib/libcurl.a -L../OSlibs/android/lib/ -lnanomsg -lcurl -lpthread -lm

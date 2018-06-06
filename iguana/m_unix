@@ -9,4 +9,4 @@ cd secp256k1; ./m_unix; cd ..
 cd ../crypto777; ./m_unix; cd ../iguana
 gcc -g -fno-aggressive-loop-optimizations -Wno-deprecated -c *.c ../basilisk/basilisk.c ../gecko/gecko.c ../datachain/datachain.c
 gcc -g -fno-aggressive-loop-optimizations -Wno-deprecated -c  main.c iguana777.c iguana_bundles.c ../basilisk/basilisk.c
-gcc -g -o ../agents/iguana *.o ../agents/libcrypto777.a  -lpthread -lm -lnanomsg
+gcc -g -o ../agents/iguana *.o ../agents/libcrypto777.a  -lpthread -lm -lnanomsg -lcurl

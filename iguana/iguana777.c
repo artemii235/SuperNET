@@ -1,5 +1,5 @@
 /******************************************************************************
- * Copyright © 2014-2017 The SuperNET Developers.                             *
+ * Copyright © 2014-2018 The SuperNET Developers.                             *
  *                                                                            *
  * See the AUTHORS, DEVELOPER-AGREEMENT and LICENSE files at                  *
  * the top-level directory of this distribution for the individual copyright  *
@@ -48,6 +48,10 @@ struct iguana_info *iguana_coinadd(char *symbol,char *name,cJSON *argjson,int32_
         {
             myinfo->allcoins_being_added = 1;
             coin = mycalloc('C',1,sizeof(*coin));
+            strcpy(coin->getinfostr,"getinfo");
+            strcpy(coin->validateaddress,"validateaddress");
+            strcpy(coin->estimatefeestr,"estimatefee");
+            strcpy(coin->signtxstr,"signrawtransaction");
             coin->blockspacesize = IGUANA_MAXPACKETSIZE + 8192;
             coin->blockspace = calloc(1,coin->blockspacesize);
             if ( virtcoin != 0 || ((privatechain= jstr(argjson,"geckochain")) != 0 && privatechain[0] != 0) )
@@ -1216,12 +1220,15 @@ int32_t iguana_launchcoin(struct supernet_info *myinfo,char *symbol,cJSON *json,
     return(0);
 }
 
+void iguana_optableinit();
+
 void iguana_coins(void *arg)
 {
     struct iguana_info **coins,*coin; char *jsonstr,*symbol; cJSON *array,*item,*json;
     int32_t i,n,maxpeers,maphash,initialheight,minconfirms,maxrequests,maxbundles;
     int64_t maxrecvcache; uint64_t services; struct vin_info V; struct supernet_info *myinfo;
     myinfo = SuperNET_MYINFO(0);
+    iguana_optableinit();
     memset(&V,0,sizeof(V));
     if ( (jsonstr= arg) != 0 && (json= cJSON_Parse(jsonstr)) != 0 )
     {

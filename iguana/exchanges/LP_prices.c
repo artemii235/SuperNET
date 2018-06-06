@@ -1,6 +1,6 @@
 
 /******************************************************************************
- * Copyright © 2014-2017 The SuperNET Developers.                             *
+ * Copyright © 2014-2018 The SuperNET Developers.                             *
  *                                                                            *
  * See the AUTHORS, DEVELOPER-AGREEMENT and LICENSE files at                  *
  * the top-level directory of this distribution for the individual copyright  *
@@ -114,7 +114,7 @@ void LP_pubkey_update(struct LP_pubkey_info *pubp,uint32_t baseind,uint32_t reli
         DL_APPEND(pubp->quotes,pq); // already serialized as only path is via stats_JSON()
         //printf("create pubp quotes %d/%d\n",baseind,relind);
     }
-    //printf("%d/%d price %.8f balance %.8f %s num.%d %.8f %.8f\n",baseind,relind,price,dstr(balance),utxocoin,numutxos,dstr(minutxo),dstr(maxutxo));
+//printf("%d/%d price %.8f balance %.8f %s num.%d min %.8f max %.8f\n",baseind,relind,price,dstr(balance),utxocoin,numutxos,dstr(minutxo),dstr(maxutxo));
     pq->price = price;
     if ( utxocoin != 0 && utxocoin[0] != 0 )
     {
@@ -304,6 +304,7 @@ struct LP_pubkey_info *LP_pubkeyadd(bits256 pubkey)
     {
         pubp = calloc(1,sizeof(*pubp));
         pubp->pubkey = pubkey;
+        pubp->pairsock = -1;
         if ( bits256_cmp(G.LP_mypub25519,pubkey) == 0 )
         {
             memcpy(pubp->rmd160,G.LP_myrmd160,sizeof(pubp->rmd160));
@@ -511,7 +512,7 @@ char *LP_myprices()
 
 int32_t LP_mypriceset(int32_t *changedp,char *base,char *rel,double price)
 {
-    struct LP_priceinfo *basepp,*relpp; struct LP_pubkey_info *pubp; double minprice,maxprice;
+    struct LP_priceinfo *basepp=0,*relpp=0; struct LP_pubkey_info *pubp; double minprice,maxprice,margin,buymargin,sellmargin;
     *changedp = 0;
     //if ( strcmp("DEX",base) == 0 || strcmp("DEX",rel) == 0 )
     //    printf("%s/%s setprice %.8f\n",base,rel,price);
@@ -520,6 +521,9 @@ int32_t LP_mypriceset(int32_t *changedp,char *base,char *rel,double price)
         
         if ( price == 0. || fabs(basepp->myprices[relpp->ind] - price)/price > 0.001 )
             *changedp = 1;
+        sellmargin = relpp->sellmargins[basepp->ind];
+        buymargin = relpp->buymargins[basepp->ind];
+        margin = (sellmargin + buymargin) * 0.5;
         if ( price == 0. )
         {
             relpp->minprices[basepp->ind] = 0.;
@@ -528,18 +532,20 @@ int32_t LP_mypriceset(int32_t *changedp,char *base,char *rel,double price)
             relpp->sellmargins[basepp->ind] = 0.;
             relpp->offsets[basepp->ind] = 0.;
             relpp->factors[basepp->ind] = 0.;
+            LP_autoref_clear(base,rel);
+            margin = 0.;
         }
         else if ( (minprice= basepp->minprices[relpp->ind]) > SMALLVAL && price < minprice )
         {
-            printf("%s/%s price %.8f less than minprice %.8f\n",base,rel,price,minprice);
-            price = minprice;
+            //printf("%s/%s price %.8f less than minprice %.8f\n",base,rel,price,minprice);
+            price = minprice * (1. - margin);
         }
         else if ( (maxprice= relpp->minprices[basepp->ind]) > SMALLVAL )
         {
             if ( price > (1. / maxprice) )
             {
-                printf("%s/%s price %.8f less than maxprice %.8f, more than %.8f\n",base,rel,price,maxprice,1./maxprice);
-                price = (1. / maxprice);
+                //printf("%s/%s price %.8f less than maxprice %.8f, more than %.8f\n",base,rel,price,maxprice,1./maxprice);
+                price = (1. / maxprice) * (1. + margin);
             }
         }
         /*else if ( basepp->myprices[relpp->ind] > SMALLVAL )
@@ -548,7 +554,7 @@ int32_t LP_mypriceset(int32_t *changedp,char *base,char *rel,double price)
         }*/
         basepp->myprices[relpp->ind] = price;          // ask
         //printf("LP_mypriceset base.%s rel.%s <- price %.8f\n",base,rel,price);
-        //relpp->myprices[basepp->ind] = (1. / price);   // bid
+        //relpp->myprices[basepp->ind] = (1. / price);   // bid, but best to do one dir at a time
         if ( (pubp= LP_pubkeyadd(G.LP_mypub25519)) != 0 )
         {
             pubp->timestamp = (uint32_t)time(NULL);
@@ -558,7 +564,9 @@ int32_t LP_mypriceset(int32_t *changedp,char *base,char *rel,double price)
             //pubp->matrix[relpp->ind][basepp->ind] = (1. / price);
         }
         return(0);
-    } else return(-1);
+    }
+    printf("base.%s rel.%s %p %p price %.8f error case\n",base!=0?base:"",rel!=0?rel:"",basepp,relpp,price);
+    return(-1);
 }
 
 double LP_price(char *base,char *rel)
@@ -637,9 +645,14 @@ struct LP_priceinfo *LP_priceinfoadd(char *symbol)
     struct LP_priceinfo *pp; cJSON *retjson;
     if ( symbol == 0 )
         return(0);
+    if ( (pp= LP_priceinfofind(symbol)) != 0 )
+    {
+        printf("%s already there\n",symbol);
+        return(pp);
+    }
     if ( LP_numpriceinfos >= sizeof(LP_priceinfos)/sizeof(*LP_priceinfos) )
     {
-        printf("cant add any more priceinfos\n");
+        printf("cant add any more priceinfos than %d\n",LP_numpriceinfos);
         return(0);
     }
     pp = &LP_priceinfos[LP_numpriceinfos];
@@ -647,7 +660,7 @@ struct LP_priceinfo *LP_priceinfoadd(char *symbol)
     safecopy(pp->symbol,symbol,sizeof(pp->symbol));
     pp->coinbits = stringbits(symbol);
     pp->ind = LP_numpriceinfos++;
-    LP_numpriceinfos++;
+    //LP_numpriceinfos++;
     if ( (retjson= LP_priceinfomatrix(0)) != 0 )
         free_json(retjson);
     return(pp);
@@ -743,9 +756,9 @@ cJSON *LP_orderbookjson(char *symbol,struct LP_orderbookentry *op)
         jaddstr(item,"address",op->coinaddr);
         jaddnum(item,"price",op->price);
         jaddnum(item,"numutxos",op->numutxos);
-        jaddnum(item,"avevolume",dstr(op->avesatoshis)*0.8);
-        jaddnum(item,"maxvolume",dstr(op->maxsatoshis)*0.8);
-        jaddnum(item,"depth",dstr(op->depth)*0.8);
+        jaddnum(item,"avevolume",dstr(op->avesatoshis));
+        jaddnum(item,"maxvolume",dstr(op->maxsatoshis));
+        jaddnum(item,"depth",dstr(op->depth));
         jaddbits256(item,"pubkey",op->pubkey);
         jaddnum(item,"age",time(NULL)-op->timestamp);
         jaddnum(item,"zcredits",dstr(op->dynamictrust));
@@ -810,7 +823,7 @@ int32_t LP_orderbook_utxoentries(uint32_t now,int32_t polarity,char *base,char *
         }
         if ( pubp->timestamp < oldest )
             continue;
-        bitcoin_address(base,coinaddr,basecoin->taddr,basecoin->pubtype,pubp->rmd160,sizeof(pubp->rmd160));
+        bitcoin_address(base,coinaddr,basecoin->taddr,basecoin->pubtype,pubp->pubsecp,33);
         avesatoshis = maxsatoshis = n = 0;
         ap = 0;
         if ( (price= LP_pubkey_price(&n,&avesatoshis,&maxsatoshis,pubp,baseid,relid)) > SMALLVAL ) //pubp->matrix[baseid][relid]) > SMALLVAL )//&& pubp->timestamps[baseid][relid] >= oldest )
@@ -853,7 +866,7 @@ char *LP_orderbook(char *base,char *rel,int32_t duration)
             suppress_prefetch = 1;
         duration = LP_ORDERBOOK_DURATION;
     }
-    LP_pubkeys_query();
+    //LP_pubkeys_query();
     baseid = basepp->ind;
     relid = relpp->ind;
     now = (uint32_t)time(NULL);
@@ -955,6 +968,43 @@ char *LP_orderbook(char *base,char *rel,int32_t duration)
     if ( asks != 0 )
         free(asks);
     return(jprint(retjson,1));
+}
+
+double LP_fomoprice(char *base,char *rel,double *relvolumep)
+{
+    char *retstr; cJSON *retjson,*asks,*item; int32_t i,numasks; double maxvol=0.,relvolume,biggest,price,fomoprice = 0.;
+    relvolume = *relvolumep;
+    if ( (retstr= LP_orderbook(base,rel,0)) != 0 )
+    {
+        if ( (retjson= cJSON_Parse(retstr)) != 0 )
+        {
+            if ( (asks= jarray(&numasks,retjson,"asks")) != 0 && numasks > 0 )
+            {
+                for (i=0; i<numasks; i++)
+                {
+                    item = jitem(asks,i);
+                    biggest = jdouble(item,"maxvolume");
+                    price = jdouble(item,"price");
+                    if ( biggest > maxvol )
+                    {
+                        maxvol = biggest;
+                        fomoprice = price;
+                    }
+                    printf("fomoprice (%.8f) i.%d %.8f vol %.8f [max %.8f @ %.8f]\n",relvolume,i,price,biggest,maxvol,fomoprice);
+                }
+            }
+            free_json(retjson);
+        }
+        free(retstr);
+    }
+    if ( maxvol > 0. && fomoprice > 0. )
+    {
+        if ( maxvol < relvolume )
+            relvolume = maxvol * 0.98;
+        fomoprice /= 0.95;
+    } else fomoprice = 0.;
+    *relvolumep = relvolume;
+    return(fomoprice);
 }
 
 int64_t LP_KMDvalue(struct iguana_info *coin,int64_t balance)
@@ -1119,7 +1169,7 @@ cJSON *LP_pricearray(char *base,char *rel,uint32_t firsttime,uint32_t lasttime,i
 void LP_pricefeedupdate(bits256 pubkey,char *base,char *rel,double price,char *utxocoin,int32_t numrelutxos,int64_t balance,int64_t minutxo,int64_t maxutxo,int64_t unconfcredits)
 {
     struct LP_priceinfo *basepp,*relpp; uint32_t now; int64_t price64; struct LP_pubkey_info *pubp; char str[65],fname[512]; FILE *fp;
-    //printf("check PRICEFEED UPDATE.(%s/%s) %.8f %s\n",base,rel,price,bits256_str(str,pubkey));
+//printf("check PRICEFEED UPDATE.(%s/%s) %.8f %s balance %.8f min %.8f max %.8f\n",base,rel,price,bits256_str(str,pubkey),dstr(balance),dstr(minutxo),dstr(maxutxo));
     if ( LP_pricevalid(price) > 0 && (basepp= LP_priceinfofind(base)) != 0 && (relpp= LP_priceinfofind(rel)) != 0 )
     {
         //if ( (fp= basepp->fps[relpp->ind]) == 0 )
@@ -1181,7 +1231,7 @@ double LP_CMCbtcprice(double *price_usdp,char *symbol)
             item = jitem(ticker,0);
             price_btc = jdouble(item,"price_btc");
             *price_usdp = jdouble(item,"price_usd");
-            //printf("%.8f item.(%s)\n",price_btc,jprint(item,0));
+//printf("%.8f item.(%s)\n",price_btc,jprint(item,0));
             free_json(ticker);
         }
         free(retstr);

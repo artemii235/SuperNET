@@ -1,5 +1,5 @@
 /******************************************************************************
- * Copyright © 2014-2017 The SuperNET Developers.                             *
+ * Copyright © 2014-2018 The SuperNET Developers.                             *
  *                                                                            *
  * See the AUTHORS, DEVELOPER-AGREEMENT and LICENSE files at                  *
  * the top-level directory of this distribution for the individual copyright  *
@@ -881,7 +881,7 @@ int32_t iguana_checksequenceverify(struct iguana_info *coin,int64_t nLockTime,ui
     return(0);
 }
 
-void iguana_optableinit(struct iguana_info *coin)
+void iguana_optableinit()
 {
     int32_t i,extralen; uint8_t stackitems,flags; char *opname; struct bitcoin_opcode *op;
     if ( OPTABLE == 0 )
@@ -912,7 +912,7 @@ void iguana_optableinit(struct iguana_info *coin)
 int32_t iguana_expandscript(struct iguana_info *coin,char *asmstr,int32_t maxlen,uint8_t *script,int32_t scriptlen)
 {
     int32_t len,n,j,i = 0; uint8_t opcode; uint32_t val,extraflag;
-    iguana_optableinit(coin);
+    iguana_optableinit();
     asmstr[0] = len = 0;
     while ( i < scriptlen )
     {
@@ -1001,7 +1001,7 @@ int32_t bitcoin_assembler(struct iguana_info *coin,cJSON *logarray,uint8_t scrip
     struct iguana_stackdata args[MAX_PUBKEYS_PER_MULTISIG];
     uint8_t databuf[MAX_SCRIPT_ELEMENT_SIZE]; char *asmstr,*str,*hexstr; cJSON *item;
     int32_t c,numops,dlen,plen,numvars,numused,numargs=0,i,j,k,n=0,len,datalen,errs=0; int64_t val;
-    iguana_optableinit(coin);
+    iguana_optableinit();
     if ( (asmstr= jstr(interpreter,"interpreter")) == 0 || asmstr[0] == 0 )
         return(0);
     if ( (numvars= juint(interpreter,"numvars")) > 0 )

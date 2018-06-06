@@ -1,0 +1,5 @@
+#!/bin/bash
+source passphrase
+source coins
+./stop
+iguana/exchanges/marketmaker "{\"netid\":9999,\"seednode\":\"5.9.253.204\",\"gui\":\"nogui\",\"client\":1, \"userhome\":\"/${HOME#"/"}\", \"passphrase\":\"$passphrase\", \"coins\":$coins}" &

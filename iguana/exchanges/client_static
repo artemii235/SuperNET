@@ -1,0 +1,11 @@
+#!/bin/bash
+source passphrase
+source coins
+pkill -15 marketmaker; 
+git pull;
+cd ..; 
+make -f m_mm_StaticNanoMsg -j2 all;
+rm -rf ./marketmaker
+cp -av ../agents/marketmaker ./
+./marketmaker "{\"gui\":\"nogui\",\"client\":1, \"userhome\":\"/${HOME#"/"}\", \"passphrase\":\"$passphrase\", \"coins\":$coins}" &
+

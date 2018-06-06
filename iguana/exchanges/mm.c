@@ -1,5 +1,5 @@
 /******************************************************************************
- * Copyright © 2014-2017 The SuperNET Developers.                             *
+ * Copyright © 2014-2018 The SuperNET Developers.                             *
  *                                                                            *
  * See the AUTHORS, DEVELOPER-AGREEMENT and LICENSE files at                  *
  * the top-level directory of this distribution for the individual copyright  *
@@ -28,6 +28,7 @@ void PNACL_message(char *arg,...)
 
 #include <stdio.h>
 #include <stdint.h>
+// #include "lib.h"
 #ifndef NATIVE_WINDOWS
 #include "OS_portable.h"
 #else
@@ -36,7 +37,7 @@ void PNACL_message(char *arg,...)
 
 uint32_t DOCKERFLAG;
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
-char *stats_JSON(void *ctx,char *myipaddr,int32_t pubsock,cJSON *argjson,char *remoteaddr,uint16_t port);
+char *stats_JSON(void *ctx,int32_t fastflag,char *myipaddr,int32_t pubsock,cJSON *argjson,char *remoteaddr,uint16_t port);
 #include "stats.c"
 void LP_priceupdate(char *base,char *rel,double price,double avebid,double aveask,double highbid,double lowask,double PAXPRICES[32]);
 
@@ -57,7 +58,8 @@ void LP_priceupdate(char *base,char *rel,double price,double avebid,double aveas
 	#include "../../crypto777/nanosrc/pipeline.h"
 	#include "../../crypto777/nanosrc/reqrep.h"
 	#include "../../crypto777/nanosrc/tcp.h"
-	#include "../../crypto777/nanosrc/pair.h"
+    #include "../../crypto777/nanosrc/pair.h"
+    #include "../../crypto777/nanosrc/ws.h"
 #else
 	#include "/usr/local/include/nanomsg/nn.h"
 	#include "/usr/local/include/nanomsg/bus.h"
@@ -65,8 +67,12 @@ void LP_priceupdate(char *base,char *rel,double price,double avebid,double aveas
 	#include "/usr/local/include/nanomsg/pipeline.h"
 	#include "/usr/local/include/nanomsg/reqrep.h"
 	#include "/usr/local/include/nanomsg/tcp.h"
-	#include "/usr/local/include/nanomsg/pair.h"
+    #include "/usr/local/include/nanomsg/pair.h"
+    #include "/usr/local/include/nanomsg/ws.h"
 #endif
+#endif
+#ifndef NN_WS_MSG_TYPE
+#define NN_WS_MSG_TYPE 1
 #endif
 
 
@@ -111,30 +117,95 @@ void LP_main(void *ptr)
     }
 }
 
+int32_t ensure_writable(char *dirname)
+{
+    char fname[512],str[65],str2[65]; bits256 r,check; FILE *fp;
+    OS_randombytes(r.bytes,sizeof(r));
+    sprintf(fname,"%s/checkval",dirname), OS_compatible_path(fname);
+    if ( (fp= fopen(fname,"wb")) == 0 )
+    {
+        printf("FATAL ERROR cant create %s\n",fname);
+        fprintf(stderr,"FATAL ERROR cant create %s\n",fname);
+        return(-1);
+    }
+    else if ( fwrite(r.bytes,1,sizeof(r),fp) != sizeof(r) )
+    {
+        printf("FATAL ERROR error writing %s\n",fname);
+        fprintf(stderr,"FATAL ERROR writing %s\n",fname);
+        return(-1);
+    }
+    else
+    {
+        fclose(fp);
+        if ( (fp= fopen(fname,"rb")) == 0 )
+        {
+            printf("FATAL ERROR cant open %s\n",fname);
+            fprintf(stderr,"FATAL ERROR cant open %s\n",fname);
+            return(-1);
+        }
+        else if ( fread(check.bytes,1,sizeof(check),fp) != sizeof(check) )
+        {
+            printf("FATAL ERROR error reading %s\n",fname);
+            fprintf(stderr,"FATAL ERROR reading %s\n",fname);
+            return(-1);
+        }
+        else if ( memcmp(check.bytes,r.bytes,sizeof(r)) != 0 )
+        {
+            printf("FATAL ERROR error comparint %s %s vs %s\n",fname,bits256_str(str,r),bits256_str(str2,check));
+            fprintf(stderr,"FATAL ERROR error comparint %s %s vs %s\n",fname,bits256_str(str,r),bits256_str(str2,check));
+            return(-1);
+        }
+        fclose(fp);
+    }
+    return(0);
+}
+
 int main(int argc, const char * argv[])
 {
-    char dirname[512],*passphrase; double incr; cJSON *retjson;
+    char dirname[512]; double incr; cJSON *retjson;
     OS_init();
     if ( strstr(argv[0],"btc2kmd") != 0 && argv[1] != 0 )
     {
-        uint8_t addrtype,rmd160[20],rmd160b[20]; char coinaddr[64],coinaddr2[64];
-        bitcoin_addr2rmd160("BTC",0,&addrtype,rmd160,(char *)argv[1]);
-        if ( addrtype == 0 )
+        bits256 privkey,checkkey; uint8_t tmptype; char kmdwif[64],str[65],str2[65],*retstr;
+        if ( LP_wifstr_valid("BTC",(char *)argv[1]) > 0 )
         {
-            bitcoin_address("KMD",coinaddr,0,60,rmd160,20);
-            bitcoin_addr2rmd160("KMD",0,&addrtype,rmd160b,coinaddr);
-            bitcoin_address("BTC",coinaddr2,0,0,rmd160b,20);
+            bitcoin_wif2priv("BTC",0,&tmptype,&privkey,(char *)argv[1]);
+            bitcoin_priv2wif("KMD",0,kmdwif,privkey,188);
+            bitcoin_wif2priv("KMD",0,&tmptype,&checkkey,kmdwif);
+            if ( bits256_cmp(privkey,checkkey) == 0 )
+                printf("BTC %s -> KMD %s: privkey %s\n",argv[1],kmdwif,bits256_str(str,privkey));
+            else printf("ERROR BTC %s %s != KMD %s %s\n",argv[1],bits256_str(str,privkey),kmdwif,bits256_str(str2,checkkey));
         }
-        else if ( addrtype == 60 )
+        else
         {
-            bitcoin_address("BTC",coinaddr,0,0,rmd160,20);
-            bitcoin_addr2rmd160("BTC",0,&addrtype,rmd160b,coinaddr);
-            bitcoin_address("KMD",coinaddr2,0,60,rmd160b,20);
+            if ( (retstr= LP_convaddress("BTC",(char *)argv[1],"KMD")) != 0 )
+                printf("%s\n",retstr);
         }
-        printf("(%s) -> %s -> %s\n",(char *)argv[1],coinaddr,coinaddr2);
-        if ( strcmp((char *)argv[1],coinaddr2) != 0 )
-            printf("ERROR\n");
         exit(0);
+    }
+    else if ( argv[1] != 0 && strcmp(argv[1],"events") == 0 )
+    {
+        int32_t len,bufsize = 1000000; void *ptr; char *buf;
+        if ( (IPC_ENDPOINT= nn_socket(AF_SP,NN_PAIR)) >= 0 )
+        {
+            if ( nn_connect(IPC_ENDPOINT,"ws://127.0.0.1:5555") >= 0 )
+            {
+                buf = calloc(1,bufsize);
+                while ( 1 )
+                {
+                    if ( (len= nn_recv(IPC_ENDPOINT,&ptr,NN_MSG,0)) > 0 )
+                    {
+                        if ( len < bufsize )
+                        {
+                            memcpy(buf,ptr,len);
+                            buf[len] = 0;
+                            printf("%s\n",(char *)buf);
+                        }
+                        nn_freemsg(ptr);
+                    }
+                }
+            } else printf("nn_connect error to IPC_ENDPOINT\n");
+        } else printf("error opening IPC_ENDPOINT\n");
     }
     else if ( argv[1] != 0 && strcmp(argv[1],"hush") == 0 )
     {
@@ -190,10 +261,103 @@ int main(int argc, const char * argv[])
         printf("done vanitygen.(%s) done %u elapsed %d\n",argv[2],(uint32_t)time(NULL),(uint32_t)time(NULL) - timestamp);
         exit(0);
     }
+    else if ( argv[1] != 0 && strcmp(argv[1],"airdropH") == 0 && argv[2] != 0 )
+    {
+        FILE *fp; double val,total = 0.; uint8_t checktype,addrtype,rmd160[21],checkrmd160[21]; char *floatstr,*addrstr,buf[256],checkaddr[64],coinaddr[64],manystrs[64][128],cmd[64*128]; int32_t n,i,num; char *flag;
+        if ( (fp= fopen(argv[2],"rb")) != 0 )
+        {
+            num = 0;
+            while ( fgets(buf,sizeof(buf),fp) > 0 )
+            {
+                if ( (n= (int32_t)strlen(buf)) > 0 )
+                    buf[--n] = 0;
+                flag = 0;
+                for (i=0; i<n; i++)
+                {
+                    if ( buf[i] == ',' )
+                    {
+                        buf[i] = 0;
+                        flag = &buf[i+1];
+                        break;
+                    }
+                }
+                if ( flag != 0 )
+                {
+                    addrstr = flag, floatstr = buf;
+                    //addrstr = buf, floatstr = flag;
+                    //bitcoin_addr2rmd160("HUSH",28,&addrtype,rmd160,buf);
+                    bitcoin_addr2rmd160("BTC",0,&addrtype,rmd160,addrstr);
+                    bitcoin_address("KMD",coinaddr,0,addrtype == 0 ? 60 : 85,rmd160,20);
+                    bitcoin_addr2rmd160("KMD",0,&checktype,checkrmd160,coinaddr);
+                    //bitcoin_address("HUSH",checkaddr,28,checktype == 60 ? 184 : 189,checkrmd160,20);
+                    bitcoin_address("BTC",checkaddr,0,checktype == 60 ? 0 : 5,checkrmd160,20);
+                    if ( memcmp(rmd160,checkrmd160,20) != 0 || strcmp(addrstr,checkaddr) != 0 )
+                    {
+                        for (i=0; i<20; i++)
+                            printf("%02x",rmd160[i]);
+                        printf(" vs. ");
+                        for (i=0; i<20; i++)
+                            printf("%02x",checkrmd160[i]);
+                        printf(" address calc error (%s).%d -> (%s).%d -> (%s) %.8f?\n",addrstr,addrtype,coinaddr,checktype,checkaddr,atof(floatstr));
+                    }
+                    else
+                    {
+                        val = atof(floatstr);
+                        sprintf(manystrs[num++],"\\\"%s\\\":%0.8f",coinaddr,val);
+                        if ( num >= sizeof(manystrs)/sizeof(*manystrs) )
+                        {
+                            sprintf(cmd,"fiat/btch sendmany \\\"\\\" \"{");
+                            for (i=0; i<num; i++)
+                                sprintf(cmd + strlen(cmd),"%s%s",manystrs[i],i<num-1?",":"");
+                            strcat(cmd,"}\" 0");
+                            printf("%s\nsleep 3\n",cmd);
+                            num = 0;
+                            memset(manystrs,0,sizeof(manystrs));
+                        }
+                        total += val;
+                        //printf("(%s).%d (%s) <- %.8f (%s) total %.8f\n",addrstr,addrtype,coinaddr,val,floatstr,total);
+                    }
+                } else printf("parse error for (%s)\n",buf);
+            }
+            if ( num > 0 )
+            {
+                sprintf(cmd,"fiat/btch sendmany \\\"\\\" \"{");
+                for (i=0; i<num; i++)
+                    sprintf(cmd + strlen(cmd),"%s%s",manystrs[i],i<num-1?",":"");
+                strcat(cmd,"}\" 0");
+                printf("%s\n",cmd);
+                num = 0;
+                memset(manystrs,0,sizeof(manystrs));
+            }
+            printf("close (%s) total %.8f\n",argv[2],total);
+            fclose(fp);
+        } else printf("couldnt open (%s)\n",argv[2]);
+        exit(0);
+    }
     sprintf(dirname,"%s",GLOBAL_DBDIR), OS_ensure_directory(dirname);
+    if ( ensure_writable(dirname) < 0 )
+    {
+        printf("couldnt write to (%s)\n",dirname);
+        exit(0);
+    }
     sprintf(dirname,"%s/SWAPS",GLOBAL_DBDIR), OS_ensure_directory(dirname);
+    if ( ensure_writable(dirname) < 0 )
+    {
+        printf("couldnt write to (%s)\n",dirname);
+        exit(0);
+    }
     sprintf(dirname,"%s/PRICES",GLOBAL_DBDIR), OS_ensure_directory(dirname);
+    if ( ensure_writable(dirname) < 0 )
+    {
+        printf("couldnt write to (%s)\n",dirname);
+        exit(0);
+    }
     sprintf(dirname,"%s/UNSPENTS",GLOBAL_DBDIR), OS_ensure_directory(dirname);
+    if ( ensure_writable(dirname) < 0 )
+    {
+        printf("couldnt write to (%s)\n",dirname);
+        exit(0);
+    }
 #ifdef FROM_JS
     argc = 2;
     retjson = cJSON_Parse("{\"client\":1,\"passphrase\":\"test\"}");
@@ -214,10 +378,10 @@ int main(int argc, const char * argv[])
             DOCKERFLAG = 1;
         else if ( jstr(retjson,"docker") != 0 )
             DOCKERFLAG = (uint32_t)calc_ipbits(jstr(retjson,"docker"));
-        if ( jobj(retjson,"passphrase") != 0 )
-            jdelete(retjson,"passphrase");
-        if ( (passphrase= jstr(retjson,"passphrase")) == 0 )
-            jaddstr(retjson,"passphrase","default");
+        //if ( jobj(retjson,"passphrase") != 0 )
+        //    jdelete(retjson,"passphrase");
+        //if ( (passphrase= jstr(retjson,"passphrase")) == 0 )
+        //    jaddstr(retjson,"passphrase","default");
         if ( OS_thread_create(malloc(sizeof(pthread_t)),NULL,(void *)LP_main,(void *)retjson) != 0 )
         {
             printf("error launching LP_main (%s)\n",jprint(retjson,0));
@@ -226,7 +390,7 @@ int main(int argc, const char * argv[])
         incr = 100.;
         while ( LP_STOP_RECEIVED == 0 )
             sleep(100000);
-    }
+    } else printf("couldnt parse.(%s)\n",argv[1]);
 #endif
     return 0;
 }

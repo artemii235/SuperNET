@@ -1,0 +1,4 @@
+#!/bin/bash
+source userpass
+curl --url "http://127.0.0.1:7783" --data "{\"userpass\":\"$userpass\",\"broadcast\":1,\"numblast\":1000,\"password\":\"default\",\"utxotxid\":\"bf8b73b2f72fbff1546811749eba3a028bce6320e5cdf2ae1ae414277661fb13\",\"utxovout\":1,\"utxovalue\":100000000,\"txfee\":20000,\"method\":\"txblast\",\"coin\":\"PIZZA\",\"outputs\":[{\"RUgW6fLfVsLJ87Ng4zJTqNedJSKYQ9ToAf\":0.0001}, {\"RLMHGUQginEGrnRtHoFBPZhLC9jeVdt1th\":0.0001}]}"
+

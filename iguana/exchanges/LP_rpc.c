@@ -1,5 +1,5 @@
 /******************************************************************************
- * Copyright © 2014-2017 The SuperNET Developers.                             *
+ * Copyright © 2014-2018 The SuperNET Developers.                             *
  *                                                                            *
  * See the AUTHORS, DEVELOPER-AGREEMENT and LICENSE files at                  *
  * the top-level directory of this distribution for the individual copyright  *
@@ -49,16 +49,17 @@ cJSON *bitcoin_json(struct iguana_info *coin,char *method,char *params)
     // bitcoind_passthru callers: "importaddress", "estimatefee", "getblockhash", "sendrawtransaction", "signrawtransaction"
     if ( coin != 0 )
     {
-        //printf("issue.(%s, %s, %s, %s, %s)\n",coin->symbol,coin->serverport,coin->userpass,method,params);
+        if ( 0 && strcmp(method,"gettxout") == 0 && strcmp("BCH",coin->symbol) == 0 )
+            printf("issue.(%s, %s, %s, %s, %s)\n",coin->symbol,coin->serverport,coin->userpass,method,params);
         if ( coin->electrum != 0 && (strcmp(method,"getblock") == 0 || strcmp(method,"paxprice") == 0 || strcmp(method,"getrawmempool") == 0) )
             return(cJSON_Parse("{\"error\":\"illegal electrum call\"}"));
-        if ( coin->inactive == 0 || strcmp(method,"importprivkey") == 0  || strcmp(method,"validateaddress") == 0 || strcmp(method,"getrawtransaction") == 0 || strcmp(method,"getblock") == 0 || strcmp(method,"getinfo") == 0 )
+        if ( coin->inactive == 0 || strcmp(method,"getrawtransaction") == 0 || strcmp(method,"getblock") == 0 || strcmp(method,"getinfo") == 0 || strcmp(method,"getblockchaininfo") == 0 || strcmp(method,"importprivkey") == 0 || strcmp(method,"validateaddress") == 0 || strcmp(method,"getaddressinfo") == 0 || strcmp(method,"importaddress") == 0 )
         {
             if ( coin->electrum == 0 )
             {
                 retstr = bitcoind_passthru(coin->symbol,coin->serverport,coin->userpass,method,params);
-                if ( 0 && strcmp("KMD",coin->symbol) == 0 )
-                    printf("%s.(%s %s): %s.%s -> (%s)\n",coin->symbol,coin->serverport,coin->userpass,method,params,retstr);
+                if ( 0 && strcmp("BCH",coin->symbol) == 0 )
+                    printf("%s.(%s %s): %s.%s -> (%s)\n",coin->symbol,coin->serverport,coin->userpass,method,params,retstr!=0?retstr:"");
                 if ( retstr != 0 && retstr[0] != 0 )
                 {
                     retjson = cJSON_Parse(retstr);
@@ -76,7 +77,7 @@ cJSON *bitcoin_json(struct iguana_info *coin,char *method,char *params)
                     }
                 }
             }
-        } else retjson = cJSON_Parse("{\"result\":\"disabled\"}");
+        } //else retjson = cJSON_Parse("{\"result\":\"disabled\"}");
     } else printf("bitcoin_json cant talk to NULL coin\n");
     return(retjson);
 }
@@ -88,28 +89,44 @@ void LP_unspents_mark(char *symbol,cJSON *vins)
 
 int32_t LP_getheight(int32_t *notarizedp,struct iguana_info *coin)
 {
-    cJSON *retjson; char *retstr,*method = "getinfo"; int32_t height;
+    cJSON *retjson; char *retstr; int32_t height;
     *notarizedp = 0;
     if ( coin == 0 )
         return(-1);
+    if ( coin->getinfostr[0] == 0 )
+        strcpy(coin->getinfostr,"getinfo");
     height = coin->height;
     if ( coin->electrum == 0 && time(NULL) > coin->heighttime+60 && coin->userpass[0] != 0 )
     {
-        if ( strcmp(coin->symbol,"BTC") == 0 )
-            method = "getblockchaininfo";
-        retstr = bitcoind_passthru(coin->symbol,coin->serverport,coin->userpass,method,"[]");
+        retstr = bitcoind_passthru(coin->symbol,coin->serverport,coin->userpass,coin->getinfostr,"[]");
         if ( retstr != 0 && retstr[0] != 0 )
         {
-            retjson = cJSON_Parse(retstr);
-            coin->height = height = jint(retjson,"blocks");
-            if ( (*notarizedp= jint(retjson,"notarized")) != 0 && *notarizedp != coin->notarized )
+            if ( (retjson= cJSON_Parse(retstr)) != 0 )
             {
-                //printf("new notarized %s %d -> %d\n",coin->symbol,coin->notarized,*notarizedp);
-                coin->notarized = *notarizedp;
-                coin->notarizationtxid = jbits256(retjson,"notarizedtxid");
-                coin->notarizedhash = jbits256(retjson,"notarizedhash");
+                if ( jobj(retjson,"error") != 0 && strcmp("getinfo",coin->getinfostr) == 0 )
+                {
+                    strcpy(coin->getinfostr,"getblockchaininfo");
+                    free_json(retjson), retjson = 0;
+                    free(retstr);
+                    if ( (retstr= bitcoind_passthru(coin->symbol,coin->serverport,coin->userpass,coin->getinfostr,"[]")) != 0 )
+                    {
+                        retjson = cJSON_Parse(retstr);
+                        printf("getblockchaininfo autoissue.(%s)\n",retstr);
+                    }
+                }
+                if ( retjson != 0 )
+                {
+                    coin->height = height = jint(retjson,"blocks");
+                    if ( (*notarizedp= jint(retjson,"notarized")) != 0 && *notarizedp != coin->notarized )
+                    {
+                        //printf("new notarized %s %d -> %d\n",coin->symbol,coin->notarized,*notarizedp);
+                        coin->notarized = *notarizedp;
+                        coin->notarizationtxid = jbits256(retjson,"notarizedtxid");
+                        coin->notarizedhash = jbits256(retjson,"notarizedhash");
+                    }
+                    free_json(retjson);
+                }
             }
-            free_json(retjson);
             if ( coin->height > 0 )
                 coin->heighttime = (uint32_t)time(NULL);
             free(retstr);
@@ -120,8 +137,9 @@ int32_t LP_getheight(int32_t *notarizedp,struct iguana_info *coin)
 
 uint64_t LP_RTsmartbalance(struct iguana_info *coin)
 {
-    cJSON *array,*item; char buf[512],*retstr; int32_t i,n; uint64_t valuesum,value;
+    cJSON *array,*item; char buf[512],*retstr; int32_t i,n; uint64_t valuesum,value; bits256 zero;
     valuesum = 0;
+    memset(zero.bytes,0,sizeof(zero));
     sprintf(buf,"[0, 99999999, [\"%s\"]]",coin->smartaddr);
     retstr = bitcoind_passthru(coin->symbol,coin->serverport,coin->userpass,"listunspent",buf);
     if ( retstr != 0 && retstr[0] != 0 )
@@ -132,8 +150,9 @@ uint64_t LP_RTsmartbalance(struct iguana_info *coin)
             for (i=0; i<n; i++)
             {
                 item = jitem(array,i);
-                value = LP_value_extract(item,1);
+                value = LP_value_extract(item,0,zero);
                 valuesum += value;
+                //printf("%s -> %.8f\n",jprint(item,0),dstr(value));
             }
         }
         free_json(array);
@@ -163,10 +182,10 @@ cJSON *LP_paxprice(char *fiat)
     return(bitcoin_json(coin,"paxprice",buf));
 }
 
-cJSON *LP_gettx(char *symbol,bits256 txid,int32_t suppress_errors)
+cJSON *LP_gettx(char *debug,char *symbol,bits256 txid,int32_t suppress_errors)
 {
     struct iguana_info *coin; char buf[512],str[65]; int32_t height; cJSON *retjson;
-    //printf("LP_gettx %s %s\n",symbol,bits256_str(str,txid));
+    //printf("%s LP_gettx %s %s\n",debug,symbol,bits256_str(str,txid));
     if ( symbol == 0 || symbol[0] == 0 )
         return(cJSON_Parse("{\"error\":\"null symbol\"}"));
     coin = LP_coinfind(symbol);
@@ -193,7 +212,7 @@ cJSON *LP_gettx(char *symbol,bits256 txid,int32_t suppress_errors)
 uint32_t LP_locktime(char *symbol,bits256 txid)
 {
     cJSON *txobj; uint32_t locktime = 0;
-    if ( (txobj= LP_gettx(symbol,txid,0)) != 0 )
+    if ( (txobj= LP_gettx("LP_locktime",symbol,txid,0)) != 0 )
     {
         locktime = juint(txobj,"locktime");
         free_json(txobj);
@@ -316,7 +335,7 @@ cJSON *LP_validateaddress(char *symbol,char *address)
             strcat(script,"88ac");
             jaddstr(retjson,"scriptPubKey",script);
         }
-        bitcoin_address(symbol,coinaddr,coin->taddr,coin->pubtype,G.LP_myrmd160,20);
+        bitcoin_address(symbol,coinaddr,coin->taddr,coin->pubtype,G.LP_pubsecp,33);
         jadd(retjson,"ismine",strcmp(coinaddr,coin->smartaddr) == 0 ? cJSON_CreateTrue() : cJSON_CreateFalse());
         jadd(retjson,"iswatchonly",cJSON_CreateTrue());
         jadd(retjson,"isscript",addrtype == coin->p2shtype ? cJSON_CreateTrue() : cJSON_CreateFalse());
@@ -325,7 +344,19 @@ cJSON *LP_validateaddress(char *symbol,char *address)
     else
     {
         sprintf(buf,"[\"%s\"]",address);
-        return(bitcoin_json(coin,"validateaddress",buf));
+        if ( coin->validateaddress[0] == 0 )
+            strcpy(coin->validateaddress,"validateaddress");
+        if ( (retjson= bitcoin_json(coin,coin->validateaddress,buf)) != 0 )
+        {
+            if ( strcmp(coin->symbol,"BTC") == 0 && jobj(retjson,"error") == 0 && jobj(retjson,"ismine") == 0 && strcmp(coin->validateaddress,"validateaddress") == 0 )
+            {
+                printf("autochange %s validateaddress -> getaddressinfo\n",coin->symbol);
+                strcpy(coin->validateaddress,"getaddressinfo");
+                free(retjson);
+                return(bitcoin_json(coin,coin->validateaddress,buf));
+            }
+        }
+        return(retjson);
     }
 }
 
@@ -354,7 +385,7 @@ int32_t LP_address_iswatchonly(char *symbol,char *address)
         return(0);
     if ( (retjson= LP_validateaddress(symbol,address)) != 0 )
     {
-        if ( (obj= jobj(retjson,"iswatchonly")) != 0 && is_cJSON_True(obj) != 0 )
+        if ( ((obj= jobj(retjson,"iswatchonly")) != 0 || (obj= jobj(retjson,"watchonly")) != 0) && is_cJSON_True(obj) != 0 )
         {
             doneflag = 1;
             //printf("%s iswatchonly (%s)\n",address,jprint(retjson,0));
@@ -385,7 +416,7 @@ int32_t LP_address_isvalid(char *symbol,char *address)
 
 cJSON *LP_listunspent(char *symbol,char *coinaddr,bits256 reftxid,bits256 reftxid2)
 {
-    char buf[128],*retstr; struct LP_address *ap; cJSON *retjson; int32_t numconfs,usecache=1; struct iguana_info *coin;
+    char buf[128],*retstr; bits256 txid; struct LP_address *ap; cJSON *retjson,*txjson,*array,*item; int32_t i,n,numconfs,vout,usecache=1; struct iguana_info *coin;
     if ( symbol == 0 || symbol[0] == 0 )
         return(cJSON_Parse("{\"error\":\"null symbol\"}"));
     coin = LP_coinfind(symbol);
@@ -395,15 +426,19 @@ cJSON *LP_listunspent(char *symbol,char *coinaddr,bits256 reftxid,bits256 reftxi
     {
         if ( (ap= LP_addressfind(coin,coinaddr)) != 0 )
         {
-            if ( ap->unspenttime == 0 )
+            if ( ap->unspenttime == 0 || strcmp(coin->symbol,"DYN") == 0 )
                 usecache = 0;
-            else if ( G.LP_pendingswaps != 0 && time(NULL) > ap->unspenttime+1 )
+            else if ( time(NULL) > ap->unspenttime+3 )
                 usecache = 0;
+            usecache = 0; // disable unspents cache for native
+            //printf("%s %s usecache.%d iswatched.%d\n",coin->symbol,coinaddr,usecache,LP_address_iswatchonly(symbol,coinaddr));
             if ( usecache != 0 && (retstr= LP_unspents_filestr(symbol,coinaddr)) != 0 )
             {
                 retjson = cJSON_Parse(retstr);
                 free(retstr);
-                return(retjson);
+                if ( cJSON_GetArraySize(retjson) > 0 )
+                    return(retjson);
+                else free_json(retjson);
             }
         }
         //printf("%s %s usecache.%d iswatched.%d\n",coin->symbol,coinaddr,usecache,LP_address_iswatchonly(symbol,coinaddr));
@@ -413,11 +448,29 @@ cJSON *LP_listunspent(char *symbol,char *coinaddr,bits256 reftxid,bits256 reftxi
                 numconfs = 0;
             else numconfs = 1;
             sprintf(buf,"[%d, 99999999, [\"%s\"]]",numconfs,coinaddr);
-//printf("LP_listunspent.(%s %s)\n",symbol,coinaddr);
             retjson = bitcoin_json(coin,"listunspent",buf);
-            retstr = jprint(retjson,0);
-            LP_unspents_cache(coin->symbol,coinaddr,retstr,1);
-            free(retstr);
+//printf("LP_listunspent.(%s %s) -> %s\n",symbol,buf,jprint(retjson,0));
+            if ( (n= cJSON_GetArraySize(retjson)) > 0 )
+            {
+                char str[65];
+                array = cJSON_CreateArray();
+                for (i=0; i<n; i++)
+                {
+                    item = jitem(retjson,i);
+                    txid = jbits256(item,"txid");
+                    vout = jint(item,"vout");
+                    if ( (txjson= LP_gettxout(symbol,coinaddr,txid,vout)) != 0 )
+                    {
+                        jaddi(array,jduplicate(item));
+                        free_json(txjson);
+                    } //else printf("%s/v%d is spent\n",bits256_str(str,txid),vout);
+                }
+                free_json(retjson);
+                retjson = array;
+                retstr = jprint(array,0);
+                LP_unspents_cache(coin->symbol,coinaddr,retstr,1);
+                free(retstr);
+            }
             if ( ap != 0 )
                 ap->unspenttime = (uint32_t)time(NULL);
             return(retjson);
@@ -452,8 +505,42 @@ cJSON *LP_listreceivedbyaddress(char *symbol,char *coinaddr)
                     }
                 }
             }
+            free_json(array);
         }
         return(cJSON_Parse("[]"));
+    } else return(electrum_address_gethistory(symbol,coin->electrum,&retjson,coinaddr,zero));
+}
+
+
+cJSON *LP_listtransactions(char *symbol,char *coinaddr,int32_t count,int32_t skip)
+{
+    char buf[128],*addr; bits256 zero; cJSON *retjson,*array,*item; int32_t i,n; struct iguana_info *coin;
+    if ( symbol == 0 || symbol[0] == 0 )
+        return(cJSON_Parse("{\"error\":\"null symbol\"}"));
+    coin = LP_coinfind(symbol);
+    if ( coin == 0 || (IAMLP == 0 && coin->inactive != 0) )
+        return(cJSON_Parse("{\"error\":\"no coin\"}"));
+    memset(zero.bytes,0,sizeof(zero));
+    if ( coin->electrum == 0 )
+    {
+        if ( count == 0 )
+            count = 10;
+        sprintf(buf,"[\"\", %d, %d, true]",count,skip);
+        retjson = cJSON_CreateArray();
+        if ( (array= bitcoin_json(coin,"listtransactions",buf)) != 0 )
+        {
+            if ( (n= cJSON_GetArraySize(array)) > 0 )
+            {
+                for (i=0; i<n; i++)
+                {
+                    item = jitem(array,i);
+                    if ( (addr= jstr(item,"address")) != 0 && strcmp(addr,coinaddr) == 0 )
+                        jaddi(retjson,jduplicate(item));
+                }
+            }
+            free_json(array);
+        }
+        return(retjson);
     } else return(electrum_address_gethistory(symbol,coin->electrum,&retjson,coinaddr,zero));
 }
 
@@ -464,7 +551,7 @@ int64_t LP_listunspent_parseitem(struct iguana_info *coin,bits256 *txidp,int32_t
     {
         *txidp = jbits256(item,"txid");
         *voutp = juint(item,"vout");
-        satoshis = LP_value_extract(item,0);
+        satoshis = LP_value_extract(item,0,*txidp);
         *heightp = LP_txheight(coin,*txidp);
     }
     else
@@ -523,7 +610,8 @@ int32_t LP_importaddress(char *symbol,char *address)
         return(-2);
     coin = LP_coinfind(symbol);
     if ( coin == 0 )
-        return(-2);
+        return(-3);
+    //printf("import.(%s %s)\n",symbol,address);
     if ( coin->electrum != 0 )
     {
         /*if ( (retjson= electrum_address_subscribe(symbol,coin->electrum,&retjson,address)) != 0 )
@@ -537,13 +625,15 @@ int32_t LP_importaddress(char *symbol,char *address)
     {
         if ( (validatejson= LP_validateaddress(symbol,address)) != 0 )
         {
+            //printf("validated.(%s)\n",jprint(validatejson,0));
             if ( (isvalid= is_cJSON_True(jobj(validatejson,"isvalid")) != 0) != 0 )
             {
-                if ( is_cJSON_True(jobj(validatejson,"iswatchonly")) != 0 || is_cJSON_True(jobj(validatejson,"ismine")) != 0 )
+                if ( is_cJSON_True(jobj(validatejson,"iswatchonly")) != 0 || is_cJSON_True(jobj(validatejson,"watchonly")) != 0 || is_cJSON_True(jobj(validatejson,"ismine")) != 0 )
                     doneflag = 1;
             }
             free_json(validatejson);
         }
+        //printf("%s (%s) isvalid.%d doneflag.%d\n",symbol,address,isvalid,doneflag);
         if ( isvalid == 0 )
             return(-1);
         if ( doneflag != 0 )
@@ -551,7 +641,7 @@ int32_t LP_importaddress(char *symbol,char *address)
         sprintf(buf,"[\"%s\", \"%s\", false]",address,address);
         if ( (retstr= bitcoind_passthru(symbol,coin->serverport,coin->userpass,"importaddress",buf)) != 0 )
         {
-            //printf("importaddress.(%s %s) -> (%s)\n",symbol,address,retstr);
+            printf("importaddress.(%s %s) -> (%s)\n",symbol,address,retstr);
             free(retstr);
         } //else printf("importaddress.(%s %s)\n",symbol,address);
         return(1);
@@ -573,13 +663,11 @@ cJSON *LP_importprivkey(char *symbol,char *wifstr,char *label,int32_t flag)
         ctx = bitcoin_ctx();
     bitcoin_wif2addr(ctx,symbol,coin->wiftaddr,coin->taddr,coin->pubtype,address,wifstr);
 #ifdef LP_DONT_IMPORTPRIVKEY
-    bitcoin_wif2addr(ctx,symbol,coin->wiftaddr,coin->taddr,coin->pubtype,address,wifstr);
     if ( LP_importaddress(symbol,address) < 0 )
     {
         printf("%s importaddress %s from %s failed, isvalid.%d\n",symbol,address,wifstr,bitcoin_validaddress(symbol,coin->taddr,coin->pubtype,coin->p2shtype,address));
         return(cJSON_Parse("{\"error\":\"couldnt import\"}"));
-    }
-    else return(cJSON_Parse("{\"result\":\"success\"}"));
+    } else return(cJSON_Parse("{\"result\":\"success\"}"));
 #endif
     if ( (retjson= LP_validateaddress(symbol,address)) != 0 )
     {
@@ -600,52 +688,104 @@ cJSON *LP_importprivkey(char *symbol,char *wifstr,char *label,int32_t flag)
     } else return(cJSON_Parse("{\"result\":\"success\"}"));
 }
 
+cJSON *LP_bitcoinfees()
+{
+    char *retstr; cJSON *retjson = 0;
+    if ( (retstr= issue_curlt("https://bitcoinfees.earn.com/api/v1/fees/recommended",LP_HTTP_TIMEOUT)) != 0 )
+    {
+        retjson = cJSON_Parse(retstr);
+        free(retstr);
+    }
+    return(retjson);
+}
+
 double _LP_getestimatedrate(struct iguana_info *coin)
 {
-    char buf[512],*retstr=0; int32_t numblocks; cJSON *errjson,*retjson; double rate = 0.00000020;
+    char buf[512],*retstr=0; int32_t numblocks,err=0; cJSON *errjson,*retjson; double rate = 0.00000005;
     if ( coin->rate < 0. || time(NULL) > coin->ratetime+30 )
     {
-        numblocks = strcmp(coin->symbol,"BTC") == 0 ? 6 : 2;
+        if ( coin->estimatefeestr[0] == 0 )
+            strcpy(coin->estimatefeestr,"estimatefee");
+        numblocks = 3;//strcmp(coin->symbol,"BTC") == 0 ? 6 : 2;
+again:
         if ( coin->electrum == 0 )
         {
             sprintf(buf,"[%d]",numblocks);
-            retstr = LP_apicall(coin,"estimatefee",buf);
+            retstr = LP_apicall(coin,coin->estimatefeestr,buf);
         }
         else
         {
-            if ( (retjson= electrum_estimatefee(coin->symbol,coin->electrum,&retjson,numblocks)) != 0 )
+            // {"fastestFee":70,"halfHourFee":70,"hourFee":10}
+            if ( strcmp(coin->symbol,"BTC") == 0 && (retjson= LP_bitcoinfees()) != 0 )
+            {
+                int32_t fastest,half,hour,best=0;
+                fastest = jint(retjson,"fastestFee");
+                half = jint(retjson,"halfHourFee");
+                hour = jint(retjson,"hourFee");
+                if ( hour*3 > half )
+                    best = hour*3;
+                else best = half;
+                if ( fastest < best )
+                    best = fastest;
+                retstr = calloc(1,16);
+                sprintf(retstr,"%0.8f",((double)best * 1024)/SATOSHIDEN);
+                //printf("LP_getestimatedrate (%s) -> %s\n",jprint(retjson,0),retstr);
+                free(retjson);
+            }
+            /*if ( (retjson= electrum_estimatefee(coin->symbol,coin->electrum,&retjson,numblocks)) != 0 )
+            {
                 retstr = jprint(retjson,1);
+                //free_json(retjson), retjson = 0; causes crash?
+                printf("estfee numblocks.%d (%s)\n",numblocks,retstr);
+            }*/
         }
         if ( retstr != 0 )
         {
             if ( retstr[0] == '{' && (errjson= cJSON_Parse(retstr)) != 0 )
             {
                 if ( jobj(errjson,"error") != 0 )
+                {
                     rate = 0.;
+                    err++;
+                }
+                if ( strcmp(coin->estimatefeestr,"estimatesmartfee") == 0 && (rate= jdouble(errjson,"feerate")) != 0 )
+                {
+                    static uint32_t counter;
+                    if ( counter++ < 10 )
+                        printf("extracted feerate %.8f from estimatesmartfee\n",rate);
+                    rate /= 1024.;
+                }
                 free_json(errjson);
             }
             else if ( retstr[0] != '-' )
-            {
                 rate = atof(retstr) / 1024.;
-                if ( rate < 0.00000020 )
-                    rate = 0.00000020;
-                rate *= 1.5;
-                if ( coin->electrum != 0 )
-                    rate *= 1.5;
+            if ( rate != 0. )
+            {
+                //rate *= 1.25;
+                if ( rate < 0.00000005 )
+                    rate = 0.00000005;
                 if ( fabs(rate - coin->rate) > SMALLVAL )
-                    printf("t%u estimated rate.(%s) (%s) -> %.8f %.8f\n",coin->ratetime,coin->symbol,retstr,rate,coin->rate);
+                    printf("%u t%u estimated rate.(%s) (%s) -> %.8f %.8f\n",(uint32_t)time(NULL),coin->ratetime,coin->symbol,retstr,rate,coin->rate);
                 coin->rate = rate;
                 coin->ratetime = (uint32_t)time(NULL);
+                //printf("set rate %.8f t%u\n",rate,coin->ratetime);
             }
             free(retstr);
+            if ( err == 1 && coin->electrum == 0 && strcmp(coin->estimatefeestr,"estimatefee") == 0 )
+            {
+                strcpy(coin->estimatefeestr,"estimatesmartfee");
+                err = 2;
+                goto again;
+            }
         } else rate = coin->rate;
     } else rate = coin->rate;
+    coin->rate = rate;
     return(rate);
 }
 
 double LP_getestimatedrate(struct iguana_info *coin)
 {
-    double rate = 0.00000020;
+    double rate = 0.00000005;
     if ( coin == 0 )
         return(rate);
     if ( (rate= _LP_getestimatedrate(coin)) <= 0. )
@@ -653,19 +793,19 @@ double LP_getestimatedrate(struct iguana_info *coin)
     return(rate);
 }
 
-char *LP_sendrawtransaction(char *symbol,char *signedtx)
+char *LP_sendrawtransaction(char *symbol,char *signedtx,int32_t needjson)
 {
     cJSON *array,*errobj; char *paramstr,*tmpstr,*retstr=0; int32_t n,alreadyflag = 0; cJSON *retjson; struct iguana_info *coin;
     if ( symbol == 0 || symbol[0] == 0 || signedtx == 0 || signedtx[0] == 0 )
     {
         printf("LP_sendrawtransaction null symbol %p or signedtx.%p\n",symbol,signedtx);
-        return(0);
+        return(clonestr("{\"error\":\"invalid param\"}"));
     }
     coin = LP_coinfind(symbol);
     if ( coin == 0 )
     {
         printf("LP_sendrawtransaction null coin\n");
-        return(0);
+        return(clonestr("{\"error\":\"invalid coin\"}"));
     }
     if ( coin->electrum == 0 )
     {
@@ -706,6 +846,14 @@ char *LP_sendrawtransaction(char *symbol,char *signedtx)
             }
         }
     }
+    if ( needjson != 0 && is_hexstr(retstr,0) > 0 )
+    {
+        retjson = cJSON_CreateObject();
+        jaddstr(retjson,"result","success");
+        jaddstr(retjson,"txid",retstr);
+        free(retstr);
+        retstr = jprint(retjson,1);
+    }
     return(retstr);
 }
 
@@ -735,7 +883,7 @@ char *LP_signrawtx(char *symbol,bits256 *signedtxidp,int32_t *completedp,cJSON *
         printf("incomplete signing %s (%s)\n",rawtx,jprint(vins,0));
         if ( signedtx != 0 )
             free(signedtx), signedtx = 0;
-    } else printf("basilisk_swap_bobtxspend %s -> %s\n",rawtx,bits256_str(str,*signedtxidp));
+    } // else printf("basilisk_swap_bobtxspend %s -> %s\n",rawtx,bits256_str(str,*signedtxidp));
     if ( signedtx == 0 )
     {
         retjson = cJSON_CreateObject();
@@ -859,9 +1007,9 @@ uint32_t LP_heighttime(char *symbol,int32_t height)
         {
             if ( (blockhashstr= LP_blockhashstr(symbol,height)) != 0 )
             {
-                if ( (retjson= cJSON_Parse(blockhashstr)) != 0 )
+                if ( (retjson= LP_getblockhashstr(symbol,blockhashstr)) != 0 )
                 {
-                    //printf("height.(%s)\n",jprint(retjson,0));
+                    //printf("%s -> height.(%s)\n",blockhashstr,jprint(retjson,0));
                     timestamp = juint(retjson,"time");
                     free_json(retjson);
                 }
@@ -884,6 +1032,7 @@ uint32_t LP_heighttime(char *symbol,int32_t height)
 cJSON *LP_blockjson(int32_t *heightp,char *symbol,char *blockhashstr,int32_t height)
 {
     cJSON *json = 0; int32_t flag = 0; struct iguana_info *coin;
+    *heightp = 0;
     if ( symbol == 0 || symbol[0] == 0 )
         return(cJSON_Parse("{\"error\":\"null symbol\"}"));
     coin = LP_coinfind(symbol);
@@ -988,7 +1137,7 @@ int32_t LP_txhasnotarization(bits256 *notarizedhashp,struct iguana_info *coin,bi
 {
     cJSON *txobj,*vins,*vin,*vouts,*vout,*spentobj,*sobj; char *hexstr; uint8_t script[1024]; bits256 spenttxid; uint64_t notarymask; int32_t i,j,numnotaries,len,spentvout,numvins,numvouts,hasnotarization = 0;
     memset(notarizedhashp,0,sizeof(*notarizedhashp));
-    if ( (txobj= LP_gettx(coin->symbol,txid,0)) != 0 )
+    if ( (txobj= LP_gettx("LP_txhasnotarization",coin->symbol,txid,0)) != 0 )
     {
         if ( (vins= jarray(&numvins,txobj,"vin")) != 0 )
         {
@@ -1000,7 +1149,7 @@ int32_t LP_txhasnotarization(bits256 *notarizedhashp,struct iguana_info *coin,bi
                     vin = jitem(vins,i);
                     spenttxid = jbits256(vin,"txid");
                     spentvout = jint(vin,"vout");
-                    if ( (spentobj= LP_gettx(coin->symbol,spenttxid,0)) != 0 )
+                    if ( (spentobj= LP_gettx("LP_txhasnotarization",coin->symbol,spenttxid,0)) != 0 )
                     {
                         if ( (vouts= jarray(&numvouts,spentobj,"vout")) != 0 )
                         {

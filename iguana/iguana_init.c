@@ -1,5 +1,5 @@
 /******************************************************************************
- * Copyright © 2014-2017 The SuperNET Developers.                             *
+ * Copyright © 2014-2018 The SuperNET Developers.                             *
  *                                                                            *
  * See the AUTHORS, DEVELOPER-AGREEMENT and LICENSE files at                  *
  * the top-level directory of this distribution for the individual copyright  *
@@ -68,6 +68,7 @@ void iguana_initcoin(struct iguana_info *coin,cJSON *argjson)
         portable_mutex_init(&coin->RTmutex);
         portable_mutex_init(&coin->kmdmutex);
         portable_mutex_init(&coin->peers_mutex);
+        portable_mutex_init(&coin->MoM_mutex);
         portable_mutex_init(&coin->blocks_mutex);
         portable_mutex_init(&coin->special_mutex);
         portable_mutex_init(&coin->allcoins_mutex);

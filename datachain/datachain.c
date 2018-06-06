@@ -1,5 +1,5 @@
 /******************************************************************************
- * Copyright © 2014-2017 The SuperNET Developers.                             *
+ * Copyright © 2014-2018 The SuperNET Developers.                             *
  *                                                                            *
  * See the AUTHORS, DEVELOPER-AGREEMENT and LICENSE files at                  *
  * the top-level directory of this distribution for the individual copyright  *
@@ -88,7 +88,7 @@ int32_t datachain_checkpoint_update(struct supernet_info *myinfo,struct iguana_i
             }
             if ( n > 0 && lastheight >= 0 && bits256_nonz(lasthash2) != 0 )
             {
-                merkle = iguana_merkle(tree,num);
+                merkle = iguana_merkle(coin->symbol,tree,num);
                 coin->lastcheckpoint = datachain_checkpoint(myinfo,coin,coin->lastcheckpoint,timestamp,merkle,lastheight,lasthash2);
             }
         }

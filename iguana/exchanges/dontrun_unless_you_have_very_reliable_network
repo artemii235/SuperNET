@@ -1,0 +1,9 @@
+#!/bin/bash
+source passphrase
+source coins
+./stop
+git pull;
+cd ..; 
+./m_mm;
+pkill -15 marketmaker; 
+stdbuf -oL $1 ./marketmaker "{\"gui\":\"nogui\", \"profitmargin\":0.01, \"userhome\":\"/${HOME#"/"}\", \"passphrase\":\"$passphrase\", \"coins\":$coins}" &

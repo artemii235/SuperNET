@@ -1,4 +1,3 @@
-#!/bin/bash
-source userpass
-# this will only work for watchonly addresses that have been rescanned and with active coins
-curl --url "http://127.0.0.1:7783" --data "{\"userpass\":\"$userpass\",\"method\":\"fundvalue\",\"address\":\"RGhxXpXSSBTBm9EvNsXnTQczthMCxHX91t\",\"divisor\":1000000}"
+coin=JUMBLR
+price=0.002
+invprice=500

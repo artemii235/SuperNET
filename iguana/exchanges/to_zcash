@@ -1,0 +1,4 @@
+rm /usr/bin/g++
+ln /usr/bin/g++-5 /usr/bin/g++
+rm /usr/bin/gcc
+ln /usr/bin/gcc-5 /usr/bin/gcc

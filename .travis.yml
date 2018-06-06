@@ -1,0 +1,30 @@
+language: c
+
+matrix:
+  include:
+    - os: linux
+      compiler: gcc
+      addons:
+        apt:
+          sources:
+            - ubuntu-toolchain-r-test
+          packages:
+            - g++-7
+      env: OS_NAME=Linux MATRIX_EVAL="CC=gcc-7 && CXX=g++-7"
+    - os: osx
+      compiler: clang
+      env: OS_NAME=Darwin
+      osx_image: xcode9.2
+
+before_install:
+  - git submodule update --init --recursive
+
+script:
+  - mkdir build && cd build
+  - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then cmake -DCMAKE_C_COMPILER=/usr/bin/gcc-7 -DCMAKE_CXX_COMPILER=/usr/bin/g++-7 ..; fi
+  - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then cmake ..; fi
+  - cmake --build . --target marketmaker-mainnet
+
+cache:
+    directories:
+     - $HOME/.hunter

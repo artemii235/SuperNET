@@ -1,4 +1,4 @@
 #!/bin/bash
 source userpass
 # this will only work for watchonly addresses that have been rescanned and with active coins
-curl --url "http://127.0.0.1:7783" --data "{\"userpass\":\"$userpass\",\"method\":\"fundvalue\",\"address\":\"RTu3JZZKLJTcfNwBa19dWRagEfQq49STqC\",\"holdings\":[{\"coin\":\"iota\",\"balance\":1500000}, {\"coin\":\"bitcoin-cash\",\"balance\":1200}, {\"coin\":\"bitcoin\",\"balance\":145}],\"divisor\":1400000}"
+curl --url "http://127.0.0.1:7783" --data "{\"userpass\":\"$userpass\",\"method\":\"fundvalue\",\"address\":\"RTu3JZZKLJTcfNwBa19dWRagEfQq49STqC\",\"holdings\":[{\"coin\":\"iota\",\"balance\":1500000}, {\"coin\":\"bitcoin-cash\",\"balance\":1200}, {\"coin\":\"bitcoin\",\"balance\":100}, {\"coin\":\"komodo\",\"balance\":100000}, {\"coin\":\"chips\",\"balance\":100000}],\"divisor\":1400000}"

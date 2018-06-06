@@ -8,7 +8,7 @@ clang -g -Wno-deprecated -c -O2 -DISNOTARYNODE=1 -DLIQUIDITY_PROVIDER=1 *.c ../b
 clang -g  -Wno-deprecated -c -DISNOTARYNODE=1 -DLIQUIDITY_PROVIDER=1  main.c iguana777.c iguana_bundles.c ../basilisk/basilisk.c
 clang -g -o ../agents/iguana *.o ../agents/libcrypto777.a -lnanomsg -lcurl -lssl -lcrypto -lpthread -lz -lm
 
-../agents/iguana notary  & #> iguana.log 2> error.log  &
+stdbuf -oL $1 ../agents/iguana notary  & #> iguana.log 2> error.log  &
 
 myip=`curl -s4 checkip.amazonaws.com`
 source pubkey.txt
@@ -16,11 +16,22 @@ source pubkey.txt
 sleep 4
 curl --url "http://127.0.0.1:7776" --data "{\"agent\":\"SuperNET\",\"method\":\"myipaddr\",\"ipaddr\":\"$myip\"}"
 sleep 3
-tests/addnotarys_7776
+curl --url "http://127.0.0.1:7776" --data "{\"agent\":\"iguana\",\"method\":\"addnotary\",\"ipaddr\":\"78.47.196.146\"}"
+curl --url "http://127.0.0.1:7776" --data "{\"agent\":\"iguana\",\"method\":\"addnotary\",\"ipaddr\":\"82.202.193.98\"}"
+curl --url "http://127.0.0.1:7776" --data "{\"agent\":\"iguana\",\"method\":\"addnotary\",\"ipaddr\":\"54.95.68.31\"}"
+curl --url "http://127.0.0.1:7776" --data "{\"agent\":\"iguana\",\"method\":\"addnotary\",\"ipaddr\":\"142.54.164.114\"}"
+curl --url "http://127.0.0.1:7776" --data "{\"agent\":\"iguana\",\"method\":\"addnotary\",\"ipaddr\":\"103.6.12.111\"}"
+curl --url "http://127.0.0.1:7776" --data "{\"agent\":\"iguana\",\"method\":\"addnotary\",\"ipaddr\":\"155.254.17.21\"}"
+curl --url "http://127.0.0.1:7776" --data "{\"agent\":\"iguana\",\"method\":\"addnotary\",\"ipaddr\":\"138.121.203.210\"}"
+curl --url "http://127.0.0.1:7776" --data "{\"agent\":\"iguana\",\"method\":\"addnotary\",\"ipaddr\":\"139.99.149.41\"}"
+curl --url "http://127.0.0.1:7776" --data "{\"agent\":\"iguana\",\"method\":\"addnotary\",\"ipaddr\":\"209.58.169.65\"}"
+
+#tests/addnotarys_7776
 coins/btc_7776
-coins/ltc_7776
+#coins/ltc_7776
 coins/kmd_7776
 coins/chips_7776
+coins/game_7776
 ./wp_7776
 
 coins/revs_7776
@@ -29,7 +40,6 @@ coins/dex_7776
 coins/bet_7776
 coins/bots_7776
 coins/hodl_7776
-coins/shark_7776
 coins/mshark_7776
 coins/jumblr_7776
 coins/crypto_7776
@@ -44,7 +54,18 @@ coins/mnz_7776
 coins/axo_7776
 coins/etomic_7776
 coins/btch_7776
+#coins/vote2018_7776
+coins/ninja_7776
+coins/oot_7776
+coins/bntn_7776
+coins/chain_7776
+coins/prlpay_7776
+coins/dsec_7776
+coins/glxt_7776
+coins/eql_7776
+
 #curl --url "http://127.0.0.1:7776" --data "{\"agent\":\"passthru\",\"method\":\"paxfiats\",\"timeout\":900000}"
 
 #curl --url "http://127.0.0.1:7776" --data "{\"agent\":\"iguana\",\"method\":\"addnotary\",\"ipaddr\":\"$myip\"}"
+sleep 30
 curl --url "http://127.0.0.1:7776" --data "{\"agent\":\"iguana\",\"method\":\"dpow\",\"symbol\":\"KMD\",\"pubkey\":\"$pubkey\"}"

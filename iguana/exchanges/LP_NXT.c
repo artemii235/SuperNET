@@ -1,6 +1,6 @@
 
 /******************************************************************************
- * Copyright © 2014-2017 The SuperNET Developers.                             *
+ * Copyright © 2014-2018 The SuperNET Developers.                             *
  *                                                                            *
  * See the AUTHORS, DEVELOPER-AGREEMENT and LICENSE files at                  *
  * the top-level directory of this distribution for the individual copyright  *
@@ -202,7 +202,7 @@ void NXTventure_liquidation()
 cJSON *LP_NXT_redeems()
 {
     char url[1024],*retstr,*recv,*method,*msgstr,assetname[128]; uint64_t totals[2][sizeof(assetids)/sizeof(*assetids)],mult,txnum,assetid,qty; int32_t i,ind,numtx=0,past_marker=0; cJSON *item,*attach,*decjson,*array,*msgjson,*encjson,*retjson=0;
-    uint64_t txnum_marker = calc_nxt64bits("4114304329372848717"); // 8537615468620726612"); // set to most recent processed
+    uint64_t txnum_marker = calc_nxt64bits("2675953695997905027"); // 4114304329372848717, 8537615468620726612"); // set to most recent processed
     uint64_t txnum_marker2 = calc_nxt64bits("7256847492742571143"); // dont change, end marker
     char *passphrase = "";
     char *account = "NXT-MRBN-8DFH-PFMK-A4DBM";

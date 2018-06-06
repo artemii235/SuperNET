@@ -1,4 +1,4 @@
-#SuperNET Client "iguana"
+# SuperNET Client "iguana"
 
 OS | Build Status 
 -------------|------
@@ -22,7 +22,7 @@ iguana: most efficient bitcoin core implementation that can simultaneously be fu
 
 komodo: this is the top secret project I cant talk about publicly yet
 
-> #TL;DR#
+> # TL;DR
 >
 > ```sudo apt-get update; sudo apt-get install git libcurl4-openssl-dev build-essential libnanomsg-dev; git clone https://github.com/jl777/SuperNET; cd SuperNET; ./m_onetime m_unix;```
 >
@@ -40,14 +40,14 @@ TOOL_DIR := /usr/local/gcc-4.8.0-qt-4.8.4-for-mingw32/win32-gcc/bin
 MINGW := i586-mingw32
 The above two definitions need to be changed to match the mingw install on your system. m_win32 and m_win64 just invokes the makefile in mingw32 and mingw64
 
-##For chrome app##
+## For chrome app
 You need to make sure the nacl sdk is properly installed and you are able to build the examples.
 Now you will need to get the external libs, which can be built from scratch using naclports or there use the reference builds of libcurl.a and libz.a in the SuperNET/crypto777/pnacl_libs. You can just copy those over into $(NACL_SDK_ROOT)/<pepper_dir>/lib/pnacl.
 
-##For android##
+## For android
 You have to build a native libnanomsg for android. This section is work in progress. Contact ca333@protonmail.ch for assistance on building latest iguana for android.
 
-#ONETIME#
+# ONETIME
 Now you are ready to build.
 I try to make the build process as simple as possible, so there are no `autoconf`, `autoreconf`, `configure`, `cmake`, `make`, to get properly installed and running and run, etc. You do need a C compiler, like gcc.
 
@@ -82,12 +82,12 @@ To build just iguana, you can ```cd``` into SuperNET/iguana and do ```./m_unix``
 
 ```./m_clean``` will remove the files created from the building
 
-#RUNNING#
+# RUNNING
 
 The native versions are command line applications: agents/iguana {JSON}
 The chrome app pexe requires that the chrome is launched with a command line parameter (tools/chrome.localhost) and then browse to *http://127.0.0.1:7777* to see the pexe
 
-#SUPERUGLYGUI#
+# SUPERUGLYGUI
 
 Once iguana is running, you can see the superuglyGUI at *http://127.0.0.1:7778/?method*
 by submitting API calls using the forms, you will see it go to some specific URL. You can also do a programmatic GET request to ```http://127.0.0.1:7778/api/<path to apicall>```
@@ -134,9 +134,9 @@ on OSX mksquashfs is not native, you will need to install fuse: https://osxfuse.
     A Note on Installation from pebwindkraft at bitco.in
 =======================
 Though I had xcode installed, aclocal didn’t work. I installed homebrew, and then:
-# brew install autoconf
-# brew install automake
-# brew install gmp
+`brew install autoconf`
+`brew install automake`
+`brew install gmp`
 
 2.) libsecp256
 it complained, that libsecp256 was not there in includes, so I linked it.
@@ -255,3 +255,16 @@ Execute the OSX deploy script:
 ./osx_deploy.sh
 ```
 The iguana binary and its linked libraries are in ```$HOME/tmp/iguana```.
+
+# Cmake build of marketmaker with linked etomic lib for ETH/ERC20 atomic swaps:
+1. `make sure g++-7 ln to /usr/bin/g++`
+1. `cd ~/SuperNET`
+1. `git checkout dev`
+1. `git submodule update --init --recursive`
+1. `mkdir build`
+1. `cd build`
+1. `cmake ..`
+1. `cmake --build . --target marketmaker-testnet` for Ropsten Ethereum testnet.
+1. `cmake --build . --target marketmaker-mainnet` for Ethereum mainnet.
+1. `cd build/iguana/exchanges`
+1. `./marketmaker-testnet` or `./marketmaker-mainnet`

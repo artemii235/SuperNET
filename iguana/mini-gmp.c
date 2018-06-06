@@ -4402,7 +4402,8 @@ int32_t bitcoin_base58decode(uint8_t *data,char *coinaddr)
                 p++;
             if ( *p != '\0' )
             {
-                printf("bitcoin_base58decode error: p %02x != 0x00\n",*p);
+                int32_t zeroval();
+                //printf("bitcoin_base58decode error: p %02x != 0x00\n",*p);
                 mpz_clear(bn), mpz_clear(bn58);
                 return(-1);
             }

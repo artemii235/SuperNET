@@ -1,0 +1,7 @@
+cp ../exchanges/auto_* .
+cp ../exchanges/prices/autoprice .
+cp ../exchanges/prices/crypto .
+cp ../exchanges/prices/jumblr .
+cp ../exchanges/prices/pangea .
+cp ../exchanges/prices/bet .
+cp ../exchanges/prices/revs .

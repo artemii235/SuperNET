@@ -1,0 +1,4 @@
+#!/bin/sh
+strace -f -o $HOME/strace.out -p `pidof marketmaker` &
+sleep 2
+killall strace

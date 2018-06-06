@@ -1,0 +1,3 @@
+#!/bin/bash
+source userpass
+curl --url "http://127.0.0.1:7783" --data "{\"userpass\":\"$userpass\",\"method\":\"unlockedspend\",\"coin\":\"KMD\",\"txid\":\"e858e382a816b4cab22e3fd3e29901c7ef497cd1fdad7683314cc9187eca34fd\"}"

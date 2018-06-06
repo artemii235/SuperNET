@@ -1,0 +1,23 @@
+source randval
+pkill -15 marketmaker; 
+git pull;
+./m_mm;
+#./m_mmosx;
+./marketmaker "{\"client\":1,\"coins\":[{\"coin\":\"REVS\",\"active\":1, \"asset\":\"REVS\",\"rpcport\":10196},{\"coin\":\"JUMBLR\",\"active\":1, \"asset\":\"JUMBLR\",\"rpcport\":15106},
+{\"active\":0,\"coin\":\"ZEC\",\"name\":\"zcash\",\"rpcport\":8232,\"taddr\":28,\"pubtype\":184,\"p2shtype\":189,\"wiftype\":128,\"txfee\":10000 },
+{\"coin\":\"DOGE\", \"name\":\"dogecoin\", \"pubtype\":30, \"p2shtype\":5, \"wiftype\":128, \"txfee\":100000000},
+{\"coin\":\"DGB\", \"name\":\"digibyte\", \"pubtype\":30, \"p2shtype\":5, \"wiftype\":128, \"txfee\":10000},
+{\"coin\":\"MZC\", \"name\":\"mazacoin\", \"pubtype\":50, \"p2shtype\":9, \"wiftype\":224, \"txfee\":0},
+{\"coin\":\"SYS\", \"name\":\"syscoin\", \"pubtype\":0, \"p2shtype\":5, \"wiftype\":128, \"txfee\":100000},
+{\"coin\":\"UNO\", \"name\":\"unobtanium\", \"pubtype\":130, \"p2shtype\":30, \"wiftype\":224, \"txfee\":1000000},
+{\"coin\":\"ZET\", \"name\":\"zetacoin\", \"pubtype\":80, \"p2shtype\":9, \"wiftype\":224, \"txfee\":10000},
+{\"coin\":\"ZEC\", \"name\":\"zcash\", \"pubtype\":184, \"p2shtype\":189, \"wiftype\":128, \"txfee\":10000},
+{\"coin\":\"BTM\", \"name\":\"bitmark\", \"pubtype\":85, \"p2shtype\":5, \"wiftype\":213, \"txfee\":0},
+{\"coin\":\"CARB\", \"name\":\"carboncoin\", \"pubtype\":47, \"p2shtype\":5, \"wiftype\":175, \"txfee\":0},
+{\"coin\":\"ANC\", \"name\":\"anoncoin\", \"pubtype\":23, \"p2shtype\":5, \"wiftype\":151, \"txfee\":2000000},
+{\"coin\":\"FRK\", \"name\":\"franko\", \"pubtype\":35, \"p2shtype\":5, \"wiftype\":163, \"txfee\":0},
+{\"coin\":\"GAME\", \"name\":\"gamecredits\", \"pubtype\":38, \"p2shtype\":5, \"wiftype\":166, \"txfee\":100000},
+{\"coin\":\"LTC\", \"name\":\"litecoin\", \"rpcport\":9332, \"pubtype\":48, \"p2shtype\":5, \"wiftype\":176, \"txfee\":100000 },
+{\"coin\":\"SUPERNET\",\"asset\":\"SUPERNET\",\"rpcport\":11341},{\"coin\":\"WLC\",\"asset\":\"WLC\",\"rpcport\":12167},{\"coin\":\"PANGEA\",\"asset\":\"PANGEA\",\"rpcport\":14068},{\"coin\":\"DEX\",\"asset\":\"DEX\",\"rpcport\":11890},{\"coin\":\"BET\",\"asset\":\"BET\",\"rpcport\":14250},{\"coin\":\"CRYPTO\",\"asset\":\"CRYPTO\",\"rpcport\":8516},{\"coin\":\"HODL\",\"asset\":\"HODL\",\"rpcport\":14431},{\"coin\":\"SHARK\",\"asset\":\"SHARK\",\"rpcport\":10114},{\"coin\":\"BOTS\",\"asset\":\"BOTS\",\"rpcport\":11964},{\"coin\":\"MGW\",\"asset\":\"MGW\",\"rpcport\":12386},{\"coin\":\"COQUI\",\"asset\":\"COQUI\",\"rpcport\":14276},{\"coin\":\"KV\",\"asset\":\"KV\",\"rpcport\":9747},{\"coin\":\"CEAL\",\"asset\":\"CEAL\",\"rpcport\":11116},{\"coin\":\"MESH\",\"asset\":\"MESH\",\"rpcport\":9455}
+], \"userhome\":\"/${HOME#"/"}\",\"passphrase\":\"$randval\"}" &
+

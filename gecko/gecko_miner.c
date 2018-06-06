@@ -204,7 +204,7 @@ char *gecko_blockconstruct(struct supernet_info *myinfo,struct iguana_info *virt
     }
     if ( (coinbasestr= gecko_coinbasestr(myinfo,virt,&txids[0],newblock->RO.timestamp,minerpubkey,blockreward,coinbase,coinbaselen,coinbasespend)) != 0 )
     {
-        newblock->RO.merkle_root = iguana_merkle(txids,txn_count + 1);
+        newblock->RO.merkle_root = iguana_merkle("GECKO",txids,txn_count + 1);
         newblock->RO.txn_count = (txn_count + 1);
         if ( txn_count > 0 )
         {

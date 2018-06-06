@@ -296,6 +296,9 @@
     <ClCompile Include="iguana\groestl.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="iguana\keccak.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <Text Include="ReadMe.txt" />

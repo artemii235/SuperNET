@@ -1,5 +1,5 @@
 /******************************************************************************
- * Copyright © 2014-2017 The SuperNET Developers.                             *
+ * Copyright © 2014-2018 The SuperNET Developers.                             *
  *                                                                            *
  * See the AUTHORS, DEVELOPER-AGREEMENT and LICENSE files at                  *
  * the top-level directory of this distribution for the individual copyright  *
@@ -346,7 +346,7 @@ int32_t iguana_peerblockrequest(struct supernet_info *myinfo,struct iguana_info 
                 }
                 if ( i == block->RO.txn_count )
                 {
-                    merkle_root = iguana_merkle(tree,block->RO.txn_count);
+                    merkle_root = iguana_merkle(coin->symbol,tree,block->RO.txn_count);
                     if ( bits256_cmp(merkle_root,block->RO.merkle_root) == 0 )
                     {
                         if ( addr != 0 && addr->lastsent != block->height )

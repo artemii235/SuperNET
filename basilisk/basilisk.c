@@ -1,5 +1,5 @@
 /******************************************************************************
- * Copyright © 2014-2017 The SuperNET Developers.                             *
+ * Copyright © 2014-2018 The SuperNET Developers.                             *
  *                                                                            *
  * See the AUTHORS, DEVELOPER-AGREEMENT and LICENSE files at                  *
  * the top-level directory of this distribution for the individual copyright  *
@@ -931,41 +931,41 @@ void basilisks_loop(void *arg)
             relay = iguana_coinfind("RELAY");
         startmilli = OS_milliseconds();
         endmilli = startmilli + 1000;
-        //fprintf(stderr,"A ");
+//fprintf(stderr,"A ");
         basilisk_issued_purge(myinfo,600000);
-        //fprintf(stderr,"B ");
+//fprintf(stderr,"B ");
         basilisk_p2pQ_process(myinfo,777);
-        //fprintf(stderr,"C ");
+//fprintf(stderr,"C ");
         if ( myinfo->IAMNOTARY != 0 )
         {
             if ( relay != 0 )
             {
-                //fprintf(stderr,"D ");
+//fprintf(stderr,"D ");
                 basilisk_ping_send(myinfo,relay);
             }
             counter++;
-            //fprintf(stderr,"E ");
+//fprintf(stderr,"E ");
             if ( myinfo->numdpows == 1 )
             {
-                iguana_dPoWupdate(myinfo,&myinfo->DPOWS[0]);
+                iguana_dPoWupdate(myinfo,myinfo->DPOWS[0]);
                 endmilli = startmilli + 100;
             }
             else if ( myinfo->numdpows > 1 )
             {
-                dp = &myinfo->DPOWS[counter % myinfo->numdpows];
+                dp = myinfo->DPOWS[counter % myinfo->numdpows];
                 iguana_dPoWupdate(myinfo,dp);
                 //if ( (counter % myinfo->numdpows) != 0 )
                 {
                     //fprintf(stderr,"F ");
-                    iguana_dPoWupdate(myinfo,&myinfo->DPOWS[0]);
+                    iguana_dPoWupdate(myinfo,myinfo->DPOWS[0]);
                 }
                 endmilli = startmilli + 30;
             }
-            //fprintf(stderr,"F ");
+//fprintf(stderr,"F ");
         }
         else
         {
-            //fprintf(stderr,"G ");
+//fprintf(stderr,"G ");
             dex_updateclient(myinfo);
             if ( myinfo->IAMLP != 0 )
                 endmilli = startmilli + 500;
@@ -973,15 +973,15 @@ void basilisks_loop(void *arg)
         }
         if ( myinfo->expiration != 0 && (myinfo->dexsock >= 0 || myinfo->IAMLP != 0 || myinfo->DEXactive > time(NULL)) )
         {
-            //fprintf(stderr,"H ");
+//fprintf(stderr,"H ");
             for (i=0; i<100; i++)
                 if ( basilisk_requests_poll(myinfo) <= 0 )
                     break;
         }
-        //printf("RELAYID.%d endmilli %f vs now %f\n",myinfo->NOTARY.RELAYID,endmilli,startmilli);
+//printf("RELAYID.%d endmilli %f vs now %f\n",myinfo->NOTARY.RELAYID,endmilli,startmilli);
         while ( OS_milliseconds() < endmilli )
             usleep(10000);
-        //printf("finished waiting numdpow.%d\n",myinfo->numdpows);
+//printf("finished waiting numdpow.%d\n",myinfo->numdpows);
         iter++;
     }
 }
@@ -1183,7 +1183,7 @@ HASH_ARRAY_STRING(basilisk,sendmessage,hash,vals,hexstr)
 
 HASH_ARRAY_STRING(basilisk,value,hash,vals,hexstr)
 {
-    char *retstr=0,*symbol,*coinaddr,*infostr; cJSON *retjson,*sobj,*info,*addrs,*txoutjson,*txjson,*array; uint32_t basilisktag,blocktime,numtx=0; bits256 txid,blockhash; struct basilisk_item *ptr,Lptr; uint64_t value; int32_t timeoutmillis,vout,height,n,m;
+    char *retstr=0,*symbol,*coinaddr,*infostr; cJSON *retjson,*sobj,*info,*addrs,*txoutjson,*txjson,*array; uint32_t basilisktag,blocktime,numtx=0; bits256 txid,blockhash,merkleroot; struct basilisk_item *ptr,Lptr; uint64_t value; int32_t timeoutmillis,vout,height,n,m;
     if ( vals == 0 )
         return(clonestr("{\"error\":\"null valsobj\"}"));
     //if ( myinfo->IAMNOTARY != 0 || myinfo->NOTARY.RELAYID >= 0 )
@@ -1219,7 +1219,7 @@ HASH_ARRAY_STRING(basilisk,value,hash,vals,hexstr)
                     jadd64bits(retjson,"satoshis",value);
                     jaddnum(retjson,"value",dstr(value));
                     jaddnum(retjson,"amount",dstr(value));
-                    height = dpow_getchaintip(myinfo,&blockhash,&blocktime,0,&numtx,coin);
+                    height = dpow_getchaintip(myinfo,&merkleroot,&blockhash,&blocktime,0,&numtx,coin);
                     jaddnum(retjson,"height",height);
                     jaddnum(retjson,"numconfirms",jint(txoutjson,"confirmations"));
                     jaddbits256(retjson,"txid",txid);

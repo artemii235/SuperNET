@@ -1,5 +1,5 @@
 /******************************************************************************
- * Copyright © 2014-2017 The SuperNET Developers.                             *
+ * Copyright © 2014-2018 The SuperNET Developers.                             *
  *                                                                            *
  * See the AUTHORS, DEVELOPER-AGREEMENT and LICENSE files at                  *
  * the top-level directory of this distribution for the individual copyright  *
@@ -416,7 +416,7 @@ int32_t iguana_bundlefname(struct iguana_info *coin,struct iguana_bundle *bp,cha
 int32_t iguana_bundleremove(struct iguana_info *coin,int32_t hdrsi,int32_t tmpfiles);
 int32_t iguana_voutsfname(struct iguana_info *coin,int32_t roflag,char *fname,int32_t slotid);
 int32_t iguana_vinsfname(struct iguana_info *coin,int32_t roflag,char *fname,int32_t slotid);
-bits256 iguana_merkle(bits256 *tree,int32_t txn_count);
+bits256 iguana_merkle(char *symbol,bits256 *tree,int32_t txn_count);
 int32_t iguana_bundleready(struct supernet_info *myinfo,struct iguana_info *coin,struct iguana_bundle *bp,int32_t requiredflag);
 int32_t iguana_blast(struct iguana_info *coin,struct iguana_peer *addr);
 int32_t iguana_validated(struct iguana_info *coin);

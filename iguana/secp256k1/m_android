@@ -3,4 +3,4 @@
 #$CC -c -O2 src/secp256k1.c -I $NDK/platforms/android-21/arch-arm/usr/include
 #rm -f ../../agents/libsecp256k1.a; $AR rcu ../../agents/libsecp256k1.a *.o 
 
-$CC2 -c -o ../sec256k1.o -I. -I./src -I./include -I./src -O3 -W -std=c89 -pedantic -Wall -Wextra -Wcast-align -Wnested-externs -Wshadow -Wstrict-prototypes -Wno-unused-function -Wno-long-long -Wno-overlength-strings -fvisibility=hidden -DHAVE_CONFIG_H src/secp256k1.c
+$CC2 -c -o ../secp256k1.o -I. -I./src -I./include -I./src -O3 -W -std=c89 -pedantic -Wall -Wextra -Wcast-align -Wnested-externs -Wshadow -Wstrict-prototypes -Wno-unused-function -Wno-long-long -Wno-overlength-strings -fvisibility=hidden -DHAVE_CONFIG_H src/secp256k1.c

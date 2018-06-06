@@ -19,7 +19,7 @@ all:
 	+$(MAKE) -C secp256k1 -f m_unix_Makefile all
 	+$(MAKE) -C ../crypto777 -f m_LP_StaticNanoMsg all
 	+$(MAKE) -C ../crypto777 -f m_LP_StaticNanoMsg clean
-	$(CC) -o ../agents/marketmaker -I../crypto777 exchanges/mm.c ../crypto777/cJSON.c mini-gmp.c groestl.c segwit_addr.c secp256k1.o ../agents/libcrypto777.a ../OSlibs/linux/$(shell uname -m)/libnanomsg-static.a -lcurl -lpthread -lm -lanl
+	$(CC) -DNOTETOMIC -o ../agents/marketmaker -I../crypto777 exchanges/mm.c ../crypto777/cJSON.c mini-gmp.c keccak.c groestl.c segwit_addr.c secp256k1.o ../agents/libcrypto777.a ../OSlibs/linux/$(shell uname -m)/libnanomsg-static.a -lcurl -lpthread -lm -lanl
 	@echo "==========================="
 	@echo " marketmaker -> `pwd`/../agents/marketmaker"
 	@echo "==========================="

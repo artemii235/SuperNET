@@ -1,0 +1,2 @@
+source userpass
+curl --url "http://127.0.0.1:7783" --data "{\"userpass\":\"$userpass\",\"method\":\"autoprice\",\"base\":\"KMD\",\"rel\":\"OOT\",\"factor\":0.15,\"buymargin\":0.0001,\"sellmargin\":0.2,\"refbase\":\"komodo\",\"refrel\":\"coinmarketcap\",\"usdpeg\":1}"

@@ -1,5 +1,5 @@
 /******************************************************************************
- * Copyright © 2014-2017 The SuperNET Developers.                             *
+ * Copyright © 2014-2018 The SuperNET Developers.                             *
  *                                                                            *
  * See the AUTHORS, DEVELOPER-AGREEMENT and LICENSE files at                  *
  * the top-level directory of this distribution for the individual copyright  *
@@ -270,7 +270,7 @@ void pax_rank(uint64_t *ranked,uint32_t *pvals)
 #define YAHOO_METALS "XAU", "XAG", "XPT", "XPD"
 static char *Yahoo_metals[] = { YAHOO_METALS };
 
-char CURRENCIES[][8] = { "USD", "EUR", "JPY", "GBP", "AUD", "CAD", "CHF", "NZD", // major currencies
+char CURRENCIES[][65] = { "USD", "EUR", "JPY", "GBP", "AUD", "CAD", "CHF", "NZD", // major currencies
     "CNY", "RUB", "MXN", "BRL", "INR", "HKD", "TRY", "ZAR", "PLN", "NOK", "SEK", "DKK", "CZK", "HUF", "ILS", "KRW", "MYR", "PHP", "RON", "SGD", "THB", "BGN", "IDR", "HRK", // end of currencies
     "XAU", "XAG", "XPT", "XPD", // metals, gold must be first
     "BTCD", "BTC", "NXT", "ETC", "ETH", "KMD", "BTS", "MAID", "XCP",  "XMR" // cryptos
@@ -330,7 +330,7 @@ int32_t PAX_ispair(char *base,char *rel,char *contract)
 
 int32_t PAX_basenum(char *_base)
 {
-    int32_t i,j; char base[64];
+    int32_t i,j; char base[65];
     strcpy(base,_base);
     touppercase(base);
     if ( 1 )
@@ -936,7 +936,7 @@ int32_t PAX_calcmatrix(double matrix[MAX_CURRENCIES][MAX_CURRENCIES])
 
 int32_t PAX_getmatrix(double *basevals,struct PAX_data *dp,double Hmatrix[32][32],double *RTprices,char *contracts[],int32_t num)
 {
-    int32_t i,j,c; char name[16]; double btcusd,kmdbtc;
+    int32_t i,j,c; char name[65]; double btcusd,kmdbtc;
     memcpy(Hmatrix,dp->ecbmatrix,sizeof(dp->ecbmatrix));
     PAX_calcmatrix(Hmatrix);
     /*for (i=0; i<32; i++)
@@ -1839,7 +1839,7 @@ int32_t PAX_idle(struct supernet_info *myinfo)//struct PAX_data *argdp,int32_t i
 {
     static double lastupdate,lastdayupdate; static uint32_t didinit; static char *userhome; int32_t idlegap = 10;
     FILE *fp; long filesize; char fname[512]; double splineval; uint32_t pvals[128],timestamp; int32_t i,datenum,seconds,c; struct tai t; struct PAX_data *dp; uint8_t data[512];
-    if ( Currencymasks[0] == 0 )
+    if ( 1 || Currencymasks[0] == 0 ) // disable pax price gatherings
         return(0);
     if ( time(NULL) > didinit+12*3600 )
     {

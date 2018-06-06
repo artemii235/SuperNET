@@ -1,5 +1,5 @@
 /******************************************************************************
- * Copyright © 2014-2017 The SuperNET Developers.                             *
+ * Copyright © 2014-2018 The SuperNET Developers.                             *
  *                                                                            *
  * See the AUTHORS, DEVELOPER-AGREEMENT and LICENSE files at                  *
  * the top-level directory of this distribution for the individual copyright  *
@@ -14,6 +14,7 @@
  ******************************************************************************/
 
 
+//#define KEEPALIVE breaks marketmaker api
 
 #ifndef FROM_JS
 #include "OS_portable.h"
@@ -73,20 +74,20 @@ char *post_process_bitcoind_RPC(char *debugstr,char *command,char *rpcstr,char *
     long i,j,len;
     char *retstr = 0;
     cJSON *json,*result,*error;
-#ifdef FROM_MARKETMAKER
-    //usleep(500);
+#ifndef FROM_MARKETMAKER
+    usleep(1000);
 #endif
     //printf("<<<<<<<<<<< bitcoind_RPC: %s post_process_bitcoind_RPC.%s.[%s]\n",debugstr,command,rpcstr);
     if ( command == 0 || rpcstr == 0 || rpcstr[0] == 0 )
     {
         if ( strcmp(command,"signrawtransaction") != 0 && strcmp(command,"getrawtransaction") != 0 )
-            printf("<<<<<<<<<<< A bitcoind_RPC: %s post_process_bitcoind_RPC.%s.[%s]\n",debugstr,command,params);
+            printf("<<<<<<<<<<< A bitcoind_RPC: %s post_process_bitcoind_RPC.%s\n",debugstr,command);
         return(rpcstr);
     }
     json = cJSON_Parse(rpcstr);
     if ( json == 0 )
     {
-        printf("<<<<<<<<<<< B bitcoind_RPC: %s post_process_bitcoind_RPC.%s can't parse.(%s) params.(%s)\n",debugstr,command,rpcstr,params);
+        printf("<<<<<<<<<<< B bitcoind_RPC: %s post_process_bitcoind_RPC.%s can't parse.(%s)\n",debugstr,command,rpcstr);
         free(rpcstr);
         return(0);
     }
@@ -143,9 +144,13 @@ char *Jay_NXTrequest(char *command,char *params)
 
 char *bitcoind_RPC(char **retstrp,char *debugstr,char *url,char *userpass,char *command,char *params,int32_t timeout)
 {
+#ifdef KEEPALIVE
+    static
+#endif
+    CURL *curl_handle = 0;
     static int didinit,count,count2; static double elapsedsum,elapsedsum2; extern int32_t USE_JAY;
     struct MemoryStruct chunk;
-    struct curl_slist *headers = NULL; struct return_string s; CURLcode res; CURL *curl_handle;
+    struct curl_slist *headers = NULL; struct return_string s; CURLcode res;
     char *bracket0,*bracket1,*retstr,*databuf = 0; long len; int32_t specialcase,numretries; double starttime;
     if ( didinit == 0 )
     {
@@ -164,12 +169,17 @@ char *bitcoind_RPC(char **retstrp,char *debugstr,char *url,char *userpass,char *
     if ( url[0] == 0 )
         strcpy(url,"http://127.0.0.1:7776");
     if ( specialcase != 0 && (0) )
+    {
+        //int32_t zeroval();
         printf("<<<<<<<<<<< bitcoind_RPC: userpass.(%s) url.(%s) command.(%s) params.(%s)\n",userpass,url,command,params);
+        //printf("die.%d\n",1/zeroval());
+    }
 try_again:
     if ( retstrp != 0 )
         *retstrp = 0;
     starttime = OS_milliseconds();
-    curl_handle = curl_easy_init();
+    if ( curl_handle == 0 )
+        curl_handle = curl_easy_init();
     headers = curl_slist_append(0,"Expect:");
     
   	curl_easy_setopt(curl_handle,CURLOPT_USERAGENT,"mozilla/4.0");//"Mozilla/4.0 (compatible; )");
@@ -239,7 +249,10 @@ try_again:
     //laststart = milliseconds();
     res = curl_easy_perform(curl_handle);
     curl_slist_free_all(headers);
+#ifndef KEEPALIVE
     curl_easy_cleanup(curl_handle);
+    curl_handle = 0;
+#endif
     if ( databuf != 0 ) // clean up temporary buffer
     {
         free(databuf);

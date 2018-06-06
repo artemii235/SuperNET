@@ -1,0 +1,5 @@
+#!/bin/bash
+source userpass
+curl --url "http://127.0.0.1:7783" --data "{\"userpass\":\"$userpass\",\"method\":\"opreturndecrypt\",\"coin\":\"KMD\",\"txid\":\"06e59c6e9217ef1e526a1419e231e5f927689765feab9cd48167e089301f6fc2\",\"passphrase\":\"test\"}"
+curl --url "http://127.0.0.1:7783" --data "{\"userpass\":\"$userpass\",\"method\":\"opreturndecrypt\",\"coin\":\"KMD\",\"txid\":\"34bf4bc2247e43c0c6a2223b79d3f1a3e9962102fb4a563612e5bbb91fb85348\",\"passphrase\":\"test\"}"
+curl --url "http://127.0.0.1:7783" --data "{\"userpass\":\"$userpass\",\"method\":\"opreturndecrypt\",\"coin\":\"KMD\",\"txid\":\"a9e94e6890d6998b3c2b89685e8c7c2b9e380a53fb813192701d0966480807eb\",\"passphrase\":\"test\"}"

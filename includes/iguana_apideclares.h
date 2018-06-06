@@ -1,5 +1,5 @@
 /******************************************************************************
- * Copyright © 2014-2017 The SuperNET Developers.                             *
+ * Copyright © 2014-2018 The SuperNET Developers.                             *
  *                                                                            *
  * See the AUTHORS, DEVELOPER-AGREEMENT and LICENSE files at                  *
  * the top-level directory of this distribution for the individual copyright  *
@@ -20,6 +20,7 @@ emit compiler error if recursively being included
 #define _IGUANA_APIDEC_H_
 
 STRING_ARG(dpow,pending,fiat);
+STRING_AND_TWOINTS(dpow,notarizations,symbol,height,numblocks);
 ZERO_ARGS(dpow,notarychains);
 STRING_ARG(dpow,active,maskhex);
 TWOINTS_AND_ARRAY(dpow,ratify,minsigs,timestamp,ratified);
@@ -173,7 +174,7 @@ STRING_AND_INT(iguana,snapshot,symbol,height);
 INT_ARRAY_STRING(iguana,dividends,height,vals,symbol);
 THREE_STRINGS(iguana,passthru,asset,function,hex);
 STRING_ARG(iguana,initfastfind,activecoin);
-TWO_STRINGS(iguana,dpow,symbol,pubkey);
+THREE_STRINGS_AND_DOUBLE(iguana,dpow,symbol,dest,pubkey,freq);
 STRING_ARG(iguana,peers,activecoin);
 STRING_AND_INT(iguana,maxpeers,activecoin,max);
 STRING_ARG(iguana,getconnectioncount,activecoin);

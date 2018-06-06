@@ -605,7 +605,10 @@ uint16_t parse_endpoint(int32_t *ip6flagp,char *transport,char *ipbuf,char *retb
                     ipbits = calc_ipbits(ipaddr);
                     expand_ipbits(tmp,ipbits);
                     if ( strcmp(tmp,ipaddr) != 0 )
-                        ipaddr = 0, sprintf(retbuf,"{\"result\":\"illegal ipaddr\",\"endpoint\":\"%s\",\"ipaddr\":\"%s\",\"checkaddr\":\"%s\"}",endpoint,ipaddr,tmp);
+                    {
+                        sprintf(retbuf,"{\"result\":\"illegal ipaddr\",\"endpoint\":\"%s\",\"ipaddr\":\"%s\",\"checkaddr\":\"%s\"}",endpoint,ipaddr,tmp);
+                        ipaddr = 0;
+                    }
                 }
                 if ( inet != 0 && ipaddr != 0 && port != 0 )
                 {

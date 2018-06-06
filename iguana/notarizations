@@ -1,0 +1,2 @@
+ curl --url "http://127.0.0.1:7776" --data "{\"pubkey\":\"$pubkey\",\"agent\":\"dpow\",\"method\":\"notarizations\",\"symbol\":\"PIZZA\",\"height\":5000,\"numblocks\":1000}"
+

@@ -1,5 +1,5 @@
 /******************************************************************************
- * Copyright © 2014-2017 The SuperNET Developers.                             *
+ * Copyright © 2014-2018 The SuperNET Developers.                             *
  *                                                                            *
  * See the AUTHORS, DEVELOPER-AGREEMENT and LICENSE files at                  *
  * the top-level directory of this distribution for the individual copyright  *
@@ -15,13 +15,41 @@
 
 #define issue_curl(cmdstr) bitcoind_RPC(0,"curl",cmdstr,0,0,0,0)
 
+uint64_t dpow_utxosize(char *symbol)
+{
+    if ( strcmp(symbol,"GAME") == 0 )
+        return(100000);
+    else return(10000);
+}
+
+char *bitcoind_getinfo(char *symbol,char *serverport,char *userpass,char *getinfostr)
+{
+    char buf[1],*retstr; cJSON *retjson;
+    buf[0] = 0;
+    if ( getinfostr[0] == 0 )
+        strcpy(getinfostr,"getinfo");
+    retstr = bitcoind_passthru(symbol,serverport,userpass,getinfostr,buf);
+    if ( (retjson= cJSON_Parse(retstr)) != 0 )
+    {
+        if ( jobj(retjson,"error") != 0 && strcmp(getinfostr,"getinfo") == 0 )
+        {
+            strcpy(getinfostr,"getblockchaininfo");
+            free(retstr);
+            retstr = bitcoind_passthru(symbol,serverport,userpass,getinfostr,buf);
+            printf("switch to getblockchaininfo -> (%s)\n",retstr);
+        }
+        free(retjson);
+    }
+    return(retstr);
+}
+
 cJSON *dpow_getinfo(struct supernet_info *myinfo,struct iguana_info *coin)
 {
     char buf[128],*retstr=0; cJSON *json = 0;
     if ( coin->FULLNODE < 0 )
     {
         buf[0] = 0;
-        retstr = bitcoind_passthru(coin->symbol,coin->chain->serverport,coin->chain->userpass,"getinfo",buf);
+        retstr = bitcoind_getinfo(coin->symbol,coin->chain->serverport,coin->chain->userpass,coin->getinfostr);
         usleep(10000);
     }
     else if ( coin->FULLNODE > 0 || coin->VALIDATENODE > 0 )
@@ -49,78 +77,92 @@ cJSON *dpow_getinfo(struct supernet_info *myinfo,struct iguana_info *coin)
     }
     return(json);
 }
-const char *Notaries_elected[][2] =
+
+uint32_t dpow_CCid(struct supernet_info *myinfo,struct iguana_info *coin)
 {
-    { "0_jl777_testA", "03b7621b44118017a16043f19b30cc8a4cfe068ac4e42417bae16ba460c80f3828" },
-    { "0_jl777_testB", "02ebfc784a4ba768aad88d44d1045d240d47b26e248cafaf1c5169a42d7a61d344" },
-    { "0_kolo_testA", "0287aa4b73988ba26cf6565d815786caf0d2c4af704d7883d163ee89cd9977edec" },
-    { "artik_AR", "029acf1dcd9f5ff9c455f8bb717d4ae0c703e089d16cf8424619c491dff5994c90" },
-    { "artik_EU", "03f54b2c24f82632e3cdebe4568ba0acf487a80f8a89779173cdb78f74514847ce" },
-    { "artik_NA", "0224e31f93eff0cc30eaf0b2389fbc591085c0e122c4d11862c1729d090106c842" },
-    { "artik_SH", "02bdd8840a34486f38305f311c0e2ae73e84046f6e9c3dd3571e32e58339d20937" },
-    { "badass_EU", "0209d48554768dd8dada988b98aca23405057ac4b5b46838a9378b95c3e79b9b9e" },
-    { "badass_NA", "02afa1a9f948e1634a29dc718d218e9d150c531cfa852843a1643a02184a63c1a7" },
-    { "badass_SH", "026b49dd3923b78a592c1b475f208e23698d3f085c4c3b4906a59faf659fd9530b" },
-    { "crackers_EU", "03bc819982d3c6feb801ec3b720425b017d9b6ee9a40746b84422cbbf929dc73c3" }, // 10
-    { "crackers_NA", "03205049103113d48c7c7af811b4c8f194dafc43a50d5313e61a22900fc1805b45" },
-    { "crackers_SH", "02be28310e6312d1dd44651fd96f6a44ccc269a321f907502aae81d246fabdb03e" },
-    { "durerus_EU", "02bcbd287670bdca2c31e5d50130adb5dea1b53198f18abeec7211825f47485d57" },
-    { "etszombi_AR", "031c79168d15edabf17d9ec99531ea9baa20039d0cdc14d9525863b83341b210e9" },
-    { "etszombi_EU", "0281b1ad28d238a2b217e0af123ce020b79e91b9b10ad65a7917216eda6fe64bf7" },
-    { "etszombi_SH", "025d7a193c0757f7437fad3431f027e7b5ed6c925b77daba52a8755d24bf682dde" },
-    { "farl4web_EU", "0300ecf9121cccf14cf9423e2adb5d98ce0c4e251721fa345dec2e03abeffbab3f" },
-    { "farl4web_SH", "0396bb5ed3c57aa1221d7775ae0ff751e4c7dc9be220d0917fa8bbdf670586c030" },
-    { "fullmoon_AR", "0254b1d64840ce9ff6bec9dd10e33beb92af5f7cee628f999cb6bc0fea833347cc" },
-    { "fullmoon_NA", "031fb362323b06e165231c887836a8faadb96eda88a79ca434e28b3520b47d235b" }, // 20
-    { "fullmoon_SH", "030e12b42ec33a80e12e570b6c8274ce664565b5c3da106859e96a7208b93afd0d" },
-    { "grewal_NA", "03adc0834c203d172bce814df7c7a5e13dc603105e6b0adabc942d0421aefd2132" },
-    { "grewal_SH", "03212a73f5d38a675ee3cdc6e82542a96c38c3d1c79d25a1ed2e42fcf6a8be4e68" },
-    { "indenodes_AR", "02ec0fa5a40f47fd4a38ea5c89e375ad0b6ddf4807c99733c9c3dc15fb978ee147" },
-    { "indenodes_EU", "0221387ff95c44cb52b86552e3ec118a3c311ca65b75bf807c6c07eaeb1be8303c" },
-    { "indenodes_NA", "02698c6f1c9e43b66e82dbb163e8df0e5a2f62f3a7a882ca387d82f86e0b3fa988" },
-    { "indenodes_SH", "0334e6e1ec8285c4b85bd6dae67e17d67d1f20e7328efad17ce6fd24ae97cdd65e" },
-    { "jeezy_EU", "023cb3e593fb85c5659688528e9a4f1c4c7f19206edc7e517d20f794ba686fd6d6" },
-    { "jsgalt_NA", "027b3fb6fede798cd17c30dbfb7baf9332b3f8b1c7c513f443070874c410232446" },
-    { "karasugoi_NA", "02a348b03b9c1a8eac1b56f85c402b041c9bce918833f2ea16d13452309052a982" }, // 30
-    { "kashifali_EU", "033777c52a0190f261c6f66bd0e2bb299d30f012dcb8bfff384103211edb8bb207" },
-    { "kolo_AR", "03016d19344c45341e023b72f9fb6e6152fdcfe105f3b4f50b82a4790ff54e9dc6" },
-    { "kolo_SH", "02aa24064500756d9b0959b44d5325f2391d8e95c6127e109184937152c384e185" },
-    { "metaphilibert_AR", "02adad675fae12b25fdd0f57250b0caf7f795c43f346153a31fe3e72e7db1d6ac6" },
-    { "movecrypto_AR", "022783d94518e4dc77cbdf1a97915b29f427d7bc15ea867900a76665d3112be6f3" },
-    { "movecrypto_EU", "021ab53bc6cf2c46b8a5456759f9d608966eff87384c2b52c0ac4cc8dd51e9cc42" },
-    { "movecrypto_NA", "02efb12f4d78f44b0542d1c60146738e4d5506d27ec98a469142c5c84b29de0a80" },
-    { "movecrypto_SH", "031f9739a3ebd6037a967ce1582cde66e79ea9a0551c54731c59c6b80f635bc859" },
-    { "muros_AR", "022d77402fd7179335da39479c829be73428b0ef33fb360a4de6890f37c2aa005e" },
-    { "noashh_AR", "029d93ef78197dc93892d2a30e5a54865f41e0ca3ab7eb8e3dcbc59c8756b6e355" }, // 40
-    { "noashh_EU", "02061c6278b91fd4ac5cab4401100ffa3b2d5a277e8f71db23401cc071b3665546" },
-    { "noashh_NA", "033c073366152b6b01535e15dd966a3a8039169584d06e27d92a69889b720d44e1" },
-    { "nxtswe_EU", "032fb104e5eaa704a38a52c126af8f67e870d70f82977e5b2f093d5c1c21ae5899" },
-    { "polycryptoblog_NA", "02708dcda7c45fb54b78469673c2587bfdd126e381654819c4c23df0e00b679622" },
-    { "pondsea_AR", "032e1c213787312099158f2d74a89e8240a991d162d4ce8017d8504d1d7004f735" },
-    { "pondsea_EU", "0225aa6f6f19e543180b31153d9e6d55d41bc7ec2ba191fd29f19a2f973544e29d" },
-    { "pondsea_NA", "031bcfdbb62268e2ff8dfffeb9ddff7fe95fca46778c77eebff9c3829dfa1bb411" },
-    { "pondsea_SH", "02209073bc0943451498de57f802650311b1f12aa6deffcd893da198a544c04f36" },
-    { "popcornbag_AR", "02761f106fb34fbfc5ddcc0c0aa831ed98e462a908550b280a1f7bd32c060c6fa3" },
-    { "popcornbag_NA", "03c6085c7fdfff70988fda9b197371f1caf8397f1729a844790e421ee07b3a93e8" }, // 50
-    { "ptytrader_NA", "0328c61467148b207400b23875234f8a825cce65b9c4c9b664f47410b8b8e3c222" },
-    { "ptytrader_SH", "0250c93c492d8d5a6b565b90c22bee07c2d8701d6118c6267e99a4efd3c7748fa4" },
-    { "rnr_AR", "029bdb08f931c0e98c2c4ba4ef45c8e33a34168cb2e6bf953cef335c359d77bfcd" },
-    { "rnr_EU", "03f5c08dadffa0ffcafb8dd7ffc38c22887bd02702a6c9ac3440deddcf2837692b" },
-    { "rnr_NA", "02e17c5f8c3c80f584ed343b8dcfa6d710dfef0889ec1e7728ce45ce559347c58c" },
-    { "rnr_SH", "037536fb9bdfed10251f71543fb42679e7c52308bcd12146b2568b9a818d8b8377" },
-    { "titomane_AR", "03cda6ca5c2d02db201488a54a548dbfc10533bdc275d5ea11928e8d6ab33c2185" },
-    { "titomane_EU", "02e41feded94f0cc59f55f82f3c2c005d41da024e9a805b41105207ef89aa4bfbd" },
-    { "titomane_SH", "035f49d7a308dd9a209e894321f010d21b7793461b0c89d6d9231a3fe5f68d9960" },
-    { "vanbreuk_EU", "024f3cad7601d2399c131fd070e797d9cd8533868685ddbe515daa53c2e26004c3" }, // 60
-    { "xrobesx_NA", "03f0cc6d142d14a40937f12dbd99dbd9021328f45759e26f1877f2a838876709e1" },
-    { "xxspot1_XX", "02ef445a392fcaf3ad4176a5da7f43580e8056594e003eba6559a713711a27f955" },
-    { "xxspot2_XX", "03d85b221ea72ebcd25373e7961f4983d12add66a92f899deaf07bab1d8b6f5573" }
-};
+    uint32_t CCid = 0; cJSON *retjson;
+    if ( (retjson= dpow_getinfo(myinfo,coin)) != 0 )
+    {
+        CCid = juint(retjson,"CCid");
+        free_json(retjson);
+    }
+    return(CCid);
+}
+
+char *Notaries_elected[65][2];
+//char *seeds[] = { "78.47.196.146", "5.9.102.210", "149.56.29.163", "191.235.80.138", "88.198.65.74", "94.102.63.226", "129.232.225.202", "104.255.64.3", "52.72.135.200", "149.56.28.84", "103.18.58.150", "221.121.144.140", "123.249.79.12", "103.18.58.146", "27.50.93.252", "176.9.0.233", "94.102.63.227", "167.114.227.223", "27.50.68.219", "192.99.233.217", "94.102.63.217", "45.64.168.216" };
+int32_t Notaries_numseeds;// = (int32_t)(sizeof(seeds)/sizeof(*seeds))
+int32_t Notaries_num,Notaries_BTCminsigs = DPOW_MINSIGS;
+int32_t Notaries_minsigs = DPOW_MIN_ASSETCHAIN_SIGS;
+uint16_t Notaries_port = DPOW_SOCKPORT;
+char *Notaries_seeds[65];
+
+int32_t komodo_initjson(char *fname)
+{
+    char *fstr,*field,*hexstr; cJSON *argjson,*array,*item; long fsize; uint16_t port; int32_t i,n,num,retval = -1;
+    //for (i=0; i<Notaries_numseeds; i++)
+    //    Notaries_seeds[i] = seeds[i];
+    if ( (fstr= OS_filestr(&fsize,fname)) != 0 )
+    {
+        if ( (argjson= cJSON_Parse(fstr)) != 0 )
+        {
+            if ( (port= juint(argjson,"port")) != 0 )
+                Notaries_port = port;
+            if ( (num= juint(argjson,"BTCminsigs")) > Notaries_BTCminsigs )
+                Notaries_BTCminsigs = num;
+            Notaries_minsigs = juint(argjson,"minsigs");
+            if ( (array= jarray(&n,argjson,"seeds")) != 0 && n <= 64 )
+            {
+                for (i=0; i<n&&i<64; i++)
+                {
+                    Notaries_seeds[i] = clonestr(jstri(array,i));
+                    printf("%s ",Notaries_seeds[i]);
+                }
+                Notaries_numseeds = i;
+                printf("Notaries_numseeds.%d\n",Notaries_numseeds);
+            }
+            if ( (array= jarray(&n,argjson,"notaries")) != 0 && n <= 64 )
+            {
+                for (i=0; i<n&&i<64; i++)
+                {
+                    item = jitem(array,i);
+                    field = jfieldname(item);
+                    if ( (hexstr= jstr(item,field)) != 0 && is_hexstr(hexstr,0) == 66 )
+                    {
+                        Notaries_elected[i][0] = clonestr(field);
+                        Notaries_elected[i][1] = clonestr(hexstr);
+                        //printf("%d of %d: %s %s\n",i,n,field,hexstr);
+                    }
+                    else
+                    {
+                        printf("couldnt find (%s) in %s or non-hex (%s)\n",field,jprint(item,0),hexstr!=0?hexstr:"");
+                        break;
+                    }
+                }
+                if ( i == n )
+                {
+                    Notaries_num = n;
+                    retval = 0;
+                    printf("numnotaries %d, port.%d minsigs.%d BTCminsigs.%d\n",Notaries_num,Notaries_port,Notaries_BTCminsigs,Notaries_minsigs);
+                }
+            }
+            free_json(argjson);
+        }
+        free(fstr);
+    }
+    return(retval);
+}
 
 int32_t komodo_notaries(char *symbol,uint8_t pubkeys[64][33],int32_t height)
 {
-    int32_t i,num=-1; struct iguana_info *coin; char params[256],*retstr,*pubkeystr; cJSON *retjson,*item,*array;
-    if ( (coin= iguana_coinfind(symbol)) != 0 )
+    int32_t i; //,num=-1; struct iguana_info *coin; char params[256],*retstr,*pubkeystr; cJSON *retjson,*item,*array;
+    if ( Notaries_num > 0 )
+    {
+        for (i=0; i<Notaries_num; i++)
+            decode_hex(pubkeys[i],33,Notaries_elected[i][1]);
+        return(Notaries_num);
+    } else return(-1);
+    /*if ( (coin= iguana_coinfind(symbol)) != 0 )
     {
         if ( height < 0 )
         {
@@ -168,7 +210,7 @@ int32_t komodo_notaries(char *symbol,uint8_t pubkeys[64][33],int32_t height)
         }
     }
     //printf("komodo_notaries returns.%d\n",num);
-    return(num);
+    return(num);*/
 }
 
 bits256 dpow_getbestblockhash(struct supernet_info *myinfo,struct iguana_info *coin)
@@ -204,10 +246,74 @@ bits256 dpow_getbestblockhash(struct supernet_info *myinfo,struct iguana_info *c
     return(blockhash);
 }
 
-int32_t dpow_paxpending(uint8_t *hex,uint32_t *paxwdcrcp)
+cJSON *issue_calcMoM(struct iguana_info *coin,int32_t height,int32_t MoMdepth)
 {
-    struct iguana_info *coin; char *retstr,*hexstr; cJSON *retjson; int32_t n=0; uint32_t paxwdcrc;
+    char buf[128],*retstr=0; cJSON *retjson = 0;
+    if ( coin->FULLNODE < 0 )
+    {
+        sprintf(buf,"[\"%d\", \"%d\"]",height,MoMdepth);
+        if ( (retstr= bitcoind_passthru(coin->symbol,coin->chain->serverport,coin->chain->userpass,"calc_MoM",buf)) != 0 )
+        {
+            retjson = cJSON_Parse(retstr);
+            //printf("MoM.%s -> %s\n",buf,retstr);
+            free(retstr);
+        }
+    }
+    return(retjson);
+}
+
+cJSON *dpow_MoMoMdata(struct iguana_info *coin,char *symbol,int32_t kmdheight,uint16_t CCid)
+{
+    char buf[128],*retstr=0; cJSON *retjson = 0; struct iguana_info *src;
+    if ( coin->FULLNODE < 0 && strcmp(coin->symbol,"KMD") == 0 && (src= iguana_coinfind(symbol)) != 0 )
+    {
+        sprintf(buf,"[\"%s\", \"%d\", \"%d\"]",symbol,kmdheight,CCid);
+        if ( (retstr= bitcoind_passthru(coin->symbol,coin->chain->serverport,coin->chain->userpass,"MoMoMdata",buf)) != 0 )
+        {
+            retjson = cJSON_Parse(retstr);
+            printf("%s kmdheight.%d CCid.%u MoMoM.%s -> %s\n",symbol,kmdheight,CCid,buf,retstr);
+            free(retstr);
+        }
+        usleep(10000);
+    }
+    return(retjson);
+}
+
+int32_t dpow_paxpending(struct supernet_info *myinfo,uint8_t *hex,int32_t hexsize,uint32_t *paxwdcrcp,bits256 MoM,uint32_t MoMdepth,uint16_t CCid,int32_t src_or_dest,struct dpow_block *bp)
+{
+    struct iguana_info *coin,*kmdcoin=0; char *retstr,*hexstr; cJSON *retjson,*infojson; int32_t kmdheight=0,hexlen=0,n=0; uint32_t paxwdcrc;
     paxwdcrc = 0;
+    if ( strcmp(bp->srccoin->symbol,"GAME") != 0 || src_or_dest != 0 )
+    {
+        n += iguana_rwbignum(1,&hex[n],sizeof(MoM),MoM.bytes);
+        MoMdepth = (MoMdepth & 0xffff) | ((uint32_t)CCid<<16);
+        n += iguana_rwnum(1,&hex[n],sizeof(MoMdepth),(uint32_t *)&MoMdepth);
+        if ( strncmp(bp->srccoin->symbol,"TXSCL",5) == 0 && src_or_dest == 0 && strcmp(bp->destcoin->symbol,"KMD") == 0 )
+        {
+            kmdcoin = bp->destcoin;
+            if ( (infojson= dpow_getinfo(myinfo,kmdcoin)) != 0 )
+            {
+                kmdheight = jint(infojson,"blocks");
+                free_json(infojson);
+            }
+            if ( (retjson= dpow_MoMoMdata(kmdcoin,bp->srccoin->symbol,kmdheight,bp->CCid)) != 0 )
+            {
+                if ( (hexstr= jstr(retjson,"data")) != 0 && (hexlen= (int32_t)strlen(hexstr)) > 0 && n+hexlen/2 <= hexsize )
+                {
+                    hexlen >>= 1;
+                    printf("add MoMoMdata.(%s)\n",hexstr);
+                    decode_hex(&hex[n],hexlen,hexstr), n += hexlen;
+                }
+                free_json(retjson);
+            }
+        }
+        paxwdcrc = calc_crc32(0,hex,n) & 0xffffff00;
+        paxwdcrc |= (n & 0xff);
+        if ( hexlen > 0 )
+            printf("%s.ht.%d opretlen.%d src_or_dest.%d dest.(%s) lastbest.%d paxwdcrc.%x\n",bp->srccoin->symbol,bp->height,n,src_or_dest,bp->destcoin->symbol,kmdcoin!=0?((kmdcoin->lastbestheight/10)*10 - 5):-1,paxwdcrc);
+    }
+    *paxwdcrcp = paxwdcrc;
+    return(n);
     if ( (coin= iguana_coinfind("KMD")) != 0 )
     {
         if ( coin->FULLNODE < 0 )
@@ -291,13 +397,34 @@ cJSON *dpow_getblock(struct supernet_info *myinfo,struct iguana_info *coin,bits2
     return(json);
 }
 
+int32_t dpow_is015(char *symbol)
+{
+    if ( strcmp("CHIPS",symbol) == 0 || strcmp("GAME",symbol) == 0 ) //strcmp("BTC",symbol) == 0 || 
+        return(1);
+    else return(0);
+}
+
 char *dpow_validateaddress(struct supernet_info *myinfo,struct iguana_info *coin,char *address)
 {
-    char buf[128],*retstr=0; 
+    char buf[128],*retstr=0; cJSON *retjson;
     if ( coin->FULLNODE < 0 )
     {
         sprintf(buf,"\"%s\"",address);
-        retstr = bitcoind_passthru(coin->symbol,coin->chain->serverport,coin->chain->userpass,"validateaddress",buf);
+        retstr = bitcoind_passthru(coin->symbol,coin->chain->serverport,coin->chain->userpass,coin->validateaddress,buf);
+//printf("%s %s %s %s %s\n",coin->symbol,coin->chain->serverport,coin->chain->userpass,coin->validateaddress,buf);
+        //printf("%s -> (%s)\n",buf,retstr!=0?retstr:"null");
+        if ( (retjson= cJSON_Parse(retstr)) != 0 )
+        {
+            if ( dpow_is015(coin->symbol) != 0 && jobj(retjson,"error") == 0 && jobj(retjson,"ismine") == 0 && strcmp(coin->validateaddress,"validateaddress") == 0 )
+            {
+                printf("autochange %s validateaddress -> getaddressinfo\n",coin->symbol);
+                strcpy(coin->validateaddress,"getaddressinfo");
+                free_json(retjson);
+                free(retjson);
+                return(bitcoind_passthru(coin->symbol,coin->chain->serverport,coin->chain->userpass,coin->validateaddress,buf));
+            }
+            free_json(retjson);
+        }
         usleep(10000);
     }
     else if ( coin->FULLNODE > 0 || coin->VALIDATENODE > 0 )
@@ -467,7 +594,7 @@ cJSON *dpow_listtransactions(struct supernet_info *myinfo,struct iguana_info *co
 
 char *dpow_signrawtransaction(struct supernet_info *myinfo,struct iguana_info *coin,char *rawtx,cJSON *vins)
 {
-    cJSON *array,*privkeys,*item; char *wifstr,*str,*paramstr,*retstr; uint8_t script[256]; int32_t i,n,len,hashtype; struct vin_info V; struct iguana_waddress *waddr; struct iguana_waccount *wacct;
+    cJSON *array,*privkeys,*item,*retjson; char *wifstr,*str,*paramstr,*retstr; uint8_t script[256]; int32_t i,n,len,hashtype; struct vin_info V; struct iguana_waddress *waddr; struct iguana_waccount *wacct;
     if ( coin->FULLNODE < 0 )
     {
         array = cJSON_CreateArray();
@@ -475,7 +602,17 @@ char *dpow_signrawtransaction(struct supernet_info *myinfo,struct iguana_info *c
         jaddi(array,jduplicate(vins));
         paramstr = jprint(array,1);
         //printf("signrawtransaction\n");
-        retstr = bitcoind_passthru(coin->symbol,coin->chain->serverport,coin->chain->userpass,"signrawtransaction",paramstr);
+        retstr = bitcoind_passthru(coin->symbol,coin->chain->serverport,coin->chain->userpass,coin->signtxstr,paramstr);
+        if ( strcmp(coin->signtxstr,"signrawtransaction") == 0 && (retjson= cJSON_Parse(retstr)) != 0 )
+        {
+            if ( jobj(retjson,"error") != 0 && dpow_is015(coin->symbol) != 0 )
+            {
+                strcpy(coin->signtxstr,"signrawtransactionwithwallet");
+                free(retstr);
+                retstr = bitcoind_passthru(coin->symbol,coin->chain->serverport,coin->chain->userpass,coin->signtxstr,paramstr);
+            }
+            free_json(retjson);
+        }
         //printf("%s signrawtransaction.(%s) params.(%s)\n",coin->symbol,retstr,paramstr);
         free(paramstr);
         usleep(10000);
@@ -514,7 +651,7 @@ char *dpow_signrawtransaction(struct supernet_info *myinfo,struct iguana_info *c
             }
         }
         retstr = bitcoinrpc_signrawtransaction(myinfo,coin,0,0,rawtx,vins,privkeys,"ALL");
-        printf("call sign.(%s) vins.(%s) privs.(%s) -> (%s)\n",rawtx,jprint(vins,0),jprint(privkeys,0),retstr);
+        //printf("call sign.(%s) vins.(%s) privs.(%s) -> (%s)\n",rawtx,jprint(vins,0),jprint(privkeys,0),retstr);
         free_json(privkeys);
         return(retstr);
     }
@@ -569,7 +706,7 @@ char *dpow_sendrawtransaction(struct supernet_info *myinfo,struct iguana_info *c
         jaddistr(array,signedtx);
         paramstr = jprint(array,1);
         retstr = bitcoind_passthru(coin->symbol,coin->chain->serverport,coin->chain->userpass,"sendrawtransaction",paramstr);
-        printf(">>>>>>>>>>> %s dpow_sendrawtransaction.(%s) -> (%s)\n",coin->symbol,paramstr,retstr);
+        printf(">>>>>>>>>>> %s dpow_sendrawtransaction (%s)\n",coin->symbol,retstr);
         free(paramstr);
         return(retstr);
     }
@@ -724,7 +861,7 @@ void init_alladdresses(struct supernet_info *myinfo,struct iguana_info *coin)
     }
 }
 
-int32_t dpow_getchaintip(struct supernet_info *myinfo,bits256 *blockhashp,uint32_t *blocktimep,bits256 *txs,uint32_t *numtxp,struct iguana_info *coin)
+int32_t dpow_getchaintip(struct supernet_info *myinfo,bits256 *merklerootp,bits256 *blockhashp,uint32_t *blocktimep,bits256 *txs,uint32_t *numtxp,struct iguana_info *coin)
 {
     int32_t n,i,height = -1,maxtx = *numtxp; bits256 besthash,oldhash; cJSON *array,*json;
     *numtxp = *blocktimep = 0;
@@ -736,6 +873,9 @@ int32_t dpow_getchaintip(struct supernet_info *myinfo,bits256 *blockhashp,uint32
         {
             if ( (height= juint(json,"height")) != 0 && (*blocktimep= juint(json,"time")) != 0 )
             {
+                *merklerootp = jbits256(json,"merkleroot");
+                //if ( bits256_nonz(*merklerootp) == 0 )
+                //    printf("block has no merkle? (%s)\n",jprint(json,0));
                 coin->lastbestheight = height;
                 if ( height > coin->longestchain )
                     coin->longestchain = height;
@@ -770,7 +910,7 @@ int32_t dpow_vini_ismine(struct supernet_info *myinfo,struct dpow_info *dp,cJSON
     return(-1);
 }
 
-int32_t dpow_haveutxo(struct supernet_info *myinfo,struct iguana_info *coin,bits256 *txidp,int32_t *voutp,char *coinaddr)
+int32_t dpow_haveutxo(struct supernet_info *myinfo,struct iguana_info *coin,bits256 *txidp,int32_t *voutp,char *coinaddr,char *srccoin)
 {
     int32_t vout,haveutxo = 0; uint32_t i,j,n,r; bits256 txid; cJSON *unspents,*item; uint64_t satoshis; char *str,*address; uint8_t script[35];
     memset(txidp,0,sizeof(*txidp));
@@ -820,7 +960,7 @@ int32_t dpow_haveutxo(struct supernet_info *myinfo,struct iguana_info *coin,bits
                 }
             }
             if ( haveutxo == 0 )
-                printf("no %s utxo: need to fund address.(%s) or wait for splitfund to confirm\n",coin->symbol,coinaddr);
+                printf("no (%s -> %s) utxo: need to fund address.(%s) or wait for splitfund to confirm\n",srccoin,coin->symbol,coinaddr);
         } //else printf("null utxo array size\n");
         free_json(unspents);
     } else printf("null return from dpow_listunspent\n");
@@ -1082,7 +1222,7 @@ void dpow_issuer_voutupdate(struct dpow_info *dp,char *symbol,int32_t isspecial,
         if ( script[offset] == 'W' && strcmp(dp->symbol,"KMD") != 0 )
         {
             // if valid add to pricefeed for issue
-            printf("WITHDRAW ht.%d txi.%d vout.%d %.8f opretlen.%d\n",height,txi,vout,dstr(fiatoshis),opretlen);
+            printf("notary vout.%s ht.%d txi.%d vout.%d %.8f opretlen.%d\n",symbol,height,txi,vout,dstr(fiatoshis),opretlen);
             if ( opretlen == 38 ) // any KMD tx
             {
                 offset++;
@@ -1243,7 +1383,9 @@ int32_t dpow_issuer_iteration(struct dpow_info *dp,struct iguana_info *coin,int3
     if ( height <= 0 )
         height = 1;
     *isrealtimep = 0;
-    if ( (retstr= dpow_issuemethod(coin->chain->userpass,(char *)"getinfo",0,port)) != 0 )
+    if ( coin->getinfostr[0] == 0 )
+        strcpy(coin->getinfostr,"getinfo");
+    if ( (retstr= dpow_issuemethod(coin->chain->userpass,(char *)coin->getinfostr,0,port)) != 0 )
     {
         if ( (infoobj= cJSON_Parse(retstr)) != 0 )
         {

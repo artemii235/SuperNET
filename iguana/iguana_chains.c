@@ -1,5 +1,5 @@
 /******************************************************************************
- * Copyright © 2014-2017 The SuperNET Developers.                             *
+ * Copyright © 2014-2018 The SuperNET Developers.                             *
  *                                                                            *
  * See the AUTHORS, DEVELOPER-AGREEMENT and LICENSE files at                  *
  * the top-level directory of this distribution for the individual copyright  *
@@ -322,7 +322,7 @@ void iguana_chainparms(struct supernet_info *myinfo,struct iguana_chain *chain,c
         if ( (port= extract_userpass(chain->serverport,chain->userpass,chain->symbol,chain->userhome,path,conf)) != 0 )
             chain->rpcport = port;
         //if ( conf[0] != 0 )
-            printf("PATH.(%s) CONF.(%s)\n",path!=0?path:"",conf);
+            printf("PATH.(%s) CONF.(%s) txfee %.8f\n",path!=0?path:"",conf,dstr(chain->txfee));
         if ( juint(argjson,"p2p") != 0 )
             chain->portp2p = juint(argjson,"p2p");
         else chain->portp2p = juint(argjson,"portp2p");
@@ -468,7 +468,7 @@ void iguana_chainparms(struct supernet_info *myinfo,struct iguana_chain *chain,c
             }
         }
         sprintf(chain->messagemagic,"%s Signed Message:\n",chain->name);
-        printf("COIN.%s serverport.(%s) RPCport.%u P2P.%u magic.%08x\n",chain->symbol,chain->serverport,chain->rpcport,chain->portp2p,*(uint32_t *)chain->netmagic);
+        printf("COIN.%s serverport.(%s) RPCport.%u P2P.%u magic.%08x txfee %.8f\n",chain->symbol,chain->serverport,chain->rpcport,chain->portp2p,*(uint32_t *)chain->netmagic,dstr(chain->txfee));
     }
 }
 

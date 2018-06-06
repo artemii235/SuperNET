@@ -1,0 +1,5 @@
+include_directories(${CMAKE_CURRENT_SOURCE_DIR})
+file(GLOB sources "src/secp256k1.c")
+file(GLOB headers "src/*.h")
+add_definitions(-DHAVE_CONFIG_H -DEXTERNAL_SECP256)
+add_library(libsecp256k1 ${sources} ${headers})

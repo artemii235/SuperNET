@@ -1,6 +1,6 @@
 
 /******************************************************************************
- * Copyright © 2014-2017 The SuperNET Developers.                             *
+ * Copyright © 2014-2018 The SuperNET Developers.                             *
  *                                                                            *
  * See the AUTHORS, DEVELOPER-AGREEMENT and LICENSE files at                  *
  * the top-level directory of this distribution for the individual copyright  *
@@ -19,6 +19,19 @@
 //
 
 char *portstrs[][3] = { { "BTC", "8332" }, { "KMD", "7771" } };
+
+int32_t LP_is_slowcoin(char *symbol)
+{
+    if ( strcmp(symbol,"BTC") == 0 )
+        return(2);
+    else if ( strcmp(symbol,"BCH") == 0 )
+        return(1);
+    else if ( strcmp(symbol,"BTG") == 0 )
+        return(1);
+    else if ( strcmp(symbol,"SBTC") == 0 )
+        return(1);
+    else return(0);
+}
 
 uint16_t LP_rpcport(char *symbol)
 {
@@ -214,7 +227,7 @@ uint16_t LP_userpass(char *userpass,char *symbol,char *assetname,char *confroot,
 
 cJSON *LP_coinjson(struct iguana_info *coin,int32_t showwif)
 {
-    struct electrum_info *ep; bits256 zero; int32_t notarized; uint64_t balance; char wifstr[128],ipaddr[64]; uint8_t tmptype; bits256 checkkey; cJSON *item = cJSON_CreateObject();
+    struct electrum_info *ep; bits256 zero; int32_t notarized; uint64_t balance; char wifstr[128],ipaddr[72]; uint8_t tmptype; bits256 checkkey; cJSON *item = cJSON_CreateObject();
     jaddstr(item,"coin",coin->symbol);
     if ( showwif != 0 )
     {
@@ -236,6 +249,14 @@ cJSON *LP_coinjson(struct iguana_info *coin,int32_t showwif)
         jaddnum(item,"balance",dstr(balance));
         jaddnum(item,"KMDvalue",dstr(LP_KMDvalue(coin,balance)));
     }
+#ifndef NOTETOMIC
+    else if (coin->etomic[0] != 0) {
+        //balance = LP_etomic_get_balance(coin, coin->smartaddr);
+        jaddnum(item,"height",-1);
+        //jaddnum(item,"balance",dstr(balance));
+        jaddnum(item,"balance",0);
+    }
+#endif
     else
     {
         jaddnum(item,"height",-1);
@@ -275,8 +296,8 @@ cJSON *LP_coinjson(struct iguana_info *coin,int32_t showwif)
 
 struct iguana_info *LP_conflicts_find(struct iguana_info *refcoin)
 {
-    struct iguana_info *coin=0,*tmp;
-    if ( refcoin != 0 )
+    struct iguana_info *coin=0,*tmp; int32_t n;
+    if ( refcoin != 0 && (n= (int32_t)strlen(refcoin->serverport)) > 3 && strcmp(":80",&refcoin->serverport[n-3]) != 0 )
     {
         HASH_ITER(hh,LP_coins,coin,tmp)
         {
@@ -309,7 +330,7 @@ char *LP_getcoin(char *symbol)
         HASH_ITER(hh,LP_coins,coin,tmp)
         {
             if ( strcmp(symbol,coin->symbol) == 0 )
-                item = LP_coinjson(coin,0);
+                item = LP_coinjson(coin,LP_showwif);
             if ( coin->inactive == 0 )
                 numenabled++;
             else numdisabled++;
@@ -342,9 +363,13 @@ struct iguana_info *LP_coinadd(struct iguana_info *cdata)
     *coin = *cdata;
     portable_mutex_init(&coin->txmutex);
     portable_mutex_init(&coin->addrmutex);
+    portable_mutex_init(&coin->addressutxo_mutex);
     portable_mutex_lock(&LP_coinmutex);
     HASH_ADD_KEYPTR(hh,LP_coins,coin->symbol,strlen(coin->symbol),coin);
     portable_mutex_unlock(&LP_coinmutex);
+    strcpy(coin->validateaddress,"validateaddress");
+    strcpy(coin->getinfostr,"getinfo");
+    strcpy(coin->estimatefeestr,"estimatefee");
     return(coin);
 }
 
@@ -375,7 +400,8 @@ uint16_t LP_coininit(struct iguana_info *coin,char *symbol,char *name,char *asse
     if ( assetname != 0 && strcmp(name,assetname) == 0 )
     {
         //printf("%s is assetchain\n",symbol);
-        coin->isassetchain = 1;
+        if ( strcmp(name,"BEER") != 0 && strcmp("PIZZA",name) != 0 )
+            coin->isassetchain = 1;
     }
     if ( strcmp(symbol,"KMD") == 0 || (assetname != 0 && assetname[0] != 0) )
         name2 = 0;
@@ -402,6 +428,11 @@ uint16_t LP_coininit(struct iguana_info *coin,char *symbol,char *name,char *asse
     {
         coin->zcash = LP_IS_BITCOINGOLD;
         printf("set coin.%s <- LP_IS_BITCOINGOLD %d\n",symbol,coin->zcash);
+    }
+    else if ( strcmp(symbol,"CMM") == 0 )
+    {
+        coin->zcash = LP_IS_BITCOINCASH;
+        //printf("set coin.%s <- LP_IS_BITCOINCASH %d\n",symbol,coin->zcash);
     }
     return(port);
 }

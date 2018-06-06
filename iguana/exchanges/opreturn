@@ -1,0 +1,6 @@
+#!/bin/bash
+source userpass
+curl -X POST --url "http://127.0.0.1:7783" --data "{\"userpass\":\"$userpass\",\"method\":\"withdraw\",\"coin\":\"COQUI\",\"passphrase\":\"$2\", \"opreturn\":\"$(echo -n "$1" | od -A n -t x1 | perl -pe 's/\W+//g')\"}"
+#curl -X POST --url "http://127.0.0.1:7783" --data "{\"userpass\":\"$userpass\",\"method\":\"withdraw\",\"coin\":\"COQUI\",\"outputs\":[{\"RGCVXhUxepCxh77thy7XgMrQ5XU9u7SWSR\":0.01}], \"opreturn\":\"$(echo -n "$1" | od -A n -t x1 | perl -pe 's/\W+//g')\"}"
+#curl --url "http://127.0.0.1:7783" --data "{\"userpass\":\"$userpass\",\"method\":\"withdraw\",\"coin\":\"HUSH\",\"outputs\":[{\"t1JTXxWyBrxdWNTaNa5gYPPfpJkhqESvyov\":$1}], \"opreturn\":\"deadbeef\"}"
+

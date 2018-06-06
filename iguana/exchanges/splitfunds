@@ -1,0 +1,6 @@
+#!/bin/bash
+source userpass
+export address=RGPido1EWcPWngDfkAcn4M4HXYt8avR4vs
+export script=2103f82c8c363d23076420a39904f9616d59c26a3d8dc7c51f67d8d3a94335431970ac
+curl --url "http://127.0.0.1:7783" --data "{\"broadcast\":1,\"userpass\":\"$userpass\",\"method\":\"withdraw\",\"coin\":\"$1\",\"outputs\":[{\"$address\":0.0001,\"script\":\"$script\"}, {\"$address\":0.0001,\"script\":\"$script\"}, {\"$address\":0.0001,\"script\":\"$script\"}, {\"$address\":0.0001,\"script\":\"$script\"}, {\"$address\":0.0001,\"script\":\"$script\"}, {\"$address\":0.0001,\"script\":\"$script\"}, {\"$address\":0.0001,\"script\":\"$script\"}, {\"$address\":0.0001,\"script\":\"$script\"}, {\"$address\":0.0001,\"script\":\"$script\"}, {\"$address\":0.0001,\"script\":\"$script\"}, {\"$address\":0.0001}]}"
+

@@ -1,0 +1,6 @@
+version: 1.0.{build}
+branches:
+  only:
+  - etomic
+build_script:
+- cmd: marketmaker_build_etomic.cmd

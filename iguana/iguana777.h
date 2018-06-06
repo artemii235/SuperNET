@@ -1,5 +1,5 @@
 /******************************************************************************
- * Copyright © 2014-2017 The SuperNET Developers.                             *
+ * Copyright © 2014-2018 The SuperNET Developers.                             *
  *                                                                            *
  * See the AUTHORS, DEVELOPER-AGREEMENT and LICENSE files at                  *
  * the top-level directory of this distribution for the individual copyright  *
@@ -159,7 +159,7 @@ struct supernet_info
     struct exchange_info *tradingexchanges[SUPERNET_MAXEXCHANGES]; int32_t numexchanges;
     struct iguana_waccount *wallet;
     struct iguana_info *allcoins; int32_t allcoins_being_added,allcoins_numvirts;
-    portable_mutex_t bu_mutex,allcoins_mutex,gecko_mutex,basilisk_mutex,DEX_mutex,DEX_reqmutex,DEX_swapmutex,smart_mutex;
+    portable_mutex_t bu_mutex,allcoins_mutex,gecko_mutex,basilisk_mutex,DEX_mutex,DEX_reqmutex,DEX_swapmutex,smart_mutex,MoM_mutex;
     struct queueitem *DEX_quotes; cJSON *Cunspents,*Cspends;
     struct basilisk_swap *swaps[256]; int32_t numswaps;
     struct basilisk_message *messagetable; portable_mutex_t messagemutex; queue_t msgQ,p2pQ;
@@ -167,7 +167,7 @@ struct supernet_info
     uint8_t *pingbuf;
     struct basilisk_request DEXaccept;
     FILE *dexfp;
-    struct dpow_info DPOWS[128]; int32_t numdpows,dpowsock,dexsock,pubsock,repsock,subsock,reqsock;
+    struct dpow_info *DPOWS[8192]; int32_t numdpows,dpowsock,dexsock,pubsock,repsock,subsock,reqsock;
     struct delayedPoW_info dPoW;
     struct basilisk_spend *spends; int32_t numspends;
     char bindaddr[64];
@@ -180,7 +180,7 @@ struct supernet_info
 #ifdef NOTARY_TESTMODE
     char dexseed_ipaddrs[1][64];
 #else
-    char dexseed_ipaddrs[4][64];
+    char dexseed_ipaddrs[8][64];
 #endif
     uint32_t dexipbits[128]; int32_t numdexipbits; portable_mutex_t dexmutex;
     // compatibility
@@ -193,6 +193,7 @@ struct supernet_info
     FILE *swapsfp;
     double DEXratio;
     struct smartaddress smartaddrs[64]; int32_t numsmartaddrs,cancelrefresh,runsilent,DEXtrades;
+    int32_t nosplit;
 };
 
 struct basilisk_swapmessage

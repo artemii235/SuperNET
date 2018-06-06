@@ -2,6 +2,7 @@
 # define _SECP256K1_RECOVERY_
 
 # include "secp256k1.h"
+# include "stdint.h"
 
 # ifdef __cplusplus
 extern "C" {
