@@ -443,7 +443,7 @@ void verus_utxos(struct iguana_info *coin,char *coinaddr)
 
 char *verusblocks()
 {
-    bits256 hash,txid; uint8_t script[44]; double value,avestakedsize,stakedval,RTu3sum,powsum,supply,possum,histo[1280],myhisto[1280]; int32_t num2,num4,num8,num16,num32,num64,num17500,numpow,numpos,num,locked,height,i,m,n,z,numstaked,posflag,npos,npow; char hashstr[64],firstaddr[64],stakingaddr[64],*addr0,*lastaddr,*hexstr; cJSON *blockjson,*txobj,*vouts,*vout,*vout1,*sobj,*addresses,*txs;
+    bits256 hash,txid; uint8_t script[44]; double value,avestakedsize,stakedval,RTu3sum,powsum,supply,possum,histo[1280],myhisto[1280]; int32_t num10,num17,num20,num16,num23000,numpow,numpos,num,locked,height,i,m,n,z,numstaked,posflag,npos,npow; char hashstr[64],firstaddr[64],stakingaddr[64],*addr0,*lastaddr,*hexstr; cJSON *blockjson,*txobj,*vouts,*vout,*vout1,*sobj,*addresses,*txs;
     struct iguana_info *coin = LP_coinfind("VRSC");
     if ( coin == 0 )
         return(clonestr("{\"error\":\"VRSC not active\"}"));
@@ -454,7 +454,7 @@ char *verusblocks()
     hash = LP_getbestblockhash(coin);
     memset(histo,0,sizeof(histo));
     memset(myhisto,0,sizeof(myhisto));
-    num17500 = num16 = num32 = num64 = num2 = num4 = num8 = numstaked = 0;
+    num23000 = num16 = num17 = num10 = num20 = numstaked = 0;
     avestakedsize = possum = powsum = supply = RTu3sum = 0.;
     numpow = numpos = num = npos = npow = 0;
     if ( bits256_nonz(hash) != 0 )
@@ -546,22 +546,18 @@ char *verusblocks()
                         possum += value, npos++;
                         if ( num < 1500 )
                             printf("ht.%-5d lock.%-7d PoS cb.(%s) stake.(%s) %.8f %.8f\n",height,locked,addr0,stakingaddr,value,stakedval);
-                        if ( height > 17500 )
+                        if ( height > 23000 )
                         {
                             char strbuf[64];
                             sprintf(strbuf,"%.0f",stakedval);
-                            if ( strcmp(strbuf,"64") == 0 )
-                                num64++;
-                            else if ( strcmp(strbuf,"32") == 0 )
-                                num32++;
+                            if ( strcmp(strbuf,"20") == 0 )
+                                num20++;
+                            else if ( strcmp(strbuf,"17") == 0 )
+                                num17++;
                             else if ( strcmp(strbuf,"16") == 0 )
                                 num16++;
-                            else if ( strcmp(strbuf,"8") == 0 )
-                                num8++;
-                            else if ( strcmp(strbuf,"4") == 0 )
-                                num4++;
-                            else if ( strcmp(strbuf,"2") == 0 )
-                                num2++;
+                            else if ( strcmp(strbuf,"10") == 0 )
+                                num10++;
                             else printf("got strbuf.(%s)\n",strbuf);
                         }
                     }
@@ -584,10 +580,10 @@ char *verusblocks()
             free_json(blockjson);
             if ( height == 5040 )
                 break;
-            else if ( height == 17500 )
+            else if ( height == 23000 )
             {
-                num17500 = num;
-                printf("num2.%d num4.%d num8.%d num16.%d / num17500.%d -> %.2f%%  %.2f%%  %.2f%% %.2f%% [%.3f %.3f %.3f %.3f] %.3f ave %.8f\n",num2,num4,num8,num16,num17500,100.*(double)num2/num17500,100.*(double)num4/num17500,100.*(double)num8/num17500,100.*(double)num16/num17500,(100.*(double)num2/num17500)/2.75,(100.*(double)num4/num17500)/2.75,(100.*(double)num8/num17500)/4.5,(100.*(double)num16/num17500)/14,(100.*(double)(num2+num4+num8+num16)/num17500)/24,avestakedsize/numstaked);
+                num23000 = num;
+                printf("num10.%d num16.%d num17.%d num20.%d / num23000.%d -> %.2f%%  %.2f%%  %.2f%% %.2f%% [%.3f %.3f %.3f %.3f] %.3f ave %.8f\n",num10,num16,num17,num20,num23000,100.*(double)num10/num23000,100.*(double)num16/num23000,100.*(double)num17/num23000,100.*(double)num20/num23000,(100.*(double)num10/num23000)/2.87,(100.*(double)num16/num23000)/10.5,(100.*(double)num17/num23000)/4.88,(100.*(double)num20/num23000)/5.74,(100.*(double)(num10+num16+num17+num20)/num23000)/24,avestakedsize/numstaked);
             }
             else if ( (num % 1000) == 0 || (num < 1000 && (num % 100) == 0) )
             {
@@ -609,7 +605,7 @@ char *verusblocks()
             printf("mytimelocked\n");
         }
         printf("num.%d PoW %.2f%% %.8f %d v %d PoS %.2f%% %.8f -> %.8f supply %.8f PoW %.1f%% PoS %.1f%% both %.1f%% RTu3sum %.8f %.1f%%\n",num,100.*(double)numpow/num,powsum,npow,npos,100.*(double)numpos/num,possum,powsum+possum,supply,100.*powsum/supply,100.*possum/supply,100.*(powsum+possum)/supply,RTu3sum,100.*RTu3sum/supply);
-        printf("num2.%d num4.%d num8.%d num16.%d / num17500.%d -> %.2f%%  %.2f%%  %.2f%% %.2f%% [%.3f %.3f %.3f %.3f] %.3f ave %.8f\n",num2,num4,num8,num16,num17500,100.*(double)num2/num17500,100.*(double)num4/num17500,100.*(double)num8/num17500,100.*(double)num16/num17500,(100.*(double)num2/num17500)/2.75,(100.*(double)num4/num17500)/2.75,(100.*(double)num8/num17500)/4.5,(100.*(double)num16/num17500)/14,(100.*(double)(num2+num4+num8+num16)/num17500)/24,avestakedsize/numstaked);
+        printf("num10.%d num16.%d num17.%d num20.%d / num23000.%d -> %.2f%%  %.2f%%  %.2f%% %.2f%% [%.3f %.3f %.3f %.3f] %.3f ave %.8f\n",num10,num16,num17,num20,num23000,100.*(double)num10/num23000,100.*(double)num16/num23000,100.*(double)num17/num23000,100.*(double)num20/num23000,(100.*(double)num10/num23000)/2.87,(100.*(double)num16/num23000)/10.5,(100.*(double)num17/num23000)/4.88,(100.*(double)num20/num23000)/5.74,(100.*(double)(num10+num16+num17+num20)/num23000)/24,avestakedsize/numstaked);
     }
     return(clonestr("{\"result\":\"success\"}"));
 }
