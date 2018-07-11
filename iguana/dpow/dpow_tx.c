@@ -329,7 +329,7 @@ bits256 dpow_notarytx(struct supernet_info *myinfo,char *signedtx,int32_t *numsi
                     memcpy(&serialized[len],sig,siglen);
                     len += siglen;
                     numsigs++;
-                } else printf("%s -> %s src_or_dest.%d Missing sig from k.%d\n",bp->srccoin->symbol,bp->destcoin->symbol,src_or_dest,k);
+                } //else printf("%s -> %s src_or_dest.%d Missing sig from k.%d\n",bp->srccoin->symbol,bp->destcoin->symbol,src_or_dest,k);
             } else serialized[len++] = 0;
             len += iguana_rwnum(1,&serialized[len],sizeof(sequenceid),&sequenceid);
             //printf("height.%d mod.%d VINI.%d <- i.%d j.%d\n",height,height % numnotaries,m,i,j);
