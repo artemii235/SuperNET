@@ -1308,8 +1308,8 @@ int32_t dpow_addnotary(struct supernet_info *myinfo,struct dpow_info *dp,char *i
     char str[512]; uint32_t ipbits,*ptr; int32_t i,iter,n,retval = -1;
     if ( myinfo->IAMNOTARY == 0 )
         return(-1);
-    if ( strcmp(ipaddr,"88.99.251.101") == 0 || strcmp(ipaddr,"82.202.193.100") == 0 )
-        return(-1);
+    //if ( strcmp(ipaddr,"88.99.251.101") == 0 || strcmp(ipaddr,"82.202.193.100") == 0 )
+    //    return(-1);
     portable_mutex_lock(&myinfo->notarymutex);
     if ( myinfo->dpowsock >= 0 )//&& myinfo->dexsock >= 0 )
     {
