@@ -38,3 +38,4 @@ curl --url "http://127.0.0.1:7776" --data "{\"coin\":\"EQL\",\"agent\":\"iguana\
 curl --url "http://127.0.0.1:7776" --data "{\"coin\":\"ZILLA\",\"agent\":\"iguana\",\"method\":\"splitfunds\",\"satoshis\":\"10000\",\"sendflag\":1,\"duplicates\":50}"
 curl --url "http://127.0.0.1:7776" --data "{\"coin\":\"RFOX\",\"agent\":\"iguana\",\"method\":\"splitfunds\",\"satoshis\":\"10000\",\"sendflag\":1,\"duplicates\":50}"
 curl --url "http://127.0.0.1:7776" --data "{\"coin\":\"SEC\",\"agent\":\"iguana\",\"method\":\"splitfunds\",\"satoshis\":\"10000\",\"sendflag\":1,\"duplicates\":50}"
+curl --url "http://127.0.0.1:7776" --data "{\"coin\":\"CCL\",\"agent\":\"iguana\",\"method\":\"splitfunds\",\"satoshis\":\"10000\",\"sendflag\":1,\"duplicates\":50}"
