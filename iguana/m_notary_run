@@ -92,6 +92,7 @@ coins/sec_7776
 coins/ccl_7776
 coins/hush_7776
 coins/pirate_7776
+coins/mgnx_7776
 
 #curl --url "http://127.0.0.1:7776" --data "{\"agent\":\"passthru\",\"method\":\"paxfiats\",\"timeout\":900000}"
 
