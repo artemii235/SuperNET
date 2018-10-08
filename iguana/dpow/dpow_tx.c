@@ -615,7 +615,7 @@ void dpow_sigscheck(struct supernet_info *myinfo,struct dpow_info *dp,struct dpo
                 else
                 {
                     bp->state = 0xffffffff;
-                    printf("dpow_sigscheck: mismatched txid.%s vs %s\n",bits256_str(str,txid),retstr);
+                    printf("dpow_sigscheck.(%s): mismatched txid.%s vs %s\n",bp->signedtx,bits256_str(str,txid),retstr);
                 }
                 free(retstr);
                 retstr = 0;

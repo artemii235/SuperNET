@@ -135,6 +135,8 @@ struct pax_transaction
     char symbol[16],coinaddr[64]; uint8_t rmd160[20],shortflag;
 };
 
+#define DPOW_MAXIPBITS 512
+
 struct dpow_info
 {
     char symbol[16],dest[16]; uint8_t minerkey33[33],minerid; uint64_t lastrecvmask;
@@ -146,7 +148,7 @@ struct dpow_info
     struct pax_transaction *PAX;
     uint32_t fullCCid;
     portable_mutex_t paxmutex,dexmutex;
-    uint32_t ipbits[128],numipbits;
+    uint32_t ipbits[DPOW_MAXIPBITS],numipbits;
     struct dpow_block **blocks,*currentbp;
 };
 

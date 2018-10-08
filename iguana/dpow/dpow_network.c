@@ -481,7 +481,7 @@ char *_dex_reqsend(struct supernet_info *myinfo,char *handler,uint8_t *key,int32
                 for (i=0; i<n; i++)
                     if ( ipbits == myinfo->dexipbits[i] )
                         break;
-                if ( i == n && n < 64 )
+                if ( i == n && n < DPOW_MAXIPBITS )
                 {
                     myinfo->dexipbits[n++] = ipbits;
                     qsort(myinfo->dexipbits,n,sizeof(uint32_t),_increasing_ipbits);
@@ -1292,7 +1292,7 @@ struct dpow_nanomsghdr
 {
     bits256 srchash,desthash;
     struct dpow_nanoutxo ratify,notarize;
-    uint32_t channel,height,size,datalen,crc32,myipbits,numipbits,ipbits[128];
+    uint32_t channel,height,size,datalen,crc32,myipbits,numipbits,ipbits[DPOW_MAXIPBITS];
     char symbol[16];
     uint8_t senderind,version0,version1,packet[];
 } PACKED;
@@ -1363,15 +1363,15 @@ int32_t dpow_addnotary(struct supernet_info *myinfo,struct dpow_info *dp,char *i
 {
     char str[512]; uint32_t ipbits,*ptr; int32_t i,iter,n,retval = -1;
 
-    #ifdef CHECKNODEIP
+#ifdef CHECKNODEIP
     // -B- [+] Decker ---
-    static uint32_t list_ipbits[128];
-    static int dead_or_alive[128]; // 0 - not set, -1 - dead, 1 - alive
+    static uint32_t list_ipbits[DPOW_MAXIPBITS];
+    static int dead_or_alive[DPOW_MAXIPBITS]; // 0 - not set, -1 - dead, 1 - alive
     static int list_ipsize;
     int in_list_flag;
     uint32_t ip_pattern;
     // -E- [+] Decker ---
-    #endif
+#endif
 
     if ( myinfo->IAMNOTARY == 0 )
         return(-1);
@@ -1382,8 +1382,8 @@ int32_t dpow_addnotary(struct supernet_info *myinfo,struct dpow_info *dp,char *i
     // -B- [+] Decker ---
     // every new ip in BUS topology network goes to dead or white list forever, until iguana restart
     ip_pattern = (uint32_t)calc_ipbits(ipaddr);
-    if ((list_ipsize == 0) || (list_ipsize > 127)) {
-            for (int i_list = 0; i_list < 128; i_list++) { list_ipbits[i_list] = 0; dead_or_alive[i_list] = 0; }
+    if ((list_ipsize == 0) || (list_ipsize > DPOW_MAXIPBITS-1)) {
+            for (int i_list = 0; i_list < DPOW_MAXIPBITS; i_list++) { list_ipbits[i_list] = 0; dead_or_alive[i_list] = 0; }
             list_ipsize = 0;
             in_list_flag = -1;
     } else {
@@ -1426,7 +1426,7 @@ int32_t dpow_addnotary(struct supernet_info *myinfo,struct dpow_info *dp,char *i
             for (i=0; i<n; i++)
                 if ( ipbits == ptr[i] )
                     break;
-            if ( i == n && n < 64 )
+            if ( i == n && n < DPOW_MAXIPBITS )
             {
                 ptr[n] = ipbits;
                 if ( iter == 0 && strcmp(ipaddr,myinfo->ipaddr) != 0 )

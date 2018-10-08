@@ -265,7 +265,7 @@ void dpow_statemachinestart(void *ptr)
     void **ptrs = ptr;
     struct supernet_info *myinfo; struct dpow_info *dp; struct dpow_checkpoint checkpoint;
     int32_t i,j,ht,extralen,destprevvout0,srcprevvout0,src_or_dest,numratified=0,kmdheight,myind = -1; uint8_t extras[10000],pubkeys[64][33]; cJSON *ratified=0,*item; struct iguana_info *src,*dest; char *jsonstr,*handle,*hexstr,str[65],str2[65],srcaddr[64],destaddr[64]; bits256 zero,MoM,merkleroot,srchash,destprevtxid0,srcprevtxid0; struct dpow_block *bp; struct dpow_entry *ep = 0; uint32_t MoMdepth,duration,minsigs,starttime,srctime;
-    char *destlockunspent,*srclockunspent,*destunlockunspent,*srcunlockunspent;
+    char *destlockunspent=0,*srclockunspent=0,*destunlockunspent=0,*srcunlockunspent=0;
     memset(&zero,0,sizeof(zero));
     MoM = zero;
     srcprevtxid0 = destprevtxid0 = zero;
@@ -519,7 +519,7 @@ void dpow_statemachinestart(void *ptr)
       free(destlockunspent);
     }
 
-    if ( strcmp("BTC",dest->symbol) == 0 )
+    if ( 0 && strcmp("BTC",dest->symbol) == 0 )
     {
       // lock the src coin selected utxo if the source coin is KMD.
       srclockunspent = dpow_lockunspent(myinfo,bp->srccoin,srcaddr,bits256_str(str2,ep->src.prev_hash),ep->src.prev_vout);
@@ -634,7 +634,7 @@ void dpow_statemachinestart(void *ptr)
     }
 
     // unlock the src selected utxo on KMD, as those are the only ones we LOCK, and CHIPS does not like the lockunspent call.
-    if ( strcmp("BTC",dest->symbol) == 0 )
+    if ( 0 && strcmp("BTC",dest->symbol) == 0 )
     {
       srcunlockunspent = dpow_unlockunspent(myinfo,bp->srccoin,srcaddr,bits256_str(str2,ep->src.prev_hash),ep->src.prev_vout);
       if (strncmp(srcunlockunspent,"true", 4) == 0 )
