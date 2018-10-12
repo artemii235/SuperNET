@@ -21,6 +21,7 @@ curl --url "http://127.0.0.1:7776" --data "{\"coin\":\"WLC\",\"agent\":\"iguana\
 curl --url "http://127.0.0.1:7776" --data "{\"coin\":\"KV\",\"agent\":\"iguana\",\"method\":\"splitfunds\",\"satoshis\":\"10000\",\"sendflag\":1,\"duplicates\":50}"
 curl --url "http://127.0.0.1:7776" --data "{\"coin\":\"CEAL\",\"agent\":\"iguana\",\"method\":\"splitfunds\",\"satoshis\":\"10000\",\"sendflag\":1,\"duplicates\":50}"
 curl --url "http://127.0.0.1:7776" --data "{\"coin\":\"MESH\",\"agent\":\"iguana\",\"method\":\"splitfunds\",\"satoshis\":\"10000\",\"sendflag\":1,\"duplicates\":50}"
+curl --url "http://127.0.0.1:7776" --data "{\"coin\":\"CHIPS\",\"agent\":\"iguana\",\"method\":\"splitfunds\",\"satoshis\":\"10000\",\"sendflag\":1,\"duplicates\":50}"
 curl --url "http://127.0.0.1:7776" --data "{\"coin\":\"MNZ\",\"agent\":\"iguana\",\"method\":\"splitfunds\",\"satoshis\":\"10000\",\"sendflag\":1,\"duplicates\":50}"
 curl --url "http://127.0.0.1:7776" --data "{\"coin\":\"AXO\",\"agent\":\"iguana\",\"method\":\"splitfunds\",\"satoshis\":\"10000\",\"sendflag\":1,\"duplicates\":50}"
 curl --url "http://127.0.0.1:7776" --data "{\"coin\":\"BTCH\",\"agent\":\"iguana\",\"method\":\"splitfunds\",\"satoshis\":\"10000\",\"sendflag\":1,\"duplicates\":50}"
@@ -39,3 +40,10 @@ curl --url "http://127.0.0.1:7776" --data "{\"coin\":\"ZILLA\",\"agent\":\"iguan
 curl --url "http://127.0.0.1:7776" --data "{\"coin\":\"RFOX\",\"agent\":\"iguana\",\"method\":\"splitfunds\",\"satoshis\":\"10000\",\"sendflag\":1,\"duplicates\":50}"
 curl --url "http://127.0.0.1:7776" --data "{\"coin\":\"SEC\",\"agent\":\"iguana\",\"method\":\"splitfunds\",\"satoshis\":\"10000\",\"sendflag\":1,\"duplicates\":50}"
 curl --url "http://127.0.0.1:7776" --data "{\"coin\":\"CCL\",\"agent\":\"iguana\",\"method\":\"splitfunds\",\"satoshis\":\"10000\",\"sendflag\":1,\"duplicates\":50}"
+curl --url "http://127.0.0.1:7776" --data "{\"coin\":\"HUSH\",\"agent\":\"iguana\",\"method\":\"splitfunds\",\"satoshis\":\"10000\",\"sendflag\":1,\"duplicates\":50}"
+curl --url "http://127.0.0.1:7776" --data "{\"coin\":\"PIRATE\",\"agent\":\"iguana\",\"method\":\"splitfunds\",\"satoshis\":\"10000\",\"sendflag\":1,\"duplicates\":50}"
+curl --url "http://127.0.0.1:7776" --data "{\"coin\":\"MGNX\",\"agent\":\"iguana\",\"method\":\"splitfunds\",\"satoshis\":\"10000\",\"sendflag\":1,\"duplicates\":50}"
+curl --url "http://127.0.0.1:7776" --data "{\"coin\":\"PGT\",\"agent\":\"iguana\",\"method\":\"splitfunds\",\"satoshis\":\"10000\",\"sendflag\":1,\"duplicates\":50}"
+curl --url "http://127.0.0.1:7776" --data "{\"coin\":\"GAME\",\"agent\":\"iguana\",\"method\":\"splitfunds\",\"satoshis\":\"100000\",\"sendflag\":1,\"duplicates\":50}"
+curl --url "http://127.0.0.1:7776" --data "{\"coin\":\"EMC2\",\"agent\":\"iguana\",\"method\":\"splitfunds\",\"satoshis\":\"100000\",\"sendflag\":1,\"duplicates\":50}"
+
