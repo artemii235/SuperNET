@@ -29,10 +29,12 @@ steps:
   # Copy files or build artifacts to a remote machine over SSH
   # https://docs.microsoft.com/en-us/azure/devops/pipelines/tasks/deploy/copy-files-over-ssh?view=vsts
   - task: CopyFilesOverSSH@0
+    env:
+      SHORT_COMMIT_HASH: $(COMMIT_HASH)
     inputs:
       sshEndpoint: nightly_build_server
       sourceFolder: 'target/debug' # Optional
-      contents: "mm2-$(COMMIT_HASH)-$(Agent.OS)"
+      contents: "mm2-$(SHORT_COMMIT_HASH)-$(Agent.OS)"
       targetFolder: "uploads/$(Build.SourceBranchName)" # Optional
       #cleanTargetFolder: false # Optional
       #overwrite: true # Optional
