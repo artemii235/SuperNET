@@ -4,7 +4,7 @@
 # https://aka.ms/yaml
 
 variables:
-  COMMIT_HASH: git rev-parse --short HEAD
+  COMMIT_HASH: $(git rev-parse --short HEAD)
 
 trigger:
   - azure-pipelines
