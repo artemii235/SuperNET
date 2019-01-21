@@ -13,5 +13,5 @@ steps:
       echo Add other tasks to build, test, and deploy your project.
       echo See https://aka.ms/yaml
     displayName: 'Run a multi-line script'
-  - script: cargo build
+  - script: cargo build -vv
     displayName: 'Build MM2'
