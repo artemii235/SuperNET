@@ -3,9 +3,6 @@
 # Add steps that build, run tests, deploy, and more:
 # https://aka.ms/yaml
 
-variables:
-  BUILD_SOURCE_VERSION: $(git rev-parse --short HEAD)
-
 trigger:
   - azure-pipelines
 
@@ -19,7 +16,6 @@ steps:
       cargo build -vv
       echo $(Build.SourceVersion)
       mv target/debug/mm2 target/debug/mm2-$(Build.SourceVersion)-$(Agent.OS)
-      ls target/debug
     displayName: 'Build MM2'
   - script: |
       export PATH=$PATH:/root/.cargo/bin
@@ -29,8 +25,6 @@ steps:
   # Copy files or build artifacts to a remote machine over SSH
   # https://docs.microsoft.com/en-us/azure/devops/pipelines/tasks/deploy/copy-files-over-ssh?view=vsts
   - task: CopyFilesOverSSH@0
-    env:
-      SHORT_COMMIT_HASH: $(git rev-parse --short HEAD)
     inputs:
       sshEndpoint: nightly_build_server
       sourceFolder: 'target/debug' # Optional
