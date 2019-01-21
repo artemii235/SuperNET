@@ -19,6 +19,7 @@ steps:
       cargo build -vv
       echo $(COMMIT_HASH)
       mv target/debug/mm2 target/debug/mm2-$(COMMIT_HASH)-$(Agent.OS)
+      ls target/debug
     displayName: 'Build MM2'
   - script: |
       export PATH=$PATH:/root/.cargo/bin
