@@ -3,6 +3,9 @@
 # Add steps that build, run tests, deploy, and more:
 # https://aka.ms/yaml
 
+- checkout: self  # self represents the repo where the initial Pipelines YAML file was found
+  clean: false
+
 trigger:
   - azure-pipelines
 
