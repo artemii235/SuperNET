@@ -31,7 +31,7 @@ steps:
       sshEndpoint: nightly_build_server
       sourceFolder: 'target/debug' # Optional
       contents: 'mm2'
-      targetFolder: 'uploads/'$(Build.SourceBranchName) # Optional
+      targetFolder: "uploads/$(Build.SourceBranchName)" # Optional
       #cleanTargetFolder: false # Optional
       #overwrite: true # Optional
       #failOnEmptySource: false # Optional
