@@ -21,7 +21,7 @@ steps:
     displayName: 'Build MM2'
   - script: |
       export PATH=$PATH:/root/.cargo/bin
-      cargo test -- --nocapture
+  #   cargo test -- --nocapture
     displayName: 'Test MM2'
   # Copy Files Over SSH
   # Copy files or build artifacts to a remote machine over SSH
@@ -31,8 +31,9 @@ steps:
       sshEndpoint: nightly_build_server
       sourceFolder: 'target/debug' # Optional
       contents: 'mm2'
-      targetFolder: 'uploads' # Optional
+      targetFolder: 'uploads/'$(Build.SourceBranchName) # Optional
       #cleanTargetFolder: false # Optional
       #overwrite: true # Optional
       #failOnEmptySource: false # Optional
       #flattenFolders: false # Optional
+    displayName: 'Upload nightly'
