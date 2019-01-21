@@ -15,7 +15,7 @@ steps:
       export PATH=$PATH:/root/.cargo/bin
       cargo build -vv
       echo $(Build.SourceVersion)
-      mv target/debug/mm2 target/debug/mm2-$(Build.SourceVersion)-$(Agent.OS)
+      mv -f target/debug/mm2 target/debug/mm2-$(Build.SourceVersion)-$(Agent.OS)
     displayName: 'Build MM2'
   - script: |
       export PATH=$PATH:/root/.cargo/bin
