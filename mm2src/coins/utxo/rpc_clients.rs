@@ -333,8 +333,8 @@ struct ElectrumTxHistoryItem {
 
 #[derive(Debug, Deserialize)]
 struct ElectrumBalance {
-    confirmed: u64,
-    unconfirmed: u64,
+    confirmed: i64,
+    unconfirmed: i64,
 }
 
 fn sha_256(input: &[u8]) -> Vec<u8> {
