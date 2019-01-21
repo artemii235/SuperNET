@@ -729,7 +729,7 @@ unsafe fn lp_connected_alice(ctx_ffi_handle: u32, qp: *mut lp::LP_quoteinfo, pai
     let mut bid = 0.;
     let mut ask = 0.;
     if lp::LP_myprice(0, &mut bid, &mut ask, (*qp).srccoin.as_mut_ptr(), (*qp).destcoin.as_mut_ptr()) <= SMALLVAL || bid <= SMALLVAL {
-        printf(b"this node has no price for %s/%s (%.8f %.8f)\n\x00".as_ptr() as *const c_char, (*qp).destcoin, (*qp).srccoin, bid, ask);
+        printf(b"this node has no price for %s/%s (%.8f %.8f)\n\x00".as_ptr() as *const c_char, (*qp).destcoin.as_ptr(), (*qp).srccoin.as_ptr(), bid, ask);
         lp::LP_aliceid((*qp).tradeid, (*qp).aliceid, b"error5\x00".as_ptr() as *mut c_char, 0, 0);
         lp::LP_failedmsg((*qp).R.requestid, (*qp).R.quoteid, -4002.0, (*qp).uuidstr.as_mut_ptr());
         return;
