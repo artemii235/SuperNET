@@ -23,16 +23,16 @@ steps:
       export PATH=$PATH:/root/.cargo/bin
       cargo test -- --nocapture
     displayName: 'Test MM2'
-  # Use cURL to upload files.
-  # https://docs.microsoft.com/en-us/azure/devops/pipelines/tasks/utility/curl-upload-files?view=vsts
-  - task: cURLUploader@2
+  # Copy Files Over SSH
+  # Copy files or build artifacts to a remote machine over SSH
+  # https://docs.microsoft.com/en-us/azure/devops/pipelines/tasks/deploy/copy-files-over-ssh?view=vsts
+  - task: CopyFilesOverSSH@0
     inputs:
-      files: 'target/debug/mm2'
-      authType: 'userAndPass' # Optional. Options: serviceEndpoint, userAndPass
-      #serviceEndpoint: # Required when authType == ServiceEndpoint
-      username: $(SFTP_UPLOAD_USER)
-      password: $(SFTP_UPLOAD_PASSWORD)
-      url: 'sftp://195.201.0.6' # Required when authType == UserAndPass
-      remotePath: 'uploads' # Optional
-      #options: # Optional
-      #redirectStderr: true # Optional
+      sshEndpoint: nightly_build_server
+      sourceFolder: 'target/debug' # Optional
+      contents: 'mm2'
+      targetFolder: 'uploads' # Optional
+      #cleanTargetFolder: false # Optional
+      #overwrite: true # Optional
+      #failOnEmptySource: false # Optional
+      #flattenFolders: false # Optional
