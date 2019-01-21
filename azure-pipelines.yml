@@ -18,7 +18,7 @@ steps:
       export PATH=$PATH:/root/.cargo/bin
       cargo build -vv
       echo $(COMMIT_HASH)
-      mv target/debug/mm2 target/debug/mm2-$(Agent.OS)
+      mv target/debug/mm2 target/debug/mm2-$(COMMIT_HASH)-$(Agent.OS)
       ls target/debug
     displayName: 'Build MM2'
   - script: |
@@ -30,11 +30,11 @@ steps:
   # https://docs.microsoft.com/en-us/azure/devops/pipelines/tasks/deploy/copy-files-over-ssh?view=vsts
   - task: CopyFilesOverSSH@0
     env:
-      SHORT_COMMIT_HASH: $(COMMIT_HASH)
+      SHORT_COMMIT_HASH: $(git rev-parse --short HEAD)
     inputs:
       sshEndpoint: nightly_build_server
       sourceFolder: 'target/debug' # Optional
-      contents: "mm2-$(Agent.OS)"
+      contents: "mm2-$(SHORT_COMMIT_HASH)-$(Agent.OS)"
       targetFolder: "uploads/$(Build.SourceBranchName)" # Optional
       #cleanTargetFolder: false # Optional
       #overwrite: true # Optional
