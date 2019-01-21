@@ -10,7 +10,7 @@ pool: Default
 
 steps:
   - checkout: self  # self represents the repo where the initial Pipelines YAML file was found
-    clean: boolean
+    clean: false # don't clean up to use previously built dependencies
   - script: |
       echo Add other tasks to build, test, and deploy your project.
       echo See https://aka.ms/yaml
@@ -23,3 +23,16 @@ steps:
       export PATH=$PATH:/root/.cargo/bin
       cargo test -- --nocapture
     displayName: 'Test MM2'
+  # Use cURL to upload files.
+  # https://docs.microsoft.com/en-us/azure/devops/pipelines/tasks/utility/curl-upload-files?view=vsts
+  - task: cURLUploader@2
+    inputs:
+      files: 'target/debug/mm2'
+      authType: 'userAndPass' # Optional. Options: serviceEndpoint, userAndPass
+      #serviceEndpoint: # Required when authType == ServiceEndpoint
+      username: $(SFTP_UPLOAD_USER)
+      password: $(SFTP_UPLOAD_PASSWORD)
+      url: 'sftp://195.201.0.6' # Required when authType == UserAndPass
+      remotePath: 'uploads' # Optional
+      #options: # Optional
+      #redirectStderr: true # Optional
