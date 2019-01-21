@@ -31,7 +31,7 @@ steps:
     inputs:
       sshEndpoint: nightly_build_server
       sourceFolder: 'target/debug' # Optional
-      contents: 'mm2'
+      contents: mm2-$(Build.SourceVersion)-$(Agent.OS)
       targetFolder: "uploads/$(Build.SourceBranchName)" # Optional
       #cleanTargetFolder: false # Optional
       #overwrite: true # Optional
