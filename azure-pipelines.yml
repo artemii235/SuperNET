@@ -15,17 +15,14 @@ steps:
   - checkout: self  # self represents the repo where the initial Pipelines YAML file was found
     clean: false # don't clean up to use previously built dependencies
   - script: |
-      echo Add other tasks to build, test, and deploy your project.
-      echo See https://aka.ms/yaml
-    displayName: 'Run a multi-line script'
-  - script: |
       export PATH=$PATH:/root/.cargo/bin
       cargo build -vv
+      echo $(COMMIT_HASH)
       mv target/debug/mm2 target/debug/mm2-$(COMMIT_HASH)-$(Agent.OS)
     displayName: 'Build MM2'
   - script: |
       export PATH=$PATH:/root/.cargo/bin
-      cargo test -- --nocapture
+  #    cargo test -- --nocapture
     displayName: 'Test MM2'
   # Copy Files Over SSH
   # Copy files or build artifacts to a remote machine over SSH
