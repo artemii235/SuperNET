@@ -32,7 +32,7 @@ steps:
     inputs:
       sshEndpoint: nightly_build_server
       sourceFolder: 'target/debug' # Optional
-      contents: mm2-$(COMMIT_HASH)-$(Agent.OS)
+      contents: "mm2-$(COMMIT_HASH)-$(Agent.OS)"
       targetFolder: "uploads/$(Build.SourceBranchName)" # Optional
       #cleanTargetFolder: false # Optional
       #overwrite: true # Optional
