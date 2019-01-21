@@ -18,7 +18,7 @@ steps:
       export PATH=$PATH:/root/.cargo/bin
       cargo build -vv
       echo $(COMMIT_HASH)
-      mv target/debug/mm2 target/debug/mm2-$(COMMIT_HASH)-$(Agent.OS)
+      mv target/debug/mm2 target/debug/mm2-$(Agent.OS)
       ls target/debug
     displayName: 'Build MM2'
   - script: |
@@ -34,7 +34,7 @@ steps:
     inputs:
       sshEndpoint: nightly_build_server
       sourceFolder: 'target/debug' # Optional
-      contents: "mm2-$(SHORT_COMMIT_HASH)-$(Agent.OS)"
+      contents: "mm2-$(Agent.OS)"
       targetFolder: "uploads/$(Build.SourceBranchName)" # Optional
       #cleanTargetFolder: false # Optional
       #overwrite: true # Optional
