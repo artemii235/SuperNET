@@ -19,7 +19,7 @@ steps:
     displayName: 'Build MM2'
   - script: |
       export PATH=$PATH:/root/.cargo/bin
-  #    cargo test -- --nocapture
+      cargo test -- --nocapture
     displayName: 'Test MM2'
   # Copy Files Over SSH
   # Copy files or build artifacts to a remote machine over SSH
