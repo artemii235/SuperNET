@@ -19,3 +19,7 @@ steps:
       export PATH=$PATH:/root/.cargo/bin
       cargo build -vv
     displayName: 'Build MM2'
+  - script: |
+      export PATH=$PATH:/root/.cargo/bin
+      cargo test -- --no-capture
+    displayName: 'Test MM2'
