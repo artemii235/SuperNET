@@ -1,6 +1,10 @@
 version: 1.0.{build}
 image: Visual Studio 2017
 
+branches:
+  except:
+    - azure-pipelines
+
 init:
 - ps: |
     $env:SHORT_HASH = "$($env:APPVEYOR_REPO_COMMIT.Substring(0, 7))"

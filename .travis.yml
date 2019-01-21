@@ -1,4 +1,7 @@
 language: c
+branches:
+  except:
+    - azure-pipelines
 matrix:
   include:
   - os: linux
