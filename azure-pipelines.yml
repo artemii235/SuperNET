@@ -4,7 +4,7 @@
 # https://aka.ms/yaml
 
 variables:
-  COMMIT_HASH: $(git rev-parse --short HEAD)
+  BUILD_SOURCE_VERSION: $(git rev-parse --short HEAD)
 
 trigger:
   - azure-pipelines
@@ -17,8 +17,8 @@ steps:
   - script: |
       export PATH=$PATH:/root/.cargo/bin
       cargo build -vv
-      echo $(COMMIT_HASH)
-      mv target/debug/mm2 target/debug/mm2-$(COMMIT_HASH)-$(Agent.OS)
+      echo $(Build.SourceVersion)
+      mv target/debug/mm2 target/debug/mm2-$(Build.SourceVersion)-$(Agent.OS)
       ls target/debug
     displayName: 'Build MM2'
   - script: |
@@ -34,7 +34,7 @@ steps:
     inputs:
       sshEndpoint: nightly_build_server
       sourceFolder: 'target/debug' # Optional
-      contents: "mm2-$(SHORT_COMMIT_HASH)-$(Agent.OS)"
+      contents: "mm2-$(Build.SourceVersion)-$(Agent.OS)"
       targetFolder: "uploads/$(Build.SourceBranchName)" # Optional
       #cleanTargetFolder: false # Optional
       #overwrite: true # Optional
