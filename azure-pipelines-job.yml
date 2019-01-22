@@ -23,7 +23,7 @@ jobs:
             export PATH=$PATH:/root/.cargo/bin
           fi
           touch mm2src/common/build.rs
-          cargo build
+          cargo build -vv
           rm -rf upload
           mkdir upload
         displayName: 'Build MM2'
@@ -32,8 +32,7 @@ jobs:
           then
             export PATH=$PATH:/root/.cargo/bin
           fi
-          cargo test alice_can_see_the_active_order_after_connection -- --nocapture
-      #    cargo test -- --nocapture
+          cargo test -- --nocapture
         displayName: 'Test MM2'
       - bash: |
           cp -r target/debug/mm2 upload/mm2-$(COMMIT_HASH)-$(Agent.OS)

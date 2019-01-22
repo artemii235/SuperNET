@@ -7,7 +7,11 @@ variables:
   COMMIT_HASH: $(git rev-parse --short HEAD)
 
 trigger:
-  - azure-pipelines
+  paths:
+    exclude:
+      - README.md
+      - mm2src/README.md
+      - etomic_build/*
 
 jobs:
   - template: azure-pipelines-job.yml  # Template reference
