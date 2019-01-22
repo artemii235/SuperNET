@@ -15,6 +15,7 @@ trigger:
       - README.md
       - mm2src/README.md
       - etomic_build/*
+      - iguana/Readme.md
 
 jobs:
   - template: azure-pipelines-job.yml  # Template reference
