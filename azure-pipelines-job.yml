@@ -15,8 +15,8 @@ jobs:
         clean: false # don't clean up to use previously built dependencies
       - powershell: |
           .\marketmaker_build_depends.cmd
-        condition: eq( variables['Agent.OS'], 'Windows_NT' )
         displayName: Build Windows deps
+        condition: eq( variables['Agent.OS'], 'Windows_NT' )
       - bash: |
           if [ $AGENT_OS = "Linux" ]
           then
@@ -28,14 +28,6 @@ jobs:
           mkdir upload
         displayName: 'Build MM2'
       - bash: |
-          cp -r target/debug/mm2 upload/mm2-$(COMMIT_HASH)-$(Agent.OS)
-        condition: ne( variables['Agent.OS'], 'Windows_NT' )
-        displayName: 'Prepare upload Linux/MacOS'
-      - powershell: |
-          7z a .\upload\mm2-win-$(COMMIT_HASH).zip .\target\debug\mm2.exe .\target\debug\*.dll "$Env:windir\system32\msvcr100.dll" "$Env:windir\system32\msvcp140.dll" "$Env:windir\system32\vcruntime140.dll"
-        condition: eq( variables['Agent.OS'], 'Windows_NT' )
-        displayName: 'Prepare upload Windows'
-      - bash: |
           if [ $AGENT_OS = "Linux" ]
           then
             export PATH=$PATH:/root/.cargo/bin
@@ -43,6 +35,14 @@ jobs:
           cargo test alice_can_see_the_active_order_after_connection -- --nocapture
       #    cargo test -- --nocapture
         displayName: 'Test MM2'
+      - bash: |
+          cp -r target/debug/mm2 upload/mm2-$(COMMIT_HASH)-$(Agent.OS)
+        displayName: 'Prepare upload Linux/MacOS'
+        condition: ne( variables['Agent.OS'], 'Windows_NT' )
+      - powershell: |
+          7z a .\upload\mm2-win-$(COMMIT_HASH).zip .\target\debug\mm2.exe .\target\debug\*.dll "$Env:windir\system32\msvcr100.dll" "$Env:windir\system32\msvcp140.dll" "$Env:windir\system32\vcruntime140.dll"
+        displayName: 'Prepare upload Windows'
+        condition: eq( variables['Agent.OS'], 'Windows_NT' )
       # https://docs.microsoft.com/en-us/azure/devops/pipelines/tasks/deploy/copy-files-over-ssh?view=vsts
       - task: CopyFilesOverSSH@0
         inputs:
