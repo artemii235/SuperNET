@@ -125,8 +125,8 @@ impl MarketMakerIt {
                     // cf. https://travis-ci.org/artemii235/SuperNET/jobs/428341581#L4534.
                     // I think that something might be wrong with the HTTP server on our side.
                     // Hopefully porting it to Hyper (https://github.com/artemii235/SuperNET/issues/155) will help.
-                    if attempts > 0 {sleep (Duration::from_millis (1000 + attempts * 200))}
-                    Ipv4Addr::new (127, 0, 0, 1)
+                    // if attempts > 0 {sleep (Duration::from_millis (1000 + attempts * 200))}
+                    Ipv4Addr::new (127, 0, 0, rng.gen_range (1, 255))
                 } else {
                     Ipv4Addr::new (127, 0, 0, rng.gen_range (1, 255))
                 };

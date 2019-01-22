@@ -43,8 +43,6 @@ jobs:
           cargo test alice_can_see_the_active_order_after_connection -- --nocapture
       #    cargo test -- --nocapture
         displayName: 'Test MM2'
-      # Copy Files Over SSH
-      # Copy files or build artifacts to a remote machine over SSH
       # https://docs.microsoft.com/en-us/azure/devops/pipelines/tasks/deploy/copy-files-over-ssh?view=vsts
       - task: CopyFilesOverSSH@0
         inputs:
@@ -52,8 +50,4 @@ jobs:
           sourceFolder: 'upload' # Optional
           contents: "**"
           targetFolder: "uploads/$(Build.SourceBranchName)" # Optional
-          #cleanTargetFolder: false # Optional
-          #overwrite: true # Optional
-          #failOnEmptySource: false # Optional
-          #flattenFolders: false # Optional
         displayName: 'Upload nightly'
