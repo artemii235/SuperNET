@@ -273,6 +273,7 @@ impl Service for RpcService {
             );
             res
         }).then(|res| {
+            log!("Then res " [res]);
             // even if future returns error we need to map it to JSON response and send to client
             Box::new(futures::future::ok(try_h!(res)))
         });
