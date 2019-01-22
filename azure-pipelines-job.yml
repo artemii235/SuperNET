@@ -13,15 +13,12 @@ jobs:
     steps:
       - checkout: self  # self represents the repo where the initial Pipelines YAML file was found
         clean: false # don't clean up to use previously built dependencies
-      - bash: |
-          export PATH=$PATH:/root/.cargo/bin
-        condition: eq( variables['Agent.OS'], 'Linux' )
-        displayName: Add Rust to path on Linux
       - powershell: |
-          marketmaker_build_depends.cmd
+          .\marketmaker_build_depends.cmd
         condition: eq( variables['Agent.OS'], 'Windows_NT' )
         displayName: Build Windows deps
       - bash: |
+          if [ AGENT_OS -eq 'Linux' ] then export PATH=$PATH:/root/.cargo/bin fi
           cargo build -vv
           echo $(Build.SourceVersion)
           mv -f target/debug/mm2 target/debug/mm2-$(Build.SourceVersion)-$(Agent.OS)
