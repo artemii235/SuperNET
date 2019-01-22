@@ -848,8 +848,11 @@ char *LP_orderbook(char *base,char *rel,int32_t duration)
     relcoin->obooktime = now;
     cachenumbids = numbids, cachenumasks = numasks;
     //printf("start cache.(%d %d) numbids.%d numasks.%d\n",cachenumbids,cachenumasks,numbids,numasks);
+    printf("LP_orderbook_utxoentries 1");
     numasks = LP_orderbook_utxoentries(now,1,base,rel,&asks,numasks,cachenumasks,duration);
+    printf("LP_orderbook_utxoentries 2");
     numbids = LP_orderbook_utxoentries(now,-1,rel,base,&bids,numbids,cachenumbids,duration);
+    printf("After LP_orderbook_utxoentries");
     retjson = cJSON_CreateObject();
     array = cJSON_CreateArray();
     if ( numbids > 1 )
