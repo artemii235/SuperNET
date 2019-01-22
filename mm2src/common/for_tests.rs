@@ -105,11 +105,12 @@ impl MarketMakerIt {
     ///            Unique local IP address is injected as "myipaddr" unless this field is already present.
     /// * `userpass` - RPC API key. We should probably extract it automatically from the MM log.
     /// * `local` - Function to start the MarketMaker in a local thread, instead of spawning a process.
+    /// It's required to manually add 127.0.0.* IPs aliases on Mac to make it properly work.
+    /// cf. https://superuser.com/a/458877, https://superuser.com/a/635327
     pub fn start (mut conf: Json, userpass: String, local: Option<LocalStart>)
     -> Result<MarketMakerIt, String> {
         let executable = try_s! (env::args().next().ok_or ("No program name"));
         let executable = try_s! (Path::new (&executable) .canonicalize());
-
         let ip: IpAddr = if conf["myipaddr"].is_null() {  // Generate an unique IP.
             let mut attempts = 0;
             let mut rng = thread_rng();
