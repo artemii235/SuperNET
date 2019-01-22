@@ -10,15 +10,15 @@ trigger:
 jobs:
   - template: azure-pipelines-job.yml  # Template reference
     parameters:
-      name: 'MM2 Linux'
+      name: 'MM2_Linux'
       os: 'Linux'
 
   - template: azure-pipelines-job.yml  # Template reference
     parameters:
-      name: 'MM2 MacOS'
+      name: 'MM2_MacOS'
       os: 'Darwin'
 
   - template: azure-pipelines-job.yml  # Template reference
     parameters:
-      name: 'MM2 Windows'
+      name: 'MM2_Windows'
       os: 'Windows_NT'
