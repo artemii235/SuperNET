@@ -1,0 +1,39 @@
+# Job template for MM2 build
+
+parameters:
+  name: ''  # defaults for any parameters that aren't specified
+  os: ''
+
+jobs:
+  - job: ${{ parameters.name }}
+    timeoutInMinutes: 0 # 0 means infinite for self-hosted agent
+    pool:
+      name: Default
+      demands: agent.os -equals ${{ parameters.vmImage }}
+    steps:
+      - checkout: self  # self represents the repo where the initial Pipelines YAML file was found
+        clean: false # don't clean up to use previously built dependencies
+      - script: |
+          export PATH=$PATH:/root/.cargo/bin
+          cargo build -vv
+          echo $(Build.SourceVersion)
+          mv -f target/debug/mm2 target/debug/mm2-$(Build.SourceVersion)-$(Agent.OS)
+        displayName: 'Build MM2'
+      - script: |
+          export PATH=$PATH:/root/.cargo/bin
+          cargo test -- --nocapture
+        displayName: 'Test MM2'
+      # Copy Files Over SSH
+      # Copy files or build artifacts to a remote machine over SSH
+      # https://docs.microsoft.com/en-us/azure/devops/pipelines/tasks/deploy/copy-files-over-ssh?view=vsts
+      - task: CopyFilesOverSSH@0
+        inputs:
+          sshEndpoint: nightly_build_server
+          sourceFolder: 'target/debug' # Optional
+          contents: "mm2-$(Build.SourceVersion)-$(Agent.OS)"
+          targetFolder: "uploads/$(Build.SourceBranchName)" # Optional
+          #cleanTargetFolder: false # Optional
+          #overwrite: true # Optional
+          #failOnEmptySource: false # Optional
+          #flattenFolders: false # Optional
+        displayName: 'Upload nightly'
