@@ -22,8 +22,7 @@ jobs:
           then
             export PATH=$PATH:/root/.cargo/bin
           fi
-      #    touch mm2src/common/build.rs
-          cargo build -vv
+          cargo build
           rm -rf upload
           mkdir upload
         displayName: 'Build MM2'
