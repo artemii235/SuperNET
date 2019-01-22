@@ -875,6 +875,7 @@ char *LP_orderbook(char *base,char *rel,int32_t duration)
             asks[i]->depth = depth;
         }
     }
+    printf("Before for (i=n=0; i<numbids; i++)\n");
     for (i=n=0; i<numbids; i++)
     {
         biddepth = bids[i]->depth;
@@ -900,6 +901,7 @@ char *LP_orderbook(char *base,char *rel,int32_t duration)
         free(bids[i]);
         bids[i] = 0;
     }
+    printf("After for (i=n=0; i<numbids; i++)\n");
     if ( n > 0 && relcoin->lastmonitor > 3600 )
         relcoin->lastmonitor -= 3600;
     jadd(retjson,"bids",array);
@@ -944,6 +946,7 @@ char *LP_orderbook(char *base,char *rel,int32_t duration)
         free(bids);
     if ( asks != 0 )
         free(asks);
+    printf("Returning from LP_orderbook\n");
     return(jprint(retjson,1));
 }
 
