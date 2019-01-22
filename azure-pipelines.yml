@@ -3,9 +3,11 @@
 # Add steps that build, run tests, deploy, and more:
 # https://aka.ms/yaml
 
+variables:
+  COMMIT_HASH: echo "$(git rev-parse --short HEAD)"
+
 trigger:
   - azure-pipelines
-
 
 jobs:
   - template: azure-pipelines-job.yml  # Template reference

@@ -23,11 +23,22 @@ jobs:
             export PATH=$PATH:/root/.cargo/bin
           fi
           cargo build -vv
-          echo $(Build.SourceVersion)
-          cp -r target/debug/mm2 target/debug/mm2-$(Build.SourceVersion)-$(Agent.OS)
+          rm -rf upload
+          mkdir upload
         displayName: 'Build MM2'
-      - script: |
-          export PATH=$PATH:/root/.cargo/bin
+      - bash: |
+          cp -r target/debug/mm2 upload/mm2-$(COMMIT_HASH)-$(Agent.OS)
+        condition: ne( variables['Agent.OS'], 'Windows_NT' )
+        displayName: 'Prepare upload Linux/MacOS'
+      - powershell: |
+          7z a .\upload\mm-win-$(COMMIT_HASH).zip .\target\debug\mm2.exe .\target\debug\*.dll "%WINDIR%\system32\msvcr100.dll" "%WINDIR%\system32\msvcp140.dll" "%WINDIR%\system32\vcruntime140.dll"
+        condition: eq( variables['Agent.OS'], 'Windows_NT' )
+        displayName: 'Prepare upload Windows'
+      - bash: |
+          if [ $AGENT_OS = "Linux" ]
+          then
+            export PATH=$PATH:/root/.cargo/bin
+          fi
           cargo test -- --nocapture
         displayName: 'Test MM2'
       # Copy Files Over SSH
@@ -36,8 +47,8 @@ jobs:
       - task: CopyFilesOverSSH@0
         inputs:
           sshEndpoint: nightly_build_server
-          sourceFolder: 'target/debug' # Optional
-          contents: "mm2-$(Build.SourceVersion)-$(Agent.OS)"
+          sourceFolder: 'upload' # Optional
+          contents: "**"
           targetFolder: "uploads/$(Build.SourceBranchName)" # Optional
           #cleanTargetFolder: false # Optional
           #overwrite: true # Optional
