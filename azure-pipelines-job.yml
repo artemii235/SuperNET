@@ -31,7 +31,7 @@ jobs:
         condition: ne( variables['Agent.OS'], 'Windows_NT' )
         displayName: 'Prepare upload Linux/MacOS'
       - powershell: |
-          7z a .\upload\mm-win-$(COMMIT_HASH).zip .\target\debug\mm2.exe .\target\debug\*.dll "%WINDIR%\system32\msvcr100.dll" "%WINDIR%\system32\msvcp140.dll" "%WINDIR%\system32\vcruntime140.dll"
+          7z a .\upload\mm-win-$(COMMIT_HASH).zip .\target\debug\mm2.exe .\target\debug\*.dll "$Env:windir\system32\msvcr100.dll" "$Env:windir\system32\msvcp140.dll" "$Env:windir\system32\vcruntime140.dll"
         condition: eq( variables['Agent.OS'], 'Windows_NT' )
         displayName: 'Prepare upload Windows'
       - bash: |
