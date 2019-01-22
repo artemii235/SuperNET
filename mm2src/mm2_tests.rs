@@ -297,7 +297,6 @@ fn alice_can_see_the_active_order_after_connection() {
     assert! (rc.0.is_success(), "!setprice: {}", rc.1);
 
     thread::sleep(Duration::from_secs(10));
-    log! ({"enable_coins (bob): {:?}", enable_coins_electrum (&mm_bob)});
 
     // Bob orderbook must show the new order
     log!("Get BEER/PIZZA orderbook on Bob side");

@@ -256,7 +256,9 @@ impl Service for RpcService {
                     let c_json = try_h! (CJSON::from_str (&req.to_string()));
                     let cpu_pool_fut = CPUPOOL.spawn_fn(move || {
                         // Emulates the single-threaded execution of the old C code.
+                        log!("Before SINGLE THREADED LOCK");
                         let _lock = SINGLE_THREADED_C_LOCK.lock();
+                        log!("After SINGLE THREADED LOCK");
                         rpc_process_json (ctx, remote_addr, req, c_json)
                     });
                     Box::new (cpu_pool_fut)
