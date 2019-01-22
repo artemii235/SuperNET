@@ -18,7 +18,10 @@ jobs:
         condition: eq( variables['Agent.OS'], 'Windows_NT' )
         displayName: Build Windows deps
       - bash: |
-          if [ $AGENT_OS -eq 'Linux' ] then export PATH=$PATH:/root/.cargo/bin fi
+          if [ $AGENT_OS = "Linux" ]
+          then
+            export PATH=$PATH:/root/.cargo/bin
+          fi
           cargo build -vv
           echo $(Build.SourceVersion)
           mv -f target/debug/mm2 target/debug/mm2-$(Build.SourceVersion)-$(Agent.OS)
