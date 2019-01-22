@@ -342,7 +342,7 @@ fn alice_can_see_the_active_order_after_connection() {
     // wait until Alice recognize Bob node by importing it's pubkey
     unwrap! (mm_alice.wait_for_log (33., &|log| log.contains ("set pubkey for")));
 
-    for _ in 0..3 {
+    for _ in 0..2 {
         // Alice should be able to see the order no later than 10 seconds after recognizing the bob
         thread::sleep(Duration::from_secs(10));
         log!("Get BEER/PIZZA orderbook on Alice side");

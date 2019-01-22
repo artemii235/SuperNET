@@ -31,7 +31,7 @@ pub fn test_peers_dht() {
     let tested_lengths: &[usize] = if option_env! ("TEST_MAX_LENGTH") == Some ("true") {
         &[992 /* (1000 - bencode overhead - checksum) */ * 253 /* Compatible with (1u8..) */ - 1 /* space for number_of_chunks */]
     } else {
-        &[16 * 1024, 1]
+        &[1024, 1]
     };
     let mut rng = rand::thread_rng();
     for message_len in tested_lengths.iter() {
