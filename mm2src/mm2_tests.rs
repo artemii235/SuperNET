@@ -311,6 +311,7 @@ fn alice_can_see_the_active_order_after_connection() {
     let bob_orderbook: Json = unwrap!(json::from_str(&rc.1));
     assert!(bob_orderbook["asks"].as_array().unwrap().len() > 0, "Bob BEER/PIZZA asks are empty");
 
+    log!("Bob orderbook " [bob_orderbook]);
     let mut mm_alice = unwrap! (MarketMakerIt::start (
         json! ({
             "gui": "nogui",
