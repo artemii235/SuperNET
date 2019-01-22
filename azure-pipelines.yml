@@ -9,7 +9,7 @@ variables:
 trigger:
   branches:
     include:
-      - *
+      - refs/heads/*
   paths:
     exclude:
       - README.md
