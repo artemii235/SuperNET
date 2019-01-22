@@ -106,8 +106,7 @@ char *stats_JSON(void *ctx,int32_t fastflag,char *myipaddr,int32_t pubsock,cJSON
     if ( (coin= jstr(argjson,"coin")) == 0 )
         coin = "";
 
-    printf("Stats JSON remote addr %s\n", remoteaddr);
-    if ( G.USERPASS[0] != 0 && strcmp(remoteaddr,"127.0.0.1") == 0 && port != 0 && strcmp(method,"psock") != 0 ) // protected localhost
+    if ( G.USERPASS[0] != 0 && is_loopback_ip(remoteaddr) == 1 && port != 0 && strcmp(method,"psock") != 0 ) // protected localhost
     {
         if ( G.USERPASS_COUNTER == 0 )
         {

@@ -2,6 +2,7 @@ use hashbrown::HashMap;
 use libc::c_char;
 use std::ffi::CStr;
 use std::mem::size_of;
+use std::net::IpAddr;
 use std::ptr::null_mut;
 use std::sync::Mutex;
 
@@ -70,4 +71,25 @@ pub extern fn LP_get_coin_pointers (coins_buf: *mut *mut lp::iguana_info, coins_
         if idx >= coins_size as isize {break}
         unsafe {*coins_buf.offset (idx) = ii.0}
     }
+}
+
+#[no_mangle]
+pub extern fn is_loopback_ip (ip: *mut c_char) -> u8 {
+    let ip_str = match unsafe { CStr::from_ptr(ip).to_str() } {
+        Ok(s) => s,
+        Err(e) => {
+            log!("Error creating CStr " [e]);
+            return 0;
+        }
+    };
+
+    let ip: IpAddr = match ip_str.parse() {
+        Ok(ip) => ip,
+        Err(e) => {
+            log!("Error " [e] " parsing ip from str " (ip_str));
+            return 0;
+        }
+    };
+
+    ip.is_loopback() as u8
 }

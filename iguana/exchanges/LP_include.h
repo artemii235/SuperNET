@@ -796,3 +796,4 @@ struct iguana_info* LP_coinadd (struct iguana_info* ii);
 struct iguana_info* LP_coinsearch (char const* ticker);
 void LP_get_coin_pointers (struct iguana_info** coins_buf, int32_t coins_size);
 char *LP_price_sig(uint32_t timestamp,bits256 priv,uint8_t *pubsecp,bits256 pubkey,char *base,char *rel,uint64_t price64);
+uint8_t is_loopback_ip (char *ip);
