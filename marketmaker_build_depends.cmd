@@ -40,15 +40,6 @@ echo Decker will automatically download and build all needed *.dll and *.lib for
 mkdir marketmaker_depends
 mkdir x64
 
-rem --- Rust ---
-curl https://win.rustup.rs/ -o rustup-init.exe
-rustup-init.exe -y --default-toolchain none --default-host x86_64-pc-windows-msvc
-del rustup-init.exe
-set PATH=%USERPROFILE%\.cargo\bin;%PATH%
-rustup install nightly-2018-12-24-x86_64-pc-windows-msvc
-rustup default nightly-2018-12-24-x86_64-pc-windows-msvc
-rustup component add rustfmt-preview
-
 rem TODO: Download automatically from build.rs.
 rem NB: "marketmaker_depends" is cached between the AppVeyor builds!
 rem --- pthreads ---
