@@ -827,7 +827,6 @@ int32_t LP_orderbook_utxoentries(uint32_t now,int32_t polarity,char *base,char *
 char *LP_orderbook(char *base,char *rel,int32_t duration)
 {
     uint32_t now,i; int64_t depth,askdepth=0,biddepth=0; struct LP_priceinfo *basepp=0,*relpp=0; struct LP_orderbookentry **bids = 0,**asks = 0; cJSON *retjson,*array; struct iguana_info *basecoin,*relcoin; int32_t n,numbids=0,numasks=0,cachenumbids,cachenumasks,baseid,relid,suppress_prefetch=0;
-    printf("In LP_orderbook\n");
     basecoin = LP_coinfind(base);
     relcoin = LP_coinfind(rel);
     if ( basecoin == 0 || relcoin == 0 )
@@ -848,11 +847,8 @@ char *LP_orderbook(char *base,char *rel,int32_t duration)
     relcoin->obooktime = now;
     cachenumbids = numbids, cachenumasks = numasks;
     //printf("start cache.(%d %d) numbids.%d numasks.%d\n",cachenumbids,cachenumasks,numbids,numasks);
-    printf("LP_orderbook_utxoentries 1");
     numasks = LP_orderbook_utxoentries(now,1,base,rel,&asks,numasks,cachenumasks,duration);
-    printf("LP_orderbook_utxoentries 2");
     numbids = LP_orderbook_utxoentries(now,-1,rel,base,&bids,numbids,cachenumbids,duration);
-    printf("After LP_orderbook_utxoentries");
     retjson = cJSON_CreateObject();
     array = cJSON_CreateArray();
     if ( numbids > 1 )
@@ -875,7 +871,6 @@ char *LP_orderbook(char *base,char *rel,int32_t duration)
             asks[i]->depth = depth;
         }
     }
-    printf("Before for (i=n=0; i<numbids; i++)\n");
     for (i=n=0; i<numbids; i++)
     {
         biddepth = bids[i]->depth;
@@ -901,7 +896,6 @@ char *LP_orderbook(char *base,char *rel,int32_t duration)
         free(bids[i]);
         bids[i] = 0;
     }
-    printf("After for (i=n=0; i<numbids; i++)\n");
     if ( n > 0 && relcoin->lastmonitor > 3600 )
         relcoin->lastmonitor -= 3600;
     jadd(retjson,"bids",array);
@@ -946,7 +940,6 @@ char *LP_orderbook(char *base,char *rel,int32_t duration)
         free(bids);
     if ( asks != 0 )
         free(asks);
-    printf("Returning from LP_orderbook\n");
     return(jprint(retjson,1));
 }
 

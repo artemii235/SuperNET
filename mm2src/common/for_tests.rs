@@ -114,22 +114,7 @@ impl MarketMakerIt {
             let mut attempts = 0;
             let mut rng = thread_rng();
             loop {
-                let ip4 = if cfg! (target_os = "macos") {
-                    // For some reason we can't use the 127.0.0.2-255 range of IPs on Travis/MacOS,
-                    // cf. https://travis-ci.org/artemii235/SuperNET/jobs/428167579
-                    // I plan to later look into this, but for now we're always using 127.0.0.1 on MacOS.
-                    //
-                    // P.S. 127.0.0.2:7783 works when tested with static+cURL,
-                    // cf. https://travis-ci.org/artemii235/SuperNET/builds/428350505
-                    // but with MM it mysteriously fails,
-                    // cf. https://travis-ci.org/artemii235/SuperNET/jobs/428341581#L4534.
-                    // I think that something might be wrong with the HTTP server on our side.
-                    // Hopefully porting it to Hyper (https://github.com/artemii235/SuperNET/issues/155) will help.
-                    // if attempts > 0 {sleep (Duration::from_millis (1000 + attempts * 200))}
-                    Ipv4Addr::new (127, 0, 0, rng.gen_range (1, 255))
-                } else {
-                    Ipv4Addr::new (127, 0, 0, rng.gen_range (1, 255))
-                };
+                let ip4 = Ipv4Addr::new (127, 0, 0, rng.gen_range (1, 255));
                 if attempts > 128 {return ERR! ("Out of local IPs?")}
                 let ip: IpAddr = ip4.clone().into();
                 let mut mm_ips = try_s! (MM_IPS.lock());
@@ -137,16 +122,6 @@ impl MarketMakerIt {
                 mm_ips.insert (ip.clone());
                 conf["myipaddr"] = format! ("{}", ip) .into();
                 conf["rpcip"] = format! ("{}", ip) .into();
-
-                if cfg! (target_os = "macos") && ip4.octets()[3] > 1 {
-                    // Make sure the local IP is enabled on MAC (and in the Travis CI).
-                    // cf. https://superuser.com/a/458877
-                    let cmd = cmd! ("sudo", "ifconfig", "lo0", "alias", format! ("{}", ip), "up");
-                    match cmd.stderr_to_stdout().read() {
-                        Err (err) => log! ({"MarketMakerIt] Error trying to `up` the {}: {}", ip, err}),
-                        Ok (output) => log! ({"MarketMakerIt] Upped the {}: {}", ip, output})
-                    }
-                }
                 break ip
             }
         } else {  // Just use the IP given in the `conf`.

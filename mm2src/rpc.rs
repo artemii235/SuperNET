@@ -156,7 +156,6 @@ fn rpc_process_json(ctx: MmArc, remote_addr: SocketAddr, json: Json, c_json: CJS
 
     if !stats_result.is_null() {
         let res_str = try_h! (unsafe {CStr::from_ptr(stats_result)} .to_str()) .to_string();
-        log!("Result from stats_result " [res_str]);
         free_c_ptr(stats_result as *mut c_void);
 
         // #220, See if `stats_JSON` returned an error and reflect this in the HTTP status.
@@ -164,10 +163,8 @@ fn rpc_process_json(ctx: MmArc, remote_addr: SocketAddr, json: Json, c_json: CJS
         let status = if let Ok (maybe_error) = json::from_str::<MaybeError> (&res_str) {
             if maybe_error.error.is_some() {500} else {200}
         } else {200};
-        log!("Success response");
         rpc_response (status, res_str)
     } else {
-        log!("Error response");
         rpc_err_response (500, "Empty result from stats_JSON")
     }
 }
@@ -273,7 +270,6 @@ impl Service for RpcService {
             );
             res
         }).then(|res| {
-            log!("Then res " [res]);
             // even if future returns error we need to map it to JSON response and send to client
             Box::new(futures::future::ok(try_h!(res)))
         });
