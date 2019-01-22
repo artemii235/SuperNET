@@ -7,6 +7,9 @@ variables:
   COMMIT_HASH: $(git rev-parse --short HEAD)
 
 trigger:
+  branches:
+    include:
+      - *
   paths:
     exclude:
       - README.md
