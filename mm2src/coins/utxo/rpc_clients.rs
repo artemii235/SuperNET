@@ -806,6 +806,7 @@ fn electrum_subscribe_multi(
 // TODO these are just helpers functions that I used during development.
 // Trade tests also cover these functions, if some of these doesn't work properly trade will fail.
 // Maybe we should remove them at all or move to a kind of "helpers" file.
+/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -932,3 +933,4 @@ mod tests {
         log!([res]);
     }
 }
+*/

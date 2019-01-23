@@ -18,7 +18,7 @@
 //
 //  Copyright © 2017-2019 SuperNET. All rights reserved.
 //
-use common::{CORE, lp, slurp_url};
+use common::{CORE, lp, MutexGuardWrapper, slurp_url};
 use secp256k1::key::PublicKey;
 use ethabi::{Contract, Token};
 use ethcore_transaction::{ Action, Transaction as UnsignedEthTransaction, UnverifiedTransaction};
@@ -32,7 +32,7 @@ use serde_json::{self as json};
 use std::borrow::Cow;
 use std::ffi::CStr;
 use std::ops::Deref;
-use std::sync::{Arc};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use web3::transports::{ Http };
@@ -381,7 +381,7 @@ impl MarketCoinOps for EthCoin {
 // It's highly likely that we won't experience any issues with it as we won't need to send "a lot" of transactions concurrently.
 // For ETH it makes even more sense because different ERC20 tokens can be based on same ETH blockchain.
 // So we would need to handle shared locks anyway.
-lazy_static! {static ref NONCE_LOCK: spin::Mutex<()> = spin::Mutex::new(());}
+lazy_static! {static ref NONCE_LOCK: Mutex<()> = Mutex::new(());}
 
 type EthTxFut = Box<Future<Item=SignedEthTransaction, Error=String> + Send + 'static>;
 
@@ -394,7 +394,7 @@ impl EthCoin {
         gas: U256,
     ) -> EthTxFut {
         let arc = self.clone();
-        let nonce_lock = NONCE_LOCK.lock();
+        let nonce_lock = MutexGuardWrapper(try_fus!(NONCE_LOCK.lock()));
         let nonce_fut = self.web3.eth().parity_next_nonce(self.my_address.clone()).map_err(|e| ERRL!("{}", e));
         Box::new(nonce_fut.then(move |nonce| -> EthTxFut {
             let nonce = try_fus!(nonce);

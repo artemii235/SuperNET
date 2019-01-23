@@ -25,7 +25,7 @@ use bitcrypto::{dhash160};
 use byteorder::{LittleEndian, WriteBytesExt};
 use chain::{TransactionOutput, TransactionInput, OutPoint, Transaction as UtxoTransaction};
 use chain::constants::{SEQUENCE_FINAL};
-use common::lp;
+use common::{lp, MutexGuardWrapper};
 use futures::{Future};
 use gstuff::now_ms;
 use keys::{KeyPair, Private, Public, Address, Secret};
@@ -41,7 +41,7 @@ use std::convert::AsMut;
 use std::ffi::CStr;
 use std::mem::transmute;
 use std::ops::Deref;
-use std::sync::{Arc};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -438,13 +438,13 @@ impl Deref for UtxoCoin {type Target = UtxoCoinImpl; fn deref (&self) -> &UtxoCo
 
 // We can use a shared UTXO lock for all UTXO coins at 1 time.
 // It's highly likely that we won't experience any issues with it as we won't need to send "a lot" of transactions concurrently.
-lazy_static! {static ref UTXO_LOCK: spin::Mutex<()> = spin::Mutex::new(());}
+lazy_static! {static ref UTXO_LOCK: Mutex<()> = Mutex::new(());}
 
 impl UtxoCoin {
     fn send_outputs_from_my_address(&self, outputs: Vec<TransactionOutput>, redeem_script: Bytes) -> TransactionFut {
         let change_script_pubkey = Builder::build_p2pkh(&self.key_pair.public().address_hash()).to_bytes();
         let arc = self.clone();
-        let utxo_lock = UTXO_LOCK.lock();
+        let utxo_lock = MutexGuardWrapper(try_fus!(UTXO_LOCK.lock()));
         let unspent_fut = self.rpc_client.list_unspent_ordered(&self.my_address);
         Box::new(unspent_fut.then(move |unspents| -> TransactionFut {
             let unspents = try_fus!(unspents);

@@ -805,3 +805,7 @@ pub fn join_all_sequential<I>(
         })
     })
 }
+
+/// A Send wrapper for MutexGuard
+pub struct MutexGuardWrapper(pub MutexGuard<'static, ()>);
+unsafe impl Send for MutexGuardWrapper {}
