@@ -32,7 +32,7 @@ use serde_json::{self as json};
 use std::borrow::Cow;
 use std::ffi::CStr;
 use std::ops::Deref;
-use std::sync::Arc;
+use std::sync::{Arc};
 use std::thread;
 use std::time::Duration;
 use web3::transports::{ Http };
@@ -377,6 +377,12 @@ impl MarketCoinOps for EthCoin {
     }
 }
 
+// We can use a shared nonce lock for all ETH coins.
+// It's highly likely that we won't experience any issues with it as we won't need to send "a lot" of transactions concurrently.
+// For ETH it makes even more sense because different ERC20 tokens can be based on same ETH blockchain.
+// So we would need to handle shared locks anyway.
+lazy_static! {static ref NONCE_LOCK: spin::Mutex<()> = spin::Mutex::new(());}
+
 type EthTxFut = Box<Future<Item=SignedEthTransaction, Error=String> + Send + 'static>;
 
 impl EthCoin {
@@ -388,6 +394,7 @@ impl EthCoin {
         gas: U256,
     ) -> EthTxFut {
         let arc = self.clone();
+        let nonce_lock = NONCE_LOCK.lock();
         let nonce_fut = self.web3.eth().parity_next_nonce(self.my_address.clone()).map_err(|e| ERRL!("{}", e));
         Box::new(nonce_fut.then(move |nonce| -> EthTxFut {
             let nonce = try_fus!(nonce);
@@ -410,7 +417,10 @@ impl EthCoin {
                 let signed = tx.sign(arc.key_pair.secret(), None);
                 let bytes = web3::types::Bytes(rlp::encode(&signed).to_vec());
                 let send_fut = arc.web3.eth().send_raw_transaction(bytes).map_err(|e| ERRL!("{}", e));
-                Box::new(send_fut.map(move |_res| signed))
+                Box::new(send_fut.then(move |res| {
+                    drop(nonce_lock);
+                    res
+                }).map(move |_res| signed))
             }))
         }))
     }

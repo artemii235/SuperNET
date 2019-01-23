@@ -41,7 +41,7 @@ use std::convert::AsMut;
 use std::ffi::CStr;
 use std::mem::transmute;
 use std::ops::Deref;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc};
 use std::thread;
 use std::time::Duration;
 
@@ -150,7 +150,6 @@ pub struct UtxoCoinImpl {  // pImpl idiom.
     /// ECDSA key pair
     key_pair: KeyPair,
     /// Lock the mutex when we deal with address utxos
-    utxo_mutex: Mutex<()>,
     my_address: Address,
     /// Is current coin KMD asset chain?
     /// https://komodoplatform.atlassian.net/wiki/spaces/KPSD/pages/71729160/What+is+a+Parallel+Chain+Asset+Chain
@@ -437,10 +436,15 @@ fn sign_tx(
 pub struct UtxoCoin(Arc<UtxoCoinImpl>);
 impl Deref for UtxoCoin {type Target = UtxoCoinImpl; fn deref (&self) -> &UtxoCoinImpl {&*self.0}}
 
+// We can use a shared UTXO lock for all UTXO coins at 1 time.
+// It's highly likely that we won't experience any issues with it as we won't need to send "a lot" of transactions concurrently.
+lazy_static! {static ref UTXO_LOCK: spin::Mutex<()> = spin::Mutex::new(());}
+
 impl UtxoCoin {
     fn send_outputs_from_my_address(&self, outputs: Vec<TransactionOutput>, redeem_script: Bytes) -> TransactionFut {
         let change_script_pubkey = Builder::build_p2pkh(&self.key_pair.public().address_hash()).to_bytes();
         let arc = self.clone();
+        let utxo_lock = UTXO_LOCK.lock();
         let unspent_fut = self.rpc_client.list_unspent_ordered(&self.my_address);
         Box::new(unspent_fut.then(move |unspents| -> TransactionFut {
             let unspents = try_fus!(unspents);
@@ -460,7 +464,11 @@ impl UtxoCoin {
                 transaction: signed,
                 redeem_script
             };
-            arc.send_raw_tx(tx.into())
+            Box::new(arc.send_raw_tx(tx.into()).then(move |res| {
+                // Drop the UTXO lock only when the transaction send result is known.
+                drop(utxo_lock);
+                res
+            }))
         }))
     }
 
@@ -957,7 +965,6 @@ pub fn utxo_coin_from_iguana_info(info: *mut lp::iguana_info, mode: UtxoInitMode
         segwit: false,
         wif_prefix: info.wiftype,
         tx_version: info.txversion,
-        utxo_mutex: Mutex::new(()),
         my_address: my_address.clone(),
         asset_chain: info.isassetchain == 1,
     };
