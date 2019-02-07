@@ -5,6 +5,7 @@
 
 variables:
   COMMIT_HASH: $(git rev-parse --short HEAD)
+  - group: passphrases
 
 trigger:
   branches:
