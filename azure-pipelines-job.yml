@@ -14,11 +14,6 @@ jobs:
     pool:
       name: Default
       demands: agent.os -equals ${{ parameters.os }}
-    env:
-      BOB_PASSPHRASE: ${{ parameters.bob_passphrase }}
-      BOB_USERPASS: ${{ parameters.bob_userpass }}
-      ALICE_PASSPHRASE: ${{ parameters.alice_passphrase }}
-      ALICE_USERPASS: ${{ parameters.alice_userpass }}
     steps:
       - checkout: self  # self represents the repo where the initial Pipelines YAML file was found
         clean: false # don't clean up to use previously built dependencies
@@ -45,6 +40,11 @@ jobs:
           cargo test trade_base_rel_electrum -- --nocapture
         displayName: 'Test MM2'
         timeoutInMinutes: 22
+        env:
+          BOB_PASSPHRASE: ${{ parameters.bob_passphrase }}
+          BOB_USERPASS: ${{ parameters.bob_userpass }}
+          ALICE_PASSPHRASE: ${{ parameters.alice_passphrase }}
+          ALICE_USERPASS: ${{ parameters.alice_userpass }}
       - bash: |
           cp -r target/debug/mm2 upload/mm2-$(COMMIT_HASH)-$(Agent.OS)
         displayName: 'Prepare upload Linux/MacOS'
