@@ -530,7 +530,123 @@ fn komodo_conf_path (ac_name: Option<&'static str>) -> Result<PathBuf, String> {
     Ok (path.join (&confname[..]))
 }
 
-fn trade_base_rel(base: &str, rel: &str) {
+/// Trading test using coins in Electrum mode, so it doesn't need any specific environment setup.
+fn trade_base_rel_electrum(base: &str, rel: &str) {
+    let (bob_file_passphrase, bob_file_userpass) = from_env_file (slurp (&".env.seed"));
+    let (alice_file_passphrase, alice_file_userpass) = from_env_file (slurp (&".env.client"));
+
+    let bob_passphrase = unwrap! (var ("BOB_PASSPHRASE") .ok().or (bob_file_passphrase), "No BOB_PASSPHRASE or .env.seed/PASSPHRASE");
+    let bob_userpass = unwrap! (var ("BOB_USERPASS") .ok().or (bob_file_userpass), "No BOB_USERPASS or .env.seed/USERPASS");
+    let alice_passphrase = unwrap! (var ("ALICE_PASSPHRASE") .ok().or (alice_file_passphrase), "No ALICE_PASSPHRASE or .env.client/PASSPHRASE");
+    let alice_userpass = unwrap! (var ("ALICE_USERPASS") .ok().or (alice_file_userpass), "No ALICE_USERPASS or .env.client/USERPASS");
+
+    let coins = json! ([
+        {"coin":"BEER","asset":"BEER"},
+        {"coin":"PIZZA","asset":"PIZZA"},
+        {"coin":"ETOMIC","asset":"ETOMIC"},
+        {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000"}
+    ]);
+
+    let mut mm_bob = unwrap! (MarketMakerIt::start (
+        json! ({
+            "gui": "nogui",
+            "netid": 9000,
+            "dht": "on",  // Enable DHT without delay.
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| unwrap! (s.parse::<i64>())),
+            "passphrase": bob_passphrase,
+            "coins": coins,
+        }),
+        bob_userpass,
+        match var ("LOCAL_THREAD_MM") {Ok (ref e) if e == "bob" => Some (local_start()), _ => None}
+    ));
+
+    let (_bob_dump_log, _bob_dump_dashboard) = mm_dump (&mm_bob.log_path);
+    log! ({"Bob log path: {}", mm_bob.log_path.display()});
+
+    // Both Alice and Bob might try to bind on the "0.0.0.0:47773" DHT port in this test
+    // (because the local "127.0.0.*:47773" addresses aren't that useful for DHT).
+    // We want to give Bob a headstart in acquiring the port,
+    // because Alice will then be able to directly reach it (thanks to "seednode").
+    // Direct communication is not required in this test, but it's nice to have.
+    // The port differs for another netid, should be 43804 for 9000
+    unwrap! (mm_bob.wait_for_log (9., &|log| log.contains ("preferred port 43804 drill true")));
+
+    let mut mm_alice = unwrap! (MarketMakerIt::start (
+        json! ({
+            "gui": "nogui",
+            "netid": 9000,
+            "dht": "on",  // Enable DHT without delay.
+            "myipaddr": env::var ("ALICE_TRADE_IP") .ok(),
+            "rpcip": env::var ("ALICE_TRADE_IP") .ok(),
+            "passphrase": alice_passphrase,
+            "coins": coins,
+            // We're using the open (non-NAT) netid 9000 seed instead, 195.201.42.102 // "seednode": fomat!((mm_bob.ip))
+        }),
+        alice_userpass,
+        match var ("LOCAL_THREAD_MM") {Ok (ref e) if e == "alice" => Some (local_start()), _ => None}
+    ));
+
+    let (_alice_dump_log, _alice_dump_dashboard) = mm_dump (&mm_alice.log_path);
+    log! ({"Alice log path: {}", mm_alice.log_path.display()});
+
+    // wait until both nodes RPC API is active
+    unwrap! (mm_bob.wait_for_log (22., &|log| log.contains (">>>>>>>>> DEX stats ")));
+    unwrap! (mm_alice.wait_for_log (22., &|log| log.contains (">>>>>>>>> DEX stats ")));
+
+    // Enable coins on Bob side. Print the replies in case we need the "smartaddress".
+    log! ({"enable_coins (bob): {:?}", enable_coins_electrum (&mm_bob)});
+    // Enable coins on Alice side. Print the replies in case we need the "smartaddress".
+    log! ({"enable_coins (alice): {:?}", enable_coins_electrum (&mm_alice)});
+
+    // Both the Taker and the Maker should connect to the netid 9000 open (non-NAT) seed node.
+    // NB: Long wayt as there might be delays in the seed node from us reusing the 127.0.0.* IPs with different keys.
+    unwrap! (mm_bob.wait_for_log (999., &|log| log.contains ("set pubkey for ")));
+    unwrap! (mm_alice.wait_for_log (999., &|log| log.contains ("set pubkey for ")));
+
+    // issue sell request on Bob side by setting base/rel price
+    log! ("Issue bob sell request");
+    let rc = unwrap! (mm_bob.rpc (json! ({
+        "userpass": mm_bob.userpass,
+        "method": "setprice",
+        "base": base,
+        "rel": rel,
+        "price": 0.9
+    })));
+    assert! (rc.0.is_success(), "!setprice: {}", rc.1);
+
+    // issue base/rel buy request from Alice side
+    thread::sleep (Duration::from_secs (2));
+    log! ("Issue alice buy request");
+    let rc = unwrap! (mm_alice.rpc (json! ({
+        "userpass": mm_alice.userpass,
+        "method": "buy",
+        "base": base,
+        "rel": rel,
+        "relvolume": 0.1,  // Should be close enough to the existing UTXOs.
+        "price": 1
+    })));
+    assert! (rc.0.is_success(), "!buy: {}", rc.1);
+
+    // ensure the swap started
+    unwrap! (mm_alice.wait_for_log (99., &|log| log.contains ("Entering the taker_swap_loop")));
+    unwrap! (mm_bob.wait_for_log (20., &|log| log.contains ("Entering the maker_swap_loop")));
+
+    // wait for swap to complete on both sides
+    unwrap! (mm_alice.wait_for_log (600., &|log| log.contains ("Swap finished successfully")));
+    unwrap! (mm_bob.wait_for_log (600., &|log| log.contains ("Swap finished successfully")));
+
+    unwrap! (mm_bob.stop());
+    unwrap! (mm_alice.stop());
+}
+
+#[test]
+fn trade_beer_pizza_electrum() {
+    trade_base_rel_electrum("BEER", "PIZZA");
+}
+
+fn trade_base_rel_native(base: &str, rel: &str) {
     // Keep BEER here for some time as coin maybe will be back
     let beer_cfp = unwrap! (komodo_conf_path (Some ("BEER")));
     let pizza_cfp = unwrap! (komodo_conf_path (Some ("PIZZA")));
@@ -690,51 +806,51 @@ fn trade_base_rel(base: &str, rel: &str) {
 /// 
 /// And run the test:
 /// 
-///     cargo test trade -- --nocapture --ignored
+///     cargo test trade_etomic_pizza -- --nocapture --ignored
 #[test]
 #[ignore]
 fn trade_pizza_eth() {
-    trade_base_rel("PIZZA", "ETH");
+    trade_base_rel_native("PIZZA", "ETH");
 }
 
 #[test]
 #[ignore]
 fn trade_eth_pizza() {
-    trade_base_rel("ETH", "PIZZA");
+    trade_base_rel_native("ETH", "PIZZA");
 }
 
 #[test]
 #[ignore]
 fn trade_beer_eth() {
-    trade_base_rel("BEER", "ETH");
+    trade_base_rel_native("BEER", "ETH");
 }
 
 #[test]
 #[ignore]
 fn trade_eth_beer() {
-    trade_base_rel("ETH", "BEER");
+    trade_base_rel_native("ETH", "BEER");
 }
 
 #[test]
 #[ignore]
 fn trade_pizza_beer() {
-    trade_base_rel("PIZZA", "BEER");
+    trade_base_rel_native("PIZZA", "BEER");
 }
 
 #[test]
 #[ignore]
 fn trade_beer_pizza() {
-    trade_base_rel("BEER", "PIZZA");
+    trade_base_rel_native("BEER", "PIZZA");
 }
 
 #[test]
 #[ignore]
 fn trade_pizza_etomic() {
-    trade_base_rel("PIZZA", "ETOMIC");
+    trade_base_rel_native("PIZZA", "ETOMIC");
 }
 
 #[test]
 #[ignore]
 fn trade_etomic_pizza() {
-    trade_base_rel("ETOMIC", "PIZZA");
+    trade_base_rel_native("ETOMIC", "PIZZA");
 }

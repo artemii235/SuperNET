@@ -22,13 +22,25 @@ jobs:
     parameters:
       name: 'MM2_Linux'
       os: 'Linux'
+      bob_passphrase: $(BOB_PASSPHRASE_LINUX)
+      bob_userpass: $(BOB_USERPASS_LINUX)
+      alice_passphrase: $(ALICE_PASSPHRASE_LINUX)
+      alice_userpass: $(ALICE_USERPASS_LINUX)
 
   - template: azure-pipelines-job.yml  # Template reference
     parameters:
       name: 'MM2_MacOS'
       os: 'Darwin'
+      bob_passphrase: $(BOB_PASSPHRASE_MAC)
+      bob_userpass: $(BOB_USERPASS_MAC)
+      alice_passphrase: $(ALICE_PASSPHRASE_MAC)
+      alice_userpass: $(ALICE_USERPASS_MAC)
 
   - template: azure-pipelines-job.yml  # Template reference
     parameters:
       name: 'MM2_Windows'
       os: 'Windows_NT'
+      bob_passphrase: $(BOB_PASSPHRASE_WIN)
+      bob_userpass: $(BOB_USERPASS_WIN)
+      alice_passphrase: $(ALICE_PASSPHRASE_WIN)
+      alice_userpass: $(ALICE_USERPASS_WIN)
