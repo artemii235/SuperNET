@@ -36,7 +36,7 @@ jobs:
           then
             export PATH=$PATH:/root/.cargo/bin
           fi
-          cargo test trade_base_rel_electrum -- --nocapture
+          cargo test trade_beer_pizza_electrum -- --nocapture
         displayName: 'Test MM2'
         timeoutInMinutes: 22
         env:
