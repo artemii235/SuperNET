@@ -530,7 +530,7 @@ fn komodo_conf_path (ac_name: Option<&'static str>) -> Result<PathBuf, String> {
     Ok (path.join (&confname[..]))
 }
 
-/// Trading test using coins in Electrum mode, so it doesn't need any specific environment setup.
+/// Trading test using coins in Electrum mode, it needs only ENV variables to be set, coins daemons are not required.
 fn trade_base_rel_electrum(base: &str, rel: &str) {
     let (bob_file_passphrase, bob_file_userpass) = from_env_file (slurp (&".env.seed"));
     let (alice_file_passphrase, alice_file_userpass) = from_env_file (slurp (&".env.client"));
