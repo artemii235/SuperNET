@@ -550,7 +550,7 @@ fn trade_base_rel_electrum(base: &str, rel: &str) {
     let mut mm_bob = unwrap! (MarketMakerIt::start (
         json! ({
             "gui": "nogui",
-            "netid": 9000,
+            "netid": 8999,
             "dht": "on",  // Enable DHT without delay.
             "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
             "rpcip": env::var ("BOB_TRADE_IP") .ok(),
@@ -570,19 +570,19 @@ fn trade_base_rel_electrum(base: &str, rel: &str) {
     // We want to give Bob a headstart in acquiring the port,
     // because Alice will then be able to directly reach it (thanks to "seednode").
     // Direct communication is not required in this test, but it's nice to have.
-    // The port differs for another netid, should be 43804 for 9000
-    unwrap! (mm_bob.wait_for_log (9., &|log| log.contains ("preferred port 43804 drill true")));
+    // The port differs for another netid, should be 43773 for 8999
+    unwrap! (mm_bob.wait_for_log (9., &|log| log.contains ("preferred port 43773 drill true")));
 
     let mut mm_alice = unwrap! (MarketMakerIt::start (
         json! ({
             "gui": "nogui",
-            "netid": 9000,
+            "netid": 8999,
             "dht": "on",  // Enable DHT without delay.
             "myipaddr": env::var ("ALICE_TRADE_IP") .ok(),
             "rpcip": env::var ("ALICE_TRADE_IP") .ok(),
             "passphrase": alice_passphrase,
             "coins": coins,
-            // We're using the open (non-NAT) netid 9000 seed instead, 195.201.42.102 // "seednode": fomat!((mm_bob.ip))
+            "seednode": fomat!((mm_bob.ip))
         }),
         alice_userpass,
         match var ("LOCAL_THREAD_MM") {Ok (ref e) if e == "alice" => Some (local_start()), _ => None}
@@ -600,9 +600,6 @@ fn trade_base_rel_electrum(base: &str, rel: &str) {
     // Enable coins on Alice side. Print the replies in case we need the "smartaddress".
     log! ({"enable_coins (alice): {:?}", enable_coins_electrum (&mm_alice)});
 
-    // Both the Taker and the Maker should connect to the netid 9000 open (non-NAT) seed node.
-    // NB: Long wayt as there might be delays in the seed node from us reusing the 127.0.0.* IPs with different keys.
-    unwrap! (mm_bob.wait_for_log (999., &|log| log.contains ("set pubkey for ")));
     unwrap! (mm_alice.wait_for_log (999., &|log| log.contains ("set pubkey for ")));
 
     // issue sell request on Bob side by setting base/rel price
