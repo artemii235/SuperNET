@@ -35,7 +35,7 @@ jobs:
           then
             export PATH=$PATH:/root/.cargo/bin
           fi
-          echo $(BOB_PASSPHRASE)
+          echo "bob" $BOB_PASSPHRASE
           cargo test trade_beer_pizza_electrum -- --nocapture
         displayName: 'Test MM2'
         timeoutInMinutes: 22
