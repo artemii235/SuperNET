@@ -26,7 +26,6 @@ jobs:
           then
             export PATH=$PATH:/root/.cargo/bin
           fi
-          touch mm2src/common/build.rs
           cargo build -vv
           rm -rf upload
           mkdir upload
@@ -36,6 +35,7 @@ jobs:
           then
             export PATH=$PATH:/root/.cargo/bin
           fi
+          echo $(BOB_PASSPHRASE)
           cargo test trade_beer_pizza_electrum -- --nocapture
         displayName: 'Test MM2'
         timeoutInMinutes: 22
