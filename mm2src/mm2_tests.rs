@@ -17,11 +17,14 @@ use std::time::Duration;
 
 /// Asks MM to enable the given currency in native mode.  
 /// Returns the RPC reply containing the corresponding wallet address.
-fn enable_native(mm: &MarketMakerIt, coin: &str) -> String {
+fn enable_native(mm: &MarketMakerIt, coin: &str, urls: Vec<&str>) -> String {
     let native = unwrap! (mm.rpc (json! ({
         "userpass": mm.userpass,
         "method": "enable",
         "coin": coin,
+        "urls": urls,
+        // ETH Ropsten swap contract address
+        "swap_contract_address": "0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94",
     })));
     assert_eq! (native.0, StatusCode::OK, "'enable' failed: {}", native.1);
     native.1
@@ -31,18 +34,20 @@ fn enable_native(mm: &MarketMakerIt, coin: &str) -> String {
 /// Returns the RPC replies containing the corresponding wallet addresses.
 fn enable_coins(mm: &MarketMakerIt) -> Vec<(&'static str, String)> {
     let mut replies = Vec::new();
-    replies.push (("BEER", enable_native (mm, "BEER")));
-    replies.push (("PIZZA", enable_native (mm, "PIZZA")));
-    replies.push (("ETOMIC", enable_native(mm, "ETOMIC")));
-    replies.push (("ETH", enable_native (mm, "ETH")));
+    replies.push (("BEER", enable_native (mm, "BEER", vec![])));
+    replies.push (("PIZZA", enable_native (mm, "PIZZA", vec![])));
+    replies.push (("ETOMIC", enable_native(mm, "ETOMIC", vec![])));
+    replies.push (("ETH", enable_native (mm, "ETH", vec!["http://195.201.0.6:8545"])));
     replies
 }
 
-fn enable_coins_electrum(mm: &MarketMakerIt) -> Vec<(&'static str, String)> {
+fn enable_coins_eth_electrum(mm: &MarketMakerIt, eth_urls: Vec<&str>) -> Vec<(&'static str, String)> {
     let mut replies = Vec::new();
     replies.push (("BEER", enable_electrum (mm, "BEER", vec!["electrum1.cipig.net:10022","electrum2.cipig.net:10022","electrum3.cipig.net:10022"])));
     replies.push (("PIZZA", enable_electrum (mm, "PIZZA", vec!["electrum1.cipig.net:10024","electrum2.cipig.net:10024","electrum3.cipig.net:10024"])));
     replies.push (("ETOMIC", enable_electrum (mm, "ETOMIC", vec!["electrum1.cipig.net:10025","electrum2.cipig.net:10025","electrum3.cipig.net:10025"])));
+    replies.push (("ETH", enable_native (mm, "ETH", eth_urls.clone())));
+    replies.push (("JST", enable_native (mm, "JST", eth_urls)));
     replies
 }
 
@@ -281,7 +286,7 @@ fn alice_can_see_the_active_order_after_connection() {
     log!({"Bob log path: {}", mm_bob.log_path.display()});
     unwrap! (mm_bob.wait_for_log (22., &|log| log.contains (">>>>>>>>> DEX stats ")));
     // Enable coins on Bob side. Print the replies in case we need the "address".
-    log! ({"enable_coins (bob): {:?}", enable_coins_electrum (&mm_bob)});
+    log! ({"enable_coins (bob): {:?}", enable_coins_eth_electrum (&mm_bob, vec!["http://195.201.0.6:8545"])});
     // issue sell request on Bob side by setting base/rel price
     log!("Issue bob sell request");
     let rc = unwrap! (mm_bob.rpc (json! ({
@@ -336,7 +341,7 @@ fn alice_can_see_the_active_order_after_connection() {
     unwrap! (mm_alice.wait_for_log (22., &|log| log.contains (">>>>>>>>> DEX stats ")));
 
     // Enable coins on Alice side. Print the replies in case we need the "address".
-    log! ({"enable_coins (alice): {:?}", enable_coins_electrum (&mm_alice)});
+    log! ({"enable_coins (alice): {:?}", enable_coins_eth_electrum (&mm_alice, vec!["http://195.201.0.6:8545"])});
 
     // wait until Alice recognize Bob node by importing it's pubkey
     unwrap! (mm_alice.wait_for_log (33., &|log| log.contains ("set pubkey for")));
@@ -432,9 +437,6 @@ fn test_check_balance_on_order_post() {
             "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| unwrap! (s.parse::<i64>())),
             "passphrase": "bob passphrase",
             "coins": coins,
-            "alice_contract":"0xe1d4236c5774d35dc47dcc2e5e0ccfc463a3289c",
-            "bob_contract":"0x105aFE60fDC8B5c021092b09E8a042135A4A976E",
-            "ethnode":"http://195.201.0.6:8545"
         }),
         "db4be27033b636c6644c356ded97b0ad08914fcb8a1e2a1efc915b833c2cbd19".into(),
         match var ("LOCAL_THREAD_MM") {Ok (ref e) if e == "bob" => Some (local_start()), _ => None}
@@ -443,7 +445,7 @@ fn test_check_balance_on_order_post() {
     log!({"Log path: {}", mm.log_path.display()});
     unwrap! (mm.wait_for_log (22., &|log| log.contains (">>>>>>>>> DEX stats ")));
     // Enable coins. Print the replies in case we need the "address".
-    log! ({"enable_coins (bob): {:?}", enable_coins_electrum (&mm)});
+    log! ({"enable_coins (bob): {:?}", enable_coins_eth_electrum (&mm, vec!["http://195.201.0.6:8545"])});
     // issue sell request by setting base/rel price
     let rc = unwrap! (mm.rpc (json! ({
         "userpass": mm.userpass,
@@ -661,7 +663,8 @@ fn trade_base_rel_electrum(base: &str, rel: &str) {
         {"coin":"BEER","asset":"BEER"},
         {"coin":"PIZZA","asset":"PIZZA"},
         {"coin":"ETOMIC","asset":"ETOMIC"},
-        {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000"}
+        {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000"},
+        {"coin":"JST","name":"jst","etomic":"0xc0eb7AeD740E1796992A08962c15661bDEB58003"}
     ]);
 
     let mut mm_bob = unwrap! (MarketMakerIt::start (
@@ -714,10 +717,10 @@ fn trade_base_rel_electrum(base: &str, rel: &str) {
     unwrap! (mm_bob.wait_for_log (22., &|log| log.contains (">>>>>>>>> DEX stats ")));
     unwrap! (mm_alice.wait_for_log (22., &|log| log.contains (">>>>>>>>> DEX stats ")));
 
-    // Enable coins on Bob side. Print the replies in case we need the "smartaddress".
-    log! ({"enable_coins (bob): {:?}", enable_coins_electrum (&mm_bob)});
-    // Enable coins on Alice side. Print the replies in case we need the "smartaddress".
-    log! ({"enable_coins (alice): {:?}", enable_coins_electrum (&mm_alice)});
+    // Enable coins on Bob side. Print the replies in case we need the address.
+    log! ({"enable_coins (bob): {:?}", enable_coins_eth_electrum (&mm_bob, vec!["http://195.201.0.6:8545"])});
+    // Enable coins on Alice side. Print the replies in case we need the address.
+    log! ({"enable_coins (alice): {:?}", enable_coins_eth_electrum (&mm_alice, vec!["http://195.201.0.6:8545"])});
 
     unwrap! (mm_alice.wait_for_log (999., &|log| log.contains ("set pubkey for ")));
 
@@ -760,6 +763,11 @@ fn trade_base_rel_electrum(base: &str, rel: &str) {
 #[test]
 fn trade_beer_pizza_electrum() {
     trade_base_rel_electrum("BEER", "PIZZA");
+}
+
+#[test]
+fn trade_eth_jst_electrum() {
+    trade_base_rel_electrum("ETH", "JST");
 }
 
 fn trade_base_rel_native(base: &str, rel: &str) {
