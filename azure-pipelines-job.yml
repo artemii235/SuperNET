@@ -28,7 +28,7 @@ jobs:
           cargo build -vv
         displayName: 'Build MM2'
       - bash: |
-          cargo test trade_eth_jst_electrum -- --nocapture
+          cargo test
         displayName: 'Test MM2'
         timeoutInMinutes: 22
         env:
