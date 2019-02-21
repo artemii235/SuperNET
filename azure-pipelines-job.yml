@@ -22,21 +22,13 @@ jobs:
         displayName: Build Windows deps
         condition: eq( variables['Agent.OS'], 'Windows_NT' )
       - bash: |
-          if [ $AGENT_OS = "Linux" ]
-          then
-            export PATH=$PATH:/root/.cargo/bin
-          fi
-          touch mm2src/common/build.rs
-          cargo build -vv
           rm -rf upload
           mkdir upload
+          touch mm2src/common/build.rs
+          cargo build -vv
         displayName: 'Build MM2'
       - bash: |
-          if [ $AGENT_OS = "Linux" ]
-          then
-            export PATH=$PATH:/root/.cargo/bin
-          fi
-          cargo test
+          cargo test trade_eth_jst_electrum -- --nocapture
         displayName: 'Test MM2'
         timeoutInMinutes: 22
         env:
