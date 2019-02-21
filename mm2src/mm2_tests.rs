@@ -264,7 +264,8 @@ fn alice_can_see_the_active_order_after_connection() {
         {"coin":"BEER","asset":"BEER","rpcport":8923,"txversion":4},
         {"coin":"PIZZA","asset":"PIZZA","rpcport":11608,"txversion":4},
         {"coin":"ETOMIC","asset":"ETOMIC","rpcport":10271,"txversion":4},
-        {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000","rpcport":80}
+        {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000","rpcport":80},
+        {"coin":"JST","name":"jst","etomic":"0xc0eb7AeD740E1796992A08962c15661bDEB58003"}
     ]);
 
     // start bob and immediately place the order
@@ -424,7 +425,8 @@ fn test_check_balance_on_order_post() {
         {"coin":"BEER","asset":"BEER","rpcport":8923,"txversion":4},
         {"coin":"PIZZA","asset":"PIZZA","rpcport":11608,"txversion":4},
         {"coin":"ETOMIC","asset":"ETOMIC","rpcport":10271,"txversion":4},
-        {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000","rpcport":80}
+        {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000","rpcport":80},
+        {"coin":"JST","name":"jst","etomic":"0xc0eb7AeD740E1796992A08962c15661bDEB58003"}
     ]);
 
     // start bob and immediately place the order
