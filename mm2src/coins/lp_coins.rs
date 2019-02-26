@@ -144,6 +144,14 @@ pub trait SwapOps {
     ) -> Result<(), String>;
 }
 
+struct SendToAddrRequest {
+    coin: String,
+    address: String,
+    amount: String,
+    /// Tx fee info is different for every coin type, so it's generic JSON getting deserialized/validated by specific coin implementation.
+    tx_fee: Json,
+}
+
 /// Operations that coins have independently from the MarketMaker.
 /// That is, things implemented by the coin wallets or public coin services.
 pub trait MarketCoinOps {
@@ -165,6 +173,8 @@ pub trait MarketCoinOps {
     fn tx_from_raw_bytes(&self, bytes: &[u8]) -> Result<TransactionEnum, String>;
 
     fn current_block(&self) -> Box<Future<Item=u64, Error=String> + Send>;
+
+    //fn send_to_address(&self, req: SendToAddrRequest) -> TransactionFut;
 }
 
 /// Compatibility layer on top of `lp::iguana_info`.  

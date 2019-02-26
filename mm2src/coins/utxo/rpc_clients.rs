@@ -1,6 +1,6 @@
 use bytes::{BytesMut};
 use chain::{OutPoint, Transaction as UtxoTransaction};
-use common::{CORE, slurp_req, StringError};
+use common::{CORE, slurp_req, StringError, SATOSHIDEN};
 use common::custom_futures::{join_all_sequential, select_ok_sequential, SendAll};
 use common::jsonrpc_client::{JsonRpcClient, JsonRpcResponseFut, JsonRpcRequest, JsonRpcResponse, RpcRes};
 use futures::{Async, Future, Poll, Sink, Stream};
@@ -91,6 +91,9 @@ pub trait UtxoRpcClientOps: Debug + 'static {
     }
 
     fn display_balance(&self, address: Address) -> RpcRes<f64>;
+
+    /// returns fee estimation per KByte in satoshis
+    fn estimate_fee_sat(&self) -> RpcRes<u64>;
 }
 
 #[derive(Clone, Deserialize, Debug, PartialEq)]
@@ -271,6 +274,10 @@ impl UtxoRpcClientOps for NativeClient {
             unspents.iter().fold(0., |sum, unspent| sum + unspent.amount)
         ))
     }
+
+    fn estimate_fee_sat(&self) -> RpcRes<u64> {
+        Box::new(self.estimate_fee().map(|fee| (fee * SATOSHIDEN as f64) as u64))
+    }
 }
 
 impl NativeClient {
@@ -307,6 +314,13 @@ impl NativeClient {
     fn get_raw_transaction(&self, txid: H256Json) -> RpcRes<RpcTransaction> {
         let verbose = 1;
         rpc_func!(self, "getrawtransaction", txid, verbose)
+    }
+
+    /// https://bitcoin.org/en/developer-reference#estimatefee
+    /// Always estimate fee for transaction to be confirmed in next block
+    fn estimate_fee(&self) -> RpcRes<f64> {
+        let n_blocks = 1;
+        rpc_func!(self, "estimate_fee", n_blocks)
     }
 }
 
@@ -545,6 +559,16 @@ impl UtxoRpcClientOps for ElectrumClient {
             (result.confirmed as f64 + result.unconfirmed as f64) / 100000000.0
         }))
     }
+
+    fn estimate_fee_sat(&self) -> RpcRes<u64> {
+        Box::new(self.estimate_fee().map(|fee|
+            if fee > 0.00001 {
+                (fee * SATOSHIDEN as f64) as u64
+            } else {
+                1000
+            }
+        ))
+    }
 }
 
 impl ElectrumClientImpl {
@@ -619,6 +643,13 @@ impl ElectrumClientImpl {
     /// https://electrumx.readthedocs.io/en/latest/protocol-methods.html#blockchain-transaction-broadcast
     fn blockchain_transaction_broadcast(&self, tx: BytesJson) -> RpcRes<H256Json> {
         rpc_func!(self, "blockchain.transaction.broadcast", tx)
+    }
+
+    /// https://electrumx.readthedocs.io/en/latest/protocol-methods.html#blockchain-estimatefee
+    /// Always estimate fee for transaction to be confirmed in next block
+    fn estimate_fee(&self) -> RpcRes<f64> {
+        let n_blocks = 1;
+        rpc_func!(self, "blockchain.estimatefee", n_blocks)
     }
 }
 
