@@ -804,9 +804,9 @@ impl MarketCoinOps for UtxoCoin {
         self.rpc_client.display_balance(self.my_address.clone())
     }
 
-    fn send_raw_tx<T>(&self, tx: &str) -> Box<Future<Item=T, Error=String> + Send> {
+    fn send_raw_tx(&self, tx: &str) -> Box<Future<Item=String, Error=String> + Send> {
         let bytes = try_fus!(hex::decode(tx));
-        self.rpc_client.send_raw_transaction(bytes.into())
+        Box::new(self.rpc_client.send_raw_transaction(bytes.into()).map(|hash| format!("{:?}", hash)))
     }
 
     fn wait_for_confirmations(

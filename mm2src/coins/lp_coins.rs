@@ -34,7 +34,6 @@ use futures::{Future};
 use gstuff::now_ms;
 use hashbrown::hash_map::{HashMap, RawEntryMut};
 use libc::{c_char, c_void};
-use serde::Serialize;
 use serde_json::{self as json, Value as Json};
 use std::borrow::Cow;
 use std::ffi::{CString};
@@ -153,7 +152,7 @@ pub trait MarketCoinOps {
     fn my_balance(&self) -> Box<Future<Item=f64, Error=String> + Send>;
 
     /// Receives raw transaction bytes in hexadecimal format as input and returns tx hash in hexadecimal format
-    fn send_raw_tx<T: Serialize>(&self, tx: &str) -> Box<Future<Item=T, Error=String> + Send> where Self: Sized;
+    fn send_raw_tx(&self, tx: &str) -> Box<Future<Item=String, Error=String> + Send>;
 
     fn wait_for_confirmations(
         &self,

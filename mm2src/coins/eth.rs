@@ -284,7 +284,7 @@ impl MarketCoinOps for EthCoin {
         }))
     }
 
-    fn send_raw_tx<T>(&self, tx: &str) -> Box<Future<Item=T, Error=String> + Send> {
+    fn send_raw_tx(&self, tx: &str) -> Box<Future<Item=String, Error=String> + Send> {
         unimplemented!();
     }
 
