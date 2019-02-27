@@ -59,6 +59,8 @@ pub trait UtxoRpcClientOps: Debug + 'static {
 
     fn send_transaction(&self, tx: &UtxoTransaction, my_addr: Address) -> RpcRes<H256Json>;
 
+    fn send_raw_transaction(&self, tx: BytesJson) -> RpcRes<H256Json>;
+
     fn get_transaction(&self, txid: H256Json) -> RpcRes<RpcTransaction>;
 
     fn get_block_count(&self) -> RpcRes<u64>;
@@ -278,6 +280,11 @@ impl UtxoRpcClientOps for NativeClient {
     fn estimate_fee_sat(&self) -> RpcRes<u64> {
         Box::new(self.estimate_fee().map(|fee| (fee * SATOSHIDEN as f64) as u64))
     }
+
+    /// https://bitcoin.org/en/developer-reference#sendrawtransaction
+    fn send_raw_transaction(&self, tx: BytesJson) -> RpcRes<H256Json> {
+        rpc_func!(self, "sendrawtransaction", tx)
+    }
 }
 
 impl NativeClient {
@@ -302,11 +309,6 @@ impl NativeClient {
             let tx: UtxoTransaction = try_s!(deserialize(transaction.hex.as_slice()).map_err(|e| ERRL!("{:?}", e)));
             Ok(tx.outputs[index].value)
         }))
-    }
-
-    /// https://bitcoin.org/en/developer-reference#sendrawtransaction
-    fn send_raw_transaction(&self, tx: BytesJson) -> RpcRes<H256Json> {
-        rpc_func!(self, "sendrawtransaction", tx)
     }
 
     /// https://bitcoin.org/en/developer-reference#getrawtransaction
@@ -568,6 +570,10 @@ impl UtxoRpcClientOps for ElectrumClient {
                 1000
             }
         ))
+    }
+
+    fn send_raw_transaction(&self, tx: BytesJson) -> RpcRes<H256Json> {
+        self.blockchain_transaction_broadcast(tx)
     }
 }
 

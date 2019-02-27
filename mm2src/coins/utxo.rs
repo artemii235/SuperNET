@@ -33,6 +33,7 @@ use keys::bytes::Bytes;
 use keys::generator::{Random, Generator};
 use primitives::hash::{H256, H264, H512};
 use script::{Opcode, Builder, Script, TransactionInputSigner, UnsignedTransactionInput, SignatureVersion};
+use serde_json::{self as json};
 use serialization::{serialize, deserialize};
 use sha2::{Sha256, Digest};
 use std::borrow::Cow;
@@ -40,12 +41,14 @@ use std::convert::AsMut;
 use std::ffi::CStr;
 use std::mem::transmute;
 use std::ops::Deref;
+use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
 use self::rpc_clients::{UtxoRpcClientEnum, UnspentInfo, ElectrumClient, ElectrumClientImpl, NativeClient};
-use super::{IguanaInfo, MarketCoinOps, MmCoin, MmCoinEnum, SwapOps, Transaction, TransactionEnum, TransactionFut};
+use super::{IguanaInfo, MarketCoinOps, MmCoin, MmCoinEnum, SwapOps, Transaction, TransactionEnum, TransactionFut, WithdrawResult};
+use common::SATOSHIDEN;
 
 /// Clones slice into fixed size array
 /// https://stackoverflow.com/a/37682288/8707622
@@ -160,6 +163,8 @@ pub struct UtxoCoinImpl {  // pImpl idiom.
     /// https://komodoplatform.atlassian.net/wiki/spaces/KPSD/pages/71729160/What+is+a+Parallel+Chain+Asset+Chain
     asset_chain: bool,
     tx_fee: TxFee,
+    /// Version group id for Zcash transactions since Overwinter: https://github.com/zcash/zips/blob/master/zip-0202.rst
+    version_group_id: u32,
 }
 
 impl UtxoCoinImpl {
@@ -283,14 +288,8 @@ fn p2sh_spending_tx(
     overwintered: bool,
     lock_time: u32,
     sequence: u32,
+    version_group_id: u32,
 ) -> Result<UtxoTransaction, String> {
-    let mut version_group_id = 0;
-    if version == 3 {
-        version_group_id = 0x03c48270;
-    } else if version == 4 {
-        version_group_id = 0x892f2085;
-    }
-
     let unsigned = TransactionInputSigner {
         lock_time,
         version,
@@ -387,7 +386,6 @@ macro_rules! true_or_err {
 
 impl UtxoCoin {
     fn send_outputs_from_my_address(&self, outputs: Vec<TransactionOutput>, redeem_script: Bytes) -> TransactionFut {
-        let change_script_pubkey = Builder::build_p2pkh(&self.key_pair.public().address_hash()).to_bytes();
         let arc = self.clone();
         let utxo_lock = MutexGuardWrapper(try_fus!(UTXO_LOCK.lock()));
         let unspent_fut = self.rpc_client.list_unspent_ordered(&self.my_address);
@@ -396,17 +394,18 @@ impl UtxoCoin {
                 unspents,
                 outputs,
                 0,
-                change_script_pubkey.clone()
-            ).and_then(move |unsigned| -> TransactionFut {
-                let signed = try_fus!(sign_tx(unsigned, &arc.key_pair, change_script_pubkey.into()));
+            ).and_then(move |(unsigned, _)| -> TransactionFut {
+                let prev_script = Builder::build_p2pkh(&arc.my_address.hash);
+                let signed = try_fus!(sign_tx(unsigned, &arc.key_pair, prev_script));
                 let tx = ExtendedUtxoTx {
                     transaction: signed,
                     redeem_script
                 };
-                Box::new(arc.send_raw_tx(tx.into()).then(move |res| {
+                Box::new(arc.rpc_client.send_transaction(&tx.transaction, arc.my_address.clone()).then(move |res| {
                     // Drop the UTXO lock only when the transaction send result is known.
                     drop(utxo_lock);
-                    res
+                    try_s!(res);
+                    Ok(tx.into())
                 }))
             })
         }))
@@ -471,17 +470,19 @@ impl UtxoCoin {
     /// Generates unsigned transaction (TransactionInputSigner) from specified utxos and outputs.
     /// This function expects that utxos are sorted by amounts in ascending order
     /// Consider sorting before calling this function
+    /// Sends the change (inputs amount - outputs amount) to "my_address"
+    /// Also returns the resulting transaction fee in satoshis
     fn generate_transaction(
         &self,
         utxos: Vec<UnspentInfo>,
         mut outputs: Vec<TransactionOutput>,
         lock_time: u32,
-        change_script_pubkey: Bytes,
-    ) -> Box<Future<Item=TransactionInputSigner, Error=String> + Send> {
+    ) -> Box<Future<Item=(TransactionInputSigner, u64), Error=String> + Send> {
+        let change_script_pubkey = Builder::build_p2pkh(&self.my_address.hash).to_bytes();
         let arc = self.clone();
         Box::new(self.get_tx_fee().and_then(move |tx_fee| {
-            true_or_err!(utxos.is_empty(), "Couldn't generate tx from empty utxos set");
-            true_or_err!(outputs.is_empty(), "Couldn't generate tx from empty outputs set");
+            true_or_err!(!utxos.is_empty(), "Couldn't generate tx from empty utxos set");
+            true_or_err!(!outputs.is_empty(), "Couldn't generate tx from empty outputs set");
 
             let mut target_value = 0;
             for output in outputs.iter() {
@@ -514,14 +515,7 @@ impl UtxoCoin {
                 });
             }
 
-            let mut version_group_id = 0;
-            if arc.tx_version == 3 {
-                version_group_id = 0x03c48270;
-            } else if arc.tx_version == 4 {
-                version_group_id = 0x892f2085;
-            }
-
-            Ok(TransactionInputSigner {
+            let tx = TransactionInputSigner {
                 inputs,
                 outputs,
                 lock_time,
@@ -532,8 +526,9 @@ impl UtxoCoin {
                 shielded_spends: vec![],
                 shielded_outputs: vec![],
                 value_balance: 0,
-                version_group_id,
-            })
+                version_group_id: arc.version_group_id,
+            };
+            Ok((tx, tx_fee))
         }))
     }
 }
@@ -628,12 +623,15 @@ impl SwapOps for UtxoCoin {
             self.tx_version,
             self.overwintered,
             (now_ms() / 1000) as u32,
-            SEQUENCE_FINAL
+            SEQUENCE_FINAL,
+            self.version_group_id,
         ));
-        self.send_raw_tx(ExtendedUtxoTx {
-            transaction,
-            redeem_script: vec![].into()
-        }.into())
+        Box::new(self.rpc_client.send_transaction(&transaction, self.my_address.clone()).map(move |_res|
+            ExtendedUtxoTx {
+                transaction,
+                redeem_script: vec![].into()
+            }.into()
+        ))
     }
 
     fn send_taker_spends_maker_payment(
@@ -658,12 +656,15 @@ impl SwapOps for UtxoCoin {
             self.tx_version,
             self.overwintered,
             (now_ms() / 1000) as u32,
-            SEQUENCE_FINAL
+            SEQUENCE_FINAL,
+            self.version_group_id,
         ));
-        self.send_raw_tx(ExtendedUtxoTx {
-            transaction,
-            redeem_script: vec![].into()
-        }.into())
+        Box::new(self.rpc_client.send_transaction(&transaction, self.my_address.clone()).map(move |_res|
+            ExtendedUtxoTx {
+                transaction,
+                redeem_script: vec![].into()
+            }.into()
+        ))
     }
 
     fn send_taker_refunds_payment(
@@ -686,12 +687,15 @@ impl SwapOps for UtxoCoin {
             self.tx_version,
             self.overwintered,
             (now_ms() / 1000) as u32,
-            SEQUENCE_FINAL - 1
+            SEQUENCE_FINAL - 1,
+            self.version_group_id,
         ));
-        self.send_raw_tx(ExtendedUtxoTx {
-            transaction,
-            redeem_script: vec![].into()
-        }.into())
+        Box::new(self.rpc_client.send_transaction(&transaction, self.my_address.clone()).map(move |_res|
+            ExtendedUtxoTx {
+                transaction,
+                redeem_script: vec![].into()
+            }.into()
+        ))
     }
 
     fn send_maker_refunds_payment(
@@ -714,12 +718,15 @@ impl SwapOps for UtxoCoin {
             self.tx_version,
             self.overwintered,
             (now_ms() / 1000) as u32,
-            SEQUENCE_FINAL - 1
+            SEQUENCE_FINAL - 1,
+            self.version_group_id,
         ));
-        self.send_raw_tx(ExtendedUtxoTx {
-            transaction,
-            redeem_script: vec![].into()
-        }.into())
+        Box::new(self.rpc_client.send_transaction(&transaction, self.my_address.clone()).map(move |_res|
+            ExtendedUtxoTx {
+                transaction,
+                redeem_script: vec![].into()
+            }.into()
+        ))
     }
 
     fn validate_fee(
@@ -797,10 +804,9 @@ impl MarketCoinOps for UtxoCoin {
         self.rpc_client.display_balance(self.my_address.clone())
     }
 
-    fn send_raw_tx(&self, tx: TransactionEnum) -> TransactionFut {
-        let tx = match tx {TransactionEnum::ExtendedUtxoTx(e) => e, _ => panic!()};
-        let send_fut = self.rpc_client.send_transaction(&tx.transaction, self.my_address.clone());
-        Box::new(send_fut.map(move |_res| { tx.into() }))
+    fn send_raw_tx<T>(&self, tx: &str) -> Box<Future<Item=T, Error=String> + Send> {
+        let bytes = try_fus!(hex::decode(tx));
+        self.rpc_client.send_raw_transaction(bytes.into())
     }
 
     fn wait_for_confirmations(
@@ -831,7 +837,7 @@ impl MarketCoinOps for UtxoCoin {
         }))
     }
 
-    fn tx_from_raw_bytes(&self, bytes: &[u8]) -> Result<TransactionEnum, String> {
+    fn tx_enum_from_bytes(&self, bytes: &[u8]) -> Result<TransactionEnum, String> {
         // should be at least 8 bytes length in case tx and redeem length is zero
         if bytes.len() < 8 {
             return ERR!("Input bytes slice len is too small");
@@ -858,6 +864,12 @@ impl MarketCoinOps for UtxoCoin {
 impl IguanaInfo for UtxoCoin {
     fn ticker<'a> (&'a self) -> &'a str {&self.ticker[..]}
 }
+
+#[derive(Serialize)]
+struct UtxoFeeDetails {
+    amount: f64,
+}
+
 impl MmCoin for UtxoCoin {
     fn is_asset_chain(&self) -> bool { self.asset_chain }
 
@@ -880,6 +892,40 @@ impl MmCoin for UtxoCoin {
                 })
             })
         )
+    }
+
+    fn withdraw(&self, to: &str, amount: f64) -> Box<Future<Item=WithdrawResult, Error=String> + Send> {
+        let to: Address = try_fus!(Address::from_str(to));
+        let value = (amount * SATOSHIDEN as f64) as u64;
+        let script_pubkey = Builder::build_p2pkh(&to.hash).to_bytes();
+        let outputs = vec![TransactionOutput {
+            value,
+            script_pubkey,
+        }];
+        let utxo_lock = MutexGuardWrapper(try_fus!(UTXO_LOCK.lock()));
+        let unspent_fut = self.rpc_client.list_unspent_ordered(&self.my_address);
+        let arc = self.clone();
+        Box::new(unspent_fut.and_then(move |unspents| {
+            arc.generate_transaction(
+                unspents,
+                outputs,
+                0,
+            ).and_then(move |(unsigned, tx_fee)| {
+                drop(utxo_lock);
+                let prev_script = Builder::build_p2pkh(&arc.my_address.hash);
+                let signed = try_s!(sign_tx(unsigned, &arc.key_pair, prev_script));
+                let fee_details = UtxoFeeDetails {
+                    amount: dstr(tx_fee as i64),
+                };
+                Ok(WithdrawResult {
+                    from: arc.my_address().into(),
+                    to: format!("{}", to),
+                    amount,
+                    transaction_bytes: hex::encode(serialize(&signed)),
+                    fee_details: try_s!(json::to_value(fee_details)),
+                })
+            })
+        }))
     }
 }
 
@@ -980,6 +1026,13 @@ pub fn utxo_coin_from_iguana_info(info: *mut lp::iguana_info, mode: UtxoInitMode
     } else {
         TxFee::Dynamic
     };
+    let version_group_id = if tx_version == 3 {
+        0x03c48270
+    } else if tx_version == 4 {
+        0x892f2085
+    } else {
+        0
+    };
 
     let coin = UtxoCoinImpl {
         ticker,
@@ -1002,6 +1055,7 @@ pub fn utxo_coin_from_iguana_info(info: *mut lp::iguana_info, mode: UtxoInitMode
         my_address: my_address.clone(),
         asset_chain: info.isassetchain == 1,
         tx_fee,
+        version_group_id,
     };
     Ok(UtxoCoin(Arc::new(coin)).into())
 }
