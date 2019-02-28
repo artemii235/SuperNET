@@ -504,7 +504,7 @@ impl UtxoCoin {
                 if value_to_spend >= target_value { break; }
             }
 
-            true_or_err!(value_to_spend >= target_value, "Couldn't collect enough value from utxos {:?} to create tx with outputs {:?}", utxos, outputs);
+            true_or_err!(value_to_spend >= target_value, "Not sufficient balance. Couldn't collect enough value from utxos {:?} to create tx with outputs {:?}", utxos, outputs);
 
             if value_to_spend > target_value {
                 outputs.push({
@@ -921,7 +921,7 @@ impl MmCoin for UtxoCoin {
                     from: arc.my_address().into(),
                     to: format!("{}", to),
                     amount,
-                    transaction_bytes: hex::encode(serialize(&signed)),
+                    tx_hex: hex::encode(serialize(&signed)),
                     fee_details: try_s!(json::to_value(fee_details)),
                 })
             })

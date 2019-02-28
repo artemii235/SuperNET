@@ -22,7 +22,7 @@
 //
 //  Copyright © 2014-2018 SuperNET. All rights reserved.
 //
-use coins::{enable, electrum, my_balance, withdraw};
+use coins::{enable, electrum, my_balance, send_raw_transaction, withdraw};
 use common::{free_c_ptr, lp, rpc_response, rpc_err_response, HyRes, CORE};
 use common::mm_ctx::MmArc;
 use futures::{self, Future};
@@ -217,6 +217,7 @@ pub fn dispatcher (req: Json, _remote_addr: Option<SocketAddr>, ctx: MmArc) -> D
         "notify" => lp_signatures::lp_notify_recv (ctx, req),  // Invoked usually from the `lp_command_q_loop`
         "passphrase" => passphrase (ctx, req),
         "sell" => sell (ctx, req),
+        "send_raw_transaction" => send_raw_transaction (ctx, req),
         "setprice" => set_price (ctx, req),
         "stop" => stop (ctx),
         "version" => version(),

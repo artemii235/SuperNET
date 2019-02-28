@@ -284,8 +284,16 @@ impl MarketCoinOps for EthCoin {
         }))
     }
 
-    fn send_raw_tx(&self, tx: &str) -> Box<Future<Item=String, Error=String> + Send> {
-        unimplemented!();
+    fn send_raw_tx(&self, mut tx: &str) -> Box<Future<Item=String, Error=String> + Send> {
+        if tx.starts_with("0x") {
+            tx = &tx[2..];
+        }
+        let bytes = try_fus!(hex::decode(tx));
+        Box::new(
+            self.web3.eth().send_raw_transaction(bytes.into())
+                .map(|res| format!("{:#02x}", res))
+                .map_err(|e| ERRL!("{}", e))
+        )
     }
 
     fn wait_for_confirmations(
@@ -895,10 +903,7 @@ impl MmCoin for EthCoin {
             EthCoinType::Eth => (wei_amount, vec![], to_addr),
             EthCoinType::Erc20(token_addr) => {
                 let function = try_fus!(ERC20_CONTRACT.function("transfer"));
-                let data = try_fus!(function.encode_input(&[
-                    Token::Address(to_addr),
-                    Token::Uint(wei_amount),
-                ]));
+                let data = try_fus!(function.encode_input(&[Token::Address(to_addr), Token::Uint(wei_amount)]));
                 (0.into(), data, token_addr)
             }
         };
@@ -918,18 +923,12 @@ impl MmCoin for EthCoin {
                     from: Some(arc.my_address),
                     to: call_addr,
                     gas: None,
-                    gas_price: Some(gas_price),
+                    gas_price: Some(gas_price)
                 };
+
                 let estimate_gas_fut = arc.web3.eth().estimate_gas(estimate_gas_req, None).map_err(|e| ERRL!("{}", e));
                 estimate_gas_fut.and_then(move |gas| {
-                    let tx = UnsignedEthTransaction {
-                        nonce,
-                        value,
-                        action: Action::Call(call_addr),
-                        data,
-                        gas,
-                        gas_price,
-                    };
+                    let tx = UnsignedEthTransaction { nonce, value, action: Action::Call(call_addr), data, gas, gas_price };
 
                     let signed = tx.sign(arc.key_pair.secret(), None);
                     let bytes = rlp::encode(&signed);
@@ -941,7 +940,7 @@ impl MmCoin for EthCoin {
                         to: format!("{:#02x}", to_addr),
                         from: arc.my_address().into(),
                         amount: amount_f64,
-                        transaction_bytes: hex::encode(bytes),
+                        tx_hex: hex::encode(bytes),
                         fee_details,
                     })
                 })

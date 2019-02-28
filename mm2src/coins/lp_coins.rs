@@ -191,7 +191,7 @@ struct WithdrawRequest {
 #[derive(Serialize)]
 pub struct WithdrawResult {
     /// Raw bytes of signed transaction in hexadecimal string, this should be sent as is to send_raw_transaction RPC to broadcast the transaction
-    transaction_bytes: String,
+    tx_hex: String,
     /// Coins will be sent from this address
     from: String,
     /// Coins will be sent to this address
@@ -199,7 +199,7 @@ pub struct WithdrawResult {
     /// Amount to be sent
     amount: f64,
     /// Every coin can has specific fee details:
-    /// When you send UTXO tx you pay fee with this coin (e.g. 1 BTC and 0.0001 BTC fee).
+    /// When you send UTXO tx you pay fee with the coin itself (e.g. 1 BTC and 0.0001 BTC fee).
     /// But for ERC20 token transfer you pay fee with another coin: ETH, because it's ETH smart contract function call that requires gas to be burnt.
     /// So it's just generic JSON for now, maybe we will change it to Rust generic later.
     fee_details: Json
@@ -996,12 +996,10 @@ pub fn send_raw_transaction (ctx: MmArc, req: Json) -> HyRes {
         Ok (None) => return rpc_err_response (500, &fomat! ("No such coin: " (ticker))),
         Err (err) => return rpc_err_response (500, &fomat! ("!lp_coinfind(" (ticker) "): " (err)))
     };
-    let bytes_string = try_h! (req["hex"].as_str().ok_or ("No 'hex' field"));
-    unimplemented!();
-    /*
-    Box::new(coin.withdraw(&withdraw_req.to, withdraw_req.amount).and_then(|res| {
-        let body = try_h!(json::to_string(&res));
-        rpc_response(200, body)
+    let bytes_string = try_h! (req["tx_hex"].as_str().ok_or ("No 'tx_hex' field"));
+    Box::new(coin.send_raw_tx(&bytes_string).and_then(|res| {
+        rpc_response(200, json!({
+            "tx_hash": res
+        }).to_string())
     }))
-    */
 }
