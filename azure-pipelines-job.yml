@@ -7,7 +7,6 @@ parameters:
   bob_userpass: ''
   alice_passphrase: ''
   alice_userpass: ''
-  cleanup: $(cleanup)
 
 jobs:
   - job: ${{ parameters.name }}
