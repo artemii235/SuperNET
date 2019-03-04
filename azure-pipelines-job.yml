@@ -22,6 +22,7 @@ jobs:
         displayName: Build Windows deps
         condition: eq( variables['Agent.OS'], 'Windows_NT' )
       - bash: |
+          echo "cleanup" $cleanup "CLEANUP" $CLEANUP
           rm -rf upload
           mkdir upload
           touch mm2src/common/build.rs
