@@ -7,6 +7,7 @@ parameters:
   bob_userpass: ''
   alice_passphrase: ''
   alice_userpass: ''
+  cleanup: $(cleanup)
 
 jobs:
   - job: ${{ parameters.name }}
@@ -16,7 +17,7 @@ jobs:
       demands: agent.os -equals ${{ parameters.os }}
     steps:
       - checkout: self  # self represents the repo where the initial Pipelines YAML file was found
-        clean: ${{ or( eq( variables['Build.Reason'], 'Schedule' ), eq( $(cleanup), 'clean' ) ) }} # clean up only on Scheduled build or if cleanup is true
+        clean: ${{ or( eq( variables['Build.Reason'], 'Schedule' ), eq(cleanup, 'clean') ) }} # clean up only on Scheduled build or if cleanup is true
       - powershell: |
           .\marketmaker_build_depends.cmd
         displayName: Build Windows deps
@@ -29,7 +30,7 @@ jobs:
           cargo build -vv
         displayName: 'Build MM2'
         env:
-          CLEAN_TEST: $(cleanup)
+          CLEAN_TEST: ${{parameters['cleanup']}}
       # Cargo uses CPU threads count by default running only 2 concurrent tests on Linux.
       # Explicit --test-threads=8 makes the process faster
       - bash: |
