@@ -81,7 +81,7 @@ use std::ffi::{CStr, CString};
 use std::intrinsics::copy;
 use std::io::{Write};
 use std::mem::{forget, size_of, uninitialized, zeroed};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::process::abort;
 use std::ptr::{null_mut, read_volatile};
@@ -794,4 +794,12 @@ impl From<std::io::Error> for StringError {
     fn from(e: std::io::Error) -> StringError {
         StringError(ERRL!("{}", e))
     }
+}
+
+pub fn global_dbdir() -> &'static Path {
+    Path::new (unwrap! (unsafe {CStr::from_ptr (lp::GLOBAL_DBDIR.as_ptr())} .to_str()))
+}
+
+pub fn swap_db_dir() -> PathBuf {
+    global_dbdir().join ("SWAPS")
 }

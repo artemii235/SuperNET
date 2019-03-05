@@ -430,7 +430,6 @@ unsafe fn lp_connect_start_bob(ctx: &MmArc, base: *mut c_char, rel: *mut c_char,
                 let maker_coin = unwrap! (unwrap! (lp_coinfind (ctx, maker_str)));
                 let ctx = ctx.clone();
                 let alice = (*qp).desthash;
-                let session = String::from(c2s!(pair_str));
                 let maker_amount = (*qp).R.srcamount as u64;
                 let taker_amount = (*qp).R.destamount as u64;
                 let my_persistent_pub = unwrap!(compressed_pub_key_from_priv_raw(&lp::G.LP_privkey.bytes));
@@ -442,7 +441,6 @@ unsafe fn lp_connect_start_bob(ctx: &MmArc, base: *mut c_char, rel: *mut c_char,
                         ctx,
                         alice,
                         lp::bits256::default(),
-                        session,
                         maker_coin,
                         taker_coin,
                         maker_amount,
@@ -758,7 +756,6 @@ unsafe fn lp_connected_alice(ctx_ffi_handle: u32, qp: *mut lp::LP_quoteinfo, pai
         let alice_loop_thread = thread::Builder::new().name("taker_loop".into()).spawn({
             let ctx = ctx.clone();
             let maker = (*qp).srchash;
-            let session = String::from(unwrap!(CStr::from_ptr (pairstr) .to_str()));
             let taker_str = c2s!((*qp).R.dest);
             let taker_coin = unwrap! (unwrap! (lp_coinfind (&ctx, taker_str)));
             let maker_str = c2s!((*qp).R.src);
@@ -773,7 +770,6 @@ unsafe fn lp_connected_alice(ctx_ffi_handle: u32, qp: *mut lp::LP_quoteinfo, pai
                     ctx,
                     lp::bits256::default(),
                     maker,
-                    session,
                     maker_coin,
                     taker_coin,
                     maker_amount,

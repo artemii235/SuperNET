@@ -28,7 +28,7 @@
 // locktime claiming on sporadic assetchains
 // there is an issue about waiting for notarization for a swap that never starts (expiration ok)
 
-use common::{coins_iter, lp, slurp_url, os, CJSON, MM_VERSION};
+use common::{coins_iter, lp, slurp_url, os, CJSON, MM_VERSION, global_dbdir};
 use common::log::TagParam;
 use common::mm_ctx::{MmCtx, MmArc};
 use common::nn::*;
@@ -1412,10 +1412,6 @@ fn test_crc32() {
     use libc::c_void;
     assert_eq! (crc32::checksum_ieee (b"123456789"), 0xcbf43926);
     assert_eq! (unsafe {lp::calc_crc32 (0, b"123456789".as_ptr() as *mut c_void, 9)}, 0xcbf43926);
-}
-
-fn global_dbdir() -> &'static Path {
-    Path::new (unwrap! (unsafe {CStr::from_ptr (lp::GLOBAL_DBDIR.as_ptr())} .to_str()))
 }
 
 /// Invokes `OS_ensure_directory`,

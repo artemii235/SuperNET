@@ -56,16 +56,20 @@
 //
 use bitcrypto::dhash160;
 use coins::{MmCoinEnum, TransactionEnum};
-use common::{bits256, dstr, Timeout};
+use common::{bits256, dstr, HyRes, rpc_response, Timeout, swap_db_dir};
 use common::log::TagParam;
 use common::mm_ctx::MmArc;
 use crc::crc32;
 use futures::{Future};
-use gstuff::now_ms;
+use gstuff::{now_ms, slurp};
 use rand::Rng;
 use peers::SendHandler;
 use primitives::hash::{H160, H256, H264};
+use serde_json::{self as json, Value as Json};
 use serialization::{deserialize, serialize};
+use std::fs::File;
+use std::io::prelude::*;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -223,7 +227,6 @@ pub struct AtomicSwap {
     maker_payment_lock: u64,
     taker: bits256,
     maker: bits256,
-    session: String,
     secret: H256,
     secret_hash: H160,
     my_persistent_pub: H264,
@@ -242,7 +245,6 @@ impl AtomicSwap {
         ctx: MmArc,
         taker: bits256,
         maker: bits256,
-        session: String,
         maker_coin: MmCoinEnum,
         taker_coin: MmCoinEnum,
         maker_amount: u64,
@@ -264,7 +266,6 @@ impl AtomicSwap {
             maker_payment_lock: 0,
             taker,
             maker,
-            session,
             secret: [0; 32].into(),
             secret_hash: H160::default(),
             other_persistent_pub: H264::default(),
@@ -294,6 +295,16 @@ fn test_serde_swap_negotiation_data() {
     let bytes = serialize(&data);
     let deserialized = deserialize(bytes.as_slice()).unwrap();
     assert_eq!(data, deserialized);
+}
+
+fn swap_file_path(uuid: &str) -> PathBuf {
+    let path = swap_db_dir();
+    path.join(format!("{}.json", uuid))
+}
+
+fn save_swap_data(uuid: &str, data: String) {
+    let mut file = unwrap!(File::create(swap_file_path(uuid)));
+    unwrap!(file.write_all(data.as_bytes()));
 }
 
 pub fn maker_swap_loop(swap: &mut AtomicSwap) -> Result<(), (i32, String)> {
@@ -457,6 +468,12 @@ pub fn maker_swap_loop(swap: &mut AtomicSwap) -> Result<(), (i32, String)> {
 
                 log!("Taker payment spend tx " (transaction.tx_hash()));
                 status.status(swap_tags, &format!("{}/{} Swap finished successfully.", swap.maker_coin.ticker(), swap.taker_coin.ticker()));
+                save_swap_data(&swap.uuid, json!({
+                    "status":"success",
+                    "uuid":swap.uuid,
+                    "maker_coin":swap.maker_coin.ticker(),
+                    "taker_coin":swap.taker_coin.ticker(),
+                }).to_string());
                 return Ok(());
             },
             AtomicSwapState::RefundMakerPayment => {
@@ -663,6 +680,12 @@ pub fn taker_swap_loop(swap: &mut AtomicSwap) -> Result<(), (i32, String)> {
 
                 log!("Maker payment spend tx " (transaction.tx_hash()));
                 status.status(swap_tags, &format!("{}/{} Swap finished successfully.", swap.maker_coin.ticker(), swap.taker_coin.ticker()));
+                save_swap_data(&swap.uuid, json!({
+                    "status":"success",
+                    "uuid":swap.uuid,
+                    "maker_coin":swap.maker_coin.ticker(),
+                    "taker_coin":swap.taker_coin.ticker(),
+                }).to_string());
                 return Ok(());
             },
             AtomicSwapState::RefundTakerPayment => {
@@ -689,4 +712,45 @@ pub fn taker_swap_loop(swap: &mut AtomicSwap) -> Result<(), (i32, String)> {
         };
         swap.state = Some(next_state);
     }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SwapFeeInfo {
+    coin: String,
+    amount: f64,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SwapTxInfo {
+    tx_hash: String,
+    amount: f64,
+    fee: SwapFeeInfo,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SwapTransactions {
+    taker_fee: SwapTxInfo,
+    maker_payment: SwapTxInfo,
+    taker_payment: SwapTxInfo,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SwapStatus {
+    status: String,
+    uuid: String,
+    maker_coin: String,
+    taker_coin: String,
+
+}
+
+/// Returns the status of requested swap
+pub fn swap_status(req: Json) -> HyRes {
+    let uuid = req["params"]["uuid"].as_str().unwrap();
+    let path = swap_file_path(uuid);
+    let content = slurp(&path);
+    let status: SwapStatus = json::from_slice(&content).unwrap();
+
+    rpc_response(200, json!({
+        "result": status
+    }).to_string())
 }

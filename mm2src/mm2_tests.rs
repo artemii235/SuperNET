@@ -653,6 +653,20 @@ fn komodo_conf_path (ac_name: Option<&'static str>) -> Result<PathBuf, String> {
     Ok (path.join (&confname[..]))
 }
 
+/// Helper function requesting swap status and checking it's value
+fn check_swap_status(mm: &MarketMakerIt, uuid: &str, status: Json) {
+    let response = unwrap!(mm.rpc (json! ({
+            "userpass": mm.userpass,
+            "method": "swapstatus",
+            "params": {
+                "uuid": uuid,
+            }
+        })));
+    assert!(response.0.is_success(), "!{} swap_status: {}", uuid, response.1);
+    let status_json: Json = unwrap!(json::from_str(&response.1));
+    assert_eq!(status_json["result"], status);
+}
+
 /// Trading test using coins with remote RPC (Electrum, ETH nodes), it needs only ENV variables to be set, coins daemons are not required.
 /// Trades few pairs concurrently to speed up the process and also act like "load" test
 fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
@@ -726,6 +740,8 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
 
     unwrap! (mm_alice.wait_for_log (999., &|log| log.contains ("set pubkey for ")));
 
+    let mut uuids = vec![];
+
     // issue sell request on Bob side by setting base/rel price
     for (base, rel) in pairs.iter() {
         log!("Issue bob " (base) "/" (rel) " sell request");
@@ -750,6 +766,8 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
             "price": 1
         })));
         assert!(rc.0.is_success(), "!buy: {}", rc.1);
+        let buy_json: Json = unwrap!(serde_json::from_str(&rc.1));
+        uuids.push(buy_json["pending"]["uuid"].as_str().unwrap().to_owned());
 
         // ensure the swap started
         unwrap!(mm_alice.wait_for_log (99., &|log| log.contains (&format!("Entering the taker_swap_loop {}/{}", base, rel))));
@@ -762,6 +780,21 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
         unwrap!(mm_bob.wait_for_log (600., &|log| log.contains (&format!("{}/{} Swap finished successfully", base, rel))));
     }
 
+    for (uuid, (base, rel)) in uuids.iter().zip(pairs.iter()) {
+        check_swap_status(&mm_alice, &uuid, json!({
+            "status": "success",
+            "uuid": uuid,
+            "maker_coin": base,
+            "taker_coin": rel,
+        }));
+        check_swap_status(&mm_bob, &uuid, json!({
+            "status": "success",
+            "uuid": uuid,
+            "maker_coin": base,
+            "taker_coin": rel,
+        }));
+    }
+
     unwrap! (mm_bob.stop());
     unwrap! (mm_alice.stop());
 }
@@ -772,7 +805,6 @@ fn trade_test_electrum_and_eth_coins() {
 }
 
 fn trade_base_rel_native(base: &str, rel: &str) {
-    // Keep BEER here for some time as coin maybe will be back
     let beer_cfp = unwrap! (komodo_conf_path (Some ("BEER")));
     let pizza_cfp = unwrap! (komodo_conf_path (Some ("PIZZA")));
     let etomic_cfp = unwrap! (komodo_conf_path (Some ("ETOMIC")));
