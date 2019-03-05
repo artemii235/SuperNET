@@ -55,7 +55,7 @@
 //  marketmaker
 //
 use bitcrypto::dhash160;
-use coins::{MmCoinEnum, TransactionEnum};
+use coins::{MmCoinEnum, TransactionEnum, TransactionDetails};
 use common::{bits256, dstr, HyRes, rpc_response, Timeout, swap_db_dir};
 use common::log::TagParam;
 use common::mm_ctx::MmArc;
@@ -473,6 +473,7 @@ pub fn maker_swap_loop(swap: &mut AtomicSwap) -> Result<(), (i32, String)> {
                     "uuid":swap.uuid,
                     "maker_coin":swap.maker_coin.ticker(),
                     "taker_coin":swap.taker_coin.ticker(),
+                    "transactions":SwapTransactions::default(),
                 }).to_string());
                 return Ok(());
             },
@@ -685,6 +686,7 @@ pub fn taker_swap_loop(swap: &mut AtomicSwap) -> Result<(), (i32, String)> {
                     "uuid":swap.uuid,
                     "maker_coin":swap.maker_coin.ticker(),
                     "taker_coin":swap.taker_coin.ticker(),
+                    "transactions":SwapTransactions::default(),
                 }).to_string());
                 return Ok(());
             },
@@ -714,24 +716,15 @@ pub fn taker_swap_loop(swap: &mut AtomicSwap) -> Result<(), (i32, String)> {
     }
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct SwapFeeInfo {
-    coin: String,
-    amount: f64,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct SwapTxInfo {
-    tx_hash: String,
-    amount: f64,
-    fee: SwapFeeInfo,
-}
-
-#[derive(Serialize, Deserialize)]
+#[derive(Default, Serialize, Deserialize)]
 pub struct SwapTransactions {
-    taker_fee: SwapTxInfo,
-    maker_payment: SwapTxInfo,
-    taker_payment: SwapTxInfo,
+    taker_fee: Option<TransactionDetails>,
+    maker_payment: Option<TransactionDetails>,
+    taker_payment: Option<TransactionDetails>,
+    taker_payment_spend: Option<TransactionDetails>,
+    maker_payment_spend: Option<TransactionDetails>,
+    taker_payment_refund: Option<TransactionDetails>,
+    maker_payment_refund: Option<TransactionDetails>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -740,7 +733,7 @@ pub struct SwapStatus {
     uuid: String,
     maker_coin: String,
     taker_coin: String,
-
+    transactions: SwapTransactions,
 }
 
 /// Returns the status of requested swap
@@ -748,7 +741,7 @@ pub fn swap_status(req: Json) -> HyRes {
     let uuid = req["params"]["uuid"].as_str().unwrap();
     let path = swap_file_path(uuid);
     let content = slurp(&path);
-    let status: SwapStatus = json::from_slice(&content).unwrap();
+    let status: SwapStatus = try_h!(json::from_slice(&content));
 
     rpc_response(200, json!({
         "result": status

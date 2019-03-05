@@ -52,7 +52,11 @@ pub mod utxo;
 use self::utxo::{utxo_coin_from_iguana_info, ExtendedUtxoTx, UtxoCoin, UtxoInitMode};
 
 pub trait Transaction: Debug + 'static {
+    /// DEPRECATED, NB: https://github.com/artemii235/SuperNET/issues/324
+    /// Transaction bytes with additional info like redeem script for UTXO coins
     fn to_raw_bytes(&self) -> Vec<u8>;
+    /// Transaction bytes in coin format without additional info
+    fn native_hex(&self) -> Vec<u8>;
     fn extract_secret(&self) -> Result<Vec<u8>, String>;
     /// String representation of tx hash for displaying purpose
     fn tx_hash(&self) -> String;
@@ -189,10 +193,13 @@ struct WithdrawRequest {
     amount: f64,
 }
 
-#[derive(Serialize)]
-pub struct WithdrawResult {
+/// Transaction details
+#[derive(Serialize, Deserialize)]
+pub struct TransactionDetails {
     /// Raw bytes of signed transaction in hexadecimal string, this should be sent as is to send_raw_transaction RPC to broadcast the transaction
     tx_hex: String,
+    /// Transaction hash in hexadecimal format
+    tx_hash: String,
     /// Coins will be sent from this address
     from: String,
     /// Coins will be sent to this address
@@ -218,7 +225,7 @@ pub trait MmCoin: SwapOps + MarketCoinOps + IguanaInfo + Debug + 'static {
 
     fn check_i_have_enough_to_trade(&self, amount: f64, maker: bool) -> Box<Future<Item=(), Error=String> + Send>;
 
-    fn withdraw(&self, to: &str, amount: f64) -> Box<Future<Item=WithdrawResult, Error=String> + Send>;
+    fn withdraw(&self, to: &str, amount: f64) -> Box<Future<Item=TransactionDetails, Error=String> + Send>;
 }
 
 #[derive(Clone, Debug)]

@@ -47,7 +47,7 @@ use std::thread;
 use std::time::Duration;
 
 use self::rpc_clients::{UtxoRpcClientEnum, UnspentInfo, ElectrumClient, ElectrumClientImpl, NativeClient};
-use super::{IguanaInfo, MarketCoinOps, MmCoin, MmCoinEnum, SwapOps, Transaction, TransactionEnum, TransactionFut, WithdrawResult};
+use super::{IguanaInfo, MarketCoinOps, MmCoin, MmCoinEnum, SwapOps, Transaction, TransactionEnum, TransactionFut, TransactionDetails};
 use common::SATOSHIDEN;
 
 /// Clones slice into fixed size array
@@ -85,6 +85,10 @@ impl Transaction for ExtendedUtxoTx {
         resulting_bytes.extend_from_slice(&redeem_len_bytes);
         resulting_bytes.extend_from_slice(&self.redeem_script);
         resulting_bytes
+    }
+
+    fn native_hex(&self) -> Vec<u8> {
+        serialize(&self.transaction).to_vec()
     }
 
     fn extract_secret(&self) -> Result<Vec<u8>, String> {
@@ -894,7 +898,7 @@ impl MmCoin for UtxoCoin {
         )
     }
 
-    fn withdraw(&self, to: &str, amount: f64) -> Box<Future<Item=WithdrawResult, Error=String> + Send> {
+    fn withdraw(&self, to: &str, amount: f64) -> Box<Future<Item=TransactionDetails, Error=String> + Send> {
         let to: Address = try_fus!(Address::from_str(to));
         let value = (amount * SATOSHIDEN as f64) as u64;
         let script_pubkey = Builder::build_p2pkh(&to.hash).to_bytes();
@@ -917,10 +921,11 @@ impl MmCoin for UtxoCoin {
                 let fee_details = UtxoFeeDetails {
                     amount: dstr(tx_fee as i64),
                 };
-                Ok(WithdrawResult {
+                Ok(TransactionDetails {
                     from: arc.my_address().into(),
                     to: format!("{}", to),
                     amount,
+                    tx_hash: format!("{}", signed.hash().reversed()),
                     tx_hex: hex::encode(serialize(&signed)),
                     fee_details: try_s!(json::to_value(fee_details)),
                 })

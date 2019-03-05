@@ -41,7 +41,7 @@ use std::time::Duration;
 use web3::types::{BlockNumber, Bytes, CallRequest, FilterBuilder, Log, Transaction as Web3Transaction, TransactionId};
 use web3::{ self, Web3 };
 
-use super::{IguanaInfo, MarketCoinOps, MmCoin, SwapOps, TransactionFut, TransactionEnum, Transaction, WithdrawResult};
+use super::{IguanaInfo, MarketCoinOps, MmCoin, SwapOps, TransactionFut, TransactionEnum, Transaction, TransactionDetails};
 
 pub use ethcore_transaction::SignedTransaction as SignedEthTransaction;
 
@@ -896,7 +896,7 @@ impl MmCoin for EthCoin {
         }))
     }
 
-    fn withdraw(&self, to: &str, amount: f64) -> Box<Future<Item=WithdrawResult, Error=String> + Send> {
+    fn withdraw(&self, to: &str, amount: f64) -> Box<Future<Item=TransactionDetails, Error=String> + Send> {
         let to_addr = try_fus!(addr_from_str(to));
         let wei_amount = try_fus!(wei_from_f64(amount, self.decimals));
         let (value, data, call_addr) = match self.coin_type {
@@ -936,11 +936,12 @@ impl MmCoin for EthCoin {
                     let fee_details = try_s!(EthTxFeeDetails::new(gas, gas_price, "ETH"));
                     let fee_details = try_s!(json::to_value(fee_details));
                     drop(nonce_lock);
-                    Ok(WithdrawResult {
+                    Ok(TransactionDetails {
                         to: format!("{:#02x}", to_addr),
                         from: arc.my_address().into(),
                         amount: amount_f64,
                         tx_hex: hex::encode(bytes),
+                        tx_hash: signed.tx_hash(),
                         fee_details,
                     })
                 })
@@ -1074,6 +1075,10 @@ fn test_wei_from_f64() {
 
 impl Transaction for SignedEthTransaction {
     fn to_raw_bytes(&self) -> Vec<u8> {
+        rlp::encode(self).to_vec()
+    }
+
+    fn native_hex(&self) -> Vec<u8> {
         rlp::encode(self).to_vec()
     }
 

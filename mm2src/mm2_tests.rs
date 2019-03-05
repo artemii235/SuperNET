@@ -654,7 +654,13 @@ fn komodo_conf_path (ac_name: Option<&'static str>) -> Result<PathBuf, String> {
 }
 
 /// Helper function requesting swap status and checking it's value
-fn check_swap_status(mm: &MarketMakerIt, uuid: &str, status: Json) {
+fn check_swap_status(
+    mm: &MarketMakerIt,
+    uuid: &str,
+    status: &str,
+    maker_coin: &str,
+    taker_coin: &str,
+) {
     let response = unwrap!(mm.rpc (json! ({
             "userpass": mm.userpass,
             "method": "swapstatus",
@@ -664,7 +670,11 @@ fn check_swap_status(mm: &MarketMakerIt, uuid: &str, status: Json) {
         })));
     assert!(response.0.is_success(), "!{} swap_status: {}", uuid, response.1);
     let status_json: Json = unwrap!(json::from_str(&response.1));
-    assert_eq!(status_json["result"], status);
+    let result = &status_json["result"];
+    assert_eq!(result["status"].as_str(), Some(status));
+    assert_eq!(result["uuid"].as_str(), Some(uuid));
+    assert_eq!(result["maker_coin"].as_str(), Some(maker_coin));
+    assert_eq!(result["taker_coin"].as_str(), Some(taker_coin));
 }
 
 /// Trading test using coins with remote RPC (Electrum, ETH nodes), it needs only ENV variables to be set, coins daemons are not required.
@@ -781,18 +791,20 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
     }
 
     for (uuid, (base, rel)) in uuids.iter().zip(pairs.iter()) {
-        check_swap_status(&mm_alice, &uuid, json!({
-            "status": "success",
-            "uuid": uuid,
-            "maker_coin": base,
-            "taker_coin": rel,
-        }));
-        check_swap_status(&mm_bob, &uuid, json!({
-            "status": "success",
-            "uuid": uuid,
-            "maker_coin": base,
-            "taker_coin": rel,
-        }));
+        check_swap_status(
+            &mm_alice,
+            &uuid,
+            "success",
+            base,
+            rel,
+        );
+        check_swap_status(
+            &mm_bob,
+            &uuid,
+            "success",
+            base,
+            rel,
+        );
     }
 
     unwrap! (mm_bob.stop());
