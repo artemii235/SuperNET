@@ -8,6 +8,7 @@ use libc::c_char;
 use peers;
 use serde_json::{self as json, Value as Json};
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::env::{self, var};
 use std::ffi::CString;
 use std::path::{Path, PathBuf};
@@ -41,14 +42,19 @@ fn enable_coins(mm: &MarketMakerIt) -> Vec<(&'static str, String)> {
     replies
 }
 
-fn enable_coins_eth_electrum(mm: &MarketMakerIt, eth_urls: Vec<&str>) -> Vec<(&'static str, String)> {
-    let mut replies = Vec::new();
-    replies.push (("BEER", enable_electrum (mm, "BEER", vec!["electrum1.cipig.net:10022","electrum2.cipig.net:10022","electrum3.cipig.net:10022"])));
-    replies.push (("PIZZA", enable_electrum (mm, "PIZZA", vec!["electrum1.cipig.net:10024","electrum2.cipig.net:10024","electrum3.cipig.net:10024"])));
-    replies.push (("ETOMIC", enable_electrum (mm, "ETOMIC", vec!["electrum1.cipig.net:10025","electrum2.cipig.net:10025","electrum3.cipig.net:10025"])));
-    replies.push (("ETH", enable_native (mm, "ETH", eth_urls.clone())));
-    replies.push (("JST", enable_native (mm, "JST", eth_urls)));
+fn enable_coins_eth_electrum(mm: &MarketMakerIt, eth_urls: Vec<&str>) -> HashMap<&'static str, String> {
+    let mut replies = HashMap::new();
+    replies.insert ("BEER", enable_electrum (mm, "BEER", vec!["electrum1.cipig.net:10022","electrum2.cipig.net:10022","electrum3.cipig.net:10022"]));
+    replies.insert ("PIZZA", enable_electrum (mm, "PIZZA", vec!["electrum1.cipig.net:10024","electrum2.cipig.net:10024","electrum3.cipig.net:10024"]));
+    replies.insert ("ETOMIC", enable_electrum (mm, "ETOMIC", vec!["electrum1.cipig.net:10025","electrum2.cipig.net:10025","electrum3.cipig.net:10025"]));
+    replies.insert ("ETH", enable_native (mm, "ETH", eth_urls.clone()));
+    replies.insert ("JST", enable_native (mm, "JST", eth_urls));
     replies
+}
+
+fn addr_from_enable(enable_response: &str) -> Json {
+    let json: Json = unwrap!(json::from_str(enable_response));
+    json["address"].clone()
 }
 
 #[test]
@@ -675,6 +681,9 @@ fn check_swap_status(
     assert_eq!(result["uuid"].as_str(), Some(uuid));
     assert_eq!(result["maker_coin"].as_str(), Some(maker_coin));
     assert_eq!(result["taker_coin"].as_str(), Some(taker_coin));
+    assert!(result["started_at"].as_u64().unwrap() > 0);
+    assert!(result["finished_at"].as_u64().unwrap() > 0);
+    assert!(result["transactions"].as_object().unwrap().len() > 0);
 }
 
 /// Trading test using coins with remote RPC (Electrum, ETH nodes), it needs only ENV variables to be set, coins daemons are not required.
@@ -813,7 +822,7 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
 
 #[test]
 fn trade_test_electrum_and_eth_coins() {
-    trade_base_rel_electrum(vec![("ETH", "JST")]);
+    trade_base_rel_electrum(vec![("BEER", "PIZZA"), ("ETH", "JST")]);
 }
 
 fn trade_base_rel_native(base: &str, rel: &str) {
@@ -1022,4 +1031,74 @@ fn trade_pizza_etomic() {
 #[ignore]
 fn trade_etomic_pizza() {
     trade_base_rel_native("ETOMIC", "PIZZA");
+}
+
+fn withdraw_and_send(mm: &MarketMakerIt, coin: &str, to: &str, enable_res: &HashMap<&'static str, String>) {
+    let addr = addr_from_enable(enable_res.get(coin).unwrap());
+
+    let withdraw = unwrap! (mm.rpc (json! ({
+        "userpass": mm.userpass,
+        "method": "withdraw",
+        "coin": coin,
+        "to": to,
+        "amount": 0.001
+    })));
+
+    assert! (withdraw.0.is_success(), "!{} withdraw: {}", coin, withdraw.1);
+    let withdraw_json: Json = unwrap!(json::from_str(&withdraw.1));
+    assert_eq!(Some(to), withdraw_json["to"].as_str());
+    assert_eq!(Some(0.001), withdraw_json["amount"].as_f64());
+    assert_eq!(addr, withdraw_json["from"]);
+
+    let send = unwrap! (mm.rpc (json! ({
+        "userpass": mm.userpass,
+        "method": "send_raw_transaction",
+        "coin": coin,
+        "tx_hex": withdraw_json["tx_hex"]
+    })));
+    assert! (send.0.is_success(), "!{} send: {}", coin, send.1);
+    let send_json: Json = unwrap!(json::from_str(&send.1));
+    assert_eq! (withdraw_json["tx_hash"], send_json["tx_hash"]);
+}
+
+#[test]
+fn test_withdraw_and_send() {
+    let (alice_file_passphrase, _alice_file_userpass) = from_env_file (slurp (&".env.client"));
+
+    let alice_passphrase = unwrap! (var ("ALICE_PASSPHRASE") .ok().or (alice_file_passphrase), "No ALICE_PASSPHRASE or .env.client/PASSPHRASE");
+
+    let coins = json! ([
+        {"coin":"BEER","asset":"BEER"},
+        {"coin":"PIZZA","asset":"PIZZA"},
+        {"coin":"ETOMIC","asset":"ETOMIC"},
+        {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000"},
+        {"coin":"JST","name":"jst","etomic":"0x2b294f029fde858b2c62184e8390591755521d8e"}
+    ]);
+
+    let mut mm_alice = unwrap! (MarketMakerIt::start (
+        json! ({
+            "gui": "nogui",
+            "netid": 8100,
+            "myipaddr": env::var ("ALICE_TRADE_IP") .ok(),
+            "rpcip": env::var ("ALICE_TRADE_IP") .ok(),
+            "passphrase": alice_passphrase,
+            "coins": coins,
+            "rpc_password": "password",
+        }),
+        "password".into(),
+        match var ("LOCAL_THREAD_MM") {Ok (ref e) if e == "alice" => Some (local_start()), _ => None}
+    ));
+
+    let (_alice_dump_log, _alice_dump_dashboard) = mm_dump (&mm_alice.log_path);
+    log! ({"Alice log path: {}", mm_alice.log_path.display()});
+
+    // wait until RPC API is active
+    unwrap! (mm_alice.wait_for_log (22., &|log| log.contains (">>>>>>>>> DEX stats ")));
+
+    // Enable coins. Print the replies in case we need the address.
+    let enable_res = enable_coins_eth_electrum (&mm_alice, vec!["http://195.201.0.6:8565"]);
+    log! ("enable_coins (alice): " [enable_res]);
+    withdraw_and_send(&mm_alice, "PIZZA", "R9o9xTocqr6CeEDGDH6mEYpwLoMz6jNjMW", &enable_res);
+    withdraw_and_send(&mm_alice, "ETH", "0xbab36286672fbdc7b250804bf6d14be0df69fa29", &enable_res);
+    withdraw_and_send(&mm_alice, "JST", "0xbab36286672fbdc7b250804bf6d14be0df69fa29", &enable_res);
 }

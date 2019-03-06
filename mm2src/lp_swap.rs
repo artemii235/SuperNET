@@ -221,10 +221,15 @@ pub struct AtomicSwap {
     state: Option<AtomicSwapState>,
     taker_coin: MmCoinEnum,
     maker_coin: MmCoinEnum,
-    taker_payment: Option<TransactionEnum>,
-    taker_payment_lock: u64,
+    taker_fee: Option<TransactionEnum>,
     maker_payment: Option<TransactionEnum>,
     maker_payment_lock: u64,
+    taker_payment: Option<TransactionEnum>,
+    taker_payment_lock: u64,
+    taker_payment_spend: Option<TransactionEnum>,
+    maker_payment_spend: Option<TransactionEnum>,
+    taker_payment_refund: Option<TransactionEnum>,
+    maker_payment_refund: Option<TransactionEnum>,
     taker: bits256,
     maker: bits256,
     secret: H256,
@@ -239,6 +244,7 @@ pub struct AtomicSwap {
     /// Allows to regognize one SWAP from the other in the logs. #274.
     uuid: String,
 }
+
 
 impl AtomicSwap {
     pub fn new(
@@ -260,10 +266,15 @@ impl AtomicSwap {
             state: Some (AtomicSwapState::Negotiation),
             taker_coin,
             maker_coin,
+            taker_fee: None,
             taker_payment: None,
             taker_payment_lock: 0,
             maker_payment: None,
             maker_payment_lock: 0,
+            taker_payment_spend: None,
+            maker_payment_spend: None,
+            taker_payment_refund: None,
+            maker_payment_refund: None,
             taker,
             maker,
             secret: [0; 32].into(),
@@ -277,6 +288,39 @@ impl AtomicSwap {
             my_persistent_pub,
             uuid,
         })
+    }
+
+    fn get_swap_transactions(&self) -> SwapTransactions {
+        SwapTransactions {
+            taker_fee: match &self.taker_fee {
+                Some(t) => Some(t.transaction_details(self.taker_coin.decimals()).unwrap()),
+                None => None,
+            },
+            maker_payment: match &self.maker_payment {
+                Some(t) => Some(t.transaction_details(self.maker_coin.decimals()).unwrap()),
+                None => None,
+            },
+            taker_payment: match &self.taker_payment {
+                Some(t) => Some(t.transaction_details(self.taker_coin.decimals()).unwrap()),
+                None => None,
+            },
+            taker_payment_spend: match &self.taker_payment_spend {
+                Some(t) => Some(t.transaction_details(self.taker_coin.decimals()).unwrap()),
+                None => None,
+            },
+            maker_payment_spend: match &self.maker_payment_spend {
+                Some(t) => Some(t.transaction_details(self.maker_coin.decimals()).unwrap()),
+                None => None,
+            },
+            taker_payment_refund: match &self.taker_payment_refund {
+                Some(t) => Some(t.transaction_details(self.taker_coin.decimals()).unwrap()),
+                None => None,
+            },
+            maker_payment_refund: match &self.maker_payment_refund {
+                Some(t) => Some(t.transaction_details(self.maker_coin.decimals()).unwrap()),
+                None => None,
+            },
+        }
     }
 }
 
@@ -469,11 +513,13 @@ pub fn maker_swap_loop(swap: &mut AtomicSwap) -> Result<(), (i32, String)> {
                 log!("Taker payment spend tx " (transaction.tx_hash()));
                 status.status(swap_tags, &format!("{}/{} Swap finished successfully.", swap.maker_coin.ticker(), swap.taker_coin.ticker()));
                 save_swap_data(&swap.uuid, json!({
-                    "status":"success",
-                    "uuid":swap.uuid,
-                    "maker_coin":swap.maker_coin.ticker(),
-                    "taker_coin":swap.taker_coin.ticker(),
-                    "transactions":SwapTransactions::default(),
+                    "status": "success",
+                    "uuid": swap.uuid,
+                    "started_at": started_at,
+                    "finished_at": now_ms() / 1000,
+                    "maker_coin": swap.maker_coin.ticker(),
+                    "taker_coin": swap.taker_coin.ticker(),
+                    "transactions": swap.get_swap_transactions(),
                 }).to_string());
                 return Ok(());
             },
@@ -682,11 +728,13 @@ pub fn taker_swap_loop(swap: &mut AtomicSwap) -> Result<(), (i32, String)> {
                 log!("Maker payment spend tx " (transaction.tx_hash()));
                 status.status(swap_tags, &format!("{}/{} Swap finished successfully.", swap.maker_coin.ticker(), swap.taker_coin.ticker()));
                 save_swap_data(&swap.uuid, json!({
-                    "status":"success",
-                    "uuid":swap.uuid,
-                    "maker_coin":swap.maker_coin.ticker(),
-                    "taker_coin":swap.taker_coin.ticker(),
-                    "transactions":SwapTransactions::default(),
+                    "status": "success",
+                    "uuid": swap.uuid,
+                    "started_at": started_at,
+                    "finished_at": now_ms() / 1000,
+                    "maker_coin": swap.maker_coin.ticker(),
+                    "taker_coin": swap.taker_coin.ticker(),
+                    "transactions": swap.get_swap_transactions(),
                 }).to_string());
                 return Ok(());
             },
@@ -731,6 +779,8 @@ pub struct SwapTransactions {
 pub struct SwapStatus {
     status: String,
     uuid: String,
+    started_at: u64,
+    finished_at: u64,
     maker_coin: String,
     taker_coin: String,
     transactions: SwapTransactions,

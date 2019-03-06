@@ -60,6 +60,25 @@ pub trait Transaction: Debug + 'static {
     fn extract_secret(&self) -> Result<Vec<u8>, String>;
     /// String representation of tx hash for displaying purpose
     fn tx_hash(&self) -> String;
+    /// Transaction amount
+    fn amount(&self, decimals: u8) -> Result<f64, String>;
+    /// From address
+    fn from(&self) -> String;
+    /// To address
+    fn to(&self) -> String;
+    /// Fee details
+    fn fee_details(&self) -> Result<Json, String>;
+    /// Serializable transaction details for displaying purposes
+    fn transaction_details(&self, decimals: u8) -> Result<TransactionDetails, String> {
+        Ok(TransactionDetails {
+            tx_hash: self.tx_hash(),
+            amount: try_s!(self.amount(decimals)),
+            fee_details: try_s!(self.fee_details()),
+            from: self.from(),
+            to: self.to(),
+            tx_hex: hex::encode_upper(self.native_hex()),
+        })
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -226,6 +245,9 @@ pub trait MmCoin: SwapOps + MarketCoinOps + IguanaInfo + Debug + 'static {
     fn check_i_have_enough_to_trade(&self, amount: f64, maker: bool) -> Box<Future<Item=(), Error=String> + Send>;
 
     fn withdraw(&self, to: &str, amount: f64) -> Box<Future<Item=TransactionDetails, Error=String> + Send>;
+
+    /// Maximum number of digits after decimal point used to denominate integer coin units (satoshis, wei, etc.)
+    fn decimals(&self) -> u8;
 }
 
 #[derive(Clone, Debug)]

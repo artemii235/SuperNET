@@ -948,6 +948,10 @@ impl MmCoin for EthCoin {
             })
         }))
     }
+
+    fn decimals(&self) -> u8 {
+        self.decimals
+    }
 }
 
 fn addr_from_raw_pubkey(pubkey: &[u8]) -> Result<Address, String> {
@@ -1074,13 +1078,9 @@ fn test_wei_from_f64() {
 }
 
 impl Transaction for SignedEthTransaction {
-    fn to_raw_bytes(&self) -> Vec<u8> {
-        rlp::encode(self).to_vec()
-    }
+    fn to_raw_bytes(&self) -> Vec<u8> { rlp::encode(self).to_vec() }
 
-    fn native_hex(&self) -> Vec<u8> {
-        rlp::encode(self).to_vec()
-    }
+    fn native_hex(&self) -> Vec<u8> { rlp::encode(self).to_vec() }
 
     fn extract_secret(&self) -> Result<Vec<u8>, String> {
         let function = try_s!(SWAP_CONTRACT.function("receiverSpend"));
@@ -1091,8 +1091,24 @@ impl Transaction for SignedEthTransaction {
         }
     }
 
-    fn tx_hash(&self) -> String {
-        format!("{:#02x}", self.hash)
+    fn tx_hash(&self) -> String { format!("{:#02x}", self.hash) }
+
+    fn amount(&self, decimals: u8) -> Result<f64, String> {
+        Ok(try_s!(display_u256_with_decimal_point(self.value, decimals).parse()))
+    }
+
+    fn from(&self) -> String { format!("{:#02x}", self.sender) }
+
+    fn to(&self) -> String {
+        match self.action {
+            Action::Create => "null".into(),
+            Action::Call(addr) => format!("{:#02x}", addr),
+        }
+    }
+
+    fn fee_details(&self) -> Result<Json, String> {
+        let fee = try_s!(EthTxFeeDetails::new(self.gas, self.gas_price, "ETH"));
+        Ok(try_s!(json::to_value(fee)))
     }
 }
 

@@ -33,7 +33,7 @@ use keys::bytes::Bytes;
 use keys::generator::{Random, Generator};
 use primitives::hash::{H256, H264, H512};
 use script::{Opcode, Builder, Script, TransactionInputSigner, UnsignedTransactionInput, SignatureVersion};
-use serde_json::{self as json};
+use serde_json::{self as json, Value as Json};
 use serialization::{serialize, deserialize};
 use sha2::{Sha256, Digest};
 use std::borrow::Cow;
@@ -104,9 +104,15 @@ impl Transaction for ExtendedUtxoTx {
         ERR!("Couldn't extract secret")
     }
 
-    fn tx_hash(&self) -> String {
-        format!("{}", self.transaction.hash().reversed())
-    }
+    fn tx_hash(&self) -> String { format!("{}", self.transaction.hash().reversed()) }
+
+    fn amount(&self, decimals: u8) -> Result<f64, String> { Ok(0.) }
+
+    fn to(&self) -> String { "".into() }
+
+    fn from(&self) -> String { "".into() }
+
+    fn fee_details(&self) -> Result<Json, String> { Ok(Json::Null) }
 }
 
 #[derive(Debug)]
@@ -931,6 +937,10 @@ impl MmCoin for UtxoCoin {
                 })
             })
         }))
+    }
+
+    fn decimals(&self) -> u8 {
+        self.decimals
     }
 }
 
