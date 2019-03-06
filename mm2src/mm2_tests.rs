@@ -822,7 +822,7 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
 
 #[test]
 fn trade_test_electrum_and_eth_coins() {
-    trade_base_rel_electrum(vec![("BEER", "PIZZA"), ("ETH", "JST")]);
+    trade_base_rel_electrum(vec![("ETH", "JST")]);
 }
 
 fn trade_base_rel_native(base: &str, rel: &str) {
