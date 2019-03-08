@@ -375,7 +375,7 @@ impl MarketCoinOps for EthCoin {
                 if let Some(tx_hash) = event.transaction_hash {
                     let transaction = try_s!(self.web3.eth().transaction(TransactionId::Hash(tx_hash)).wait()).unwrap();
 
-                    return Ok(TransactionEnum::from(signed_tx_from_web3_tx(transaction)))
+                    return Ok(TransactionEnum::from(try_s!(signed_tx_from_web3_tx(transaction))))
                 }
             }
             thread::sleep(Duration::from_secs(15));
@@ -1112,28 +1112,26 @@ impl Transaction for SignedEthTransaction {
     }
 }
 
-fn signed_tx_from_web3_tx(transaction: Web3Transaction) -> SignedEthTransaction {
-    SignedEthTransaction {
-        transaction: UnverifiedTransaction {
-            r: 0.into(),
-            s: 0.into(),
-            v: 0,
-            hash: transaction.hash,
-            unsigned: UnsignedEthTransaction {
-                data: transaction.input.0,
-                gas_price: transaction.gas_price,
-                gas: transaction.gas,
-                value: transaction.value,
-                nonce: transaction.nonce,
-                action: match transaction.to {
-                    Some(addr) => Action::Call(addr),
-                    None => Action::Create,
-                }
+fn signed_tx_from_web3_tx(transaction: Web3Transaction) -> Result<SignedEthTransaction, String> {
+    let unverified = UnverifiedTransaction {
+        r: transaction.r,
+        s: transaction.s,
+        v: transaction.v.as_u64(),
+        hash: transaction.hash,
+        unsigned: UnsignedEthTransaction {
+            data: transaction.input.0,
+            gas_price: transaction.gas_price,
+            gas: transaction.gas,
+            value: transaction.value,
+            nonce: transaction.nonce,
+            action: match transaction.to {
+                Some(addr) => Action::Call(addr),
+                None => Action::Create,
             }
-        },
-        public: None,
-        sender: transaction.from,
-    }
+        }
+    };
+
+    Ok(try_s!(SignedEthTransaction::new(unverified)))
 }
 
 #[derive(Deserialize, Debug)]

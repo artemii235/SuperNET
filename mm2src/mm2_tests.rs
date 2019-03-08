@@ -789,7 +789,7 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
         uuids.push(buy_json["pending"]["uuid"].as_str().unwrap().to_owned());
 
         // ensure the swap started
-        unwrap!(mm_alice.wait_for_log (99., &|log| log.contains (&format!("Entering the taker_swap_loop {}/{}", base, rel))));
+        unwrap!(mm_alice.wait_for_log (20., &|log| log.contains (&format!("Entering the taker_swap_loop {}/{}", base, rel))));
         unwrap!(mm_bob.wait_for_log (20., &|log| log.contains (&format!("Entering the maker_swap_loop {}/{}", base, rel))));
     }
 
@@ -821,6 +821,7 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
 }
 
 #[test]
+#[ignore]
 fn trade_test_electrum_and_eth_coins() {
     trade_base_rel_electrum(vec![("ETH", "JST")]);
 }

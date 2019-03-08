@@ -35,7 +35,7 @@ use std::time::Duration;
 use std::thread;
 
 use crate::lp_network::lp_queue_command;
-use crate::lp_swap::{taker_swap_loop, maker_swap_loop, AtomicSwap};
+use crate::lp_swap::{taker_swap_loop, AtomicSwap, MakerSwap, run_maker_swap};
 
 /// Temporary kludge, improving readability of the not-yet-fully-ported code. Should be removed eventually.
 macro_rules! c2s {($cs: expr) => {unwrap!(CStr::from_ptr($cs.as_ptr()).to_str())}}
@@ -437,21 +437,21 @@ unsafe fn lp_connect_start_bob(ctx: &MmArc, base: *mut c_char, rel: *mut c_char,
                 log!("Seller loop");
                 move || {
                     log!("Entering the maker_swap_loop " (maker_coin.ticker()) "/" (taker_coin.ticker()));
-                    let mut maker_swap = AtomicSwap::new(
+                    let maker_swap = MakerSwap::new(
                         ctx,
                         alice,
-                        lp::bits256::default(),
                         maker_coin,
                         taker_coin,
                         maker_amount,
                         taker_amount,
                         my_persistent_pub,
                         uuid,
-                    ).unwrap();
-                    match maker_swap_loop(&mut maker_swap) {
+                    );
+                    run_maker_swap(maker_swap);
+                    /*match maker_swap_loop(&mut maker_swap) {
                         Ok(_) => (),
                         Err(e) => log!("Swap finished with error " [e])
-                    };
+                    };*/
                 }
             });
             match loop_thread {

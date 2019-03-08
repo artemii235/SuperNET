@@ -55,6 +55,7 @@
 //  marketmaker
 //
 use bitcrypto::dhash160;
+use btc_rpc::v1::types::{H256 as H256Json, H264 as H264Json};
 use coins::{MmCoinEnum, TransactionEnum, TransactionDetails};
 use common::{bits256, dstr, HyRes, rpc_response, Timeout, swap_db_dir};
 use common::log::TagParam;
@@ -185,6 +186,34 @@ macro_rules! recv_ {
     }}
 }
 
+macro_rules! recv__ {
+    ($swap: expr, $subj: expr, $timeout_sec: expr, $ec: expr, $validator: block) => {{
+        let recv_subject = fomat! (($subj) '@' ($swap.uuid));
+        let validator = Box::new ($validator) as Box<Fn(&[u8]) -> Result<(), String> + Send>;
+        let recv_f = peers::recv (&$swap.ctx, recv_subject.as_bytes(), Box::new ({
+            // NB: `peers::recv` is generic and not responsible for handling errors.
+            //     Here, on the other hand, we should know enough to log the errors.
+            //     Also through the macros the logging statements will carry informative line numbers on them.
+            move |payload: &[u8]| -> bool {
+                match validator (payload) {
+                    Ok (()) => true,
+                    Err (err) => {
+                        log! ("Error validating payload '" ($subj) "' (" (payload.len()) " bytes, crc " (crc32::checksum_ieee (payload)) "): " (err) ". Retrying…");
+                        false
+                    }
+                }
+            }
+        }));
+        let recv_f = Timeout::new (recv_f, Duration::from_secs (BASIC_COMM_TIMEOUT + $timeout_sec));
+        let payload = recv_f.wait().unwrap();
+        // Checksum here helps us visually verify the logistics between the Maker and Taker logs.
+        let crc = crc32::checksum_ieee (&payload);
+        log! ("Received '" (recv_subject) "' (" (payload.len()) " bytes, crc " (crc) ")");
+
+        payload
+    }}
+}
+
 // AG: The explicit state here constitutes an early and experimental design aimed towards
 // serializable and resumable SWAP. The `AtomicSwapState` is essentially a list of `goto` labels,
 // allowing us to jump anywhere in the SWAP loops.
@@ -241,10 +270,9 @@ pub struct AtomicSwap {
     taker_amount: u64,
     maker_payment_confirmations: u32,
     taker_payment_confirmations: u32,
-    /// Allows to regognize one SWAP from the other in the logs. #274.
+    /// Allows to recognize one SWAP from the other in the logs. #274.
     uuid: String,
 }
-
 
 impl AtomicSwap {
     pub fn new(
@@ -349,6 +377,244 @@ fn swap_file_path(uuid: &str) -> PathBuf {
 fn save_swap_data(uuid: &str, data: String) {
     let mut file = unwrap!(File::create(swap_file_path(uuid)));
     unwrap!(file.write_all(data.as_bytes()));
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct MakerSwapData {
+    taker_coin: String,
+    maker_coin: String,
+    taker: H256Json,
+    secret: H256Json,
+    my_persistent_pub: H264Json,
+    lock_duration: u64,
+    maker_amount: u64,
+    taker_amount: u64,
+    maker_payment_confirmations: u32,
+    taker_payment_confirmations: u32,
+    maker_payment_lock: u64,
+    /// Allows to recognize one SWAP from the other in the logs. #274.
+    uuid: String,
+    started_at: u64,
+}
+
+pub struct MakerSwap {
+    ctx: MmArc,
+    maker_coin: MmCoinEnum,
+    taker_coin: MmCoinEnum,
+    maker_amount: u64,
+    taker_amount: u64,
+    my_persistent_pub: H264,
+    taker: bits256,
+    uuid: String,
+    data: MakerSwapData,
+    taker_data: SwapNegotiationData,
+    taker_payment_lock: u64,
+    other_persistent_pub: H264,
+}
+
+macro_rules! send_m {
+    ($ec: expr, $subj: expr, $slice: expr) => {
+        match  {
+            Ok(h) => h,
+            Err(err) => err!($ec, "send error: "(err))
+        }
+    }
+}
+
+macro_rules! recv_m {
+    ($subj: expr, $desc: expr, $timeout_sec: expr, $ec: expr, $validator: block) => {
+        recv_! (swap, status, $subj, $desc, $timeout_sec, $ec, $validator)
+    };
+    // Use this form if there's a sending future to terminate upon receiving the answer.
+    ($selff: ident, $sending_f: ident, $subj: expr, $desc: expr, $timeout_sec: expr, $ec: expr, $validator: block) => {{
+        let payload = recv__! ($selff, $subj, $timeout_sec, $ec, $validator);
+        drop ($sending_f);
+        payload
+    }};
+}
+
+impl MakerSwap {
+    fn apply_event(mut self, event: MakerSwapEvent) -> Result<Self, String> {
+        match event {
+            MakerSwapEvent::Started(data) => {
+                self.data = data;
+                Ok(self)
+            },
+            MakerSwapEvent::Negotiated((taker_payment_locktime, taker_pub)) => {
+                self.taker_payment_lock = taker_payment_locktime;
+                self.other_persistent_pub = taker_pub.into();
+                Ok(self)
+            }
+        _ => unimplemented!(),
+        }
+    }
+
+    fn handle_command(&self, command: MakerSwapCommand)
+        -> Result<(MakerSwapCommand, MakerSwapEvent), String> {
+        match command {
+            MakerSwapCommand::Start => self.start(),
+            MakerSwapCommand::Negotiate => self.negotiate(),
+            MakerSwapCommand::WaitTakerFee(sending_f) => self.wait_taker_fee(sending_f),
+            MakerSwapCommand::SendPayment => self.maker_payment(),
+            _ => unimplemented!(),
+        }
+    }
+
+    pub fn new(
+        ctx: MmArc,
+        taker: bits256,
+        maker_coin: MmCoinEnum,
+        taker_coin: MmCoinEnum,
+        maker_amount: u64,
+        taker_amount: u64,
+        my_persistent_pub: H264,
+        uuid: String,
+    ) -> Self {
+        MakerSwap {
+            ctx,
+            maker_coin,
+            taker_coin,
+            maker_amount,
+            taker_amount,
+            my_persistent_pub,
+            taker,
+            uuid,
+            data: MakerSwapData::default(),
+            taker_data: SwapNegotiationData::default(),
+            taker_payment_lock: 0,
+            other_persistent_pub: H264::default(),
+        }
+    }
+
+    fn start(&self) -> Result<(MakerSwapCommand, MakerSwapEvent), String> {
+        if let Err(e) = self.maker_coin.check_i_have_enough_to_trade(dstr(self.maker_amount as i64), true).wait() {
+            return Ok((
+                MakerSwapCommand::Finish,
+                MakerSwapEvent::StartFailed(ERRL!("!check_i_have_enough_to_trade {}", e)),
+            ));
+        };
+
+        let lock_duration = lp_atomic_locktime(self.maker_coin.ticker(), self.taker_coin.ticker());
+        let (maker_payment_confirmations, taker_payment_confirmations) = payment_confirmations(&self.maker_coin, &self.taker_coin);
+        let mut rng = rand::thread_rng();
+        let secret: [u8; 32] = rng.gen();
+        let started_at = now_ms() / 1000;
+
+        let data = MakerSwapData {
+            taker_coin: self.taker_coin.ticker().to_owned(),
+            maker_coin: self.maker_coin.ticker().to_owned(),
+            taker: unsafe { self.taker.bytes.into() },
+            secret: secret.into(),
+            started_at,
+            lock_duration,
+            maker_amount: self.maker_amount,
+            taker_amount: self.taker_amount,
+            maker_payment_confirmations,
+            taker_payment_confirmations,
+            maker_payment_lock: started_at + lock_duration * 2,
+            my_persistent_pub: self.my_persistent_pub.clone().into(),
+            uuid: self.uuid.clone(),
+        };
+
+        Ok((MakerSwapCommand::Negotiate, MakerSwapEvent::Started(data)))
+    }
+
+    fn negotiate(&self) -> Result<(MakerSwapCommand, MakerSwapEvent), String> {
+        let maker_negotiation_data = SwapNegotiationData {
+            started_at: self.data.started_at,
+            payment_locktime: self.data.maker_payment_lock,
+            secret_hash: dhash160(&self.data.secret.0),
+            persistent_pubkey: self.my_persistent_pub.clone(),
+        };
+
+        let bytes = serialize(&maker_negotiation_data);
+        let sending_f = send_! (&self.ctx, self.taker, fomat!(("negotiation") '@' (self.uuid)), bytes.as_slice()).unwrap();
+
+        let data = recv_m!(self, sending_f, "negotiation-reply", "for Negotiation reply", 90, -2000, {|_: &[u8]| Ok(())});
+        let taker_data: SwapNegotiationData = match deserialize(data.as_slice()) {
+            Ok(d) => d,
+            Err(e) => return Ok((
+                MakerSwapCommand::Finish,
+                MakerSwapEvent::NegotiateFailed,
+            )),
+        };
+
+        let negotiated = serialize(&true);
+        let sending_f = send_! (&self.ctx, self.taker, fomat!(("negotiated") '@' (self.uuid)), negotiated.as_slice()).unwrap();
+        Ok((
+            MakerSwapCommand::WaitTakerFee(sending_f),
+            MakerSwapEvent::Negotiated((taker_data.payment_locktime, taker_data.persistent_pubkey.into())),
+        ))
+    }
+
+    fn wait_taker_fee(&self, sending_f: Arc<SendHandler>) -> Result<(MakerSwapCommand, MakerSwapEvent), String> {
+        let payload = recv_m!(self, sending_f, "taker-fee", "for Taker fee", 600, -2003, {|_: &[u8]| Ok(())});
+        let taker_fee = match self.taker_coin.tx_enum_from_bytes(&payload) {
+            Ok(tx) => tx,
+            Err(err) => return Ok((
+                MakerSwapCommand::Finish,
+                MakerSwapEvent::TakerFeeValidateFailed(ERRL!("{}", err))
+            ))
+        };
+
+        log!("Taker fee tx " (taker_fee.tx_hash()));
+
+        let fee_addr_pub_key = unwrap!(hex::decode("03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc06"));
+        let fee_amount = self.taker_amount / 777;
+        let fee_details = taker_fee.transaction_details(self.taker_coin.decimals()).unwrap();
+        match self.taker_coin.validate_fee(taker_fee, &fee_addr_pub_key, fee_amount as u64) {
+            Ok(_) => (),
+            Err(err) => return Ok((
+                MakerSwapCommand::Finish,
+                MakerSwapEvent::TakerFeeValidateFailed(ERRL!("{}", err))
+            ))
+        };
+        Ok((
+            MakerSwapCommand::SendPayment,
+            MakerSwapEvent::TakerFeeValidated(fee_details)
+        ))
+    }
+
+    fn maker_payment(&self) -> Result<(MakerSwapCommand, MakerSwapEvent), String> {
+        unimplemented!();
+    }
+}
+
+pub fn run_maker_swap(mut swap: MakerSwap) {
+    let mut command = MakerSwapCommand::Start;
+    let mut event;
+    loop {
+        let res = swap.handle_command(command).unwrap();
+        command = res.0;
+        event = res.1;
+        swap = swap.apply_event(event).unwrap();
+    }
+}
+
+enum MakerSwapCommand {
+    Start,
+    Negotiate,
+    WaitTakerFee(Arc<SendHandler>),
+    SendPayment,
+    WaitForTakerPayment,
+    ValidateTakerPayment,
+    SpendTakerPayment,
+    Finish
+}
+
+#[derive(Serialize, Deserialize)]
+enum MakerSwapEvent {
+    Started(MakerSwapData),
+    StartFailed(String),
+    Negotiated((u64, H264Json)),
+    NegotiateFailed,
+    TakerFeeValidated(TransactionDetails),
+    TakerFeeValidateFailed(String),
+    SentMakerPayment,
+    GotTakerPayment,
+    TakerPaymentValidatedAndConfirmed,
+    TakerPaymentSpent,
+    Finished,
 }
 
 pub fn maker_swap_loop(swap: &mut AtomicSwap) -> Result<(), (i32, String)> {
@@ -788,7 +1054,7 @@ pub struct SwapStatus {
 
 /// Returns the status of requested swap
 pub fn swap_status(req: Json) -> HyRes {
-    let uuid = req["params"]["uuid"].as_str().unwrap();
+    let uuid = try_h!(req["params"]["uuid"].as_str().ok_or("uuid parameter is not set or is not string"));
     let path = swap_file_path(uuid);
     let content = slurp(&path);
     let status: SwapStatus = try_h!(json::from_slice(&content));
