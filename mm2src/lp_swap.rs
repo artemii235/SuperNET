@@ -410,6 +410,37 @@ pub struct MakerSwap {
     taker_data: SwapNegotiationData,
     taker_payment_lock: u64,
     other_persistent_pub: H264,
+    taker_fee: Option<TransactionDetails>,
+    maker_payment: Option<TransactionDetails>,
+    taker_payment: Option<TransactionDetails>,
+}
+
+enum MakerSwapCommand {
+    Start,
+    Negotiate,
+    WaitForTakerFee(Arc<SendHandler>),
+    SendPayment,
+    WaitForTakerPayment(Arc<SendHandler>),
+    SpendTakerPayment,
+    RefundPayment,
+    Finish
+}
+
+#[derive(Serialize, Deserialize)]
+enum MakerSwapEvent {
+    Started(MakerSwapData),
+    StartFailed(String),
+    Negotiated((u64, H264Json)),
+    NegotiateFailed,
+    TakerFeeValidated(TransactionDetails),
+    TakerFeeValidateFailed(String),
+    MakerPaymentSent(TransactionDetails),
+    MakerPaymentFailed,
+    TakerPaymentValidatedAndConfirmed(TransactionDetails),
+    TakerPaymentValidateFailed,
+    TakerPaymentSpent(TransactionDetails),
+    TakerPaymentSpendFailed(String),
+    Finished,
 }
 
 macro_rules! send_m {
@@ -434,19 +465,27 @@ macro_rules! recv_m {
 }
 
 impl MakerSwap {
-    fn apply_event(mut self, event: MakerSwapEvent) -> Result<Self, String> {
+    fn apply_event(&mut self, event: MakerSwapEvent) -> Result<(), String> {
         match event {
             MakerSwapEvent::Started(data) => {
                 self.data = data;
-                Ok(self)
             },
             MakerSwapEvent::Negotiated((taker_payment_locktime, taker_pub)) => {
                 self.taker_payment_lock = taker_payment_locktime;
                 self.other_persistent_pub = taker_pub.into();
-                Ok(self)
-            }
+            },
+            MakerSwapEvent::TakerFeeValidated(tx) => {
+                self.taker_fee = Some(tx);
+            },
+            MakerSwapEvent::MakerPaymentSent(tx) => {
+                self.maker_payment = Some(tx);
+            },
+            MakerSwapEvent::TakerPaymentValidatedAndConfirmed(tx) => {
+                self.taker_payment = Some(tx);
+            },
         _ => unimplemented!(),
         }
+        Ok(())
     }
 
     fn handle_command(&self, command: MakerSwapCommand)
@@ -454,8 +493,10 @@ impl MakerSwap {
         match command {
             MakerSwapCommand::Start => self.start(),
             MakerSwapCommand::Negotiate => self.negotiate(),
-            MakerSwapCommand::WaitTakerFee(sending_f) => self.wait_taker_fee(sending_f),
+            MakerSwapCommand::WaitForTakerFee(sending_f) => self.wait_taker_fee(sending_f),
             MakerSwapCommand::SendPayment => self.maker_payment(),
+            MakerSwapCommand::WaitForTakerPayment(sending_f) => self.wait_for_taker_payment(sending_f),
+            MakerSwapCommand::SpendTakerPayment => self.spend_taker_payment(),
             _ => unimplemented!(),
         }
     }
@@ -483,6 +524,9 @@ impl MakerSwap {
             taker_data: SwapNegotiationData::default(),
             taker_payment_lock: 0,
             other_persistent_pub: H264::default(),
+            taker_fee: None,
+            maker_payment: None,
+            taker_payment: None,
         }
     }
 
@@ -538,11 +582,11 @@ impl MakerSwap {
                 MakerSwapEvent::NegotiateFailed,
             )),
         };
-
+        // TODO add taker negotiation data validation
         let negotiated = serialize(&true);
         let sending_f = send_! (&self.ctx, self.taker, fomat!(("negotiated") '@' (self.uuid)), negotiated.as_slice()).unwrap();
         Ok((
-            MakerSwapCommand::WaitTakerFee(sending_f),
+            MakerSwapCommand::WaitForTakerFee(sending_f),
             MakerSwapEvent::Negotiated((taker_data.payment_locktime, taker_data.persistent_pubkey.into())),
         ))
     }
@@ -557,7 +601,7 @@ impl MakerSwap {
             ))
         };
 
-        log!("Taker fee tx " (taker_fee.tx_hash()));
+        log!({"Taker fee tx {:02x}", taker_fee.tx_hash()});
 
         let fee_addr_pub_key = unwrap!(hex::decode("03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc06"));
         let fee_amount = self.taker_amount / 777;
@@ -576,7 +620,104 @@ impl MakerSwap {
     }
 
     fn maker_payment(&self) -> Result<(MakerSwapCommand, MakerSwapEvent), String> {
-        unimplemented!();
+        let payment_fut = self.maker_coin.send_maker_payment(
+            self.data.maker_payment_lock as u32,
+            &*self.other_persistent_pub,
+            &*dhash160(&self.data.secret.0),
+            self.maker_amount,
+        );
+
+        // status.status(swap_tags, "Sending Maker payment…");
+        let transaction = match payment_fut.wait() {
+            Ok(t) => t,
+            Err(err) => return Ok((
+                MakerSwapCommand::Finish,
+                MakerSwapEvent::MakerPaymentFailed
+            ))
+        };
+        log!({"Maker payment tx {:02x}", transaction.tx_hash()});
+        let sending_f = send_! (&self.ctx, self.taker, fomat!(("maker-payment") '@' (self.uuid)), transaction.to_raw_bytes()).unwrap();
+
+        Ok((
+            MakerSwapCommand::WaitForTakerPayment(sending_f),
+            MakerSwapEvent::MakerPaymentSent(transaction.transaction_details(self.maker_coin.decimals()).unwrap())
+        ))
+    }
+
+    fn wait_for_taker_payment(&self, sending_f: Arc<SendHandler>) -> Result<(MakerSwapCommand, MakerSwapEvent), String> {
+        let wait_duration = self.data.lock_duration / 3;
+        let wait_taker_payment = self.data.started_at + wait_duration;
+        let payload = recv_m!(self, sending_f, "taker-payment", "for Taker payment", wait_duration, -2006, {|_: &[u8]| Ok(())});
+
+        let taker_payment = match self.taker_coin.tx_enum_from_bytes(&payload) {
+            Ok(tx) => tx,
+            Err(err) => return Ok((
+                MakerSwapCommand::RefundPayment,
+                MakerSwapEvent::TakerFeeValidateFailed(ERRL!("!taker_coin.tx_enum_from_bytes: {}", err))
+            )),
+        };
+
+        let validated = self.taker_coin.validate_taker_payment(
+            taker_payment.clone(),
+            self.taker_payment_lock as u32,
+            &*self.other_persistent_pub,
+            &*dhash160(&self.data.secret.0),
+            self.taker_amount,
+        );
+
+        if let Err(e) = validated {
+            return Ok((
+                MakerSwapCommand::RefundPayment,
+                MakerSwapEvent::TakerFeeValidateFailed(ERRL!("!taker_coin.validate_taker_payment: {}", e))
+            ))
+        }
+
+        log!({"Taker payment tx {:02x}", taker_payment.tx_hash()});
+        let tx_details = taker_payment.transaction_details(self.taker_coin.decimals()).unwrap();
+        // status.status(swap_tags, "Waiting for Taker payment confirmation…");
+        let wait = self.taker_coin.wait_for_confirmations(
+            taker_payment,
+            self.data.taker_payment_confirmations,
+            wait_taker_payment,
+        );
+
+        if let Err(err) = wait {
+            return Ok((
+                MakerSwapCommand::RefundPayment,
+                MakerSwapEvent::TakerFeeValidateFailed(ERRL!("!taker_coin.wait_for_confirmations: {}", err))
+            ))
+        }
+
+        Ok((
+            MakerSwapCommand::SpendTakerPayment,
+            MakerSwapEvent::TakerPaymentValidatedAndConfirmed(tx_details),
+        ))
+    }
+
+    fn spend_taker_payment(&self) -> Result<(MakerSwapCommand, MakerSwapEvent), String> {
+        let spend_fut = self.taker_coin.send_maker_spends_taker_payment(
+            &self.taker_payment.clone().unwrap().tx_hex,
+            &self.data.secret.0,
+        );
+
+        // status.status(swap_tags, "Waiting for Taker payment to be spent…");
+        let transaction = match spend_fut.wait() {
+            Ok(t) => t,
+            Err(err) => return Ok((
+                MakerSwapCommand::RefundPayment,
+                MakerSwapEvent::TakerPaymentSpendFailed(ERRL!("!taker_coin.send_maker_spends_taker_payment: {}", err))
+            ))
+        };
+
+        let tx_details = transaction.transaction_details(self.taker_coin.decimals()).unwrap();
+
+        log!({"Taker payment spend tx {:02x}", transaction.tx_hash()});
+        log!({"{}/{} Swap finished successfully.", self.maker_coin.ticker(), self.taker_coin.ticker()});
+        Ok((
+            MakerSwapCommand::Finish,
+            MakerSwapEvent::TakerPaymentSpent(tx_details),
+        ))
+        // status.status(swap_tags, &format!("{}/{} Swap finished successfully.", swap.maker_coin.ticker(), swap.taker_coin.ticker()));
     }
 }
 
@@ -587,216 +728,7 @@ pub fn run_maker_swap(mut swap: MakerSwap) {
         let res = swap.handle_command(command).unwrap();
         command = res.0;
         event = res.1;
-        swap = swap.apply_event(event).unwrap();
-    }
-}
-
-enum MakerSwapCommand {
-    Start,
-    Negotiate,
-    WaitTakerFee(Arc<SendHandler>),
-    SendPayment,
-    WaitForTakerPayment,
-    ValidateTakerPayment,
-    SpendTakerPayment,
-    Finish
-}
-
-#[derive(Serialize, Deserialize)]
-enum MakerSwapEvent {
-    Started(MakerSwapData),
-    StartFailed(String),
-    Negotiated((u64, H264Json)),
-    NegotiateFailed,
-    TakerFeeValidated(TransactionDetails),
-    TakerFeeValidateFailed(String),
-    SentMakerPayment,
-    GotTakerPayment,
-    TakerPaymentValidatedAndConfirmed,
-    TakerPaymentSpent,
-    Finished,
-}
-
-pub fn maker_swap_loop(swap: &mut AtomicSwap) -> Result<(), (i32, String)> {
-    // NB: We can communicate the SWAP status to UI progress indicators via documented tags,
-    // cf. https://github.com/artemii235/SuperNET/commit/d66ab944bfd8c5e8fb17f1d36ac303797156b88e#r31676734
-    // (but first we need to establish a use case for such indication with the UI guys,
-    //  in order to avoid premature throw-away design, cf. https://www.agilealliance.org/glossary/simple-design).
-    let mut status = swap.ctx.log.status_handle();
-    let uuid = swap.uuid.clone();
-    let swap_tags: &[&TagParam] = &[&"swap", &("uuid", &uuid[..])];
-    macro_rules! send {
-        ($ec: expr, $subj: expr, $slice: expr) => {
-            match send_! (&swap.ctx, swap.taker, fomat!(($subj) '@' (swap.uuid)), $slice) {
-                Ok(h) => h,
-                Err(err) => err!($ec, "send error: "(err))
-            }
-    }   }
-    macro_rules! recv {
-        ($subj: expr, $desc: expr, $timeout_sec: expr, $ec: expr, $validator: block) => {
-            recv_! (swap, status, $subj, $desc, $timeout_sec, $ec, $validator)
-        };
-        // Use this form if there's a sending future to terminate upon receiving the answer.
-        ($sending_f: ident, $subj: expr, $desc: expr, $timeout_sec: expr, $ec: expr, $validator: block) => {{
-            let payload = recv_! (swap, status, swap_tags, $subj, $desc, $timeout_sec, $ec, $validator);
-            drop ($sending_f);
-            payload
-        }};
-    }
-    // Note that `err!` updates the current `status`. We assume there is no blind spots in the `status`.
-    // NB: If we want to replace the `err!` with `?` then we should move the `status` ownership to the call site.
-    //     (Which IMHO would break the status code flow and encapsulation a little).
-    macro_rules! err {
-        ($ec: expr, $($msg: tt)+) => {{
-            let mut msg = fomat! (' ' $($msg)+);
-            status.append (&msg);
-            msg.remove (0);
-            return Err (($ec, msg))
-        }};
-    }
-
-    if let Err(e) = swap.maker_coin.check_i_have_enough_to_trade(dstr(swap.maker_amount as i64), true).wait() {
-        err!(-2000, "!check_i_have_enough_to_trade" [e]);
-    };
-
-    let started_at = now_ms() / 1000;
-    let mut rng = rand::thread_rng();
-    let secret: [u8; 32] = rng.gen();
-    swap.maker_payment_lock = started_at + swap.lock_duration * 2;
-    let wait_taker_payment = started_at + swap.lock_duration / 3;
-
-    swap.secret_hash = dhash160(&secret);
-    swap.secret = secret.into();
-    let maker_negotiation_data = SwapNegotiationData {
-        started_at,
-        payment_locktime: swap.maker_payment_lock,
-        secret_hash: swap.secret_hash.clone(),
-        persistent_pubkey: swap.my_persistent_pub.clone(),
-    };
-
-    loop {
-        let next_state = match unwrap!(swap.state.take()) {
-            AtomicSwapState::Negotiation => {
-                let bytes = serialize(&maker_negotiation_data);
-                let sending_f = send!(-2001, "negotiation", bytes.as_slice());
-
-                let data = recv!(sending_f, "negotiation-reply", "for Negotiation reply", 90, -2000, {|_: &[u8]| Ok(())});
-                let taker_data: SwapNegotiationData = match deserialize(data.as_slice()) {
-                    Ok(d) => d,
-                    Err(e) => err!(-2001, "!negotiation-reply-deserialize: " [e]),
-                };
-
-                swap.taker_payment_lock = taker_data.payment_locktime;
-                swap.other_persistent_pub = taker_data.persistent_pubkey;
-
-                let negotiated = serialize(&true);
-                let sending_f = send!(-2001, "negotiated", negotiated.as_slice());
-
-                AtomicSwapState::WaitTakerFee { sending_f }
-            },
-            AtomicSwapState::WaitTakerFee { sending_f } => {
-                let payload = recv!(sending_f, "taker-fee", "for Taker fee", 600, -2003, {|_: &[u8]| Ok(())});
-                let taker_fee = match swap.taker_coin.tx_enum_from_bytes(&payload) {
-                    Ok(tx) => tx,
-                    Err(err) => err!(-2003, "!tx_enum_from_bytes: "(err)),
-                };
-
-                log!("Taker fee tx " (taker_fee.tx_hash()));
-
-                let fee_addr_pub_key = unwrap!(hex::decode("03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc06"));
-                let fee_amount = swap.taker_amount / 777;
-                match swap.taker_coin.validate_fee(taker_fee, &fee_addr_pub_key, fee_amount as u64) {
-                    Ok(_) => (),
-                    Err(err) => err!(-2010, "!validate taker fee: "(err)),
-                };
-                AtomicSwapState::SendMakerPayment
-            },
-            AtomicSwapState::SendMakerPayment => {
-                let payment_fut = swap.maker_coin.send_maker_payment(
-                    swap.maker_payment_lock as u32,
-                    &*swap.other_persistent_pub,
-                    &*swap.secret_hash,
-                    swap.maker_amount,
-                );
-
-                status.status(swap_tags, "Sending Maker payment…");
-                let transaction = match payment_fut.wait() {
-                    Ok(t) => t,
-                    Err(err) => err!(-2006, "!send_maker_payment: "(err))
-                };
-                log!("Maker payment tx " (transaction.tx_hash()));
-                let sending_f = send!(-2006, "maker-payment", transaction.to_raw_bytes());
-                swap.maker_payment = Some(transaction.clone());
-
-                AtomicSwapState::WaitTakerPayment {sending_f}
-            },
-            AtomicSwapState::WaitTakerPayment {sending_f} => {
-                let payload = recv!(sending_f, "taker-payment", "for Taker payment", swap.lock_duration / 3, -2006, {|_: &[u8]| Ok(())});
-
-                let taker_payment = match swap.taker_coin.tx_enum_from_bytes(&payload) {
-                    Ok(tx) => tx,
-                    Err(err) => err!(-2006, "!taker_coin.tx_enum_from_bytes: "(err))
-                };
-
-                let validated = swap.taker_coin.validate_taker_payment(
-                    taker_payment.clone(),
-                    swap.taker_payment_lock as u32,
-                    &*swap.other_persistent_pub,
-                    &*swap.secret_hash,
-                    swap.taker_amount,
-                );
-
-                if let Err(e) = validated {
-                    err!(-2011, "!validate taker payment: "(e));
-                }
-
-                log!("Taker payment tx " (taker_payment.tx_hash()));
-                swap.taker_payment = Some(taker_payment.clone());
-
-                status.status(swap_tags, "Waiting for Taker payment confirmation…");
-                let wait = swap.taker_coin.wait_for_confirmations(
-                    taker_payment,
-                    swap.taker_payment_confirmations,
-                    wait_taker_payment,
-                );
-
-                if let Err(err) = wait {err!(-2006, "!taker_coin.wait_for_confirmations: "(err))}
-
-                AtomicSwapState::SpendTakerPayment
-            },
-            AtomicSwapState::SpendTakerPayment => {
-                let spend_fut = swap.taker_coin.send_maker_spends_taker_payment(
-                    swap.taker_payment.clone().unwrap(),
-                    &*swap.secret,
-                );
-
-                status.status(swap_tags, "Waiting for Taker payment to be spent…");
-                let transaction = match spend_fut.wait() {
-                    Ok(t) => t,
-                    Err(err) => err!(-2007, "!send_maker_spends_taker_payment: "(err))
-                };
-
-                log!("Taker payment spend tx " (transaction.tx_hash()));
-                status.status(swap_tags, &format!("{}/{} Swap finished successfully.", swap.maker_coin.ticker(), swap.taker_coin.ticker()));
-                save_swap_data(&swap.uuid, json!({
-                    "status": "success",
-                    "uuid": swap.uuid,
-                    "started_at": started_at,
-                    "finished_at": now_ms() / 1000,
-                    "maker_coin": swap.maker_coin.ticker(),
-                    "taker_coin": swap.taker_coin.ticker(),
-                    "transactions": swap.get_swap_transactions(),
-                }).to_string());
-                return Ok(());
-            },
-            AtomicSwapState::RefundMakerPayment => {
-                // TODO cover this case
-                status.status(swap_tags, "TBD. Swap finished in RefundMakerPayment.");
-                return Ok(());
-            },
-            _ => unimplemented!(),
-        };
-        swap.state = Some(next_state);
+        swap.apply_event(event).unwrap();
     }
 }
 
@@ -896,7 +828,7 @@ pub fn taker_swap_loop(swap: &mut AtomicSwap) -> Result<(), (i32, String)> {
                     Err (err) => err!(-1004, "!send_taker_fee: " (err))
                 };
 
-                log!("Taker fee tx hash " (transaction.tx_hash()));
+                log!("Taker fee tx hash " [transaction.tx_hash()]);
                 let sending_f = send!(-1004, "taker-fee", transaction.to_raw_bytes());
 
                 AtomicSwapState::WaitMakerPayment {sending_f}
@@ -920,7 +852,7 @@ pub fn taker_swap_loop(swap: &mut AtomicSwap) -> Result<(), (i32, String)> {
                     err!(-1011, "!validate maker payment: "(e));
                 }
 
-                log!("Got maker payment " (maker_payment.tx_hash()));
+                log!("Got maker payment " [maker_payment.tx_hash()]);
                 swap.maker_payment = Some(maker_payment.clone());
 
                 status.status(swap_tags, "Waiting for the confirmation of the Maker payment…");
@@ -948,7 +880,7 @@ pub fn taker_swap_loop(swap: &mut AtomicSwap) -> Result<(), (i32, String)> {
                     Err(err) => err!(-1006, "!send_taker_payment: "(err))
                 };
 
-                log!("Taker payment tx hash " (transaction.tx_hash()));
+                log!("Taker payment tx hash " [transaction.tx_hash()]);
                 let msg = transaction.to_raw_bytes();
 
                 let sending_f = send!(-1006, "taker-payment", msg);
@@ -963,7 +895,7 @@ pub fn taker_swap_loop(swap: &mut AtomicSwap) -> Result<(), (i32, String)> {
 
                 match got {
                     Ok(transaction) => {
-                        log!("Taker payment spend tx " (transaction.tx_hash()));
+                        log!("Taker payment spend tx " [transaction.tx_hash()]);
                         let secret = transaction.extract_secret();
                         if let Ok(bytes) = secret {
                             swap.secret = H256::from(bytes.as_slice());
@@ -991,7 +923,7 @@ pub fn taker_swap_loop(swap: &mut AtomicSwap) -> Result<(), (i32, String)> {
                     Err(err) => err!(-1, "Error: "(err))
                 };
 
-                log!("Maker payment spend tx " (transaction.tx_hash()));
+                log!("Maker payment spend tx " [transaction.tx_hash()]);
                 status.status(swap_tags, &format!("{}/{} Swap finished successfully.", swap.maker_coin.ticker(), swap.taker_coin.ticker()));
                 save_swap_data(&swap.uuid, json!({
                     "status": "success",
@@ -1020,7 +952,7 @@ pub fn taker_swap_loop(swap: &mut AtomicSwap) -> Result<(), (i32, String)> {
                     Ok(t) => t,
                     Err(err) => err!(-1, "Error: "(err))
                 };
-                log!("Taker refund tx hash " (transaction.tx_hash()));
+                log!("Taker refund tx hash " [transaction.tx_hash()]);
                 status.status(swap_tags, "Swap finished with refund.");
                 return Ok(());
             },

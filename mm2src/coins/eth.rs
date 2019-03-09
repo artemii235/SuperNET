@@ -30,6 +30,7 @@ use futures_timer::Delay;
 use gstuff::now_ms;
 use hyper::StatusCode;
 use rand::Rng;
+use rpc::v1::types::{Bytes as BytesJson};
 use serde_json::{self as json, Value as Json};
 use std::borrow::Cow;
 use std::ffi::CStr;
@@ -140,15 +141,13 @@ impl SwapOps for EthCoin {
 
     fn send_maker_spends_taker_payment(
         &self,
-        taker_payment_tx: TransactionEnum,
+        taker_payment_tx: &[u8],
         secret: &[u8],
     ) -> TransactionFut {
-        let tx = match taker_payment_tx {
-            TransactionEnum::SignedEthTransaction(t) => t,
-            _ => panic!(),
-        };
+        let tx: UnverifiedTransaction = try_fus!(rlp::decode(taker_payment_tx));
+        let signed = try_fus!(SignedEthTransaction::new(tx));
 
-        Box::new(self.spend_hash_time_locked_payment(tx, secret).map(TransactionEnum::from))
+        Box::new(self.spend_hash_time_locked_payment(signed, secret).map(TransactionEnum::from))
     }
 
     fn send_taker_spends_maker_payment(
@@ -323,7 +322,7 @@ impl MarketCoinOps for EthCoin {
             };
             if let Some(receipt) = web3_receipt {
                 if receipt.status != Some(1.into()) {
-                    return ERR!("Tx receipt {:?} status of {} tx {} is failed", receipt, self.ticker(), tx.tx_hash());
+                    return ERR!("Tx receipt {:?} status of {} tx {:?} is failed", receipt, self.ticker(), tx.tx_hash());
                 }
 
                 if let Some(confirmed_at) = receipt.block_number {
@@ -940,7 +939,7 @@ impl MmCoin for EthCoin {
                         to: format!("{:#02x}", to_addr),
                         from: arc.my_address().into(),
                         amount: amount_f64,
-                        tx_hex: hex::encode(bytes),
+                        tx_hex: bytes.into(),
                         tx_hash: signed.tx_hash(),
                         fee_details,
                     })
@@ -1091,7 +1090,7 @@ impl Transaction for SignedEthTransaction {
         }
     }
 
-    fn tx_hash(&self) -> String { format!("{:#02x}", self.hash) }
+    fn tx_hash(&self) -> BytesJson { self.hash.to_vec().into() }
 
     fn amount(&self, decimals: u8) -> Result<f64, String> {
         Ok(try_s!(display_u256_with_decimal_point(self.value, decimals).parse()))

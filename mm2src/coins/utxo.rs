@@ -32,6 +32,7 @@ use keys::{KeyPair, Private, Public, Address, Secret};
 use keys::bytes::Bytes;
 use keys::generator::{Random, Generator};
 use primitives::hash::{H256, H264, H512};
+use rpc::v1::types::{Bytes as BytesJson};
 use script::{Opcode, Builder, Script, TransactionInputSigner, UnsignedTransactionInput, SignatureVersion};
 use serde_json::{self as json, Value as Json};
 use serialization::{serialize, deserialize};
@@ -104,7 +105,7 @@ impl Transaction for ExtendedUtxoTx {
         ERR!("Couldn't extract secret")
     }
 
-    fn tx_hash(&self) -> String { format!("{}", self.transaction.hash().reversed()) }
+    fn tx_hash(&self) -> BytesJson { self.transaction.hash().reversed().to_vec().into() }
 
     fn amount(&self, decimals: u8) -> Result<f64, String> { Ok(0.) }
 
@@ -290,7 +291,8 @@ fn p2sh_spend(
 }
 
 fn p2sh_spending_tx(
-    prev_transaction: ExtendedUtxoTx,
+    prev_transaction: UtxoTransaction,
+    redeem_script: Bytes,
     outputs: Vec<TransactionOutput>,
     script_data: Script,
     key_pair: &KeyPair,
@@ -307,10 +309,10 @@ fn p2sh_spending_tx(
         inputs: vec![UnsignedTransactionInput {
             sequence,
             previous_output: OutPoint {
-                hash: prev_transaction.transaction.hash(),
+                hash: prev_transaction.hash(),
                 index: 0,
             },
-            amount: prev_transaction.transaction.outputs[0].value,
+            amount: prev_transaction.outputs[0].value,
         }],
         outputs: outputs.clone(),
         expiry_height: 0,
@@ -321,7 +323,7 @@ fn p2sh_spending_tx(
         version_group_id,
     };
     let signed_input = try_s!(
-        p2sh_spend(&unsigned, 0, key_pair, script_data, prev_transaction.redeem_script.into())
+        p2sh_spend(&unsigned, 0, key_pair, script_data, redeem_script.into())
     );
     Ok(UtxoTransaction {
         version: unsigned.version,
@@ -441,10 +443,10 @@ impl UtxoCoin {
                 Ok(t) => t,
                 Err(e) => {
                     if attempts > 2 {
-                        return ERR!("Got error {:?} after 3 attempts of getting tx {} from RPC", e, tx.tx_hash());
+                        return ERR!("Got error {:?} after 3 attempts of getting tx {:?} from RPC", e, tx.tx_hash());
                     };
                     attempts += 1;
-                    log!("Error " [e] " getting the tx " (tx.tx_hash()) " from rpc");
+                    log!("Error " [e] " getting the tx " [tx.tx_hash()] " from rpc");
                     thread::sleep(Duration::from_secs(10));
                     continue;
                 }
@@ -613,20 +615,22 @@ impl SwapOps for UtxoCoin {
 
     fn send_maker_spends_taker_payment(
         &self,
-        taker_payment_tx: TransactionEnum,
+        taker_payment_tx: &[u8],
         secret: &[u8],
     ) -> TransactionFut {
-        let prev_tx = match taker_payment_tx {TransactionEnum::ExtendedUtxoTx(e) => e, _ => panic!()};
+        let prev_tx: UtxoTransaction = try_fus!(deserialize(taker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
         let output = TransactionOutput {
-            value: prev_tx.transaction.outputs[0].value - 1000,
+            value: prev_tx.outputs[0].value - 1000,
             script_pubkey: Builder::build_p2pkh(&self.key_pair.public().address_hash()).to_bytes()
         };
         let script_data = Builder::default()
             .push_data(secret)
             .push_opcode(Opcode::OP_0)
             .into_script();
+        let redeem_script = vec![].into();
         let transaction = try_fus!(p2sh_spending_tx(
             prev_tx,
+            redeem_script,
             vec![output],
             script_data,
             &self.key_pair,
@@ -659,7 +663,8 @@ impl SwapOps for UtxoCoin {
             .push_opcode(Opcode::OP_0)
             .into_script();
         let transaction = try_fus!(p2sh_spending_tx(
-            prev_tx,
+            prev_tx.transaction,
+            prev_tx.redeem_script,
             vec![output],
             script_data,
             &self.key_pair,
@@ -690,7 +695,8 @@ impl SwapOps for UtxoCoin {
             .push_opcode(Opcode::OP_1)
             .into_script();
         let transaction = try_fus!(p2sh_spending_tx(
-            prev_tx,
+            prev_tx.transaction,
+            prev_tx.redeem_script,
             vec![output],
             script_data,
             &self.key_pair,
@@ -721,7 +727,8 @@ impl SwapOps for UtxoCoin {
             .push_opcode(Opcode::OP_1)
             .into_script();
         let transaction = try_fus!(p2sh_spending_tx(
-            prev_tx,
+            prev_tx.transaction,
+            prev_tx.redeem_script,
             vec![output],
             script_data,
             &self.key_pair,
@@ -931,8 +938,8 @@ impl MmCoin for UtxoCoin {
                     from: arc.my_address().into(),
                     to: format!("{}", to),
                     amount,
-                    tx_hash: format!("{}", signed.hash().reversed()),
-                    tx_hex: hex::encode(serialize(&signed)),
+                    tx_hash: signed.hash().reversed().to_vec().into(),
+                    tx_hex: serialize(&signed).into(),
                     fee_details: try_s!(json::to_value(fee_details)),
                 })
             })

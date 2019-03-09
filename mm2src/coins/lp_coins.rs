@@ -35,6 +35,7 @@ use futures::{Future};
 use gstuff::now_ms;
 use hashbrown::hash_map::{HashMap, RawEntryMut};
 use libc::{c_char, c_void};
+use rpc::v1::types::{Bytes as BytesJson};
 use serde_json::{self as json, Value as Json};
 use std::borrow::Cow;
 use std::ffi::{CString};
@@ -58,8 +59,8 @@ pub trait Transaction: Debug + 'static {
     /// Transaction bytes in coin format without additional info
     fn native_hex(&self) -> Vec<u8>;
     fn extract_secret(&self) -> Result<Vec<u8>, String>;
-    /// String representation of tx hash for displaying purpose
-    fn tx_hash(&self) -> String;
+    /// Serializable representation of tx hash for displaying purpose
+    fn tx_hash(&self) -> BytesJson;
     /// Transaction amount
     fn amount(&self, decimals: u8) -> Result<f64, String>;
     /// From address
@@ -76,7 +77,7 @@ pub trait Transaction: Debug + 'static {
             fee_details: try_s!(self.fee_details()),
             from: self.from(),
             to: self.to(),
-            tx_hex: hex::encode_upper(self.native_hex()),
+            tx_hex: self.native_hex().into(),
         })
     }
 }
@@ -122,7 +123,7 @@ pub trait SwapOps {
 
     fn send_maker_spends_taker_payment(
         &self,
-        taker_payment_tx: TransactionEnum,
+        taker_payment_tx: &[u8],
         secret: &[u8],
     ) -> TransactionFut;
 
@@ -213,12 +214,12 @@ struct WithdrawRequest {
 }
 
 /// Transaction details
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct TransactionDetails {
     /// Raw bytes of signed transaction in hexadecimal string, this should be sent as is to send_raw_transaction RPC to broadcast the transaction
-    tx_hex: String,
+    pub tx_hex: BytesJson,
     /// Transaction hash in hexadecimal format
-    tx_hash: String,
+    tx_hash: BytesJson,
     /// Coins will be sent from this address
     from: String,
     /// Coins will be sent to this address
