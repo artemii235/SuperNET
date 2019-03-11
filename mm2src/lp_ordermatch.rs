@@ -35,7 +35,7 @@ use std::time::Duration;
 use std::thread;
 
 use crate::lp_network::lp_queue_command;
-use crate::lp_swap::{taker_swap_loop, AtomicSwap, MakerSwap, run_maker_swap};
+use crate::lp_swap::{MakerSwap, run_maker_swap, TakerSwap, run_taker_swap};
 
 /// Temporary kludge, improving readability of the not-yet-fully-ported code. Should be removed eventually.
 macro_rules! c2s {($cs: expr) => {unwrap!(CStr::from_ptr($cs.as_ptr()).to_str())}}
@@ -766,9 +766,8 @@ unsafe fn lp_connected_alice(ctx_ffi_handle: u32, qp: *mut lp::LP_quoteinfo, pai
             let uuid = CStr::from_ptr ((*qp).uuidstr.as_ptr()) .to_string_lossy().into_owned();
             move || {
                 log!("Entering the taker_swap_loop " (maker_coin.ticker()) "/" (taker_coin.ticker()));
-                let mut taker_swap = AtomicSwap::new(
+                let mut taker_swap = TakerSwap::new(
                     ctx,
-                    lp::bits256::default(),
                     maker,
                     maker_coin,
                     taker_coin,
@@ -776,11 +775,8 @@ unsafe fn lp_connected_alice(ctx_ffi_handle: u32, qp: *mut lp::LP_quoteinfo, pai
                     taker_amount,
                     my_persistent_pub,
                     uuid,
-                ).unwrap();
-                match taker_swap_loop(&mut taker_swap) {
-                    Ok(_) => (),
-                    Err(e) => log!("Swap finished with error "[e])
-                };
+                );
+                run_taker_swap(taker_swap);
             }
         });
         match alice_loop_thread {

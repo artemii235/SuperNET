@@ -142,6 +142,8 @@ impl SwapOps for EthCoin {
     fn send_maker_spends_taker_payment(
         &self,
         taker_payment_tx: &[u8],
+        _time_lock: u32,
+        _taker_pub: &[u8],
         secret: &[u8],
     ) -> TransactionFut {
         let tx: UnverifiedTransaction = try_fus!(rlp::decode(taker_payment_tx));
@@ -177,14 +179,15 @@ impl SwapOps for EthCoin {
 
     fn send_maker_refunds_payment(
         &self,
-        maker_payment_tx: TransactionEnum,
+        maker_payment_tx: &[u8],
+        _time_lock: u32,
+        _taker_pub: &[u8],
+        _secret_hash: &[u8],
     ) -> TransactionFut {
-        let tx = match maker_payment_tx {
-            TransactionEnum::SignedEthTransaction(t) => t,
-            _ => panic!(),
-        };
+        let tx: UnverifiedTransaction = try_fus!(rlp::decode(maker_payment_tx));
+        let signed = try_fus!(SignedEthTransaction::new(tx));
 
-        Box::new(self.refund_hash_time_locked_payment(tx).map(TransactionEnum::from))
+        Box::new(self.refund_hash_time_locked_payment(signed).map(TransactionEnum::from))
     }
 
     fn validate_fee(

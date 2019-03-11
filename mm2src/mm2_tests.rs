@@ -663,9 +663,9 @@ fn komodo_conf_path (ac_name: Option<&'static str>) -> Result<PathBuf, String> {
 fn check_swap_status(
     mm: &MarketMakerIt,
     uuid: &str,
-    status: &str,
     maker_coin: &str,
     taker_coin: &str,
+    expected_events: Vec<&str>,
 ) {
     let response = unwrap!(mm.rpc (json! ({
             "userpass": mm.userpass,
@@ -674,16 +674,12 @@ fn check_swap_status(
                 "uuid": uuid,
             }
         })));
-    assert!(response.0.is_success(), "!{} swap_status: {}", uuid, response.1);
-    let status_json: Json = unwrap!(json::from_str(&response.1));
-    let result = &status_json["result"];
-    assert_eq!(result["status"].as_str(), Some(status));
-    assert_eq!(result["uuid"].as_str(), Some(uuid));
-    assert_eq!(result["maker_coin"].as_str(), Some(maker_coin));
-    assert_eq!(result["taker_coin"].as_str(), Some(taker_coin));
-    assert!(result["started_at"].as_u64().unwrap() > 0);
-    assert!(result["finished_at"].as_u64().unwrap() > 0);
-    assert!(result["transactions"].as_object().unwrap().len() > 0);
+    assert!(response.0.is_success(), "!status of {}: {}", uuid, response.1);
+    let status_response: Json = unwrap!(json::from_str(&response.1));
+    let events_array = status_response["result"].as_array().unwrap();
+    let actual_events = events_array.iter().map(|item| item["event"]["type"].as_str().unwrap());
+    let actual_events: Vec<&str> = actual_events.collect();
+    assert_eq!(expected_events, actual_events);
 }
 
 /// Trading test using coins with remote RPC (Electrum, ETH nodes), it needs only ENV variables to be set, coins daemons are not required.
@@ -793,36 +789,33 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
         unwrap!(mm_bob.wait_for_log (20., &|log| log.contains (&format!("Entering the maker_swap_loop {}/{}", base, rel))));
     }
 
-    // wait for complete on both sides in separate loop allowing swaps to run concurrently
-    for (base, rel) in pairs.iter() {
-        unwrap!(mm_alice.wait_for_log (600., &|log| log.contains (&format!("{}/{} Swap finished successfully", base, rel))));
-        unwrap!(mm_bob.wait_for_log (600., &|log| log.contains (&format!("{}/{} Swap finished successfully", base, rel))));
-    }
-    /*
     for (uuid, (base, rel)) in uuids.iter().zip(pairs.iter()) {
+        unwrap!(mm_bob.wait_for_log (600., &|log| log.contains (&format!("[swap uuid={}] Finished", uuid))));
+        unwrap!(mm_alice.wait_for_log (600., &|log| log.contains (&format!("[swap uuid={}] Finished", uuid))));
         check_swap_status(
             &mm_alice,
             &uuid,
-            "success",
             base,
             rel,
+            vec!["Started", "Negotiated", "TakerFeeSent", "MakerPaymentValidatedAndConfirmed", "TakerPaymentSent", "TakerPaymentSpent", "MakerPaymentSpent", "Finished"],
         );
+
         check_swap_status(
             &mm_bob,
             &uuid,
-            "success",
             base,
             rel,
+            vec!["Started", "Negotiated", "TakerFeeValidated", "MakerPaymentSent", "TakerPaymentValidatedAndConfirmed", "TakerPaymentSpent", "Finished"],
         );
     }
-    */
     unwrap! (mm_bob.stop());
     unwrap! (mm_alice.stop());
 }
 
 #[test]
+#[ignore]
 fn trade_test_electrum_and_eth_coins() {
-    trade_base_rel_electrum(vec![("ETH", "JST")]);
+    trade_base_rel_electrum(vec![("BEER", "ETOMIC")]);
 }
 
 fn trade_base_rel_native(base: &str, rel: &str) {

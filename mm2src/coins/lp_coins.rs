@@ -124,6 +124,8 @@ pub trait SwapOps {
     fn send_maker_spends_taker_payment(
         &self,
         taker_payment_tx: &[u8],
+        time_lock: u32,
+        taker_pub: &[u8],
         secret: &[u8],
     ) -> TransactionFut;
 
@@ -140,7 +142,10 @@ pub trait SwapOps {
 
     fn send_maker_refunds_payment(
         &self,
-        maker_payment_tx: TransactionEnum,
+        maker_payment_tx: &[u8],
+        time_lock: u32,
+        taker_pub: &[u8],
+        secret_hash: &[u8],
     ) -> TransactionFut;
 
     fn validate_fee(
@@ -214,7 +219,7 @@ struct WithdrawRequest {
 }
 
 /// Transaction details
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TransactionDetails {
     /// Raw bytes of signed transaction in hexadecimal string, this should be sent as is to send_raw_transaction RPC to broadcast the transaction
     pub tx_hex: BytesJson,

@@ -577,12 +577,12 @@ impl SwapOps for UtxoCoin {
         &self,
         time_lock: u32,
         taker_pub: &[u8],
-        priv_bn_hash: &[u8],
+        secret_hash: &[u8],
         amount: u64,
     ) -> TransactionFut {
         let redeem_script = try_fus!(payment_script(
             time_lock,
-            priv_bn_hash,
+            secret_hash,
             self.key_pair.public(),
             &try_fus!(Public::from_slice(taker_pub)),
         ));
@@ -616,6 +616,8 @@ impl SwapOps for UtxoCoin {
     fn send_maker_spends_taker_payment(
         &self,
         taker_payment_tx: &[u8],
+        time_lock: u32,
+        taker_pub: &[u8],
         secret: &[u8],
     ) -> TransactionFut {
         let prev_tx: UtxoTransaction = try_fus!(deserialize(taker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
@@ -627,10 +629,12 @@ impl SwapOps for UtxoCoin {
             .push_data(secret)
             .push_opcode(Opcode::OP_0)
             .into_script();
-        let redeem_script = vec![].into();
+        let redeem_script = try_fus!(
+            payment_script(time_lock, &*dhash160(secret), &try_fus!(Public::from_slice(taker_pub)), self.key_pair.public())
+        );
         let transaction = try_fus!(p2sh_spending_tx(
             prev_tx,
-            redeem_script,
+            redeem_script.into(),
             vec![output],
             script_data,
             &self.key_pair,
@@ -716,19 +720,28 @@ impl SwapOps for UtxoCoin {
 
     fn send_maker_refunds_payment(
         &self,
-        maker_payment_tx: TransactionEnum,
+        maker_payment_tx: &[u8],
+        time_lock: u32,
+        taker_pub: &[u8],
+        secret_hash: &[u8],
     ) -> TransactionFut {
-        let prev_tx = match maker_payment_tx {TransactionEnum::ExtendedUtxoTx(e) => e, _ => panic!()};
+        let prev_tx: UtxoTransaction = try_fus!(deserialize(maker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
         let output = TransactionOutput {
-            value: prev_tx.transaction.outputs[0].value - 1000,
+            value: prev_tx.outputs[0].value - 1000,
             script_pubkey: Builder::build_p2pkh(&self.key_pair.public().address_hash()).to_bytes()
         };
         let script_data = Builder::default()
             .push_opcode(Opcode::OP_1)
             .into_script();
+        let redeem_script = try_fus!(payment_script(
+            time_lock,
+            secret_hash,
+            self.key_pair.public(),
+            &try_fus!(Public::from_slice(taker_pub)),
+        ));
         let transaction = try_fus!(p2sh_spending_tx(
-            prev_tx.transaction,
-            prev_tx.redeem_script,
+            prev_tx,
+            redeem_script.into(),
             vec![output],
             script_data,
             &self.key_pair,
