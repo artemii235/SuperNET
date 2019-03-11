@@ -290,7 +290,7 @@ impl MarketCoinOps for EthCoin {
         let bytes = try_fus!(hex::decode(tx));
         Box::new(
             self.web3.eth().send_raw_transaction(bytes.into())
-                .map(|res| format!("{:#02x}", res))
+                .map(|res| format!("{:02x}", res))
                 .map_err(|e| ERRL!("{}", e))
         )
     }
