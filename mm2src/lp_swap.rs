@@ -57,7 +57,7 @@
 use bitcrypto::dhash160;
 use btc_rpc::v1::types::{H160 as H160Json, H256 as H256Json, H264 as H264Json};
 use coins::{MmCoinEnum, TransactionDetails};
-use common::{bits256, dstr, HyRes, rpc_response, Timeout, swap_db_dir};
+use common::{bits256, dstr, HyRes, rpc_response, Timeout, swap_db_dir, str_to_malloc, lp};
 use common::log::{TagParam};
 use common::mm_ctx::MmArc;
 use crc::crc32;
@@ -713,7 +713,10 @@ pub fn run_maker_swap(mut swap: MakerSwap) {
         }
         match res.0 {
             Some(c) => { command = c; },
-            None => break,
+            None => {
+                broadcast_swap_status(&swap.uuid).unwrap();
+                break;
+            },
         }
     }
 }
@@ -739,7 +742,10 @@ pub fn run_taker_swap(mut swap: TakerSwap) {
         }
         match res.0 {
             Some(c) => { command = c; },
-            None => break,
+            None => {
+                broadcast_swap_status(&swap.uuid).unwrap();
+                break;
+            },
         }
     }
 }
@@ -1226,4 +1232,18 @@ pub fn swap_status(req: Json) -> HyRes {
     rpc_response(200, json!({
         "result": status
     }).to_string())
+}
+
+fn broadcast_swap_status(uuid: &str) -> Result<(), String> {
+    let path = swap_file_path(uuid);
+    let content = slurp(&path);
+    let status: SavedSwap = try_s!(json::from_slice(&content));
+    let status_string = json!({
+        "method": "swapstatus",
+        "data": status,
+    }).to_string();
+    let status_c_string = str_to_malloc(&status_string);
+    let zero = lp::bits256::default();
+    unsafe { lp::LP_reserved_msg(0, zero, status_c_string); }
+    Ok(())
 }

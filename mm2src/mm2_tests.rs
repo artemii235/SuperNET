@@ -802,6 +802,7 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
             vec!["Started", "Negotiated", "TakerFeeValidated", "MakerPaymentSent", "TakerPaymentValidatedAndConfirmed", "TakerPaymentSpent", "Finished"],
         );
     }
+    thread::sleep(Duration::from_secs(120));
     unwrap! (mm_bob.stop());
     unwrap! (mm_alice.stop());
 }

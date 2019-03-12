@@ -546,6 +546,7 @@ pub unsafe fn lp_command_q_loop(ctx: MmArc) {
             }
         } else {
             let json = unwrap!(json::from_str(&cmd.msg));
+            log!([json]);
             let json = match dispatcher (json, None, ctx.clone()) {
                 DispatcherRes::Match (handler) => {
                     rpc_reply_to_peer (handler, cmd);
