@@ -23,7 +23,7 @@ pub mod rpc_clients;
 use base64::{encode_config as base64_encode, URL_SAFE};
 use bitcrypto::{dhash160};
 use byteorder::{LittleEndian, WriteBytesExt};
-use chain::{TransactionOutput, TransactionInput, OutPoint, Transaction as UtxoTransaction};
+use chain::{TransactionOutput, TransactionInput, OutPoint};
 use chain::constants::{SEQUENCE_FINAL};
 use common::{dstr, lp, MutexGuardWrapper};
 use futures::{Future};
@@ -40,12 +40,13 @@ use sha2::{Sha256, Digest};
 use std::borrow::Cow;
 use std::convert::AsMut;
 use std::ffi::CStr;
-use std::mem::transmute;
 use std::ops::Deref;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
+
+pub use chain::Transaction as UtxoTx;
 
 use self::rpc_clients::{UtxoRpcClientEnum, UnspentInfo, ElectrumClient, ElectrumClientImpl, NativeClient};
 use super::{IguanaInfo, MarketCoinOps, MmCoin, MmCoinEnum, SwapOps, Transaction, TransactionEnum, TransactionFut, TransactionDetails};
@@ -59,41 +60,13 @@ fn clone_into_array<A: Default + AsMut<[T]>, T: Clone>(slice: &[T]) -> A {
     a
 }
 
-/// Extended UTXO transaction, contains redeem script to spend p2sh output
-/// Every transaction should contain separate redeem script for every p2sh output
-/// However as MM creates only 1 p2sh output per every swap transaction
-/// we can use single redeem script at least for now.
-#[derive(Debug, Clone)]
-pub struct ExtendedUtxoTx {
-    pub transaction: UtxoTransaction,
-    pub redeem_script: Bytes,
-}
-
-impl ExtendedUtxoTx {
-    pub fn transaction_bytes(&self) -> Bytes {
-        serialize(&self.transaction)
-    }
-}
-
-impl Transaction for ExtendedUtxoTx {
-    fn to_raw_bytes(&self) -> Vec<u8> {
-        let mut resulting_bytes = vec![];
-        let tx_bytes = serialize(&self.transaction);
-        let tx_len_bytes: [u8; 4] = unsafe { transmute(tx_bytes.len() as u32) };
-        resulting_bytes.extend_from_slice(&tx_len_bytes);
-        resulting_bytes.extend_from_slice(&tx_bytes);
-        let redeem_len_bytes: [u8; 4] = unsafe { transmute(self.redeem_script.len() as u32) };
-        resulting_bytes.extend_from_slice(&redeem_len_bytes);
-        resulting_bytes.extend_from_slice(&self.redeem_script);
-        resulting_bytes
-    }
-
-    fn native_hex(&self) -> Vec<u8> {
-        serialize(&self.transaction).to_vec()
+impl Transaction for UtxoTx {
+    fn tx_hex(&self) -> Vec<u8> {
+        serialize(self).into()
     }
 
     fn extract_secret(&self) -> Result<Vec<u8>, String> {
-        let script: Script = self.transaction.inputs[0].script_sig.clone().into();
+        let script: Script = self.inputs[0].script_sig.clone().into();
         for (i, instr) in script.iter().enumerate() {
             let instruction = instr.unwrap();
             if i == 1 {
@@ -105,7 +78,7 @@ impl Transaction for ExtendedUtxoTx {
         ERR!("Couldn't extract secret")
     }
 
-    fn tx_hash(&self) -> BytesJson { self.transaction.hash().reversed().to_vec().into() }
+    fn tx_hash(&self) -> BytesJson { self.hash().reversed().to_vec().into() }
 
     fn amount(&self, decimals: u8) -> Result<f64, String> { Ok(0.) }
 
@@ -291,7 +264,7 @@ fn p2sh_spend(
 }
 
 fn p2sh_spending_tx(
-    prev_transaction: UtxoTransaction,
+    prev_transaction: UtxoTx,
     redeem_script: Bytes,
     outputs: Vec<TransactionOutput>,
     script_data: Script,
@@ -301,7 +274,7 @@ fn p2sh_spending_tx(
     lock_time: u32,
     sequence: u32,
     version_group_id: u32,
-) -> Result<UtxoTransaction, String> {
+) -> Result<UtxoTx, String> {
     let unsigned = TransactionInputSigner {
         lock_time,
         version,
@@ -325,7 +298,7 @@ fn p2sh_spending_tx(
     let signed_input = try_s!(
         p2sh_spend(&unsigned, 0, key_pair, script_data, redeem_script.into())
     );
-    Ok(UtxoTransaction {
+    Ok(UtxoTx {
         version: unsigned.version,
         overwintered: unsigned.overwintered,
         lock_time: unsigned.lock_time,
@@ -355,14 +328,14 @@ fn sign_tx(
     unsigned: TransactionInputSigner,
     key_pair: &KeyPair,
     prev_script: Script
-) -> Result<UtxoTransaction, String> {
+) -> Result<UtxoTx, String> {
     let mut signed_inputs = vec![];
     for (i, _) in unsigned.inputs.iter().enumerate() {
         signed_inputs.push(
             try_s!(p2pkh_spend(&unsigned, i, key_pair, &prev_script))
         );
     }
-    Ok(UtxoTransaction {
+    Ok(UtxoTx {
         inputs: signed_inputs,
         outputs: unsigned.outputs.clone(),
         version: unsigned.version,
@@ -409,15 +382,11 @@ impl UtxoCoin {
             ).and_then(move |(unsigned, _)| -> TransactionFut {
                 let prev_script = Builder::build_p2pkh(&arc.my_address.hash);
                 let signed = try_fus!(sign_tx(unsigned, &arc.key_pair, prev_script));
-                let tx = ExtendedUtxoTx {
-                    transaction: signed,
-                    redeem_script
-                };
-                Box::new(arc.rpc_client.send_transaction(&tx.transaction, arc.my_address.clone()).then(move |res| {
+                Box::new(arc.rpc_client.send_transaction(&signed, arc.my_address.clone()).then(move |res| {
                     // Drop the UTXO lock only when the transaction send result is known.
                     drop(utxo_lock);
                     try_s!(res);
-                    Ok(tx.into())
+                    Ok(signed.into())
                 }))
             })
         }))
@@ -433,13 +402,13 @@ impl UtxoCoin {
         amount: u64,
     ) -> Result<(), String> {
         let tx = match payment_tx {
-            TransactionEnum::ExtendedUtxoTx(tx) => tx,
+            TransactionEnum::UtxoTx(tx) => tx,
             _ => panic!(),
         };
 
         let mut attempts = 0;
         loop {
-            let tx_from_rpc = match self.rpc_client.get_transaction(tx.transaction.hash().reversed().into()).wait() {
+            let tx_from_rpc = match self.rpc_client.get_transaction(tx.hash().reversed().into()).wait() {
                 Ok(t) => t,
                 Err(e) => {
                     if attempts > 2 {
@@ -451,7 +420,7 @@ impl UtxoCoin {
                     continue;
                 }
             };
-            if serialize(&tx.transaction).take() != tx_from_rpc.hex.0 {
+            if serialize(&tx).take() != tx_from_rpc.hex.0 {
                 return ERR!("Provided payment tx {:?} doesn't match tx data from rpc {:?}", tx, tx_from_rpc);
             }
 
@@ -462,18 +431,13 @@ impl UtxoCoin {
                 &try_s!(Public::from_slice(second_pub0)),
             ));
 
-            let actual_redeem = tx.redeem_script.into();
-            if expected_redeem != actual_redeem {
-                return ERR!("Provided redeem script {} doesn't match expected {}", actual_redeem, expected_redeem);
-            }
-
             let expected_output = TransactionOutput {
                 value: amount,
                 script_pubkey: Builder::build_p2sh(&dhash160(&expected_redeem)).into(),
             };
 
-            if tx.transaction.outputs[0] != expected_output {
-                return ERR!("Provided payment tx output doesn't match expected {:?} {:?}", tx.transaction.outputs[0], expected_output);
+            if tx.outputs[0] != expected_output {
+                return ERR!("Provided payment tx output doesn't match expected {:?} {:?}", tx.outputs[0], expected_output);
             }
             return Ok(());
         }
@@ -620,7 +584,7 @@ impl SwapOps for UtxoCoin {
         taker_pub: &[u8],
         secret: &[u8],
     ) -> TransactionFut {
-        let prev_tx: UtxoTransaction = try_fus!(deserialize(taker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
+        let prev_tx: UtxoTx = try_fus!(deserialize(taker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
         let output = TransactionOutput {
             value: prev_tx.outputs[0].value - 1000,
             script_pubkey: Builder::build_p2pkh(&self.key_pair.public().address_hash()).to_bytes()
@@ -645,10 +609,7 @@ impl SwapOps for UtxoCoin {
             self.version_group_id,
         ));
         Box::new(self.rpc_client.send_transaction(&transaction, self.my_address.clone()).map(move |_res|
-            ExtendedUtxoTx {
-                transaction,
-                redeem_script: vec![].into()
-            }.into()
+            transaction.into()
         ))
     }
 
@@ -659,7 +620,7 @@ impl SwapOps for UtxoCoin {
         maker_pub: &[u8],
         secret: &[u8],
     ) -> TransactionFut {
-        let prev_tx: UtxoTransaction = try_fus!(deserialize(maker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
+        let prev_tx: UtxoTx = try_fus!(deserialize(maker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
         let output = TransactionOutput {
             value: prev_tx.outputs[0].value - 1000,
             script_pubkey: Builder::build_p2pkh(&self.key_pair.public().address_hash()).to_bytes()
@@ -684,10 +645,7 @@ impl SwapOps for UtxoCoin {
             self.version_group_id,
         ));
         Box::new(self.rpc_client.send_transaction(&transaction, self.my_address.clone()).map(move |_res|
-            ExtendedUtxoTx {
-                transaction,
-                redeem_script: vec![].into()
-            }.into()
+            transaction.into()
         ))
     }
 
@@ -698,7 +656,7 @@ impl SwapOps for UtxoCoin {
         maker_pub: &[u8],
         secret_hash: &[u8],
     ) -> TransactionFut {
-        let prev_tx: UtxoTransaction = try_fus!(deserialize(taker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
+        let prev_tx: UtxoTx = try_fus!(deserialize(taker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
         let output = TransactionOutput {
             value: prev_tx.outputs[0].value - 1000,
             script_pubkey: Builder::build_p2pkh(&self.key_pair.public().address_hash()).to_bytes()
@@ -722,10 +680,7 @@ impl SwapOps for UtxoCoin {
             self.version_group_id,
         ));
         Box::new(self.rpc_client.send_transaction(&transaction, self.my_address.clone()).map(move |_res|
-            ExtendedUtxoTx {
-                transaction,
-                redeem_script: vec![].into()
-            }.into()
+            transaction.into()
         ))
     }
 
@@ -736,7 +691,7 @@ impl SwapOps for UtxoCoin {
         taker_pub: &[u8],
         secret_hash: &[u8],
     ) -> TransactionFut {
-        let prev_tx: UtxoTransaction = try_fus!(deserialize(maker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
+        let prev_tx: UtxoTx = try_fus!(deserialize(maker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
         let output = TransactionOutput {
             value: prev_tx.outputs[0].value - 1000,
             script_pubkey: Builder::build_p2pkh(&self.key_pair.public().address_hash()).to_bytes()
@@ -763,10 +718,7 @@ impl SwapOps for UtxoCoin {
             self.version_group_id,
         ));
         Box::new(self.rpc_client.send_transaction(&transaction, self.my_address.clone()).map(move |_res|
-            ExtendedUtxoTx {
-                transaction,
-                redeem_script: vec![].into()
-            }.into()
+            transaction.into()
         ))
     }
 
@@ -777,13 +729,13 @@ impl SwapOps for UtxoCoin {
         amount: u64
     ) -> Result<(), String> {
         let tx = match fee_tx {
-            TransactionEnum::ExtendedUtxoTx(tx) => tx,
+            TransactionEnum::UtxoTx(tx) => tx,
             _ => panic!(),
         };
 
-        let tx_from_rpc = try_s!(self.rpc_client.get_transaction(tx.transaction.hash().reversed().into()).wait());
+        let tx_from_rpc = try_s!(self.rpc_client.get_transaction(tx.hash().reversed().into()).wait());
 
-        if tx_from_rpc.hex.0 != serialize(&tx.transaction).take() {
+        if tx_from_rpc.hex.0 != serialize(&tx).take() {
             return ERR!("Provided dex fee tx {:?} doesn't match tx data from rpc {:?}", tx, tx_from_rpc);
         }
 
@@ -793,8 +745,8 @@ impl SwapOps for UtxoCoin {
             script_pubkey: Builder::build_p2pkh(&address.hash).to_bytes()
         };
 
-        if tx.transaction.outputs[0] != expected_output {
-            return ERR!("Provided dex fee tx output doesn't match expected {:?} {:?}", tx.transaction.outputs[0], expected_output);
+        if tx.outputs[0] != expected_output {
+            return ERR!("Provided dex fee tx output doesn't match expected {:?} {:?}", tx.outputs[0], expected_output);
         }
         Ok(())
     }
@@ -856,42 +808,25 @@ impl MarketCoinOps for UtxoCoin {
         confirmations: u32,
         wait_until: u64,
     ) -> Result<(), String> {
-        let tx = match tx {TransactionEnum::ExtendedUtxoTx(e) => e, _ => panic!()};
+        let tx = match tx {TransactionEnum::UtxoTx(e) => e, _ => panic!()};
         self.rpc_client.wait_for_confirmations(
-            &tx.transaction,
+            &tx,
             confirmations as u32,
             wait_until,
         )
     }
 
     fn wait_for_tx_spend(&self, tx_bytes: &[u8], wait_until: u64) -> Result<TransactionEnum, String> {
-        let tx: UtxoTransaction = try_s!(deserialize(tx_bytes).map_err(|e| ERRL!("{:?}", e)));
+        let tx: UtxoTx = try_s!(deserialize(tx_bytes).map_err(|e| ERRL!("{:?}", e)));
 
         let res = try_s!(self.rpc_client.wait_for_payment_spend(&tx, 0, wait_until));
 
-        Ok(TransactionEnum::ExtendedUtxoTx(ExtendedUtxoTx {
-            transaction: res,
-            redeem_script: vec![].into(),
-        }))
+        Ok(res.into())
     }
 
     fn tx_enum_from_bytes(&self, bytes: &[u8]) -> Result<TransactionEnum, String> {
-        // should be at least 8 bytes length in case tx and redeem length is zero
-        if bytes.len() < 8 {
-            return ERR!("Input bytes slice len is too small");
-        }
-        let len_array = clone_into_array::<[u8; 4], u8>(&bytes[0..4]);
-        let tx_len: u32 = unsafe { transmute(len_array) };
-        let mut read: usize = 4;
-        let transaction: UtxoTransaction = try_s!(deserialize(&bytes[read..read + tx_len as usize]).map_err(|err| format!("{:?}", err)));
-        read += tx_len as usize;
-        let redeem_len: u32 = unsafe { transmute(clone_into_array::<[u8; 4], u8>(&bytes[read..read + 4])) };
-        read += 4 as usize;
-        let redeem_script = Bytes::from(&bytes[read..read + redeem_len as usize]);
-        Ok(ExtendedUtxoTx {
-            transaction,
-            redeem_script,
-        }.into())
+        let transaction: UtxoTx = try_s!(deserialize(bytes).map_err(|err| format!("{:?}", err)));
+        Ok(transaction.into())
     }
 
     fn current_block(&self) -> Box<Future<Item=u64, Error=String> + Send> {
@@ -1106,8 +1041,8 @@ pub fn utxo_coin_from_iguana_info(info: *mut lp::iguana_info, mode: UtxoInitMode
 #[test]
 fn test_extract_secret() {
     let bytes = hex::decode("0100000001de7aa8d29524906b2b54ee2e0281f3607f75662cbc9080df81d1047b78e21dbc00000000d7473044022079b6c50820040b1fbbe9251ced32ab334d33830f6f8d0bf0a40c7f1336b67d5b0220142ccf723ddabb34e542ed65c395abc1fbf5b6c3e730396f15d25c49b668a1a401209da937e5609680cb30bff4a7661364ca1d1851c2506fa80c443f00a3d3bf7365004c6b6304f62b0e5cb175210270e75970bb20029b3879ec76c4acd320a8d0589e003636264d01a7d566504bfbac6782012088a9142fb610d856c19fd57f2d0cffe8dff689074b3d8a882103f368228456c940ac113e53dad5c104cf209f2f102a409207269383b6ab9b03deac68ffffffff01d0dc9800000000001976a9146d9d2b554d768232320587df75c4338ecc8bf37d88ac40280e5c").unwrap();
-    let tx: UtxoTransaction = deserialize(bytes.as_slice()).unwrap();
-    let extended = ExtendedUtxoTx {
+    let tx: UtxoTx = deserialize(bytes.as_slice()).unwrap();
+    let extended = UtxoTx {
         transaction: tx,
         redeem_script: vec![].into()
     };

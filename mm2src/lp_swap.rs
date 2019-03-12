@@ -56,9 +56,9 @@
 //
 use bitcrypto::dhash160;
 use btc_rpc::v1::types::{H160 as H160Json, H256 as H256Json, H264 as H264Json};
-use coins::{MmCoinEnum, TransactionEnum, TransactionDetails};
+use coins::{MmCoinEnum, TransactionDetails};
 use common::{bits256, dstr, HyRes, rpc_response, Timeout, swap_db_dir};
-use common::log::{TagParam, StatusHandle};
+use common::log::{TagParam};
 use common::mm_ctx::MmArc;
 use crc::crc32;
 use futures::{Future};
@@ -167,12 +167,12 @@ macro_rules! recv_ {
             }
         }));
         let recv_f = Timeout::new (recv_f, Duration::from_secs (BASIC_COMM_TIMEOUT + $timeout_sec));
-        let payload = recv_f.wait().unwrap();
-        // Checksum here helps us visually verify the logistics between the Maker and Taker logs.
-        let crc = crc32::checksum_ieee (&payload);
-        log! ("Received '" (recv_subject) "' (" (payload.len()) " bytes, crc " (crc) ")");
-
-        payload
+        recv_f.wait().map(|payload| {
+            // Checksum here helps us visually verify the logistics between the Maker and Taker logs.
+            let crc = crc32::checksum_ieee (&payload);
+            log! ("Received '" (recv_subject) "' (" (payload.len()) " bytes, crc " (crc) ")");
+            payload
+        })
     }}
 }
 
@@ -196,11 +196,6 @@ fn test_serde_swap_negotiation_data() {
 fn swap_file_path(uuid: &str) -> PathBuf {
     let path = swap_db_dir();
     path.join(format!("{}.json", uuid))
-}
-
-fn save_swap_data(uuid: &str, data: String) {
-    let mut file = unwrap!(File::create(swap_file_path(uuid)));
-    unwrap!(file.write_all(data.as_bytes()));
 }
 
 fn save_maker_swap_event(uuid: &str, event: MakerSavedEvent) -> Result<(), String> {
@@ -261,7 +256,6 @@ struct MakerSwapData {
     /// Allows to recognize one SWAP from the other in the logs. #274.
     uuid: String,
     started_at: u64,
-    finished_at: u64,
 }
 
 pub struct MakerSwap {
@@ -274,7 +268,6 @@ pub struct MakerSwap {
     taker: bits256,
     uuid: String,
     data: MakerSwapData,
-    taker_data: SwapNegotiationData,
     taker_payment_lock: u64,
     other_persistent_pub: H264,
     taker_fee: Option<TransactionDetails>,
@@ -283,6 +276,7 @@ pub struct MakerSwap {
     taker_payment_spend: Option<TransactionDetails>,
     maker_payment_refund: Option<TransactionDetails>,
     errors: Vec<String>,
+    finished_at: u64,
 }
 
 enum MakerSwapCommand {
@@ -306,7 +300,8 @@ enum MakerSwapEvent {
     TakerFeeValidated(TransactionDetails),
     TakerFeeValidateFailed(String),
     MakerPaymentSent(TransactionDetails),
-    MakerPaymentFailed(String),
+    MakerPaymentTransactionFailed(String),
+    MakerPaymentDataSendFailed(String),
     TakerPaymentValidatedAndConfirmed(TransactionDetails),
     TakerPaymentValidateFailed(String),
     TakerPaymentSpent(TransactionDetails),
@@ -326,7 +321,8 @@ impl MakerSwapEvent {
             MakerSwapEvent::TakerFeeValidated(_) => "Taker fee validated...".to_owned(),
             MakerSwapEvent::TakerFeeValidateFailed(_) => "Taker fee validate failed...".to_owned(),
             MakerSwapEvent::MakerPaymentSent(_) => "Maker payment sent...".to_owned(),
-            MakerSwapEvent::MakerPaymentFailed(_) => "Maker payment failed...".to_owned(),
+            MakerSwapEvent::MakerPaymentTransactionFailed(_) => "Maker payment failed...".to_owned(),
+            MakerSwapEvent::MakerPaymentDataSendFailed(_) => "Maker payment failed...".to_owned(),
             MakerSwapEvent::TakerPaymentValidatedAndConfirmed(_) => "Taker payment validated and confirmed...".to_owned(),
             MakerSwapEvent::TakerPaymentValidateFailed(_) => "Taker payment validate failed...".to_owned(),
             MakerSwapEvent::TakerPaymentSpent(_) => "Taker payment spent...".to_owned(),
@@ -382,20 +378,21 @@ impl MakerSwap {
             MakerSwapEvent::TakerFeeValidated(tx) => self.taker_fee = Some(tx),
             MakerSwapEvent::TakerFeeValidateFailed(err) => self.errors.push(err),
             MakerSwapEvent::MakerPaymentSent(tx) => self.maker_payment = Some(tx),
-            MakerSwapEvent::MakerPaymentFailed(err) => self.errors.push(err),
+            MakerSwapEvent::MakerPaymentTransactionFailed(err) => self.errors.push(err),
+            MakerSwapEvent::MakerPaymentDataSendFailed(err) => self.errors.push(err),
             MakerSwapEvent::TakerPaymentValidatedAndConfirmed(tx) => self.taker_payment = Some(tx),
             MakerSwapEvent::TakerPaymentValidateFailed(err) => self.errors.push(err),
             MakerSwapEvent::TakerPaymentSpent(tx) => self.taker_payment_spend = Some(tx),
             MakerSwapEvent::TakerPaymentSpendFailed(err) => self.errors.push(err),
             MakerSwapEvent::MakerPaymentRefunded(tx) => self.maker_payment_refund = Some(tx),
             MakerSwapEvent::MakerPaymentRefundFailed(err) => self.errors.push(err),
-            MakerSwapEvent::Finished => self.data.finished_at = now_ms() / 1000,
+            MakerSwapEvent::Finished => self.finished_at = now_ms() / 1000,
         }
         Ok(())
     }
 
     fn handle_command(&self, command: MakerSwapCommand)
-        -> Result<(Option<MakerSwapCommand>, MakerSwapEvent), String> {
+        -> Result<(Option<MakerSwapCommand>, Vec<MakerSwapEvent>), String> {
         match command {
             MakerSwapCommand::Start => self.start(),
             MakerSwapCommand::Negotiate => self.negotiate(),
@@ -404,7 +401,7 @@ impl MakerSwap {
             MakerSwapCommand::WaitForTakerPayment(sending_f) => self.wait_for_taker_payment(sending_f),
             MakerSwapCommand::SpendTakerPayment => self.spend_taker_payment(),
             MakerSwapCommand::RefundMakerPayment => self.refund_maker_payment(),
-            MakerSwapCommand::Finish => Ok((None, MakerSwapEvent::Finished)),
+            MakerSwapCommand::Finish => Ok((None, vec![MakerSwapEvent::Finished])),
         }
     }
 
@@ -428,7 +425,6 @@ impl MakerSwap {
             taker,
             uuid,
             data: MakerSwapData::default(),
-            taker_data: SwapNegotiationData::default(),
             taker_payment_lock: 0,
             other_persistent_pub: H264::default(),
             taker_fee: None,
@@ -437,14 +433,15 @@ impl MakerSwap {
             taker_payment_spend: None,
             maker_payment_refund: None,
             errors: vec![],
+            finished_at: 0,
         }
     }
 
-    fn start(&self) -> Result<(Option<MakerSwapCommand>, MakerSwapEvent), String> {
+    fn start(&self) -> Result<(Option<MakerSwapCommand>, Vec<MakerSwapEvent>), String> {
         if let Err(e) = self.maker_coin.check_i_have_enough_to_trade(dstr(self.maker_amount as i64), true).wait() {
             return Ok((
                 Some(MakerSwapCommand::Finish),
-                MakerSwapEvent::StartFailed(ERRL!("!check_i_have_enough_to_trade {}", e)),
+                vec![MakerSwapEvent::StartFailed(ERRL!("!check_i_have_enough_to_trade {}", e))],
             ));
         };
 
@@ -460,7 +457,6 @@ impl MakerSwap {
             taker: unsafe { self.taker.bytes.into() },
             secret: secret.into(),
             started_at,
-            finished_at: 0,
             lock_duration,
             maker_amount: self.maker_amount,
             taker_amount: self.taker_amount,
@@ -471,10 +467,10 @@ impl MakerSwap {
             uuid: self.uuid.clone(),
         };
 
-        Ok((Some(MakerSwapCommand::Negotiate), MakerSwapEvent::Started(data)))
+        Ok((Some(MakerSwapCommand::Negotiate), vec![MakerSwapEvent::Started(data)]))
     }
 
-    fn negotiate(&self) -> Result<(Option<MakerSwapCommand>, MakerSwapEvent), String> {
+    fn negotiate(&self) -> Result<(Option<MakerSwapCommand>, Vec<MakerSwapEvent>), String> {
         let maker_negotiation_data = SwapNegotiationData {
             started_at: self.data.started_at,
             payment_locktime: self.data.maker_payment_lock,
@@ -483,32 +479,57 @@ impl MakerSwap {
         };
 
         let bytes = serialize(&maker_negotiation_data);
-        let sending_f = send_! (&self.ctx, self.taker, fomat!(("negotiation") '@' (self.uuid)), bytes.as_slice()).unwrap();
+        let sending_f = match send_! (&self.ctx, self.taker, fomat!(("negotiation") '@' (self.uuid)), bytes.as_slice()) {
+            Ok(f) => f,
+            Err(e) => return Ok((
+                Some(MakerSwapCommand::Finish),
+                vec![MakerSwapEvent::NegotiateFailed(ERRL!("{}", e))],
+            )),
+        };
 
-        let data = recv!(self, sending_f, "negotiation-reply", "for Negotiation reply", 90, -2000, {|_: &[u8]| Ok(())});
+        let data = match recv!(self, sending_f, "negotiation-reply", "for Negotiation reply", 90, -2000, {|_: &[u8]| Ok(())}) {
+            Ok(d) => d,
+            Err(e) => return Ok((
+                Some(MakerSwapCommand::Finish),
+                vec![MakerSwapEvent::NegotiateFailed(ERRL!("{:?}", e))],
+            )),
+        };
         let taker_data: SwapNegotiationData = match deserialize(data.as_slice()) {
             Ok(d) => d,
             Err(e) => return Ok((
                 Some(MakerSwapCommand::Finish),
-                MakerSwapEvent::NegotiateFailed(ERRL!("{:?}", e)),
+                vec![MakerSwapEvent::NegotiateFailed(ERRL!("{:?}", e))],
             )),
         };
         // TODO add taker negotiation data validation
         let negotiated = serialize(&true);
-        let sending_f = send_! (&self.ctx, self.taker, fomat!(("negotiated") '@' (self.uuid)), negotiated.as_slice()).unwrap();
+        let sending_f = match send_! (&self.ctx, self.taker, fomat!(("negotiated") '@' (self.uuid)), negotiated.as_slice()) {
+            Ok(f) => f,
+            Err(e) => return Ok((
+                Some(MakerSwapCommand::Finish),
+                vec![MakerSwapEvent::NegotiateFailed(ERRL!("{}", e))],
+            )),
+        };
+
         Ok((
             Some(MakerSwapCommand::WaitForTakerFee(sending_f)),
-            MakerSwapEvent::Negotiated((taker_data.payment_locktime, taker_data.persistent_pubkey.into())),
+            vec![MakerSwapEvent::Negotiated((taker_data.payment_locktime, taker_data.persistent_pubkey.into()))],
         ))
     }
 
-    fn wait_taker_fee(&self, sending_f: Arc<SendHandler>) -> Result<(Option<MakerSwapCommand>, MakerSwapEvent), String> {
-        let payload = recv!(self, sending_f, "taker-fee", "for Taker fee", 600, -2003, {|_: &[u8]| Ok(())});
+    fn wait_taker_fee(&self, sending_f: Arc<SendHandler>) -> Result<(Option<MakerSwapCommand>, Vec<MakerSwapEvent>), String> {
+        let payload = match recv!(self, sending_f, "taker-fee", "for Taker fee", 600, -2003, {|_: &[u8]| Ok(())}) {
+            Ok(d) => d,
+            Err(e) => return Ok((
+                Some(MakerSwapCommand::Finish),
+                vec![MakerSwapEvent::TakerFeeValidateFailed(ERRL!("{}", e))]
+            ))
+        };
         let taker_fee = match self.taker_coin.tx_enum_from_bytes(&payload) {
             Ok(tx) => tx,
-            Err(err) => return Ok((
+            Err(e) => return Ok((
                 Some(MakerSwapCommand::Finish),
-                MakerSwapEvent::TakerFeeValidateFailed(ERRL!("{}", err))
+                vec![MakerSwapEvent::TakerFeeValidateFailed(ERRL!("{}", e))]
             ))
         };
 
@@ -521,16 +542,16 @@ impl MakerSwap {
             Ok(_) => (),
             Err(err) => return Ok((
                 Some(MakerSwapCommand::Finish),
-                MakerSwapEvent::TakerFeeValidateFailed(ERRL!("{}", err))
+                vec![MakerSwapEvent::TakerFeeValidateFailed(ERRL!("{}", err))]
             ))
         };
         Ok((
             Some(MakerSwapCommand::SendPayment),
-            MakerSwapEvent::TakerFeeValidated(fee_details)
+            vec![MakerSwapEvent::TakerFeeValidated(fee_details)]
         ))
     }
 
-    fn maker_payment(&self) -> Result<(Option<MakerSwapCommand>, MakerSwapEvent), String> {
+    fn maker_payment(&self) -> Result<(Option<MakerSwapCommand>, Vec<MakerSwapEvent>), String> {
         let payment_fut = self.maker_coin.send_maker_payment(
             self.data.maker_payment_lock as u32,
             &*self.other_persistent_pub,
@@ -542,28 +563,41 @@ impl MakerSwap {
             Ok(t) => t,
             Err(err) => return Ok((
                 Some(MakerSwapCommand::Finish),
-                MakerSwapEvent::MakerPaymentFailed(ERRL!("{}", err)),
+                vec![MakerSwapEvent::MakerPaymentTransactionFailed(ERRL!("{}", err))],
             ))
         };
+        let tx_details = transaction.transaction_details(self.maker_coin.decimals()).unwrap();
         log!({"Maker payment tx {:02x}", transaction.tx_hash()});
-        let sending_f = send_! (&self.ctx, self.taker, fomat!(("maker-payment") '@' (self.uuid)), transaction.to_raw_bytes()).unwrap();
+        let sending_f = match send_! (&self.ctx, self.taker, fomat!(("maker-payment") '@' (self.uuid)), transaction.tx_hex()) {
+            Ok(f) => f,
+            Err(e) => return Ok((
+                Some(MakerSwapCommand::RefundMakerPayment),
+                vec![MakerSwapEvent::MakerPaymentSent(tx_details), MakerSwapEvent::MakerPaymentDataSendFailed(ERRL!("{}", e))]
+            ))
+        };
 
         Ok((
             Some(MakerSwapCommand::WaitForTakerPayment(sending_f)),
-            MakerSwapEvent::MakerPaymentSent(transaction.transaction_details(self.maker_coin.decimals()).unwrap())
+            vec![MakerSwapEvent::MakerPaymentSent(tx_details)]
         ))
     }
 
-    fn wait_for_taker_payment(&self, sending_f: Arc<SendHandler>) -> Result<(Option<MakerSwapCommand>, MakerSwapEvent), String> {
+    fn wait_for_taker_payment(&self, sending_f: Arc<SendHandler>) -> Result<(Option<MakerSwapCommand>, Vec<MakerSwapEvent>), String> {
         let wait_duration = self.data.lock_duration / 3;
         let wait_taker_payment = self.data.started_at + wait_duration;
-        let payload = recv!(self, sending_f, "taker-payment", "for Taker payment", wait_duration, -2006, {|_: &[u8]| Ok(())});
+        let payload = match recv!(self, sending_f, "taker-payment", "for Taker payment", wait_duration, -2006, {|_: &[u8]| Ok(())}) {
+            Ok(p) => p,
+            Err(e) => return Ok((
+                Some(MakerSwapCommand::RefundMakerPayment),
+                vec![MakerSwapEvent::TakerPaymentValidateFailed(e)],
+            ))
+        };
 
         let taker_payment = match self.taker_coin.tx_enum_from_bytes(&payload) {
             Ok(tx) => tx,
             Err(err) => return Ok((
                 Some(MakerSwapCommand::RefundMakerPayment),
-                MakerSwapEvent::TakerFeeValidateFailed(ERRL!("!taker_coin.tx_enum_from_bytes: {}", err))
+                vec![MakerSwapEvent::TakerFeeValidateFailed(ERRL!("!taker_coin.tx_enum_from_bytes: {}", err))]
             )),
         };
 
@@ -578,7 +612,7 @@ impl MakerSwap {
         if let Err(e) = validated {
             return Ok((
                 Some(MakerSwapCommand::RefundMakerPayment),
-                MakerSwapEvent::TakerFeeValidateFailed(ERRL!("!taker_coin.validate_taker_payment: {}", e))
+                vec![MakerSwapEvent::TakerFeeValidateFailed(ERRL!("!taker_coin.validate_taker_payment: {}", e))]
             ))
         }
 
@@ -593,17 +627,17 @@ impl MakerSwap {
         if let Err(err) = wait {
             return Ok((
                 Some(MakerSwapCommand::RefundMakerPayment),
-                MakerSwapEvent::TakerFeeValidateFailed(ERRL!("!taker_coin.wait_for_confirmations: {}", err))
+                vec![MakerSwapEvent::TakerFeeValidateFailed(ERRL!("!taker_coin.wait_for_confirmations: {}", err))]
             ))
         }
 
         Ok((
             Some(MakerSwapCommand::SpendTakerPayment),
-            MakerSwapEvent::TakerPaymentValidatedAndConfirmed(tx_details),
+            vec![MakerSwapEvent::TakerPaymentValidatedAndConfirmed(tx_details)]
         ))
     }
 
-    fn spend_taker_payment(&self) -> Result<(Option<MakerSwapCommand>, MakerSwapEvent), String> {
+    fn spend_taker_payment(&self) -> Result<(Option<MakerSwapCommand>, Vec<MakerSwapEvent>), String> {
         let spend_fut = self.taker_coin.send_maker_spends_taker_payment(
             &self.taker_payment.clone().unwrap().tx_hex,
             self.taker_payment_lock as u32,
@@ -615,7 +649,7 @@ impl MakerSwap {
             Ok(t) => t,
             Err(err) => return Ok((
                 Some(MakerSwapCommand::RefundMakerPayment),
-                MakerSwapEvent::TakerPaymentSpendFailed(ERRL!("!taker_coin.send_maker_spends_taker_payment: {}", err))
+                vec![MakerSwapEvent::TakerPaymentSpendFailed(ERRL!("!taker_coin.send_maker_spends_taker_payment: {}", err))]
             ))
         };
 
@@ -624,11 +658,11 @@ impl MakerSwap {
         log!({"Taker payment spend tx {:02x}", transaction.tx_hash()});
         Ok((
             Some(MakerSwapCommand::Finish),
-            MakerSwapEvent::TakerPaymentSpent(tx_details),
+            vec![MakerSwapEvent::TakerPaymentSpent(tx_details)]
         ))
     }
 
-    fn refund_maker_payment(&self) -> Result<(Option<MakerSwapCommand>, MakerSwapEvent), String> {
+    fn refund_maker_payment(&self) -> Result<(Option<MakerSwapCommand>, Vec<MakerSwapEvent>), String> {
         while now_ms() / 1000 < self.data.maker_payment_lock {
             std::thread::sleep(Duration::from_secs(10));
         }
@@ -644,7 +678,7 @@ impl MakerSwap {
             Ok(t) => t,
             Err(err) => return Ok((
                 Some(MakerSwapCommand::RefundMakerPayment),
-                MakerSwapEvent::TakerPaymentSpendFailed(ERRL!("!taker_coin.send_maker_spends_taker_payment: {}", err))
+                vec![MakerSwapEvent::TakerPaymentSpendFailed(ERRL!("!taker_coin.send_maker_spends_taker_payment: {}", err))]
             ))
         };
 
@@ -653,28 +687,30 @@ impl MakerSwap {
         log!({"Maker payment refund tx {:02x}", transaction.tx_hash()});
         Ok((
             Some(MakerSwapCommand::Finish),
-            MakerSwapEvent::TakerPaymentSpent(tx_details),
+            vec![MakerSwapEvent::TakerPaymentSpent(tx_details)],
         ))
     }
 }
 
 pub fn run_maker_swap(mut swap: MakerSwap) {
     let mut command = MakerSwapCommand::Start;
-    let mut event;
+    let mut events;
     let ctx = swap.ctx.clone();
     let mut status = ctx.log.status_handle();
     let uuid = swap.uuid.clone();
     let swap_tags: &[&TagParam] = &[&"swap", &("uuid", &uuid[..])];
     loop {
         let res = swap.handle_command(command).unwrap();
-        event = res.1;
-        let to_save = MakerSavedEvent {
-            timestamp: now_ms(),
-            event: event.clone(),
-        };
-        save_maker_swap_event(&swap.uuid, to_save).unwrap();
-        status.status(swap_tags, &event.status_str());
-        swap.apply_event(event).unwrap();
+        events = res.1;
+        for event in events {
+            let to_save = MakerSavedEvent {
+                timestamp: now_ms(),
+                event: event.clone(),
+            };
+            save_maker_swap_event(&swap.uuid, to_save).unwrap();
+            status.status(swap_tags, &event.status_str());
+            swap.apply_event(event).unwrap();
+        }
         match res.0 {
             Some(c) => { command = c; },
             None => break,
@@ -684,21 +720,23 @@ pub fn run_maker_swap(mut swap: MakerSwap) {
 
 pub fn run_taker_swap(mut swap: TakerSwap) {
     let mut command = TakerSwapCommand::Start;
-    let mut event;
+    let mut events;
     let ctx = swap.ctx.clone();
     let mut status = ctx.log.status_handle();
     let uuid = swap.uuid.clone();
     let swap_tags: &[&TagParam] = &[&"swap", &("uuid", &uuid[..])];
     loop {
         let res = swap.handle_command(command).unwrap();
-        event = res.1;
-        let to_save = TakerSavedEvent {
-            timestamp: now_ms(),
-            event: event.clone(),
-        };
-        save_taker_swap_event(&swap.uuid, to_save).unwrap();
-        status.status(swap_tags, &event.status_str());
-        swap.apply_event(event).unwrap();
+        events = res.1;
+        for event in events {
+            let to_save = TakerSavedEvent {
+                timestamp: now_ms(),
+                event: event.clone(),
+            };
+            save_taker_swap_event(&swap.uuid, to_save).unwrap();
+            status.status(swap_tags, &event.status_str());
+            swap.apply_event(event).unwrap();
+        }
         match res.0 {
             Some(c) => { command = c; },
             None => break,
@@ -760,7 +798,8 @@ enum TakerSwapEvent {
     MakerPaymentValidatedAndConfirmed(TransactionDetails),
     MakerPaymentValidateFailed(String),
     TakerPaymentSent(TransactionDetails),
-    TakerPaymentFailed(String),
+    TakerPaymentTransactionFailed(String),
+    TakerPaymentDataSendFailed(String),
     TakerPaymentSpent((TransactionDetails, H256Json)),
     TakerPaymentWaitForSpendFailed(String),
     MakerPaymentSpent(TransactionDetails),
@@ -782,7 +821,8 @@ impl TakerSwapEvent {
             TakerSwapEvent::MakerPaymentValidatedAndConfirmed(_) => "Maker payment validated and confirmed...".to_owned(),
             TakerSwapEvent::MakerPaymentValidateFailed(_) => "Maker payment validate failed...".to_owned(),
             TakerSwapEvent::TakerPaymentSent(_) => "Taker payment sent...".to_owned(),
-            TakerSwapEvent::TakerPaymentFailed(_) => "Taker payment send failed...".to_owned(),
+            TakerSwapEvent::TakerPaymentTransactionFailed(_) => "Taker payment transaction failed...".to_owned(),
+            TakerSwapEvent::TakerPaymentDataSendFailed(_) => "Taker payment data send failed...".to_owned(),
             TakerSwapEvent::TakerPaymentSpent(_) => "Taker payment spent...".to_owned(),
             TakerSwapEvent::TakerPaymentWaitForSpendFailed(_) => "Taker payment wait for spend failed...".to_owned(),
             TakerSwapEvent::MakerPaymentSpent(_) => "Maker payment spent...".to_owned(),
@@ -822,7 +862,8 @@ impl TakerSwap {
             TakerSwapEvent::MakerPaymentValidatedAndConfirmed(tx) => self.maker_payment = Some(tx),
             TakerSwapEvent::MakerPaymentValidateFailed(err) => self.errors.push(err),
             TakerSwapEvent::TakerPaymentSent(tx) => self.taker_payment = Some(tx),
-            TakerSwapEvent::TakerPaymentFailed(err) => self.errors.push(err),
+            TakerSwapEvent::TakerPaymentTransactionFailed(err) => self.errors.push(err),
+            TakerSwapEvent::TakerPaymentDataSendFailed(err) => self.errors.push(err),
             TakerSwapEvent::TakerPaymentSpent((tx, secret)) => {
                 self.taker_payment_spend = Some(tx);
                 self.secret = secret;
@@ -838,7 +879,7 @@ impl TakerSwap {
     }
 
     fn handle_command(&self, command: TakerSwapCommand)
-                      -> Result<(Option<TakerSwapCommand>, TakerSwapEvent), String> {
+                      -> Result<(Option<TakerSwapCommand>, Vec<TakerSwapEvent>), String> {
         match command {
             TakerSwapCommand::Start => self.start(),
             TakerSwapCommand::Negotiate => self.negotiate(),
@@ -848,7 +889,7 @@ impl TakerSwap {
             TakerSwapCommand::WaitForTakerPaymentSpend(sending_f) => self.wait_for_taker_payment_spend(sending_f),
             TakerSwapCommand::SpendMakerPayment => self.spend_maker_payment(),
             TakerSwapCommand::RefundTakerPayment => self.refund_taker_payment(),
-            TakerSwapCommand::Finish => Ok((None, TakerSwapEvent::Finished)),
+            TakerSwapCommand::Finish => Ok((None, vec![TakerSwapEvent::Finished])),
         }
     }
 
@@ -887,11 +928,11 @@ impl TakerSwap {
         }
     }
 
-    fn start(&self) -> Result<(Option<TakerSwapCommand>, TakerSwapEvent), String> {
+    fn start(&self) -> Result<(Option<TakerSwapCommand>, Vec<TakerSwapEvent>), String> {
         if let Err(e) = self.taker_coin.check_i_have_enough_to_trade(dstr(self.taker_amount as i64), true).wait() {
             return Ok((
                 Some(TakerSwapCommand::Finish),
-                TakerSwapEvent::StartFailed(ERRL!("{}", e)),
+                vec![TakerSwapEvent::StartFailed(ERRL!("{}", e))],
             ))
         }
 
@@ -915,16 +956,22 @@ impl TakerSwap {
             maker_payment_wait: started_at + lock_duration / 3,
         };
 
-        Ok((Some(TakerSwapCommand::Negotiate), TakerSwapEvent::Started(data)))
+        Ok((Some(TakerSwapCommand::Negotiate), vec![TakerSwapEvent::Started(data)]))
     }
 
-    fn negotiate(&self) -> Result<(Option<TakerSwapCommand>, TakerSwapEvent), String> {
-        let data = recv!(self, "negotiation", "for Maker negotiation data", 90, -1000, {|_: &[u8]| Ok(())});
+    fn negotiate(&self) -> Result<(Option<TakerSwapCommand>, Vec<TakerSwapEvent>), String> {
+        let data = match recv!(self, "negotiation", "for Maker negotiation data", 90, -1000, {|_: &[u8]| Ok(())}) {
+            Ok(d) => d,
+            Err(e) => return Ok((
+                Some(TakerSwapCommand::Finish),
+                vec![TakerSwapEvent::NegotiateFailed(ERRL!("{:?}", e))]
+            )),
+        };
         let maker_data: SwapNegotiationData = match deserialize(data.as_slice()) {
             Ok(d) => d,
             Err(e) => return Ok((
                 Some(TakerSwapCommand::Finish),
-                TakerSwapEvent::NegotiateFailed(ERRL!("{:?}", e))
+                vec![TakerSwapEvent::NegotiateFailed(ERRL!("{:?}", e))]
             )),
         };
 
@@ -942,34 +989,46 @@ impl TakerSwap {
             persistent_pubkey: self.my_persistent_pub.clone(),
         };
         let bytes = serialize(&taker_data);
-        let sending_f = send_! (&self.ctx, self.maker, fomat!(("negotiation-reply") '@' (self.uuid)), bytes.as_slice()).unwrap();
-        let data = recv!(self, sending_f, "negotiated", "for Maker negotiated", 90, -1000, {|_: &[u8]| Ok(())});
+        let sending_f = match send_! (&self.ctx, self.maker, fomat!(("negotiation-reply") '@' (self.uuid)), bytes.as_slice()) {
+            Ok(f) => f,
+            Err(e) => return Ok((
+                Some(TakerSwapCommand::Finish),
+                vec![TakerSwapEvent::NegotiateFailed(ERRL!("{}", e))]
+            )),
+        };
+        let data = match recv!(self, sending_f, "negotiated", "for Maker negotiated", 90, -1000, {|_: &[u8]| Ok(())}) {
+            Ok(d) => d,
+            Err(e) => return Ok((
+                Some(TakerSwapCommand::Finish),
+                vec![TakerSwapEvent::NegotiateFailed(ERRL!("{:?}", e))]
+            )),
+        };
         let negotiated: bool = match deserialize(data.as_slice()) {
             Ok(n) => n,
             Err(e) => return Ok((
                 Some(TakerSwapCommand::Finish),
-                TakerSwapEvent::NegotiateFailed(ERRL!("{:?}", e))
+                vec![TakerSwapEvent::NegotiateFailed(ERRL!("{:?}", e))]
             )),
         };
 
         if !negotiated {
             return Ok((
                 Some(TakerSwapCommand::Finish),
-                TakerSwapEvent::NegotiateFailed(ERRL!("Maker sent negotiated = false")),
+                vec![TakerSwapEvent::NegotiateFailed(ERRL!("Maker sent negotiated = false"))],
             ));
         }
 
         Ok((
             Some(TakerSwapCommand::SendTakerFee),
-            TakerSwapEvent::Negotiated((
+            vec![TakerSwapEvent::Negotiated((
                 maker_data.payment_locktime,
                 maker_data.persistent_pubkey.into(),
                 maker_data.secret_hash.into()
-            )),
+            ))],
         ))
     }
 
-    fn send_taker_fee(&self) -> Result<(Option<TakerSwapCommand>, TakerSwapEvent), String> {
+    fn send_taker_fee(&self) -> Result<(Option<TakerSwapCommand>, Vec<TakerSwapEvent>), String> {
         let fee_addr_pub_key = unwrap!(hex::decode("03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc06"));
         let fee_amount = self.taker_amount / 777;
         let fee_tx = self.taker_coin.send_taker_fee(&fee_addr_pub_key, fee_amount as u64).wait();
@@ -977,25 +1036,37 @@ impl TakerSwap {
             Ok (t) => t,
             Err (err) => return Ok((
                 Some(TakerSwapCommand::Finish),
-                TakerSwapEvent::TakerFeeSendFailed(ERRL!("{}", err))
+                vec![TakerSwapEvent::TakerFeeSendFailed(ERRL!("{}", err))]
             )),
         };
 
         log!({"Taker fee tx hash {:02x}", transaction.tx_hash()});
-        let sending_f = send_! (&self.ctx, self.maker, fomat!(("taker-fee") '@' (self.uuid)), transaction.to_raw_bytes()).unwrap();
+        let sending_f = match send_! (&self.ctx, self.maker, fomat!(("taker-fee") '@' (self.uuid)), transaction.tx_hex()) {
+            Ok(f) => f,
+            Err (err) => return Ok((
+                Some(TakerSwapCommand::Finish),
+                vec![TakerSwapEvent::TakerFeeSendFailed(ERRL!("{}", err))]
+            )),
+        };
         Ok((
             Some(TakerSwapCommand::WaitForMakerPayment(sending_f)),
-            TakerSwapEvent::TakerFeeSent(transaction.transaction_details(self.taker_coin.decimals()).unwrap()),
+            vec![TakerSwapEvent::TakerFeeSent(transaction.transaction_details(self.taker_coin.decimals()).unwrap())],
         ))
     }
 
-    fn wait_for_maker_payment(&self, sending_f: Arc<SendHandler>) -> Result<(Option<TakerSwapCommand>, TakerSwapEvent), String> {
-        let payload = recv!(self, sending_f, "maker-payment", "for Maker payment", 600, -1005, {|_: &[u8]| Ok(())});
+    fn wait_for_maker_payment(&self, sending_f: Arc<SendHandler>) -> Result<(Option<TakerSwapCommand>, Vec<TakerSwapEvent>), String> {
+        let payload = match recv!(self, sending_f, "maker-payment", "for Maker payment", 600, -1005, {|_: &[u8]| Ok(())}) {
+            Ok(p) => p,
+            Err(e) => return Ok((
+                Some(TakerSwapCommand::Finish),
+                vec![TakerSwapEvent::MakerPaymentValidateFailed(ERRL!("Error waiting for 'maker-payment' data: {}", e))]
+            )),
+        };
         let maker_payment = match self.maker_coin.tx_enum_from_bytes(&payload) {
             Ok(p) => p,
-            Err(err) => return Ok((
+            Err(e) => return Ok((
                 Some(TakerSwapCommand::Finish),
-                TakerSwapEvent::MakerPaymentValidateFailed(ERRL!("Error parsing the 'maker-payment': {}", err))
+                vec![TakerSwapEvent::MakerPaymentValidateFailed(ERRL!("Error parsing the 'maker-payment': {}", e))]
             )),
         };
 
@@ -1010,7 +1081,7 @@ impl TakerSwap {
         if let Err(e) = validated {
             return Ok((
                 Some(TakerSwapCommand::Finish),
-                TakerSwapEvent::MakerPaymentValidateFailed(ERRL!("!validate maker payment: {}", e))
+                vec![TakerSwapEvent::MakerPaymentValidateFailed(ERRL!("!validate maker payment: {}", e))]
             ));
         }
 
@@ -1023,17 +1094,17 @@ impl TakerSwap {
         ) {
             return Ok((
                 Some(TakerSwapCommand::Finish),
-                TakerSwapEvent::MakerPaymentValidateFailed(ERRL!("!wait for maker payment confirmations: {}", err))
+                vec![TakerSwapEvent::MakerPaymentValidateFailed(ERRL!("!wait for maker payment confirmations: {}", err))]
             ));
         }
 
         Ok((
             Some(TakerSwapCommand::SendTakerPayment),
-            TakerSwapEvent::MakerPaymentValidatedAndConfirmed(tx_details)
+            vec![TakerSwapEvent::MakerPaymentValidatedAndConfirmed(tx_details)]
         ))
     }
 
-    fn send_taker_payment(&self) -> Result<(Option<TakerSwapCommand>, TakerSwapEvent), String> {
+    fn send_taker_payment(&self) -> Result<(Option<TakerSwapCommand>, Vec<TakerSwapEvent>), String> {
         let payment_fut = self.taker_coin.send_taker_payment(
             self.data.taker_payment_lock as u32,
             &*self.other_persistent_pub,
@@ -1043,28 +1114,35 @@ impl TakerSwap {
 
         let transaction = match payment_fut.wait() {
             Ok(t) => t,
-            Err(err) => return Ok((
+            Err(e) => return Ok((
                 Some(TakerSwapCommand::Finish),
-                TakerSwapEvent::TakerPaymentFailed(ERRL!("{}", err))
+                vec![TakerSwapEvent::TakerPaymentTransactionFailed(ERRL!("{}", e))]
             ))
         };
 
         log!({"Taker payment tx hash {:02x}", transaction.tx_hash()});
-        let sending_f = send_! (&self.ctx, self.maker, fomat!(("taker-payment") '@' (self.uuid)), transaction.to_raw_bytes()).unwrap();
-
         let tx_details = transaction.transaction_details(self.taker_coin.decimals()).unwrap();
+
+        let sending_f = match send_! (&self.ctx, self.maker, fomat!(("taker-payment") '@' (self.uuid)), transaction.tx_hex()) {
+            Ok(f) => f,
+            Err(e) => return Ok((
+                Some(TakerSwapCommand::RefundTakerPayment),
+                vec![TakerSwapEvent::TakerPaymentSent(tx_details), TakerSwapEvent::TakerPaymentDataSendFailed(e)]
+            ))
+        };
+
         Ok((
             Some(TakerSwapCommand::WaitForTakerPaymentSpend(sending_f)),
-            TakerSwapEvent::TakerPaymentSent(tx_details),
+            vec![TakerSwapEvent::TakerPaymentSent(tx_details)],
         ))
     }
 
-    fn wait_for_taker_payment_spend(&self, sending_f: Arc<SendHandler>) -> Result<(Option<TakerSwapCommand>, TakerSwapEvent), String> {
+    fn wait_for_taker_payment_spend(&self, sending_f: Arc<SendHandler>) -> Result<(Option<TakerSwapCommand>, Vec<TakerSwapEvent>), String> {
         let tx = match self.taker_coin.wait_for_tx_spend(&self.taker_payment.clone().unwrap().tx_hex, self.data.taker_payment_lock) {
             Ok(t) => t,
             Err(e) => return Ok((
                 Some(TakerSwapCommand::RefundTakerPayment),
-                TakerSwapEvent::TakerPaymentWaitForSpendFailed(e),
+                vec![TakerSwapEvent::TakerPaymentWaitForSpendFailed(e)],
             ))
         };
         drop(sending_f);
@@ -1074,17 +1152,17 @@ impl TakerSwap {
             Ok(bytes) => H256Json::from(bytes.as_slice()),
             Err(e) => return Ok((
                 Some(TakerSwapCommand::Finish),
-                TakerSwapEvent::TakerPaymentWaitForSpendFailed(ERRL!("{}", e)),
+                vec![TakerSwapEvent::TakerPaymentWaitForSpendFailed(ERRL!("{}", e))],
             )),
         };
 
         Ok((
             Some(TakerSwapCommand::SpendMakerPayment),
-            TakerSwapEvent::TakerPaymentSpent((tx_details, secret)),
+            vec![TakerSwapEvent::TakerPaymentSpent((tx_details, secret))],
         ))
     }
 
-    fn spend_maker_payment(&self) -> Result<(Option<TakerSwapCommand>, TakerSwapEvent), String> {
+    fn spend_maker_payment(&self) -> Result<(Option<TakerSwapCommand>, Vec<TakerSwapEvent>), String> {
         let spend_fut = self.maker_coin.send_taker_spends_maker_payment(
             &self.maker_payment.clone().unwrap().tx_hex.0,
             self.maker_payment_lock as u32,
@@ -1096,7 +1174,7 @@ impl TakerSwap {
             Ok(t) => t,
             Err(err) => return Ok((
                 Some(TakerSwapCommand::Finish),
-                TakerSwapEvent::MakerPaymentSpendFailed(ERRL!("{}", err))
+                vec![TakerSwapEvent::MakerPaymentSpendFailed(ERRL!("{}", err))]
             )),
         };
 
@@ -1104,11 +1182,11 @@ impl TakerSwap {
         let tx_details = transaction.transaction_details(self.maker_coin.decimals()).unwrap();
         Ok((
             Some(TakerSwapCommand::Finish),
-            TakerSwapEvent::MakerPaymentSpent(tx_details),
+            vec![TakerSwapEvent::MakerPaymentSpent(tx_details)],
         ))
     }
 
-    fn refund_taker_payment(&self) -> Result<(Option<TakerSwapCommand>, TakerSwapEvent), String> {
+    fn refund_taker_payment(&self) -> Result<(Option<TakerSwapCommand>, Vec<TakerSwapEvent>), String> {
         loop {
             if now_ms() / 1000 > self.data.taker_payment_lock + 10 {
                 break;
@@ -1126,14 +1204,14 @@ impl TakerSwap {
             Ok(t) => t,
             Err(err) => return Ok((
                 Some(TakerSwapCommand::Finish),
-                TakerSwapEvent::TakerPaymentRefundFailed(ERRL!("{}", err))
+                vec![TakerSwapEvent::TakerPaymentRefundFailed(ERRL!("{}", err))]
             )),
         };
         log!({"Taker refund tx hash {:02x}", transaction.tx_hash()});
         let tx_details = transaction.transaction_details(self.taker_coin.decimals()).unwrap();
         Ok((
             Some(TakerSwapCommand::Finish),
-            TakerSwapEvent::TakerPaymentRefunded(tx_details),
+            vec![TakerSwapEvent::TakerPaymentRefunded(tx_details)],
         ))
     }
 }

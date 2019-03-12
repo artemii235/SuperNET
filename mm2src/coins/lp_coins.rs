@@ -48,16 +48,13 @@ use std::sync::{Arc, Mutex};
 #[doc(hidden)]
 pub mod coins_tests;
 pub mod eth;
-use self::eth::{eth_coin_from_iguana_info, EthCoin, SignedEthTransaction};
+use self::eth::{eth_coin_from_iguana_info, EthCoin, SignedEthTx};
 pub mod utxo;
-use self::utxo::{utxo_coin_from_iguana_info, ExtendedUtxoTx, UtxoCoin, UtxoInitMode};
+use self::utxo::{utxo_coin_from_iguana_info, UtxoTx, UtxoCoin, UtxoInitMode};
 
 pub trait Transaction: Debug + 'static {
-    /// DEPRECATED, NB: https://github.com/artemii235/SuperNET/issues/324
-    /// Transaction bytes with additional info like redeem script for UTXO coins
-    fn to_raw_bytes(&self) -> Vec<u8>;
-    /// Transaction bytes in coin format without additional info
-    fn native_hex(&self) -> Vec<u8>;
+    /// Raw transaction bytes of the transaction
+    fn tx_hex(&self) -> Vec<u8>;
     fn extract_secret(&self) -> Result<Vec<u8>, String>;
     /// Serializable representation of tx hash for displaying purpose
     fn tx_hash(&self) -> BytesJson;
@@ -77,26 +74,26 @@ pub trait Transaction: Debug + 'static {
             fee_details: try_s!(self.fee_details()),
             from: self.from(),
             to: self.to(),
-            tx_hex: self.native_hex().into(),
+            tx_hex: self.tx_hex().into(),
         })
     }
 }
 
 #[derive(Clone, Debug)]
 pub enum TransactionEnum {
-    ExtendedUtxoTx (ExtendedUtxoTx),
-    SignedEthTransaction (SignedEthTransaction)
+    UtxoTx (UtxoTx),
+    SignedEthTx (SignedEthTx)
 }
-ifrom! (TransactionEnum, ExtendedUtxoTx);
-ifrom! (TransactionEnum, SignedEthTransaction);
+ifrom! (TransactionEnum, UtxoTx);
+ifrom! (TransactionEnum, SignedEthTx);
 
 // NB: When stable and groked by IDEs, `enum_dispatch` can be used instead of `Deref` to speed things up.
 impl Deref for TransactionEnum {
     type Target = Transaction;
     fn deref (&self) -> &dyn Transaction {
         match self {
-            &TransactionEnum::ExtendedUtxoTx (ref t) => t,
-            &TransactionEnum::SignedEthTransaction (ref t) => t,
+            &TransactionEnum::UtxoTx (ref t) => t,
+            &TransactionEnum::SignedEthTx (ref t) => t,
 }   }   }
 
 pub type TransactionFut = Box<dyn Future<Item=TransactionEnum, Error=String>>;

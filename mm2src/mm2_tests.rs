@@ -663,8 +663,6 @@ fn komodo_conf_path (ac_name: Option<&'static str>) -> Result<PathBuf, String> {
 fn check_swap_status(
     mm: &MarketMakerIt,
     uuid: &str,
-    maker_coin: &str,
-    taker_coin: &str,
     expected_events: Vec<&str>,
 ) {
     let response = unwrap!(mm.rpc (json! ({
@@ -789,22 +787,18 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
         unwrap!(mm_bob.wait_for_log (20., &|log| log.contains (&format!("Entering the maker_swap_loop {}/{}", base, rel))));
     }
 
-    for (uuid, (base, rel)) in uuids.iter().zip(pairs.iter()) {
+    for uuid in uuids.iter() {
         unwrap!(mm_bob.wait_for_log (600., &|log| log.contains (&format!("[swap uuid={}] Finished", uuid))));
         unwrap!(mm_alice.wait_for_log (600., &|log| log.contains (&format!("[swap uuid={}] Finished", uuid))));
         check_swap_status(
             &mm_alice,
             &uuid,
-            base,
-            rel,
             vec!["Started", "Negotiated", "TakerFeeSent", "MakerPaymentValidatedAndConfirmed", "TakerPaymentSent", "TakerPaymentSpent", "MakerPaymentSpent", "Finished"],
         );
 
         check_swap_status(
             &mm_bob,
             &uuid,
-            base,
-            rel,
             vec!["Started", "Negotiated", "TakerFeeValidated", "MakerPaymentSent", "TakerPaymentValidatedAndConfirmed", "TakerPaymentSpent", "Finished"],
         );
     }
@@ -814,7 +808,7 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
 
 #[test]
 fn trade_test_electrum_and_eth_coins() {
-    trade_base_rel_electrum(vec![("ETH", "JST")]);
+    trade_base_rel_electrum(vec![("BEER", "ETOMIC"), ("ETH", "JST")]);
 }
 
 fn trade_base_rel_native(base: &str, rel: &str) {
