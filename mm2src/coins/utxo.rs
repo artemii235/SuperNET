@@ -654,21 +654,26 @@ impl SwapOps for UtxoCoin {
 
     fn send_taker_spends_maker_payment(
         &self,
-        maker_payment_tx: TransactionEnum,
+        maker_payment_tx: &[u8],
+        time_lock: u32,
+        maker_pub: &[u8],
         secret: &[u8],
     ) -> TransactionFut {
-        let prev_tx = match maker_payment_tx {TransactionEnum::ExtendedUtxoTx(e) => e, _ => panic!()};
+        let prev_tx: UtxoTransaction = try_fus!(deserialize(maker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
         let output = TransactionOutput {
-            value: prev_tx.transaction.outputs[0].value - 1000,
+            value: prev_tx.outputs[0].value - 1000,
             script_pubkey: Builder::build_p2pkh(&self.key_pair.public().address_hash()).to_bytes()
         };
         let script_data = Builder::default()
             .push_data(secret)
             .push_opcode(Opcode::OP_0)
             .into_script();
+        let redeem_script = try_fus!(
+            payment_script(time_lock, &*dhash160(secret), &try_fus!(Public::from_slice(maker_pub)), self.key_pair.public())
+        );
         let transaction = try_fus!(p2sh_spending_tx(
-            prev_tx.transaction,
-            prev_tx.redeem_script,
+            prev_tx,
+            redeem_script.into(),
             vec![output],
             script_data,
             &self.key_pair,
@@ -688,19 +693,25 @@ impl SwapOps for UtxoCoin {
 
     fn send_taker_refunds_payment(
         &self,
-        taker_payment_tx: TransactionEnum,
+        taker_payment_tx: &[u8],
+        time_lock: u32,
+        maker_pub: &[u8],
+        secret_hash: &[u8],
     ) -> TransactionFut {
-        let prev_tx = match taker_payment_tx {TransactionEnum::ExtendedUtxoTx(e) => e, _ => panic!()};
+        let prev_tx: UtxoTransaction = try_fus!(deserialize(taker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
         let output = TransactionOutput {
-            value: prev_tx.transaction.outputs[0].value - 1000,
+            value: prev_tx.outputs[0].value - 1000,
             script_pubkey: Builder::build_p2pkh(&self.key_pair.public().address_hash()).to_bytes()
         };
         let script_data = Builder::default()
             .push_opcode(Opcode::OP_1)
             .into_script();
+        let redeem_script = try_fus!(
+            payment_script(time_lock, secret_hash, self.key_pair.public(), &try_fus!(Public::from_slice(maker_pub)))
+        );
         let transaction = try_fus!(p2sh_spending_tx(
-            prev_tx.transaction,
-            prev_tx.redeem_script,
+            prev_tx,
+            redeem_script.into(),
             vec![output],
             script_data,
             &self.key_pair,
@@ -853,13 +864,10 @@ impl MarketCoinOps for UtxoCoin {
         )
     }
 
-    fn wait_for_tx_spend(&self, transaction: TransactionEnum, wait_until: u64) -> Result<TransactionEnum, String> {
-        let tx = match transaction {TransactionEnum::ExtendedUtxoTx(e) => e, _ => panic!()};
-        let res = try_s!(self.rpc_client.wait_for_payment_spend(
-            &tx.transaction,
-            0,
-            wait_until,
-        ));
+    fn wait_for_tx_spend(&self, tx_bytes: &[u8], wait_until: u64) -> Result<TransactionEnum, String> {
+        let tx: UtxoTransaction = try_s!(deserialize(tx_bytes).map_err(|e| ERRL!("{:?}", e)));
+
+        let res = try_s!(self.rpc_client.wait_for_payment_spend(&tx, 0, wait_until));
 
         Ok(TransactionEnum::ExtendedUtxoTx(ExtendedUtxoTx {
             transaction: res,

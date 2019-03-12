@@ -131,13 +131,18 @@ pub trait SwapOps {
 
     fn send_taker_spends_maker_payment(
         &self,
-        maker_payment_tx: TransactionEnum,
+        maker_payment_tx: &[u8],
+        time_lock: u32,
+        maker_pub: &[u8],
         secret: &[u8],
     ) -> TransactionFut;
 
     fn send_taker_refunds_payment(
         &self,
-        taker_payment_tx: TransactionEnum,
+        taker_payment_tx: &[u8],
+        time_lock: u32,
+        maker_pub: &[u8],
+        secret_hash: &[u8],
     ) -> TransactionFut;
 
     fn send_maker_refunds_payment(
@@ -191,7 +196,7 @@ pub trait MarketCoinOps {
         wait_until: u64,
     ) -> Result<(), String>;
 
-    fn wait_for_tx_spend(&self, transaction: TransactionEnum, wait_until: u64) -> Result<TransactionEnum, String>;
+    fn wait_for_tx_spend(&self, transaction: &[u8], wait_until: u64) -> Result<TransactionEnum, String>;
 
     fn tx_enum_from_bytes(&self, bytes: &[u8]) -> Result<TransactionEnum, String>;
 

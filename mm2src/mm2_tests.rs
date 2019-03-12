@@ -676,7 +676,7 @@ fn check_swap_status(
         })));
     assert!(response.0.is_success(), "!status of {}: {}", uuid, response.1);
     let status_response: Json = unwrap!(json::from_str(&response.1));
-    let events_array = status_response["result"].as_array().unwrap();
+    let events_array = status_response["result"]["events"].as_array().unwrap();
     let actual_events = events_array.iter().map(|item| item["event"]["type"].as_str().unwrap());
     let actual_events: Vec<&str> = actual_events.collect();
     assert_eq!(expected_events, actual_events);
@@ -813,9 +813,8 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
 }
 
 #[test]
-#[ignore]
 fn trade_test_electrum_and_eth_coins() {
-    trade_base_rel_electrum(vec![("BEER", "ETOMIC")]);
+    trade_base_rel_electrum(vec![("ETH", "JST")]);
 }
 
 fn trade_base_rel_native(base: &str, rel: &str) {

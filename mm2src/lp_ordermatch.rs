@@ -766,7 +766,7 @@ unsafe fn lp_connected_alice(ctx_ffi_handle: u32, qp: *mut lp::LP_quoteinfo, pai
             let uuid = CStr::from_ptr ((*qp).uuidstr.as_ptr()) .to_string_lossy().into_owned();
             move || {
                 log!("Entering the taker_swap_loop " (maker_coin.ticker()) "/" (taker_coin.ticker()));
-                let mut taker_swap = TakerSwap::new(
+                let taker_swap = TakerSwap::new(
                     ctx,
                     maker,
                     maker_coin,

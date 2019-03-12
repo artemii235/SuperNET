@@ -154,27 +154,27 @@ impl SwapOps for EthCoin {
 
     fn send_taker_spends_maker_payment(
         &self,
-        maker_payment_tx: TransactionEnum,
+        maker_payment_tx: &[u8],
+        _time_lock: u32,
+        _maker_pub: &[u8],
         secret: &[u8],
     ) -> TransactionFut {
-        let tx = match maker_payment_tx {
-            TransactionEnum::SignedEthTransaction(t) => t,
-            _ => panic!(),
-        };
-
-        Box::new(self.spend_hash_time_locked_payment(tx, secret).map(TransactionEnum::from))
+        let tx: UnverifiedTransaction = try_fus!(rlp::decode(maker_payment_tx));
+        let signed = try_fus!(SignedEthTransaction::new(tx));
+        Box::new(self.spend_hash_time_locked_payment(signed, secret).map(TransactionEnum::from))
     }
 
     fn send_taker_refunds_payment(
         &self,
-        taker_payment_tx: TransactionEnum,
+        taker_payment_tx: &[u8],
+        _time_lock: u32,
+        _maker_pub: &[u8],
+        _secret_hash: &[u8],
     ) -> TransactionFut {
-        let tx = match taker_payment_tx {
-            TransactionEnum::SignedEthTransaction(t) => t,
-            _ => panic!(),
-        };
+        let tx: UnverifiedTransaction = try_fus!(rlp::decode(taker_payment_tx));
+        let signed = try_fus!(SignedEthTransaction::new(tx));
 
-        Box::new(self.refund_hash_time_locked_payment(tx).map(TransactionEnum::from))
+        Box::new(self.refund_hash_time_locked_payment(signed).map(TransactionEnum::from))
     }
 
     fn send_maker_refunds_payment(
@@ -346,11 +346,9 @@ impl MarketCoinOps for EthCoin {
         }
     }
 
-    fn wait_for_tx_spend(&self, tx: TransactionEnum, wait_until: u64) -> Result<TransactionEnum, String> {
-        let tx = match tx {
-            TransactionEnum::SignedEthTransaction(t) => t,
-            _ => panic!(),
-        };
+    fn wait_for_tx_spend(&self, tx_bytes: &[u8], wait_until: u64) -> Result<TransactionEnum, String> {
+        let unverified: UnverifiedTransaction = try_s!(rlp::decode(tx_bytes));
+        let tx = try_s!(SignedEthTransaction::new(unverified));
 
         let func_name = match self.coin_type {
             EthCoinType::Eth => "ethPayment",
