@@ -575,7 +575,7 @@ impl MakerSwap {
 
         let fee_addr_pub_key = unwrap!(hex::decode("03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc06"));
         let fee_amount = self.taker_amount / 777;
-        let fee_details = taker_fee.transaction_details(self.taker_coin.decimals()).unwrap();
+        let fee_details = unwrap!(taker_fee.transaction_details(self.taker_coin.decimals()));
         match self.taker_coin.validate_fee(taker_fee, &fee_addr_pub_key, fee_amount as u64) {
             Ok(_) => (),
             Err(err) => return Ok((
@@ -604,7 +604,7 @@ impl MakerSwap {
                 vec![MakerSwapEvent::MakerPaymentTransactionFailed(ERRL!("{}", err))],
             ))
         };
-        let tx_details = transaction.transaction_details(self.maker_coin.decimals()).unwrap();
+        let tx_details = unwrap!(transaction.transaction_details(self.maker_coin.decimals()));
         log!({"Maker payment tx {:02x}", transaction.tx_hash()});
         let sending_f = match send_! (&self.ctx, self.taker, fomat!(("maker-payment") '@' (self.uuid)), transaction.tx_hex()) {
             Ok(f) => f,
@@ -655,7 +655,7 @@ impl MakerSwap {
         }
 
         log!({"Taker payment tx {:02x}", taker_payment.tx_hash()});
-        let tx_details = taker_payment.transaction_details(self.taker_coin.decimals()).unwrap();
+        let tx_details = unwrap!(taker_payment.transaction_details(self.taker_coin.decimals()));
         let wait = self.taker_coin.wait_for_confirmations(
             taker_payment,
             self.data.taker_payment_confirmations,
@@ -677,7 +677,7 @@ impl MakerSwap {
 
     fn spend_taker_payment(&self) -> Result<(Option<MakerSwapCommand>, Vec<MakerSwapEvent>), String> {
         let spend_fut = self.taker_coin.send_maker_spends_taker_payment(
-            &self.taker_payment.clone().unwrap().tx_hex,
+            &unwrap!(self.taker_payment.clone()).tx_hex,
             self.taker_payment_lock as u32,
             &*self.other_persistent_pub,
             &self.data.secret.0,
@@ -691,7 +691,7 @@ impl MakerSwap {
             ))
         };
 
-        let tx_details = transaction.transaction_details(self.taker_coin.decimals()).unwrap();
+        let tx_details = unwrap!(transaction.transaction_details(self.taker_coin.decimals()));
 
         log!({"Taker payment spend tx {:02x}", transaction.tx_hash()});
         Ok((
@@ -706,7 +706,7 @@ impl MakerSwap {
         }
 
         let spend_fut = self.taker_coin.send_maker_refunds_payment(
-            &self.maker_payment.clone().unwrap().tx_hex,
+            &unwrap!(self.maker_payment.clone()).tx_hex,
             self.data.maker_payment_lock as u32,
             &*self.other_persistent_pub,
             &*dhash160(&self.data.secret.0),
@@ -720,7 +720,7 @@ impl MakerSwap {
             ))
         };
 
-        let tx_details = transaction.transaction_details(self.taker_coin.decimals()).unwrap();
+        let tx_details = unwrap!(transaction.transaction_details(self.taker_coin.decimals()));
 
         log!({"Maker payment refund tx {:02x}", transaction.tx_hash()});
         Ok((
@@ -730,6 +730,10 @@ impl MakerSwap {
     }
 }
 
+/// Starts the maker swap and drives it to completion (until None next command received).
+/// Panics in case of command or event apply fails, not sure yet how to handle such situations
+/// because it's usually means that swap is in invalid state which is possible only if there's developer error.
+/// Every produced event is saved to local DB. Swap status is broadcasted to P2P network after completion.
 pub fn run_maker_swap(mut swap: MakerSwap) {
     let mut command = MakerSwapCommand::Start;
     let mut events;
@@ -738,27 +742,31 @@ pub fn run_maker_swap(mut swap: MakerSwap) {
     let uuid = swap.uuid.clone();
     let swap_tags: &[&TagParam] = &[&"swap", &("uuid", &uuid[..])];
     loop {
-        let res = swap.handle_command(command).unwrap();
+        let res = unwrap!(swap.handle_command(command));
         events = res.1;
         for event in events {
             let to_save = MakerSavedEvent {
                 timestamp: now_ms(),
                 event: event.clone(),
             };
-            save_my_maker_swap_event(&swap.uuid, to_save).unwrap();
+            unwrap!(save_my_maker_swap_event(&swap.uuid, to_save));
             status.status(swap_tags, &event.status_str());
-            swap.apply_event(event).unwrap();
+            unwrap!(swap.apply_event(event));
         }
         match res.0 {
             Some(c) => { command = c; },
             None => {
-                broadcast_my_swap_status(&swap.uuid).unwrap();
+                unwrap!(broadcast_my_swap_status(&swap.uuid));
                 break;
             },
         }
     }
 }
 
+/// Starts the taker swap and drives it to completion (until None next command received).
+/// Panics in case of command or event apply fails, not sure yet how to handle such situations
+/// because it's usually means that swap is in invalid state which is possible only if there's developer error
+/// Every produced event is saved to local DB. Swap status is broadcasted to P2P network after completion.
 pub fn run_taker_swap(mut swap: TakerSwap) {
     let mut command = TakerSwapCommand::Start;
     let mut events;
@@ -767,21 +775,21 @@ pub fn run_taker_swap(mut swap: TakerSwap) {
     let uuid = swap.uuid.clone();
     let swap_tags: &[&TagParam] = &[&"swap", &("uuid", &uuid[..])];
     loop {
-        let res = swap.handle_command(command).unwrap();
+        let res = unwrap!(swap.handle_command(command));
         events = res.1;
         for event in events {
             let to_save = TakerSavedEvent {
                 timestamp: now_ms(),
                 event: event.clone(),
             };
-            save_my_taker_swap_event(&swap.uuid, to_save).unwrap();
+            unwrap!(save_my_taker_swap_event(&swap.uuid, to_save));
             status.status(swap_tags, &event.status_str());
-            swap.apply_event(event).unwrap();
+            unwrap!(swap.apply_event(event));
         }
         match res.0 {
             Some(c) => { command = c; },
             None => {
-                broadcast_my_swap_status(&swap.uuid).unwrap();
+                unwrap!(broadcast_my_swap_status(&swap.uuid));
                 break;
             },
         }

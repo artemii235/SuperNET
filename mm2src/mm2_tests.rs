@@ -674,8 +674,8 @@ fn check_my_swap_status(
         })));
     assert!(response.0.is_success(), "!status of {}: {}", uuid, response.1);
     let status_response: Json = unwrap!(json::from_str(&response.1));
-    let events_array = status_response["result"]["events"].as_array().unwrap();
-    let actual_events = events_array.iter().map(|item| item["event"]["type"].as_str().unwrap());
+    let events_array = unwrap!(status_response["result"]["events"].as_array());
+    let actual_events = events_array.iter().map(|item| unwrap!(item["event"]["type"].as_str()));
     let actual_events: Vec<&str> = actual_events.collect();
     assert_eq!(expected_events, &actual_events);
 }
@@ -694,11 +694,11 @@ fn check_stats_swap_status(
         })));
     assert!(response.0.is_success(), "!status of {}: {}", uuid, response.1);
     let status_response: Json = unwrap!(json::from_str(&response.1));
-    let maker_events_array = status_response["result"]["maker"]["events"].as_array().unwrap();
-    let taker_events_array = status_response["result"]["taker"]["events"].as_array().unwrap();
-    let maker_actual_events = maker_events_array.iter().map(|item| item["event"]["type"].as_str().unwrap());
+    let maker_events_array = unwrap!(status_response["result"]["maker"]["events"].as_array());
+    let taker_events_array = unwrap!(status_response["result"]["taker"]["events"].as_array());
+    let maker_actual_events = maker_events_array.iter().map(|item| unwrap!(item["event"]["type"].as_str()));
     let maker_actual_events: Vec<&str> = maker_actual_events.collect();
-    let taker_actual_events = taker_events_array.iter().map(|item| item["event"]["type"].as_str().unwrap());
+    let taker_actual_events = taker_events_array.iter().map(|item| unwrap!(item["event"]["type"].as_str()));
     let taker_actual_events: Vec<&str> = taker_actual_events.collect();
     assert_eq!(maker_expected_events, &maker_actual_events);
     assert_eq!(taker_expected_events, &taker_actual_events);
@@ -804,7 +804,7 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
         })));
         assert!(rc.0.is_success(), "!buy: {}", rc.1);
         let buy_json: Json = unwrap!(serde_json::from_str(&rc.1));
-        uuids.push(buy_json["pending"]["uuid"].as_str().unwrap().to_owned());
+        uuids.push(unwrap!(buy_json["pending"]["uuid"].as_str()).to_owned());
 
         // ensure the swap started
         unwrap!(mm_alice.wait_for_log (20., &|log| log.contains (&format!("Entering the taker_swap_loop {}/{}", base, rel))));
@@ -1063,7 +1063,7 @@ fn trade_etomic_pizza() {
 }
 
 fn withdraw_and_send(mm: &MarketMakerIt, coin: &str, to: &str, enable_res: &HashMap<&'static str, String>) {
-    let addr = addr_from_enable(enable_res.get(coin).unwrap());
+    let addr = addr_from_enable(unwrap!(enable_res.get(coin)));
 
     let withdraw = unwrap! (mm.rpc (json! ({
         "userpass": mm.userpass,

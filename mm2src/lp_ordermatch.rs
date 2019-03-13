@@ -434,7 +434,6 @@ unsafe fn lp_connect_start_bob(ctx: &MmArc, base: *mut c_char, rel: *mut c_char,
                 let taker_amount = (*qp).R.destamount as u64;
                 let my_persistent_pub = unwrap!(compressed_pub_key_from_priv_raw(&lp::G.LP_privkey.bytes));
                 let uuid = CStr::from_ptr ((*qp).uuidstr.as_ptr()) .to_string_lossy().into_owned();
-                log!("Seller loop");
                 move || {
                     log!("Entering the maker_swap_loop " (maker_coin.ticker()) "/" (taker_coin.ticker()));
                     let maker_swap = MakerSwap::new(
@@ -448,10 +447,6 @@ unsafe fn lp_connect_start_bob(ctx: &MmArc, base: *mut c_char, rel: *mut c_char,
                         uuid,
                     );
                     run_maker_swap(maker_swap);
-                    /*match maker_swap_loop(&mut maker_swap) {
-                        Ok(_) => (),
-                        Err(e) => log!("Swap finished with error " [e])
-                    };*/
                 }
             });
             match loop_thread {
