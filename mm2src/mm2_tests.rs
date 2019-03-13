@@ -829,7 +829,8 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
             &maker_events,
         );
     }
-
+    // give nodes 10 seconds to broadcast their swaps data
+    thread::sleep(Duration::from_secs(10));
     for uuid in uuids.iter() {
         check_stats_swap_status(
             &mm_alice,
