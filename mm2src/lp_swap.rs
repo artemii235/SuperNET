@@ -193,51 +193,77 @@ fn test_serde_swap_negotiation_data() {
     assert_eq!(data, deserialized);
 }
 
-fn swap_file_path(uuid: &str) -> PathBuf {
+fn my_swap_file_path(uuid: &str) -> PathBuf {
     let path = swap_db_dir();
-    path.join(format!("{}.json", uuid))
+    path.join("MY").join(format!("{}.json", uuid))
 }
 
-fn save_maker_swap_event(uuid: &str, event: MakerSavedEvent) -> Result<(), String> {
-    let path = swap_file_path(uuid);
+fn stats_maker_swap_file_path(uuid: &str) -> PathBuf {
+    let path = swap_db_dir();
+    path.join("STATS").join("MAKER").join(format!("{}.json", uuid))
+}
+
+fn stats_taker_swap_file_path(uuid: &str) -> PathBuf {
+    let path = swap_db_dir();
+    path.join("STATS").join("TAKER").join(format!("{}.json", uuid))
+}
+
+fn save_my_maker_swap_event(uuid: &str, event: MakerSavedEvent) -> Result<(), String> {
+    let path = my_swap_file_path(uuid);
     let content = slurp(&path);
     let swap: SavedSwap = if content.is_empty() {
-        SavedSwap::Maker(vec![])
+        SavedSwap::Maker(MakerSavedSwap {
+            uuid: uuid.to_owned(),
+            events: vec![],
+        })
     } else {
         try_s!(json::from_slice(&content))
     };
 
-    if let SavedSwap::Maker(mut events) = swap {
-        events.push(event);
-        let new_swap = SavedSwap::Maker(events);
+    if let SavedSwap::Maker(mut maker_swap) = swap {
+        maker_swap.events.push(event);
+        let new_swap = SavedSwap::Maker(maker_swap);
         let new_content = try_s!(json::to_vec(&new_swap));
         let mut file = try_s!(File::create(path));
         try_s!(file.write_all(&new_content));
         Ok(())
     } else {
-        panic!()
+        ERR!("Expected SavedSwap::Maker at {}, got {:?}", path.display(), swap)
     }
 }
 
-fn save_taker_swap_event(uuid: &str, event: TakerSavedEvent) -> Result<(), String> {
-    let path = swap_file_path(uuid);
+fn save_my_taker_swap_event(uuid: &str, event: TakerSavedEvent) -> Result<(), String> {
+    let path = my_swap_file_path(uuid);
     let content = slurp(&path);
     let swap: SavedSwap = if content.is_empty() {
-        SavedSwap::Taker(vec![])
+        SavedSwap::Taker(TakerSavedSwap {
+            uuid: uuid.to_owned(),
+            events: vec![]
+        })
     } else {
         try_s!(json::from_slice(&content))
     };
 
-    if let SavedSwap::Taker(mut events) = swap {
-        events.push(event);
-        let new_swap = SavedSwap::Taker(events);
+    if let SavedSwap::Taker(mut taker_swap) = swap {
+        taker_swap.events.push(event);
+        let new_swap = SavedSwap::Taker(taker_swap);
         let new_content = try_s!(json::to_vec(&new_swap));
         let mut file = try_s!(File::create(path));
         try_s!(file.write_all(&new_content));
         Ok(())
     } else {
-        panic!()
+        ERR!("Expected SavedSwap::Taker at {}, got {:?}", path.display(), swap)
     }
+}
+
+fn save_stats_swap(swap: SavedSwap) -> Result<(), String> {
+    let (path, content) = match &swap {
+        SavedSwap::Maker(maker_swap) => (stats_maker_swap_file_path(&maker_swap.uuid), try_s!(json::to_vec(&maker_swap))),
+        SavedSwap::Taker(taker_swap) => (stats_taker_swap_file_path(&taker_swap.uuid), try_s!(json::to_vec(&taker_swap))),
+    };
+    let mut file = try_s!(File::create(path));
+    try_s!(file.write_all(&content));
+    Ok(())
 }
 
 #[derive(Clone, Serialize, Deserialize, Default, Debug)]
@@ -347,10 +373,22 @@ struct TakerSavedEvent {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type", content = "events")]
+struct MakerSavedSwap {
+    uuid: String,
+    events: Vec<MakerSavedEvent>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct TakerSavedSwap {
+    uuid: String,
+    events: Vec<TakerSavedEvent>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type")]
 enum SavedSwap {
-    Maker(Vec<MakerSavedEvent>),
-    Taker(Vec<TakerSavedEvent>),
+    Maker(MakerSavedSwap),
+    Taker(TakerSavedSwap),
 }
 
 macro_rules! recv {
@@ -707,14 +745,14 @@ pub fn run_maker_swap(mut swap: MakerSwap) {
                 timestamp: now_ms(),
                 event: event.clone(),
             };
-            save_maker_swap_event(&swap.uuid, to_save).unwrap();
+            save_my_maker_swap_event(&swap.uuid, to_save).unwrap();
             status.status(swap_tags, &event.status_str());
             swap.apply_event(event).unwrap();
         }
         match res.0 {
             Some(c) => { command = c; },
             None => {
-                broadcast_swap_status(&swap.uuid).unwrap();
+                broadcast_my_swap_status(&swap.uuid).unwrap();
                 break;
             },
         }
@@ -736,14 +774,14 @@ pub fn run_taker_swap(mut swap: TakerSwap) {
                 timestamp: now_ms(),
                 event: event.clone(),
             };
-            save_taker_swap_event(&swap.uuid, to_save).unwrap();
+            save_my_taker_swap_event(&swap.uuid, to_save).unwrap();
             status.status(swap_tags, &event.status_str());
             swap.apply_event(event).unwrap();
         }
         match res.0 {
             Some(c) => { command = c; },
             None => {
-                broadcast_swap_status(&swap.uuid).unwrap();
+                broadcast_my_swap_status(&swap.uuid).unwrap();
                 break;
             },
         }
@@ -1222,10 +1260,10 @@ impl TakerSwap {
     }
 }
 
-/// Returns the status of requested swap
-pub fn swap_status(req: Json) -> HyRes {
+/// Returns the status of swap performed on `my` node
+pub fn my_swap_status(req: Json) -> HyRes {
     let uuid = try_h!(req["params"]["uuid"].as_str().ok_or("uuid parameter is not set or is not string"));
-    let path = swap_file_path(uuid);
+    let path = my_swap_file_path(uuid);
     let content = slurp(&path);
     let status: SavedSwap = try_h!(json::from_slice(&content));
 
@@ -1234,8 +1272,36 @@ pub fn swap_status(req: Json) -> HyRes {
     }).to_string())
 }
 
-fn broadcast_swap_status(uuid: &str) -> Result<(), String> {
-    let path = swap_file_path(uuid);
+/// Returns the status of requested swap, typically performed by other nodes and saved by `save_stats_swap_status`
+pub fn stats_swap_status(req: Json) -> HyRes {
+    let uuid = try_h!(req["params"]["uuid"].as_str().ok_or("uuid parameter is not set or is not string"));
+    let maker_path = stats_maker_swap_file_path(uuid);
+    let taker_path = stats_taker_swap_file_path(uuid);
+    let maker_content = slurp(&maker_path);
+    let taker_content = slurp(&taker_path);
+    let maker_status: Option<MakerSavedSwap> = if maker_content.is_empty() {
+        None
+    } else {
+        Some(try_h!(json::from_slice(&maker_content)))
+    };
+
+    let taker_status: Option<TakerSavedSwap> = if taker_content.is_empty() {
+        None
+    } else {
+        Some(try_h!(json::from_slice(&taker_content)))
+    };
+
+    rpc_response(200, json!({
+        "result": {
+            "maker": maker_status,
+            "taker": taker_status,
+        }
+    }).to_string())
+}
+
+/// Broadcasts `my` swap status to P2P network
+fn broadcast_my_swap_status(uuid: &str) -> Result<(), String> {
+    let path = my_swap_file_path(uuid);
     let content = slurp(&path);
     let status: SavedSwap = try_s!(json::from_slice(&content));
     let status_string = json!({
@@ -1246,4 +1312,13 @@ fn broadcast_swap_status(uuid: &str) -> Result<(), String> {
     let zero = lp::bits256::default();
     unsafe { lp::LP_reserved_msg(0, zero, status_c_string); }
     Ok(())
+}
+
+/// Saves the swap status notification received from P2P network to local DB.
+pub fn save_stats_swap_status(data: Json) -> HyRes {
+    let swap: SavedSwap = try_h!(json::from_value(data));
+    try_h!(save_stats_swap(swap));
+    rpc_response(200, json!({
+        "result": "success"
+    }).to_string())
 }

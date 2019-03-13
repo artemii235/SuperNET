@@ -1461,6 +1461,10 @@ fn fix_directories() -> bool {
     unsafe {os::OS_ensure_directory (lp::GLOBAL_DBDIR.as_ptr() as *mut c_char)};
     let dbdir = global_dbdir();
     if !ensure_writable (&dbdir.join ("SWAPS")) {return false}
+    if !ensure_writable (&dbdir.join ("SWAPS").join ("MY")) {return false}
+    if !ensure_writable (&dbdir.join ("SWAPS").join ("STATS")) {return false}
+    if !ensure_writable (&dbdir.join ("SWAPS").join ("STATS").join ("MAKER")) {return false}
+    if !ensure_writable (&dbdir.join ("SWAPS").join ("STATS").join ("TAKER")) {return false}
     if !ensure_writable (&dbdir.join ("GTC")) {return false}
     if !ensure_writable (&dbdir.join ("PRICES")) {return false}
     if !ensure_writable (&dbdir.join ("UNSPENTS")) {return false}

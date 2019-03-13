@@ -659,15 +659,15 @@ fn komodo_conf_path (ac_name: Option<&'static str>) -> Result<PathBuf, String> {
     Ok (path.join (&confname[..]))
 }
 
-/// Helper function requesting swap status and checking it's value
-fn check_swap_status(
+/// Helper function requesting my swap status and checking it's events
+fn check_my_swap_status(
     mm: &MarketMakerIt,
     uuid: &str,
-    expected_events: Vec<&str>,
+    expected_events: &Vec<&str>,
 ) {
     let response = unwrap!(mm.rpc (json! ({
             "userpass": mm.userpass,
-            "method": "swapstatus",
+            "method": "my_swap_status",
             "params": {
                 "uuid": uuid,
             }
@@ -677,7 +677,31 @@ fn check_swap_status(
     let events_array = status_response["result"]["events"].as_array().unwrap();
     let actual_events = events_array.iter().map(|item| item["event"]["type"].as_str().unwrap());
     let actual_events: Vec<&str> = actual_events.collect();
-    assert_eq!(expected_events, actual_events);
+    assert_eq!(expected_events, &actual_events);
+}
+
+fn check_stats_swap_status(
+    mm: &MarketMakerIt,
+    uuid: &str,
+    maker_expected_events: &Vec<&str>,
+    taker_expected_events: &Vec<&str>,
+) {
+    let response = unwrap!(mm.rpc (json! ({
+            "method": "stats_swap_status",
+            "params": {
+                "uuid": uuid,
+            }
+        })));
+    assert!(response.0.is_success(), "!status of {}: {}", uuid, response.1);
+    let status_response: Json = unwrap!(json::from_str(&response.1));
+    let maker_events_array = status_response["result"]["maker"]["events"].as_array().unwrap();
+    let taker_events_array = status_response["result"]["taker"]["events"].as_array().unwrap();
+    let maker_actual_events = maker_events_array.iter().map(|item| item["event"]["type"].as_str().unwrap());
+    let maker_actual_events: Vec<&str> = maker_actual_events.collect();
+    let taker_actual_events = taker_events_array.iter().map(|item| item["event"]["type"].as_str().unwrap());
+    let taker_actual_events: Vec<&str> = taker_actual_events.collect();
+    assert_eq!(maker_expected_events, &maker_actual_events);
+    assert_eq!(taker_expected_events, &taker_actual_events);
 }
 
 /// Trading test using coins with remote RPC (Electrum, ETH nodes), it needs only ENV variables to be set, coins daemons are not required.
@@ -787,22 +811,40 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
         unwrap!(mm_bob.wait_for_log (20., &|log| log.contains (&format!("Entering the maker_swap_loop {}/{}", base, rel))));
     }
 
+    let maker_events = vec!["Started", "Negotiated", "TakerFeeValidated", "MakerPaymentSent", "TakerPaymentValidatedAndConfirmed", "TakerPaymentSpent", "Finished"];
+    let taker_events = vec!["Started", "Negotiated", "TakerFeeSent", "MakerPaymentValidatedAndConfirmed", "TakerPaymentSent", "TakerPaymentSpent", "MakerPaymentSpent", "Finished"];
+
     for uuid in uuids.iter() {
         unwrap!(mm_bob.wait_for_log (600., &|log| log.contains (&format!("[swap uuid={}] Finished", uuid))));
         unwrap!(mm_alice.wait_for_log (600., &|log| log.contains (&format!("[swap uuid={}] Finished", uuid))));
-        check_swap_status(
+        check_my_swap_status(
             &mm_alice,
             &uuid,
-            vec!["Started", "Negotiated", "TakerFeeSent", "MakerPaymentValidatedAndConfirmed", "TakerPaymentSent", "TakerPaymentSpent", "MakerPaymentSpent", "Finished"],
+            &taker_events,
         );
 
-        check_swap_status(
+        check_my_swap_status(
             &mm_bob,
             &uuid,
-            vec!["Started", "Negotiated", "TakerFeeValidated", "MakerPaymentSent", "TakerPaymentValidatedAndConfirmed", "TakerPaymentSpent", "Finished"],
+            &maker_events,
         );
     }
-    thread::sleep(Duration::from_secs(120));
+
+    for uuid in uuids.iter() {
+        check_stats_swap_status(
+            &mm_alice,
+            &uuid,
+            &maker_events,
+            &taker_events,
+        );
+
+        check_stats_swap_status(
+            &mm_bob,
+            &uuid,
+            &maker_events,
+            &taker_events,
+        );
+    }
     unwrap! (mm_bob.stop());
     unwrap! (mm_alice.stop());
 }
