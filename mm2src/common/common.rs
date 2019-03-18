@@ -73,6 +73,7 @@ use hyper::header::{ HeaderValue, CONTENT_TYPE };
 use hyper::rt::Stream;
 use hyper_rustls::HttpsConnector;
 use libc::{c_char, c_void, malloc, free};
+use secp256k1::*;
 use serde_json::{self as json, Value as Json};
 use std::env::args;
 use std::fmt;
