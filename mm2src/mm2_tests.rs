@@ -691,6 +691,8 @@ fn check_my_swap_status(
     mm: &MarketMakerIt,
     uuid: &str,
     expected_events: &Vec<&str>,
+    maker_amount: u64,
+    taker_amount: u64,
 ) {
     let response = unwrap!(mm.rpc (json! ({
             "userpass": mm.userpass,
@@ -702,6 +704,8 @@ fn check_my_swap_status(
     assert!(response.0.is_success(), "!status of {}: {}", uuid, response.1);
     let status_response: Json = unwrap!(json::from_str(&response.1));
     let events_array = unwrap!(status_response["result"]["events"].as_array());
+    assert_eq!(events_array[0]["event"]["data"]["maker_amount"].as_u64(), Some(maker_amount));
+    assert_eq!(events_array[0]["event"]["data"]["taker_amount"].as_u64(), Some(taker_amount));
     let actual_events = events_array.iter().map(|item| unwrap!(item["event"]["type"].as_str()));
     let actual_events: Vec<&str> = actual_events.collect();
     assert_eq!(expected_events, &actual_events);
@@ -814,7 +818,7 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
             "method": "setprice",
             "base": base,
             "rel": rel,
-            "price": 0.9
+            "price": 1
         })));
         assert!(rc.0.is_success(), "!setprice: {}", rc.1);
 
@@ -827,7 +831,7 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
             "base": base,
             "rel": rel,
             "relvolume": 0.1,
-            "price": 1
+            "price": 2
         })));
         assert!(rc.0.is_success(), "!buy: {}", rc.1);
         let buy_json: Json = unwrap!(serde_json::from_str(&rc.1));
@@ -848,12 +852,16 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
             &mm_alice,
             &uuid,
             &taker_events,
+            10000000,
+            10000000,
         );
 
         check_my_swap_status(
             &mm_bob,
             &uuid,
             &maker_events,
+            10000000,
+            10000000,
         );
     }
     // give nodes 10 seconds to broadcast their swaps data
@@ -879,7 +887,7 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
 
 #[test]
 fn trade_test_electrum_and_eth_coins() {
-    trade_base_rel_electrum(vec![("BEER", "ETOMIC")]);
+    trade_base_rel_electrum(vec![("BEER", "ETOMIC"), ("ETH", "JST")]);
 }
 
 fn trade_base_rel_native(base: &str, rel: &str) {
