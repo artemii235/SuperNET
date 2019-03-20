@@ -268,13 +268,3 @@ uint32_t LP_swapwait(uint32_t expiration,uint32_t requestid,uint32_t quoteid,int
         return(0);
     }
 }
-
-int32_t LP_calc_waittimeout(char *symbol)
-{
-    int32_t waittimeout = TX_WAIT_TIMEOUT;
-    if ( strcmp(symbol,"BTC") == 0 )
-        waittimeout *= 8;
-    else if ( LP_is_slowcoin(symbol) != 0 )
-        waittimeout *= 4;
-    return(waittimeout);
-}

@@ -932,55 +932,6 @@ int32_t LP_txheight(struct iguana_info *coin,bits256 txid)
     return(height);
 }
 
-int32_t LP_numconfirms(char *symbol,char *coinaddr,bits256 txid,int32_t vout,int32_t mempool)
-{
-    struct iguana_info *coin; bits256 zero; int32_t ht,notarized,numconfirms = 100;
-    cJSON *txobj;
-    if ( (coin= LP_coinfind(symbol)) == 0 || coin->inactive != 0 )
-        return(-1);
-    if ( coin->electrum == 0 )
-    {
-        numconfirms = -1;
-        if ( (txobj= LP_gettxout(symbol,coinaddr,txid,vout)) != 0 )
-        {
-            numconfirms = jint(txobj,"confirmations");
-            free_json(txobj);
-        }
-        else if ( mempool != 0 && LP_mempoolscan(symbol,txid) >= 0 )
-            numconfirms = 0;
-        else if ( (txobj= LP_gettx("LP_numconfirms",symbol,txid,1)) != 0 )
-        {
-            numconfirms = jint(txobj,"confirmations");
-            free_json(txobj);
-        }
-    }
-    else
-    {
-        memset(zero.bytes,0,sizeof(zero));
-        LP_listunspent_issue(symbol,coinaddr,1,txid,zero);
-        if ( (ht= LP_txheight(coin,txid)) > 0 && ht <= coin->height )
-            numconfirms = (LP_getheight(&notarized,coin) - ht + 1);
-        else if ( mempool != 0 )
-        {
-            if ( LP_waitmempool(symbol,coinaddr,txid,vout,30) >= 0 )
-                numconfirms = 0;
-        }
-    }
-    /*if ( numconfirms == BASILISK_DEFAULT_MAXCONFIRMS )
-    {
-        if ( coin->isassetchain != 0 || strcmp(coin->symbol,"KMD") == 0 )
-        {
-            numconfirms--;
-            if ( coin->notarized >= coin->height-numconfirms )
-            {
-                printf("%s notarized.%d current ht.%d - numconfirms.%d -> txheight.%d\n",coin->symbol,coin->notarized,coin->height,numconfirms,coin->height - numconfirms);
-                numconfirms = BASILISK_DEFAULT_MAXCONFIRMS;
-            }
-        }
-    }*/
-    return(numconfirms);
-}
-
 uint64_t LP_txinterestvalue(uint64_t *interestp,char *destaddr,struct iguana_info *coin,bits256 txid,int32_t vout)
 {
     uint64_t interest,value = 0; cJSON *txobj;

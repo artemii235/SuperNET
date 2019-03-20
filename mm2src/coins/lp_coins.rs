@@ -733,8 +733,8 @@ fn lp_coininit (ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoinEnum, Str
     ii.ctx = unsafe {bitcoin_ctx() as *mut c_void};
     ii.noimportprivkey_flag = match ticker {"XVG" | "CLOAK" | "PPC" | "BCC" | "ORB" => 1, _ => 0};
     if rpcport != 0 {try_s! (safecopy! (ii.serverport, "127.0.0.1:{}", rpcport))}
-    unsafe {lp::LP_coin_curl_init (&mut *ii)};
     ii.decimals = coins_en["decimals"].as_u64().unwrap_or (0) as u8;
+    ii.overwintered = coins_en["overwintered"].as_u64().unwrap_or (0) as u8;
 
     let asset = coins_en["asset"].as_str();
     let isassetchain = if let Some (asset) = asset {
@@ -914,7 +914,6 @@ fn lp_coininit (ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoinEnum, Str
         ii.inactive = (now_ms() / 1000) as u32
     } else {
         ii.inactive = 0;
-        unsafe {lp::LP_unspents_load (ii.symbol.as_mut_ptr(), ii.smartaddr.as_mut_ptr())};
         // AG: I wonder why the special treatment.
         //     We invoke `LP_importaddress` during the SWAP, so maybe we can remove the "KMD"-only invocation here.
         if ticker == "KMD" {

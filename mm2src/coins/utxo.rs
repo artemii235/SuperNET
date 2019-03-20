@@ -1007,22 +1007,19 @@ pub fn utxo_coin_from_iguana_info(info: *mut lp::iguana_info, mode: UtxoInitMode
             UtxoRpcClientEnum::Electrum(ElectrumClient(client))
         }
     };
-    let tx_version = if info.isassetchain == 1 || ticker == "KMD" || ticker == "BEER" || ticker == "PIZZA" {
-        4
+    let (tx_version, overwintered) = if info.isassetchain == 1 || ticker == "KMD" || ticker == "BEER" || ticker == "PIZZA" {
+        (4, true)
     } else {
-        info.txversion
+        (info.txversion, info.overwintered == 1)
     };
-    // At least for now only ZEC and forks rely on tx version so we can use it to detect overwintered
-    // TODO Consider refactoring, overwintered flag should be explicitly set in coins config
-    let overwintered = tx_version >= 3;
     let tx_fee = if info.txfee > 0 {
         TxFee::Fixed(info.txfee)
     } else {
         TxFee::Dynamic
     };
-    let version_group_id = if tx_version == 3 {
+    let version_group_id = if tx_version == 3 && overwintered {
         0x03c48270
-    } else if tx_version == 4 {
+    } else if tx_version == 4 && overwintered {
         0x892f2085
     } else {
         0
