@@ -238,6 +238,7 @@ fn generate_bindings() {
             "LP_instantdex_txids",
             "LP_pendswap_add",
             "LP_price_sig",
+            "LP_coin_curl_init",
         ]
         .iter(),
         // types

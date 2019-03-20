@@ -1252,6 +1252,19 @@ int32_t LP_reserved_msg(int32_t priority,bits256 pubkey,char *msg)
 
 extern int32_t bitcoind_RPC_inittime;
 
+void LP_coin_curl_init(struct iguana_info* coin) {
+    coin->curl_handle = curl_easy_init();
+    portable_mutex_init(&coin->curl_mutex);
+
+    // From the former LP_coinadd:
+    portable_mutex_init(&coin->txmutex);
+    portable_mutex_init(&coin->addrmutex);
+    portable_mutex_init(&coin->addressutxo_mutex);
+    strcpy(coin->validateaddress,"validateaddress");
+    strcpy(coin->getinfostr,"getinfo");
+    strcpy(coin->estimatefeestr,"estimatefee");
+}
+
 void LP_mutex_init() {
     portable_mutex_init(&LP_peermutex);
     portable_mutex_init(&LP_utxomutex);

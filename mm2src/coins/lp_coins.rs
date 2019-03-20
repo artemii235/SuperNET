@@ -733,6 +733,7 @@ fn lp_coininit (ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoinEnum, Str
     ii.ctx = unsafe {bitcoin_ctx() as *mut c_void};
     ii.noimportprivkey_flag = match ticker {"XVG" | "CLOAK" | "PPC" | "BCC" | "ORB" => 1, _ => 0};
     if rpcport != 0 {try_s! (safecopy! (ii.serverport, "127.0.0.1:{}", rpcport))}
+    unsafe {lp::LP_coin_curl_init (&mut *ii)};
     ii.decimals = coins_en["decimals"].as_u64().unwrap_or (0) as u8;
     ii.overwintered = coins_en["overwintered"].as_u64().unwrap_or (0) as u8;
 
