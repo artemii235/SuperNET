@@ -583,23 +583,23 @@ fn build_libtorrent() {
     let mmd = root().join("marketmaker_depends");
     let _ = fs::create_dir(&mmd);
 
-    let tgz = mmd.join("libtorrent-rasterbar-1.2.0-rc.tar.gz");
+    let tgz = mmd.join("libtorrent-rasterbar-1.2.0.tar.gz");
     if !tgz.exists() {
         hget (
-            "https://github.com/arvidn/libtorrent/releases/download/libtorrent-1_2_0_RC/libtorrent-rasterbar-1.2.0-rc.tar.gz",
+            "https://github.com/arvidn/libtorrent/releases/download/libtorrent_1_2_0/libtorrent-rasterbar-1.2.0.tar.gz",
             tgz.clone()
         );
         assert!(tgz.exists());
     }
 
-    let rasterbar = mmd.join("libtorrent-rasterbar-1.2.0-rc");
+    let rasterbar = mmd.join("libtorrent-rasterbar-1.2.0");
     if !rasterbar.exists() {
         unwrap!(
-            ecmd!("tar", "-xzf", "libtorrent-rasterbar-1.2.0-rc.tar.gz")
+            ecmd!("tar", "-xzf", "libtorrent-rasterbar-1.2.0.tar.gz")
                 .dir(&mmd)
                 .stdout_to_stderr()
                 .run(),
-            "Can't unpack libtorrent-rasterbar-1.2.0-rc.tar.gz"
+            "Can't unpack libtorrent-rasterbar-1.2.0.tar.gz"
         );
         assert!(rasterbar.exists());
 
@@ -618,7 +618,7 @@ fn build_libtorrent() {
     unwrap!(ecmd!(
         "cmake",
         "-DCMAKE_BUILD_TYPE=Release",
-        "-DCMAKE_CXX_STANDARD=11",
+        "-DCMAKE_CXX_STANDARD=14",
         "-DBUILD_SHARED_LIBS=off",
         "-DCMAKE_POSITION_INDEPENDENT_CODE:BOOL=true", // Adds "-fPIC".
         "-Di2p=off",
@@ -734,33 +734,33 @@ fn libtorrent() {
             assert!(boost_system.exists());
         }
 
-        let rasterbar = mmd.join("libtorrent-rasterbar-1.2.0-rc");
+        let rasterbar = mmd.join("libtorrent-rasterbar-1.2.0");
         if rasterbar.exists() {
             // Cache maintenance.
-            let _ = fs::remove_file(mmd.join("libtorrent-rasterbar-1.2.0-rc.tar.gz"));
+            let _ = fs::remove_file(mmd.join("libtorrent-rasterbar-1.2.0.tar.gz"));
             let _ = fs::remove_dir_all(rasterbar.join("docs"));
         } else {
             // [Download and] unpack.
-            if !mmd.join("libtorrent-rasterbar-1.2.0-rc.tar.gz").exists() {
+            if !mmd.join("libtorrent-rasterbar-1.2.0.tar.gz").exists() {
                 hget (
-                    "https://github.com/arvidn/libtorrent/releases/download/libtorrent-1_2_0_RC/libtorrent-rasterbar-1.2.0-rc.tar.gz",
-                    mmd.join ("libtorrent-rasterbar-1.2.0-rc.tar.gz.tmp")
+                    "https://github.com/arvidn/libtorrent/releases/download/libtorrent_1_2_0/libtorrent-rasterbar-1.2.0.tar.gz",
+                    mmd.join ("libtorrent-rasterbar-1.2.0.tar.gz.tmp")
                 );
                 unwrap!(fs::rename(
-                    mmd.join("libtorrent-rasterbar-1.2.0-rc.tar.gz.tmp"),
-                    mmd.join("libtorrent-rasterbar-1.2.0-rc.tar.gz")
+                    mmd.join("libtorrent-rasterbar-1.2.0.tar.gz.tmp"),
+                    mmd.join("libtorrent-rasterbar-1.2.0.tar.gz")
                 ));
             }
 
             unwrap!(
-                ecmd!("tar", "-xzf", "libtorrent-rasterbar-1.2.0-rc.tar.gz")
+                ecmd!("tar", "-xzf", "libtorrent-rasterbar-1.2.0.tar.gz")
                     .dir(&mmd)
                     .stdout_to_stderr()
                     .run(),
-                "Can't unpack libtorrent-rasterbar-1.2.0-rc.tar.gz"
+                "Can't unpack libtorrent-rasterbar-1.2.0.tar.gz"
             );
             assert!(rasterbar.exists());
-            let _ = fs::remove_file(mmd.join("libtorrent-rasterbar-1.2.0-rc.tar.gz"));
+            let _ = fs::remove_file(mmd.join("libtorrent-rasterbar-1.2.0.tar.gz"));
 
             cmake_opt_out(
                 &rasterbar.join("CMakeLists.txt"),
@@ -842,7 +842,7 @@ fn libtorrent() {
         println!(
             "cargo:rustc-link-search=native={}",
             unwrap!(root()
-                .join("marketmaker_depends/libtorrent-rasterbar-1.2.0-rc/build")
+                .join("marketmaker_depends/libtorrent-rasterbar-1.2.0/build")
                 .to_str())
         );
         println!("cargo:rustc-link-lib=c++");
@@ -859,7 +859,7 @@ fn libtorrent() {
                 .file("dht.cc")
                 .warnings(true)
                 .flag("-std=c++11")
-                .include(root().join("marketmaker_depends/libtorrent-rasterbar-1.2.0-rc/include"))
+                .include(root().join("marketmaker_depends/libtorrent-rasterbar-1.2.0/include"))
                 .include(r"/usr/local/Cellar/boost/1.68.0/include/")
                 .compile("dht");
         }
@@ -878,7 +878,7 @@ fn libtorrent() {
         println!(
             "cargo:rustc-link-search=native={}",
             unwrap!(root()
-                .join("marketmaker_depends/libtorrent-rasterbar-1.2.0-rc/build")
+                .join("marketmaker_depends/libtorrent-rasterbar-1.2.0/build")
                 .to_str())
         );
 
@@ -890,12 +890,12 @@ fn libtorrent() {
             cc::Build::new()
                 .file("dht.cc")
                 .warnings(true)
-                // cf. marketmaker_depends/libtorrent-rasterbar-1.2.0-rc/build/CMakeFiles/torrent-rasterbar.dir/flags.make
+                // cf. marketmaker_depends/libtorrent-rasterbar-1.2.0/build/CMakeFiles/torrent-rasterbar.dir/flags.make
                 // Mismatch between the libtorrent and the dht.cc flags
                 // might produce weird "undefined reference" link errors.
                 .flag("-std=c++14")
                 .flag("-fPIC")
-                .include(root().join("marketmaker_depends/libtorrent-rasterbar-1.2.0-rc/include"))
+                .include(root().join("marketmaker_depends/libtorrent-rasterbar-1.2.0/include"))
                 .include("/usr/local/include")
                 .compile("dht");
         }
