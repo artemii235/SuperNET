@@ -21,7 +21,7 @@
 pub mod rpc_clients;
 
 use base64::{encode_config as base64_encode, URL_SAFE};
-use bitcrypto::{dhash160};
+pub use bitcrypto::{dhash160, ChecksumType};
 use byteorder::{LittleEndian, WriteBytesExt};
 use chain::{TransactionOutput, TransactionInput, OutPoint};
 use chain::constants::{SEQUENCE_FINAL};
@@ -139,6 +139,10 @@ pub struct UtxoCoinImpl {  // pImpl idiom.
     tx_fee: TxFee,
     /// Version group id for Zcash transactions since Overwinter: https://github.com/zcash/zips/blob/master/zip-0202.rst
     version_group_id: u32,
+    /// Defines if coin uses Zcash transaction format
+    zcash: bool,
+    /// Address and privkey checksum type
+    checksum_type: ChecksumType,
 }
 
 impl UtxoCoinImpl {
@@ -264,6 +268,7 @@ fn p2sh_spending_tx(
     lock_time: u32,
     sequence: u32,
     version_group_id: u32,
+    zcash: bool,
 ) -> Result<UtxoTx, String> {
     let unsigned = TransactionInputSigner {
         lock_time,
@@ -284,6 +289,7 @@ fn p2sh_spending_tx(
         shielded_outputs: vec![],
         value_balance: 0,
         version_group_id,
+        zcash,
     };
     let signed_input = try_s!(
         p2sh_spend(&unsigned, 0, key_pair, script_data, redeem_script.into())
@@ -303,14 +309,16 @@ fn p2sh_spending_tx(
         binding_sig: H512::default(),
         join_split_sig: H512::default(),
         join_split_pubkey: H256::default(),
+        zcash,
     })
 }
 
-fn address_from_raw_pubkey(pub_key: &[u8], prefix: u8, t_addr_prefix: u8) -> Result<Address, String> {
+fn address_from_raw_pubkey(pub_key: &[u8], prefix: u8, t_addr_prefix: u8, checksum_type: ChecksumType) -> Result<Address, String> {
     Ok(Address {
         t_addr_prefix,
         prefix,
         hash: try_s!(Public::from_slice(pub_key)).address_hash(),
+        checksum_type,
     })
 }
 
@@ -340,6 +348,7 @@ fn sign_tx(
         binding_sig: H512::default(),
         join_split_sig: H512::default(),
         join_split_pubkey: H256::default(),
+        zcash: unsigned.zcash,
     })
 }
 
@@ -510,13 +519,14 @@ impl UtxoCoin {
                 shielded_outputs: vec![],
                 value_balance: 0,
                 version_group_id: arc.version_group_id,
+                zcash: arc.zcash,
             };
             Ok((tx, tx_fee))
         }))
     }
 }
 
-pub fn compressed_key_pair_from_bytes(raw: &[u8], prefix: u8) -> Result<KeyPair, String> {
+pub fn compressed_key_pair_from_bytes(raw: &[u8], prefix: u8, checksum_type: ChecksumType) -> Result<KeyPair, String> {
     if raw.len() != 32 {
         return ERR!("Invalid raw priv key len {}", raw.len());
     }
@@ -524,19 +534,20 @@ pub fn compressed_key_pair_from_bytes(raw: &[u8], prefix: u8) -> Result<KeyPair,
     let private = Private {
         prefix,
         compressed: true,
-        secret: Secret::from(raw)
+        secret: Secret::from(raw),
+        checksum_type,
     };
     Ok(try_s!(KeyPair::from_private(private)))
 }
 
-pub fn compressed_pub_key_from_priv_raw(raw_priv: &[u8]) -> Result<H264, String> {
-    let key_pair: KeyPair = try_s!(compressed_key_pair_from_bytes(raw_priv, 0));
+pub fn compressed_pub_key_from_priv_raw(raw_priv: &[u8], sum_type: ChecksumType) -> Result<H264, String> {
+    let key_pair: KeyPair = try_s!(compressed_key_pair_from_bytes(raw_priv, 0, sum_type));
     Ok(H264::from(&**key_pair.public()))
 }
 
 impl SwapOps for UtxoCoin {
     fn send_taker_fee(&self, fee_pub_key: &[u8], amount: u64) -> TransactionFut {
-        let address = try_fus!(address_from_raw_pubkey(fee_pub_key, self.pub_addr_prefix, self.pub_t_addr_prefix));
+        let address = try_fus!(address_from_raw_pubkey(fee_pub_key, self.pub_addr_prefix, self.pub_t_addr_prefix, self.checksum_type));
         let amount = adjust_sat_by_decimals(amount, self.decimals);
         let output = TransactionOutput {
             value: amount,
@@ -621,6 +632,7 @@ impl SwapOps for UtxoCoin {
                 (now_ms() / 1000) as u32,
                 SEQUENCE_FINAL,
                 arc.version_group_id,
+                arc.zcash,
             ));
             Box::new(arc.rpc_client.send_transaction(&transaction, arc.my_address.clone()).map(move |_res|
                 transaction.into()
@@ -660,6 +672,7 @@ impl SwapOps for UtxoCoin {
                 (now_ms() / 1000) as u32,
                 SEQUENCE_FINAL,
                 arc.version_group_id,
+                arc.zcash,
             ));
             Box::new(arc.rpc_client.send_transaction(&transaction, arc.my_address.clone()).map(move |_res|
                 transaction.into()
@@ -698,6 +711,7 @@ impl SwapOps for UtxoCoin {
                 (now_ms() / 1000) as u32,
                 SEQUENCE_FINAL - 1,
                 arc.version_group_id,
+                arc.zcash,
             ));
             Box::new(arc.rpc_client.send_transaction(&transaction, arc.my_address.clone()).map(move |_res|
                 transaction.into()
@@ -739,6 +753,7 @@ impl SwapOps for UtxoCoin {
                 (now_ms() / 1000) as u32,
                 SEQUENCE_FINAL - 1,
                 arc.version_group_id,
+                arc.zcash,
             ));
             Box::new(arc.rpc_client.send_transaction(&transaction, arc.my_address.clone()).map(move |_res|
                 transaction.into()
@@ -763,7 +778,7 @@ impl SwapOps for UtxoCoin {
             return ERR!("Provided dex fee tx {:?} doesn't match tx data from rpc {:?}", tx, tx_from_rpc);
         }
 
-        let address = try_s!(address_from_raw_pubkey(fee_addr, self.pub_addr_prefix, self.pub_t_addr_prefix));
+        let address = try_s!(address_from_raw_pubkey(fee_addr, self.pub_addr_prefix, self.pub_t_addr_prefix, self.checksum_type));
         let expected_output = TransactionOutput {
             value: amount,
             script_pubkey: Builder::build_p2pkh(&address.hash).to_bytes()
@@ -935,17 +950,18 @@ impl MmCoin for UtxoCoin {
     }
 }
 
-pub fn random_compressed_key_pair(prefix: u8) -> Result<KeyPair, String> {
+pub fn random_compressed_key_pair(prefix: u8, checksum_type: ChecksumType) -> Result<KeyPair, String> {
     let random_key = try_s!(Random::new(prefix).generate());
 
     Ok(try_s!(KeyPair::from_private(Private {
         prefix,
         secret: random_key.private().secret.clone(),
         compressed: true,
+        checksum_type,
     })))
 }
 
-fn key_pair_from_seed(seed: &[u8], prefix: u8) -> KeyPair {
+fn key_pair_from_seed(seed: &[u8], prefix: u8, checksum_type: ChecksumType) -> KeyPair {
     let mut hasher = Sha256::new();
     hasher.input(seed);
     let mut hash = hasher.result();
@@ -956,6 +972,7 @@ fn key_pair_from_seed(seed: &[u8], prefix: u8) -> KeyPair {
         prefix,
         secret: H256::from(hash.as_slice()),
         compressed: true,
+        checksum_type,
     };
 
     KeyPair::from_private(private).unwrap()
@@ -968,10 +985,21 @@ pub enum UtxoInitMode {
 
 pub fn utxo_coin_from_iguana_info(info: *mut lp::iguana_info, mode: UtxoInitMode) -> Result<MmCoinEnum, String> {
     let info = unsafe { *info };
+    let ticker = try_s! (unsafe {CStr::from_ptr (info.symbol.as_ptr())} .to_str()) .into();
+
+    let checksum_type = if ticker == "GRS" {
+        ChecksumType::DGROESTL512
+    } else if ticker == "SMART" {
+        ChecksumType::KECCAK256
+    } else {
+        ChecksumType::DSHA256
+    };
+
     let private = Private {
         prefix: info.wiftype,
         secret: H256::from(unsafe { lp::G.LP_privkey.bytes }),
         compressed: true,
+        checksum_type,
     };
 
     let key_pair = try_s!(KeyPair::from_private(private));
@@ -979,9 +1007,8 @@ pub fn utxo_coin_from_iguana_info(info: *mut lp::iguana_info, mode: UtxoInitMode
         prefix: info.pubtype,
         t_addr_prefix: info.taddr,
         hash: key_pair.public().address_hash(),
+        checksum_type,
     };
-
-    let ticker = try_s! (unsafe {CStr::from_ptr (info.symbol.as_ptr())} .to_str()) .into();
 
     let rpc_client = match mode {
         UtxoInitMode::Native => {
@@ -1047,7 +1074,8 @@ pub fn utxo_coin_from_iguana_info(info: *mut lp::iguana_info, mode: UtxoInitMode
     } else {
         8
     };
-
+    // should be sufficient to detect zcash by overwintered flag
+    let zcash = overwintered;
     let coin = UtxoCoinImpl {
         ticker,
         decimals,
@@ -1070,6 +1098,8 @@ pub fn utxo_coin_from_iguana_info(info: *mut lp::iguana_info, mode: UtxoInitMode
         asset_chain: info.isassetchain == 1,
         tx_fee,
         version_group_id,
+        zcash,
+        checksum_type,
     };
     Ok(UtxoCoin(Arc::new(coin)).into())
 }
@@ -1079,11 +1109,13 @@ mod tests {
     use super::*;
 
     fn utxo_coin_for_test() -> UtxoCoin {
-        let key_pair = key_pair_from_seed("test seed".as_bytes(), 0);
+        let checksum_type = ChecksumType::DSHA256;
+        let key_pair = key_pair_from_seed("test seed".as_bytes(), 0, checksum_type);
         let my_address = Address {
             prefix: 60,
             hash: key_pair.public().address_hash(),
-            t_addr_prefix: 0
+            t_addr_prefix: 0,
+            checksum_type,
         };
 
         let client = ElectrumClientImpl::new();
@@ -1110,7 +1142,9 @@ mod tests {
             ticker: "ETOMIC".into(),
             wif_prefix: 0,
             tx_fee: TxFee::Fixed(1000),
-            version_group_id: 0x892f2085
+            version_group_id: 0x892f2085,
+            zcash: true,
+            checksum_type,
         };
 
         UtxoCoin(Arc::new(coin))
