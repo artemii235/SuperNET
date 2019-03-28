@@ -31,6 +31,7 @@
 
 use common::{bitcoin_ctx, bits256, lp, rpc_response, rpc_err_response, HyRes};
 use common::mm_ctx::{from_ctx, MmArc};
+use dirs::home_dir;
 use futures::{Future};
 use gstuff::now_ms;
 use hashbrown::hash_map::{HashMap, RawEntryMut};
@@ -42,6 +43,7 @@ use std::ffi::{CString};
 use std::fmt::Debug;
 use std::mem::zeroed;
 use std::ops::Deref;
+use std::path::PathBuf;
 use std::ptr::null_mut;
 use std::sync::{Arc, Mutex};
 
@@ -662,6 +664,30 @@ struct iguana_info *LP_coinadd(struct iguana_info *cdata)
 }
 */
 
+/// Returns a path to the native coin wallet configuration.  
+/// (This path is used in `LP_userpassfp` to read the wallet credentials).  
+/// cf. https://github.com/artemii235/SuperNET/issues/346
+fn confpath (coins_en: &Json) -> Result<PathBuf, String> {
+    // Documented at https://github.com/jl777/coins#bitcoin-protocol-specific-json
+    // "USERHOME/" prefix should be replaced with the user's home folder.
+    let confpathˢ = coins_en["confpath"].as_str().unwrap_or ("") .trim();
+    if confpathˢ.is_empty() {
+        let nameˢ = coins_en["name"].as_str().unwrap_or ("-no-name-") .trim();
+        return Ok (fomat! ((nameˢ) ".conf") .into())
+    }
+    let (confpathˢ, rel_to_home) =
+        if confpathˢ.starts_with ("~/") {(&confpathˢ[2..], true)}
+        else if confpathˢ.starts_with ("USERHOME/") {(&confpathˢ[9..], true)}
+        else {(confpathˢ, false)};
+
+    if rel_to_home {
+        let home = try_s! (home_dir().ok_or ("Can not detect the user home directory"));
+        Ok (home.join (confpathˢ))
+    } else {
+        Ok (confpathˢ.into())
+    }
+}
+
 /// Adds a new currency into the list of currencies configured.
 ///
 /// Returns an error if the currency already exists. Initializing the same currency twice is a bad habit
@@ -761,41 +787,17 @@ fn lp_coininit (ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoinEnum, Str
     common::for_c::LP_coinadd (ii);
 
     let rpcport = unsafe {
-        // TODO
-        // The name/name2 logic here is a best-effort attempt to preserve the one in the former C code, but I think we should later simplify it.
-        // These names are used to construct the file path, but that construction seems broken, at least on Windows (it's using a fixed USERHOME).
-        // Maybe we should reuse the `komodo_conf_path` which provides the `c_confpath` value for the tests.
-        let name = match ticker {
-            "BTC" => "bitcoin",  // These were hardcoded before, though now for CMC we need the explicit "name" in the `coins` configuration as well.
-            "KMD" => "komodo",
-            _ => if let Some (asset) = asset {asset} else {coins_en["name"].as_str().unwrap_or ("")}
-        };
-        let name2 = if ticker == "KMD" || asset.is_some() {""} else {name};
-
-        let c_asset = try_s! (CString::new (asset.unwrap_or ("")));
-        let c_name = try_s! (CString::new (name));
-        let c_name2 = try_s! (CString::new (name2));
-        let c_name2_ptr = if name2 == "" {
-            null_mut()
-        } else {
-            c_name2.as_ptr() as *mut c_char
-        };
-
-        let confpath = coins_en["confpath"].as_str().unwrap_or ("");
-        let c_confpath = try_s! (CString::new (confpath));
-        let confpath_ptr = if confpath == "" {
-            null_mut()
-        } else {
-            c_confpath.as_ptr() as *mut c_char
-        };
+        let confpathᵖ = try_s! (confpath (coins_en));
+        let confpathˢ = try_s! (confpathᵖ.to_str().ok_or ("Malformed confpath"));
+        let confpathᶜ = try_s! (CString::new (confpathˢ));
 
         lp::LP_userpass (
             ii.userpass.as_mut_ptr(),            // userpass
             c_ticker.as_ptr() as *mut c_char,    // symbol
-            c_asset.as_ptr() as *mut c_char,     // assetname
-            c_name.as_ptr() as *mut c_char,      // confroot
-            c_name2_ptr,                         // name
-            confpath_ptr,                        // confpath
+            null_mut(),                          // assetname
+            null_mut(),                          // confroot
+            null_mut(),                          // name
+            confpathᶜ.as_ptr() as *mut c_char,   // confpath
             rpcport                              // origport
         )
     };
