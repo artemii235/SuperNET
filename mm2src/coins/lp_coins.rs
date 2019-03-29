@@ -675,7 +675,7 @@ fn confpath (coins_en: &Json) -> Result<PathBuf, String> {
         let home = try_s! (home_dir().ok_or ("Can not detect the user home directory"));
         if let Some (assetˢ) = coins_en["asset"].as_str() {
             let assetˢ = assetˢ.to_lowercase();
-            return Ok (home.join (".komodo") .join (assetˢ) .join (fomat! ((assetˢ) ".conf")))
+            return Ok (home.join (".komodo") .join (&assetˢ) .join (fomat! ((assetˢ) ".conf")))
         } else if let Some (nameˢ) = coins_en["name"].as_str() {
             return Ok (home.join (fomat! ('.' (nameˢ))) .join (fomat! ((nameˢ) ".conf")))
         }
