@@ -243,6 +243,9 @@ pub unsafe fn lp_command_process(
     if !json["result"].is_null() || !json["error"].is_null() {
         null_mut()
     } else {
+        if std::env::var("LOG_COMMANDS").is_ok() {
+            log!("Got command: " [json]);
+        }
         let _lock = SINGLE_THREADED_C_LOCK.lock();
         let mut trade_command = -1;
         if stats_json_only == 0 {
