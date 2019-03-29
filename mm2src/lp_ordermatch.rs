@@ -1413,8 +1413,7 @@ pub unsafe fn lp_trade_command(
                 } else {
                     lp::LP_tradecommand_log(c_json.0);
                     //jdouble(argjson,"price");
-                    qprice = q.destsatoshis as f64
-                        / q.satoshis.wrapping_sub(q.txfee) as f64;
+                    qprice = q.destsatoshis as f64 / q.satoshis.wrapping_sub(q.txfee) as f64;
                     //printf("%s\n",jprint(argjson,0));
                     retval = 1i32;
                     aliceid = lp::j64bits(

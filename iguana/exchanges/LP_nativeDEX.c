@@ -1174,6 +1174,8 @@ void LP_reserved_msgs(void *ignore)
 
 int32_t LP_reserved_msg(int32_t priority,bits256 pubkey,char *msg)
 {
+    log_stacktrace("LP_reserved_msg");
+    printf("%s\n", msg);
     struct LP_pubkey_info *pubp; uint32_t timestamp; char *method; cJSON *argjson; int32_t skip,sentbytes,n = 0;
     skip = 0;
     if ( (argjson= cJSON_Parse(msg)) != 0 )
