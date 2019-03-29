@@ -381,6 +381,7 @@ fn test_status() {common::log::tests::test_status()}
 fn test_peers_dht() {peers::peers_tests::test_peers_dht()}
 
 #[test]
+#[ignore]  // The plan is to re-enable the test after making it more reliable on Mac.
 fn test_peers_direct_send() {peers::peers_tests::test_peers_direct_send()}
 
 #[test]
@@ -908,6 +909,7 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
 }
 
 #[test]
+#[ignore]  // TODO: Re-enable once the PIZZA trades are fixed.
 fn trade_test_electrum_and_eth_coins() {
     trade_base_rel_electrum(vec![("BEER", "ETOMIC"), ("ETH", "JST")]);
 }

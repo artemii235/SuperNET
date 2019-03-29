@@ -979,7 +979,6 @@ fn build_c_code(mm_version: &str) {
 
     println!("cargo:rustc-link-lib=static=libcrypto777");
     println!("cargo:rustc-link-lib=static=libjpeg");
-    //Already linked from etomicrs->ethkey->eth-secp256k1//println!("cargo:rustc-link-lib=static=libsecp256k1");
 
     if cfg!(windows) {
         println!("cargo:rustc-link-search=native={}", path2s(rabs("x64")));
@@ -1059,7 +1058,6 @@ fn main() {
         path2s(rabs("iguana/exchanges/etomicswap"))
     );
     println!("rerun-if-changed={}", path2s(rabs("iguana/exchanges")));
-    println!("rerun-if-changed={}", path2s(rabs("iguana/secp256k1")));
     println!("rerun-if-changed={}", path2s(rabs("crypto777")));
     println!("rerun-if-changed={}", path2s(rabs("crypto777/jpeg")));
     println!("rerun-if-changed={}", path2s(rabs("OSlibs/win")));
