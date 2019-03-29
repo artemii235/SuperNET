@@ -108,7 +108,6 @@ uint16_t LP_userpassfp(char *symbol,char *username,char *password,FILE *fp)
     return(port);
 }
 
-// TODO: remove in favor of `fn confpath`
 void LP_statefname(char *fname,char *symbol,char *assetname,char *str,char *name,char *confpath)
 {
     if ( confpath != 0 && confpath[0] != 0 )
@@ -200,16 +199,29 @@ void LP_statefname(char *fname,char *symbol,char *assetname,char *str,char *name
 
 uint16_t LP_userpass(char *userpass,char *symbol,char *assetname,char *confroot,char *name,char *confpath,uint16_t origport)
 {
-    FILE *fp; char username[512],password[512]; uint16_t port = 0;
+    FILE *fp; char fname[512],username[512],password[512],confname[512]; uint16_t port = 0;
     userpass[0] = 0;
-    if ( (fp= fopen(confpath,"rb")) != 0 )
+    sprintf(confname,"%s.conf",confroot);
+    if ( 0 )
+        printf("%s (%s) %s confname.(%s) confroot.(%s)\n",symbol,assetname,name,confname,confroot);
+#if defined(__APPLE__) || defined(NATIVE_WINDOWS)
+    int32_t len;
+    confname[0] = toupper(confname[0]);
+    len = (int32_t)strlen(confname);
+    if ( strcmp(&confname[len-4],"coin") == 0 )
+        confname[len - 4] = 'C';
+#endif
+    LP_statefname(fname,symbol,assetname,confname,name,confpath);
+    if ( (fp= fopen(fname,"rb")) != 0 )
     {
         if ( (port= LP_userpassfp(symbol,username,password,fp)) == 0 )
             port = origport;
         sprintf(userpass,"%s:%s",username,password);
         fclose(fp);
+        if ( 0 )
+            printf("LP_statefname.(%s) <- %s %s %s (%s) (%s)\n",fname,name,symbol,assetname,userpass,confpath);
         return(port);
-    } else printf("cant open.(%s)\n",confpath);
+    } else printf("cant open.(%s)\n",fname);
     return(origport);
 }
 
