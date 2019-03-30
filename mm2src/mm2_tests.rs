@@ -352,7 +352,7 @@ fn alice_can_see_the_active_order_after_connection() {
     log! ({"enable_coins (alice): {:?}", enable_coins_eth_electrum (&mm_alice, vec!["http://195.201.0.6:8545"])});
 
     // wait until Alice recognize Bob node by importing it's pubkey
-    unwrap! (mm_alice.wait_for_log (33., &|log| log.contains ("set pubkey for")));
+    // unwrap! (mm_alice.wait_for_log (33., &|log| log.contains ("set pubkey for")));
 
     for _ in 0..2 {
         // Alice should be able to see the order no later than 10 seconds after recognizing the bob
@@ -909,7 +909,6 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
 }
 
 #[test]
-#[ignore]  // TODO: Re-enable once the PIZZA trades are fixed.
 fn trade_test_electrum_and_eth_coins() {
     trade_base_rel_electrum(vec![("BEER", "ETOMIC"), ("ETH", "JST")]);
 }

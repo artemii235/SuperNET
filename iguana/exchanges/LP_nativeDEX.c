@@ -1019,17 +1019,6 @@ void queue_loop(void *ctx)
                         //bits256 magic;
                         //magic = LP_calc_magic(ptr->msg,(int32_t)(ptr->msglen - sizeof(bits256)));
                         //memcpy(&ptr->msg[ptr->msglen - sizeof(bits256)],&magic,sizeof(magic));
-                        if ( 0 )
-                        {
-                            static FILE *fp;
-                            if ( fp == 0 )
-                                fp = fopen("packet.log","wb");
-                            if ( fp != 0 )
-                            {
-                                fprintf(fp,"%s\n",(char *)ptr->msg);
-                                fflush(fp);
-                            }
-                        }
                         if ( (json= cJSON_Parse((char *)ptr->msg)) != 0 )
                         {
                             if ( ptr->msglen < sizeof(linebuf) )
@@ -1070,28 +1059,6 @@ void queue_loop(void *ctx)
                             //printf("queue_loop sock.%d len.%d notready.%d, skip\n",ptr->sock,ptr->msglen,ptr->notready);
                             ptr->sock = -1;
                         }
-                    }
-                }
-            }
-            else if ( 0 && time(NULL) > ptr->starttime+13 )
-            {
-                LP_crc32find(&duplicate,-1,ptr->crc32);
-                if ( duplicate > 0 )
-                {
-                    LP_Qfound++;
-                    if ( (LP_Qfound % 100) == 0 )
-                        printf("found.%u Q.%d err.%d match.%d\n",ptr->crc32,LP_Qenqueued,LP_Qerrors,LP_Qfound);
-                    flag++;
-                }
-                else if ( 0 ) // too much beyond duplicate filter when network is busy
-                {
-                    printf("couldnt find.%u peerind.%d Q.%d err.%d match.%d\n",ptr->crc32,ptr->peerind,LP_Qenqueued,LP_Qerrors,LP_Qfound);
-                    ptr->peerind++;
-                    if ( (ptr->sock= LP_peerindsock(&ptr->peerind)) < 0 )
-                    {
-                        printf("%d no more peers to try at peerind.%d %p Q_LP.%p\n",n,ptr->peerind,ptr,LP_Q);
-                        flag++;
-                        LP_Qerrors++;
                     }
                 }
             }
@@ -1174,8 +1141,6 @@ void LP_reserved_msgs(void *ignore)
 
 int32_t LP_reserved_msg(int32_t priority,bits256 pubkey,char *msg)
 {
-    log_stacktrace("LP_reserved_msg");
-    printf("%s\n", msg);
     struct LP_pubkey_info *pubp; uint32_t timestamp; char *method; cJSON *argjson; int32_t skip,sentbytes,n = 0;
     skip = 0;
     if ( (argjson= cJSON_Parse(msg)) != 0 )
