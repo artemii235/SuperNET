@@ -981,8 +981,10 @@ const P2P_SEED_NODES: [&'static str; 5] = [
 ];
 
 /// Default seed nodes for netid 9999 that is used for MM2 testing
-const P2P_SEED_NODES_9999: [&'static str; 1] = [
+const P2P_SEED_NODES_9999: [&'static str; 3] = [
     "195.201.116.176",
+    "46.4.87.18",
+    "46.4.78.11",
 ];
 
 /// Setup the peer-to-peer network.
