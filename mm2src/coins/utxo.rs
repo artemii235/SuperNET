@@ -123,7 +123,8 @@ pub struct UtxoCoinImpl {  // pImpl idiom.
     /// Is coin protected by Komodo dPoW?
     /// https://komodoplatform.com/security-delayed-proof-of-work-dpow/
     notarized: bool,
-    /// RPC port
+    /// The local RPC port of the coin wallet.  
+    /// Fetched from the wallet config when we can find it.
     rpc_port: u16,
     /// RPC username
     rpc_user: String,
@@ -981,7 +982,10 @@ pub enum UtxoInitMode {
     Electrum(Vec<String>),
 }
 
-pub fn utxo_coin_from_iguana_info(info: *mut lp::iguana_info, mode: UtxoInitMode) -> Result<MmCoinEnum, String> {
+pub fn utxo_coin_from_iguana_info(
+info: *mut lp::iguana_info, mode: UtxoInitMode,
+rpc_port: u16,
+) -> Result<MmCoinEnum, String> {
     let info = unsafe { *info };
     let ticker = try_s! (unsafe {CStr::from_ptr (info.symbol.as_ptr())} .to_str()) .into();
 
@@ -1012,6 +1016,7 @@ pub fn utxo_coin_from_iguana_info(info: *mut lp::iguana_info, mode: UtxoInitMode
         UtxoInitMode::Native => {
             let auth_str = unsafe { try_s!(CStr::from_ptr(info.userpass.as_ptr()).to_str()) };
             let uri = unsafe { try_s!(CStr::from_ptr(info.serverport.as_ptr()).to_str()) };
+            log! ([=uri]);
             UtxoRpcClientEnum::Native(NativeClient {
                 uri: format!("http://{}", uri),
                 auth: format!("Basic {}", base64_encode(auth_str, URL_SAFE)),
@@ -1089,7 +1094,7 @@ pub fn utxo_coin_from_iguana_info(info: *mut lp::iguana_info, mode: UtxoInitMode
         pub_t_addr_prefix: info.taddr,
         p2sh_t_addr_prefix: info.taddr,
         rpc_password: "".to_owned(),
-        rpc_port: 0,
+        rpc_port,
         rpc_user: "".to_owned(),
         segwit: false,
         wif_prefix: info.wiftype,
