@@ -1016,8 +1016,8 @@ rpc_port: u16,
         UtxoInitMode::Native => {
             let auth_str = unsafe { try_s!(CStr::from_ptr(info.userpass.as_ptr()).to_str()) };
             let uri = unsafe { try_s!(CStr::from_ptr(info.serverport.as_ptr()).to_str()) };
-            log! ([=uri]);
             UtxoRpcClientEnum::Native(NativeClient {
+                // Similar to `fomat!("http://127.0.0.1:"(rpc_port))`.
                 uri: format!("http://{}", uri),
                 auth: format!("Basic {}", base64_encode(auth_str, URL_SAFE)),
             })

@@ -705,7 +705,6 @@ fn lp_coininit (ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoinEnum, Str
         };
 
         let confpathᵖ = try_s! (confpath (coins_en));
-        log! ([=confpathᵖ]);
         let confpathˢ = try_s! (confpathᵖ.to_str().ok_or ("Malformed confpath"));
         let confpathᶜ = try_s! (CString::new (confpathˢ));
 
