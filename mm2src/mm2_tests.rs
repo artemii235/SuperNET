@@ -287,6 +287,7 @@ fn alice_can_see_the_active_order_after_connection() {
             "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| unwrap! (s.parse::<i64>())),
             "passphrase": "bob passphrase",
             "coins": coins,
+            "seednode": true,
         }),
         "db4be27033b636c6644c356ded97b0ad08914fcb8a1e2a1efc915b833c2cbd19".into(),
         match var ("LOCAL_THREAD_MM") {Ok (ref e) if e == "bob" => Some (local_start()), _ => None}
@@ -399,9 +400,7 @@ fn test_my_balance() {
             "rpcip": env::var ("BOB_TRADE_IP") .ok(),
             "passphrase": "bob passphrase",
             "coins": coins,
-            "alice_contract":"0xe1d4236c5774d35dc47dcc2e5e0ccfc463a3289c",
-            "bob_contract":"0x105aFE60fDC8B5c021092b09E8a042135A4A976E",
-            "ethnode":"http://195.201.0.6:8545"
+            "seednode": true,
         }),
         "db4be27033b636c6644c356ded97b0ad08914fcb8a1e2a1efc915b833c2cbd19".into(),
         match var ("LOCAL_THREAD_MM") {Ok (ref e) if e == "bob" => Some (local_start()), _ => None}
@@ -483,6 +482,7 @@ fn test_check_balance_on_order_post() {
             "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| unwrap! (s.parse::<i64>())),
             "passphrase": "bob passphrase",
             "coins": coins,
+            "seednode": true,
         }),
         "db4be27033b636c6644c356ded97b0ad08914fcb8a1e2a1efc915b833c2cbd19".into(),
         match var ("LOCAL_THREAD_MM") {Ok (ref e) if e == "bob" => Some (local_start()), _ => None}
@@ -531,6 +531,7 @@ fn test_rpc_password_from_json() {
             "passphrase": "bob passphrase",
             "coins": coins,
             "rpc_password": "",
+            "seednode": true,
         }),
         "password".into(),
         match var ("LOCAL_THREAD_MM") {Ok (ref e) if e == "bob" => Some (local_start()), _ => None}
@@ -545,6 +546,7 @@ fn test_rpc_password_from_json() {
             "passphrase": "bob passphrase",
             "coins": coins,
             "rpc_password": {"key":"value"},
+            "seednode": true,
         }),
         "password".into(),
         match var ("LOCAL_THREAD_MM") {Ok (ref e) if e == "bob" => Some (local_start()), _ => None}
@@ -558,6 +560,7 @@ fn test_rpc_password_from_json() {
             "passphrase": "bob passphrase",
             "coins": coins,
             "rpc_password": "password",
+            "seednode": true,
         }),
         "password".into(),
         match var ("LOCAL_THREAD_MM") {Ok (ref e) if e == "bob" => Some (local_start()), _ => None}
@@ -621,6 +624,7 @@ fn test_rpc_password_from_json_no_userpass() {
             "netid": 9998,
             "passphrase": "bob passphrase",
             "coins": coins,
+            "seednode": true,
         }),
         "password".into(),
         match var ("LOCAL_THREAD_MM") {Ok (ref e) if e == "bob" => Some (local_start()), _ => None}
@@ -771,6 +775,7 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
             "passphrase": bob_passphrase,
             "coins": coins,
             "rpc_password": "password",
+            "seednode": true,
         }),
         "password".into(),
         match var ("LOCAL_THREAD_MM") {Ok (ref e) if e == "bob" => Some (local_start()), _ => None}
@@ -1173,6 +1178,7 @@ fn test_withdraw_and_send() {
             "passphrase": alice_passphrase,
             "coins": coins,
             "rpc_password": "password",
+            "seednode": true,
         }),
         "password".into(),
         match var ("LOCAL_THREAD_MM") {Ok (ref e) if e == "alice" => Some (local_start()), _ => None}
@@ -1207,6 +1213,7 @@ fn test_swap_status() {
             "passphrase": "some passphrase",
             "coins": coins,
             "rpc_password": "password",
+            "seednode": true,
         }),
         "password".into(),
         match var ("LOCAL_THREAD_MM") {Ok (ref e) if e == "alice" => Some (local_start()), _ => None}

@@ -45,7 +45,7 @@ use serde_json::{Value as Json};
 use std::borrow::Cow;
 use std::fs;
 use std::ffi::{CStr, CString};
-use std::io::{Cursor, Read, Write};
+use std::io::{Cursor, Read, Write, BufRead, BufReader};
 use std::mem::{transmute, zeroed};
 use std::net::{IpAddr, Ipv4Addr, TcpListener, TcpStream};
 use std::path::Path;
@@ -1047,14 +1047,22 @@ pub unsafe fn lp_initpeers (ctx: &MmArc, pubsock: i32, mut mypeer: *mut lp::LP_p
         Vec::new()
     };
 
-    if seeds.len() > 0 {
-        log!("Connecting to seed " (seeds[0].0));
-        let mut seed_connection: TcpStream = try_s!(TcpStream::connect(&fomat!((seeds[0].0) ":" (pubport))));
-        try_s!(seed_connection.set_nonblocking(true));
+    let i_am_seed = ctx.conf["seednode"].as_bool().unwrap_or(false);
+    if !i_am_seed {
+        if seeds.len() == 0 {
+            return ERR!("At least 1 seednode address must be provided");
+        }
+        let mut seed_connections = vec![];
+        for (seed_ip, _) in seeds.iter() {
+            log!("Connecting to seed " (seed_ip));
+            let connection: TcpStream = try_s!(TcpStream::connect(&fomat!((seed_ip) ":" (pubport))));
+            try_s!(connection.set_nonblocking(true));
+            seed_connections.push(connection);
+        }
         thread::spawn(move || {
             let mut buf = String::new();
             loop {
-                seed_connection.read_to_string(&mut buf);
+                seed_connections[0].read_to_string(&mut buf);
                 if buf.len() > 0 {
                     log!((buf));
                     lp_queue_command(buf.clone());
@@ -1062,13 +1070,17 @@ pub unsafe fn lp_initpeers (ctx: &MmArc, pubsock: i32, mut mypeer: *mut lp::LP_p
                 }
 
                 match P2P_CHANNEL.1.recv_timeout(Duration::from_millis(1)) {
-                    Ok(msg) => { seed_connection.write(&msg).unwrap(); },
+                    Ok(mut msg) => {
+                        msg.push('\n' as u8);
+                        seed_connections[0].write(&msg).unwrap();
+                    },
                     Err(channel::RecvTimeoutError::Timeout) => {},
                     Err(channel::RecvTimeoutError::Disconnected) => break,
                 };
             }
         });
     }
+
     for (seed_ip, is_lp) in seeds {
         let ip = try_s! (CString::new (&seed_ip[..]));
         lp::LP_addpeer (mypeer, pubsock, ip.as_ptr() as *mut c_char, myport, pullport, pubport, if is_lp {1} else {0}, lp::G.LP_sessionid, netid);
@@ -1777,44 +1789,63 @@ pub fn lp_init (mypullport: u16, mypubport: u16, conf: Json, c_conf: CJSON) -> R
     unsafe {lp::LP_canbind = 1}
     unsafe {lp::G.netid = ctx.conf["netid"].as_u64().unwrap_or (0) as u16}
     unsafe {lp::LP_mypubsock = -1}
-    let listener: TcpListener = try_s!(TcpListener::bind(&fomat!((myipaddr) ":" (mypubport))));
-    try_s!(listener.set_nonblocking(true));
 
-    thread::spawn(move || {
-        let mut clients = vec![];
-        loop {
-            match listener.accept() {
-                Ok((mut stream, addr)) => {
-                    log!("New connection from " [addr]);
-                    stream.set_nonblocking(true).unwrap();
-                    stream.write(b"hello");
-                    clients.push(stream);
-                },
-                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => (),
-                Err(e) => panic!("encountered IO error: {}", e),
-            }
-            if clients.len() > 0 {
-                match P2P_CHANNEL.1.recv_timeout(Duration::from_millis(1)) {
-                    Ok(msg) => clients.iter_mut().for_each(|client| {
-                        client.write(&msg).unwrap();
-                    }),
-                    Err(channel::RecvTimeoutError::Timeout) => {},
-                    Err(channel::RecvTimeoutError::Disconnected) => break,
-                };
+    let i_am_seed = ctx.conf["seednode"].as_bool().unwrap_or(false);
+    if i_am_seed {
+        let listener: TcpListener = try_s!(TcpListener::bind(&fomat!((myipaddr) ":" (mypubport))));
+        try_s!(listener.set_nonblocking(true));
 
-                let mut buf = String::new();
-                for client in clients.iter_mut() {
-                    client.read_to_string(&mut buf);
-                    if buf.len() > 0 {
-                        log!((buf));
-                        lp_queue_command(buf.clone());
-                        buf.clear();
-                    }
+        thread::spawn(move || {
+            let mut clients = vec![];
+            loop {
+                match listener.accept() {
+                    Ok((stream, addr)) => {
+                        log!("New connection from " (addr));
+                        match stream.set_nonblocking(true) {
+                            Ok(_) => clients.push((BufReader::new(stream), addr)),
+                            Err(e) => log!("Error " (e) " setting nonblocking mode for addr " (addr)),
+                        }
+                    },
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => (),
+                    Err(e) => panic!("encountered IO error: {}", e),
+                }
+                if clients.len() > 0 {
+                    clients = clients.drain_filter(|(client, addr)| {
+                        let mut buf = String::new();
+                        match client.read_line(&mut buf) {
+                            Ok(_) => {
+                                log!([buf.len()]);
+                                if buf.len() > 0 {
+                                    log!((buf));
+                                    lp_queue_command(buf);
+                                }
+                                true
+                            },
+                            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => true,
+                            Err(e) => {
+                                log!("Error " (e) " receiving message from " (addr) ". Dropping connection.");
+                                false
+                            },
+                        }
+                    }).collect();
+
+                    clients = match P2P_CHANNEL.1.recv_timeout(Duration::from_millis(1)) {
+                        Ok(msg) => clients.drain_filter(|(client, addr)| {
+                            match client.get_mut().write(&msg) {
+                                Ok(_) => true,
+                                Err(e) => {
+                                    log!("Error " (e) " sending message to " (addr) ". Dropping connection.");
+                                    false
+                                }
+                            }
+                        }).collect(),
+                        Err(channel::RecvTimeoutError::Timeout) => clients,
+                        Err(channel::RecvTimeoutError::Disconnected) => panic!("P2P channel is disconnected"),
+                    };
                 }
             }
-        }
-    });
-
+        });
+    }
     try_s! (coins::lp_initcoins (&ctx));
     unsafe {lp::RPC_port = try_s! (ctx.rpc_ip_port()) .port()}
     unsafe {lp::G.waiting = 1}
