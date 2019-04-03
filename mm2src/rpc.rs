@@ -49,9 +49,11 @@ use crate::mm2::lp_ordermatch::{buy, sell};
 use crate::mm2::lp_swap::{my_swap_status, stats_swap_status};
 use crate::mm2::CJSON;
 
+#[path = "rpc/lp_commands.rs"]
 mod lp_commands;
 use self::lp_commands::*;
 
+#[path = "rpc/lp_signatures.rs"]
 mod lp_signatures;
 
 lazy_static! {
@@ -154,13 +156,13 @@ fn rpc_process_json(ctx: MmArc, remote_addr: SocketAddr, json: Json, c_json: CJS
     let stats_result = unsafe {
         lp::stats_JSON(
             ctx.btc_ctx() as *mut c_void,
-            0,
             my_ip_ptr.as_ptr() as *mut c_char,
             lp::LP_mypubsock,
             c_json.0,
             remote_ip_ptr.as_ptr() as *mut c_char,
             rpc_ip_port.port(),
             1,
+            ctx.conf["rpc_local_only"].as_bool().unwrap_or(true) as u8,
         )
     };
 
@@ -256,11 +258,11 @@ impl Service for RpcService {
             let req = try_h! (req);
             let req: Json = try_h! (json::from_slice (&req));
 
-            {
-                let method = req["method"].as_str();
-                if !remote_addr.ip().is_loopback() && !PUBLIC_METHODS.contains (&method) {
-                    return rpc_err_response (400, "Selected method can be called from localhost only!")
-                }
+            let method = req["method"].as_str();
+            // https://github.com/artemii235/SuperNET/issues/368
+            let local_only = ctx.conf["rpc_local_only"].as_bool().unwrap_or(true);
+            if local_only && !remote_addr.ip().is_loopback() && !PUBLIC_METHODS.contains (&method) {
+                return rpc_err_response (400, &ERRL!("Selected method can be called from localhost only!"))
             }
             try_h! (auth (&req, &ctx));
 
