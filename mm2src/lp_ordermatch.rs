@@ -18,7 +18,7 @@
 //  ordermatch.rs
 //  marketmaker
 //
-use common::{lp, nn, free_c_ptr, c_char_to_string, sat_to_f, SATOSHIS, SMALLVAL, CJSON, dstr, rpc_response, rpc_err_response, HyRes};
+use common::{lp, lp_queue_command, lp_queue_command_for_c, nn, free_c_ptr, c_char_to_string, sat_to_f, SATOSHIS, SMALLVAL, CJSON, dstr, rpc_response, rpc_err_response, HyRes};
 use common::mm_ctx::{from_ctx, MmArc, MmWeak};
 use coins::{lp_coinfind, MmCoinEnum};
 use coins::utxo::{compressed_pub_key_from_priv_raw, ChecksumType};
@@ -34,8 +34,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::thread;
 
-use crate::mm2::lp_network::lp_queue_command;
 use crate::mm2::lp_swap::{MakerSwap, run_maker_swap, TakerSwap, run_taker_swap};
+use crate::mm2::lp_native_dex::{broadcast_p2p_msg};
 
 /// Temporary kludge, improving readability of the not-yet-fully-ported code. Should be removed eventually.
 macro_rules! c2s {($cs: expr) => {unwrap!(CStr::from_ptr($cs.as_ptr()).to_str())}}
@@ -458,12 +458,12 @@ unsafe fn lp_connect_start_bob(ctx: &MmArc, base: *mut c_char, rel: *mut c_char,
                     lp::LP_otheraddress((*qp).srccoin.as_mut_ptr(), other_addr.as_mut_ptr(), (*qp).destcoin.as_mut_ptr(), (*qp).destaddr.as_mut_ptr());
                     lp::LP_importaddress((*qp).srccoin.as_mut_ptr(), other_addr.as_mut_ptr());
                     let zero = lp::bits256::default();
-                    lp::LP_reserved_msg(1, (*qp).desthash, lp::jprint(req_json, 0));
+                    broadcast_p2p_msg((*qp).desthash, lp::jprint(req_json, 0));
                     thread::sleep(Duration::from_secs(1));
                     printf(b"send CONNECT for %u-%u\n\x00".as_ptr() as *const c_char, (*qp).R.requestid, (*qp).R.quoteid);
-                    lp::LP_reserved_msg(1, zero, lp::jprint(req_json, 0));
+                    // broadcast_p2p_msg(zero, lp::jprint(req_json, 0));
                     if lp::IPC_ENDPOINT >= 0 {
-                        lp_queue_command(null_mut(), lp::jprint(req_json, 0), lp::IPC_ENDPOINT, -1, 0);
+                        lp_queue_command_for_c(null_mut(), lp::jprint(req_json, 0), lp::IPC_ENDPOINT, -1, 0);
                     }
                     if (*qp).mpnet != 0 && (*qp).gtc == 0 {
                         let msg = lp::jprint(req_json, 0);
@@ -776,7 +776,7 @@ unsafe fn lp_connected_alice(ctx_ffi_handle: u32, qp: *mut lp::LP_quoteinfo, pai
                 lp::LP_swapsfp_update((*qp).R.requestid, (*qp).R.quoteid);
                 if lp::IPC_ENDPOINT >= 0 {
                     let msg = lp::jprint(retjson.0, 0);
-                    lp_queue_command(null_mut(), msg, lp::IPC_ENDPOINT, -1, 0);
+                    lp_queue_command_for_c(null_mut(), msg, lp::IPC_ENDPOINT, -1, 0);
                     free_c_ptr(msg as *mut c_void);
                 }
             },
@@ -1011,9 +1011,9 @@ unsafe fn lp_trades_gotrequest(ctx: &MmArc, qp: *mut lp::LP_quoteinfo, newqp: *m
     lp::jaddnum(reqjson, b"quotetime\x00".as_ptr() as *mut c_char, (*qp).quotetime as f64);
     lp::jaddnum(reqjson, b"pending\x00".as_ptr() as *mut c_char, ((*qp).timestamp + lp::LP_RESERVETIME) as f64);
     lp::jaddstr(reqjson, b"method\x00".as_ptr() as *mut c_char, b"reserved\x00".as_ptr() as *mut c_char);
-    lp::LP_reserved_msg(1, (*qp).desthash, lp::jprint(reqjson, 0));
-    let zero = lp::bits256::default();
-    lp::LP_reserved_msg(1, zero, lp::jprint(reqjson, 0));
+    broadcast_p2p_msg((*qp).desthash, lp::jprint(reqjson, 0));
+    // let zero = lp::bits256::default();
+    // broadcast_p2p_msg(zero, lp::jprint(reqjson, 0));
     if (*qp).mpnet != 0 && (*qp).gtc == 0 {
         let msg = lp::jprint(reqjson, 0);
         lp::LP_mpnet_send(0, msg, 1, (*qp).destaddr.as_mut_ptr());

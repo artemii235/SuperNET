@@ -206,7 +206,7 @@ int32_t LP_peerindsock(int32_t *peerindp)
         {
             if (peerind == *peerindp)
             {
-                //printf("peerind.%d -> sock %d\n",peerind,peer->pushsock);
+                // printf("peerind.%d -> sock %d ip %s\n",peerind,peer->pushsock,peer->ipaddr);
                 return (peer->pushsock);
             }
             peerind++;
@@ -219,15 +219,10 @@ void _LP_queuesend(uint32_t crc32,int32_t sock0,int32_t sock1,uint8_t *msg,int32
 {
     int32_t i,maxind,flag = 0,peerind = 0; //sentbytes,
     maxind = LP_numpeers();
-    // printf("%s\n", (char *)msg);
+    //printf("%s\n", (char *)msg);
     // printf("num peers %d sock0 %d sock1 %d\n", maxind, sock0, sock1);
     if ( sock0 >= 0 ) {
         _LP_sendqueueadd(crc32, sock0, msg, msglen, 0);
-    }
-    for (i=0; i < maxind; i++) {
-        peerind = i;
-        sock1 = LP_peerindsock(&peerind);
-        _LP_sendqueueadd(crc32,sock1,msg,msglen,needack);
     }
 }
 

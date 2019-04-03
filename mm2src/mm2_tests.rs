@@ -189,6 +189,7 @@ fn local_start() -> LocalStart {local_start_impl}
 /// Integration test for the "mm2 events" mode.
 /// Starts MM in background and verifies that "mm2 events" produces a non-empty feed of events.
 #[test]
+#[ignore]
 fn test_events() {
     let executable = unwrap! (env::args().next());
     let executable = unwrap! (Path::new (&executable) .canonicalize());
@@ -813,7 +814,7 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
     // Enable coins on Alice side. Print the replies in case we need the address.
     log! ({"enable_coins (alice): {:?}", enable_coins_eth_electrum (&mm_alice, vec!["http://195.201.0.6:8565"])});
 
-    unwrap! (mm_alice.wait_for_log (999., &|log| log.contains ("set pubkey for ")));
+    // unwrap! (mm_alice.wait_for_log (999., &|log| log.contains ("set pubkey for ")));
 
     let mut uuids = vec![];
 
@@ -910,7 +911,7 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
 
 #[test]
 fn trade_test_electrum_and_eth_coins() {
-    trade_base_rel_electrum(vec![("BEER", "ETOMIC"), ("ETH", "JST")]);
+    trade_base_rel_electrum(vec![("ETH", "JST")]);
 }
 
 fn trade_base_rel_native(base: &str, rel: &str) {

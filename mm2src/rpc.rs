@@ -23,7 +23,7 @@
 //  Copyright © 2014-2018 SuperNET. All rights reserved.
 //
 use coins::{enable, electrum, my_balance, send_raw_transaction, withdraw};
-use common::{free_c_ptr, lp, rpc_response, rpc_err_response, HyRes, CORE};
+use common::{free_c_ptr, lp, rpc_response, rpc_err_response, HyRes, CORE, lp_queue_command_for_c};
 use common::mm_ctx::MmArc;
 use futures::{self, Future};
 use futures_cpupool::CpuPool;
@@ -44,14 +44,15 @@ use std::sync::Mutex;
 use tokio_core::net::TcpListener;
 use hex;
 
-use crate::mm2::lp_network::lp_queue_command;
 use crate::mm2::lp_ordermatch::{buy, sell};
 use crate::mm2::lp_swap::{my_swap_status, stats_swap_status};
 use crate::mm2::CJSON;
 
+#[path = "rpc/lp_commands.rs"]
 mod lp_commands;
 use self::lp_commands::*;
 
+#[path = "rpc/lp_signatures.rs"]
 mod lp_signatures;
 
 lazy_static! {
@@ -136,7 +137,7 @@ fn rpc_process_json(ctx: MmArc, remote_addr: SocketAddr, json: Json, c_json: CJS
             let json_str = json.to_string();
             let c_json_ptr = try_h! (CString::new (json_str));
             unsafe {
-                lp_queue_command(null_mut(),
+                lp_queue_command_for_c(null_mut(),
                                     c_json_ptr.as_ptr() as *mut c_char,
                                     lp::IPC_ENDPOINT,
                                     1,

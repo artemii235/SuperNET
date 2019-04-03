@@ -28,11 +28,12 @@
 // locktime claiming on sporadic assetchains
 // there is an issue about waiting for notarization for a swap that never starts (expiration ok)
 
-use common::{coins_iter, lp, slurp_url, os, CJSON, MM_VERSION, global_dbdir};
+use common::{coins_iter, lp, lp_queue_command, lp_queue_command_for_c, slurp_url, os, CJSON, MM_VERSION, global_dbdir, free_c_ptr, P2P_CHANNEL};
 use common::log::TagParam;
 use common::mm_ctx::{MmCtx, MmArc};
 use common::nn::*;
 use crc::crc32;
+use crossbeam::channel;
 use futures::{Future};
 use gstuff::now_ms;
 use hex;
@@ -46,7 +47,7 @@ use std::fs;
 use std::ffi::{CStr, CString};
 use std::io::{Cursor, Read, Write};
 use std::mem::{size_of, transmute, zeroed};
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::{IpAddr, Ipv4Addr, TcpListener, TcpStream};
 use std::path::Path;
 use std::ptr::null_mut;
 use std::str;
@@ -55,9 +56,28 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, sleep};
 use std::time::Duration;
 
-use crate::mm2::lp_network::{lp_command_q_loop, lp_queue_command};
+use crate::mm2::lp_network::{lp_command_q_loop};
 use crate::mm2::lp_ordermatch::{lp_trade_command, lp_trades_loop};
 use crate::mm2::rpc::{self, SINGLE_THREADED_C_LOCK};
+
+#[no_mangle]
+pub extern fn broadcast_p2p_msg (pubkey: lp::bits256, msg: *mut c_char) {
+    if msg == null_mut() {
+        log!("received null msg");
+        return;
+    }
+
+    let msg_str = match unsafe { CStr::from_ptr(msg).to_str() } {
+        Ok(s) => s,
+        Err(e) => {
+            log!("Error creating CStr " [e]);
+            return;
+        }
+    };
+    log!("Msg " (msg_str));
+    P2P_CHANNEL.0.send(msg_str.to_owned().into_bytes()).unwrap();
+    free_c_ptr(msg as *mut c_void);
+}
 
 /*
 #include <stdio.h>
@@ -994,7 +1014,6 @@ pub unsafe fn lp_initpeers (ctx: &MmArc, pubsock: i32, mut mypeer: *mut lp::LP_p
     // Pick our ports.
     let (mut pullport, mut pubport, mut busport) = (0, 0, 0);
     lp::LP_ports (&mut pullport, &mut pubport, &mut busport, netid);
-
     // Add ourselves into the list of known peers.
     try_s! (peers::initialize (ctx, netid, lp::G.LP_mypub25519, pubport + 1, lp::G.LP_sessionid));
     let myipaddr_c = try_s! (CString::new (fomat! ((myipaddr))));
@@ -1028,6 +1047,28 @@ pub unsafe fn lp_initpeers (ctx: &MmArc, pubsock: i32, mut mypeer: *mut lp::LP_p
         Vec::new()
     };
 
+    if seeds.len() > 0 {
+        log!("Connecting to seed " (seeds[0].0));
+        let mut seed_connection: TcpStream = try_s!(TcpStream::connect(&fomat!((seeds[0].0) ":" (pubport))));
+        try_s!(seed_connection.set_nonblocking(true));
+        thread::spawn(move || {
+            let mut buf = String::new();
+            loop {
+                seed_connection.read_to_string(&mut buf);
+                if buf.len() > 0 {
+                    log!((buf));
+                    lp_queue_command(buf.clone());
+                    buf.clear();
+                }
+
+                match P2P_CHANNEL.1.recv_timeout(Duration::from_millis(1)) {
+                    Ok(msg) => { seed_connection.write(&msg).unwrap(); },
+                    Err(channel::RecvTimeoutError::Timeout) => {},
+                    Err(channel::RecvTimeoutError::Disconnected) => break,
+                };
+            }
+        });
+    }
     for (seed_ip, is_lp) in seeds {
         let ip = try_s! (CString::new (&seed_ip[..]));
         lp::LP_addpeer (mypeer, pubsock, ip.as_ptr() as *mut c_char, myport, pullport, pubport, if is_lp {1} else {0}, lp::G.LP_sessionid, netid);
@@ -1736,33 +1777,44 @@ pub fn lp_init (mypullport: u16, mypubport: u16, conf: Json, c_conf: CJSON) -> R
     unsafe {lp::LP_canbind = 1}
     unsafe {lp::G.netid = ctx.conf["netid"].as_u64().unwrap_or (0) as u16}
     unsafe {lp::LP_mypubsock = -1}
+    let listener: TcpListener = try_s!(TcpListener::bind(&fomat!((myipaddr) ":" (mypubport))));
+    try_s!(listener.set_nonblocking(true));
 
-    if true {
-        // NB: `myipaddr` should be a bindable IP, not some NAT-outer IP.
-        let bindaddr = fomat! ("tcp://" (myipaddr) ':' (mypubport));
-        unsafe {lp::LP_mypubsock = nn_socket (AF_SP as i32, NN_PUB as i32)}
-        if unsafe {lp::LP_mypubsock} >= 0 {
-            let bindaddr_c = try_s! (CString::new (&bindaddr[..]));
-            let bind_rc = unsafe {nn_bind (lp::LP_mypubsock, bindaddr_c.as_ptr())};
-            if bind_rc >= 0 {
-                let mut timeout: i32 = 100;
-                unsafe {nn_setsockopt (lp::LP_mypubsock, NN_SOL_SOCKET as i32, NN_SNDTIMEO as i32, &mut timeout as *mut i32 as *mut c_void, size_of::<i32>())};
-            } else {
-                log! ({"error binding to ({}).{}", bindaddr, unsafe {lp::LP_mypubsock}});
-                if unsafe {lp::LP_mypubsock} >= 0 {
-                    unsafe {nn_close (lp::LP_mypubsock); lp::LP_mypubsock = -1}
+    thread::spawn(move || {
+        let mut clients = vec![];
+        loop {
+            match listener.accept() {
+                Ok((mut stream, addr)) => {
+                    log!("New connection from " [addr]);
+                    stream.set_nonblocking(true).unwrap();
+                    stream.write(b"hello");
+                    clients.push(stream);
+                },
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => (),
+                Err(e) => panic!("encountered IO error: {}", e),
+            }
+            if clients.len() > 0 {
+                match P2P_CHANNEL.1.recv_timeout(Duration::from_millis(1)) {
+                    Ok(msg) => clients.iter_mut().for_each(|client| {
+                        client.write(&msg).unwrap();
+                    }),
+                    Err(channel::RecvTimeoutError::Timeout) => {},
+                    Err(channel::RecvTimeoutError::Disconnected) => break,
+                };
+
+                let mut buf = String::new();
+                for client in clients.iter_mut() {
+                    client.read_to_string(&mut buf);
+                    if buf.len() > 0 {
+                        log!((buf));
+                        lp_queue_command(buf.clone());
+                        buf.clear();
+                    }
                 }
             }
-        } else {
-            log! ({"error getting pubsock {}", unsafe {lp::LP_mypubsock}});
         }
-        log! ({"lp_init] Listening on {} (LP_mypubsock {})", bindaddr, unsafe {lp::LP_mypubsock}});
-        let mut mypullport = mypullport;
-        let mut pushaddr: [c_char; 256] = unsafe {zeroed()};
-        let myipaddr_c = try_s! (CString::new (fomat! ((myipaddr))));
-        unsafe {lp::LP_mypullsock = lp::LP_initpublicaddr (
-            ctx.btc_ctx() as *mut c_void, &mut mypullport, pushaddr.as_mut_ptr(), myipaddr_c.as_ptr() as *mut c_char, mypullport, 0)};
-    }
+    });
+
     try_s! (coins::lp_initcoins (&ctx));
     unsafe {lp::RPC_port = try_s! (ctx.rpc_ip_port()) .port()}
     unsafe {lp::G.waiting = 1}
@@ -1898,7 +1950,7 @@ pub fn lp_init (mypullport: u16, mypubport: u16, conf: Json, c_conf: CJSON) -> R
     // to C functions defined here in the mm2 binary crate. Such functions should be shared dynamically
     // in order not to interfere with the linking of the etomicrs test binary.
     unsafe {lp::SPAWN_RPC = Some (rpc::spawn_rpc)};
-    unsafe {lp::LP_QUEUE_COMMAND = Some (lp_queue_command)};
+    unsafe {lp::LP_QUEUE_COMMAND = Some (lp_queue_command_for_c)};
 
     let myipaddr = unsafe {lp::LP_myipaddr.as_ptr() as *mut c_char};
     unsafe {lp::LPinit (myipaddr, mypullport, mypubport, passphrase.as_ptr() as *mut c_char, c_conf.0, ctx_id)};

@@ -313,7 +313,7 @@ char *LP_pricepings(char *base,char *rel,double price)
 char *LP_postprice_recv(cJSON *argjson)
 {
     bits256 pubkey; double price; uint8_t pubkey33[33]; char *base,*rel,*argstr,coinaddr[64];
-    //printf("PRICE POSTED.(%s)\n",jprint(argjson,0));
+    printf("PRICE POSTED.(%s)\n",jprint(argjson,0));
     if ( (base= jstr(argjson,"base")) != 0 && (rel= jstr(argjson,"rel")) != 0 && (price= jdouble(argjson,"price")) > SMALLVAL )
     {
         pubkey = jbits256(argjson,"pubkey");
@@ -418,7 +418,7 @@ int32_t LP_pubkey_sigcheck(struct LP_pubkey_info *pubp,cJSON *item)
     return(retval);
 }
 
-void LP_notify_pubkeys(void *ctx,int32_t pubsock)
+void LP_notify_pubkeys()
 {
     bits256 zero; uint32_t timestamp; char LPipaddr[64],secpstr[67]; cJSON *reqjson = cJSON_CreateObject();
     memset(zero.bytes,0,sizeof(zero));
@@ -441,7 +441,7 @@ void LP_notify_pubkeys(void *ctx,int32_t pubsock)
         } else printf("no LPipaddr\n");
     }
     jaddnum(reqjson,"session",G.LP_sessionid);
-    LP_reserved_msg(1,zero,jprint(reqjson,1));
+    broadcast_p2p_msg(zero,jprint(reqjson,1));
 }
 
 char *LP_uitem_recv(cJSON *argjson)
@@ -479,20 +479,13 @@ void LP_query(char *method,struct LP_quoteinfo *qp)
             jadd(reqjson,"proof",LP_instantdex_txids(0,coin->smartaddr));
     }
     msg = jprint(reqjson,1);
-    {
         //printf("QUERY.(%s)\n",msg);
-        if ( IPC_ENDPOINT >= 0 )
-            LP_QUEUE_COMMAND(0,msg,IPC_ENDPOINT,-1,0);
-        memset(&zero,0,sizeof(zero));
-        LP_reserved_msg(1,zero,clonestr(msg));
-        //if ( bits256_nonz(qp->srchash) != 0 )
-        {
-            sleep(1);
-            LP_reserved_msg(1,qp->srchash,clonestr(msg));
-        }
-    }
+    if ( IPC_ENDPOINT >= 0 )
+        LP_QUEUE_COMMAND(0,msg,IPC_ENDPOINT,-1,0);
+    memset(&zero,0,sizeof(zero));
+    // broadcast_p2p_msg(zero,clonestr(msg));
+    broadcast_p2p_msg(qp->srchash,clonestr(msg));
     if ( strcmp(method,"connect") == 0 && qp->mpnet != 0 && qp->gtc == 0 )
         LP_mpnet_send(0,msg,1,qp->coinaddr);
     free(msg);
 }
-

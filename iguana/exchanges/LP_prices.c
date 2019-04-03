@@ -88,6 +88,7 @@ void LP_pubkey_update(struct LP_pubkey_info *pubp,uint32_t baseind,uint32_t reli
             break;
         pq = 0;
     }
+    printf("pubkey update called\n");
     if ( pq == 0 )
     {
         pq = calloc(1,sizeof(*pq));

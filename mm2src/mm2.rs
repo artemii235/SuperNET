@@ -19,7 +19,7 @@
 //  Copyright © 2017-2018 SuperNET. All rights reserved.
 //
 
-use common::{bitcoin_priv2wif, lp, os, BitcoinCtx, CJSON, MM_VERSION};
+use common::{lp_queue_command, bitcoin_priv2wif, lp, os, BitcoinCtx, CJSON, MM_VERSION};
 use common::lp::{_bits256 as bits256};
 use common::mm_ctx::MmCtx;
 
@@ -45,17 +45,22 @@ use std::str;
 pub mod crash_reports;
 use self::crash_reports::init_crash_reports;
 
+#[path = "lp_native_dex.rs"]
 mod lp_native_dex;
 use self::lp_native_dex::{lp_init};
 
+#[path = "lp_network.rs"]
 pub mod lp_network;
-pub use self::lp_network::lp_queue_command;
 
+#[path = "lp_ordermatch.rs"]
 pub mod lp_ordermatch;
+#[path = "lp_swap.rs"]
 pub mod lp_swap;
+#[path = "rpc.rs"]
 pub mod rpc;
 
 #[cfg(test)]
+#[path = "mm2_tests.rs"]
 mod mm2_tests;
 /*
 #include "LP_nativeDEX.c"

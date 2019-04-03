@@ -73,6 +73,7 @@ use std::io::prelude::*;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use crate::mm2::lp_native_dex::broadcast_p2p_msg;
 
 /// Includes the grace time we add to the "normal" timeouts
 /// in order to give different and/or heavy communication channels a chance.
@@ -266,7 +267,7 @@ fn save_my_taker_swap_event(uuid: &str, event: TakerSavedEvent) -> Result<(), St
     }
 }
 
-fn save_stats_swap(swap: SavedSwap) -> Result<(), String> {
+fn save_stats_swap(swap: &SavedSwap) -> Result<(), String> {
     let (path, content) = match &swap {
         SavedSwap::Maker(maker_swap) => (stats_maker_swap_file_path(&maker_swap.uuid), try_s!(json::to_vec(&maker_swap))),
         SavedSwap::Taker(taker_swap) => (stats_taker_swap_file_path(&taker_swap.uuid), try_s!(json::to_vec(&taker_swap))),
@@ -1391,20 +1392,21 @@ fn broadcast_my_swap_status(uuid: &str) -> Result<(), String> {
     let path = my_swap_file_path(uuid);
     let content = slurp(&path);
     let status: SavedSwap = try_s!(json::from_slice(&content));
+    try_s!(save_stats_swap(&status));
     let status_string = json!({
         "method": "swapstatus",
         "data": status,
     }).to_string();
     let status_c_string = str_to_malloc(&status_string);
     let zero = lp::bits256::default();
-    unsafe { lp::LP_reserved_msg(0, zero, status_c_string); }
+    unsafe { broadcast_p2p_msg(zero, status_c_string); }
     Ok(())
 }
 
 /// Saves the swap status notification received from P2P network to local DB.
 pub fn save_stats_swap_status(data: Json) -> HyRes {
     let swap: SavedSwap = try_h!(json::from_value(data));
-    try_h!(save_stats_swap(swap));
+    try_h!(save_stats_swap(&swap));
     rpc_response(200, json!({
         "result": "success"
     }).to_string())

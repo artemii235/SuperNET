@@ -461,6 +461,7 @@ cJSON *LP_transaction_fromdata(struct iguana_info *coin,bits256 txid,uint8_t *se
 uint64_t LP_RTsmartbalance(struct iguana_info *coin);
 int32_t LP_getheight(int32_t *notarizedp,struct iguana_info *coin);
 int32_t LP_reserved_msg(int32_t priority,bits256 pubkey,char *msg);
+void broadcast_p2p_msg(bits256 pubkey,char *msg);
 void LP_coinadd_(struct iguana_info *cdata, int32_t iguana_info_size);
 /// Deprecated, use the ported `coins::lp_coinfind` instead.
 struct iguana_info *LP_coinfind(char *symbol);

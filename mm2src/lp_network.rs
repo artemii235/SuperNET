@@ -18,7 +18,7 @@
 //  marketmaker
 //
 
-use common::{free_c_ptr, nn, slice_to_malloc, HyRes, CJSON, CORE};
+use common::{free_c_ptr, nn, slice_to_malloc, HyRes, CJSON, CORE, QueuedCommand, COMMAND_QUEUE};
 use common::mm_ctx::MmArc;
 use crossbeam::channel;
 use futures::{future, Future, Stream};
@@ -448,25 +448,11 @@ struct LP_queuedcommand
 } *LP_commandQ;
 */
 
-#[derive(Debug)]
-struct QueuedCommand {
-    response_sock: i32,
-    stats_json_only: i32,
-    queue_id: u32,
-    msg: String,
-    // retstrp: *mut *mut c_char,
-}
-
 #[derive(Serialize)]
 struct CommandForNn {
     result: Json,
     #[serde(rename="queueid")]
     queue_id: u32
-}
-
-lazy_static! {
-    // TODO: Move to `MmCtx`.
-    static ref COMMAND_QUEUE: (channel::Sender<QueuedCommand>, channel::Receiver<QueuedCommand>) = channel::unbounded();
 }
 
 /// Sends a reply to the `cmd.response_sock` peer.
@@ -529,7 +515,13 @@ pub unsafe fn lp_command_q_loop(ctx: MmArc) {
             Err (channel::RecvTimeoutError::Disconnected) => break
         };
 
-        let msg_json = unwrap!(json::from_str(&cmd.msg));
+        let msg_json = match json::from_str(&cmd.msg) {
+            Ok(j) => j,
+            Err(e) => {
+                log!("Error parsing JSON from msg " (cmd.msg));
+                continue;
+            }
+        };
         if cmd.stats_json_only < 0 { // broadcast passthrough
             if cmd.response_sock >= 0 {
                 let nn_command = CommandForNn {
@@ -585,24 +577,6 @@ pub unsafe fn lp_command_q_loop(ctx: MmArc) {
     }
 }
 
-/// Register an RPC command that came internally or from the peer-to-peer bus.
-#[no_mangle]
-pub extern "C" fn lp_queue_command (retstrp: *mut *mut c_char, buf: *mut c_char, response_sock: i32,
-                                    stats_json_only: i32, queue_id: u32) -> () {
-    if retstrp != null_mut() {
-        unsafe { *retstrp = null_mut() }
-    }
-
-    if buf == null_mut() {panic! ("!buf")}
-    let msg = String::from (unwrap! (unsafe {CStr::from_ptr (buf)} .to_str()));
-    let cmd = QueuedCommand {
-        msg,
-        queue_id,
-        response_sock,
-        stats_json_only
-    };
-    unwrap! ((*COMMAND_QUEUE).0.send (cmd))
-}
 /*
 void mynn_close(int32_t sock)
 {
