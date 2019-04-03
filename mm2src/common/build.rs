@@ -225,7 +225,6 @@ fn generate_bindings() {
             "LP_importaddress",
             "LP_otheraddress",
             "LP_swapsfp_update",
-            "LP_reserved_msg",
             "LP_unavailableset",
             "LP_trades_pricevalidate",
             "LP_allocated",
@@ -239,6 +238,7 @@ fn generate_bindings() {
             "LP_pendswap_add",
             "LP_price_sig",
             "LP_coin_curl_init",
+            "LP_postprice_recv",
         ]
         .iter(),
         // types

@@ -18,7 +18,7 @@
 //  marketmaker
 //
 
-use common::{dstr, free_c_ptr, lp, rpc_response, rpc_err_response, slurp_req, HyRes, lp_queue_command, SATOSHIDEN, SMALLVAL, P2P_CHANNEL};
+use common::{dstr, free_c_ptr, lp, rpc_response, rpc_err_response, slurp_req, HyRes, SATOSHIDEN, SMALLVAL, P2P_CHANNEL, CJSON};
 use common::mm_ctx::{MmArc, MmWeak};
 use common::log::TagParam;
 use coins::{lp_coinfind, MmCoinEnum};
@@ -101,8 +101,10 @@ impl PricePingRequest {
 fn lp_send_price_ping(req: &PricePingRequest) -> Result<(), String> {
     let req_string = try_s!(json::to_string(req));
     // TODO this is required to process the set price message on our own node, it's the easiest way now
-    //      there should be a better way of doing this so we should consider refactoring
-    lp_queue_command(req_string.clone());
+    //      there might be a better way of doing this so we should consider refactoring
+    let c_json = try_s!(CJSON::from_str(&req_string));
+    let post_price_res = unsafe { lp::LP_postprice_recv(c_json.0) };
+    free_c_ptr(post_price_res as *mut c_void);
     Ok(try_s!(P2P_CHANNEL.0.send(req_string.into_bytes())))
 }
 

@@ -18,7 +18,7 @@
 //  marketmaker
 //
 
-use common::{free_c_ptr, nn, slice_to_malloc, HyRes, CJSON, CORE, QueuedCommand, COMMAND_QUEUE};
+use common::{free_c_ptr, nn, slice_to_malloc, HyRes, CJSON, CORE, QueuedCommand, COMMAND_QUEUE, P2P_CHANNEL};
 use common::mm_ctx::MmArc;
 use crossbeam::channel;
 use futures::{future, Future, Stream};
@@ -564,6 +564,11 @@ pub unsafe fn lp_command_q_loop(ctx: MmArc) {
                 c_json,
                 cmd.stats_json_only,
             );
+            let i_am_seed = ctx.conf["seednode"].as_bool().unwrap_or(false);
+            if i_am_seed {
+                P2P_CHANNEL.0.send(cmd.msg.clone().into_bytes());
+            }
+
             if !retstr.is_null() {
                 let retvec = CStr::from_ptr (retstr) .to_bytes().to_vec();
                 free_c_ptr(retstr as *mut c_void);
