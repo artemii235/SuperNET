@@ -46,7 +46,7 @@ use std::borrow::Cow;
 use std::fs;
 use std::ffi::{CStr, CString};
 use std::io::{Cursor, Read, Write};
-use std::mem::{size_of, transmute, zeroed};
+use std::mem::{transmute, zeroed};
 use std::net::{IpAddr, Ipv4Addr, TcpListener, TcpStream};
 use std::path::Path;
 use std::ptr::null_mut;

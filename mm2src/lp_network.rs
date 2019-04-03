@@ -22,11 +22,10 @@ use common::{free_c_ptr, nn, slice_to_malloc, HyRes, CJSON, CORE, QueuedCommand,
 use common::mm_ctx::MmArc;
 use crossbeam::channel;
 use futures::{future, Future, Stream};
-use libc::{c_char, c_void, strlen};
+use libc::{c_void, strlen};
 use serde_json::{self as json, Value as Json};
 use std::ffi::{CStr, CString};
 use std::fmt;
-use std::ptr::null_mut;
 use std::time::Duration;
 
 use crate::mm2::lp_native_dex::lp_command_process;
@@ -518,7 +517,7 @@ pub unsafe fn lp_command_q_loop(ctx: MmArc) {
         let msg_json = match json::from_str(&cmd.msg) {
             Ok(j) => j,
             Err(e) => {
-                log!("Error parsing JSON from msg " (cmd.msg));
+                log!("Error " (e) " parsing JSON from msg " (cmd.msg));
                 continue;
             }
         };

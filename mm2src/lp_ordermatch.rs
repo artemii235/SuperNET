@@ -18,7 +18,7 @@
 //  ordermatch.rs
 //  marketmaker
 //
-use common::{lp, lp_queue_command, lp_queue_command_for_c, nn, free_c_ptr, c_char_to_string, sat_to_f, SATOSHIS, SMALLVAL, CJSON, dstr, rpc_response, rpc_err_response, HyRes};
+use common::{lp, lp_queue_command_for_c, nn, free_c_ptr, c_char_to_string, sat_to_f, SATOSHIS, SMALLVAL, CJSON, dstr, rpc_response, rpc_err_response, HyRes};
 use common::mm_ctx::{from_ctx, MmArc, MmWeak};
 use coins::{lp_coinfind, MmCoinEnum};
 use coins::utxo::{compressed_pub_key_from_priv_raw, ChecksumType};
@@ -457,7 +457,7 @@ unsafe fn lp_connect_start_bob(ctx: &MmArc, base: *mut c_char, rel: *mut c_char,
                     lp::LP_importaddress((*qp).destcoin.as_mut_ptr(), (*qp).destaddr.as_mut_ptr());
                     lp::LP_otheraddress((*qp).srccoin.as_mut_ptr(), other_addr.as_mut_ptr(), (*qp).destcoin.as_mut_ptr(), (*qp).destaddr.as_mut_ptr());
                     lp::LP_importaddress((*qp).srccoin.as_mut_ptr(), other_addr.as_mut_ptr());
-                    let zero = lp::bits256::default();
+                    // let zero = lp::bits256::default();
                     broadcast_p2p_msg((*qp).desthash, lp::jprint(req_json, 0));
                     thread::sleep(Duration::from_secs(1));
                     printf(b"send CONNECT for %u-%u\n\x00".as_ptr() as *const c_char, (*qp).R.requestid, (*qp).R.quoteid);

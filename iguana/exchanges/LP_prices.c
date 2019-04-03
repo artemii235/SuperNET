@@ -775,13 +775,10 @@ int32_t LP_orderbook_utxoentries(uint32_t now,int32_t polarity,char *base,char *
     memset(zeroes,0,sizeof(zeroes));
     HASH_ITER(hh,LP_pubkeyinfos,pubp,tmp)
     {
-        if ( memcmp(zeroes,pubp->rmd160,sizeof(pubp->rmd160)) == 0 )
-        {
-            //printf("skip pubp since no rmd160\n");
+        if ( pubp->timestamp < oldest ) {
+            printf("skip pubp timestamp %d < oldest %d\n", pubp->timestamp, oldest);
             continue;
         }
-        if ( pubp->timestamp < oldest )
-            continue;
         bitcoin_address(base,coinaddr,basecoin->taddr,basecoin->pubtype,pubp->pubsecp,33);
         avesatoshis = maxsatoshis = n = 0;
         ap = 0;
@@ -794,7 +791,7 @@ int32_t LP_orderbook_utxoentries(uint32_t now,int32_t polarity,char *base,char *
                 (*arrayp)[num++] = op;
             }
         }
-        //printf("pubp.(%s) %.8f %p\n",coinaddr,price,ap);
+        printf("pubp.(%s) %.8f %p\n",coinaddr,price,ap);
     }
     return(num);
 }

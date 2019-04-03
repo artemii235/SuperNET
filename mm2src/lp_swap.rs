@@ -1399,7 +1399,7 @@ fn broadcast_my_swap_status(uuid: &str) -> Result<(), String> {
     }).to_string();
     let status_c_string = str_to_malloc(&status_string);
     let zero = lp::bits256::default();
-    unsafe { broadcast_p2p_msg(zero, status_c_string); }
+    broadcast_p2p_msg(zero, status_c_string);
     Ok(())
 }
 
