@@ -293,7 +293,11 @@ struct iguana_info
     int32_t numutxos,notarized,longestchain,firstrefht,firstscanht,lastscanht,height,txversion; uint16_t busport,did_addrutxo_reset;
     uint32_t dPoWtime,lastautosplit,lastresetutxo,loadedcache,electrumlist,lastunspent,importedprivkey,lastpushtime,lastutxosync,addr_listunspent_requested,lastutxos,updaterate,counter,inactive,lastmempool,lastgetinfo,ratetime,heighttime,lastmonitor,obooktime;
     uint8_t pubtype,p2shtype,isPoS,wiftype,wiftaddr,taddr,noimportprivkey_flag,userconfirms,isassetchain,maxconfirms;
-    char symbol[128],smartaddr[64],userpass[1024],serverport[128],instantdex_address[64],estimatefeestr[32],getinfostr[32],etomic[64],validateaddress[64];
+    char symbol[128],smartaddr[64],userpass[1024];
+    /// The "$host:$port" address of the coin wallet.  
+    /// Fetched from the wallet config when we can find it.
+    char serverport[128];
+    char instantdex_address[64],estimatefeestr[32],getinfostr[32],etomic[64],validateaddress[64];
     // portfolio
     double price_kmd,force,perc,goal,goalperc,relvolume,rate;
     void *electrum; void *ctx;
@@ -658,7 +662,7 @@ void (*SPAWN_RPC)(uint32_t);
 void (*LP_QUEUE_COMMAND)(char**,char*,int32_t,int32_t,uint32_t);
 
 extern int32_t IPC_ENDPOINT;
-char *stats_JSON(void *ctx,int32_t fastflag,char *myipaddr,int32_t mypubsock,cJSON *argjson,char *remoteaddr,uint16_t port,int32_t authenticated);
+char *stats_JSON(void *ctx,char *myipaddr,int32_t mypubsock,cJSON *argjson,char *remoteaddr,uint16_t port,int32_t authenticated, uint8_t loopback_only);
 char *LP_instantdex_deposit(struct iguana_info *coin,int32_t weeks,double amount,int32_t broadcast);
 
 struct LP_privkey { bits256 privkey; uint8_t rmd160[20]; };
