@@ -465,7 +465,6 @@ cJSON *LP_transaction_fromdata(struct iguana_info *coin,bits256 txid,uint8_t *se
 uint64_t LP_RTsmartbalance(struct iguana_info *coin);
 int32_t LP_getheight(int32_t *notarizedp,struct iguana_info *coin);
 int32_t LP_reserved_msg(int32_t priority,bits256 pubkey,char *msg);
-void broadcast_p2p_msg(bits256 pubkey,char *msg);
 void LP_coinadd_(struct iguana_info *cdata, int32_t iguana_info_size);
 /// Deprecated, use the ported `coins::lp_coinfind` instead.
 struct iguana_info *LP_coinfind(char *symbol);
@@ -580,7 +579,7 @@ uint16_t LP_userpass(char *userpass,char *symbol,char *assetname,char *confroot,
 /// Helps `lp_coininit` to initialize things that we can't readily initialize from Rust.
 void LP_coin_curl_init(struct iguana_info* coin);
 void LP_mutex_init();
-void LP_tradebots_timeslice(void *ctx);
+void LP_tradebots_timeslice(uint32_t ctx_h);
 struct LP_priceinfo *LP_priceinfofind(char *symbol);
 /// `num_LP_autorefs` is incremeted in `lp_autoprice`, invoked by RPC method "autoprice".
 extern int32_t num_LP_autorefs;
@@ -701,13 +700,13 @@ uint64_t LP_basesatoshis(double relvolume,double price,uint64_t txfee,uint64_t d
 int32_t LP_quoteinfoinit(struct LP_quoteinfo *qp,struct LP_utxoinfo *utxo,char *destcoin,double price,uint64_t satoshis,uint64_t destsatoshis);
 int32_t LP_quotedestinfo(struct LP_quoteinfo *qp,bits256 desthash,char *destaddr);
 int32_t LP_mypriceset(int32_t iambob,int32_t *changedp,char *base,char *rel,double price);
-char *LP_trade(void *ctx,char *myipaddr,int32_t mypubsock,struct LP_quoteinfo *qp,double maxprice,int32_t timeout,int32_t duration,uint32_t tradeid,bits256 destpubkey,char *uuidstr);
+char *LP_trade(struct LP_quoteinfo *qp,double maxprice,int32_t timeout,uint32_t tradeid,bits256 destpubkey,char *uuidstr, uint32_t ctx_h);
 void gen_quote_uuid(char *result, char *base, char* rel);
 int32_t decode_hex(unsigned char *bytes,int32_t n,char *hex);
 uint64_t LP_aliceid_calc(bits256 desttxid,int32_t destvout,bits256 feetxid,int32_t feevout);
 uint32_t LP_rand();
 void LP_gtc_addorder(struct LP_quoteinfo *qp);
-void LP_query(char *method,struct LP_quoteinfo *qp);
+void LP_query(char *method,struct LP_quoteinfo *qp, uint32_t ctx_h);
 extern struct LP_quoteinfo LP_Alicequery;
 extern double LP_Alicemaxprice;
 extern bits256 LP_Alicedestpubkey;
@@ -769,3 +768,4 @@ struct iguana_info* LP_coinadd (struct iguana_info* ii);
 struct iguana_info* LP_coinsearch (char const* ticker);
 void LP_get_coin_pointers (struct iguana_info** coins_buf, int32_t coins_size);
 uint8_t is_loopback_ip (char *ip);
+void broadcast_p2p_msg_for_c(bits256 pubkey,char *msg, uint32_t ctx_h);

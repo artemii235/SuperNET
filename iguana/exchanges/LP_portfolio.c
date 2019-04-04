@@ -483,7 +483,7 @@ int32_t LP_portfolio_trade(void *ctx,uint32_t *requestidp,uint32_t *quoteidp,str
             //if ( LP_utxo_bestfit(sell->symbol,SATOSHIDEN * relvolume) != 0 )
             {
                 memset(zero.bytes,0,sizeof(zero));
-                if ( (retstr2= LP_autobuy(ctx,0,"127.0.0.1",-1,buy->symbol,sell->symbol,maxprice,relvolume,60,24*3600,gui,LP_lastnonce+1,zero,1,0,0,0)) != 0 )
+                if ( (retstr2= LP_autobuy(0,buy->symbol,sell->symbol,maxprice,relvolume,60,24*3600,gui,LP_lastnonce+1,zero,1,0,0,0)) != 0 )
                 {
                     if ( (retjson2= cJSON_Parse(retstr2)) != 0 )
                     {

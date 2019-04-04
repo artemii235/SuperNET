@@ -19,6 +19,7 @@
 //  marketmaker
 //
 use common::{lp, lp_queue_command_for_c, nn, free_c_ptr, c_char_to_string, sat_to_f, SATOSHIS, SMALLVAL, CJSON, dstr, rpc_response, rpc_err_response, HyRes};
+use common::for_c::broadcast_p2p_msg_for_c;
 use common::mm_ctx::{from_ctx, MmArc, MmWeak};
 use coins::{lp_coinfind, MmCoinEnum};
 use coins::utxo::{compressed_pub_key_from_priv_raw, ChecksumType};
@@ -35,7 +36,6 @@ use std::time::Duration;
 use std::thread;
 
 use crate::mm2::lp_swap::{MakerSwap, run_maker_swap, TakerSwap, run_taker_swap};
-use crate::mm2::lp_native_dex::{broadcast_p2p_msg};
 
 /// Temporary kludge, improving readability of the not-yet-fully-ported code. Should be removed eventually.
 macro_rules! c2s {($cs: expr) => {unwrap!(CStr::from_ptr($cs.as_ptr()).to_str())}}
@@ -458,7 +458,7 @@ unsafe fn lp_connect_start_bob(ctx: &MmArc, base: *mut c_char, rel: *mut c_char,
                     lp::LP_otheraddress((*qp).srccoin.as_mut_ptr(), other_addr.as_mut_ptr(), (*qp).destcoin.as_mut_ptr(), (*qp).destaddr.as_mut_ptr());
                     lp::LP_importaddress((*qp).srccoin.as_mut_ptr(), other_addr.as_mut_ptr());
                     // let zero = lp::bits256::default();
-                    broadcast_p2p_msg((*qp).desthash, lp::jprint(req_json, 0));
+                    broadcast_p2p_msg_for_c((*qp).desthash, lp::jprint(req_json, 0), unwrap!(ctx.ffi_handle()));
                     thread::sleep(Duration::from_secs(1));
                     printf(b"send CONNECT for %u-%u\n\x00".as_ptr() as *const c_char, (*qp).R.requestid, (*qp).R.quoteid);
                     // broadcast_p2p_msg(zero, lp::jprint(req_json, 0));
@@ -564,6 +564,7 @@ fn lp_trade(
     trade_id: u32,
     dest_pub_key: lp::bits256,
     uuid: *mut c_char,
+    ctx: &MmArc,
 ) -> Result<String, String> {
     unsafe {
         (*qp).aliceid = lp::LP_rand() as u64;
@@ -585,7 +586,7 @@ fn lp_trade(
             lp_gtc_addorder(qp);
         }
         // TODO: discuss if LP_query should run in case of gtc order as LP_gtciteration will run it anyway
-        lp::LP_query(b"request\x00".as_ptr() as *mut c_char, qp);
+        lp::LP_query(b"request\x00".as_ptr() as *mut c_char, qp, unwrap!(ctx.ffi_handle()));
         lp::LP_Alicequery = *qp;
         lp::LP_Alicemaxprice = (*qp).maxprice;
         log!({"lp_trade] Alice max price: {}", lp::LP_Alicemaxprice});
@@ -868,7 +869,7 @@ double LP_trades_alicevalidate(void *ctx,struct LP_quoteinfo *qp)
     return(qprice);
 }
 */
-unsafe fn lp_reserved(qp: *mut lp::LP_quoteinfo) {
+unsafe fn lp_reserved(qp: *mut lp::LP_quoteinfo, ctx: &MmArc) {
     let maxprice = lp::LP_Alicemaxprice;
     let price = maxprice;
     //let price = lp::LP_pricecache(qp, (*qp).srccoin.as_mut_ptr(), (*qp).destcoin.as_mut_ptr(), (*qp).txid, (*qp).vout);
@@ -879,7 +880,8 @@ unsafe fn lp_reserved(qp: *mut lp::LP_quoteinfo) {
         //printf("send CONNECT\n");
         lp::LP_query(
             b"connect\x00" as *const u8 as *mut libc::c_char,
-            qp
+            qp,
+            unwrap!(ctx.ffi_handle())
         );
     } else {
         log!({"LP_reserved {} price {} vs maxprice {}", (*qp).aliceid, price, maxprice});
@@ -1011,7 +1013,7 @@ unsafe fn lp_trades_gotrequest(ctx: &MmArc, qp: *mut lp::LP_quoteinfo, newqp: *m
     lp::jaddnum(reqjson, b"quotetime\x00".as_ptr() as *mut c_char, (*qp).quotetime as f64);
     lp::jaddnum(reqjson, b"pending\x00".as_ptr() as *mut c_char, ((*qp).timestamp + lp::LP_RESERVETIME) as f64);
     lp::jaddstr(reqjson, b"method\x00".as_ptr() as *mut c_char, b"reserved\x00".as_ptr() as *mut c_char);
-    broadcast_p2p_msg((*qp).desthash, lp::jprint(reqjson, 0));
+    broadcast_p2p_msg_for_c((*qp).desthash, lp::jprint(reqjson, 0), unwrap!(ctx.ffi_handle()));
     // let zero = lp::bits256::default();
     // broadcast_p2p_msg(zero, lp::jprint(reqjson, 0));
     if (*qp).mpnet != 0 && (*qp).gtc == 0 {
@@ -1191,7 +1193,7 @@ pub unsafe fn lp_trades_loop(ctx: MmArc) {
             if now > trade.lastprocessed && trade.iambob == 0 && trade.bestprice > 0. {
                 if trade.connectsent == 0 {
                     lp::LP_Alicemaxprice = trade.bestprice;
-                    lp_reserved(&mut trade.Qs[lp::LP_CONNECT as usize]); // send LP_CONNECT
+                    lp_reserved(&mut trade.Qs[lp::LP_CONNECT as usize], &ctx); // send LP_CONNECT
                     (*trade).connectsent = now;
                     log!({"send LP_connect aliceid.{} {}", trade.aliceid, trade.bestprice});
                 } else if now < trade.firstprocessed + timeout as u64 && ((trade.firstprocessed  + timeout as u64 - now) % 20) == 19 {
@@ -1451,7 +1453,7 @@ pub unsafe fn lp_trade_command(
                                     {
                                         lp_trades_gotreserved(&mut q, &mut q2);
                                         if lp::LP_quotecmp(0, &mut q, &mut lp::LP_Alicequery) == 0 {
-                                            lp_reserved(&mut q);
+                                            lp_reserved(&mut q, &ctx);
                                         }
                                     }
                             } else {
@@ -1865,7 +1867,8 @@ pub fn lp_auto_buy(ctx: &MmArc, input: AutoBuyInput) -> Result<String, String> {
             timeout as i32,
             0,
             dest_pub_key,
-            uuid_str.as_ptr() as *mut c_char
+            uuid_str.as_ptr() as *mut c_char,
+            ctx,
         )))
     }
 }

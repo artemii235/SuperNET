@@ -28,12 +28,11 @@
 // locktime claiming on sporadic assetchains
 // there is an issue about waiting for notarization for a swap that never starts (expiration ok)
 
-use common::{coins_iter, lp, lp_queue_command, lp_queue_command_for_c, slurp_url, os, CJSON, MM_VERSION, global_dbdir, free_c_ptr, P2P_CHANNEL};
+use common::{coins_iter, lp, lp_queue_command_for_c, slurp_url, os, CJSON, MM_VERSION, global_dbdir};
 use common::log::TagParam;
 use common::mm_ctx::{MmCtx, MmArc};
 use common::nn::*;
 use crc::crc32;
-use crossbeam::channel;
 use futures::{Future};
 use gstuff::now_ms;
 use hex;
@@ -45,9 +44,9 @@ use serde_json::{Value as Json};
 use std::borrow::Cow;
 use std::fs;
 use std::ffi::{CStr, CString};
-use std::io::{Cursor, Read, Write, BufRead, BufReader};
+use std::io::{Cursor, Read, Write};
 use std::mem::{transmute, zeroed};
-use std::net::{IpAddr, Ipv4Addr, TcpListener, TcpStream};
+use std::net::{IpAddr, Ipv4Addr, TcpListener};
 use std::path::Path;
 use std::ptr::null_mut;
 use std::str;
@@ -56,28 +55,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, sleep};
 use std::time::Duration;
 
-use crate::mm2::lp_network::{lp_command_q_loop};
+use crate::mm2::lp_network::{lp_command_q_loop, seednode_loop, client_p2p_loop};
 use crate::mm2::lp_ordermatch::{lp_trade_command, lp_trades_loop};
 use crate::mm2::rpc::{self, SINGLE_THREADED_C_LOCK};
-
-#[no_mangle]
-pub extern fn broadcast_p2p_msg (pubkey: lp::bits256, msg: *mut c_char) {
-    if msg == null_mut() {
-        log!("received null msg");
-        return;
-    }
-
-    let msg_str = match unsafe { CStr::from_ptr(msg).to_str() } {
-        Ok(s) => s,
-        Err(e) => {
-            log!("Error creating CStr " [e]);
-            return;
-        }
-    };
-    log!("Msg " (msg_str));
-    P2P_CHANNEL.0.send(msg_str.to_owned().into_bytes()).unwrap();
-    free_c_ptr(msg as *mut c_void);
-}
 
 /*
 #include <stdio.h>
@@ -1047,38 +1027,16 @@ pub unsafe fn lp_initpeers (ctx: &MmArc, pubsock: i32, mut mypeer: *mut lp::LP_p
         Vec::new()
     };
 
-    let i_am_seed = ctx.conf["seednode"].as_bool().unwrap_or(false);
+    let i_am_seed = ctx.conf["i_am_seed"].as_bool().unwrap_or(false);
     if !i_am_seed {
         if seeds.len() == 0 {
-            return ERR!("At least 1 seednode address must be provided");
+            return ERR!("At least 1 IP must be provided");
         }
-        let mut seed_connections = vec![];
-        for (seed_ip, _) in seeds.iter() {
-            log!("Connecting to seed " (seed_ip));
-            let connection: TcpStream = try_s!(TcpStream::connect(&fomat!((seed_ip) ":" (pubport))));
-            try_s!(connection.set_nonblocking(true));
-            seed_connections.push(connection);
-        }
-        thread::spawn(move || {
-            let mut buf = String::new();
-            loop {
-                seed_connections[0].read_to_string(&mut buf);
-                if buf.len() > 0 {
-                    log!((buf));
-                    lp_queue_command(buf.clone());
-                    buf.clear();
-                }
-
-                match P2P_CHANNEL.1.recv_timeout(Duration::from_millis(1)) {
-                    Ok(mut msg) => {
-                        msg.push('\n' as u8);
-                        seed_connections[0].write(&msg).unwrap();
-                    },
-                    Err(channel::RecvTimeoutError::Timeout) => {},
-                    Err(channel::RecvTimeoutError::Disconnected) => break,
-                };
-            }
-        });
+        let seed_ips = seeds.iter().map(|(ip, _)| fomat!((ip) ":" (pubport))).collect();
+        try_s!(thread::Builder::new().name ("client_p2p_loop".into()) .spawn ({
+            let ctx = ctx.clone();
+            move || client_p2p_loop(ctx, seed_ips)
+        }));
     }
 
     for (seed_ip, is_lp) in seeds {
@@ -1790,62 +1748,17 @@ pub fn lp_init (mypullport: u16, mypubport: u16, conf: Json, c_conf: CJSON) -> R
     unsafe {lp::G.netid = ctx.conf["netid"].as_u64().unwrap_or (0) as u16}
     unsafe {lp::LP_mypubsock = -1}
 
-    let i_am_seed = ctx.conf["seednode"].as_bool().unwrap_or(false);
-    if i_am_seed {
+    let i_am_seed = ctx.conf["i_am_seed"].as_bool().unwrap_or(false);
+    let seednode_thread = if i_am_seed {
         let listener: TcpListener = try_s!(TcpListener::bind(&fomat!((myipaddr) ":" (mypubport))));
         try_s!(listener.set_nonblocking(true));
-
-        thread::spawn(move || {
-            let mut clients = vec![];
-            loop {
-                match listener.accept() {
-                    Ok((stream, addr)) => {
-                        log!("New connection from " (addr));
-                        match stream.set_nonblocking(true) {
-                            Ok(_) => clients.push((BufReader::new(stream), addr)),
-                            Err(e) => log!("Error " (e) " setting nonblocking mode for addr " (addr)),
-                        }
-                    },
-                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => (),
-                    Err(e) => panic!("encountered IO error: {}", e),
-                }
-                if clients.len() > 0 {
-                    clients = clients.drain_filter(|(client, addr)| {
-                        let mut buf = String::new();
-                        match client.read_line(&mut buf) {
-                            Ok(_) => {
-                                log!([buf.len()]);
-                                if buf.len() > 0 {
-                                    log!((buf));
-                                    lp_queue_command(buf);
-                                }
-                                true
-                            },
-                            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => true,
-                            Err(e) => {
-                                log!("Error " (e) " receiving message from " (addr) ". Dropping connection.");
-                                false
-                            },
-                        }
-                    }).collect();
-
-                    clients = match P2P_CHANNEL.1.recv_timeout(Duration::from_millis(1)) {
-                        Ok(msg) => clients.drain_filter(|(client, addr)| {
-                            match client.get_mut().write(&msg) {
-                                Ok(_) => true,
-                                Err(e) => {
-                                    log!("Error " (e) " sending message to " (addr) ". Dropping connection.");
-                                    false
-                                }
-                            }
-                        }).collect(),
-                        Err(channel::RecvTimeoutError::Timeout) => clients,
-                        Err(channel::RecvTimeoutError::Disconnected) => panic!("P2P channel is disconnected"),
-                    };
-                }
-            }
-        });
-    }
+        Some(try_s!(thread::Builder::new().name ("seednode_loop".into()) .spawn ({
+            let ctx = ctx.clone();
+            move || seednode_loop(ctx, listener)
+        })))
+    } else {
+        None
+    };
     try_s! (coins::lp_initcoins (&ctx));
     unsafe {lp::RPC_port = try_s! (ctx.rpc_ip_port()) .port()}
     unsafe {lp::G.waiting = 1}
@@ -1988,6 +1901,9 @@ pub fn lp_init (mypullport: u16, mypubport: u16, conf: Json, c_conf: CJSON) -> R
     unwrap! (prices.join());
     unwrap! (trades.join());
     unwrap! (command_queue.join());
+    if let Some(seednode) = seednode_thread {
+        unwrap! (seednode.join());
+    }
     Ok(())
 }
 /*

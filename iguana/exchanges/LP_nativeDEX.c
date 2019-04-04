@@ -868,7 +868,7 @@ void gameaddrs()
     }
 }
 
-void LP_pubkeysloop(void *ctx)
+void LP_pubkeysloop(void *ctx_h)
 {
     static uint32_t lasttime;
     strcpy(LP_pubkeysloop_stats.name,"LP_pubkeysloop");
@@ -886,7 +886,7 @@ void LP_pubkeysloop(void *ctx)
             if ( time(NULL) > lasttime+20 )
             {
                 //printf("LP_pubkeysloop %u\n",(uint32_t)time(NULL));
-                LP_notify_pubkeys(ctx,LP_mypubsock);
+                LP_notify_pubkeys(*(uint32_t *)ctx_h);
                 lasttime = (uint32_t)time(NULL);
             }
         }
@@ -915,9 +915,9 @@ void LP_pendswap_add(uint32_t expiration,uint32_t requestid,uint32_t quoteid)
     portable_mutex_unlock(&LP_pendswap_mutex);
 }
 
-void LP_swapsloop(void *ctx)
+void LP_swapsloop(uint32_t ctx_h)
 {
-    char *retstr; cJSON *retjson; uint32_t requestid,quoteid; int32_t i,nonz; struct LP_pendswap *sp,*tmp;
+    char *retstr; cJSON *retjson; uint32_t requestid,quoteid; int32_t i,nonz;
     strcpy(LP_swapsloop_stats.name,"LP_swapsloop");
     LP_swapsloop_stats.threshold = 605000.;
     if ( (retstr= basilisk_swapentry(0,0,0,1)) != 0 )
@@ -947,7 +947,7 @@ void LP_swapsloop(void *ctx)
                 sleep(6);
             }
         } else sleep(10);
-        LP_gtc_iteration(ctx,LP_myipaddr,LP_mypubsock);
+        LP_gtc_iteration(ctx_h);
     }
 }
 
@@ -1293,7 +1293,7 @@ void LPinit(char* myipaddr,uint16_t mypullport,uint16_t mypubport,char *passphra
         printf("error launching LP_coinsloop for (%s)\n","KMD");
         exit(-1);
     }
-    if ( OS_thread_create(malloc(sizeof(pthread_t)),NULL,(void *)LP_pubkeysloop,ctx) != 0 )
+    if ( OS_thread_create(malloc(sizeof(pthread_t)),NULL,(void *)LP_pubkeysloop,(void *)&mm_ctx_id) != 0 )
     {
         printf("error launching LP_pubkeysloop for ctx.%p\n",ctx);
         exit(-1);

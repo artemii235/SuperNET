@@ -62,7 +62,7 @@ pub mod lp_privkey;
 pub mod mm_ctx;
 pub mod ser;
 
-use crossbeam::{channel, Sender, Receiver as CrossbeamReceiver};
+use crossbeam::{channel};
 use futures::{future, Async, Future, Poll};
 use futures::sync::oneshot::{self, Receiver};
 use futures::task::Task;
@@ -812,10 +812,6 @@ pub fn global_dbdir() -> &'static Path {
 
 pub fn swap_db_dir() -> PathBuf {
     global_dbdir().join ("SWAPS")
-}
-
-lazy_static! {
-    pub static ref P2P_CHANNEL: (Sender<Vec<u8>>, CrossbeamReceiver<Vec<u8>>) = channel::unbounded();
 }
 
 #[derive(Debug)]

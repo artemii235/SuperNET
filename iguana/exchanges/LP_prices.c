@@ -743,24 +743,6 @@ struct LP_orderbookentry *LP_orderbookentry(char *address,char *base,char *rel,d
     return(op);
 }
 
-void LP_pubkeys_query()
-{
-    uint8_t zeroes[20]; bits256 zero; cJSON *reqjson; struct LP_pubkey_info *pubp=0,*tmp;
-    memset(zero.bytes,0,sizeof(zero));
-    memset(zeroes,0,sizeof(zeroes));
-    HASH_ITER(hh,LP_pubkeyinfos,pubp,tmp)
-    {
-        if ( memcmp(zeroes,pubp->rmd160,sizeof(pubp->rmd160)) == 0 && time(NULL) > pubp->lasttime+60 )
-        {
-            pubp->lasttime = (uint32_t)time(NULL);
-            reqjson = cJSON_CreateObject();
-            jaddstr(reqjson,"method","wantnotify");
-            jaddbits256(reqjson,"pub",pubp->pubkey);
-            //printf("LP_pubkeys_query %s\n",jprint(reqjson,0));
-            LP_reserved_msg(0,zero,jprint(reqjson,1));
-        }
-    }
-}
 #include <inttypes.h>;
 int32_t LP_orderbook_utxoentries(uint32_t now,int32_t polarity,char *base,char *rel,struct LP_orderbookentry *(**arrayp),int32_t num,int32_t cachednum,int32_t duration)
 {

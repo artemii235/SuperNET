@@ -625,19 +625,6 @@ char *stats_JSON(void *ctx,char *myipaddr,int32_t pubsock,cJSON *argjson,char *r
         //printf("%-4d tradestatus | aliceid.%llu RT.%d %d\n",(uint32_t)time(NULL) % 3600,(long long)j64bits(argjson,"aliceid"),LP_RTcount,LP_swapscount);
         retstr = clonestr("{\"result\":\"success\"}");
     }
-    else if ( strcmp(method,"wantnotify") == 0 )
-    {
-        bits256 pub; static uint32_t lastnotify;
-        pub = jbits256(argjson,"pub");
-        //char str[65]; printf("got wantnotify.(%s) vs %s\n",jprint(argjson,0),bits256_str(str,G.LP_mypub25519));
-        if ( bits256_cmp(pub,G.LP_mypub25519) == 0 && time(NULL) > lastnotify+60 )
-        {
-            lastnotify = (uint32_t)time(NULL);
-            //printf("wantnotify for me!\n");
-            LP_notify_pubkeys(ctx,LP_mypubsock);
-        }
-        retstr = clonestr("{\"result\":\"success\"}");
-    }
     else if ( strcmp(method,"addr_unspents") == 0 )
     {
         //printf("GOT ADDR_UNSPENTS %s %s\n",jstr(argjson,"coin"),jstr(argjson,"address"));

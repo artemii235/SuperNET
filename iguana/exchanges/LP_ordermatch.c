@@ -356,7 +356,7 @@ struct LP_utxoinfo *LP_address_myutxopair(struct LP_utxoinfo *butxo,int32_t iamb
     return(0);
 }
 
-void LP_gtc_iteration()
+void LP_gtc_iteration(uint32_t ctx_h)
 {
     struct LP_gtcorder *gtc,*tmp; struct LP_quoteinfo *qp; uint64_t destvalue,destvalue2; uint32_t oldest = 0;
     if ( Alice_expiration != 0 )
@@ -381,7 +381,7 @@ void LP_gtc_iteration()
             if ( gtc->pending <= oldest+60 && time(NULL) > gtc->pending+LP_AUTOTRADE_TIMEOUT*10 )
             {
                 gtc->pending = qp->timestamp = (uint32_t)time(NULL);
-                LP_query("request",qp);
+                LP_query("request",qp, ctx_h);
                 LP_Alicequery = *qp, LP_Alicemaxprice = gtc->Q.maxprice, Alice_expiration = qp->timestamp + 2*LP_AUTOTRADE_TIMEOUT, LP_Alicedestpubkey = qp->srchash;
                 char str[65]; printf("LP_gtc fill.%d gtc.%d %s/%s %.8f vol %.8f dest.(%s) maxprice %.8f etomicdest.(%s) uuid.%s fill.%d gtc.%d\n",qp->fill,qp->gtc,qp->srccoin,qp->destcoin,dstr(qp->satoshis),dstr(qp->destsatoshis),bits256_str(str,LP_Alicedestpubkey),gtc->Q.maxprice,qp->etomicdest,qp->uuidstr,qp->fill,qp->gtc);
                 break;
@@ -401,7 +401,7 @@ void LP_gtc_addorder(struct LP_quoteinfo *qp)
     portable_mutex_unlock(&LP_gtcmutex);
 }
 
-char *LP_trade(void *ctx,char *myipaddr,int32_t mypubsock,struct LP_quoteinfo *qp,double maxprice,int32_t timeout,int32_t duration,uint32_t tradeid,bits256 destpubkey,char *uuidstr)
+char *LP_trade(struct LP_quoteinfo *qp,double maxprice,int32_t timeout,uint32_t tradeid,bits256 destpubkey,char *uuidstr, uint32_t ctx_h)
 {
     qp->aliceid = (uint64_t)LP_rand();
     if ( (qp->tradeid= tradeid) == 0 )
@@ -416,7 +416,7 @@ char *LP_trade(void *ctx,char *myipaddr,int32_t mypubsock,struct LP_quoteinfo *q
         LP_gtc_addorder(qp);
     }
     {
-        LP_query("request",qp);
+        LP_query("request",qp, ctx_h);
         LP_Alicequery = *qp, LP_Alicemaxprice = qp->maxprice, Alice_expiration = qp->timestamp + timeout, LP_Alicedestpubkey = qp->srchash;
     }
     if ( qp->gtc == 0 )
@@ -654,9 +654,9 @@ void gen_quote_uuid(char *result, char *base, char* rel) {
     bits256_str(result,hash);
 }
 
-char *LP_autobuy(void *ctx,int32_t fomoflag,char *myipaddr,int32_t mypubsock,char *base,char *rel,double maxprice,double relvolume,int32_t timeout,int32_t duration,char *gui,uint32_t nonce,bits256 destpubkey,uint32_t tradeid,char *_uuidstr,int32_t fillflag,int32_t gtcflag)
+char *LP_autobuy(int32_t fomoflag,char *base,char *rel,double maxprice,double relvolume,int32_t timeout,int32_t duration,char *gui,uint32_t nonce,bits256 destpubkey,uint32_t tradeid,int32_t fillflag,int32_t gtcflag, uint32_t ctx_h)
 {
-    uint64_t desttxfee,txfee,balance; uint32_t lastnonce; int64_t bestsatoshis=0,destsatoshis; struct iguana_info *basecoin,*relcoin; struct LP_utxoinfo *autxo,B,A; struct LP_quoteinfo Q; bits256 pubkeys[100]; struct LP_address_utxo *utxos[4096]; int32_t num=0,maxiters=100,i,max=(int32_t)(sizeof(utxos)/sizeof(*utxos));
+    uint64_t desttxfee,txfee; uint32_t lastnonce; int64_t bestsatoshis=0,destsatoshis; struct iguana_info *basecoin,*relcoin; struct LP_utxoinfo *autxo,B,A; struct LP_quoteinfo Q; bits256 pubkeys[100]; struct LP_address_utxo *utxos[4096]; int32_t num=0,maxiters=100,i,max=(int32_t)(sizeof(utxos)/sizeof(*utxos));
     basecoin = LP_coinfind(base);
     relcoin = LP_coinfind(rel);
     if ( gui == 0 )
@@ -788,5 +788,5 @@ char *LP_autobuy(void *ctx,int32_t fomoflag,char *myipaddr,int32_t mypubsock,cha
     LP_mypriceset(0,&changed,base,rel,0.);
     char uuidstr[65];
     gen_quote_uuid(uuidstr, base, rel);
-    return(LP_trade(ctx,myipaddr,mypubsock,&Q,maxprice,timeout,duration,tradeid,destpubkey,uuidstr));
+    return(LP_trade(&Q,maxprice,timeout,tradeid,destpubkey,uuidstr,ctx_h));
 }

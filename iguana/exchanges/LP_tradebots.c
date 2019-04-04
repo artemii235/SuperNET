@@ -315,7 +315,7 @@ double LP_orderbook_maxrel(char *base,char *rel,double maxprice)
     return(maxrel);
 }
 
-void LP_tradebot_timeslice(void *ctx,struct LP_tradebot *bot)
+void LP_tradebot_timeslice(struct LP_tradebot *bot, uint32_t ctx_h)
 {
     double remaining,maxrel; struct LP_tradebot_trade *tp; int32_t i,maxiters = 10; uint32_t tradeid; bits256 destpubkey; char *retstr,*liststr; cJSON *retjson,*retjson2,*pending;
     memset(destpubkey.bytes,0,sizeof(destpubkey));
@@ -338,7 +338,7 @@ void LP_tradebot_timeslice(void *ctx,struct LP_tradebot *bot)
                     {
                         if ( remaining < 0.001 )
                             break;
-                        if ( (retstr= LP_autobuy(ctx,0,LP_myipaddr,LP_mypubsock,bot->base,bot->rel,bot->maxprice,remaining/i,0,0,G.gui,0,destpubkey,tradeid,0,0,0)) != 0 )
+                        if ( (retstr= LP_autobuy(0,bot->base,bot->rel,bot->maxprice,remaining/i,0,0,G.gui,0,destpubkey,tradeid,0,0,ctx_h)) != 0 )
                         {
                             if ( (retjson2= cJSON_Parse(retstr)) != 0 )
                             {
@@ -419,7 +419,7 @@ void LP_tradebot_finished(uint32_t tradeid,uint32_t requestid,uint32_t quoteid)
     }
 }
 
-void LP_tradebots_timeslice(void *ctx)
+void LP_tradebots_timeslice(uint32_t ctx_h)
 {
     static uint32_t lastnumfinished = 0;
     struct iguana_info *relcoin; bits256 zero; struct LP_tradebot *bot,*tmp;
@@ -436,7 +436,7 @@ void LP_tradebots_timeslice(void *ctx)
             bot->pause = 0;
         if ( bot->numpending == 0 && time(NULL) > bot->lasttime+TRADEBOTS_GAPTIME )
         {
-            LP_tradebot_timeslice(ctx,bot);
+            LP_tradebot_timeslice(bot,ctx_h);
             bot->lasttime = (uint32_t)time(NULL);
         }
     }

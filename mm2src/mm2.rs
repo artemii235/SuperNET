@@ -164,8 +164,9 @@ fn help() {
         "  rpc_local_only ..  MM forbids some RPC requests from not loopback (localhost) IPs as additional security measure.\n"
         "                     Defaults to `true`, set `false` to disable. `Use with caution`.\n"
         "  rpcport        ..  If > 1000 overrides the 7783 default.\n"
-        "  seednode       ..  Notify MM that it should run in seednode mode (acting as message relayer/broadcaster for others).\n\
-                              Defaults to `false`.\n"
+        "  i_am_seed      ..  Notify MM that it should run in seednode mode (acting as message relayer/broadcaster for others).\n"
+        "                     Defaults to `false`.\n"
+        "  seednode       ..  Seednode IP that node will use. Must be set if the node is not seed itself\n"
         "  userhome       ..  System home directory of a user ('/root' by default).\n"
         "  wif            ..  `1` to add WIFs to the information we provide about a coin.\n"
         "\n"

@@ -418,7 +418,7 @@ int32_t LP_pubkey_sigcheck(struct LP_pubkey_info *pubp,cJSON *item)
     return(retval);
 }
 
-void LP_notify_pubkeys()
+void LP_notify_pubkeys(uint32_t ctx_h)
 {
     bits256 zero; uint32_t timestamp; char LPipaddr[64],secpstr[67]; cJSON *reqjson = cJSON_CreateObject();
     memset(zero.bytes,0,sizeof(zero));
@@ -441,7 +441,7 @@ void LP_notify_pubkeys()
         } else printf("no LPipaddr\n");
     }
     jaddnum(reqjson,"session",G.LP_sessionid);
-    broadcast_p2p_msg(zero,jprint(reqjson,1));
+    broadcast_p2p_msg_for_c(zero,jprint(reqjson,1), ctx_h);
 }
 
 char *LP_uitem_recv(cJSON *argjson)
@@ -463,7 +463,7 @@ printf("LP_uitem_recv deprecated\n");
     return(clonestr("{\"result\":\"success\"}"));
 }
 
-void LP_query(char *method,struct LP_quoteinfo *qp)
+void LP_query(char *method,struct LP_quoteinfo *qp, uint32_t ctx_h)
 {
     cJSON *reqjson; bits256 zero; char *msg; struct iguana_info *coin; int32_t flag = 0;
     reqjson = LP_quotejson(qp);
@@ -484,7 +484,7 @@ void LP_query(char *method,struct LP_quoteinfo *qp)
         LP_QUEUE_COMMAND(0,msg,IPC_ENDPOINT,-1,0);
     memset(&zero,0,sizeof(zero));
     // broadcast_p2p_msg(zero,clonestr(msg));
-    broadcast_p2p_msg(qp->srchash,clonestr(msg));
+    broadcast_p2p_msg_for_c(qp->srchash,clonestr(msg), ctx_h);
     if ( strcmp(method,"connect") == 0 && qp->mpnet != 0 && qp->gtc == 0 )
         LP_mpnet_send(0,msg,1,qp->coinaddr);
     free(msg);
