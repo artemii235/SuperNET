@@ -336,7 +336,7 @@ fn alice_can_see_the_active_order_after_connection() {
             "rpcip": env::var ("ALICE_TRADE_IP") .ok(),
             "passphrase": "alice passphrase",
             "coins": coins,
-            "seednode": fomat!((mm_bob.ip)),
+            "seednodes": [fomat!((mm_bob.ip))],
             "alice_contract":"0xe1d4236c5774d35dc47dcc2e5e0ccfc463a3289c",
             "bob_contract":"0x105aFE60fDC8B5c021092b09E8a042135A4A976E",
             "ethnode":"http://195.201.0.6:8545"
@@ -800,7 +800,7 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
             "rpcip": env::var ("ALICE_TRADE_IP") .ok(),
             "passphrase": alice_passphrase,
             "coins": coins,
-            "seednode": fomat!((mm_bob.ip)),
+            "seednodes": [fomat!((mm_bob.ip))],
             "rpc_password": "password",
         }),
         "password".into(),

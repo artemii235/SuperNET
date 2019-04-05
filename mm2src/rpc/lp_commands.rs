@@ -223,7 +223,7 @@ struct PassphraseReq {
     userpass: Option<String>,
     /// Defaults to "cli" (in `lp_passphrase_init`).
     gui: Option<String>,
-    seednode: Option<String>
+    seednodes: Option<Vec<String>>
 }
 
 pub fn passphrase (ctx: MmArc, req: Json) -> HyRes {
@@ -240,8 +240,9 @@ pub fn passphrase (ctx: MmArc, req: Json) -> HyRes {
 
     unsafe {lp::G.USERPASS_COUNTER = 1}
 
+
     unsafe {try_h! (lp_passphrase_init (&ctx,
-        Some (&req.passphrase), req.gui.as_ref().map (|s| &s[..]), req.seednode.as_ref().map (|s| &s[..])))};
+        Some (&req.passphrase), req.gui.as_ref().map (|s| &s[..]), req.seednodes))};
 
     let mut coins = Vec::new();
     try_h! (unsafe {coins_iter (&mut |coin| {
