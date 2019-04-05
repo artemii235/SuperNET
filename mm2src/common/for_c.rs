@@ -116,7 +116,6 @@ pub extern fn broadcast_p2p_msg_for_c (pubkey: lp::bits256, msg: *mut c_char, ct
             return;
         }
     };
-    log!("Msg " (msg_str));
     ctx.broadcast_p2p_msg(msg_str);
     free_c_ptr(msg as *mut c_void);
 }

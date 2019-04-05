@@ -182,10 +182,10 @@ pub fn seednode_loop(ctx: MmArc, listener: TcpListener) {
 
         match listener.accept() {
             Ok((stream, addr)) => {
-                log!("New connection from " (addr));
+                ctx.log.log("😀", &[&"incoming_connection", &addr.to_string().as_str()], "New connection...");
                 match stream.set_nonblocking(true) {
                     Ok(_) => clients.push((BufReader::new(stream), addr, String::new())),
-                    Err(e) => log!("Error " (e) " setting nonblocking mode for addr " (addr)),
+                    Err(e) => ctx.log.log("😟", &[&"incoming_connection", &addr.to_string().as_str()], &format!("Error {} setting nonblocking mode", e)),
                 }
             },
             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => (),
@@ -198,8 +198,9 @@ pub fn seednode_loop(ctx: MmArc, listener: TcpListener) {
                     if buf.len() > 0 {
                         let msgs: Vec<_> = buf.split('\n').collect();
                         for msg in msgs {
-                            log!((msg));
-                            lp_queue_command(msg.to_string());
+                            if !msg.is_empty() {
+                                lp_queue_command(msg.to_string());
+                            }
                         }
                         buf.clear();
                     }
@@ -207,7 +208,7 @@ pub fn seednode_loop(ctx: MmArc, listener: TcpListener) {
                 },
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => true,
                 Err(e) => {
-                    log!("Error " (e) " receiving message from " (addr) ". Dropping connection.");
+                    ctx.log.log("😟", &[&"incoming_connection", &addr.to_string().as_str()], &format!("Error {} reading from socket, dropping connection", e));
                     false
                 },
             }
@@ -219,7 +220,7 @@ pub fn seednode_loop(ctx: MmArc, listener: TcpListener) {
                 match client.get_mut().write(&msg) {
                     Ok(_) => true,
                     Err(e) => {
-                        log!("Error " (e) " sending message to " (addr) ". Dropping connection.");
+                        ctx.log.log("😟", &[&"incoming_connection", &addr.to_string().as_str()], &format!("Error {} writing to socket, dropping connection", e));
                         false
                     }
                 }
@@ -249,7 +250,7 @@ pub fn client_p2p_loop(ctx: MmArc, addrs: Vec<String>) {
             for (addr, last_attempt) in addrs.iter_mut() {
                 let is_connected = seed_connections.iter().find(|conn| &conn.addr == addr);
                 if is_connected.is_none() && *last_attempt + 30000 < now_ms() {
-                    log!("Connecting to seed "(addr));
+                    ctx.log.log("😀", &[&"seed_connection", &addr.as_str()], "Connecting...");
                     *last_attempt = now_ms();
                     match TcpStream::connect(&*addr) {
                         Ok(stream) => {
@@ -260,12 +261,13 @@ pub fn client_p2p_loop(ctx: MmArc, addrs: Vec<String>) {
                                         addr: addr.to_string(),
                                         buf: String::new(),
                                     };
+                                    ctx.log.log("😀", &[&"seed_connection", &addr.as_str()], "Connected...");
                                     seed_connections.push(conn);
                                 },
-                                Err(e) => log!("Error " (e) " setting non-blocking mode for seednode " (addr)),
+                                Err(e) => ctx.log.log("😟", &[&"seed_connection", &addr.as_str()], &format!("Error {} setting non-blocking mode", e)),
                             }
                         },
-                        Err(e) => log!("Error " (e) " connecting to seednode " (addr)),
+                        Err(e) => ctx.log.log("😟", &[&"seed_connection", &addr.as_str()], &format!("Connection error {}", e)),
                     }
                 }
             }
@@ -277,8 +279,9 @@ pub fn client_p2p_loop(ctx: MmArc, addrs: Vec<String>) {
                     if conn.buf.len() > 0 {
                         let msgs: Vec<_> = conn.buf.split('\n').collect();
                         for msg in msgs {
-                            log!((msg));
-                            lp_queue_command(msg.to_string());
+                            if !msg.is_empty() {
+                                lp_queue_command(msg.to_string());
+                            }
                         }
                         conn.buf.clear();
                     }
@@ -286,7 +289,7 @@ pub fn client_p2p_loop(ctx: MmArc, addrs: Vec<String>) {
                 },
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => true,
                 Err(e) => {
-                    log!("Error " (e) " receiving message from " (conn.addr) ". Dropping connection.");
+                    ctx.log.log("😟", &[&"seed_connection", &conn.addr.clone().as_str()], &format!("Error {} on reading from socket, dropping connection", e));
                     false
                 },
             }
@@ -298,7 +301,7 @@ pub fn client_p2p_loop(ctx: MmArc, addrs: Vec<String>) {
                 match conn.stream.get_mut().write(&msg) {
                     Ok(_) => true,
                     Err(e) => {
-                        log!("Error " (e) " sending message to " (conn.addr) ". Dropping connection.");
+                        ctx.log.log("😟", &[&"seed_connection", &conn.addr.clone().as_str()], &format!("Error {} writing to socket, dropping connection", e));
                         false
                     }
                 }

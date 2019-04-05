@@ -156,7 +156,7 @@ struct LP_peerinfo *LP_addpeer(struct LP_peerinfo *mypeer,int32_t mypubsock,char
                 portable_mutex_unlock(&LP_peermutex);
             } else printf("%s invalid pushsock.%d or subsock.%d\n",peer->ipaddr,peer->pushsock,peer->subsock);
         }
-    } else printf("LP_addpeer: checkip.(%s) vs (%s)\n",checkip,ipaddr);
+    }
     return(peer);
 }
 
