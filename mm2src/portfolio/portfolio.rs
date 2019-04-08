@@ -1181,8 +1181,6 @@ pub fn prices_loop (ctx: MmArc) {
             last_price_broadcast = now_ms();
         }
 
-        unsafe {lp::LP_tradebots_timeslice (unwrap!(ctx.ffi_handle()))};
-
         let btcpp = unsafe {lp::LP_priceinfofind (b"BTC\0".as_ptr() as *mut c_char)};
         if btcpp == null_mut() {
             if btc_wait_status.is_none() {btc_wait_status = Some (ctx.log.status (&[&"portfolio"], "Waiting for BTC price..."))}

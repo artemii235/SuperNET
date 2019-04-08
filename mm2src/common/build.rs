@@ -137,14 +137,12 @@ fn generate_bindings() {
             "LPinit",
             "LP_addpeer",
             "LP_peer_recv",
-            "LP_initpublicaddr",
             "LP_ports",
             "LP_rpcport",
             "unbuffered_output_support",
             "calc_crc32",
             "LP_userpass",
             "LP_mutex_init",
-            "LP_tradebots_timeslice",
             "stats_JSON",
             "LP_priceinfofind",
             "prices_loop",
@@ -181,7 +179,6 @@ fn generate_bindings() {
             "LP_mpnet_send",
             "LP_recent_swaps",
             "LP_address",
-            "LP_address_utxo_ptrs",
             "LP_command_process",
             "LP_balances",
             "LP_KMDvalue",
@@ -217,8 +214,6 @@ fn generate_bindings() {
             "LP_privkey_updates",
             "LP_privkey_init",
             "LP_privkey",
-            "LP_importaddress",
-            "LP_otheraddress",
             "LP_swapsfp_update",
             "LP_unavailableset",
             "LP_trades_pricevalidate",
@@ -228,7 +223,6 @@ fn generate_bindings() {
             "LP_RTmetrics_blacklisted",
             "LP_getheight",
             "LP_reservation_check",
-            "LP_nanobind",
             "LP_instantdex_txids",
             "LP_pendswap_add",
             "LP_price_sig",
@@ -1055,28 +1049,16 @@ fn build_c_code(mm_version: &str) {
         );
     }
 
-    println!(
-        "cargo:rustc-link-lib={}",
-        if cfg!(windows) { "libcurl" } else { "curl" }
-    );
     if cfg!(windows) {
         // https://sourceware.org/pthreads-win32/
         // ftp://sourceware.org/pub/pthreads-win32/prebuilt-dll-2-9-1-release/
         println!("cargo:rustc-link-lib=pthreadVC2");
-        println!("cargo:rustc-link-lib=mswsock"); // For nanomsg.
         unwrap!(
             fs::copy(
                 root().join("x64/pthreadVC2.dll"),
                 root().join("target/debug/pthreadVC2.dll")
             ),
             "Can't copy pthreadVC2.dll"
-        );
-        unwrap!(
-            fs::copy(
-                root().join("x64/libcurl.dll"),
-                root().join("target/debug/libcurl.dll")
-            ),
-            "Can't copy libcurl.dll"
         );
     } else {
         println!("cargo:rustc-link-lib=crypto");

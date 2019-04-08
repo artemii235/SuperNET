@@ -291,15 +291,6 @@ char *LP_pricepings(char *base,char *rel,double price)
         jaddstr(reqjson,"pubsecp",pubsecpstr);
         if ( (kmd= LP_coinfind("KMD")) != 0 && (ap= LP_address(kmd,kmd->smartaddr)) != 0 && ap->instantdex_credits != 0 )
             jaddnum(reqjson,"credits",dstr(ap->instantdex_credits));
-        if ( (numutxos= LP_address_minmax(1,&median,&minsize,&maxsize,basecoin,basecoin->smartaddr)) != 0 )
-        {
-            //printf("send %s numutxos.%d median %.8f min %.8f max %.8f\n",base,numutxos,dstr(median),dstr(minsize),dstr(maxsize));
-            jaddstr(reqjson,"utxocoin",base);
-            jaddnum(reqjson,"n",numutxos);
-            jaddnum(reqjson,"bal",dstr(median) * numutxos);
-            jaddnum(reqjson,"min",dstr(minsize));
-            jaddnum(reqjson,"max",dstr(maxsize));
-        }
         char *sig = LP_price_sig(timestamp,G.LP_privkey,G.LP_pubsecp,G.LP_mypub25519,base,rel,price64);
         if (sig != NULL) {
             jaddstr(reqjson, "sig", sig);
@@ -453,13 +444,6 @@ printf("LP_uitem_recv deprecated\n");
     height = jint(argjson,"ht");
     value = j64bits(argjson,"value");
     coinaddr = jstr(argjson,"coinaddr");
-    if ( (symbol= jstr(argjson,"coin")) != 0 && coinaddr != 0 && (coin= LP_coinfind(symbol)) != 0 )
-    {
-        //char str[65]; printf("uitem %s %s %s/v%d %.8f ht.%d\n",symbol,coinaddr,bits256_str(str,txid),vout,dstr(value),height);
-        if ( strcmp(coin->smartaddr,coinaddr) != 0 )
-            LP_address_utxoadd(0,(uint32_t)time(NULL),"LP_uitem_recv",coin,coinaddr,txid,vout,value,height,-1);
-        //else printf("ignore external uitem %s %s\n",symbol,coin->smartaddr);
-    }
     return(clonestr("{\"result\":\"success\"}"));
 }
 
@@ -473,11 +457,6 @@ void LP_query(char *method,struct LP_quoteinfo *qp, uint32_t ctx_h)
     jaddstr(reqjson,"method",method);
     if ( jobj(reqjson,"timestamp") == 0 )
         jaddnum(reqjson,"timestamp",time(NULL));
-    if ( strcmp(method,"connect") == 0 )
-    {
-        if ( (coin= LP_coinfind("KMD")) != 0 )
-            jadd(reqjson,"proof",LP_instantdex_txids(0,coin->smartaddr));
-    }
     msg = jprint(reqjson,1);
         //printf("QUERY.(%s)\n",msg);
     if ( IPC_ENDPOINT >= 0 )

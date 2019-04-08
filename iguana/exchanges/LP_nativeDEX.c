@@ -151,13 +151,11 @@ char *blocktrail_listtransactions(char *symbol,char *coinaddr,int32_t num,int32_
 }
 
 #include "LP_mmjson.c"
-#include "LP_socket.c"
 #include "LP_secp.c"
 #include "LP_bitcoin.c"
 #include "LP_coins.c"
 #include "LP_rpc.c"
 #include "LP_mpnet.c"
-#include "LP_cache.c"
 #include "LP_RTmetrics.c"
 #include "LP_utxo.c"
 #include "LP_prices.c"
@@ -165,7 +163,6 @@ char *blocktrail_listtransactions(char *symbol,char *coinaddr,int32_t num,int32_
 #include "LP_transaction.c"
 #include "LP_stats.c"
 #include "LP_remember.c"
-#include "LP_instantdex.c"
 #include "LP_swap.c"
 #include "LP_peers.c"
 #include "LP_privkey.c"
@@ -345,8 +342,6 @@ int32_t LP_nanomsg_recvs(void *ctx)
         nonz += LP_sock_check("PULL",ctx,origipaddr,-1,LP_mypullsock,"127.0.0.1",1);
     }
     portable_mutex_unlock(&LP_nanorecvsmutex);
-    //if ( G.mpnet != 0 )
-        LP_mpnet_check(ctx,origipaddr,LP_mypubsock);
     return(nonz);
 }
 
@@ -429,92 +424,9 @@ void LP_coinsloop(void *_coins)
                 //printf("%s has no smartaddress??\n",coin->symbol);
                 continue;
             }
-            if ( didfilescreate == 0 && strcmp("KMD",coin->symbol) == 0 )
-            {
-                LP_instantdex_filescreate(coin->smartaddr);
-                didfilescreate = 1;
-            }
             memset(&zero,0,sizeof(zero));
             if ( coin->inactive != 0 )
                 continue;
-            //free_json(LP_address_balance(coin,coin->smartaddr,1)); expensive invoking gettxout
-            if ( coin->do_autofill_merge != 0 )
-            {
-                if ( (retstr= LP_autofillbob(coin,coin->do_autofill_merge*1.02)) != 0 )
-                {
-                    if ( (retjson= cJSON_Parse(retstr)) != 0 )
-                    {
-                        if ( (hexstr= jstr(retjson,"hex")) != 0 )
-                        {
-                            if ( (txidstr= LP_sendrawtransaction(coin->symbol,hexstr,0)) != 0 )
-                            {
-                                printf("autofill created %s\n",txidstr);
-                                free(txidstr);
-                                coin->fillsatoshis = coin->do_autofill_merge;
-                                coin->do_autofill_merge = 0;
-                                coin->bobfillheight = LP_getheight(&notarized,coin);
-                            }
-                        }
-                        free_json(retjson);
-                    }
-                    free(retstr);
-                }
-            }
-            if ( coin->longestchain == 1 ) // special init value
-                coin->longestchain = LP_getheight(&notarized,coin);
-            if ( (ep= coin->electrum) != 0 )
-            {
-                if ( (backupep= ep->prev) == 0 )
-                    backupep = ep;
-                if ( (retjson= electrum_address_listunspent(coin->symbol,ep,&retjson,coin->smartaddr,1,zero,zero)) != 0 )
-                    free_json(retjson);
-                if ( (ap= LP_addressfind(coin,coin->smartaddr)) != 0 )
-                {
-                    DL_FOREACH_SAFE(ap->utxos,up,tmp)
-                    {
-                        if ( up->U.height > 0 && up->spendheight < 0 )
-                        {
-                            if ( up->SPV == 0 )
-                            {
-                                nonz++;
-                                up->SPV = LP_merkleproof(coin,coin->smartaddr,backupep,up->U.txid,up->U.height);
-                                if ( up->SPV > 0 )
-                                {
-                                    if ( (tx= LP_transactionfind(coin,up->U.txid)) != 0 && tx->SPV == 0 )
-                                    {
-                                        tx->SPV = up->SPV;
-                                        //printf("%s %s: SPV.%d\n",coin->symbol,bits256_str(str,up->U.txid),up->SPV);
-                                    }
-                                }
-                            }
-                            else if ( up->SPV == -1 )
-                            {
-                                nonz++;
-                                printf("SPV failure for %s %s\n",coin->symbol,bits256_str(str,up->U.txid));
-                                oldht = up->U.height;
-                                LP_txheight_check(coin,ap->coinaddr,up->U.txid);
-                                if ( oldht != up->U.height )
-                                    up->SPV = LP_merkleproof(coin,coin->smartaddr,backupep,up->U.txid,up->U.height);
-                                if ( up->SPV <= 0 )
-                                    up->SPV = -2;
-                                else printf("%s %s: corrected SPV.%d\n",coin->symbol,bits256_str(str,up->U.txid),up->SPV);
-                            }
-                        }
-                    }
-                }
-                while ( ep != 0 )
-                {
-                    if ( time(NULL) > ep->keepalive+LP_ELECTRUM_KEEPALIVE )
-                    {
-                        //printf("%s electrum.%p needs a keepalive: lag.%d\n",ep->symbol,ep,(int32_t)(time(NULL) - ep->keepalive));
-                        if ( (retjson= electrum_banner(coin->symbol,ep,&retjson)) != 0 )
-                            free_json(retjson);
-                        ep->keepalive = (uint32_t)time(NULL);
-                    }
-                    ep = ep->prev;
-                }
-                continue;
-            }
             if ( coin->firstrefht == 0 )
                 continue;
             else if ( coin->firstscanht == 0 )
@@ -532,7 +444,6 @@ void LP_coinsloop(void *_coins)
             else if ( coin->lastscanht > coin->longestchain+1 )
             {
                 printf("detected chain rewind lastscanht.%d vs longestchain.%d, first.%d ref.%d\n",coin->lastscanht,coin->longestchain,coin->firstscanht,coin->firstrefht);
-                LP_undospends(coin,coin->longestchain-1);
                 //LP_mempoolscan(coin->symbol,zero);
                 coin->lastscanht = coin->longestchain - 1;
                 if ( coin->firstscanht < coin->lastscanht )
@@ -545,18 +456,6 @@ void LP_coinsloop(void *_coins)
                 nonz++;
                 if ( strcmp("BTC",coins) == 0 )//&& coin->lastscanht < coin->longestchain-3 )
                     printf("[%s]: %s ref.%d scan.%d to %d, longest.%d\n",coins,coin->symbol,coin->firstrefht,coin->firstscanht,coin->lastscanht,coin->longestchain);
-                for (j=0; j<100; j++)
-                {
-                    if ( LP_blockinit(coin,coin->lastscanht) < 0 )
-                    {
-                        printf("please ignore this blockinit.%s %d error\n",coin->symbol,coin->lastscanht);
-                        sleep(10);
-                        break;
-                    }
-                    coin->lastscanht++;
-                    if ( coin->lastscanht == coin->longestchain+1 || strcmp("BTC",coins) == 0 )
-                        break;
-                }
                 if ( strcmp("BTC",coins) == 0 )
                     printf("done [%s]: %s ref.%d scan.%d to %d, longest.%d\n",coins,coin->symbol,coin->firstrefht,coin->firstscanht,coin->lastscanht,coin->longestchain);
             }
@@ -566,53 +465,6 @@ void LP_coinsloop(void *_coins)
         //if ( nonz == 0 )
             usleep(100000);
     }
-}
-
-int32_t LP_mainloop_iter(void *ctx,char *myipaddr,struct LP_peerinfo *mypeer,int32_t pubsock)
-{
-    static uint32_t counter;//,didinstantdex;
-    struct iguana_info *coin,*ctmp; char *origipaddr; uint32_t now; int32_t notarized,height,nonz = 0;
-    if ( (origipaddr= myipaddr) == 0 )
-        origipaddr = "127.0.0.1";
-    if ( mypeer == 0 )
-        myipaddr = "127.0.0.1";
-    HASH_ITER(hh,LP_coins,coin,ctmp) // firstrefht,firstscanht,lastscanht
-    {
-        now = (uint32_t)time(NULL);
-#ifdef bruteforce
-        if ( IAMLP != 0 && coin->inactive == 0 && coin->electrum == 0 && didinstantdex == 0 && strcmp("KMD",coin->symbol) == 0 )
-        {
-            LP_instantdex_deposits(coin);
-            didinstantdex = now;
-        }
-#endif
-        /*if ( (coin->addr_listunspent_requested != 0 && now > coin->lastpushtime+LP_ORDERBOOK_DURATION*.5) || now > coin->lastpushtime+LP_ORDERBOOK_DURATION*5 )
-        {
-            //printf("PUSH addr_listunspent_requested %u\n",coin->addr_listunspent_requested);
-            coin->lastpushtime = (uint32_t)now;
-            LP_smartutxos_push(coin);
-            coin->addr_listunspent_requested = 0;
-        }*/
-        if ( coin->electrum == 0 && coin->inactive == 0 && now > coin->lastgetinfo+LP_GETINFO_INCR )
-        {
-            nonz++;
-            if ( (height= LP_getheight(&notarized,coin)) > coin->longestchain )
-            {
-                coin->longestchain = height;
-                if ( notarized != 0 && notarized > coin->notarized )
-                {
-                    coin->notarized = notarized;
-                    if ( IAMLP != 0 )
-                        LP_dPoW_broadcast(coin);
-                }
-                if ( 0 && coin->firstrefht != 0 )
-                    printf(">>>>>>>>>> set %s longestchain %d (ref.%d [%d, %d])\n",coin->symbol,height,coin->firstrefht,coin->firstscanht,coin->lastscanht);
-            } //else LP_mempoolscan(coin->symbol,zero);
-            coin->lastgetinfo = (uint32_t)now;
-        }
-    }
-    counter++;
-    return(nonz);
 }
 
 int my_strncasecmp(const char *s1,const char *s2,size_t n)
@@ -1165,7 +1017,6 @@ void LPinit(char* myipaddr,uint16_t mypullport,uint16_t mypubport,char *passphra
     }
     int32_t nonz,didremote=0;
     LP_statslog_parse();
-    bitcoind_RPC_inittime = 0;
 
     if (SPAWN_RPC != 0) SPAWN_RPC(mm_ctx_id);
     else
@@ -1177,7 +1028,6 @@ void LPinit(char* myipaddr,uint16_t mypullport,uint16_t mypubport,char *passphra
     //LP_mpnet_init(); seems better to have the GUI send in persistent orders, exit mm is a cancel all
     while ( LP_STOP_RECEIVED == 0 )
     {
-        nonz = 0;
         G.waiting = 1;
         while ( G.initializing != 0 ) //&& strcmp(G.USERPASS,"1d8b27b21efabcd96571cd56f91a40fb9aa4cc623d273c63bf9223dc6f8cd81f") == 0 )
         {
@@ -1189,19 +1039,13 @@ void LPinit(char* myipaddr,uint16_t mypullport,uint16_t mypubport,char *passphra
             sleep(1);
             continue;
         }
-        if ((ctx = r_btc_ctx(mm_ctx_id)) == 0) return;
-        if ( LP_mainloop_iter(ctx,myipaddr,mypeer,LP_mypubsock) != 0 )
-            nonz++;
+        if (r_btc_ctx(mm_ctx_id) == 0) return;
         if ( IAMLP != 0 && didremote == 0 && LP_cmdcount > 0 )
         {
             didremote = 1;
             uint16_t myport2 = RPC_port-1;
             printf("start remote port\n");
         }
-        if ( nonz == 0 )
-            usleep(1000);
-        else if ( IAMLP == 0 )
-            usleep(1000);
     }
 #endif
     printf("marketmaker exiting in 5 seconds\n");

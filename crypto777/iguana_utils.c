@@ -991,14 +991,6 @@ void calc_rmd160_sha256(uint8_t rmd160[20],uint8_t *data,int32_t datalen)
     calc_rmd160(0,rmd160,hash.bytes,sizeof(hash));
 }
 
-char *bittrex_orderbook(char *base,char *rel,int32_t maxdepth)
-{
-    char market[64],url[512];
-    sprintf(market,"%s-%s",rel,base);
-    sprintf(url,"http://bittrex.com/api/v1.1/public/getorderbook?market=%s&type=both&depth=%d",market,maxdepth);
-    return(issue_curl(url));
-}
-
 double calc_theoretical(double weighted,double CMC_average,double changes[3])
 {
     double theoretical = 0.; //adjusted = 0.,
@@ -1094,36 +1086,6 @@ double weighted_orderbook(double *avebidp,double *aveaskp,double *highbidp,doubl
         }
     }
     return(weighted);
-}
-
-double get_theoretical(double *avebidp,double *aveaskp,double *highbidp,double *lowaskp,double *CMC_averagep,double changes[3],char *name,char *base,char *rel,double *USD_averagep)
-{
-    static int32_t counter;
-    char *cmcstr; cJSON *cmcjson,*item; double weighted,theoretical = 0.;
-    *avebidp = *aveaskp = *highbidp = *lowaskp = *CMC_averagep = 0.;
-    //TODO//if ( (cmcstr= cmc_ticker(name)) != 0 )
-    if ((cmcstr = 0) != 0)
-    {
-        if ( (cmcjson= cJSON_Parse(cmcstr)) != 0 )
-        {
-            if ( is_cJSON_Array(cmcjson) == 0 )
-                item = cmcjson;
-            else item = jitem(cmcjson,0);
-            *CMC_averagep = jdouble(item,"price_btc");
-            *USD_averagep = jdouble(item,"price_usd");
-            changes[0] = jdouble(item,"percent_change_1h");
-            changes[1] = jdouble(item,"percent_change_24h");
-            changes[2] = jdouble(item,"percent_change_7d");
-            weighted = weighted_orderbook(avebidp,aveaskp,highbidp,lowaskp,bittrex_orderbook(base,rel,25),1./(*CMC_averagep));
-            if ( *CMC_averagep > SMALLVAL && weighted > SMALLVAL )
-                theoretical = calc_theoretical(weighted,*CMC_averagep,changes);
-            if ( (0) && counter++ < 100 )
-                printf("HBLA.[%.8f %.8f] AVE.[%.8f %.8f] (%s) CMC %f %f %f %f\n",*highbidp,*lowaskp,*avebidp,*aveaskp,jprint(item,0),*CMC_averagep,changes[0],changes[1],changes[2]);
-            free_json(cmcjson);
-        }
-        free(cmcstr);
-    }
-    return(theoretical);
 }
 
 bits256 bits256_calctxid(char *symbol,uint8_t *serialized,int32_t len)

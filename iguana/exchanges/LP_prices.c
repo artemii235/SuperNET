@@ -304,27 +304,6 @@ char *LP_pubkey_trusted()
     return(jprint(array,1));
 }
 
-int64_t LP_unspents_metric(struct iguana_info *coin,char *coinaddr)
-{
-    cJSON *array,*item; int32_t i,n; int64_t metric=0,total;
-    //LP_listunspent_both(coin->symbol,coinaddr,0);
-    if ( (array= LP_address_utxos(coin,coinaddr,1)) != 0 )
-    {
-        total = 0;
-        if ( (n= cJSON_GetArraySize(array)) > 0 )
-        {
-            for (i=0; i<n; i++)
-            {
-                item = jitem(array,i);
-                total += j64bits(item,"value");
-            }
-        }
-        metric = _LP_unspents_metric(total,n);
-        free_json(array);
-    }
-    return(metric);
-}
-
 cJSON *LP_pubkeyjson(struct LP_pubkey_info *pubp)
 {
     int32_t baseid,relid,numutxos; int64_t avesatoshis,maxsatoshis; char *base,hexstr[67],hexstr2[67],sigstr[256]; double price; cJSON *item,*array,*obj;

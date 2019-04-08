@@ -2,7 +2,6 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 set(MM_SOURCES mm.c ../mini-gmp.c ../groestl.c ../segwit_addr.c ../keccak.c)
 
 set(MM_LIBS
-        curl
         pthread
         libcrypto777
         libjpeg
@@ -13,7 +12,7 @@ set(MM_LIBS
     )
 
 if(WIN32)
-link_directories(${CMAKE_SOURCE_DIR}/marketmaker_depends/curl/build_msvc_2015_win64/lib/Release ${CMAKE_SOURCE_DIR}/marketmaker_depends/pthread-win32/bin/x64_MSVC2015.Release)
+link_directories(${CMAKE_SOURCE_DIR}/marketmaker_depends/pthread-win32/bin/x64_MSVC2015.Release)
 endif()
 add_library(marketmaker-lib STATIC ${MM_SOURCES})
 include_directories(../../crypto777)
@@ -41,10 +40,6 @@ target_link_libraries(marketmaker-lib ${MM_LIBS})
 
 if(NOT DEFINED MM_VERSION)
     SET(MM_VERSION UNKNOWN)
-endif()
-
-if(NOT DEFINED ETOMIC)
-    target_compile_definitions(marketmaker-lib PRIVATE -DNOTETOMIC)
 endif()
 
 target_compile_definitions(marketmaker-lib PRIVATE -DMM_VERSION="${MM_VERSION}")

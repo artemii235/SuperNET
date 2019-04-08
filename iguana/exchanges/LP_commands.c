@@ -119,30 +119,7 @@ char *stats_JSON(void *ctx,char *myipaddr,int32_t pubsock,cJSON *argjson,char *r
         if ( jobj(argjson,"userpass") != 0 )
             jdelete(argjson,"userpass");
         LP_cmdcount++;
-        if ( strcmp(method,"instantdex_deposit") == 0 )
-        {
-            if ( (ptr= LP_coinsearch("KMD")) != 0 )
-            {
-                if ( jint(argjson,"weeks") <= 0 ) {
-                    return(clonestr("{\"error\":\"instantdex_deposit weeks param must be greater than zero\"}"));
-                }
-                if ( jdouble(argjson,"amount") < 10. ) {
-                    return(clonestr("{\"error\":\"instantdex_deposit amount param must be equal or greater than 10\"}"));
-                }
-
-                return(LP_instantdex_deposit(ptr,juint(argjson,"weeks"),jdouble(argjson,"amount"),jobj(argjson,"broadcast") != 0 ? jint(argjson,"broadcast") : 1));
-            }
-            return(clonestr("{\"error\":\"cant find KMD\"}"));
-        }
-        else if ( strcmp(method,"instantdex_claim") == 0 )
-        {
-            if ( (ptr= LP_coinsearch("KMD")) != 0 )
-            {
-                return(LP_instantdex_claim(ptr));
-            }
-            return(clonestr("{\"error\":\"cant find KMD\"}"));
-        }
-        else if ( strcmp(method,"jpg") == 0 )
+        if ( strcmp(method,"jpg") == 0 )
         {
             return(LP_jpg(jstr(argjson,"srcfile"),jstr(argjson,"destfile"),jint(argjson,"power2"),jstr(argjson,"password"),jstr(argjson,"data"),jint(argjson,"required"),juint(argjson,"ind")));
         }
@@ -183,10 +160,6 @@ char *stats_JSON(void *ctx,char *myipaddr,int32_t pubsock,cJSON *argjson,char *r
                 jaddnum(retjson,"bestheight",ptr->height);
                 return(jprint(retjson,1));
             } else return(clonestr("{\"error\":\"cant find coin\"}"));
-        }
-        else if ( strcmp(method,"portfolio") == 0 )
-        {
-            return(LP_portfolio());
         }
         else if ( strcmp(method,"calcaddress") == 0 )
         {
@@ -351,28 +324,6 @@ char *stats_JSON(void *ctx,char *myipaddr,int32_t pubsock,cJSON *argjson,char *r
                     return(jprint(array,1));
                 } else return(clonestr("{\"error\":\"couldnt find coin\"}"));
             }
-            else if ( strcmp(method,"listunspent") == 0 )
-            {
-                if ( (ptr= LP_coinsearch(coin)) != 0 )
-                {
-                    char *coinaddr; bits256 zero;
-                    memset(zero.bytes,0,sizeof(zero));
-                    if ( (coinaddr= jstr(argjson,"address")) != 0 )
-                    {
-                        if ( coinaddr[0] != 0 )
-                        {
-                            LP_address(ptr,coinaddr);
-                            if ( strcmp(coinaddr,ptr->smartaddr) == 0 && bits256_nonz(G.LP_privkey) != 0 )
-                            {
-                                LP_listunspent_issue(coin,coinaddr,2,zero,zero);
-                                //LP_privkey_init(-1,ptr,G.LP_privkey,G.LP_mypub25519);
-                            }
-                            return(jprint(LP_listunspent(coin,coinaddr,zero,zero),1));
-                        }
-                    }
-                    return(clonestr("{\"error\":\"no address specified\"}"));
-                } else return(clonestr("{\"error\":\"cant find coind\"}"));
-            }
             else if ( strcmp(method,"balance") == 0 )
             {
                 if ( (ptr= LP_coinsearch(coin)) != 0 )
@@ -392,46 +343,11 @@ char *stats_JSON(void *ctx,char *myipaddr,int32_t pubsock,cJSON *argjson,char *r
                     return(jprint(retjson,1));
                 } else return(clonestr("{\"error\":\"cant find coind\"}"));
             }
-            else if ( strcmp(method,"sendrawtransaction") == 0 )
-            {
-                return(LP_sendrawtransaction(coin,jstr(argjson,"signedtx"),jint(argjson,"needjson")));
-            }
             else if ( strcmp(method,"convaddress") == 0 )
             {
                 return(LP_convaddress(coin,jstr(argjson,"address"),jstr(argjson,"destcoin")));
             }
-            else if ( strcmp(method,"timelock") == 0 )
-            {
-                return(LP_timelock(coin,juint(argjson,"duration"),jstr(argjson,"destaddr"),jdouble(argjson,"amount")*SATOSHIDEN));
-            }
-            else if ( strcmp(method,"opreturndecrypt") == 0 )
-            {
-                return(LP_opreturndecrypt(ctx,coin,jbits256(argjson,"txid"),jstr(argjson,"passphrase")));
-            }
-            else if ( strcmp(method,"unlockedspend") == 0 )
-            {
-                return(LP_unlockedspend(ctx,coin,jbits256(argjson,"txid")));
-            }
             // cJSON *LP_listtransactions(char *symbol,char *coinaddr,int32_t count,int32_t skip)
-            else if ( strcmp(method,"listtransactions") == 0 )
-            {
-                if ( (ptr= LP_coinfind(coin)) != 0 )
-                    return(jprint(LP_listtransactions(coin,jstr(argjson,"address"),juint(argjson,"count"),juint(argjson,"skip")),1));
-            }
-            else if ( strcmp(method,"getrawtransaction") == 0 )
-            {
-                return(jprint(LP_gettx("stats_JSON",coin,jbits256(argjson,"txid"),0),1));
-            }
-            else if ( strcmp(method,"txblast") == 0 )
-            {
-                if ( (ptr= LP_coinsearch(coin)) != 0 )
-                    return(LP_txblast(ptr,argjson));
-                else return(clonestr("{\"error\":\"cant find coind\"}"));
-            }
-            else if ( strcmp(method,"movecoinbases") == 0 )
-            {
-                return(LP_movecoinbases(coin));
-            }
             else if ( strcmp(method,"setconfirms") == 0 )
             {
                 int32_t n;
@@ -472,13 +388,9 @@ char *stats_JSON(void *ctx,char *myipaddr,int32_t pubsock,cJSON *argjson,char *r
                 jaddstr(retjson,"error",LP_DONTCHANGE_ERRMSG1);
                 return(jprint(retjson,1));
             }
-            else if ( strcmp(method,"goal") == 0 )
-                return(LP_portfolio_goal(coin,jdouble(argjson,"val")));
             else if ( strcmp(method,"getcoin") == 0 )
                 return(LP_getcoin(coin));
         }
-        else if ( strcmp(method,"goal") == 0 )
-            return(LP_portfolio_goal("*",100.));
         else if ( strcmp(method,"lastnonce") == 0 )
         {
             cJSON *retjson = cJSON_CreateObject();

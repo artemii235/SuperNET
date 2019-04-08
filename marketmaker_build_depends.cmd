@@ -34,24 +34,6 @@ if not exist marketmaker_depends\pthreadVC2.dll (
 copy marketmaker_depends\pthreadVC2.dll x64\pthreadVC2.dll
 copy marketmaker_depends\pthreadVC2.lib x64\pthreadVC2.lib
 
-rem TODO: Move to build.rs and build automatically.
-rem --- curl ---
-:compile_curl
-if not exist marketmaker_depends\curl\build\lib\Release\libcurl.dll (
-    cd marketmaker_depends 
-    rmdir curl /S /Q
-    git clone --depth=1 --quiet https://github.com/curl/curl
-    cd curl
-    mkdir build
-    cd build
-    cmake -G "Visual Studio 15 2017 Win64" -DCMAKE_USE_WINSSL:BOOL=ON ..
-    cmake --build . --config Release --target libcurl
-    cd ../../..
-)
-copy marketmaker_depends\curl\build\lib\Release\libcurl_imp.lib x64\libcurl.lib
-copy marketmaker_depends\curl\build\lib\Release\libcurl_imp.exp x64\libcurl.exp
-copy marketmaker_depends\curl\build\lib\Release\libcurl.dll x64\libcurl.dll
-
 rem Show what we've got here, in case we'd want to clear the cached folder, etc.
 echo marketmaker_build_depends] dir marketmaker_depends
 dir marketmaker_depends
