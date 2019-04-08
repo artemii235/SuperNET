@@ -920,7 +920,6 @@ fn build_c_code(mm_version: &str) {
         cmake_prep_args.push("-G".into());
         cmake_prep_args.push("Visual Studio 15 2017 Win64".into());
     }
-    cmake_prep_args.push("-DETOMIC=ON".into());
     cmake_prep_args.push(format!("-DMM_VERSION={}", mm_version));
     cmake_prep_args.push("-DCMAKE_BUILD_TYPE=Debug".into());
     cmake_prep_args.push("..".into());
@@ -1042,7 +1041,6 @@ fn main() {
     // We should avoid using it for now.
 
     // Rebuild when we change certain features.
-    //println!("rerun-if-env-changed=CARGO_FEATURE_ETOMIC");
     //println!("rerun-if-env-changed=CARGO_FEATURE_NOP");
 
     windows_requirements();
