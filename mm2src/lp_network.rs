@@ -196,6 +196,7 @@ pub fn seednode_loop(ctx: MmArc, listener: TcpListener) {
             match client.read_line(buf) {
                 Ok(_) => {
                     if buf.len() > 0 {
+                        log!("Received msg " (buf) " from " (addr));
                         let msgs: Vec<_> = buf.split('\n').collect();
                         for msg in msgs {
                             if !msg.is_empty() {
@@ -217,6 +218,7 @@ pub fn seednode_loop(ctx: MmArc, listener: TcpListener) {
         clients = match ctx.seednode_p2p_channel.1.recv_timeout(Duration::from_millis(1)) {
             Ok(mut msg) => clients.drain_filter(|(client, addr, _)| {
                 msg.push('\n' as u8);
+                log!("Sending msg " (std::str::from_utf8(&msg).unwrap()) " to " (addr));
                 match client.get_mut().write(&msg) {
                     Ok(_) => true,
                     Err(e) => {
@@ -277,6 +279,7 @@ pub fn client_p2p_loop(ctx: MmArc, addrs: Vec<String>) {
             match conn.stream.read_line(&mut conn.buf) {
                 Ok(_) => {
                     if conn.buf.len() > 0 {
+                        log!("Received msg " (conn.buf) " from " (conn.addr));
                         let msgs: Vec<_> = conn.buf.split('\n').collect();
                         for msg in msgs {
                             if !msg.is_empty() {
@@ -298,6 +301,7 @@ pub fn client_p2p_loop(ctx: MmArc, addrs: Vec<String>) {
         seed_connections = match ctx.client_p2p_channel.1.recv_timeout(Duration::from_millis(1)) {
             Ok(mut msg) => seed_connections.drain_filter(|conn| {
                 msg.push('\n' as u8);
+                log!("Sending msg " (std::str::from_utf8(&msg).unwrap()) " to " (conn.addr));
                 match conn.stream.get_mut().write(&msg) {
                     Ok(_) => true,
                     Err(e) => {
