@@ -936,16 +936,6 @@ void calc_unhexstr(char *hexstr,uint8_t *buf,uint8_t *msg,int32_t len)
     hexstr[len>>1] = 0;
 }
 
-void calc_base64_encodestr(char *hexstr,uint8_t *buf,uint8_t *msg,int32_t len)
-{
-    nn_base64_encode(msg,len,hexstr,len);
-}
-
-void calc_base64_decodestr(char *hexstr,uint8_t *buf,uint8_t *msg,int32_t len)
-{
-    nn_base64_decode((void *)msg,len,(void *)hexstr,1024);
-}
-
 void sha256_sha256(char *hexstr,uint8_t *buf,uint8_t *msg,int32_t len)
 {
     bits256_doublesha256(hexstr,msg,len);

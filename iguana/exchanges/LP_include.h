@@ -80,9 +80,6 @@ void emscripten_usleep(int32_t x); // returns immediate, no sense for sleeping
 //#define LP_MAXPENDING_SWAPS 13
 #define LP_CLIENT_STATSPARSE (90 * 1024 * 1024)
 
-#define LP_COMMAND_SENDSOCK NN_PUSH
-#define LP_COMMAND_RECVSOCK NN_PULL
-
 #define DPOW_MIN_ASSETCHAIN_SIGS 11
 #define LP_ENCRYPTED_MAXSIZE (16384 + 2 + crypto_box_NONCEBYTES + crypto_box_ZEROBYTES)
 
@@ -534,7 +531,6 @@ struct LP_utxoinfo *_LP_utxo2find(int32_t iambob,bits256 txid,int32_t vout);
 int64_t LP_dynamictrust(int64_t credits,bits256 pubkey,int64_t kmdvalue);
 struct LP_address *LP_addressfind(struct iguana_info *coin,char *coinaddr);
 int64_t LP_outpoint_amount(char *symbol,bits256 txid,int32_t vout);
-void LP_closepeers();
 int32_t LP_trades_canceluuid(char *uuidstr);
 int _decreasing_uint64(const void *a,const void *b);
 int32_t LP_alice_eligible(uint32_t quotetime);

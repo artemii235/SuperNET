@@ -31,7 +31,6 @@
 use common::{coins_iter, lp, lp_queue_command_for_c, slurp_url, os, CJSON, MM_VERSION, global_dbdir};
 use common::log::TagParam;
 use common::mm_ctx::{MmCtx, MmArc};
-use common::nn::*;
 use crc::crc32;
 use futures::{Future};
 use gstuff::now_ms;
@@ -1561,7 +1560,6 @@ pub unsafe fn lp_passphrase_init (ctx: &MmArc, passphrase: Option<&str>, gui: Op
     lp::G.LP_sessionid = (now_ms() / 1000) as u32;
     try_s! (safecopy! (lp::G.gui, "{}", gui));
 
-    lp::LP_closepeers();
     try_s! (lp_initpeers (ctx, lp::LP_mypubsock, lp::LP_mypeer, &myipaddr, lp::RPC_port, netid, seednodes));
 
     lp::LP_tradebot_pauseall();
@@ -1578,12 +1576,14 @@ pub unsafe fn lp_passphrase_init (ctx: &MmArc, passphrase: Option<&str>, gui: Op
 /// Temporarily binds on the given IP and port to check if they're available.  
 /// Returns `false` if the `ip` does not belong to a connected interface or if it is already taken.
 fn test_bind (ip: IpAddr, port: u16) -> bool {
-    let bindaddr = fomat! ("tcp://" (ip) ':' (port));
-    let sock = unsafe {nn_socket (AF_SP as i32, NN_PUB as i32)};
-    let bindaddr_c = unwrap! (CString::new (&bindaddr[..]));
-    let bind_rc = unsafe {nn_bind (sock, bindaddr_c.as_ptr())};
-    unsafe {nn_close (sock)};  // 'Tis just an experiment, real bindings happen elsewhere.
-    bind_rc >= 0
+    let bindaddr = fomat! ((ip) ':' (port));
+    match TcpListener::bind(&bindaddr) {
+        Ok(_) => true,
+        Err(e) => {
+            log!("Error " (e) " binding to " (bindaddr));
+            false
+        }
+    }
 }
 
 pub fn lp_init (mypullport: u16, mypubport: u16, conf: Json, c_conf: CJSON) -> Result<(), String> {

@@ -19,7 +19,7 @@
 //
 
 use bitcrypto::ripemd160;
-use common::{free_c_ptr, nn, slice_to_malloc, HyRes, CJSON, CORE, QueuedCommand, COMMAND_QUEUE, lp_queue_command};
+use common::{free_c_ptr, HyRes, CJSON, CORE, QueuedCommand, COMMAND_QUEUE, lp_queue_command};
 use common::mm_ctx::MmArc;
 use crossbeam::channel;
 use futures::{future, Future, Stream};
@@ -64,13 +64,6 @@ fn reply_to_peer (cmd: QueuedCommand, mut reply: Vec<u8>) -> Result<(), String> 
 
         // See also commits ce09bcd and 62f3cba: looks like we need the wired string to be zero-terminated.
         reply.push (0);
-
-        let _size = unsafe {nn::nn_send (
-            cmd.response_sock,
-            slice_to_malloc (&reply) as *mut c_void,  // Officially it should be `nn_allocmsg` but looks like `malloc` will do.
-            reply.len() as usize,
-            0,
-        )};
     }
     Ok(())
 }

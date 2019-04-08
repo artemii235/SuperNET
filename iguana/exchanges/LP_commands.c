@@ -134,45 +134,6 @@ char *stats_JSON(void *ctx,char *myipaddr,int32_t pubsock,cJSON *argjson,char *r
             }
             return(clonestr("{\"error\":\"cant find KMD\"}"));
         }
-        else if ( strcmp(method,"getendpoint") == 0 )
-        {
-            int32_t err,mode; uint16_t wsport = 5555; char endpoint[64],bindpoint[64];
-            if ( juint(argjson,"port") != 0 )
-                wsport = juint(argjson,"port");
-            retjson = cJSON_CreateObject();
-            if ( IPC_ENDPOINT >= 0 )
-            {
-                jaddstr(retjson,"error","IPC endpoint already exists");
-                jaddnum(retjson,"socket",IPC_ENDPOINT);
-            }
-            else
-            {
-                if ( (IPC_ENDPOINT= nn_socket(AF_SP,NN_PAIR)) >= 0 )
-                {
-                    sprintf(bindpoint,"ws://*:%u",wsport);
-                    sprintf(endpoint,"ws://127.0.0.1:%u",wsport);
-                    if ( (err= nn_bind(IPC_ENDPOINT,bindpoint)) >= 0 )
-                    {
-                        jaddstr(retjson,"result","success");
-                        jaddstr(retjson,"endpoint",endpoint);
-                        jaddnum(retjson,"socket",IPC_ENDPOINT);
-                        mode = NN_WS_MSG_TYPE_TEXT;
-                        err = nn_setsockopt(IPC_ENDPOINT,NN_SOL_SOCKET,NN_WS_MSG_TYPE,&mode,sizeof(mode));
-                        jaddnum(retjson,"sockopt",err);
-                    }
-                    else
-                    {
-                        jaddstr(retjson,"error",(char *)nn_strerror(nn_errno()));
-                        jaddstr(retjson,"bind",bindpoint);
-                        jaddnum(retjson,"err",err);
-                        jaddnum(retjson,"socket",IPC_ENDPOINT);
-                        nn_close(IPC_ENDPOINT);
-                        IPC_ENDPOINT = -1;
-                    }
-                } else jaddstr(retjson,"error","couldnt get NN_PAIR socket");
-            }
-            return(jprint(retjson,1));
-        }
         else if ( strcmp(method,"instantdex_claim") == 0 )
         {
             if ( (ptr= LP_coinsearch("KMD")) != 0 )

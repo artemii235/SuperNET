@@ -25,7 +25,7 @@ use common::mm_ctx::MmCtx;
 
 use gstuff::{now_ms, slurp};
 
-use libc::{c_char, c_int, c_void};
+use libc::{c_char};
 
 use rand::random;
 
@@ -33,7 +33,6 @@ use serde_json::{self as json, Value as Json};
 
 use std::env;
 use std::ffi::{CStr, CString, OsString};
-use std::io::{self, Write};
 use std::mem::{zeroed};
 use std::process::exit;
 use std::ptr::{null};
@@ -205,8 +204,6 @@ pub fn mm2_main() {
         return
     }
 
-    if let Err (err) = events (&args_os) {log! ({"events error] {}", err}); return}
-
     let second_arg = args_os.get (2) .and_then (|arg| arg.to_str());
     if first_arg == Some ("vanity") && second_arg.is_some() {vanity (unwrap! (second_arg)); return}
 
@@ -257,34 +254,6 @@ fn btc2kmd (wif_or_btc: &str) -> Result<String, String> {
         if retstr == null() {return ERR! ("LP_convaddress")}
         Ok (unwrap! (unsafe {CStr::from_ptr (retstr)} .to_str()) .into())
     }
-}
-
-/// Implements the `mm2 events` mode.  
-/// If the command-line arguments match the events mode and everything else works then this function will never return.
-fn events (args_os: &[OsString]) -> Result<(), String> {
-    use common::nn::*;
-
-    /*
-    else if ( argv[1] != 0 && strcmp(argv[1],"events") == 0 )
-    */
-    if args_os.get (1) .and_then (|arg| arg.to_str()) .unwrap_or ("") == "events" {
-        let ipc_endpoint = unsafe {nn_socket (AF_SP as c_int, NN_PAIR as c_int)};
-        if ipc_endpoint < 0 {return ERR! ("!nn_socket")}
-        let rc = unsafe {nn_connect (ipc_endpoint, "ws://127.0.0.1:5555\0".as_ptr() as *const c_char)};
-        if rc < 0 {return ERR! ("!nn_connect")}
-        loop {
-            let mut buf: [u8; 1000000] = unsafe {zeroed()};
-            let len = unsafe {nn_recv (ipc_endpoint, buf.as_mut_ptr() as *mut c_void, buf.len() - 1, 0)};
-            if len >= 0 {
-                let len = len as usize;
-                assert! (len < buf.len());
-                let stdout = io::stdout();
-                let mut stdout = stdout.lock();
-                try_s! (stdout.write_all (&buf[0..len]));
-            }
-        }
-    }
-    Ok(())
 }
 
 fn vanity (substring: &str) {

@@ -126,37 +126,7 @@ double LP_quote_validate(struct LP_utxoinfo *autxo,struct LP_utxoinfo *butxo,str
 
 int32_t LP_nanobind(void *ctx,char *pairstr)
 {
-    int32_t i,r,pairsock = -1; uint16_t mypullport; char bindaddr[128];
-    if ( LP_canbind != 0 )
-    {
-        if ( (pairsock= nn_socket(AF_SP,NN_PAIR)) < 0 )
-            printf("error creating utxo->pair\n");
-        else
-        {
-            for (i=0; i<10000; i++)
-            {
-                r = (10000 + (LP_rand() % 50000)) & 0xffff;
-                if ( LP_fixed_pairport != 0 )
-                    r = LP_fixed_pairport;
-                nanomsg_transportname(0,pairstr,LP_myipaddr,r);
-                nanomsg_transportname(0,bindaddr,LP_myipaddr,r);
-                if ( nn_bind(pairsock,bindaddr) >= 0 )
-                {
-                    //timeout = 1;
-                    //nn_setsockopt(pairsock,NN_SOL_SOCKET,NN_SNDTIMEO,&timeout,sizeof(timeout));
-                    //nn_setsockopt(pairsock,NN_SOL_SOCKET,NN_RCVTIMEO,&timeout,sizeof(timeout));
-                    //printf("nanobind %s to %d\n",pairstr,pairsock);
-                    return(pairsock);
-                } // else printf("error binding to %s for %s\n",bindaddr,pairstr);
-                if ( LP_fixed_pairport != 0 )
-                    break;
-            }
-            printf("%d ports all used\n",i);
-            nn_close(pairsock);
-            pairsock = -1;
-        }
-    } else pairsock = LP_initpublicaddr(ctx,&mypullport,pairstr,"127.0.0.1",0,1);
-    return(pairsock);
+    return(1);
 }
 
 int32_t LP_nearest_utxovalue(struct iguana_info *coin,char *coinaddr,struct LP_address_utxo **utxos,int32_t n,uint64_t targetval)

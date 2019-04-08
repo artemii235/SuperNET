@@ -310,100 +310,7 @@ char *LP_process_message(void *ctx,char *typestr,char *myipaddr,int32_t pubsock,
 
 int32_t LP_sock_check(char *typestr,void *ctx,char *myipaddr,int32_t pubsock,int32_t sock,char *remoteaddr,int32_t maxdepth)
 {
-    static char *line;
-    int32_t recvlen=1,msglen,nonz = 0; cJSON *recvjson; void *ptr,*msg; char methodstr[64],*decodestr,*retstr,*str; struct nn_pollfd pfd;
-    if ( line == 0 )
-        line = calloc(1,1024*1024);
-    if ( sock >= 0 )
-    {
-        while ( nonz < maxdepth && recvlen > 0 )
-        {
-            decodestr = 0;
-            nonz++;
-            memset(&pfd,0,sizeof(pfd));
-            pfd.fd = sock;
-            pfd.events = NN_POLLIN;
-            if ( nn_poll(&pfd,1,1) != 1 )
-                break;
-            ptr = 0;
-            if ( (recvlen= nn_recv(sock,&ptr,NN_MSG,0)) > 0 )
-            {
-                //printf("%s nn_recv.%d\n",typestr,recvlen);
-                decodestr = 0;
-                if ( recvlen > 32768 )
-                {
-                    printf("unexpectedly large packet\n");
-                }
-                else
-                {
-                    msg = ptr;
-                    msglen = recvlen;
-                    if ( (recvjson= cJSON_Parse((char *)ptr)) == 0 )
-                    {
-                        if ( (decodestr= MMJSON_decode(ptr,recvlen)) != 0 )
-                        {
-                            if ( (recvjson= cJSON_Parse(decodestr)) != 0 )
-                            {
-                                msg = decodestr;
-                                msglen = (int32_t)strlen(decodestr) + 1;
-                            }
-                            //printf("decoded.(%s)\n",decodestr);
-                        } else printf("couldnt decode linebuf[%d]\n",recvlen);
-                    }
-                    methodstr[0] = 0;
-                    if ( recvjson != 0 )
-                    {
-                        // AG: Uncomment to debug the ordermatch communications:
-                        //printf("LP_sock_check] from %i, %s: %s\n", sock, remoteaddr, cJSON_Print(recvjson));
-                        safecopy(LP_methodstr,jstr(recvjson,"method"),sizeof(LP_methodstr));
-                        free_json(recvjson);
-                    }
-                    int32_t validreq = 1;
-                    /*if ( strlen((char *)ptr)+sizeof(bits256) <= recvlen )
-                     {
-                     if ( LP_magic_check(ptr,recvlen,remoteaddr) <= 0 )
-                     {
-                     //printf("magic check error\n");
-                     } else validreq = 1;
-                     recvlen -= sizeof(bits256);
-                     }*/
-                    if ( validreq != 0 )
-                    {
-                        if ( (retstr= LP_process_message(ctx,typestr,myipaddr,pubsock,msg,msglen,sock)) != 0 )
-                            free(retstr);
-                        
-                        if ( Broadcaststr != 0 )
-                        {
-                            //printf("self broadcast.(%s)\n",Broadcaststr);
-                            str = Broadcaststr;
-                            Broadcaststr = 0;
-                            LP_QUEUE_COMMAND(0,str,pubsock,0,0);
-                            /*if ( (argjson= cJSON_Parse(str)) != 0 )
-                            {
-                                //portable_mutex_lock(&LP_commandmutex);
-                                if ( LP_tradecommand(0,ctx,myipaddr,pubsock,argjson,0,0) <= 0 )
-                                {
-                                    if ( (retstr= stats_JSON(ctx,0,myipaddr,pubsock,argjson,remoteaddr,0)) != 0 )
-                                        free(retstr);
-                                }
-                                //portable_mutex_unlock(&LP_commandmutex);
-                                free_json(argjson);
-                            }*/
-                            free(str);
-                        }
-                    }
-                }
-            }
-            if ( ptr != 0 )
-            {
-                nn_freemsg(ptr), ptr = 0;
-                //free(buf);
-            }
-            if ( decodestr != 0 )
-                free(decodestr);
-        }
-    }
-    return(nonz);
+    return(1);
 }
 
 int32_t LP_nanomsg_recvs(void *ctx)
@@ -1026,13 +933,6 @@ void queue_loop(void *ctx)
                             {
                                 if ( (k= MMJSON_encode(linebuf,(char *)ptr->msg)) > 0 )
                                 {
-                                    if ( (sentbytes= nn_send(ptr->sock,linebuf,k,0)) != k )
-                                        printf("%d LP_send mmjson sent %d instead of %d\n",n,sentbytes,k);
-                                    else
-                                    {
-                                        flag++;
-                                        ptr->sock = -1;
-                                    }
                                 }
                                 //printf("k.%d flag.%d SEND.(%s) sock.%d\n",k,flag,(char *)ptr->msg,ptr->sock);
                             }
@@ -1041,13 +941,6 @@ void queue_loop(void *ctx)
                         if ( flag == 0 )
                         {
                            // printf("non-encoded len.%d SEND.(%s) sock.%d\n",ptr->msglen,(char *)ptr->msg,ptr->sock);
-                            if ( (sentbytes= nn_send(ptr->sock,ptr->msg,ptr->msglen,0)) != ptr->msglen )
-                                printf("%d LP_send sent %d instead of %d\n",n,sentbytes,ptr->msglen);
-                            else
-                            {
-                                flag++;
-                                ptr->sock = -1;
-                            }
                         }
                         if ( ptr->peerind > 0 )
                             ptr->starttime = (uint32_t)time(NULL);
@@ -1085,7 +978,7 @@ void queue_loop(void *ctx)
 
 void LP_reserved_msgs(void *ignore)
 {
-    bits256 zero; int32_t flag,nonz; struct nn_pollfd pfd;
+    bits256 zero; int32_t flag,nonz;
     memset(zero.bytes,0,sizeof(zero));
     strcpy(LP_reserved_msgs_stats.name,"LP_reserved_msgs");
     LP_reserved_msgs_stats.threshold = 1000.;
@@ -1115,14 +1008,6 @@ void LP_reserved_msgs(void *ignore)
         {
             nonz++;
             flag = 0;
-            if ( flag == 0 && LP_mypubsock >= 0 )
-            {
-                memset(&pfd,0,sizeof(pfd));
-                pfd.fd = LP_mypubsock;
-                pfd.events = NN_POLLOUT;
-                if ( nn_poll(&pfd,1,1) == 1 )
-                    flag = 1;
-            } else flag = 1;
             if ( flag == 1 )
             {
                 portable_mutex_lock(&LP_reservedmutex);
@@ -1159,26 +1044,6 @@ int32_t LP_reserved_msg(int32_t priority,bits256 pubkey,char *msg)
         return(-1);
     //if ( strcmp(G.USERPASS,"1d8b27b21efabcd96571cd56f91a40fb9aa4cc623d273c63bf9223dc6f8cd81f") == 0 )
     //    return(-1);
-    if ( priority > 0 && bits256_nonz(pubkey) != 0 )
-    {
-        if ( (pubp= LP_pubkeyfind(pubkey)) != 0 )
-        {
-            if ( pubp->pairsock >= 0 )
-            {
-                if ( (sentbytes= nn_send(pubp->pairsock,msg,(int32_t)strlen(msg)+1,0)) < 0 )
-                {
-                    //pubp->pairsock = -1;
-                    //LP_peer_pairsock(pubkey);
-                    //printf("mark cmdchannel %d closed sentbytes.%d\n",pubp->pairsock,sentbytes);
-                }
-                else
-                {
-                    printf("sent %d bytes to cmdchannel.%d\n",sentbytes,pubp->pairsock);
-                    return(sentbytes);
-                }
-            }
-        }
-    }
     portable_mutex_lock(&LP_reservedmutex);
     if ( num_Reserved_msgs[priority] < sizeof(Reserved_msgs[priority])/sizeof(*Reserved_msgs[priority]) )
     {
@@ -1252,11 +1117,6 @@ void LPinit(char* myipaddr,uint16_t mypullport,uint16_t mypubport,char *passphra
     long filesize; int32_t valid,timeout; struct LP_peerinfo *mypeer=0; char pushaddr[128],subaddr[128],bindaddr[128],*coins_str=0; cJSON *coinsjson=0; void* ctx;
 
 #ifndef FROM_JS
-    if ( OS_thread_create(malloc(sizeof(pthread_t)),NULL,(void *)LP_psockloop,(void *)myipaddr) != 0 )
-    {
-        printf("error launching LP_psockloop for (%s)\n",myipaddr);
-        exit(-1);
-    }
     if ( OS_thread_create(malloc(sizeof(pthread_t)),NULL,(void *)LP_reserved_msgs,(void *)myipaddr) != 0 )
     {
         printf("error launching LP_reserved_msgs for (%s)\n",myipaddr);

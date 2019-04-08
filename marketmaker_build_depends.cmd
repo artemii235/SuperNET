@@ -3,7 +3,7 @@ rem [ Decker] Automatically download and build depends script for marketmaker.
 rem
 rem 1. Requires installed CMake for Windows (!)
 rem 2. Currently build only 64-bit release versions of .lib and .dll
-rem 3. Libraries available: pthreads, nanomsg, curl
+rem 3. Libraries available: pthreads, curl
 
 if exist "c:\Program Files (x86)\Microsoft Visual Studio\2017\BuildTools\VC\Auxiliary\Build\vcvars64.bat" (
  call "c:\Program Files (x86)\Microsoft Visual Studio\2017\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
@@ -33,22 +33,6 @@ if not exist marketmaker_depends\pthreadVC2.dll (
 )
 copy marketmaker_depends\pthreadVC2.dll x64\pthreadVC2.dll
 copy marketmaker_depends\pthreadVC2.lib x64\pthreadVC2.lib
-
-rem TODO: Move to build.rs and build automatically.
-rem --- nanomsg ---
-:compile_nanomsg
-if not exist marketmaker_depends\nanomsg\build\Release\nanomsg.lib (
-    cd marketmaker_depends
-    rmdir nanomsg /S /Q
-    git clone --depth=1 --quiet https://github.com/nanomsg/nanomsg
-    cd nanomsg
-    mkdir build
-    cd build
-    cmake -G "Visual Studio 15 2017 Win64" -DNN_STATIC_LIB=ON ..
-    cmake --build . --config Release --target nanomsg
-    cd ../../..
-)
-copy marketmaker_depends\nanomsg\build\Release\nanomsg.lib x64\nanomsg.lib
 
 rem TODO: Move to build.rs and build automatically.
 rem --- curl ---

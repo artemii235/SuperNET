@@ -18,7 +18,7 @@
 //  ordermatch.rs
 //  marketmaker
 //
-use common::{lp, lp_queue_command_for_c, nn, free_c_ptr, c_char_to_string, sat_to_f, SATOSHIS, SMALLVAL, CJSON, dstr, rpc_response, rpc_err_response, HyRes};
+use common::{lp, lp_queue_command_for_c, free_c_ptr, c_char_to_string, sat_to_f, SATOSHIS, SMALLVAL, CJSON, dstr, rpc_response, rpc_err_response, HyRes};
 use common::for_c::broadcast_p2p_msg_for_c;
 use common::mm_ctx::{from_ctx, MmArc, MmWeak};
 use coins::{lp_coinfind, MmCoinEnum};
@@ -486,11 +486,6 @@ unsafe fn lp_connect_start_bob(ctx: &MmArc, base: *mut c_char, rel: *mut c_char,
         lp::LP_failedmsg((*qp).R.requestid, (*qp).R.quoteid, -3004.0, (*qp).uuidstr.as_mut_ptr());
         log!("lp::G.LP_mypub25519 " (lp::G.LP_mypub25519) " != (*qp).srchash " ((*qp).srchash));
     }
-    if retval < 0 {
-        if pair >= 0 {
-            nn::nn_close(pair);
-        }
-    }
     retval
 }
 /*
@@ -726,73 +721,56 @@ unsafe fn lp_connected_alice(ctx_ffi_handle: u32, qp: *mut lp::LP_quoteinfo, pai
         lp::LP_failedmsg((*qp).R.requestid, (*qp).R.quoteid, -4002.0, (*qp).uuidstr.as_mut_ptr());
         return;
     }
-//LP_RTmetrics_update(qp->srccoin,qp->destcoin);
     printf(b"%s/%s bid %.8f ask %.8f\n\x00".as_ptr() as *const c_char, (*qp).srccoin.as_ptr(), (*qp).destcoin.as_ptr(), bid, ask);
-    let pairsock = nn::nn_socket(nn::AF_SP as i32, nn::NN_PAIR as i32);
-    if pairstr.is_null() || *pairstr == 0 || pairsock < 0 {
-        lp::LP_aliceid((*qp).tradeid, (*qp).aliceid, b"error8\x00".as_ptr() as *mut c_char, (*qp).R.requestid, (*qp).R.quoteid);
-        lp::LP_failedmsg((*qp).R.requestid, (*qp).R.quoteid, -4005.0, (*qp).uuidstr.as_mut_ptr());
-    } else if nn::nn_connect(pairsock, pairstr) >= 0 {
-//timeout = 1;
-//nn_setsockopt(pairsock,NN_SOL_SOCKET,NN_SNDTIMEO,&timeout,sizeof(timeout));
-//nn_setsockopt(pairsock,NN_SOL_SOCKET,NN_RCVTIMEO,&timeout,sizeof(timeout));
-//autxo->S.swap = swap;
-//swap->utxo = autxo;
-        let mut otheraddr: [c_char; 64] = [0; 64];
-        lp::LP_importaddress((*qp).srccoin.as_mut_ptr(), (*qp).coinaddr.as_mut_ptr());
-        lp::LP_otheraddress((*qp).destcoin.as_mut_ptr(), otheraddr.as_mut_ptr(), (*qp).srccoin.as_mut_ptr(), (*qp).coinaddr.as_mut_ptr());
-        lp::LP_importaddress((*qp).srccoin.as_mut_ptr(), otheraddr.as_mut_ptr());
-        lp::LP_aliceid((*qp).tradeid, (*qp).aliceid, b"started\x00".as_ptr() as *mut c_char, (*qp).R.requestid, (*qp).R.quoteid);
-        printf(b"alice pairstr.(%s) pairsock.%d\n\x00".as_ptr() as *const c_char, pairstr, pairsock);
-        let alice_loop_thread = thread::Builder::new().name("taker_loop".into()).spawn({
-            let ctx = ctx.clone();
-            let maker = (*qp).srchash;
-            let taker_str = c2s!((*qp).R.dest);
-            let taker_coin = unwrap! (unwrap! (lp_coinfind (&ctx, taker_str)));
-            let maker_str = c2s!((*qp).R.src);
-            let maker_coin = unwrap! (unwrap! (lp_coinfind (&ctx, maker_str)));
-            let maker_amount = (*qp).R.srcamount as u64;
-            let taker_amount = (*qp).R.destamount as u64;
-            let my_persistent_pub = unwrap!(compressed_pub_key_from_priv_raw(&lp::G.LP_privkey.bytes, ChecksumType::DSHA256));
-            let uuid = CStr::from_ptr ((*qp).uuidstr.as_ptr()) .to_string_lossy().into_owned();
-            move || {
-                log!("Entering the taker_swap_loop " (maker_coin.ticker()) "/" (taker_coin.ticker()));
-                let taker_swap = TakerSwap::new(
-                    ctx,
-                    maker,
-                    maker_coin,
-                    taker_coin,
-                    maker_amount,
-                    taker_amount,
-                    my_persistent_pub,
-                    uuid,
-                );
-                run_taker_swap(taker_swap);
-            }
-        });
-        match alice_loop_thread {
-            Ok(_h) => {
-                let retjson = CJSON(lp::LP_quotejson(qp));
-                lp::jaddstr(retjson.0, b"result\x00".as_ptr() as *mut c_char, b"success\x00".as_ptr() as *mut c_char);
-                lp::LP_swapsfp_update((*qp).R.requestid, (*qp).R.quoteid);
-                if lp::IPC_ENDPOINT >= 0 {
-                    let msg = lp::jprint(retjson.0, 0);
-                    lp_queue_command_for_c(null_mut(), msg, lp::IPC_ENDPOINT, -1, 0);
-                    free_c_ptr(msg as *mut c_void);
-                }
-            },
-            Err(e) => {
-                log!({ "Got error trying to start taker loop {}", e });
-                lp::LP_aliceid((*qp).tradeid, (*qp).aliceid, b"error9\x00".as_ptr() as *mut c_char, (*qp).R.requestid, (*qp).R.quoteid);
-                lp::LP_failedmsg((*qp).R.requestid, (*qp).R.quoteid, -4006.0, (*qp).uuidstr.as_mut_ptr());
-            }
+    let mut otheraddr: [c_char; 64] = [0; 64];
+    lp::LP_importaddress((*qp).srccoin.as_mut_ptr(), (*qp).coinaddr.as_mut_ptr());
+    lp::LP_otheraddress((*qp).destcoin.as_mut_ptr(), otheraddr.as_mut_ptr(), (*qp).srccoin.as_mut_ptr(), (*qp).coinaddr.as_mut_ptr());
+    lp::LP_importaddress((*qp).srccoin.as_mut_ptr(), otheraddr.as_mut_ptr());
+    lp::LP_aliceid((*qp).tradeid, (*qp).aliceid, b"started\x00".as_ptr() as *mut c_char, (*qp).R.requestid, (*qp).R.quoteid);
+    printf(b"alice pairstr.(%s)\n\x00".as_ptr() as *const c_char, pairstr);
+    let alice_loop_thread = thread::Builder::new().name("taker_loop".into()).spawn({
+        let ctx = ctx.clone();
+        let maker = (*qp).srchash;
+        let taker_str = c2s!((*qp).R.dest);
+        let taker_coin = unwrap!(unwrap! (lp_coinfind (&ctx, taker_str)));
+        let maker_str = c2s!((*qp).R.src);
+        let maker_coin = unwrap!(unwrap! (lp_coinfind (&ctx, maker_str)));
+        let maker_amount = (*qp).R.srcamount as u64;
+        let taker_amount = (*qp).R.destamount as u64;
+        let my_persistent_pub = unwrap!(compressed_pub_key_from_priv_raw(&lp::G.LP_privkey.bytes, ChecksumType::DSHA256));
+        let uuid = CStr::from_ptr((*qp).uuidstr.as_ptr()).to_string_lossy().into_owned();
+        move || {
+            log!("Entering the taker_swap_loop " (maker_coin.ticker()) "/" (taker_coin.ticker()));
+            let taker_swap = TakerSwap::new(
+                ctx,
+                maker,
+                maker_coin,
+                taker_coin,
+                maker_amount,
+                taker_amount,
+                my_persistent_pub,
+                uuid,
+            );
+            run_taker_swap(taker_swap);
         }
-    } else {
-        lp::LP_aliceid((*qp).tradeid, (*qp).aliceid, b"error10\x00".as_ptr() as *mut c_char, (*qp).R.requestid, (*qp).R.quoteid);
-        printf(b"connect error %s\n\x00".as_ptr() as *const c_char, nn::nn_strerror(nn::nn_errno()));
-        lp::LP_failedmsg((*qp).R.requestid, (*qp).R.quoteid, -4007.0, (*qp).uuidstr.as_mut_ptr());
+    });
+    match alice_loop_thread {
+        Ok(_h) => {
+            let retjson = CJSON(lp::LP_quotejson(qp));
+            lp::jaddstr(retjson.0, b"result\x00".as_ptr() as *mut c_char, b"success\x00".as_ptr() as *mut c_char);
+            lp::LP_swapsfp_update((*qp).R.requestid, (*qp).R.quoteid);
+            if lp::IPC_ENDPOINT >= 0 {
+                let msg = lp::jprint(retjson.0, 0);
+                lp_queue_command_for_c(null_mut(), msg, lp::IPC_ENDPOINT, -1, 0);
+                free_c_ptr(msg as *mut c_void);
+            }
+        },
+        Err(e) => {
+            log!({ "Got error trying to start taker loop {}", e });
+            lp::LP_aliceid((*qp).tradeid, (*qp).aliceid, b"error9\x00".as_ptr() as *mut c_char, (*qp).R.requestid, (*qp).R.quoteid);
+            lp::LP_failedmsg((*qp).R.requestid, (*qp).R.quoteid, -4006.0, (*qp).uuidstr.as_mut_ptr());
+        }
     }
-//printf("connected result.(%s)\n",jprint(retjson,0));
 }
 /*
 int32_t LP_aliceonly(char *symbol)

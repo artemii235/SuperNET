@@ -97,52 +97,6 @@ struct LP_peerinfo *LP_addpeer(struct LP_peerinfo *mypeer,int32_t mypubsock,char
                 LP_numactive_LP++;
             peer->port = port;
             peer->ip_port = ((uint64_t)port << 32) | ipbits;
-            if ( pushport != 0 && subport != 0 && (pushsock= nn_socket(AF_SP,NN_PUSH)) >= 0 )
-            {
-                nanomsg_transportname(0,pushaddr,peer->ipaddr,pushport);
-                valid = 0;
-                if ( nn_connect(pushsock,pushaddr) >= 0 )
-                    valid++;
-                if ( valid > 0 )
-                {
-                    //timeout = 10;
-                    //nn_setsockopt(pushsock,NN_SOL_SOCKET,NN_MAXTTL,&timeout,sizeof(timeout));
-                    timeout = 100;
-                    nn_setsockopt(pushsock,NN_SOL_SOCKET,NN_SNDTIMEO,&timeout,sizeof(timeout));
-                    printf("connected to push.(%s) pushsock.%d valid.%d  | ",pushaddr,pushsock,valid);
-                    peer->connected = (uint32_t)time(NULL);
-                    peer->pushsock = pushsock;
-                    if ( (subsock= nn_socket(AF_SP,NN_SUB)) >= 0 )
-                    {
-                        timeout = 100;
-                        nn_setsockopt(subsock,NN_SOL_SOCKET,NN_RCVTIMEO,&timeout,sizeof(timeout));
-                        nn_setsockopt(subsock,NN_SUB,NN_SUB_SUBSCRIBE,"",0);
-                        nanomsg_transportname(0,subaddr,peer->ipaddr,subport);
-                        valid = 0;
-                        /*
-                        if ( nn_connect(subsock,subaddr) >= 0 )
-                            valid++;
-                        if ( valid > 0 )
-                        {
-                            peer->subsock = subsock;
-                            printf("connected to sub.(%s) subsock.%d valid.%d numactive.%d\n",subaddr,peer->subsock,valid,LP_numactive_LP);
-                        }
-                        else
-                        {
-                            printf("error connecting to subsock.%d (%s)\n",subsock,subaddr);
-                            nn_close(subsock);
-                            subsock = -1;
-                        }
-                        */
-                    }
-                }
-                else
-                {
-                    nn_close(pushsock);
-                    pushsock = -1;
-                    printf("error connecting to push.(%s)\n",pushaddr);
-                }
-            } else printf("%s pushport.%u subport.%u pushsock.%d isLP.%d\n",ipaddr,pushport,subport,pushsock,isLP);
             if ( peer->pushsock >= 0 && peer->subsock >= 0 )
             {
                 //printf("add peer %s isLP.%d\n",peer->ipaddr,peer->isLP);
@@ -158,22 +112,6 @@ struct LP_peerinfo *LP_addpeer(struct LP_peerinfo *mypeer,int32_t mypubsock,char
         }
     }
     return(peer);
-}
-
-void LP_closepeers()
-{
-    struct LP_peerinfo *peer,*tmp; 
-    HASH_ITER(hh,LP_peerinfos,peer,tmp)
-    {
-        portable_mutex_lock(&LP_peermutex);
-        HASH_DELETE(hh,LP_peerinfos,peer);
-        portable_mutex_unlock(&LP_peermutex);
-        if ( peer->pushsock >= 0 )
-            nn_close(peer->pushsock), peer->pushsock = -1;
-        if ( peer->subsock >= 0 )
-            nn_close(peer->subsock), peer->subsock = -1;
-        // free(peer); a small memleak to avoid freein inflight requests
-    }
 }
 
 /*int32_t LP_coinbus(uint16_t coin_busport)

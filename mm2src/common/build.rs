@@ -214,7 +214,6 @@ fn generate_bindings() {
             "LP_failedmsg",
             "LP_quote_validate",
             "LP_availableset",
-            "LP_closepeers",
             "LP_tradebot_pauseall",
             "LP_portfolio_reset",
             "LP_priceinfos_clear",
@@ -320,25 +319,6 @@ fn generate_bindings() {
         .iter(),
         empty(), // types
         empty(), // defines
-    );
-    bindgen(
-        vec!["../../crypto777/nanosrc/nn.h".into()],
-        "c_headers/nn.rs",
-        [
-            "nn_bind",
-            "nn_connect",
-            "nn_close",
-            "nn_errno",
-            "nn_freemsg",
-            "nn_recv",
-            "nn_setsockopt",
-            "nn_send",
-            "nn_socket",
-            "nn_strerror",
-        ]
-        .iter(),
-        empty(),
-        ["AF_SP", "NN_PAIR", "NN_PUB", "NN_SOL_SOCKET", "NN_SNDTIMEO", "NN_MSG",].iter(),
     );
 }
 
@@ -1010,10 +990,6 @@ fn build_c_code(mm_version: &str) {
             "cargo:rustc-link-search=native={}",
             path2s(rabs("build/crypto777/jpeg"))
         );
-        println!(
-            "cargo:rustc-link-search=native={}",
-            path2s(rabs("build/nanomsg-build"))
-        );
     }
 
     println!(
@@ -1024,7 +1000,6 @@ fn build_c_code(mm_version: &str) {
         // https://sourceware.org/pthreads-win32/
         // ftp://sourceware.org/pub/pthreads-win32/prebuilt-dll-2-9-1-release/
         println!("cargo:rustc-link-lib=pthreadVC2");
-        println!("cargo:rustc-link-lib=static=nanomsg");
         println!("cargo:rustc-link-lib=mswsock"); // For nanomsg.
         unwrap!(
             fs::copy(
@@ -1042,7 +1017,6 @@ fn build_c_code(mm_version: &str) {
         );
     } else {
         println!("cargo:rustc-link-lib=crypto");
-        println!("cargo:rustc-link-lib=static=nanomsg");
     }
 }
 

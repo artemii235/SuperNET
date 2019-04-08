@@ -105,9 +105,6 @@ pub use self::lp::{_bits256 as bits256};
 #[allow(dead_code,non_upper_case_globals,non_camel_case_types,non_snake_case)]
 pub mod os {include! ("c_headers/OS_portable.rs");}
 
-#[allow(dead_code,non_upper_case_globals,non_camel_case_types,non_snake_case)]
-pub mod nn {include! ("c_headers/nn.rs");}
-
 pub const MM_VERSION: &'static str = env! ("MM_VERSION");
 
 pub const SATOSHIS: u64 = 100000000;
