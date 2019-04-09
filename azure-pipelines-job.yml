@@ -47,7 +47,7 @@ jobs:
           ALICE_PASSPHRASE: $(${{ parameters.alice_passphrase }})
           ALICE_USERPASS: $(${{ parameters.alice_userpass }})
       - bash: |
-          cp -r target/debug/mm2 upload/mm2-$(COMMIT_HASH)-$(Agent.OS)
+          zip -9 upload/mm2-$(COMMIT_HASH)-$(Agent.OS) target/debug/mm2
         displayName: 'Prepare upload Linux/MacOS'
         condition: ne( variables['Agent.OS'], 'Windows_NT' )
       - powershell: |

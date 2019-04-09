@@ -6,9 +6,6 @@ set(MM_LIBS
         libcrypto777
         libjpeg
         libsecp256k1
-        dl
-        crypto
-        ssl
     )
 
 if(WIN32)
@@ -16,18 +13,12 @@ link_directories(${CMAKE_SOURCE_DIR}/marketmaker_depends/pthread-win32/bin/x64_M
 endif()
 add_library(marketmaker-lib STATIC ${MM_SOURCES})
 include_directories(../../crypto777)
-if(UNIX)
-    target_link_libraries(marketmaker-lib m)
-endif()
 if(WIN32)
 add_definitions(-DNATIVE_WINDOWS)
 add_definitions(-DIGUANA_LOG2PACKETSIZE=20)
 add_definitions(-DIGUANA_MAXPACKETSIZE=1572864)
 add_definitions(-D_CRT_SECURE_NO_WARNINGS)
 include_directories("${CMAKE_SOURCE_DIR}/includes")
-endif()
-if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
-target_link_libraries(marketmaker-lib -static-libgcc -static-libstdc++)
 endif()
 # Link with apple OS libraries
 if (APPLE)
