@@ -68,11 +68,12 @@ use peers::SendHandler;
 use primitives::hash::{H160, H264};
 use serde_json::{self as json, Value as Json};
 use serialization::{deserialize, serialize};
-use std::fs::File;
+use std::ffi::OsStr;
+use std::fs::{File, DirEntry};
 use std::io::prelude::*;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 /// Includes the grace time we add to the "normal" timeouts
 /// in order to give different and/or heavy communication channels a chance.
@@ -186,9 +187,13 @@ fn test_serde_swap_negotiation_data() {
     assert_eq!(data, deserialized);
 }
 
-fn my_swap_file_path(uuid: &str) -> PathBuf {
+fn my_swaps_dir() -> PathBuf {
     let path = swap_db_dir();
-    path.join("MY").join(format!("{}.json", uuid))
+    path.join("MY")
+}
+
+fn my_swap_file_path(uuid: &str) -> PathBuf {
+    my_swaps_dir().join(format!("{}.json", uuid))
 }
 
 fn stats_maker_swap_file_path(uuid: &str) -> PathBuf {
@@ -1406,5 +1411,33 @@ pub fn save_stats_swap_status(data: Json) -> HyRes {
     try_h!(save_stats_swap(&swap));
     rpc_response(200, json!({
         "result": "success"
+    }).to_string())
+}
+
+/// Returns the data of recent swaps of `my` node. Returns no more than `limit` records (default: 10).
+pub fn my_recent_swaps(req: Json) -> HyRes {
+    let limit = req["limit"].as_u64().unwrap_or(10);
+    let skip = req["skip"].as_u64().unwrap_or(0);
+    let mut entries: Vec<(SystemTime, DirEntry)> = try_h!(my_swaps_dir().read_dir()).filter_map(|dir_entry| {
+        match dir_entry {
+            Ok(entry) => if entry.path().extension() == Some(OsStr::new("json")) {
+                Some((entry.metadata().unwrap().modified().unwrap(), entry))
+            } else {
+                None
+            },
+            Err(e) => None,
+        }
+    }).collect();
+    entries.sort_by(|(a, _), (b, _)| b.cmp(&a));
+
+    let mut result: Vec<Json> = vec![];
+    for (m_time, entry) in entries.iter().skip(skip as usize).take(limit as usize) {
+        result.push(try_h!(json::from_slice(&slurp(&entry.path()))));
+    }
+    rpc_response(200, json!({
+        "result": result,
+        "skip": skip,
+        "limit": limit,
+        "total": entries.len(),
     }).to_string())
 }
