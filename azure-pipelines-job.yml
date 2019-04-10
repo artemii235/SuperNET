@@ -37,13 +37,13 @@ jobs:
       - bash: |
           rm -rf upload
           mkdir upload
+          touch mm2src/common/build.rs
           cargo build -vv
         displayName: 'Build MM2'
       # Cargo uses CPU threads count by default running only 2 concurrent tests on Linux.
       # Explicit --test-threads=8 makes the process faster
       - bash: |
-          echo "test"
-      #   cargo test --all --bin mm2 -- --test-threads=8
+          cargo test --all --bin mm2 -- --test-threads=8
         displayName: 'Test MM2'
         timeoutInMinutes: 22
         env:
@@ -53,10 +53,12 @@ jobs:
           ALICE_USERPASS: $(${{ parameters.alice_userpass }})
       - bash: |
           zip upload/mm2-$(COMMIT_HASH)-$(Agent.OS) target/debug/mm2
+          zip upload/mm2-latest-$(Agent.OS) target/debug/mm2
         displayName: 'Prepare upload Linux/MacOS'
         condition: ne( variables['Agent.OS'], 'Windows_NT' )
       - powershell: |
           7z a .\upload\mm2-$(COMMIT_HASH)-$(Agent.OS).zip .\target\debug\mm2.exe .\target\debug\*.dll "$Env:windir\system32\msvcr100.dll" "$Env:windir\system32\msvcp140.dll" "$Env:windir\system32\vcruntime140.dll"
+          7z a .\upload\mm2-latest-$(Agent.OS).zip .\target\debug\mm2.exe .\target\debug\*.dll "$Env:windir\system32\msvcr100.dll" "$Env:windir\system32\msvcp140.dll" "$Env:windir\system32\vcruntime140.dll"
         displayName: 'Prepare upload Windows'
         condition: eq( variables['Agent.OS'], 'Windows_NT' )
       # https://docs.microsoft.com/en-us/azure/devops/pipelines/tasks/deploy/copy-files-over-ssh?view=vsts
@@ -66,11 +68,5 @@ jobs:
           sourceFolder: 'upload' # Optional
           contents: "**"
           targetFolder: "uploads/$(Build.SourceBranchName)" # Optional
+          overwrite: true
         displayName: 'Upload nightly'
-      # https://docs.microsoft.com/en-us/azure/devops/pipelines/tasks/deploy/ssh?view=azure-devops
-      - task: SSH@0
-        inputs:
-          sshEndpoint: nightly_build_server
-          runOptions: inline
-          inline: pwd
-        displayName: 'Copy nightly as latest'
