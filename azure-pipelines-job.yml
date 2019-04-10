@@ -27,7 +27,8 @@ jobs:
         continueOnError: true
       # https://docs.microsoft.com/en-us/azure/devops/pipelines/process/variables?view=azure-devops&tabs=yaml%2Cbatch#set-a-job-scoped-variable-from-a-script
       - script: |
-          echo '##vso[task.setvariable variable=COMM_HASH]$(COMMIT_HASH)'
+          export TAG=echo "dev-$(git rev-parse --short HEAD)"
+          echo '##vso[task.setvariable variable=COMM_HASH]$TAG'
         displayName: Setup ENV
       - powershell: |
           .\marketmaker_build_depends.cmd
@@ -36,7 +37,7 @@ jobs:
       - bash: |
           rm -rf upload
           mkdir upload
-          touch mm2src/common/build.rs
+      #   touch mm2src/common/build.rs
           cargo build -vv
         displayName: 'Build MM2'
       # Cargo uses CPU threads count by default running only 2 concurrent tests on Linux.
