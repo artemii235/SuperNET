@@ -1415,25 +1415,52 @@ pub fn save_stats_swap_status(data: Json) -> HyRes {
 }
 
 /// Returns the data of recent swaps of `my` node. Returns no more than `limit` records (default: 10).
+/// Skips the first `skip` records (default: 0).
 pub fn my_recent_swaps(req: Json) -> HyRes {
     let limit = req["limit"].as_u64().unwrap_or(10);
     let skip = req["skip"].as_u64().unwrap_or(0);
     let mut entries: Vec<(SystemTime, DirEntry)> = try_h!(my_swaps_dir().read_dir()).filter_map(|dir_entry| {
-        match dir_entry {
-            Ok(entry) => if entry.path().extension() == Some(OsStr::new("json")) {
-                Some((entry.metadata().unwrap().modified().unwrap(), entry))
-            } else {
-                None
-            },
-            Err(e) => None,
+        let entry = match dir_entry {
+            Ok(ent) => ent,
+            Err(e) => {
+                log!("Error " (e) " reading from dir " (my_swaps_dir().display()));
+                return None;
+            }
+        };
+
+        let metadata = match entry.metadata() {
+            Ok(m) => m,
+            Err(e) => {
+                log!("Error " (e) " getting file " (entry.path().display()) " meta");
+                return None;
+            }
+        };
+
+        let m_time = match metadata.modified() {
+            Ok(time) => time,
+            Err(e) => {
+                log!("Error " (e) " getting file " (entry.path().display()) " m_time");
+                return None;
+            }
+        };
+
+        if entry.path().extension() == Some(OsStr::new("json")) {
+            Some((m_time, entry))
+        } else {
+            None
         }
     }).collect();
+    // sort by m_time in descending order
     entries.sort_by(|(a, _), (b, _)| b.cmp(&a));
 
-    let mut result: Vec<Json> = vec![];
-    for (m_time, entry) in entries.iter().skip(skip as usize).take(limit as usize) {
-        result.push(try_h!(json::from_slice(&slurp(&entry.path()))));
-    }
+    // iterate over file entries trying to parse the file contents and add to result vector
+    let result: Vec<Json> = entries.iter().skip(skip as usize).take(limit as usize).map(|(_, entry)|
+        json::from_slice(&slurp(&entry.path())).map_err(|e| {
+            log!("Error " (e) " parsing JSON from " (entry.path().display()));
+            e
+        }).unwrap_or(Json::Null)
+    ).collect();
+
     rpc_response(200, json!({
         "result": result,
         "skip": skip,

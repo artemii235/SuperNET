@@ -1,7 +1,7 @@
 use common::identity;
 use common::for_tests::{enable_electrum, from_env_file, mm_dump, mm_spat, LocalStart, MarketMakerIt};
 use dirs;
-use gstuff::{now_float, slurp};
+use gstuff::{slurp};
 use hyper::StatusCode;
 use hyper::header::ACCESS_CONTROL_ALLOW_ORIGIN;
 use libc::c_char;
@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::env::{self, var};
 use std::ffi::CString;
 use std::path::{Path, PathBuf};
-use std::thread::{self, sleep};
+use std::thread;
 use std::time::Duration;
 
 /// Asks MM to enable the given currency in native mode.  
