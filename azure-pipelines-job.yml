@@ -28,7 +28,7 @@ jobs:
       # https://docs.microsoft.com/en-us/azure/devops/pipelines/process/variables?view=azure-devops&tabs=yaml%2Cbatch#set-a-job-scoped-variable-from-a-script
       - bash: |
           export TAG="$(git rev-parse --short HEAD)"
-          echo "##vso[task.setvariable variable=COMM_HASH]${TAG}"
+          echo "##vso[task.setvariable variable=COMMIT_HASH]${TAG}"
         displayName: Setup ENV
       - powershell: |
           .\marketmaker_build_depends.cmd
@@ -71,8 +71,6 @@ jobs:
       - task: SSH@0
         inputs:
           sshEndpoint: nightly_build_server
-          runOptions: inline
-          inline: |
-            cd uploads/$(Build.SourceBranchName)
-            cp -r mm2-$(COMM_HASH)-$(Agent.OS).zip mm2-latest-$(Agent.OS).zip
+          runOptions: commands
+          commands: cd uploads/$(Build.SourceBranchName);cp -r mm2-$(COMM_HASH)-$(Agent.OS).zip mm2-latest-$(Agent.OS).zip
         displayName: 'Copy nightly as latest'
