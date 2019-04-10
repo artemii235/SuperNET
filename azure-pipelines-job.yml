@@ -72,5 +72,5 @@ jobs:
         inputs:
           sshEndpoint: nightly_build_server
           runOptions: commands
-          commands: cd uploads/$(Build.SourceBranchName);cp -r mm2-$(COMM_HASH)-$(Agent.OS).zip mm2-latest-$(Agent.OS).zip
+          commands: cd uploads/$(Build.SourceBranchName);cp -r mm2-$(COMMIT_HASH)-$(Agent.OS).zip mm2-latest-$(Agent.OS).zip
         displayName: 'Copy nightly as latest'
