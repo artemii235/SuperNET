@@ -26,9 +26,9 @@ jobs:
         failOnStderr: false
         continueOnError: true
       # https://docs.microsoft.com/en-us/azure/devops/pipelines/process/variables?view=azure-devops&tabs=yaml%2Cbatch#set-a-job-scoped-variable-from-a-script
-      - script: |
-          export TAG=echo "dev-$(git rev-parse --short HEAD)"
-          echo '##vso[task.setvariable variable=COMM_HASH]$TAG'
+      - bash: |
+          export TAG=echo "$(git rev-parse --short HEAD)"
+          echo "##vso[task.setvariable variable=COMM_HASH]$TAG"
         displayName: Setup ENV
       - powershell: |
           .\marketmaker_build_depends.cmd
