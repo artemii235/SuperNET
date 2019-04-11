@@ -46,6 +46,7 @@ use std::ops::Deref;
 use std::path::PathBuf;
 use std::ptr::null_mut;
 use std::sync::{Arc, Mutex};
+use std::thread;
 
 #[doc(hidden)]
 pub mod coins_tests;
@@ -260,6 +261,14 @@ pub trait MmCoin: SwapOps + MarketCoinOps + IguanaInfo + Debug + 'static {
 
     /// Maximum number of digits after decimal point used to denominate integer coin units (satoshis, wei, etc.)
     fn decimals(&self) -> u8;
+
+    /// Loop collecting coin transaction history and saving it to local DB
+    fn process_history_loop(&self, ctx: MmArc);
+
+    /// Path to tx history file
+    fn tx_history_path(&self, ctx: &MmArc) -> PathBuf {
+        ctx.dbdir().join("TRANSACTIONS").join(format!("{}.json", self.ticker()))
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -837,6 +846,12 @@ fn lp_coininit (ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoinEnum, Str
     } else {
         ii.inactive = 0;
     }
+
+    try_s!(thread::Builder::new().name(format!("tx_history_{}", ticker)).spawn({
+        let coin = coin.clone();
+        let ctx = ctx.clone();
+        move || coin.process_history_loop(ctx)
+    }));
 
     ve.insert (ticker.into(), coin.clone());
     Ok (coin)

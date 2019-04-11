@@ -50,6 +50,7 @@ pub use ethcore_transaction::SignedTransaction as SignedEthTx;
 mod web3_transport;
 use self::web3_transport::Web3Transport;
 use futures::future::Either;
+use common::mm_ctx::MmArc;
 
 /// https://github.com/artemii235/etomic-swap/blob/master/contracts/EtomicSwap.sol
 /// Dev chain (195.201.0.6:8565) contract address: 0xa09ad3cd7e96586ebd05a2607ee56b56fb2db8fd
@@ -959,6 +960,10 @@ impl MmCoin for EthCoin {
 
     fn decimals(&self) -> u8 {
         self.decimals
+    }
+
+    fn process_history_loop(&self, ctx: MmArc) {
+        unimplemented!()
     }
 }
 

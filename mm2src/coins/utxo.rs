@@ -1,5 +1,5 @@
 /******************************************************************************
- * Copyright © 2014-2018 The SuperNET Developers.                             *
+ * Copyright © 2014-2019 The SuperNET Developers.                             *
  *                                                                            *
  * See the AUTHORS, DEVELOPER-AGREEMENT and LICENSE files at                  *
  * the top-level directory of this distribution for the individual copyright  *
@@ -16,7 +16,7 @@
 //  utxo.rs
 //  marketmaker
 //
-//  Copyright © 2017-2018 SuperNET. All rights reserved.
+//  Copyright © 2017-2019 SuperNET. All rights reserved.
 //
 pub mod rpc_clients;
 
@@ -27,20 +27,22 @@ use chain::{TransactionOutput, TransactionInput, OutPoint};
 use chain::constants::{SEQUENCE_FINAL};
 use common::{dstr, lp, MutexGuardWrapper};
 use futures::{Future};
-use gstuff::now_ms;
-use keys::{KeyPair, Private, Public, Address, Secret};
+use gstuff::{now_ms, slurp};
+use keys::{KeyPair, Private, Public, Address, Secret, Type};
 use keys::bytes::Bytes;
 use keys::generator::{Random, Generator};
 use primitives::hash::{H256, H264, H512};
 use rand::{thread_rng};
 use rand::seq::SliceRandom;
-use rpc::v1::types::{Bytes as BytesJson};
-use script::{Opcode, Builder, Script, TransactionInputSigner, UnsignedTransactionInput, SignatureVersion};
+use rpc::v1::types::{Bytes as BytesJson, H256 as H256Json};
+use script::{Opcode, Builder, Script, ScriptAddress, TransactionInputSigner, UnsignedTransactionInput, SignatureVersion};
 use serde_json::{self as json, Value as Json};
 use serialization::{serialize, deserialize};
 use sha2::{Sha256, Digest};
 use std::borrow::Cow;
 use std::ffi::CStr;
+use std::fs::File;
+use std::io::{Write};
 use std::ops::Deref;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
@@ -51,6 +53,9 @@ pub use chain::Transaction as UtxoTx;
 
 use self::rpc_clients::{UtxoRpcClientEnum, UnspentInfo, ElectrumClient, ElectrumClientImpl, NativeClient};
 use super::{IguanaInfo, MarketCoinOps, MmCoin, MmCoinEnum, SwapOps, Transaction, TransactionEnum, TransactionFut, TransactionDetails};
+use crate::utxo::rpc_clients::{NativeClientImpl, UtxoRpcClientOps};
+use hashbrown::HashMap;
+use common::mm_ctx::MmArc;
 
 impl Transaction for UtxoTx {
     fn tx_hex(&self) -> Vec<u8> {
@@ -154,6 +159,30 @@ impl UtxoCoinImpl {
             TxFee::Fixed(fee) => Box::new(futures::future::ok(fee)),
             TxFee::Dynamic => self.rpc_client.estimate_fee_sat(self.decimals),
         }
+    }
+
+    fn addresses_from_script(&self, script: &Script) -> Result<Vec<Address>, String> {
+        let destinations: Vec<ScriptAddress> = try_s!(script.extract_destinations());
+
+        let addresses = destinations.into_iter().map(|dst| {
+            let (prefix, t_addr_prefix) = match dst.kind {
+                Type::P2PKH => (self.pub_addr_prefix, self.pub_t_addr_prefix),
+                Type::P2SH => (self.p2sh_addr_prefix, self.p2sh_t_addr_prefix),
+            };
+
+            Address {
+                hash: dst.hash,
+                checksum_type: self.checksum_type,
+                prefix,
+                t_addr_prefix,
+            }
+        }).collect();
+
+        Ok(addresses)
+    }
+
+    fn tx_details_by_hash(&self, hash: H256Json) -> Result<TransactionDetails, String> {
+        unimplemented!()
     }
 }
 
@@ -420,7 +449,7 @@ impl UtxoCoin {
 
         let mut attempts = 0;
         loop {
-            let tx_from_rpc = match self.rpc_client.get_transaction(tx.hash().reversed().into()).wait() {
+            let tx_from_rpc = match self.rpc_client.get_transaction_bytes(tx.hash().reversed().into()).wait() {
                 Ok(t) => t,
                 Err(e) => {
                     if attempts > 2 {
@@ -432,7 +461,7 @@ impl UtxoCoin {
                     continue;
                 }
             };
-            if serialize(&tx).take() != tx_from_rpc.hex.0 {
+            if serialize(&tx).take() != tx_from_rpc.0 {
                 return ERR!("Provided payment tx {:?} doesn't match tx data from rpc {:?}", tx, tx_from_rpc);
             }
 
@@ -771,9 +800,9 @@ impl SwapOps for UtxoCoin {
             _ => panic!(),
         };
         let amount = adjust_sat_by_decimals(amount, self.decimals);
-        let tx_from_rpc = try_s!(self.rpc_client.get_transaction(tx.hash().reversed().into()).wait());
+        let tx_from_rpc = try_s!(self.rpc_client.get_transaction_bytes(tx.hash().reversed().into()).wait());
 
-        if tx_from_rpc.hex.0 != serialize(&tx).take() {
+        if tx_from_rpc.0 != serialize(&tx).take() {
             return ERR!("Provided dex fee tx {:?} doesn't match tx data from rpc {:?}", tx, tx_from_rpc);
         }
 
@@ -947,6 +976,35 @@ impl MmCoin for UtxoCoin {
     fn decimals(&self) -> u8 {
         self.decimals
     }
+
+    fn process_history_loop(&self, ctx: MmArc) {
+        let content = slurp(&self.tx_history_path(&ctx));
+        let mut history: HashMap<H256Json, TransactionDetails> = if content.is_empty() {
+            HashMap::new()
+        } else {
+            json::from_slice(&content).unwrap()
+        };
+
+        loop {
+            match &self.rpc_client {
+                UtxoRpcClientEnum::Native(client) => {
+                    let transactions = client.list_transactions(100, 0).wait().unwrap();
+                    for transaction in transactions {
+                        if transaction.address == self.my_address() {
+                            let raw_transaction = client.get_transaction_bytes(transaction.txid.clone()).wait().unwrap();
+                            let utxo_tx = self.tx_enum_from_bytes(&raw_transaction).unwrap();
+                            let tx_details = utxo_tx.transaction_details(self.decimals).unwrap();
+                            history.insert(transaction.txid, tx_details);
+                        }
+                    }
+                },
+                UtxoRpcClientEnum::Electrum(_) => unimplemented!()
+            };
+            let mut file = File::create(self.tx_history_path(&ctx)).unwrap();
+            file.write_all(&json::to_vec(&history).unwrap()).unwrap();
+            thread::sleep(Duration::from_secs(30));
+        }
+    }
 }
 
 pub fn random_compressed_key_pair(prefix: u8, checksum_type: ChecksumType) -> Result<KeyPair, String> {
@@ -983,8 +1041,9 @@ pub enum UtxoInitMode {
 }
 
 pub fn utxo_coin_from_iguana_info(
-info: *mut lp::iguana_info, mode: UtxoInitMode,
-rpc_port: u16,
+    info: *mut lp::iguana_info,
+    mode: UtxoInitMode,
+    rpc_port: u16,
 ) -> Result<MmCoinEnum, String> {
     let info = unsafe { *info };
     let ticker = try_s! (unsafe {CStr::from_ptr (info.symbol.as_ptr())} .to_str()) .into();
@@ -1016,11 +1075,13 @@ rpc_port: u16,
         UtxoInitMode::Native => {
             let auth_str = unsafe { try_s!(CStr::from_ptr(info.userpass.as_ptr()).to_str()) };
             let uri = unsafe { try_s!(CStr::from_ptr(info.serverport.as_ptr()).to_str()) };
-            UtxoRpcClientEnum::Native(NativeClient {
+            let client = Arc::new(NativeClientImpl {
                 // Similar to `fomat!("http://127.0.0.1:"(rpc_port))`.
                 uri: format!("http://{}", uri),
                 auth: format!("Basic {}", base64_encode(auth_str, URL_SAFE)),
-            })
+            });
+
+            UtxoRpcClientEnum::Native(NativeClient(client))
         },
         UtxoInitMode::Electrum(mut urls) => {
             let mut rng = thread_rng();
@@ -1194,5 +1255,21 @@ mod tests {
         // the change that is less than tx_fee must be included to miner fee according to JL777
         // so no extra outputs should appear in generated transaction
         assert_eq!(generated.0.outputs.len(), 1);
+    }
+
+    #[test]
+    fn test_addresses_from_script() {
+        let coin = utxo_coin_for_test();
+        // P2PKH
+        let script: Script = "76a91405aab5342166f8594baf17a7d9bef5d56744332788ac".into();
+        let expected_addr: Vec<Address> = vec!["R9o9xTocqr6CeEDGDH6mEYpwLoMz6jNjMW".into()];
+        let actual_addr = unwrap!(coin.addresses_from_script(&script));
+        assert_eq!(expected_addr, actual_addr);
+
+        // P2SH
+        let script: Script = "a914e71a6120653ebd526e0f9d7a29cde5969db362d487".into();
+        let expected_addr: Vec<Address> = vec!["bZoEPR7DjTqSDiQTeRFNDJuQPTRY2335LD".into()];
+        let actual_addr = unwrap!(coin.addresses_from_script(&script));
+        assert_eq!(expected_addr, actual_addr);
     }
 }
