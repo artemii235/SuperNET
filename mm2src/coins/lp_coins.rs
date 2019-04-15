@@ -63,20 +63,23 @@ pub trait Transaction: Debug + 'static {
     fn tx_hash(&self) -> BytesJson;
     /// Transaction amount
     fn amount(&self, decimals: u8) -> Result<f64, String>;
-    /// From address
-    fn from(&self) -> String;
-    /// To address
-    fn to(&self) -> String;
+    /// From addresses
+    fn from(&self) -> Vec<String>;
+    /// To addresses
+    fn to(&self) -> Vec<String>;
     /// Fee details
     fn fee_details(&self) -> Result<Json, String>;
     /// Serializable transaction details for displaying purposes
     fn transaction_details(&self, decimals: u8) -> Result<TransactionDetails, String> {
         Ok(TransactionDetails {
             tx_hash: self.tx_hash(),
-            amount: try_s!(self.amount(decimals)),
+            total_amount: try_s!(self.amount(decimals)),
+            spent_by_me: 0.,
+            received_by_me: 0.,
             fee_details: try_s!(self.fee_details()),
             from: self.from(),
             to: self.to(),
+            block_height: 0,
             tx_hex: self.tx_hex().into(),
         })
     }
@@ -230,12 +233,18 @@ pub struct TransactionDetails {
     pub tx_hex: BytesJson,
     /// Transaction hash in hexadecimal format
     tx_hash: BytesJson,
-    /// Coins will be sent from this address
-    from: String,
-    /// Coins will be sent to this address
-    to: String,
-    /// Amount to be sent
-    amount: f64,
+    /// Coins are sent from these addresses
+    from: Vec<String>,
+    /// Coins are sent to these addresses
+    to: Vec<String>,
+    /// Total tx amount
+    total_amount: f64,
+    /// The amount spent from "our" address
+    spent_by_me: f64,
+    /// The amount received by "our" address
+    received_by_me: f64,
+    /// Block height
+    block_height: u64,
     /// Every coin can has specific fee details:
     /// When you send UTXO tx you pay fee with the coin itself (e.g. 1 BTC and 0.0001 BTC fee).
     /// But for ERC20 token transfer you pay fee with another coin: ETH, because it's ETH smart contract function call that requires gas to be burnt.

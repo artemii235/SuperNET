@@ -946,11 +946,14 @@ impl MmCoin for EthCoin {
                     let fee_details = try_s!(json::to_value(fee_details));
                     drop(nonce_lock);
                     Ok(TransactionDetails {
-                        to: format!("{:#02x}", to_addr),
-                        from: arc.my_address().into(),
-                        amount: amount_f64,
+                        to: vec![format!("{:#02x}", to_addr)],
+                        from: vec![arc.my_address().into()],
+                        total_amount: amount_f64,
+                        spent_by_me: 0.,
+                        received_by_me: 0.,
                         tx_hex: bytes.into(),
                         tx_hash: signed.tx_hash(),
+                        block_height: 0,
                         fee_details,
                     })
                 })
@@ -1108,12 +1111,12 @@ impl Transaction for SignedEthTx {
         Ok(try_s!(display_u256_with_decimal_point(self.value, decimals).parse()))
     }
 
-    fn from(&self) -> String { format!("{:#02x}", self.sender) }
+    fn from(&self) -> Vec<String> { vec![format!("{:#02x}", self.sender)] }
 
-    fn to(&self) -> String {
+    fn to(&self) -> Vec<String> {
         match self.action {
-            Action::Create => "null".into(),
-            Action::Call(addr) => format!("{:#02x}", addr),
+            Action::Create => vec!["null".into()],
+            Action::Call(addr) => vec![format!("{:#02x}", addr)],
         }
     }
 

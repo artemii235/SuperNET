@@ -424,10 +424,10 @@ impl ElectrumBlockHeader {
 }
 
 #[derive(Debug, Deserialize)]
-struct ElectrumTxHistoryItem {
-    height: i64,
-    tx_hash: H256Json,
-    fee: Option<i64>,
+pub struct ElectrumTxHistoryItem {
+    pub height: i64,
+    pub tx_hash: H256Json,
+    pub fee: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -678,7 +678,7 @@ impl ElectrumClientImpl {
     }
 
     /// https://electrumx.readthedocs.io/en/latest/protocol-methods.html#blockchain-scripthash-get-history
-    fn scripthash_get_history(&self, hash: &str) -> RpcRes<Vec<ElectrumTxHistoryItem>> {
+    pub fn scripthash_get_history(&self, hash: &str) -> RpcRes<Vec<ElectrumTxHistoryItem>> {
         rpc_func!(self, "blockchain.scripthash.get_history", hash)
     }
 
