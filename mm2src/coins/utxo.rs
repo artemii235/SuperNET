@@ -56,6 +56,7 @@ pub use chain::Transaction as UtxoTx;
 use self::rpc_clients::{UtxoRpcClientEnum, UnspentInfo, ElectrumClient, ElectrumClientImpl, NativeClient, electrum_script_hash};
 use super::{IguanaInfo, MarketCoinOps, MmCoin, MmCoinEnum, SwapOps, Transaction, TransactionEnum, TransactionFut, TransactionDetails};
 use crate::utxo::rpc_clients::{NativeClientImpl, UtxoRpcClientOps};
+use std::cmp::Ordering;
 
 impl Transaction for UtxoTx {
     fn tx_hex(&self) -> Vec<u8> {
@@ -216,11 +217,19 @@ impl UtxoCoinImpl {
             }
             to_addresses.push(to);
         }
+        // remove address duplicates in case several inputs were spent from same address
+        // or several outputs are sent to same address
+        let mut from_addresses: Vec<String> = from_addresses.into_iter().flatten().map(|addr| addr.to_string()).collect();
+        from_addresses.sort();
+        from_addresses.dedup();
+        let mut to_addresses: Vec<String> = to_addresses.into_iter().flatten().map(|addr| addr.to_string()).collect();
+        to_addresses.sort();
+        to_addresses.dedup();
 
         let fee = self.denominate_satoshis(input_amount as i64 - output_amount as i64);
         Ok(TransactionDetails {
-            from: from_addresses.into_iter().flatten().map(|addr| addr.to_string()).collect(),
-            to: to_addresses.into_iter().flatten().map(|addr| addr.to_string()).collect(),
+            from: from_addresses,
+            to: to_addresses,
             received_by_me: self.denominate_satoshis(received_by_me as i64),
             spent_by_me: self.denominate_satoshis(spent_by_me as i64),
             total_amount: self.denominate_satoshis(input_amount as i64),
@@ -1034,21 +1043,27 @@ impl MmCoin for UtxoCoin {
 
     fn process_history_loop(&self, ctx: MmArc) {
         let content = slurp(&self.tx_history_path(&ctx));
-        let mut history: HashMap<H256Json, TransactionDetails> = if content.is_empty() {
-            HashMap::new()
+        let mut history: Vec<TransactionDetails> = if content.is_empty() {
+            vec![]
         } else {
             json::from_slice(&content).unwrap()
         };
         log!("History len " (history.len()));
         let mut from = 0;
+        let mut history_map = HashMap::new();
+        for tx in history {
+            history_map.insert(H256Json::from(tx.tx_hash.as_slice()), tx);
+        }
         loop {
             let tx_ids: Vec<H256Json> = match &self.rpc_client {
                 UtxoRpcClientEnum::Native(client) => {
                     let transactions = client.list_transactions(100, from).wait().unwrap();
                     if transactions.is_empty() {
-                        log!("Processed all transactions");
-                        break;
+                        from = 0;
+                        thread::sleep(Duration::from_secs(60));
+                        continue;
                     }
+                    from += 100;
                     transactions.into_iter().filter_map(|item| {
                         if item.address == self.my_address() {
                             Some(item.txid)
@@ -1064,12 +1079,32 @@ impl MmCoin for UtxoCoin {
                     electrum_history.into_iter().map(|item| item.tx_hash).collect()
                 }
             };
-            from += 100;
             for txid in tx_ids {
-                let tx_details = self.tx_details_by_hash(txid.clone()).unwrap();
-                history.insert(txid, tx_details);
+                match history_map.entry(txid.clone()) {
+                    Entry::Vacant(e) => {
+                        let tx_details = self.tx_details_by_hash(txid).unwrap();
+                        e.insert(tx_details);
+                    },
+                    Entry::Occupied(mut e) => {
+                        // request tx details again for unconfirmed transaction
+                        if e.get().block_height == 0 {
+                            let tx_details = self.tx_details_by_hash(txid).unwrap();
+                            e.insert(tx_details);
+                        }
+                    }
+                }
+
                 let mut file = File::create(self.tx_history_path(&ctx)).unwrap();
-                file.write_all(&json::to_vec(&history).unwrap()).unwrap();
+                let mut to_write: Vec<&TransactionDetails> = history_map.iter().map(|(_, value)| value).collect();
+                // the transactions with block_height == 0 are the most recent so we need to separately handle them while sorting
+                to_write.sort_unstable_by(|a, b| if a.block_height == 0 {
+                    Ordering::Less
+                } else if b.block_height == 0 {
+                    Ordering::Greater
+                } else {
+                    b.block_height.cmp(&a.block_height)
+                });
+                file.write_all(&json::to_vec(&to_write).unwrap()).unwrap();
                 drop(file);
             }
             thread::sleep(Duration::from_secs(1));
@@ -1243,6 +1278,7 @@ pub fn utxo_coin_from_iguana_info(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ethkey::verify_address;
 
     fn utxo_coin_for_test() -> UtxoCoin {
         let checksum_type = ChecksumType::DSHA256;

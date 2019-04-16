@@ -33,10 +33,10 @@ use common::{bitcoin_ctx, bits256, lp, rpc_response, rpc_err_response, HyRes};
 use common::mm_ctx::{from_ctx, MmArc};
 use dirs::home_dir;
 use futures::{Future};
-use gstuff::now_ms;
+use gstuff::{now_ms, slurp};
 use hashbrown::hash_map::{HashMap, RawEntryMut};
 use libc::{c_char, c_void};
-use rpc::v1::types::{Bytes as BytesJson};
+use rpc::v1::types::{Bytes as BytesJson, H256 as H256Json};
 use serde_json::{self as json, Value as Json};
 use std::borrow::Cow;
 use std::ffi::{CString};
@@ -988,4 +988,35 @@ pub fn send_raw_transaction (ctx: MmArc, req: Json) -> HyRes {
             "tx_hash": res
         }).to_string())
     }))
+}
+
+/// Returns the transaction history of selected coin. Returns no more than `limit` records (default: 10).
+/// Skips the first `skip` records (default: 0).
+/// Transactions are sorted by number of confirmations in ascending order.
+pub fn tx_history (ctx: MmArc, req: Json) -> HyRes {
+    let ticker = try_h! (req["coin"].as_str().ok_or ("No 'coin' field")).to_owned();
+    let coin = match lp_coinfind (&ctx, &ticker) {
+        Ok (Some (t)) => t,
+        Ok (None) => return rpc_err_response (500, &fomat! ("No such coin: " (ticker))),
+        Err (err) => return rpc_err_response (500, &fomat! ("!lp_coinfind(" (ticker) "): " (err)))
+    };
+    let limit = req["limit"].as_u64().unwrap_or(10);
+    let skip = req["skip"].as_u64().unwrap_or(0);
+    let file_path = coin.tx_history_path(&ctx);
+    let content = slurp(&file_path);
+    if content.is_empty() {
+        rpc_response(200, json!({
+            "result": [],
+        }).to_string())
+    } else {
+        let history: Vec<TransactionDetails> = try_h!(json::from_slice(&content));
+        let total_records = history.len();
+        let history: Vec<TransactionDetails> = history.into_iter().skip(skip as usize).take(limit as usize).collect();
+        rpc_response(200, json!({
+            "result": history,
+            "limit": limit,
+            "skip": skip,
+            "total": total_records,
+        }).to_string())
+    }
 }

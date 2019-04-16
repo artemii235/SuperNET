@@ -22,7 +22,7 @@
 //
 //  Copyright © 2014-2018 SuperNET. All rights reserved.
 //
-use coins::{enable, electrum, my_balance, send_raw_transaction, withdraw};
+use coins::{enable, electrum, my_balance, send_raw_transaction, withdraw, tx_history};
 use common::{free_c_ptr, lp, rpc_response, rpc_err_response, HyRes, CORE, lp_queue_command_for_c};
 use common::mm_ctx::MmArc;
 use futures::{self, Future};
@@ -225,6 +225,7 @@ pub fn dispatcher (req: Json, _remote_addr: Option<SocketAddr>, ctx: MmArc) -> D
         "my_recent_swaps" => my_recent_swaps(ctx, req),
         "my_swap_status" => my_swap_status(ctx, req),
         "stats_swap_status" => stats_swap_status(ctx, req),
+        "tx_history" => tx_history(ctx, req),
         "version" => version(),
         "withdraw" => withdraw(ctx, req),
         _ => return DispatcherRes::NoMatch (req)
