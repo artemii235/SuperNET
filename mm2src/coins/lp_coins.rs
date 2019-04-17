@@ -36,7 +36,7 @@ use futures::{Future};
 use gstuff::{now_ms, slurp};
 use hashbrown::hash_map::{HashMap, RawEntryMut};
 use libc::{c_char, c_void};
-use rpc::v1::types::{Bytes as BytesJson, H256 as H256Json};
+use rpc::v1::types::{Bytes as BytesJson};
 use serde_json::{self as json, Value as Json};
 use std::borrow::Cow;
 use std::ffi::{CString};
@@ -276,7 +276,7 @@ pub trait MmCoin: SwapOps + MarketCoinOps + IguanaInfo + Debug + 'static {
 
     /// Path to tx history file
     fn tx_history_path(&self, ctx: &MmArc) -> PathBuf {
-        ctx.dbdir().join("TRANSACTIONS").join(format!("{}.json", self.ticker()))
+        ctx.dbdir().join("TRANSACTIONS").join(format!("{}_{}.json", self.ticker(), self.my_address()))
     }
 }
 
@@ -856,11 +856,14 @@ fn lp_coininit (ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoinEnum, Str
         ii.inactive = 0;
     }
 
-    try_s!(thread::Builder::new().name(format!("tx_history_{}", ticker)).spawn({
-        let coin = coin.clone();
-        let ctx = ctx.clone();
-        move || coin.process_history_loop(ctx)
-    }));
+    let history = req["tx_history"].as_bool().unwrap_or(false);
+    if history {
+        try_s!(thread::Builder::new().name(format!("tx_history_{}", ticker)).spawn({
+            let coin = coin.clone();
+            let ctx = ctx.clone();
+            move || coin.process_history_loop(ctx)
+        }));
+    }
 
     ve.insert (ticker.into(), coin.clone());
     Ok (coin)
@@ -1011,12 +1014,24 @@ pub fn tx_history (ctx: MmArc, req: Json) -> HyRes {
     } else {
         let history: Vec<TransactionDetails> = try_h!(json::from_slice(&content));
         let total_records = history.len();
-        let history: Vec<TransactionDetails> = history.into_iter().skip(skip as usize).take(limit as usize).collect();
-        rpc_response(200, json!({
-            "result": history,
-            "limit": limit,
-            "skip": skip,
-            "total": total_records,
-        }).to_string())
+        Box::new(coin.current_block().and_then(move |block_number| {
+            let history = history.into_iter().skip(skip as usize).take(limit as usize);
+            let history: Vec<Json> = history.map(|item| {
+                let tx_block = item.block_height;
+                let mut json = unwrap!(json::to_value(item));
+                json["confirmations"] = if tx_block == 0 {
+                    Json::from(0)
+                } else {
+                    Json::from(block_number - tx_block + 1)
+                };
+                json
+            }).collect();
+            rpc_response(200, json!({
+                "result": history,
+                "limit": limit,
+                "skip": skip,
+                "total": total_records,
+            }).to_string())
+        }))
     }
 }

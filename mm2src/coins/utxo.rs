@@ -43,8 +43,6 @@ use serialization::{serialize, deserialize};
 use sha2::{Sha256, Digest};
 use std::borrow::Cow;
 use std::ffi::CStr;
-use std::fs::File;
-use std::io::{Write};
 use std::ops::Deref;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
@@ -1043,28 +1041,43 @@ impl MmCoin for UtxoCoin {
 
     fn process_history_loop(&self, ctx: MmArc) {
         let content = slurp(&self.tx_history_path(&ctx));
-        let mut history: Vec<TransactionDetails> = if content.is_empty() {
+        let history: Vec<TransactionDetails> = if content.is_empty() {
             vec![]
         } else {
-            json::from_slice(&content).unwrap()
+            match json::from_slice(&content) {
+                Ok(c) => c,
+                Err(e) => {
+                    ctx.log.log("", &[&"tx_history", &self.ticker], &ERRL!("Error {} on history deserialization, resetting the cache", e));
+                    unwrap!(std::fs::remove_file(&self.tx_history_path(&ctx)));
+                    vec![]
+                }
+            }
         };
-        log!("History len " (history.len()));
-        let mut from = 0;
         let mut history_map = HashMap::new();
-        for tx in history {
+        for tx in history.into_iter() {
             history_map.insert(H256Json::from(tx.tx_hash.as_slice()), tx);
         }
         loop {
             let tx_ids: Vec<H256Json> = match &self.rpc_client {
                 UtxoRpcClientEnum::Native(client) => {
-                    let transactions = client.list_transactions(100, from).wait().unwrap();
-                    if transactions.is_empty() {
-                        from = 0;
-                        thread::sleep(Duration::from_secs(60));
-                        continue;
+                    let mut from = 0;
+                    let mut all_transactions = vec![];
+                    loop {
+                        let transactions = match client.list_transactions(1000, from).wait() {
+                            Ok(value) => value,
+                            Err(e) => {
+                                ctx.log.log("", &[&"tx_history", &self.ticker], &ERRL!("Error {} on list transactions, retrying", e));
+                                thread::sleep(Duration::from_secs(10));
+                                continue;
+                            }
+                        };
+                        if transactions.is_empty() {
+                            break;
+                        }
+                        from += 1000;
+                        all_transactions.extend(transactions);
                     }
-                    from += 100;
-                    transactions.into_iter().filter_map(|item| {
+                    all_transactions.into_iter().filter_map(|item| {
                         if item.address == self.my_address() {
                             Some(item.txid)
                         } else {
@@ -1075,39 +1088,54 @@ impl MmCoin for UtxoCoin {
                 UtxoRpcClientEnum::Electrum(client) => {
                     let script = Builder::build_p2pkh(&self.my_address.hash);
                     let script_hash = electrum_script_hash(&script);
-                    let electrum_history = client.scripthash_get_history(&hex::encode(script_hash)).wait().unwrap();
-                    electrum_history.into_iter().map(|item| item.tx_hash).collect()
+                    let electrum_history = match client.scripthash_get_history(&hex::encode(script_hash)).wait() {
+                        Ok(value) => value,
+                        Err(e) => {
+                            ctx.log.log("", &[&"tx_history", &self.ticker], &ERRL!("Error {} on scripthash_get_history, retrying", e));
+                            thread::sleep(Duration::from_secs(10));
+                            continue;
+                        }
+                    };
+                    // electrum returns the most recent transactions in the end but we need to
+                    // process them first so rev is required
+                    electrum_history.into_iter().rev().take(10).map(|item| item.tx_hash).collect()
                 }
             };
             for txid in tx_ids {
+                let mut updated = false;
                 match history_map.entry(txid.clone()) {
                     Entry::Vacant(e) => {
-                        let tx_details = self.tx_details_by_hash(txid).unwrap();
-                        e.insert(tx_details);
+                        if let Ok(tx_details) = self.tx_details_by_hash(txid) {
+                            e.insert(tx_details);
+                            updated = true;
+                        }
                     },
                     Entry::Occupied(mut e) => {
                         // request tx details again for unconfirmed transaction
                         if e.get().block_height == 0 {
-                            let tx_details = self.tx_details_by_hash(txid).unwrap();
-                            e.insert(tx_details);
+                            if let Ok(tx_details) = self.tx_details_by_hash(txid) {
+                                e.insert(tx_details);
+                                updated = true;
+                            }
                         }
                     }
                 }
-
-                let mut file = File::create(self.tx_history_path(&ctx)).unwrap();
-                let mut to_write: Vec<&TransactionDetails> = history_map.iter().map(|(_, value)| value).collect();
-                // the transactions with block_height == 0 are the most recent so we need to separately handle them while sorting
-                to_write.sort_unstable_by(|a, b| if a.block_height == 0 {
-                    Ordering::Less
-                } else if b.block_height == 0 {
-                    Ordering::Greater
-                } else {
-                    b.block_height.cmp(&a.block_height)
-                });
-                file.write_all(&json::to_vec(&to_write).unwrap()).unwrap();
-                drop(file);
+                if updated {
+                    let mut to_write: Vec<&TransactionDetails> = history_map.iter().map(|(_, value)| value).collect();
+                    // the transactions with block_height == 0 are the most recent so we need to separately handle them while sorting
+                    to_write.sort_unstable_by(|a, b| if a.block_height == 0 {
+                        Ordering::Less
+                    } else if b.block_height == 0 {
+                        Ordering::Greater
+                    } else {
+                        b.block_height.cmp(&a.block_height)
+                    });
+                    let tmp_file = format!("{}.tmp", self.tx_history_path(&ctx).display());
+                    unwrap!(std::fs::write(&tmp_file, &unwrap!(json::to_vec(&to_write))));
+                    unwrap!(std::fs::rename(tmp_file, self.tx_history_path(&ctx)));
+                }
             }
-            thread::sleep(Duration::from_secs(1));
+            thread::sleep(Duration::from_secs(30));
         }
     }
 }
