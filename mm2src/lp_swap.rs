@@ -749,7 +749,7 @@ impl MakerSwap {
             std::thread::sleep(Duration::from_secs(10));
         }
 
-        let spend_fut = self.taker_coin.send_maker_refunds_payment(
+        let spend_fut = self.maker_coin.send_maker_refunds_payment(
             &unwrap!(self.maker_payment.clone()).tx_hex,
             self.data.maker_payment_lock as u32,
             &*self.other_persistent_pub,
@@ -759,8 +759,8 @@ impl MakerSwap {
         let transaction = match spend_fut.wait() {
             Ok(t) => t,
             Err(err) => return Ok((
-                Some(MakerSwapCommand::RefundMakerPayment),
-                vec![MakerSwapEvent::TakerPaymentSpendFailed(ERRL!("!taker_coin.send_maker_spends_taker_payment: {}", err))]
+                Some(MakerSwapCommand::Finish),
+                vec![MakerSwapEvent::MakerPaymentRefundFailed(ERRL!("!maker_coin.send_maker_refunds_payment: {}", err))]
             ))
         };
 
@@ -769,7 +769,7 @@ impl MakerSwap {
         log!({"Maker payment refund tx {:02x}", transaction.tx_hash()});
         Ok((
             Some(MakerSwapCommand::Finish),
-            vec![MakerSwapEvent::TakerPaymentSpent(tx_details)],
+            vec![MakerSwapEvent::MakerPaymentRefunded(tx_details)],
         ))
     }
 }

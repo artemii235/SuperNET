@@ -27,7 +27,7 @@ use std::sync::{Mutex, Arc};
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::time::{Duration};
 use tokio::codec::{Encoder, Decoder};
-use tokio::net::TcpStream;
+use tokio_tcp::TcpStream;
 
 #[derive(Debug)]
 pub enum UtxoRpcClientEnum {
@@ -339,7 +339,7 @@ impl NativeClientImpl {
     pub fn output_amount(&self, txid: H256Json, index: usize) -> RpcRes<u64> {
         let fut = self.get_raw_transaction_bytes(txid);
         Box::new(fut.and_then(move |bytes| {
-            let tx: UtxoTransaction = try_s!(deserialize(bytes.as_slice()).map_err(|e| ERRL!("{:?}", e)));
+            let tx: UtxoTransaction = try_s!(deserialize(bytes.as_slice()).map_err(|e| ERRL!("Error {:?} trying to deserialize the transaction {:?}", e, bytes)));
             Ok(tx.outputs[index].value)
         }))
     }
@@ -829,6 +829,7 @@ fn electrum_connect(
             });
 
             let (sink, stream) = Bytes.framed(stream).split();
+            // this forwards the messages from rx to sink (write) part of tcp stream
             let send_all = SendAll::new(sink, rx);
             let clone = responses.clone();
             CORE.spawn(|_| {
