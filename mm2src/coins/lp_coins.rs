@@ -1004,7 +1004,7 @@ pub fn tx_history (ctx: MmArc, req: Json) -> HyRes {
         Err (err) => return rpc_err_response (500, &fomat! ("!lp_coinfind(" (ticker) "): " (err)))
     };
     let limit = req["limit"].as_u64().unwrap_or(10);
-    let skip = req["skip"].as_u64().unwrap_or(0);
+    let from_tx_hash: Option<BytesJson> = try_h!(json::from_value(req["from_tx_hash"].clone()));
     let file_path = coin.tx_history_path(&ctx);
     let content = slurp(&file_path);
     if content.is_empty() {
@@ -1015,7 +1015,13 @@ pub fn tx_history (ctx: MmArc, req: Json) -> HyRes {
         let history: Vec<TransactionDetails> = try_h!(json::from_slice(&content));
         let total_records = history.len();
         Box::new(coin.current_block().and_then(move |block_number| {
-            let history = history.into_iter().skip(skip as usize).take(limit as usize);
+            let skip = match &from_tx_hash {
+                Some(hash) => {
+                    try_h!(history.iter().position(|item| item.tx_hash == *hash).ok_or(ERRL!("from_tx_hash {:02x} is not found", hash))) + 1
+                },
+                None => 0,
+            };
+            let history = history.into_iter().skip(skip).take(limit as usize);
             let history: Vec<Json> = history.map(|item| {
                 let tx_block = item.block_height;
                 let mut json = unwrap!(json::to_value(item));
@@ -1029,7 +1035,7 @@ pub fn tx_history (ctx: MmArc, req: Json) -> HyRes {
             rpc_response(200, json!({
                 "result": history,
                 "limit": limit,
-                "skip": skip,
+                "from_tx_hash": from_tx_hash,
                 "total": total_records,
             }).to_string())
         }))

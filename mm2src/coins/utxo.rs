@@ -1098,7 +1098,7 @@ impl MmCoin for UtxoCoin {
                     };
                     // electrum returns the most recent transactions in the end but we need to
                     // process them first so rev is required
-                    electrum_history.into_iter().rev().take(10).map(|item| item.tx_hash).collect()
+                    electrum_history.into_iter().rev().map(|item| item.tx_hash).collect()
                 }
             };
             for txid in tx_ids {
