@@ -22,7 +22,7 @@
 //
 //  Copyright © 2014-2018 SuperNET. All rights reserved.
 //
-use coins::{enable, electrum, my_balance, send_raw_transaction, withdraw, tx_history};
+use coins::{enable, electrum, my_balance, send_raw_transaction, withdraw, my_tx_history};
 use common::{free_c_ptr, lp, rpc_response, rpc_err_response, HyRes, CORE, lp_queue_command_for_c};
 use common::mm_ctx::MmArc;
 use futures::{self, Future};
@@ -216,6 +216,7 @@ pub fn dispatcher (req: Json, _remote_addr: Option<SocketAddr>, ctx: MmArc) -> D
         "inventory" => inventory (ctx, req),
         "mpnet" => mpnet (&req),
         "my_balance" => my_balance (ctx, req),
+        "my_tx_history" => my_tx_history(ctx, req),
         "notify" => lp_signatures::lp_notify_recv (ctx, req),  // Invoked usually from the `lp_command_q_loop`
         "passphrase" => passphrase (ctx, req),
         "sell" => sell (ctx, req),
@@ -225,7 +226,6 @@ pub fn dispatcher (req: Json, _remote_addr: Option<SocketAddr>, ctx: MmArc) -> D
         "my_recent_swaps" => my_recent_swaps(ctx, req),
         "my_swap_status" => my_swap_status(ctx, req),
         "stats_swap_status" => stats_swap_status(ctx, req),
-        "tx_history" => tx_history(ctx, req),
         "version" => version(),
         "withdraw" => withdraw(ctx, req),
         _ => return DispatcherRes::NoMatch (req)

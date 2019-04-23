@@ -967,7 +967,7 @@ impl MmCoin for EthCoin {
     }
 
     fn process_history_loop(&self, ctx: MmArc) {
-        unimplemented!()
+        log!("History is not implemented for ETH coins yet!");
     }
 
     fn tx_details_by_hash(&self, hash: &[u8]) -> Result<TransactionDetails, String> {

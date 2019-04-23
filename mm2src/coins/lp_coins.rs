@@ -987,7 +987,7 @@ pub fn send_raw_transaction (ctx: MmArc, req: Json) -> HyRes {
 /// Returns the transaction history of selected coin. Returns no more than `limit` records (default: 10).
 /// Skips the first `skip` records (default: 0).
 /// Transactions are sorted by number of confirmations in ascending order.
-pub fn tx_history (ctx: MmArc, req: Json) -> HyRes {
+pub fn my_tx_history(ctx: MmArc, req: Json) -> HyRes {
     let ticker = try_h! (req["coin"].as_str().ok_or ("No 'coin' field")).to_owned();
     let coin = match lp_coinfind (&ctx, &ticker) {
         Ok (Some (t)) => t,
@@ -1008,7 +1008,7 @@ pub fn tx_history (ctx: MmArc, req: Json) -> HyRes {
         Box::new(coin.current_block().and_then(move |block_number| {
             let skip = match &from_tx_hash {
                 Some(hash) => {
-                    try_h!(history.iter().position(|item| item.tx_hash == *hash).ok_or(ERRL!("from_tx_hash {:02x} is not found", hash))) + 1
+                    try_h!(history.iter().position(|item| item.tx_hash == *hash).ok_or(format!("from_tx_hash {:02x} is not found", hash))) + 1
                 },
                 None => 0,
             };
@@ -1024,10 +1024,13 @@ pub fn tx_history (ctx: MmArc, req: Json) -> HyRes {
                 json
             }).collect();
             rpc_response(200, json!({
-                "result": history,
-                "limit": limit,
-                "from_tx_hash": from_tx_hash,
-                "total": total_records,
+                "result": {
+                    "transactions": history,
+                    "limit": limit,
+                    "skipped":skip,
+                    "from_tx_hash": from_tx_hash,
+                    "total": total_records,
+                }
             }).to_string())
         }))
     }
