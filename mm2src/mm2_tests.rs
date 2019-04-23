@@ -697,7 +697,7 @@ fn check_recent_swaps(
         })));
     assert!(response.0.is_success(), "!status of my_recent_swaps {}", response.1);
     let swaps_response: Json = unwrap!(json::from_str(&response.1));
-    let swaps: &Vec<Json> = unwrap!(swaps_response["result"].as_array());
+    let swaps: &Vec<Json> = unwrap!(swaps_response["result"]["swaps"].as_array());
     assert_eq!(expected_len, swaps.len());
 }
 

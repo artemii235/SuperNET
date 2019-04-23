@@ -85,6 +85,16 @@ impl Transaction for UtxoTx {
     fn fee_details(&self) -> Result<Json, String> { Ok(Json::Null) }
 }
 
+/// Additional transaction data that can't be easily got from raw transaction without calling
+/// additional RPC methods, e.g. to get input amount we need to request all previous transactions
+/// and check output values
+#[derive(Debug)]
+pub struct AdditionalTxData {
+    received_by_me: u64,
+    spent_by_me: u64,
+    fee_amount: u64,
+}
+
 #[derive(Debug)]
 enum TxFee {
     Fixed(u64),
@@ -178,66 +188,6 @@ impl UtxoCoinImpl {
         }).collect();
 
         Ok(addresses)
-    }
-
-    fn tx_details_by_hash(&self, hash: H256Json) -> Result<TransactionDetails, String> {
-        let verbose_tx = try_s!(self.rpc_client.get_verbose_transaction(hash).wait());
-        let tx: UtxoTx = try_s!(deserialize(verbose_tx.hex.as_slice()).map_err(|e| ERRL!("{:?}", e)));
-        let mut input_transactions: HashMap<&H256, UtxoTx> = HashMap::new();
-        let mut input_amount = 0;
-        let mut output_amount = 0;
-        let mut from_addresses = vec![];
-        let mut to_addresses = vec![];
-        let mut spent_by_me = 0;
-        let mut received_by_me = 0;
-        for input in tx.inputs.iter() {
-            let input_tx = match input_transactions.entry(&input.previous_output.hash) {
-                Entry::Vacant(e) => {
-                    let prev: BytesJson = try_s!(self.rpc_client.get_transaction_bytes(input.previous_output.hash.reversed().into()).wait());
-                    let prev_tx: UtxoTx = try_s!(deserialize(prev.as_slice()).map_err(|e| ERRL!("{:?}", e)));
-                    e.insert(prev_tx)
-                },
-                Entry::Occupied(e) => e.into_mut(),
-            };
-            input_amount += input_tx.outputs[input.previous_output.index as usize].value;
-            let from: Vec<Address> = try_s!(self.addresses_from_script(&input_tx.outputs[input.previous_output.index as usize].script_pubkey.clone().into()));
-            if from.contains(&self.my_address) {
-                spent_by_me += input_tx.outputs[input.previous_output.index as usize].value;
-            }
-            from_addresses.push(from);
-        };
-
-        for output in tx.outputs.iter() {
-            output_amount += output.value;
-            let to = try_s!(self.addresses_from_script(&output.script_pubkey.clone().into()));
-            if to.contains(&self.my_address) {
-                received_by_me += output.value;
-            }
-            to_addresses.push(to);
-        }
-        // remove address duplicates in case several inputs were spent from same address
-        // or several outputs are sent to same address
-        let mut from_addresses: Vec<String> = from_addresses.into_iter().flatten().map(|addr| addr.to_string()).collect();
-        from_addresses.sort();
-        from_addresses.dedup();
-        let mut to_addresses: Vec<String> = to_addresses.into_iter().flatten().map(|addr| addr.to_string()).collect();
-        to_addresses.sort();
-        to_addresses.dedup();
-
-        let fee = self.denominate_satoshis(input_amount as i64 - output_amount as i64);
-        Ok(TransactionDetails {
-            from: from_addresses,
-            to: to_addresses,
-            received_by_me: self.denominate_satoshis(received_by_me as i64),
-            spent_by_me: self.denominate_satoshis(spent_by_me as i64),
-            total_amount: self.denominate_satoshis(input_amount as i64),
-            tx_hash: tx.hash().reversed().to_vec().into(),
-            tx_hex: verbose_tx.hex,
-            fee_details: json!({
-                "amount": fee
-            }),
-            block_height: verbose_tx.height,
-        })
     }
 
     pub fn denominate_satoshis(&self, satoshi: i64) -> f64 {
@@ -553,18 +503,22 @@ impl UtxoCoin {
         utxos: Vec<UnspentInfo>,
         mut outputs: Vec<TransactionOutput>,
         lock_time: u32,
-    ) -> Box<Future<Item=(TransactionInputSigner, u64), Error=String> + Send> {
+    ) -> Box<Future<Item=(TransactionInputSigner, AdditionalTxData), Error=String> + Send> {
         let change_script_pubkey = Builder::build_p2pkh(&self.my_address.hash).to_bytes();
         let arc = self.clone();
-        Box::new(self.get_tx_fee().and_then(move |tx_fee| {
+        Box::new(self.get_tx_fee().and_then(move |mut tx_fee| {
             true_or_err!(!utxos.is_empty(), "Couldn't generate tx from empty utxos set");
             true_or_err!(!outputs.is_empty(), "Couldn't generate tx from empty outputs set");
 
             let mut target_value = 0;
+            let mut received_by_me = 0;
             for output in outputs.iter() {
                 let value = output.value;
                 true_or_err!(value >= tx_fee, "Output value {} is less than tx_fee {}", value, tx_fee);
                 target_value += value;
+                if output.script_pubkey == change_script_pubkey {
+                    received_by_me += value;
+                }
             }
 
             true_or_err!(target_value > 0, "Total target value calculated from outputs {:?} is zero", outputs);
@@ -592,6 +546,9 @@ impl UtxoCoin {
                         script_pubkey: change_script_pubkey
                     }
                 });
+                received_by_me += change;
+            } else {
+                tx_fee += change;
             }
 
             let tx = TransactionInputSigner {
@@ -608,7 +565,13 @@ impl UtxoCoin {
                 version_group_id: arc.version_group_id,
                 zcash: arc.zcash,
             };
-            Ok((tx, tx_fee))
+
+            let data = AdditionalTxData {
+                fee_amount: tx_fee,
+                received_by_me,
+                spent_by_me: value_to_spend,
+            };
+            Ok((tx, data))
         }))
     }
 }
@@ -1013,23 +976,24 @@ impl MmCoin for UtxoCoin {
                 unspents,
                 outputs,
                 0,
-            ).and_then(move |(unsigned, tx_fee)| {
+            ).and_then(move |(unsigned, data)| {
                 drop(utxo_lock);
                 let prev_script = Builder::build_p2pkh(&arc.my_address.hash);
                 let signed = try_s!(sign_tx(unsigned, &arc.key_pair, prev_script));
                 let fee_details = UtxoFeeDetails {
-                    amount: dstr(tx_fee as i64, arc.decimals),
+                    amount: dstr(data.fee_amount as i64, arc.decimals),
                 };
                 Ok(TransactionDetails {
                     from: vec![arc.my_address().into()],
                     to: vec![format!("{}", to)],
                     total_amount: amount,
-                    spent_by_me: 0.,
-                    received_by_me: 0.,
+                    spent_by_me: dstr(data.spent_by_me as i64, arc.decimals),
+                    received_by_me: dstr(data.received_by_me as i64, arc.decimals),
                     tx_hash: signed.hash().reversed().to_vec().into(),
                     tx_hex: serialize(&signed).into(),
                     fee_details: try_s!(json::to_value(fee_details)),
                     block_height: 0,
+                    coin: arc.ticker.clone(),
                 })
             })
         }))
@@ -1105,7 +1069,7 @@ impl MmCoin for UtxoCoin {
                 let mut updated = false;
                 match history_map.entry(txid.clone()) {
                     Entry::Vacant(e) => {
-                        if let Ok(tx_details) = self.tx_details_by_hash(txid) {
+                        if let Ok(tx_details) = self.tx_details_by_hash(&txid.0) {
                             e.insert(tx_details);
                             updated = true;
                         }
@@ -1113,7 +1077,7 @@ impl MmCoin for UtxoCoin {
                     Entry::Occupied(mut e) => {
                         // request tx details again for unconfirmed transaction
                         if e.get().block_height == 0 {
-                            if let Ok(tx_details) = self.tx_details_by_hash(txid) {
+                            if let Ok(tx_details) = self.tx_details_by_hash(&txid.0) {
                                 e.insert(tx_details);
                                 updated = true;
                             }
@@ -1137,6 +1101,68 @@ impl MmCoin for UtxoCoin {
             }
             thread::sleep(Duration::from_secs(30));
         }
+    }
+
+    fn tx_details_by_hash(&self, hash: &[u8]) -> Result<TransactionDetails, String> {
+        let hash = H256Json::from(hash);
+        let verbose_tx = try_s!(self.rpc_client.get_verbose_transaction(hash).wait());
+        let tx: UtxoTx = try_s!(deserialize(verbose_tx.hex.as_slice()).map_err(|e| ERRL!("{:?}", e)));
+        let mut input_transactions: HashMap<&H256, UtxoTx> = HashMap::new();
+        let mut input_amount = 0;
+        let mut output_amount = 0;
+        let mut from_addresses = vec![];
+        let mut to_addresses = vec![];
+        let mut spent_by_me = 0;
+        let mut received_by_me = 0;
+        for input in tx.inputs.iter() {
+            let input_tx = match input_transactions.entry(&input.previous_output.hash) {
+                Entry::Vacant(e) => {
+                    let prev: BytesJson = try_s!(self.rpc_client.get_transaction_bytes(input.previous_output.hash.reversed().into()).wait());
+                    let prev_tx: UtxoTx = try_s!(deserialize(prev.as_slice()).map_err(|e| ERRL!("{:?}", e)));
+                    e.insert(prev_tx)
+                },
+                Entry::Occupied(e) => e.into_mut(),
+            };
+            input_amount += input_tx.outputs[input.previous_output.index as usize].value;
+            let from: Vec<Address> = try_s!(self.addresses_from_script(&input_tx.outputs[input.previous_output.index as usize].script_pubkey.clone().into()));
+            if from.contains(&self.my_address) {
+                spent_by_me += input_tx.outputs[input.previous_output.index as usize].value;
+            }
+            from_addresses.push(from);
+        };
+
+        for output in tx.outputs.iter() {
+            output_amount += output.value;
+            let to = try_s!(self.addresses_from_script(&output.script_pubkey.clone().into()));
+            if to.contains(&self.my_address) {
+                received_by_me += output.value;
+            }
+            to_addresses.push(to);
+        }
+        // remove address duplicates in case several inputs were spent from same address
+        // or several outputs are sent to same address
+        let mut from_addresses: Vec<String> = from_addresses.into_iter().flatten().map(|addr| addr.to_string()).collect();
+        from_addresses.sort();
+        from_addresses.dedup();
+        let mut to_addresses: Vec<String> = to_addresses.into_iter().flatten().map(|addr| addr.to_string()).collect();
+        to_addresses.sort();
+        to_addresses.dedup();
+
+        let fee = self.denominate_satoshis(input_amount as i64 - output_amount as i64);
+        Ok(TransactionDetails {
+            from: from_addresses,
+            to: to_addresses,
+            received_by_me: self.denominate_satoshis(received_by_me as i64),
+            spent_by_me: self.denominate_satoshis(spent_by_me as i64),
+            total_amount: self.denominate_satoshis(input_amount as i64),
+            tx_hash: tx.hash().reversed().to_vec().into(),
+            tx_hex: verbose_tx.hex,
+            fee_details: json!({
+                "amount": fee
+            }),
+            block_height: verbose_tx.height,
+            coin: self.ticker.clone(),
+        })
     }
 }
 
@@ -1306,7 +1332,6 @@ pub fn utxo_coin_from_iguana_info(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethkey::verify_address;
 
     fn utxo_coin_for_test() -> UtxoCoin {
         let checksum_type = ChecksumType::DSHA256;
@@ -1390,6 +1415,10 @@ mod tests {
         // the change that is less than tx_fee must be included to miner fee according to JL777
         // so no extra outputs should appear in generated transaction
         assert_eq!(generated.0.outputs.len(), 1);
+
+        assert_eq!(generated.1.fee_amount, 1999);
+        assert_eq!(generated.1.received_by_me, 0);
+        assert_eq!(generated.1.spent_by_me, 100000);
     }
 
     #[test]

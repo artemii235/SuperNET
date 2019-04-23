@@ -40,7 +40,7 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
-use web3::types::{BlockNumber, Bytes, CallRequest, FilterBuilder, Log, Transaction as Web3Transaction, TransactionId};
+use web3::types::{BlockNumber, Bytes, CallRequest, FilterBuilder, Log, Transaction as Web3Transaction, TransactionId, H256};
 use web3::{ self, Web3 };
 
 use super::{IguanaInfo, MarketCoinOps, MmCoin, SwapOps, TransactionFut, TransactionEnum, Transaction, TransactionDetails};
@@ -955,6 +955,7 @@ impl MmCoin for EthCoin {
                         tx_hash: signed.tx_hash(),
                         block_height: 0,
                         fee_details,
+                        coin: arc.ticker.clone(),
                     })
                 })
             })
@@ -967,6 +968,60 @@ impl MmCoin for EthCoin {
 
     fn process_history_loop(&self, ctx: MmArc) {
         unimplemented!()
+    }
+
+    fn tx_details_by_hash(&self, hash: &[u8]) -> Result<TransactionDetails, String> {
+        let hash = H256::from(hash);
+        let tx = try_s!(self.web3.eth().transaction(TransactionId::Hash(hash)).wait());
+        let tx: Web3Transaction = try_s!(tx.ok_or(format!("tx hash {:02x} is not found", hash)));
+        let raw = try_s!(signed_tx_from_web3_tx(tx.clone()));
+        let mut received_by_me = 0f64;
+        let mut spent_by_me = 0f64;
+
+        let to = match tx.to {
+            Some(addr) => vec![format!("{:#02x}", addr)],
+            None => vec![],
+        };
+        let total_amount = try_s!(display_u256_with_decimal_point(tx.value, self.decimals).parse());
+
+        match self.coin_type {
+            EthCoinType::Eth => {
+                if tx.to == Some(self.my_address) {
+                    received_by_me = total_amount;
+                }
+
+                if tx.from == self.my_address {
+                    spent_by_me = total_amount;
+                }
+
+                Ok(TransactionDetails {
+                    from: vec![format!("{:#02x}", tx.from)],
+                    to,
+                    coin: self.ticker.clone(),
+                    block_height: tx.block_number.unwrap_or(U256::from(0)).into(),
+                    tx_hex: rlp::encode(&raw).into(),
+                    tx_hash: tx.hash.0.to_vec().into(),
+                    received_by_me,
+                    spent_by_me,
+                    total_amount,
+                    fee_details: Json::Null,
+                })
+            },
+            EthCoinType::Erc20(_addr) => {
+                Ok(TransactionDetails {
+                    from: vec![format!("{:#02x}", tx.from)],
+                    to,
+                    coin: self.ticker.clone(),
+                    block_height: tx.block_number.unwrap_or(U256::from(0)).into(),
+                    tx_hex: rlp::encode(&raw).into(),
+                    tx_hash: tx.hash.0.to_vec().into(),
+                    received_by_me,
+                    spent_by_me,
+                    total_amount,
+                    fee_details: Json::Null,
+                })
+            },
+        }
     }
 }
 

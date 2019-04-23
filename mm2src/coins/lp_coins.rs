@@ -69,20 +69,6 @@ pub trait Transaction: Debug + 'static {
     fn to(&self) -> Vec<String>;
     /// Fee details
     fn fee_details(&self) -> Result<Json, String>;
-    /// Serializable transaction details for displaying purposes
-    fn transaction_details(&self, decimals: u8) -> Result<TransactionDetails, String> {
-        Ok(TransactionDetails {
-            tx_hash: self.tx_hash(),
-            total_amount: try_s!(self.amount(decimals)),
-            spent_by_me: 0.,
-            received_by_me: 0.,
-            fee_details: try_s!(self.fee_details()),
-            from: self.from(),
-            to: self.to(),
-            block_height: 0,
-            tx_hex: self.tx_hex().into(),
-        })
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -249,7 +235,9 @@ pub struct TransactionDetails {
     /// When you send UTXO tx you pay fee with the coin itself (e.g. 1 BTC and 0.0001 BTC fee).
     /// But for ERC20 token transfer you pay fee with another coin: ETH, because it's ETH smart contract function call that requires gas to be burnt.
     /// So it's just generic JSON for now, maybe we will change it to Rust generic later.
-    fee_details: Json
+    fee_details: Json,
+    /// The coin transaction belongs to
+    coin: String,
 }
 
 /// NB: Implementations are expected to follow the pImpl idiom, providing cheap reference-counted cloning and garbage collection.
@@ -278,6 +266,9 @@ pub trait MmCoin: SwapOps + MarketCoinOps + IguanaInfo + Debug + 'static {
     fn tx_history_path(&self, ctx: &MmArc) -> PathBuf {
         ctx.dbdir().join("TRANSACTIONS").join(format!("{}_{}.json", self.ticker(), self.my_address()))
     }
+
+    /// Gets tx details by hash requesting the coin RPC if required
+    fn tx_details_by_hash(&self, hash: &[u8]) -> Result<TransactionDetails, String>;
 }
 
 #[derive(Clone, Debug)]
