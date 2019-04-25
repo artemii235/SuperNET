@@ -28,7 +28,7 @@ use chain::constants::{SEQUENCE_FINAL};
 use common::{dstr, lp, MutexGuardWrapper};
 use common::mm_ctx::MmArc;
 use futures::{Future};
-use gstuff::{now_ms, slurp};
+use gstuff::{now_ms};
 use hashbrown::hash_map::{HashMap, Entry};
 use keys::{KeyPair, Private, Public, Address, Secret, Type};
 use keys::bytes::Bytes;
@@ -1005,23 +1005,8 @@ impl MmCoin for UtxoCoin {
     }
 
     fn process_history_loop(&self, ctx: MmArc) {
-        let content = slurp(&self.tx_history_path(&ctx));
-        let history: Vec<TransactionDetails> = if content.is_empty() {
-            vec![]
-        } else {
-            match json::from_slice(&content) {
-                Ok(c) => c,
-                Err(e) => {
-                    ctx.log.log("", &[&"tx_history", &self.ticker], &ERRL!("Error {} on history deserialization, resetting the cache", e));
-                    unwrap!(std::fs::remove_file(&self.tx_history_path(&ctx)));
-                    vec![]
-                }
-            }
-        };
-        let mut history_map = HashMap::new();
-        for tx in history.into_iter() {
-            history_map.insert(H256Json::from(tx.tx_hash.as_slice()), tx);
-        }
+        let history = self.load_history_from_file(&ctx);
+        let mut history_map: HashMap<H256Json, TransactionDetails> = history.into_iter().map(|tx| (H256Json::from(tx.tx_hash.as_slice()), tx)).collect();
         loop {
             let tx_ids: Vec<H256Json> = match &self.rpc_client {
                 UtxoRpcClientEnum::Native(client) => {
@@ -1095,9 +1080,7 @@ impl MmCoin for UtxoCoin {
                     } else {
                         b.block_height.cmp(&a.block_height)
                     });
-                    let tmp_file = format!("{}.tmp", self.tx_history_path(&ctx).display());
-                    unwrap!(std::fs::write(&tmp_file, &unwrap!(json::to_vec(&to_write))));
-                    unwrap!(std::fs::rename(tmp_file, self.tx_history_path(&ctx)));
+                    self.save_history_to_file(&unwrap!(json::to_vec(&to_write)), &ctx);
                 }
             }
             thread::sleep(Duration::from_secs(30));

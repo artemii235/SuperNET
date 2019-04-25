@@ -270,6 +270,31 @@ pub trait MmCoin: SwapOps + MarketCoinOps + IguanaInfo + Debug + 'static {
         ctx.dbdir().join("TRANSACTIONS").join(format!("{}_{}.json", self.ticker(), self.my_address()))
     }
 
+    /// Loads existing tx history from file, returns empty vector if file is not found
+    /// Cleans the existing file if deserialization fails
+    fn load_history_from_file(&self, ctx: &MmArc) -> Vec<TransactionDetails> {
+        let content = slurp(&self.tx_history_path(&ctx));
+        let history: Vec<TransactionDetails> = if content.is_empty() {
+            vec![]
+        } else {
+            match json::from_slice(&content) {
+                Ok(c) => c,
+                Err(e) => {
+                    ctx.log.log("", &[&"tx_history", &self.ticker().to_string()], &ERRL!("Error {} on history deserialization, resetting the cache", e));
+                    unwrap!(std::fs::remove_file(&self.tx_history_path(&ctx)));
+                    vec![]
+                }
+            }
+        };
+        history
+    }
+
+    fn save_history_to_file(&self, content: &[u8], ctx: &MmArc) {
+        let tmp_file = format!("{}.tmp", self.tx_history_path(&ctx).display());
+        unwrap!(std::fs::write(&tmp_file, content));
+        unwrap!(std::fs::rename(tmp_file, self.tx_history_path(&ctx)));
+    }
+
     /// Gets tx details by hash requesting the coin RPC if required
     fn tx_details_by_hash(&self, hash: &[u8]) -> Result<TransactionDetails, String>;
 }

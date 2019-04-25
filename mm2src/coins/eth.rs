@@ -22,18 +22,20 @@ use common::{lp, MutexGuardWrapper, slurp_url};
 use secp256k1::key::PublicKey;
 use ethabi::{Contract, Token};
 use ethcore_transaction::{ Action, Transaction as UnSignedEthTx, UnverifiedTransaction};
-use ethereum_types::{Address, U256};
+use ethereum_types::{Address, U256, H160};
 use ethkey::{ KeyPair, Public, public_to_address, SECP256K1 };
 use futures::Future;
 use futures::future::{loop_fn, Loop};
 use futures_timer::Delay;
 use gstuff::now_ms;
+use hashbrown::HashMap;
 use hyper::StatusCode;
 use rand::{Rng, thread_rng};
 use rand::seq::SliceRandom;
 use rpc::v1::types::{Bytes as BytesJson};
 use serde_json::{self as json, Value as Json};
 use std::borrow::Cow;
+use std::cmp::Ordering;
 use std::ffi::CStr;
 use std::ops::Deref;
 use std::str::FromStr;
@@ -91,6 +93,35 @@ pub struct EthCoinImpl {  // pImpl idiom.
     web3: Web3<Web3Transport>,
     decimals: u8,
     gas_station_url: Option<String>,
+}
+
+impl EthCoinImpl {
+    /// Gets Transfer events from ERC20 smart contract `addr` since `from_block`
+    fn erc20_transfer_events(
+        &self,
+        contract: Address,
+        from_addr: Option<Address>,
+        to_addr: Option<Address>,
+        from_block: BlockNumber,
+        to_block: BlockNumber,
+        limit: Option<usize>
+    ) -> Box<Future<Item=Vec<Log>, Error=String>> {
+        let contract_event = try_fus!(ERC20_CONTRACT.event("Transfer"));
+        let topic0 = Some(vec![contract_event.signature()]);
+        let topic1 = from_addr.map(|addr| vec![addr.into()]);
+        let topic2 = to_addr.map(|addr| vec![addr.into()]);
+        let mut filter = FilterBuilder::default()
+            .topics(topic0, topic1, topic2, None)
+            .from_block(from_block)
+            .to_block(to_block)
+            .address(vec![contract]);
+
+        if let Some(l) = limit {
+            filter = filter.limit(l);
+        }
+
+        Box::new(self.web3.eth().logs(filter.build()).map_err(|e| ERRL!("{:?}", e)))
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -718,6 +749,7 @@ impl EthCoin {
         }
     }
 
+    /// Gets `ReceiverSpent` events from etomic swap smart contract (`self.swap_contract_address` ) since `from_block`
     fn spend_events(&self, from_block: u64) -> Box<Future<Item=Vec<Log>, Error=String>> {
         let contract_event = try_fus!(SWAP_CONTRACT.event("ReceiverSpent"));
         let filter = FilterBuilder::default()
@@ -820,6 +852,115 @@ impl EthCoin {
                 _ => ERR!("Payment status must be uint, got {:?}", decoded_tokens[2]),
             }
         }))
+    }
+
+    /// Downloads and saves ERC20 transaction history of my_address
+    fn process_erc20_history(&self, token_addr: H160, ctx: &MmArc) {
+        let mut existing_history = self.load_history_from_file(ctx);
+
+        // find the earliest and latest blocks for which we have history
+        // if downloading is interrupted for some reason we might not have all transactions from the past
+        // transactions are sorted by block number in descending order so it's ok
+        // just to get first and last elements
+        let (earliest_block, latest_block) = if existing_history.is_empty() {
+            (BlockNumber::Earliest, BlockNumber::Earliest)
+        } else {
+            let max = existing_history.first().unwrap().block_height;
+            let min = existing_history.last().unwrap().block_height;
+            (BlockNumber::Number(min), BlockNumber::Number(max))
+        };
+
+        let from_events_before_earliest = self.erc20_transfer_events(
+            token_addr,
+            Some(self.my_address),
+            None,
+            BlockNumber::Earliest,
+            earliest_block,
+            None,
+        ).wait().unwrap();
+
+        let to_events_before_earliest = self.erc20_transfer_events(
+            token_addr,
+            None,
+            Some(self.my_address),
+            BlockNumber::Earliest,
+            earliest_block,
+            None,
+        ).wait().unwrap();
+
+        let from_events_after_latest = self.erc20_transfer_events(
+            token_addr,
+            Some(self.my_address),
+            None,
+            latest_block,
+            BlockNumber::Latest,
+            None,
+        ).wait().unwrap();
+
+        let to_events_after_latest = self.erc20_transfer_events(
+            token_addr,
+            None,
+            Some(self.my_address),
+            latest_block,
+            BlockNumber::Latest,
+            None,
+        ).wait().unwrap();
+
+        let all_events = from_events_before_earliest.into_iter()
+            .chain(to_events_before_earliest)
+            .chain(from_events_after_latest)
+            .chain(to_events_after_latest);
+
+        let all_events: HashMap<H256, Log> = all_events.filter(|a| a.block_number.is_some() && a.transaction_hash.is_some()).map(|a| (a.transaction_hash.clone().unwrap(), a)).collect();
+        let mut all_events: Vec<Log> = all_events.into_iter().map(|(_, log)| log).collect();
+        all_events.sort_by(|a, b| b.block_number.unwrap().cmp(&a.block_number.unwrap()));
+
+        for event in all_events {
+            let amount = U256::from(event.data.0.as_slice());
+            let total_amount: f64 = display_u256_with_decimal_point(amount, 18).parse().unwrap();
+            let mut received_by_me = 0.;
+            let mut spent_by_me = 0.;
+
+            let from_addr = H160::from(event.topics[1]);
+            let to_addr = H160::from(event.topics[2]);
+
+            if from_addr == self.my_address {
+                spent_by_me = total_amount;
+            }
+
+            if to_addr == self.my_address {
+                received_by_me = total_amount;
+            }
+
+            let web3_tx = self.web3.eth().transaction(TransactionId::Hash(event.transaction_hash.unwrap())).wait().unwrap().unwrap();
+            let receipt = self.web3.eth().transaction_receipt(event.transaction_hash.unwrap()).wait().unwrap().unwrap();
+
+            let fee_details = EthTxFeeDetails::new(receipt.gas_used.unwrap_or(0.into()), web3_tx.gas_price, "ETH").unwrap();
+            let raw = signed_tx_from_web3_tx(web3_tx).unwrap();
+            let details = TransactionDetails {
+                spent_by_me,
+                received_by_me,
+                total_amount,
+                to: vec![format!("{:#02x}", to_addr)],
+                from: vec![format!("{:#02x}", from_addr)],
+                coin: "JST".into(),
+                fee_details: json::to_value(fee_details).unwrap(),
+                block_height: event.block_number.unwrap().into(),
+                my_balance_change: received_by_me - spent_by_me,
+                tx_hash: BytesJson(raw.hash.to_vec()),
+                tx_hex: BytesJson(rlp::encode(&raw)),
+            };
+
+            existing_history.push(details);
+            existing_history.sort_unstable_by(|a, b| if a.block_height == 0 {
+                Ordering::Less
+            } else if b.block_height == 0 {
+                Ordering::Greater
+            } else {
+                b.block_height.cmp(&a.block_height)
+            });
+            self.save_history_to_file(&unwrap!(json::to_vec(&existing_history)), &ctx);
+        }
     }
 }
 
@@ -975,10 +1116,6 @@ impl MmCoin for EthCoin {
         self.decimals
     }
 
-    fn process_history_loop(&self, ctx: MmArc) {
-        log!("History is not implemented for ETH coins yet!");
-    }
-
     fn tx_details_by_hash(&self, hash: &[u8]) -> Result<TransactionDetails, String> {
         let hash = H256::from(hash);
         let tx = try_s!(self.web3.eth().transaction(TransactionId::Hash(hash)).wait());
@@ -1032,6 +1169,13 @@ impl MmCoin for EthCoin {
                     fee_details: Json::Null,
                 })
             },
+        }
+    }
+
+    fn process_history_loop(&self, ctx: MmArc) {
+        match self.coin_type {
+            EthCoinType::Eth => log!("History is not implemented for ETH coins yet!"),
+            EthCoinType::Erc20(token) => self.process_erc20_history(token, &ctx),
         }
     }
 }
@@ -1326,5 +1470,31 @@ pub fn eth_coin_from_iguana_info(info: *mut lp::iguana_info, req: &Json) -> Resu
         gas_station_url: try_s!(json::from_value(req["gas_station_url"].clone())),
         web3,
     };
-    Ok(EthCoin(Arc::new(coin)).into())
+    Ok(EthCoin(Arc::new(coin)))
+}
+
+fn eth_coin_for_test() -> EthCoin {
+    let ticker = "JST";
+
+    let urls: Vec<String> = vec!["http://195.201.0.6:8565".into()];
+    let swap_contract_address: Address = "0xa09ad3cd7e96586ebd05a2607ee56b56fb2db8fd".into();
+    let key_pair: KeyPair = unwrap!(KeyPair::from_secret_slice(&hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap()));
+    let my_address = key_pair.address();
+
+    let transport = unwrap!(Web3Transport::new(urls));
+    let web3 = Web3::new(transport);
+
+    let coin_type = EthCoinType::Erc20("0x2b294f029fde858b2c62184e8390591755521d8e".into());
+
+    let coin = EthCoinImpl {
+        key_pair,
+        my_address,
+        coin_type,
+        swap_contract_address,
+        decimals: 18,
+        ticker: ticker.into(),
+        gas_station_url: None,
+        web3,
+    };
+    EthCoin(Arc::new(coin)).into()
 }
