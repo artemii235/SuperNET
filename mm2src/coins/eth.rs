@@ -856,110 +856,169 @@ impl EthCoin {
 
     /// Downloads and saves ERC20 transaction history of my_address
     fn process_erc20_history(&self, token_addr: H160, ctx: &MmArc) {
-        let mut existing_history = self.load_history_from_file(ctx);
+        loop {
+            let mut existing_history = self.load_history_from_file(ctx);
 
-        // find the earliest and latest blocks for which we have history
-        // if downloading is interrupted for some reason we might not have all transactions from the past
-        // transactions are sorted by block number in descending order so it's ok
-        // just to get first and last elements
-        let (earliest_block, latest_block) = if existing_history.is_empty() {
-            (BlockNumber::Earliest, BlockNumber::Earliest)
-        } else {
-            let max = existing_history.first().unwrap().block_height;
-            let min = existing_history.last().unwrap().block_height;
-            (BlockNumber::Number(min), BlockNumber::Number(max))
-        };
-
-        let from_events_before_earliest = self.erc20_transfer_events(
-            token_addr,
-            Some(self.my_address),
-            None,
-            BlockNumber::Earliest,
-            earliest_block,
-            None,
-        ).wait().unwrap();
-
-        let to_events_before_earliest = self.erc20_transfer_events(
-            token_addr,
-            None,
-            Some(self.my_address),
-            BlockNumber::Earliest,
-            earliest_block,
-            None,
-        ).wait().unwrap();
-
-        let from_events_after_latest = self.erc20_transfer_events(
-            token_addr,
-            Some(self.my_address),
-            None,
-            latest_block,
-            BlockNumber::Latest,
-            None,
-        ).wait().unwrap();
-
-        let to_events_after_latest = self.erc20_transfer_events(
-            token_addr,
-            None,
-            Some(self.my_address),
-            latest_block,
-            BlockNumber::Latest,
-            None,
-        ).wait().unwrap();
-
-        let all_events = from_events_before_earliest.into_iter()
-            .chain(to_events_before_earliest)
-            .chain(from_events_after_latest)
-            .chain(to_events_after_latest);
-
-        let all_events: HashMap<H256, Log> = all_events.filter(|a| a.block_number.is_some() && a.transaction_hash.is_some()).map(|a| (a.transaction_hash.clone().unwrap(), a)).collect();
-        let mut all_events: Vec<Log> = all_events.into_iter().map(|(_, log)| log).collect();
-        all_events.sort_by(|a, b| b.block_number.unwrap().cmp(&a.block_number.unwrap()));
-
-        for event in all_events {
-            let amount = U256::from(event.data.0.as_slice());
-            let total_amount: f64 = display_u256_with_decimal_point(amount, 18).parse().unwrap();
-            let mut received_by_me = 0.;
-            let mut spent_by_me = 0.;
-
-            let from_addr = H160::from(event.topics[1]);
-            let to_addr = H160::from(event.topics[2]);
-
-            if from_addr == self.my_address {
-                spent_by_me = total_amount;
-            }
-
-            if to_addr == self.my_address {
-                received_by_me = total_amount;
-            }
-
-            let web3_tx = self.web3.eth().transaction(TransactionId::Hash(event.transaction_hash.unwrap())).wait().unwrap().unwrap();
-            let receipt = self.web3.eth().transaction_receipt(event.transaction_hash.unwrap()).wait().unwrap().unwrap();
-
-            let fee_details = EthTxFeeDetails::new(receipt.gas_used.unwrap_or(0.into()), web3_tx.gas_price, "ETH").unwrap();
-            let raw = signed_tx_from_web3_tx(web3_tx).unwrap();
-            let details = TransactionDetails {
-                spent_by_me,
-                received_by_me,
-                total_amount,
-                to: vec![format!("{:#02x}", to_addr)],
-                from: vec![format!("{:#02x}", from_addr)],
-                coin: "JST".into(),
-                fee_details: json::to_value(fee_details).unwrap(),
-                block_height: event.block_number.unwrap().into(),
-                my_balance_change: received_by_me - spent_by_me,
-                tx_hash: BytesJson(raw.hash.to_vec()),
-                tx_hex: BytesJson(rlp::encode(&raw)),
+            // find the earliest and latest blocks for which we have history
+            // if downloading is interrupted for some reason we might not have all transactions from the past
+            // transactions are sorted by block number in descending order so it's ok to get first and last elements
+            let (earliest_block, latest_block) = if existing_history.is_empty() {
+                (BlockNumber::Earliest, BlockNumber::Earliest)
+            } else {
+                // can safely unwrap as history is not empty here
+                let max = unwrap!(existing_history.first()).block_height + 1;
+                let min = unwrap!(existing_history.last()).block_height - 1;
+                (BlockNumber::Number(min), BlockNumber::Number(max))
             };
 
-            existing_history.push(details);
-            existing_history.sort_unstable_by(|a, b| if a.block_height == 0 {
-                Ordering::Less
-            } else if b.block_height == 0 {
-                Ordering::Greater
-            } else {
-                b.block_height.cmp(&a.block_height)
-            });
-            self.save_history_to_file(&unwrap!(json::to_vec(&existing_history)), &ctx);
+            // AP: AFAIK ETH RPC doesn't support conditional filters like `get this OR this` so we have
+            // to run several queries to get transfer events including our address as sender `or` receiver
+            // TODO refactor this to batch requests instead of single request per query
+            let from_events_before_earliest = match self.erc20_transfer_events(
+                token_addr,
+                Some(self.my_address),
+                None,
+                BlockNumber::Earliest,
+                earliest_block,
+                None,
+            ).wait() {
+                Ok(events) => events,
+                Err(e) => {
+                    ctx.log.log("", &[&"tx_history", &self.ticker], &ERRL!("Error {} on erc20_transfer_events, retrying", e));
+                    thread::sleep(Duration::from_secs(10));
+                    continue;
+                }
+            };
+
+            let to_events_before_earliest = match self.erc20_transfer_events(
+                token_addr,
+                None,
+                Some(self.my_address),
+                BlockNumber::Earliest,
+                earliest_block,
+                None,
+            ).wait() {
+                Ok(events) => events,
+                Err(e) => {
+                    ctx.log.log("", &[&"tx_history", &self.ticker], &ERRL!("Error {} on erc20_transfer_events, retrying", e));
+                    thread::sleep(Duration::from_secs(10));
+                    continue;
+                }
+            };
+
+            let from_events_after_latest = match self.erc20_transfer_events(
+                token_addr,
+                Some(self.my_address),
+                None,
+                latest_block,
+                BlockNumber::Latest,
+                None,
+            ).wait() {
+                Ok(events) => events,
+                Err(e) => {
+                    ctx.log.log("", &[&"tx_history", &self.ticker], &ERRL!("Error {} on erc20_transfer_events, retrying", e));
+                    thread::sleep(Duration::from_secs(10));
+                    continue;
+                }
+            };
+
+            let to_events_after_latest = match self.erc20_transfer_events(
+                token_addr,
+                None,
+                Some(self.my_address),
+                latest_block,
+                BlockNumber::Latest,
+                None,
+            ).wait() {
+                Ok(events) => events,
+                Err(e) => {
+                    ctx.log.log("", &[&"tx_history", &self.ticker], &ERRL!("Error {} on erc20_transfer_events, retrying", e));
+                    thread::sleep(Duration::from_secs(10));
+                    continue;
+                }
+            };
+
+            let all_events = from_events_before_earliest.into_iter()
+                .chain(to_events_before_earliest)
+                .chain(from_events_after_latest)
+                .chain(to_events_after_latest);
+
+            let all_events: HashMap<H256, Log> = all_events
+                .filter(|e| e.block_number.is_some() && e.transaction_hash.is_some() && !e.is_removed())
+                .map(|e| (e.transaction_hash.clone().unwrap(), e)).collect();
+            let mut all_events: Vec<Log> = all_events.into_iter().map(|(_, log)| log).collect();
+            all_events.sort_by(|a, b| b.block_number.unwrap().cmp(&a.block_number.unwrap()));
+
+            for event in all_events {
+                let amount = U256::from(event.data.0.as_slice());
+                let total_amount: f64 = display_u256_with_decimal_point(amount, 18).parse().unwrap();
+                let mut received_by_me = 0.;
+                let mut spent_by_me = 0.;
+
+                let from_addr = H160::from(event.topics[1]);
+                let to_addr = H160::from(event.topics[2]);
+
+                if from_addr == self.my_address {
+                    spent_by_me = total_amount;
+                }
+
+                if to_addr == self.my_address {
+                    received_by_me = total_amount;
+                }
+
+                let web3_tx = match self.web3.eth().transaction(TransactionId::Hash(event.transaction_hash.unwrap())).wait() {
+                    Ok(tx) => tx,
+                    Err(e) => {
+                        ctx.log.log("", &[&"tx_history", &self.ticker], &ERRL!("Error {} on getting transaction {:?}", e, event.transaction_hash.unwrap()));
+                        continue;
+                    }
+                };
+                let web3_tx = match web3_tx {
+                    Some(t) => t,
+                    None => {
+                        ctx.log.log("", &[&"tx_history", &self.ticker], &ERRL!("No such transaction {:?}", event.transaction_hash.unwrap()));
+                        continue;
+                    }
+                };
+
+                let receipt = match self.web3.eth().transaction_receipt(event.transaction_hash.unwrap()).wait() {
+                    Ok(r) => r,
+                    Err(e) => {
+                        ctx.log.log("", &[&"tx_history", &self.ticker], &ERRL!("Error {} on getting transaction {:?} receipt", e, event.transaction_hash.unwrap()));
+                        continue;
+                    }
+                };
+                let fee_details = match receipt {
+                    Some(r) => Some(unwrap!(EthTxFeeDetails::new(r.gas_used.unwrap_or(0.into()), web3_tx.gas_price, "ETH"))),
+                    None => None,
+                };
+
+                let raw = signed_tx_from_web3_tx(web3_tx).unwrap();
+                let details = TransactionDetails {
+                    spent_by_me,
+                    received_by_me,
+                    total_amount,
+                    to: vec![format!("{:#02x}", to_addr)],
+                    from: vec![format!("{:#02x}", from_addr)],
+                    coin: self.ticker.clone(),
+                    fee_details: unwrap!(json::to_value(fee_details)),
+                    block_height: event.block_number.unwrap_or(U256::from(0)).into(),
+                    my_balance_change: received_by_me - spent_by_me,
+                    tx_hash: BytesJson(raw.hash.to_vec()),
+                    tx_hex: BytesJson(rlp::encode(&raw)),
+                };
+
+                existing_history.push(details);
+                existing_history.sort_unstable_by(|a, b| if a.block_height == 0 {
+                    Ordering::Less
+                } else if b.block_height == 0 {
+                    Ordering::Greater
+                } else {
+                    b.block_height.cmp(&a.block_height)
+                });
+                self.save_history_to_file(&unwrap!(json::to_vec(&existing_history)), &ctx);
+            }
+            thread::sleep(Duration::from_secs(30));
         }
     }
 }
@@ -1471,30 +1530,4 @@ pub fn eth_coin_from_iguana_info(info: *mut lp::iguana_info, req: &Json) -> Resu
         web3,
     };
     Ok(EthCoin(Arc::new(coin)))
-}
-
-fn eth_coin_for_test() -> EthCoin {
-    let ticker = "JST";
-
-    let urls: Vec<String> = vec!["http://195.201.0.6:8565".into()];
-    let swap_contract_address: Address = "0xa09ad3cd7e96586ebd05a2607ee56b56fb2db8fd".into();
-    let key_pair: KeyPair = unwrap!(KeyPair::from_secret_slice(&hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap()));
-    let my_address = key_pair.address();
-
-    let transport = unwrap!(Web3Transport::new(urls));
-    let web3 = Web3::new(transport);
-
-    let coin_type = EthCoinType::Erc20("0x2b294f029fde858b2c62184e8390591755521d8e".into());
-
-    let coin = EthCoinImpl {
-        key_pair,
-        my_address,
-        coin_type,
-        swap_contract_address,
-        decimals: 18,
-        ticker: ticker.into(),
-        gas_station_url: None,
-        web3,
-    };
-    EthCoin(Arc::new(coin)).into()
 }
