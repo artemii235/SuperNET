@@ -995,6 +995,8 @@ impl MmCoin for UtxoCoin {
                     fee_details: try_s!(json::to_value(fee_details)),
                     block_height: 0,
                     coin: arc.ticker.clone(),
+                    internal_id: vec![].into(),
+                    timestamp: now_ms() / 1000,
                 })
             })
         }))
@@ -1147,6 +1149,8 @@ impl MmCoin for UtxoCoin {
             }),
             block_height: verbose_tx.height,
             coin: self.ticker.clone(),
+            internal_id: tx.hash().reversed().to_vec().into(),
+            timestamp: verbose_tx.time.into(),
         })
     }
 }

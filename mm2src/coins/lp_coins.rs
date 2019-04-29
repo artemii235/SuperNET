@@ -234,6 +234,8 @@ pub struct TransactionDetails {
     my_balance_change: f64,
     /// Block height
     block_height: u64,
+    /// Transaction timestamp
+    timestamp: u64,
     /// Every coin can has specific fee details:
     /// When you send UTXO tx you pay fee with the coin itself (e.g. 1 BTC and 0.0001 BTC fee).
     /// But for ERC20 token transfer you pay fee with another coin: ETH, because it's ETH smart contract function call that requires gas to be burnt.
@@ -241,6 +243,8 @@ pub struct TransactionDetails {
     fee_details: Json,
     /// The coin transaction belongs to
     coin: String,
+    /// Internal MM2 id used for internal transaction identification, for some coins it might be equal to transaction hash
+    internal_id: BytesJson,
 }
 
 /// NB: Implementations are expected to follow the pImpl idiom, providing cheap reference-counted cloning and garbage collection.
@@ -1023,7 +1027,7 @@ pub fn my_tx_history(ctx: MmArc, req: Json) -> HyRes {
         Err (err) => return rpc_err_response (500, &fomat! ("!lp_coinfind(" (ticker) "): " (err)))
     };
     let limit = req["limit"].as_u64().unwrap_or(10);
-    let from_tx_hash: Option<BytesJson> = try_h!(json::from_value(req["from_tx_hash"].clone()));
+    let from_id: Option<BytesJson> = try_h!(json::from_value(req["from_id"].clone()));
     let file_path = coin.tx_history_path(&ctx);
     let content = slurp(&file_path);
     if content.is_empty() {
@@ -1034,9 +1038,9 @@ pub fn my_tx_history(ctx: MmArc, req: Json) -> HyRes {
         let history: Vec<TransactionDetails> = try_h!(json::from_slice(&content));
         let total_records = history.len();
         Box::new(coin.current_block().and_then(move |block_number| {
-            let skip = match &from_tx_hash {
-                Some(hash) => {
-                    try_h!(history.iter().position(|item| item.tx_hash == *hash).ok_or(format!("from_tx_hash {:02x} is not found", hash))) + 1
+            let skip = match &from_id {
+                Some(id) => {
+                    try_h!(history.iter().position(|item| item.internal_id == *id).ok_or(format!("from_id {:02x} is not found", id))) + 1
                 },
                 None => 0,
             };
@@ -1056,7 +1060,7 @@ pub fn my_tx_history(ctx: MmArc, req: Json) -> HyRes {
                     "transactions": history,
                     "limit": limit,
                     "skipped":skip,
-                    "from_tx_hash": from_tx_hash,
+                    "from_id": from_id,
                     "total": total_records,
                 }
             }).to_string())

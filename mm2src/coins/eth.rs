@@ -18,6 +18,7 @@
 //
 //  Copyright © 2017-2019 SuperNET. All rights reserved.
 //
+use bitcrypto::sha256;
 use common::{lp, MutexGuardWrapper, slurp_url};
 use secp256k1::key::PublicKey;
 use ethabi::{Contract, Token};
@@ -42,8 +43,8 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
-use web3::types::{BlockNumber, Bytes, CallRequest, FilterBuilder, Log, Transaction as Web3Transaction, TransactionId, H256};
 use web3::{ self, Web3 };
+use web3::types::{Action as TraceAction, BlockId, BlockNumber, Bytes, CallRequest, FilterBuilder, Log, Transaction as Web3Transaction, TransactionId, H256, Trace, TraceFilterBuilder};
 
 use super::{IguanaInfo, MarketCoinOps, MmCoin, SwapOps, TransactionFut, TransactionEnum, Transaction, TransactionDetails};
 
@@ -96,7 +97,7 @@ pub struct EthCoinImpl {  // pImpl idiom.
 }
 
 impl EthCoinImpl {
-    /// Gets Transfer events from ERC20 smart contract `addr` since `from_block`
+    /// Gets Transfer events from ERC20 smart contract `addr` between `from_block` and `to_block`
     fn erc20_transfer_events(
         &self,
         contract: Address,
@@ -121,6 +122,28 @@ impl EthCoinImpl {
         }
 
         Box::new(self.web3.eth().logs(filter.build()).map_err(|e| ERRL!("{:?}", e)))
+    }
+
+    /// Gets ETH traces between addresses in `from_block` and `to_block`
+    fn eth_traces(
+        &self,
+        from_addr: Vec<Address>,
+        to_addr: Vec<Address>,
+        from_block: BlockNumber,
+        to_block: BlockNumber,
+        limit: Option<usize>
+    ) -> Box<Future<Item=Vec<Trace>, Error=String>> {
+        let mut filter = TraceFilterBuilder::default()
+            .from_address(from_addr)
+            .to_address(to_addr)
+            .from_block(from_block)
+            .to_block(to_block);
+
+        if let Some(l) = limit {
+            filter = filter.count(l);
+        }
+
+        Box::new(self.web3.trace().filter(filter.build()).map_err(|e| ERRL!("{:?}", e)))
     }
 }
 
@@ -950,6 +973,7 @@ impl EthCoin {
             all_events.sort_by(|a, b| b.block_number.unwrap().cmp(&a.block_number.unwrap()));
 
             for event in all_events {
+                let internal_id = sha256(&json::to_vec(&event).unwrap());
                 let amount = U256::from(event.data.0.as_slice());
                 let total_amount: f64 = display_u256_with_decimal_point(amount, 18).parse().unwrap();
                 let mut received_by_me = 0.;
@@ -992,6 +1016,14 @@ impl EthCoin {
                     Some(r) => Some(unwrap!(EthTxFeeDetails::new(r.gas_used.unwrap_or(0.into()), web3_tx.gas_price, "ETH"))),
                     None => None,
                 };
+                let block_number = event.block_number.unwrap();
+                let block = match self.web3.eth().block(BlockId::Number(BlockNumber::Number(block_number.into()))).wait() {
+                    Ok(b) => unwrap!(b),
+                    Err(e) => {
+                        ctx.log.log("", &[&"tx_history", &self.ticker], &ERRL!("Error {} on getting block {} data", e, block_number));
+                        continue;
+                    }
+                };
 
                 let raw = signed_tx_from_web3_tx(web3_tx).unwrap();
                 let details = TransactionDetails {
@@ -1002,10 +1034,191 @@ impl EthCoin {
                     from: vec![format!("{:#02x}", from_addr)],
                     coin: self.ticker.clone(),
                     fee_details: unwrap!(json::to_value(fee_details)),
-                    block_height: event.block_number.unwrap_or(U256::from(0)).into(),
+                    block_height: block_number.into(),
                     my_balance_change: received_by_me - spent_by_me,
                     tx_hash: BytesJson(raw.hash.to_vec()),
                     tx_hex: BytesJson(rlp::encode(&raw)),
+                    internal_id: BytesJson(internal_id.to_vec()),
+                    timestamp: block.timestamp.into(),
+                };
+
+                existing_history.push(details);
+                existing_history.sort_unstable_by(|a, b| if a.block_height == 0 {
+                    Ordering::Less
+                } else if b.block_height == 0 {
+                    Ordering::Greater
+                } else {
+                    b.block_height.cmp(&a.block_height)
+                });
+                self.save_history_to_file(&unwrap!(json::to_vec(&existing_history)), &ctx);
+            }
+            thread::sleep(Duration::from_secs(30));
+        }
+    }
+
+    /// Downloads and saves ETH transaction history of my_address, relies on Parity trace_filter API
+    /// https://wiki.parity.io/JSONRPC-trace-module#trace_filter, this requires tracing to be enabled
+    /// in node config. Other ETH clients (Geth, etc.) are `not` supported (yet).
+    fn process_eth_history(&self, ctx: &MmArc) {
+        loop {
+            let mut existing_history = self.load_history_from_file(ctx);
+
+            // find the earliest and latest blocks for which we have history
+            // if downloading is interrupted for some reason we might not have all transactions from the past
+            // transactions are sorted by block number in descending order so it's ok to get first and last elements
+            let (earliest_block, latest_block) = if existing_history.is_empty() {
+                (BlockNumber::Earliest, BlockNumber::Earliest)
+            } else {
+                // can safely unwrap as history is not empty here
+                let max = unwrap!(existing_history.first()).block_height + 1;
+                let min = unwrap!(existing_history.last()).block_height - 1;
+                (BlockNumber::Number(min), BlockNumber::Number(max))
+            };
+
+            // AP: AFAIK ETH RPC doesn't support conditional filters like `get this OR this` so we have
+            // to run several queries to get trace events including our address as sender `or` receiver
+            // TODO refactor this to batch requests instead of single request per query
+            let from_traces_before_earliest = match self.eth_traces(
+                vec![self.my_address],
+                vec![],
+                BlockNumber::Earliest,
+                earliest_block,
+                None,
+            ).wait() {
+                Ok(traces) => traces,
+                Err(e) => {
+                    ctx.log.log("", &[&"tx_history", &self.ticker], &ERRL!("Error {} on eth_traces, retrying", e));
+                    thread::sleep(Duration::from_secs(10));
+                    continue;
+                }
+            };
+
+            let to_traces_before_earliest = match self.eth_traces(
+                vec![],
+                vec![self.my_address],
+                BlockNumber::Earliest,
+                earliest_block,
+                None,
+            ).wait() {
+                Ok(traces) => traces,
+                Err(e) => {
+                    ctx.log.log("", &[&"tx_history", &self.ticker], &ERRL!("Error {} on eth_traces, retrying", e));
+                    thread::sleep(Duration::from_secs(10));
+                    continue;
+                }
+            };
+
+            let from_traces_after_latest = match self.eth_traces(
+                vec![self.my_address],
+                vec![],
+                latest_block,
+                BlockNumber::Latest,
+                None,
+            ).wait() {
+                Ok(traces) => traces,
+                Err(e) => {
+                    ctx.log.log("", &[&"tx_history", &self.ticker], &ERRL!("Error {} on eth_traces, retrying", e));
+                    thread::sleep(Duration::from_secs(10));
+                    continue;
+                }
+            };
+
+            let to_traces_after_latest = match self.eth_traces(
+                vec![],
+                vec![self.my_address],
+                latest_block,
+                BlockNumber::Latest,
+                None,
+            ).wait() {
+                Ok(traces) => traces,
+                Err(e) => {
+                    ctx.log.log("", &[&"tx_history", &self.ticker], &ERRL!("Error {} on eth_traces, retrying", e));
+                    thread::sleep(Duration::from_secs(10));
+                    continue;
+                }
+            };
+
+            let mut all_traces: Vec<Trace> = from_traces_before_earliest.into_iter()
+                .chain(to_traces_before_earliest)
+                .chain(from_traces_after_latest)
+                .chain(to_traces_after_latest)
+                .collect();
+            all_traces.sort_by(|a, b| b.block_number.cmp(&a.block_number));
+
+            for trace in all_traces {
+                let internal_id = sha256(&json::to_vec(&trace).unwrap());
+
+                // TODO Only standard Call traces are supported, contract creations, suicides and block rewards will be supported later
+                let call_data = match trace.action {
+                    TraceAction::Call(d) => d,
+                    _ => continue,
+                };
+
+                let web3_tx = match self.web3.eth().transaction(TransactionId::Hash(trace.transaction_hash.unwrap())).wait() {
+                    Ok(tx) => tx,
+                    Err(e) => {
+                        ctx.log.log("", &[&"tx_history", &self.ticker], &ERRL!("Error {} on getting transaction {:?}", e, trace.transaction_hash.unwrap()));
+                        continue;
+                    }
+                };
+                let web3_tx = match web3_tx {
+                    Some(t) => t,
+                    None => {
+                        ctx.log.log("", &[&"tx_history", &self.ticker], &ERRL!("No such transaction {:?}", trace.transaction_hash.unwrap()));
+                        continue;
+                    }
+                };
+
+                let receipt = match self.web3.eth().transaction_receipt(trace.transaction_hash.unwrap()).wait() {
+                    Ok(r) => r,
+                    Err(e) => {
+                        ctx.log.log("", &[&"tx_history", &self.ticker], &ERRL!("Error {} on getting transaction {:?} receipt", e, trace.transaction_hash.unwrap()));
+                        continue;
+                    }
+                };
+                let fee_details: Option<EthTxFeeDetails> = match receipt {
+                    Some(r) => Some(unwrap!(EthTxFeeDetails::new(r.gas_used.unwrap_or(0.into()), web3_tx.gas_price, "ETH"))),
+                    None => None,
+                };
+
+                let total_amount: f64 = display_u256_with_decimal_point(call_data.value, 18).parse().unwrap();
+                let mut received_by_me = 0.;
+                let mut spent_by_me = 0.;
+
+                if call_data.from == self.my_address {
+                    spent_by_me = total_amount;
+                    if let Some(ref fee) = fee_details {
+                        spent_by_me += fee.total_fee;
+                    }
+                }
+
+                if call_data.to == self.my_address {
+                    received_by_me = total_amount;
+                }
+
+                let raw = signed_tx_from_web3_tx(web3_tx).unwrap();
+                let block = match self.web3.eth().block(BlockId::Number(BlockNumber::Number(trace.block_number))).wait() {
+                    Ok(b) => unwrap!(b),
+                    Err(e) => {
+                        ctx.log.log("", &[&"tx_history", &self.ticker], &ERRL!("Error {} on getting block {} data", e, trace.block_number));
+                        continue;
+                    }
+                };
+
+                let details = TransactionDetails {
+                    spent_by_me,
+                    received_by_me,
+                    total_amount,
+                    to: vec![format!("{:#02x}", call_data.to)],
+                    from: vec![format!("{:#02x}", call_data.from)],
+                    coin: self.ticker.clone(),
+                    fee_details: unwrap!(json::to_value(fee_details)),
+                    block_height: trace.block_number,
+                    my_balance_change: received_by_me - spent_by_me,
+                    tx_hash: BytesJson(raw.hash.to_vec()),
+                    tx_hex: BytesJson(rlp::encode(&raw)),
+                    internal_id: BytesJson::from(internal_id.to_vec()),
+                    timestamp: block.timestamp.into(),
                 };
 
                 existing_history.push(details);
@@ -1165,6 +1378,8 @@ impl MmCoin for EthCoin {
                         block_height: 0,
                         fee_details,
                         coin: arc.ticker.clone(),
+                        internal_id: vec![].into(),
+                        timestamp: now_ms() / 1000,
                     })
                 })
             })
@@ -1211,6 +1426,8 @@ impl MmCoin for EthCoin {
                     my_balance_change: received_by_me - spent_by_me,
                     total_amount,
                     fee_details: Json::Null,
+                    internal_id: vec![0].into(),
+                    timestamp: now_ms() / 1000,
                 })
             },
             EthCoinType::Erc20(_addr) => {
@@ -1226,6 +1443,8 @@ impl MmCoin for EthCoin {
                     my_balance_change: received_by_me - spent_by_me,
                     total_amount,
                     fee_details: Json::Null,
+                    internal_id: vec![0].into(),
+                    timestamp: now_ms() / 1000,
                 })
             },
         }
@@ -1233,7 +1452,7 @@ impl MmCoin for EthCoin {
 
     fn process_history_loop(&self, ctx: MmArc) {
         match self.coin_type {
-            EthCoinType::Eth => log!("History is not implemented for ETH coins yet!"),
+            EthCoinType::Eth => self.process_eth_history(&ctx),
             EthCoinType::Erc20(token) => self.process_erc20_history(token, &ctx),
         }
     }
