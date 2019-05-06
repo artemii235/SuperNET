@@ -18,8 +18,8 @@
 //  marketmaker
 //
 
-#![feature(non_ascii_idents)]
 #![feature(integer_atomics)]
+#![feature(non_ascii_idents)]
 
 #[macro_use] extern crate common;
 #[macro_use] extern crate fomat_macros;
