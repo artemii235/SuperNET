@@ -234,7 +234,7 @@ char *LP_convaddress(char *symbol,char *address,char *dest)
 
 bits256 LP_privkeycalc(bits256 *pubkeyp) {
     //static uint32_t counter;
-    bits256 privkey, userpub, userpass, checkkey, tmpkey;
+    bits256 userpub, userpass, checkkey, tmpkey;
     uint8_t rmd160[20];
     checkkey = G.LP_privkey;
     OS_randombytes(tmpkey.bytes, sizeof(tmpkey));
@@ -245,7 +245,7 @@ bits256 LP_privkeycalc(bits256 *pubkeyp) {
     userpub = curve25519(userpass,curve25519_basepoint9());
     bits256_str(G.USERPASS,userpub);
     printf("userpass.(userpass is deprecated, set the rpc_password in MM2 JSON config instead: https://github.com/artemii235/developer-docs/blob/mm/docs/basic-docs/atomic-swap-dex/dex-walkthrough.md#initiate-marketmaker-20)\n");
-    vcalc_sha256(0, checkkey.bytes, privkey.bytes, sizeof(privkey));
+    vcalc_sha256(0, checkkey.bytes, G.LP_privkey.bytes, sizeof(G.LP_privkey));
     checkkey.bytes[0] &= 248, checkkey.bytes[31] &= 127, checkkey.bytes[31] |= 64;
     G.LP_mypub25519 = *pubkeyp = curve25519(checkkey, curve25519_basepoint9());
     G.LP_mypriv25519 = checkkey;
