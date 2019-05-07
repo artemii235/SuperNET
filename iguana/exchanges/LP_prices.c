@@ -100,6 +100,7 @@ void LP_pubkey_update(struct LP_pubkey_info *pubp,uint32_t baseind,uint32_t reli
 //printf("%d/%d price %.8f balance %.8f %s num.%d min %.8f max %.8f\n",baseind,relind,price,dstr(balance),utxocoin,numutxos,dstr(minutxo),dstr(maxutxo));
     pq->price = price;
     pq->balance = balance;
+    pubp->timestamp = (uint32_t)time(NULL);
 }
 
 struct LP_priceinfo *LP_priceinfo(int32_t ind)
@@ -751,7 +752,6 @@ int32_t LP_orderbook_utxoentries(uint32_t now,int32_t polarity,char *base,char *
                 (*arrayp)[num++] = op;
             }
         }
-        printf("pubp.(%s) %.8f %p\n",coinaddr,price,ap);
     }
     return(num);
 }
