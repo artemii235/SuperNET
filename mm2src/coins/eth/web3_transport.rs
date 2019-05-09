@@ -70,10 +70,7 @@ impl Transport for Web3Transport {
 
         Box::new(select_ok_sequential(futures)
             .map_err(|errs| ErrorKind::Transport(ERRL!("{:?}", errs)).into())
-            .and_then(|(_, _, body)| {
-                log!((std::str::from_utf8(&body).unwrap()));
-                single_response(body)
-            })
+            .and_then(|(_, _, body)| single_response(body))
         )
     }
 }

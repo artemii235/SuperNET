@@ -1096,10 +1096,10 @@ impl EthCoin {
     /// https://wiki.parity.io/JSONRPC-trace-module#trace_filter, this requires tracing to be enabled
     /// in node config. Other ETH clients (Geth, etc.) are `not` supported (yet).
     fn process_eth_history(&self, ctx: &MmArc) {
-        // Artem Pikulin: by playing a bit with Parity mainnet node I've discovered that trace_filter API responds after reasonable time for 10000 blocks.
-        // I've tried to increase the amount to 100000, but response is slow (about 40 seconds).
+        // Artem Pikulin: by playing a bit with Parity mainnet node I've discovered that trace_filter API responds after reasonable time for 1000 blocks.
+        // I've tried to increase the amount to 10000, but request times out somewhere near 2500000 block.
         // Also the Parity RPC server seem to get stuck while request in running (other requests performance is also lowered).
-        let delta = U256::from(10000);
+        let delta = U256::from(1000);
 
         loop {
             let current_block = match self.web3.eth().block_number().wait() {
@@ -1204,8 +1204,6 @@ impl EthCoin {
                 self.store_eth_traces(&ctx, &saved_traces);
             }
             saved_traces.traces.sort_by(|a, b| b.block_number.cmp(&a.block_number));
-            log!([saved_traces]);
-
             for trace in saved_traces.traces {
                 let hash = sha256(&json::to_vec(&trace).unwrap());
                 let internal_id = BytesJson::from(hash.to_vec());
@@ -1252,14 +1250,20 @@ impl EthCoin {
                 let mut spent_by_me = 0.;
 
                 if call_data.from == self.my_address {
-                    spent_by_me = total_amount;
+                    // ETH transfer is actually happening only if no error occurred
+                    if trace.error.is_none() {
+                        spent_by_me = total_amount;
+                    }
                     if let Some(ref fee) = fee_details {
                         spent_by_me += fee.total_fee;
                     }
                 }
 
                 if call_data.to == self.my_address {
-                    received_by_me = total_amount;
+                    // ETH transfer is actually happening only if no error occurred
+                    if trace.error.is_none() {
+                        received_by_me = total_amount;
+                    }
                 }
 
                 let raw = signed_tx_from_web3_tx(web3_tx).unwrap();
