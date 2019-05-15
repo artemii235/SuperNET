@@ -818,8 +818,8 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
         uuids.push(unwrap!(buy_json["pending"]["uuid"].as_str()).to_owned());
 
         // ensure the swap started
-        unwrap!(mm_alice.wait_for_log (10., &|log| log.contains (&format!("Entering the taker_swap_loop {}/{}", base, rel))));
-        unwrap!(mm_bob.wait_for_log (10., &|log| log.contains (&format!("Entering the maker_swap_loop {}/{}", base, rel))));
+        unwrap!(mm_alice.wait_for_log (5., &|log| log.contains (&format!("Entering the taker_swap_loop {}/{}", base, rel))));
+        unwrap!(mm_bob.wait_for_log (5., &|log| log.contains (&format!("Entering the maker_swap_loop {}/{}", base, rel))));
     }
 
     let maker_success_events = vec!["Started", "Negotiated", "TakerFeeValidated", "MakerPaymentSent",

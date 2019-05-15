@@ -695,7 +695,7 @@ unsafe fn lp_connected_alice(ctx_ffi_handle: u32, qp: *mut lp::LP_quoteinfo, pai
     */
     let mut bid = 0.;
     let mut ask = 0.;
-    if lp::LP_myprice(0, &mut bid, &mut ask, (*qp).srccoin.as_mut_ptr(), (*qp).destcoin.as_mut_ptr()) <= SMALLVAL || bid <= SMALLVAL {
+    if lp::LP_myprice(1, &mut bid, &mut ask, (*qp).srccoin.as_mut_ptr(), (*qp).destcoin.as_mut_ptr()) <= SMALLVAL || bid <= SMALLVAL {
         printf(b"this node has no price for %s/%s (%.8f %.8f)\n\x00".as_ptr() as *const c_char, (*qp).destcoin.as_ptr(), (*qp).srccoin.as_ptr(), bid, ask);
         lp::LP_aliceid((*qp).tradeid, (*qp).aliceid, b"error5\x00".as_ptr() as *mut c_char, 0, 0);
         lp::LP_failedmsg((*qp).R.requestid, (*qp).R.quoteid, -4002.0, (*qp).uuidstr.as_mut_ptr());
@@ -824,8 +824,6 @@ double LP_trades_alicevalidate(void *ctx,struct LP_quoteinfo *qp)
 }
 */
 unsafe fn lp_reserved(qp: *mut lp::LP_quoteinfo, ctx: &MmArc) {
-    let maxprice = lp::LP_Alicemaxprice;
-    let price = maxprice;
     //let price = lp::LP_pricecache(qp, (*qp).srccoin.as_mut_ptr(), (*qp).destcoin.as_mut_ptr(), (*qp).txid, (*qp).vout);
     (*qp).tradeid = lp::LP_Alicequery.tradeid;
     lp::LP_Alicereserved = *qp;
@@ -1120,6 +1118,7 @@ pub unsafe fn lp_trades_loop(ctx: MmArc) {
             if now > trade.lastprocessed {
                 if trade.connectsent == 0 {
                     lp::LP_Alicemaxprice = trade.bestprice;
+                    lp_trades_bestpricecheck(trade);
                     lp_reserved(&mut trade.Qs[lp::LP_CONNECT as usize], &ctx); // send LP_CONNECT
                     (*trade).connectsent = now;
                     log!({"send LP_connect aliceid.{} {}", trade.aliceid, trade.bestprice});
@@ -1137,14 +1136,6 @@ pub unsafe fn lp_trades_loop(ctx: MmArc) {
         now = now_ms() / 1000;
         for (key, trade) in (*trades_map).clone().iter_mut() {
             timeout = lp::LP_AUTOTRADE_TIMEOUT;
-            let coin = unwrap!(lp_coinfind(&ctx, c2s!(trade.Q.srccoin)));
-            if let Some(coin) = coin {if coin.iguana_info().electrum != null_mut() {
-                timeout += (lp::LP_AUTOTRADE_TIMEOUT as f64 * 0.5) as u32;
-            }}
-            let coin = unwrap!(lp_coinfind(&ctx, c2s!(trade.Q.destcoin)));
-            if let Some(coin) = coin {if coin.iguana_info().electrum != null_mut() {
-                timeout += (lp::LP_AUTOTRADE_TIMEOUT as f64 * 0.5) as u32;
-            }}
             if now > trade.firstprocessed + timeout as u64 * 10 || trade.cancelled != 0 {
                 //printf("purge swap aliceid.%llu\n",(long long)tp->aliceid);
                 trades_map.remove(key);
@@ -1177,10 +1168,9 @@ pub unsafe fn lp_trades_loop(ctx: MmArc) {
                             if qp != null_mut() {
                                 qtp.Qs[lp::LP_RESERVED as usize] = q;
                             }
-                        } else if qtp.iambob == 0 && funcid == lp::LP_RESERVED { // alice maybe sends LP_CONNECT
-                            log!("here");
+                        } else if funcid == lp::LP_RESERVED { // alice maybe sends LP_CONNECT
                             lp_trades_bestpricecheck(&mut qtp);
-                        } else if qtp.iambob == 0 && funcid == lp::LP_CONNECTED {
+                        } else if funcid == lp::LP_CONNECTED {
                             qtp.negotiationdone = now;
                             //printf("alice sets negotiationdone.%u\n",now);
                             lp_trades_gotconnected(
@@ -1214,21 +1204,21 @@ pub unsafe fn lp_trades_loop(ctx: MmArc) {
             }
 //printf("finished dequeue %p funcid.%d aliceid.%llu iambob.%d/%d done.%u\n",qtp,funcid,(long long)qtp->aliceid,qtp->iambob,tp->iambob,tp->negotiationdone);
             flag = 0;
+            if funcid == lp::LP_CONNECTED && trade.negotiationdone == 0 { // alice all done  tp->connectsent != 0 &&
+                flag = 1;
+                (*trade).negotiationdone = now;
+                lp_trades_gotconnected(
+                    unwrap!(ctx.ffi_handle()),
+                    &mut trade.Q,
+                    &mut trade.Qs[lp::LP_CONNECTED as usize],
+                    trade.pairstr.as_mut_ptr()
+                );
+            }
             if trade.iambob == 0 {
                 if funcid == lp::LP_RESERVED {
-                    log!("here");
                     if trade.connectsent == 0 {
                         flag = lp_trades_bestpricecheck(trade);
                     }
-                } else if funcid == lp::LP_CONNECTED && trade.negotiationdone == 0 { // alice all done  tp->connectsent != 0 &&
-                    flag = 1;
-                    (*trade).negotiationdone = now;
-                    lp_trades_gotconnected(
-                        unwrap!(ctx.ffi_handle()),
-                        &mut trade.Q,
-                        &mut trade.Qs[lp::LP_CONNECTED as usize],
-                        trade.pairstr.as_mut_ptr()
-                    );
                 }
             } else {
                 if funcid == lp::LP_REQUEST { // bob maybe sends LP_RESERVED
