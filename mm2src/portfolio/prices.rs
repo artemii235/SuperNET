@@ -144,7 +144,7 @@ pub fn set_price(ctx: MmArc, req: Json) -> HyRes {
     let rel = try_h!(CString::new(req.rel.as_str()));
     Box::new(base_coin.check_i_have_enough_to_trade(MIN_TRADE, true).and_then(move |_|
         rel_coin.can_i_spend_other_payment().and_then(move |_| {
-            let price_set_res = unsafe { lp::LP_mypriceset(1, &mut changed, base.as_ptr() as *mut c_char, rel.as_ptr() as *mut c_char, req.price) };
+            let price_set_res = unsafe { lp::LP_mypriceset(&mut changed, base.as_ptr() as *mut c_char, rel.as_ptr() as *mut c_char, req.price, 0.) };
             if price_set_res < 0 {
                 return rpc_err_response(500, "could not set price");
             }

@@ -22,7 +22,6 @@
 struct LP_quoteinfo LP_Alicequery,LP_Alicereserved;
 double LP_Alicemaxprice;
 bits256 LP_Alicedestpubkey,LP_bobs_reserved;
-uint32_t Alice_expiration,Bob_expiration;
 
 void LP_failedmsg(uint32_t requestid,uint32_t quoteid,double val,char *uuidstr)
 {
@@ -186,8 +185,6 @@ struct LP_utxoinfo *LP_address_myutxopair(struct LP_utxoinfo *butxo,int32_t iamb
 void LP_gtc_iteration(uint32_t ctx_h)
 {
     struct LP_gtcorder *gtc,*tmp; struct LP_quoteinfo *qp; uint64_t destvalue,destvalue2; uint32_t oldest = 0;
-    if ( Alice_expiration != 0 )
-        return;
     DL_FOREACH_SAFE(GTCorders,gtc,tmp)
     {
         if ( gtc->cancelled == 0 && (oldest == 0 || gtc->pending < oldest) )
@@ -209,7 +206,7 @@ void LP_gtc_iteration(uint32_t ctx_h)
             {
                 gtc->pending = qp->timestamp = (uint32_t)time(NULL);
                 LP_query("request",qp, ctx_h);
-                LP_Alicequery = *qp, LP_Alicemaxprice = gtc->Q.maxprice, Alice_expiration = qp->timestamp + 2*LP_AUTOTRADE_TIMEOUT, LP_Alicedestpubkey = qp->srchash;
+                LP_Alicequery = *qp, LP_Alicemaxprice = gtc->Q.maxprice, LP_Alicedestpubkey = qp->srchash;
                 char str[65]; printf("LP_gtc fill.%d gtc.%d %s/%s %.8f vol %.8f dest.(%s) maxprice %.8f etomicdest.(%s) uuid.%s fill.%d gtc.%d\n",qp->fill,qp->gtc,qp->srccoin,qp->destcoin,dstr(qp->satoshis),dstr(qp->destsatoshis),bits256_str(str,LP_Alicedestpubkey),gtc->Q.maxprice,qp->etomicdest,qp->uuidstr,qp->fill,qp->gtc);
                 break;
             }
@@ -244,7 +241,7 @@ char *LP_trade(struct LP_quoteinfo *qp,double maxprice,int32_t timeout,uint32_t 
     }
     {
         LP_query("request",qp, ctx_h);
-        LP_Alicequery = *qp, LP_Alicemaxprice = qp->maxprice, Alice_expiration = qp->timestamp + timeout, LP_Alicedestpubkey = qp->srchash;
+        LP_Alicequery = *qp, LP_Alicemaxprice = qp->maxprice, LP_Alicedestpubkey = qp->srchash;
     }
     if ( qp->gtc == 0 )
     {
@@ -276,24 +273,9 @@ int32_t LP_quotecmp(int32_t strictflag,struct LP_quoteinfo *qp,struct LP_quotein
     return(-1);
 }
 
-void LP_alicequery_clear()
-{
-    memset(&LP_Alicequery,0,sizeof(LP_Alicequery));
-    memset(&LP_Alicedestpubkey,0,sizeof(LP_Alicedestpubkey));
-    LP_Alicemaxprice = 0.;
-    Alice_expiration = 0;
-}
-
 int32_t LP_alice_eligible(uint32_t quotetime)
 {
-    if ( Alice_expiration != 0 && quotetime > Alice_expiration )
-    {
-        if ( LP_Alicequery.uuidstr[0] != 0 )
-            LP_failedmsg(LP_Alicequery.R.requestid,LP_Alicequery.R.quoteid,-9999,LP_Alicequery.uuidstr);
-        printf("time expired for Alice_request\n");
-        LP_alicequery_clear();
-    }
-    return(Alice_expiration == 0 || time(NULL) < Alice_expiration);
+    return(1);
 }
 
 char *LP_cancel_order(char *uuidstr)
@@ -336,7 +318,6 @@ char *LP_cancel_order(char *uuidstr)
             if ( strcmp(LP_Alicequery.uuidstr,uuidstr) == 0 )
             {
                 LP_failedmsg(LP_Alicequery.R.requestid,LP_Alicequery.R.quoteid,-9998,LP_Alicequery.uuidstr);
-                LP_alicequery_clear();
                 jaddstr(retjson,"status","uuid canceled");
             } else jaddstr(retjson,"status","will stop trade negotiation, but if swap started it wont cancel");
         }
@@ -369,7 +350,7 @@ double LP_trades_alicevalidate(struct LP_quoteinfo *qp)
 double LP_trades_bobprice(double *bidp,double *askp,struct LP_quoteinfo *qp)
 {
     double price; struct iguana_info *coin; char str[65];
-    price = LP_myprice(1,bidp,askp,qp->srccoin,qp->destcoin);
+    price = LP_myprice(bidp,askp,qp->srccoin,qp->destcoin);
     if ( (coin= LP_coinfind(qp->srccoin)) == 0 || price <= SMALLVAL || *askp <= SMALLVAL )
     {
         //printf("this node has no price for %s/%s\n",qp->srccoin,qp->destcoin);
@@ -478,13 +459,6 @@ char *LP_autobuy(int32_t fomoflag,char *base,char *rel,double maxprice,double re
         if ( timeout < 1.5*LP_AUTOTRADE_TIMEOUT )
             timeout = 1.5*LP_AUTOTRADE_TIMEOUT;
     }
-    if ( time(NULL) < Alice_expiration )
-    {
-        cJSON *retjson = cJSON_CreateObject();
-        jaddstr(retjson,"error","only one pending request at a time");
-        jaddnum(retjson,"wait",Alice_expiration-time(NULL));
-        return(jprint(retjson,1));
-    } else LP_alicequery_clear();
     LP_txfees(&txfee,&desttxfee,base,rel);
     if ( txfee != 0 && txfee < 10000 )
         txfee = 10000;
@@ -575,8 +549,8 @@ char *LP_autobuy(int32_t fomoflag,char *base,char *rel,double maxprice,double re
     Q.mpnet = G.mpnet;
     Q.fill = fillflag;
     Q.gtc = gtcflag;
-    LP_mypriceset(0,&changed,rel,base,1. / maxprice);
-    LP_mypriceset(0,&changed,base,rel,0.);
+    LP_mypriceset(&changed,rel,base,1. / maxprice,0.);
+    LP_mypriceset(&changed,base,rel,0.,0.);
     char uuidstr[65];
     gen_quote_uuid(uuidstr, base, rel);
     return(LP_trade(&Q,maxprice,timeout,tradeid,destpubkey,uuidstr,ctx_h));

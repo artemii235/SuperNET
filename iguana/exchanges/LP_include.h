@@ -523,7 +523,6 @@ int32_t LP_trades_canceluuid(char *uuidstr);
 int _decreasing_uint64(const void *a,const void *b);
 int32_t LP_alice_eligible(uint32_t quotetime);
 int32_t LP_is_slowcoin(char *symbol);
-void LP_alicequery_clear();
 
 int32_t bitcoin_priv2wif(char *symbol,uint8_t wiftaddr,char *wifstr,bits256 privkey,uint8_t addrtype);
 int bech32_convert_bits(uint8_t *out,int32_t *outlen,int outbits,const uint8_t *in,int32_t inlen,int inbits,int pad);
@@ -539,7 +538,7 @@ struct LP_priceinfo
     int32_t ind,pad;
     double diagval,high[2],low[2],last[2],bid[2],ask[2];
     double relvals[LP_MAXPRICEINFOS];
-    double myprices[2][LP_MAXPRICEINFOS];
+    double myprices[LP_MAXPRICEINFOS];
     double minprices[LP_MAXPRICEINFOS]; // autoprice
     double fixedprices[LP_MAXPRICEINFOS]; // fixedprices
     double buymargins[LP_MAXPRICEINFOS];
@@ -572,7 +571,6 @@ struct LP_portfoliotrade { double metric; char buycoin[65],sellcoin[65]; };
 int32_t LP_portfolio_order(struct LP_portfoliotrade *trades,int32_t max,cJSON *array);
 double LP_pricesparse(void *ctx,int32_t trexflag,char *retstr,struct LP_priceinfo *btcpp);
 char *LP_ticker(char *refbase,char *refrel);
-int32_t LP_mypriceset(int32_t iambob,int32_t *changedp,char *base,char *rel,double price);
 void LP_autopriceset(int32_t ind,void *ctx,int32_t dir,struct LP_priceinfo *basepp,struct LP_priceinfo *relpp,double price,char *refbase,char *refrel);
 cJSON *LP_balances(char *coinaddr);
 char *unstringify(char *str);
@@ -672,7 +670,6 @@ extern uint32_t LP_ORDERBOOK_DURATION;
 // Corresponds to the "time expired for Alice_request" timeout failures during the SWAP. Seconds.
 extern uint32_t LP_AUTOTRADE_TIMEOUT;
 extern uint32_t LP_RESERVETIME;
-extern uint32_t Alice_expiration;
 
 void LP_txfees(uint64_t *txfeep,uint64_t *desttxfeep,char *base,char *rel);
 double LP_fomoprice(char *base,char *rel,double *relvolumep);
@@ -680,7 +677,7 @@ struct LP_utxoinfo *LP_address_myutxopair(struct LP_utxoinfo *butxo,int32_t iamb
 uint64_t LP_basesatoshis(double relvolume,double price,uint64_t txfee,uint64_t desttxfee);
 int32_t LP_quoteinfoinit(struct LP_quoteinfo *qp,struct LP_utxoinfo *utxo,char *destcoin,double price,uint64_t satoshis,uint64_t destsatoshis);
 int32_t LP_quotedestinfo(struct LP_quoteinfo *qp,bits256 desthash,char *destaddr);
-int32_t LP_mypriceset(int32_t iambob,int32_t *changedp,char *base,char *rel,double price);
+int32_t LP_mypriceset(int32_t *changedp,char *base,char *rel,double price,double_t balance);
 char *LP_trade(struct LP_quoteinfo *qp,double maxprice,int32_t timeout,uint32_t tradeid,bits256 destpubkey,char *uuidstr, uint32_t ctx_h);
 void gen_quote_uuid(char *result, char *base, char* rel);
 int32_t decode_hex(unsigned char *bytes,int32_t n,char *hex);
@@ -713,7 +710,7 @@ int32_t bits256_cmp(bits256 a,bits256 b);
 char *bits256_str(char hexstr[65],bits256 x);
 int32_t LP_quotecmp(int32_t strictflag,struct LP_quoteinfo *qp,struct LP_quoteinfo *qp2);
 int64_t LP_instantdex_proofcheck(char *symbol,char *coinaddr,cJSON *proof,int32_t num);
-double LP_myprice(int32_t iambob,double *bidp,double *askp,char *base,char *rel);
+double LP_myprice(double *bidp,double *askp,char *base,char *rel);
 double LP_pricecache(struct LP_quoteinfo *qp,char *base,char *rel,bits256 txid,int32_t vout);
 int32_t LP_pricevalid(double price);
 

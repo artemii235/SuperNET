@@ -26,7 +26,7 @@ use coins::utxo::{compressed_pub_key_from_priv_raw, ChecksumType};
 use futures::future::Future;
 use gstuff::now_ms;
 use hashbrown::hash_map::{Entry, HashMap};
-use libc::{self, c_void, c_char, strcpy, strlen, calloc, rand};
+use libc::{self, c_void, c_char, strcpy, strlen, calloc};
 use serde_json::{self as json, Value as Json};
 use std::collections::{VecDeque};
 use std::ffi::{CString, CStr};
@@ -535,7 +535,6 @@ unsafe fn lp_gtc_addorder(qp: *mut lp::LP_quoteinfo) -> () {
 fn lp_trade(
     qp: *mut lp::LP_quoteinfo,
     price: f64,
-    timeout: i32,
     trade_id: u32,
     dest_pub_key: lp::bits256,
     uuid: *mut c_char,
@@ -565,7 +564,6 @@ fn lp_trade(
         lp::LP_Alicequery = *qp;
         lp::LP_Alicemaxprice = (*qp).maxprice;
         log!({"lp_trade] Alice max price: {}", lp::LP_Alicemaxprice});
-        lp::Alice_expiration = (*qp).timestamp + timeout as u32;
         lp::LP_Alicedestpubkey = (*qp).srchash;
         if (*qp).gtc == 0 {
             let msg = lp::jprint(lp::LP_quotejson(qp), 1);
@@ -677,11 +675,6 @@ unsafe fn lp_connected_alice(ctx_ffi_handle: u32, qp: *mut lp::LP_quoteinfo, pai
     lp::LP_requestinit(&mut (*qp).R, (*qp).srchash, (*qp).desthash, (*qp).srccoin.as_mut_ptr(), (*qp).satoshis, (*qp).destcoin.as_mut_ptr(), (*qp).destsatoshis, (*qp).timestamp, (*qp).quotetime, dex_selector, (*qp).fill as i32, (*qp).gtc as i32);
 //printf("calculated requestid.%u quoteid.%u\n",qp->R.requestid,qp->R.quoteid);
     let mut changed = 0;
-    if lp::LP_Alicequery.srccoin[0] != 0 && lp::LP_Alicequery.destcoin[0] != 0 {
-        lp::LP_mypriceset(0, &mut changed, lp::LP_Alicequery.destcoin.as_mut_ptr(), lp::LP_Alicequery.srccoin.as_mut_ptr(), 0.);
-        lp::LP_mypriceset(0, &mut changed, lp::LP_Alicequery.srccoin.as_mut_ptr(), lp::LP_Alicequery.destcoin.as_mut_ptr(), 0.);
-    }
-    lp::LP_alicequery_clear();
     lp::LP_Alicereserved = lp::LP_quoteinfo::default();
     lp::LP_aliceid((*qp).tradeid, (*qp).aliceid, b"connected\x00".as_ptr() as *mut c_char, (*qp).R.requestid, (*qp).R.quoteid);
     /*
@@ -695,12 +688,6 @@ unsafe fn lp_connected_alice(ctx_ffi_handle: u32, qp: *mut lp::LP_quoteinfo, pai
     */
     let mut bid = 0.;
     let mut ask = 0.;
-    if lp::LP_myprice(1, &mut bid, &mut ask, (*qp).srccoin.as_mut_ptr(), (*qp).destcoin.as_mut_ptr()) <= SMALLVAL || bid <= SMALLVAL {
-        printf(b"this node has no price for %s/%s (%.8f %.8f)\n\x00".as_ptr() as *const c_char, (*qp).destcoin.as_ptr(), (*qp).srccoin.as_ptr(), bid, ask);
-        lp::LP_aliceid((*qp).tradeid, (*qp).aliceid, b"error5\x00".as_ptr() as *mut c_char, 0, 0);
-        lp::LP_failedmsg((*qp).R.requestid, (*qp).R.quoteid, -4002.0, (*qp).uuidstr.as_mut_ptr());
-        return;
-    }
     printf(b"%s/%s bid %.8f ask %.8f\n\x00".as_ptr() as *const c_char, (*qp).srccoin.as_ptr(), (*qp).destcoin.as_ptr(), bid, ask);
     lp::LP_aliceid((*qp).tradeid, (*qp).aliceid, b"started\x00".as_ptr() as *mut c_char, (*qp).R.requestid, (*qp).R.quoteid);
     printf(b"alice pairstr.(%s)\n\x00".as_ptr() as *const c_char, pairstr);
@@ -827,7 +814,6 @@ unsafe fn lp_reserved(qp: *mut lp::LP_quoteinfo, ctx: &MmArc) {
     //let price = lp::LP_pricecache(qp, (*qp).srccoin.as_mut_ptr(), (*qp).destcoin.as_mut_ptr(), (*qp).txid, (*qp).vout);
     (*qp).tradeid = lp::LP_Alicequery.tradeid;
     lp::LP_Alicereserved = *qp;
-    lp::LP_alicequery_clear();
     //printf("send CONNECT\n");
     lp::LP_query(
         b"connect\x00" as *const u8 as *mut libc::c_char,
@@ -1019,8 +1005,7 @@ unsafe fn lp_trades_gotconnected(
 //printf("CONNECTED ALICE uuid.%s\n",qp->uuidstr);
             lp::LP_aliceid((*qp).tradeid, (*qp).aliceid, b"connected\x00" as *const u8 as *mut c_char, 0, 0);
             lp_connected_alice(ctx, qp, pairstr);
-            lp::LP_mypriceset(0, &mut changed, (*qp).destcoin.as_mut_ptr(), (*qp).srccoin.as_mut_ptr(), 0.);
-            lp::LP_alicequery_clear();
+            lp::LP_mypriceset(&mut changed, (*qp).destcoin.as_mut_ptr(), (*qp).srccoin.as_mut_ptr(), 0., 0.);
             return qp;
     } else {
         lp::LP_failedmsg((*qp).R.requestid, (*qp).R.quoteid, val, (*qp).uuidstr.as_mut_ptr());
@@ -1030,7 +1015,6 @@ unsafe fn lp_trades_gotconnected(
 }
 
 unsafe fn lp_trades_bestpricecheck(tp: *mut lp::LP_trade) -> i32 {
-    log!("Called bestprice check");
     let mut flag = 0;
     let mut q = (*tp).Q;
     let pubp = lp::LP_pubkeyadd(q.srchash);
@@ -1280,14 +1264,12 @@ pub unsafe fn lp_trade_command(
     c_json: &CJSON,
 ) -> i32 {
     let mut str: [libc::c_char; 65] = [0; 65];
-    let mut i: i32;
     let dex_selector: i32 = 0;
     let aliceid: u64;
     let qprice: f64;
     let price: f64;
     let mut bid: f64 = 0.;
     let mut ask: f64 = 0.;
-    let rq: u64;
     let mut q = lp::LP_quoteinfo::default();
     let mut counter: i32 = 0;
     let mut retval: i32 = -1i32;
@@ -1317,7 +1299,6 @@ pub unsafe fn lp_trade_command(
                     q.fill as i32,
                     q.gtc as i32,
                 );
-                rq = (q.R.requestid as u64) << 32i32 | q.R.quoteid as u64;
                 // eat expired packets, some old timestamps floating about?
                 if q.uuidstr[0usize] == 0 || q.timestamp > 0 && now_ms() / 1000 > q.timestamp.wrapping_add(30 * 20) as u64 {
                     printf(
@@ -1379,40 +1360,6 @@ pub unsafe fn lp_trade_command(
                         // alice
                         if lp::G.LP_mypub25519 == q.desthash && lp::G.LP_mypub25519 != q.srchash
                         {
-                            static mut RQS: [u64; 1024] = [0; 1024];
-                            i = 0;
-                            while (i as u64)
-                                < (::std::mem::size_of::<[u64; 1024]>() as u64)
-                                .wrapping_div(::std::mem::size_of::<u64>() as u64)
-                                {
-                                    if rq == RQS[i as usize] {
-                                        return retval;
-                                    } else {
-                                        i += 1
-                                    }
-                                }
-                            i = 0;
-                            while (i as u64)
-                                < (::std::mem::size_of::<[u64; 1024]>() as u64)
-                                .wrapping_div(::std::mem::size_of::<u64>() as u64)
-                                {
-                                    if RQS[i as usize] == 0 as u64 {
-                                        break;
-                                    }
-                                    i += 1
-                                }
-                            if i as u64
-                                == (::std::mem::size_of::<[u64; 1024]>() as u64)
-                                .wrapping_div(::std::mem::size_of::<u64>() as u64)
-                            {
-                                i = (rand() as u64).wrapping_rem(
-                                    (::std::mem::size_of::<[u64; 1024]>() as u64)
-                                        .wrapping_div(
-                                            ::std::mem::size_of::<u64>() as u64
-                                        ),
-                                ) as i32
-                            }
-                            RQS[i as usize] = rq;
                             // AG: Bob's p2p ID (`LP_mypub25519`) is in `json["srchash"]`.
                             log!("CONNECTED.(" (json) ")");
                             lp_trade_command_q(
@@ -1427,24 +1374,12 @@ pub unsafe fn lp_trade_command(
                             );
                         }
                     }
-                    // bob
-                    if method == Some("request") || method == Some("connect") {
-                        price = lp::LP_myprice(
-                            1i32,
-                            &mut bid,
-                            &mut ask,
-                            q.srccoin.as_mut_ptr(),
-                            q.destcoin.as_mut_ptr(),
-                        )
-                    } else {
-                        price = lp::LP_myprice(
-                            0,
-                            &mut bid,
-                            &mut ask,
-                            q.srccoin.as_mut_ptr(),
-                            q.destcoin.as_mut_ptr(),
-                        )
-                    }
+                    price = lp::LP_myprice(
+                        &mut bid,
+                        &mut ask,
+                        q.srccoin.as_mut_ptr(),
+                        q.destcoin.as_mut_ptr(),
+                    );
                     let coin = unwrap!(lp_coinfind(&ctx, c2s!(q.srccoin)));
                     if coin.is_none() {
                         //printf("%s is not active\n",Q.srccoin);
@@ -1474,40 +1409,6 @@ pub unsafe fn lp_trade_command(
                             lp_bob_competition(&ctx, &mut counter, aliceid, qprice, 1000);
                             // bob
                             if lp::G.LP_mypub25519 == q.srchash && lp::G.LP_mypub25519 != q.desthash {
-                                static mut RQS_0: [u64; 1024] = [0; 1024];
-                                i = 0;
-                                while (i as u64)
-                                    < (::std::mem::size_of::<[u64; 1024]>() as u64)
-                                    .wrapping_div(::std::mem::size_of::<u64>() as u64)
-                                    {
-                                        if rq == RQS_0[i as usize] {
-                                            return retval;
-                                        } else {
-                                            i += 1
-                                        }
-                                    }
-                                i = 0;
-                                while (i as u64)
-                                    < (::std::mem::size_of::<[u64; 1024]>() as u64)
-                                    .wrapping_div(::std::mem::size_of::<u64>() as u64)
-                                    {
-                                        if RQS_0[i as usize] == 0 as u64 {
-                                            break;
-                                        }
-                                        i += 1
-                                    }
-                                if i as u64
-                                    == (::std::mem::size_of::<[u64; 1024]>() as u64)
-                                    .wrapping_div(::std::mem::size_of::<u64>() as u64)
-                                {
-                                    i = (rand() as u64).wrapping_rem(
-                                        (::std::mem::size_of::<[u64; 1024]>() as u64)
-                                            .wrapping_div(
-                                                ::std::mem::size_of::<u64>() as u64
-                                            ),
-                                    ) as i32
-                                }
-                                RQS_0[i as usize] = rq;
                                 printf(
                                     b"CONNECT.(%s)\n\x00" as *const u8 as *const libc::c_char,
                                     lp::jprint(c_json.0, 0),
@@ -1627,16 +1528,7 @@ pub fn lp_auto_buy(ctx: &MmArc, input: AutoBuyInput) -> Result<String, String> {
     let base = match base {Some(c) => c, None => return ERR!("Base coin is not found or inactive")};
     let base_ii = base.iguana_info();
 
-    let timeout = input.timeout.unwrap_or(unsafe { lp::LP_AUTOTRADE_TIMEOUT });
-
     unsafe {
-        if now_ms() / 1000 < lp::Alice_expiration as u64 {
-            return ERR!("Only 1 pending request at a time, wait {}",
-                            lp::Alice_expiration as u64 - now_ms() / 1000);
-        } else {
-            lp::LP_alicequery_clear();
-        }
-
         let mut tx_fee : u64 = 0;
         let mut dest_tx_fee : u64 = 0;
         let base_str = try_s!(CString::new(input.base.clone()));
@@ -1693,17 +1585,11 @@ pub fn lp_auto_buy(ctx: &MmArc, input: AutoBuyInput) -> Result<String, String> {
         q.mpnet = lp::G.mpnet;
         q.fill = fill_flag;
         q.gtc = input.gtc.unwrap_or(0);
-        lp::LP_mypriceset(1,
-                          &mut changed as *mut i32,
+        lp::LP_mypriceset(&mut changed as *mut i32,
                           rel_str.as_ptr() as *mut c_char,
                           base_str.as_ptr() as *mut c_char,
                           1. / price,
-        );
-        lp::LP_mypriceset(1,
-                          &mut changed as *mut i32,
-                          base_str.as_ptr() as *mut c_char,
-                          rel_str.as_ptr() as *mut c_char,
-                          price,
+                          volume,
         );
         let uuid_str: [c_char; 100] = [0; 100];
         lp::gen_quote_uuid(uuid_str.as_ptr() as *mut c_char, base_str.as_ptr() as *mut c_char, rel_str.as_ptr() as *mut c_char);
@@ -1715,7 +1601,6 @@ pub fn lp_auto_buy(ctx: &MmArc, input: AutoBuyInput) -> Result<String, String> {
         Ok(try_s!(lp_trade(
             &mut q as *mut lp::LP_quoteinfo,
             price,
-            timeout as i32,
             0,
             dest_pub_key,
             uuid_str.as_ptr() as *mut c_char,

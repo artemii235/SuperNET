@@ -794,9 +794,9 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
         log!("Issue bob " (base) "/" (rel) " sell request");
             let rc = unwrap!(mm_bob.rpc (json! ({
             "userpass": mm_bob.userpass,
-            "method": "setprice",
-            "base": base,
-            "rel": rel,
+            "method": "buy",
+            "base": rel,
+            "rel": base,
             "price": 1,
             "relvolume": 0.1
         })));
@@ -811,7 +811,7 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
             "base": base,
             "rel": rel,
             "relvolume": 0.1,
-            "price": 2
+            "price": 1
         })));
         assert!(rc.0.is_success(), "!buy: {}", rc.1);
         let buy_json: Json = unwrap!(serde_json::from_str(&rc.1));
@@ -1310,4 +1310,96 @@ fn test_startup_passphrase() {
     startup_passphrase("UvCjJf4dKSs2vFGVtCnUTAhR5FTZGdg43DDRa9s7s5DV1sSDX14g", "RRnMcSeKiLrNdbp91qNVQwwXx5azD4S4CD");
     // 0x prefixed hex
     startup_passphrase("0xb8c774f071de08c7fd8f62b97f1a5726f6ce9f1bcf141b70b86689254ed6714e", "RRnMcSeKiLrNdbp91qNVQwwXx5azD4S4CD");
+}
+
+/// MM2 should allow to issue several buy/sell calls in a row without delays.
+/// https://github.com/artemii235/SuperNET/issues/245
+#[test]
+fn test_multiple_buy_sell_no_delay() {
+    let coins = json!([
+        {"coin":"BEER","asset":"BEER","txversion":4},
+        {"coin":"PIZZA","asset":"PIZZA","txversion":4},
+        {"coin":"ETOMIC","asset":"ETOMIC","txversion":4},
+    ]);
+
+    let (bob_file_passphrase, _bob_file_userpass) = from_env_file (slurp (&".env.seed"));
+    let bob_passphrase = unwrap! (var ("BOB_PASSPHRASE") .ok().or (bob_file_passphrase), "No BOB_PASSPHRASE or .env.seed/PASSPHRASE");
+
+    let mut mm = unwrap! (MarketMakerIt::start (
+        json! ({
+            "gui": "nogui",
+            "netid": 9998,
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| unwrap! (s.parse::<i64>())),
+            "passphrase": bob_passphrase,
+            "coins": coins,
+            "rpc_password": "pass",
+            "i_am_seed": true,
+        }),
+        "pass".into(),
+        match var ("LOCAL_THREAD_MM") {Ok (ref e) if e == "bob" => Some (local_start()), _ => None}
+    ));
+    let (_dump_log, _dump_dashboard) = mm_dump (&mm.log_path);
+    log!({"Log path: {}", mm.log_path.display()});
+    unwrap! (mm.wait_for_log (22., &|log| log.contains (">>>>>>>>> DEX stats ")));
+    enable_electrum (&mm, "BEER", vec!["electrum1.cipig.net:10022"]);
+    enable_electrum (&mm, "PIZZA", vec!["electrum1.cipig.net:10024"]);
+    enable_electrum (&mm, "ETOMIC", vec!["electrum1.cipig.net:10025"]);
+
+    let rc = unwrap! (mm.rpc (json! ({
+        "userpass": mm.userpass,
+        "method": "buy",
+        "base": "BEER",
+        "rel": "PIZZA",
+        "price": 1,
+        "relvolume": 0.1,
+    })));
+    assert! (rc.0.is_success(), "buy should have succeed, but got {:?}", rc);
+
+    let rc = unwrap! (mm.rpc (json! ({
+        "userpass": mm.userpass,
+        "method": "buy",
+        "base": "BEER",
+        "rel": "ETOMIC",
+        "price": 1,
+        "relvolume": 0.1,
+    })));
+    assert! (rc.0.is_success(), "buy should have succeed, but got {:?}", rc);
+    thread::sleep(Duration::from_secs(5));
+
+    log!("Get BEER/PIZZA orderbook");
+    let rc = unwrap! (mm.rpc (json! ({
+        "userpass": mm.userpass,
+        "method": "orderbook",
+        "base": "BEER",
+        "rel": "PIZZA",
+    })));
+    assert! (rc.0.is_success(), "!orderbook: {}", rc.1);
+
+    let bob_orderbook: Json = unwrap!(json::from_str(&rc.1));
+    log!("BEER/PIZZA orderbook " [bob_orderbook]);
+    let bids = bob_orderbook["bids"].as_array().unwrap();
+    let asks = bob_orderbook["asks"].as_array().unwrap();
+    assert!(bids.len() > 0, "BEER/PIZZA bids are empty");
+    assert_eq!(asks.len(), 0, "BEER/PIZZA asks are not empty");
+    let vol = bids[0]["maxvolume"].as_f64().unwrap();
+    assert_eq!(vol, 0.1);
+
+    log!("Get BEER/ETOMIC orderbook");
+    let rc = unwrap! (mm.rpc (json! ({
+        "userpass": mm.userpass,
+        "method": "orderbook",
+        "base": "BEER",
+        "rel": "ETOMIC",
+    })));
+    assert! (rc.0.is_success(), "!orderbook: {}", rc.1);
+
+    let bob_orderbook: Json = unwrap!(json::from_str(&rc.1));
+    log!("BEER/ETOMIC orderbook " [bob_orderbook]);
+    let bids = bob_orderbook["bids"].as_array().unwrap();
+    assert!(bids.len() > 0, "BEER/ETOMIC bids are empty");
+    assert_eq!(asks.len(), 0, "BEER/ETOMIC asks are not empty");
+    let vol = bids[0]["maxvolume"].as_f64().unwrap();
+    assert_eq!(vol, 0.1);
 }

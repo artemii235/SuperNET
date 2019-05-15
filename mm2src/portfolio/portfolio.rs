@@ -787,9 +787,9 @@ fn lp_autoprice_iter (ctx: &MmArc, btcpp: *mut lp::LP_priceinfo) -> Result<(), S
                     if autoref.lastask < SMALLVAL {autoref.lastask = askprice}
                     else {autoref.lastask = (autoref.lastask * 0.9) + (0.1 * askprice)}
                     askprice = autoref.lastask;
-                    unsafe {lp::LP_mypriceset (1, &mut changed, c_rel, c_base, bidprice)};
+                    unsafe {lp::LP_mypriceset (&mut changed, c_rel, c_base, bidprice,0.)};
                     unsafe {lp::LP_pricepings (c_rel, c_base, bidprice)};
-                    unsafe {lp::LP_mypriceset (1, &mut changed, c_base, c_rel, askprice)};
+                    unsafe {lp::LP_mypriceset (&mut changed, c_base, c_rel, askprice,0.)};
                     unsafe {lp::LP_pricepings (c_base, c_rel, askprice)};
                 }
                 autoref.count += 1
@@ -868,7 +868,7 @@ fn lp_autoprice_iter (ctx: &MmArc, btcpp: *mut lp::LP_priceinfo) -> Result<(), S
                     }
                 };
 
-                unsafe {lp::LP_mypriceset (1, &mut changed, c_rel, c_base, newprice)};
+                unsafe {lp::LP_mypriceset (&mut changed, c_rel, c_base, newprice,0.)};
                 unsafe {lp::LP_pricepings (c_rel, c_base, newprice)};
 
                 let newprice = {
@@ -882,7 +882,7 @@ fn lp_autoprice_iter (ctx: &MmArc, btcpp: *mut lp::LP_priceinfo) -> Result<(), S
                         moving
                     }
                 };
-                unsafe {lp::LP_mypriceset (1, &mut changed, c_base, c_rel, newprice)};
+                unsafe {lp::LP_mypriceset (&mut changed, c_base, c_rel, newprice,0.)};
                 unsafe {lp::LP_pricepings (c_base, c_rel, newprice)};
             }
         }

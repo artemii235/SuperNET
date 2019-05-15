@@ -300,7 +300,7 @@ char *stats_JSON(void *ctx,char *myipaddr,int32_t pubsock,cJSON *argjson,char *r
             price = jdouble(argjson,"price");
             if ( strcmp(method,"myprice") == 0 )
             {
-                if ( LP_myprice(1,&bid,&ask,base,rel) > SMALLVAL )
+                if ( LP_myprice(&bid,&ask,base,rel) > SMALLVAL )
                 {
                     retjson = cJSON_CreateObject();
                     jaddstr(retjson,"base",base);
