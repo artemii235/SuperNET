@@ -359,8 +359,8 @@ fn test_my_balance() {
     unwrap! (mm.wait_for_log (22., &|log| log.contains (">>>>>>>>> DEX stats ")));
     // Enable BEER.
     let json = enable_electrum(&mm, "BEER", vec!["electrum1.cipig.net:10022","electrum2.cipig.net:10022","electrum3.cipig.net:10022"]);
-    let balance_on_enable = unwrap!(json["balance"].as_f64());
-    assert_eq!(balance_on_enable, 1.0);
+    let balance_on_enable = unwrap!(json["balance"].as_str());
+    assert_eq!(balance_on_enable, "1");
 
     let my_balance = unwrap! (mm.rpc (json! ({
         "userpass": mm.userpass,
@@ -369,8 +369,8 @@ fn test_my_balance() {
     })));
     assert_eq! (my_balance.0, StatusCode::OK, "RPC «my_balance» failed with status «{}»", my_balance.0);
     let json: Json = unwrap!(json::from_str(&my_balance.1));
-    let my_balance = unwrap!(json["balance"].as_f64());
-    assert_eq!(my_balance, 1.0);
+    let my_balance = unwrap!(json["balance"].as_str());
+    assert_eq!(my_balance, "1");
     let my_address = unwrap!(json["address"].as_str());
     assert_eq!(my_address, "RRnMcSeKiLrNdbp91qNVQwwXx5azD4S4CD");
 }
@@ -801,11 +801,11 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
             "relvolume": 0.1
         })));
         assert!(rc.0.is_success(), "!setprice: {}", rc.1);
+    }
 
-        // issue base/rel buy request from Alice side
-        thread::sleep(Duration::from_secs(2));
+    for (base, rel) in pairs.iter() {
         log!("Issue alice " (base) "/" (rel) " buy request");
-            let rc = unwrap!(mm_alice.rpc (json! ({
+        let rc = unwrap!(mm_alice.rpc (json! ({
             "userpass": mm_alice.userpass,
             "method": "buy",
             "base": base,
@@ -816,8 +816,10 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
         assert!(rc.0.is_success(), "!buy: {}", rc.1);
         let buy_json: Json = unwrap!(serde_json::from_str(&rc.1));
         uuids.push(unwrap!(buy_json["pending"]["uuid"].as_str()).to_owned());
+    }
 
-        // ensure the swap started
+    for (base, rel) in pairs.iter() {
+        // ensure the swaps are started
         unwrap!(mm_alice.wait_for_log (5., &|log| log.contains (&format!("Entering the taker_swap_loop {}/{}", base, rel))));
         unwrap!(mm_bob.wait_for_log (5., &|log| log.contains (&format!("Entering the maker_swap_loop {}/{}", base, rel))));
     }

@@ -56,6 +56,7 @@ mod web3_transport;
 use self::web3_transport::Web3Transport;
 use futures::future::Either;
 use common::mm_ctx::MmArc;
+use bigdecimal::BigDecimal;
 
 #[cfg(test)]
 mod eth_tests;
@@ -375,10 +376,10 @@ impl MarketCoinOps for EthCoin {
         checksum_address(&format!("{:#02x}", self.my_address)).into()
     }
 
-    fn my_balance(&self) -> Box<Future<Item=f64, Error=String> + Send> {
+    fn my_balance(&self) -> Box<Future<Item=BigDecimal, Error=String> + Send> {
         let decimals = self.decimals;
         Box::new(self.my_balance().and_then(move |result| {
-            Ok(try_s!(u256_to_f64(result, decimals)))
+            Ok(try_s!(u256_to_big_decimal(result, decimals)))
         }))
     }
 
@@ -1577,6 +1578,11 @@ fn display_u256_with_decimal_point(number: U256, decimals: u8) -> String {
 }
 
 fn u256_to_f64(number: U256, decimals: u8) -> Result<f64, String> {
+    let string = display_u256_with_decimal_point(number, decimals);
+    Ok(try_s!(string.parse()))
+}
+
+fn u256_to_big_decimal(number: U256, decimals: u8) -> Result<BigDecimal, String> {
     let string = display_u256_with_decimal_point(number, decimals);
     Ok(try_s!(string.parse()))
 }

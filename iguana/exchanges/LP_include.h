@@ -724,7 +724,6 @@ void LP_swapsfp_update(uint32_t requestid,uint32_t quoteid);
 void LP_unavailableset(bits256 txid,int32_t vout,uint32_t expiration,bits256 otherpub);
 double LP_trades_pricevalidate(struct LP_quoteinfo *qp,struct iguana_info *coin,double price);
 uint32_t LP_allocated(bits256 txid,int32_t vout);
-double LP_trades_bobprice(double *bidp,double *askp,struct LP_quoteinfo *qp);
 int32_t LP_RTmetrics_blacklisted(bits256 pubkey);
 int32_t LP_reservation_check(bits256 txid,int32_t vout,bits256 pubkey);
 int32_t LP_nanobind(void *ctx,char *pairstr);

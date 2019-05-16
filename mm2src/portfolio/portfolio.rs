@@ -32,6 +32,7 @@ use self::prices::{lp_btcprice, lp_fundvalue, broadcast_my_prices, Coins, CoinId
 #[doc(hidden)]
 pub mod portfolio_tests;
 
+use bigdecimal::BigDecimal;
 use common::{lp, rpc_response, rpc_err_response, slurp_url,
   HyRes, RefreshedExternalResource, CJSON, SMALLVAL};
 use common::mm_ctx::{from_ctx, MmArc, MmWeak};
@@ -55,20 +56,37 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use std::thread::sleep;
 
-struct PortfolioContext {
+
+/// Enum representing the order amount
+#[derive(Clone)]
+pub enum OrderAmount {
+    /// The entire balance is available to trade
+    Max,
+    /// Limit the amount to the value
+    Limit(BigDecimal)
+}
+
+#[derive(Clone)]
+pub struct Order {
+    pub max_base_vol: OrderAmount,
+    pub min_base_vol: OrderAmount,
+    pub price: BigDecimal,
+}
+
+pub struct PortfolioContext {
     // NB: We're using the MM configuration ("coins"), therefore every MM must have its own set of price resources.
     //     That's why we keep the price resources in the `PortfolioContext` and not in a singleton.
     price_resources: Mutex<HashMap<(PricingProvider, PriceUnit), (Arc<Coins>, RefreshedExternalResource<ExternalPrices>)>>,
     // Fixed prices explicitly set by "setprice" RPC call
-    my_prices: Mutex<HashMap<(String, String), f64>>,
+    pub my_orders: Mutex<HashMap<(String, String), Order>>,
 }
 impl PortfolioContext {
     /// Obtains a reference to this crate context, creating it if necessary.
-    fn from_ctx (ctx: &MmArc) -> Result<Arc<PortfolioContext>, String> {
+    pub fn from_ctx (ctx: &MmArc) -> Result<Arc<PortfolioContext>, String> {
         Ok (try_s! (from_ctx (&ctx.portfolio_ctx, move || {
             Ok (PortfolioContext {
                 price_resources: Mutex::new (HashMap::new()),
-                my_prices: Mutex::new (HashMap::new())
+                my_orders: Mutex::new (HashMap::new())
             })
         })))
     }

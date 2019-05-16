@@ -33,6 +33,10 @@ fn display_u256_with_point() {
     let string = display_u256_with_decimal_point(number, 18);
     assert_eq!("1.", string);
 
+    let number = U256::from_dec_str("10000000000000000000000000000000000000000000000000000000000").unwrap();
+    let string = display_u256_with_decimal_point(number, 18);
+    assert_eq!("10000000000000000000000000000000000000000.", string);
+
     let number = U256::from_dec_str("1234567890000000000").unwrap();
     let string = display_u256_with_decimal_point(number, 18);
     assert_eq!("1.23456789", string);

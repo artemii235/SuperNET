@@ -29,6 +29,7 @@
 #[macro_use] extern crate serde_json;
 #[macro_use] extern crate unwrap;
 
+use bigdecimal::BigDecimal;
 use common::{bitcoin_ctx, lp, rpc_response, rpc_err_response, HyRes};
 use common::mm_ctx::{from_ctx, MmArc};
 use dirs::home_dir;
@@ -173,7 +174,7 @@ pub trait SwapOps {
 pub trait MarketCoinOps {
     fn my_address(&self) -> Cow<str>;
 
-    fn my_balance(&self) -> Box<Future<Item=f64, Error=String> + Send>;
+    fn my_balance(&self) -> Box<Future<Item=BigDecimal, Error=String> + Send>;
 
     /// Receives raw transaction bytes in hexadecimal format as input and returns tx hash in hexadecimal format
     fn send_raw_tx(&self, tx: &str) -> Box<Future<Item=String, Error=String> + Send>;

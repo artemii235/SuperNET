@@ -347,18 +347,6 @@ double LP_trades_alicevalidate(struct LP_quoteinfo *qp)
     return(qprice);
 }
 
-double LP_trades_bobprice(double *bidp,double *askp,struct LP_quoteinfo *qp)
-{
-    double price; struct iguana_info *coin; char str[65];
-    price = LP_myprice(bidp,askp,qp->srccoin,qp->destcoin);
-    if ( (coin= LP_coinfind(qp->srccoin)) == 0 || price <= SMALLVAL || *askp <= SMALLVAL )
-    {
-        //printf("this node has no price for %s/%s\n",qp->srccoin,qp->destcoin);
-        return(0.);
-    }
-    return(*askp);
-}
-
 double LP_trades_pricevalidate(struct LP_quoteinfo *qp,struct iguana_info *coin,double price)
 {
     double qprice; struct LP_utxoinfo A,B,*autxo,*butxo;

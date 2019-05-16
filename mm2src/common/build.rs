@@ -218,7 +218,6 @@ fn generate_bindings() {
             "LP_trades_pricevalidate",
             "LP_allocated",
             "LP_basesatoshis",
-            "LP_trades_bobprice",
             "LP_RTmetrics_blacklisted",
             "LP_getheight",
             "LP_reservation_check",

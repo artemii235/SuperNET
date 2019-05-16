@@ -18,6 +18,7 @@
 //  ordermatch.rs
 //  marketmaker
 //
+use bigdecimal::BigDecimal;
 use common::{lp, lp_queue_command_for_c, free_c_ptr, c_char_to_string, sat_to_f, SATOSHIS, SMALLVAL, CJSON, dstr, rpc_response, rpc_err_response, HyRes};
 use common::for_c::broadcast_p2p_msg_for_c;
 use common::mm_ctx::{from_ctx, MmArc, MmWeak};
@@ -27,6 +28,8 @@ use futures::future::Future;
 use gstuff::now_ms;
 use hashbrown::hash_map::{Entry, HashMap};
 use libc::{self, c_void, c_char, strcpy, strlen, calloc};
+use num_traits::cast::ToPrimitive;
+use portfolio::{Order, OrderAmount, PortfolioContext};
 use serde_json::{self as json, Value as Json};
 use std::collections::{VecDeque};
 use std::ffi::{CString, CStr};
@@ -674,7 +677,6 @@ unsafe fn lp_connected_alice(ctx_ffi_handle: u32, qp: *mut lp::LP_quoteinfo, pai
     let dex_selector = 0;
     lp::LP_requestinit(&mut (*qp).R, (*qp).srchash, (*qp).desthash, (*qp).srccoin.as_mut_ptr(), (*qp).satoshis, (*qp).destcoin.as_mut_ptr(), (*qp).destsatoshis, (*qp).timestamp, (*qp).quotetime, dex_selector, (*qp).fill as i32, (*qp).gtc as i32);
 //printf("calculated requestid.%u quoteid.%u\n",qp->R.requestid,qp->R.quoteid);
-    let mut changed = 0;
     lp::LP_Alicereserved = lp::LP_quoteinfo::default();
     lp::LP_aliceid((*qp).tradeid, (*qp).aliceid, b"connected\x00".as_ptr() as *mut c_char, (*qp).R.requestid, (*qp).R.quoteid);
     /*
@@ -686,9 +688,6 @@ unsafe fn lp_connected_alice(ctx_ffi_handle: u32, qp: *mut lp::LP_quoteinfo, pai
         return;
     }
     */
-    let mut bid = 0.;
-    let mut ask = 0.;
-    printf(b"%s/%s bid %.8f ask %.8f\n\x00".as_ptr() as *const c_char, (*qp).srccoin.as_ptr(), (*qp).destcoin.as_ptr(), bid, ask);
     lp::LP_aliceid((*qp).tradeid, (*qp).aliceid, b"started\x00".as_ptr() as *mut c_char, (*qp).R.requestid, (*qp).R.quoteid);
     printf(b"alice pairstr.(%s)\n\x00".as_ptr() as *const c_char, pairstr);
     let alice_loop_thread = thread::Builder::new().name("taker_loop".into()).spawn({
@@ -885,15 +884,22 @@ unsafe fn lp_trades_gotrequest(ctx: &MmArc, qp: *mut lp::LP_quoteinfo, newqp: *m
     let mut str: [c_char; 65] = [0; 65];
     // AG: The Alice p2p ID seems to be in the `qp.desthash`.
     printf(b"bob %s received REQUEST.(%s) mpnet.%d fill.%d gtc.%d\n\x00".as_ptr() as *const c_char, lp::bits256_str(str.as_mut_ptr(), lp::G.LP_mypub25519), (*qp).uuidstr[32..].as_ptr(), (*qp).mpnet, (*qp).fill, (*qp).gtc);
-    let coin = match unwrap!(lp_coinfind(ctx, c2s!((*qp).srccoin))) {Some(c) => c, None => return null_mut()};
+    let src_coin = c2s!((*qp).srccoin);
+    let dest_coin = c2s!((*qp).destcoin);
 
-    let mut bid = 0.;
-    let mut ask = 0.;
-    let my_price = lp::LP_trades_bobprice(&mut bid, &mut ask, qp);
-    if my_price == 0. {
-        log!({"myprice {} bid {} ask {}", my_price, bid, ask});
-        return null_mut();
-    }
+    let coin = match unwrap!(lp_coinfind(ctx, src_coin)) {Some(c) => c, None => return null_mut()};
+    let portfolio_ctx = unwrap!(PortfolioContext::from_ctx(ctx));
+    let my_orders = unwrap!(portfolio_ctx.my_orders.lock());
+
+    let my_price = match my_orders.get(&(src_coin.to_string(), dest_coin.to_string())) {
+        Some(order) => order.price.to_f64().unwrap(),
+        None => {
+            log!("No order for " (src_coin) "/" (dest_coin));
+            return null_mut();
+        }
+    };
+    drop(my_orders);
+
     log!({"dest sat {} sat {} tx_fee {}", (*qp).destsatoshis, (*qp).satoshis, (*qp).txfee});
     unwrap!(safecopy!((*qp).coinaddr, "{}", coin.my_address()));
     if (*qp).srchash.nonz() == false || (*qp).srchash == lp::G.LP_mypub25519 {
@@ -965,13 +971,19 @@ unsafe fn lp_trades_got_connect(ctx: &MmArc, qp: *mut lp::LP_quoteinfo, new_qp: 
     let qp = new_qp;
     let coin = unwrap!(lp_coinfind(ctx, c2s!((*qp).srccoin)));
     if coin.is_none() {return null_mut()}
-    let mut bid = 0.;
-    let mut ask = 0.;
-    let my_price = lp::LP_trades_bobprice(&mut bid, &mut ask, qp);
-    if my_price == 0. {
-        log!("Bob my price is zero!");
-        return null_mut();
-    }
+    let src_coin = c2s!((*qp).srccoin);
+    let dest_coin = c2s!((*qp).destcoin);
+    let portfolio_ctx = unwrap!(PortfolioContext::from_ctx(ctx));
+    let my_orders = unwrap!(portfolio_ctx.my_orders.lock());
+
+    match my_orders.get(&(src_coin.to_string(), dest_coin.to_string())) {
+        Some(_) => (),
+        None => {
+            log!("No order for " (src_coin) "/" (dest_coin));
+            return null_mut();
+        }
+    };
+    drop(my_orders);
     //let q_price = lp::LP_trades_pricevalidate(qp, coin, my_price);
     //if q_price < 0. {
     //    log!("Bob q_price is less than zero!");
@@ -1267,15 +1279,13 @@ pub unsafe fn lp_trade_command(
     let dex_selector: i32 = 0;
     let aliceid: u64;
     let qprice: f64;
-    let price: f64;
-    let mut bid: f64 = 0.;
-    let mut ask: f64 = 0.;
     let mut q = lp::LP_quoteinfo::default();
     let mut counter: i32 = 0;
     let mut retval: i32 = -1i32;
     let method = json["method"].as_str();
     match method {
         Some("reserved") | Some("connected") | Some("request") | Some("connect") => {
+            log!([json]);
             if lp::LP_quoteparse(&mut q, c_json.0) < 0 {
                 printf(
                     b"ERROR parsing.(%s)\n\x00" as *const u8 as *const libc::c_char,
@@ -1374,18 +1384,10 @@ pub unsafe fn lp_trade_command(
                             );
                         }
                     }
-                    price = lp::LP_myprice(
-                        &mut bid,
-                        &mut ask,
-                        q.srccoin.as_mut_ptr(),
-                        q.destcoin.as_mut_ptr(),
-                    );
+
                     let coin = unwrap!(lp_coinfind(&ctx, c2s!(q.srccoin)));
                     if coin.is_none() {
                         //printf("%s is not active\n",Q.srccoin);
-                        return retval;
-                    } else if price <= 1e-15f64 || ask <= 1e-15f64 {
-                        //printf("this node has no price for %s/%s\n",Q.srccoin,Q.destcoin);
                         return retval;
                     } else {
                         // bob
@@ -1408,11 +1410,15 @@ pub unsafe fn lp_trade_command(
                         } else if method == Some("connect") {
                             lp_bob_competition(&ctx, &mut counter, aliceid, qprice, 1000);
                             // bob
+                            log!("srchash " (hex::encode(q.srchash.bytes)));
+                            log!("desthash " (hex::encode(q.desthash.bytes)));
+                            log!("G.LP_mypub25519 " (hex::encode(lp::G.LP_mypub25519.bytes)));
                             if lp::G.LP_mypub25519 == q.srchash && lp::G.LP_mypub25519 != q.desthash {
                                 printf(
                                     b"CONNECT.(%s)\n\x00" as *const u8 as *const libc::c_char,
                                     lp::jprint(c_json.0, 0),
                                 );
+                                log!("here");
                                 lp_trade_command_q(
                                     &ctx,
                                     &mut q,
@@ -1440,13 +1446,13 @@ fn zero_f() -> f64 { 0. }
 pub struct AutoBuyInput {
     base: String,
     rel: String,
-    price: f64,
+    price: BigDecimal,
     #[serde(rename="relvolume")]
-    #[serde(default = "zero_f")]
-    rel_volume: f64,
+    #[serde(default)]
+    rel_volume: BigDecimal,
     #[serde(rename="basevolume")]
-    #[serde(default = "zero_f")]
-    base_volume: f64,
+    #[serde(default)]
+    base_volume: BigDecimal,
     #[serde(default = "zero_f")]
     fomo: f64,
     #[serde(default = "zero_f")]
@@ -1472,7 +1478,7 @@ pub fn buy(ctx: MmArc, json: Json) -> HyRes {
     let rel_coin = match rel_coin {Some(c) => c, None => return rpc_err_response(500, "Rel coin is not found or inactive")};
     let base_coin = try_h!(lp_coinfind(&ctx, &input.base));
     let base_coin: MmCoinEnum = match base_coin {Some(c) => c, None => return rpc_err_response(500, "Base coin is not found or inactive")};
-    Box::new(rel_coin.check_i_have_enough_to_trade(input.rel_volume, false).and_then(move |_|
+    Box::new(rel_coin.check_i_have_enough_to_trade(input.rel_volume.to_f64().unwrap(), false).and_then(move |_|
         base_coin.can_i_spend_other_payment().and_then(move |_|
             rpc_response(200, try_h!(lp_auto_buy(&ctx, input)))
         )
@@ -1488,7 +1494,7 @@ pub fn sell(ctx: MmArc, json: Json) -> HyRes {
     let base_coin = match base_coin {Some(c) => c, None => return rpc_err_response(500, "Base coin is not found or inactive")};
     let rel_coin = try_h!(lp_coinfind(&ctx, &input.rel));
     let rel_coin = match rel_coin {Some(c) => c, None => return rpc_err_response(500, "Rel coin is not found or inactive")};
-    Box::new(rel_coin.check_i_have_enough_to_trade(input.base_volume, false).and_then(move |_|
+    Box::new(rel_coin.check_i_have_enough_to_trade(input.base_volume.to_f64().unwrap(), false).and_then(move |_|
         base_coin.can_i_spend_other_payment().and_then(move |_|
             rpc_response(200, try_h!(lp_auto_buy(&ctx, input)))
         )
@@ -1496,7 +1502,7 @@ pub fn sell(ctx: MmArc, json: Json) -> HyRes {
 }
 
 pub fn lp_auto_buy(ctx: &MmArc, input: AutoBuyInput) -> Result<String, String> {
-    if input.price < SMALLVAL {
+    if input.price < SMALLVAL.into() {
         return ERR!("Price is too low, minimum is {}", SMALLVAL);
     }
 
@@ -1505,7 +1511,7 @@ pub fn lp_auto_buy(ctx: &MmArc, input: AutoBuyInput) -> Result<String, String> {
             let volume = if input.fomo > 0. {
                 input.fomo
             } else {
-                input.rel_volume
+                input.rel_volume.to_f64().unwrap()
             };
             if volume <= 0. {
                 return ERR!("Volume must be greater than 0");
@@ -1516,7 +1522,7 @@ pub fn lp_auto_buy(ctx: &MmArc, input: AutoBuyInput) -> Result<String, String> {
             let volume = if input.dump > 0. {
                 input.dump
             } else {
-                input.base_volume
+                input.base_volume.to_f64().unwrap()
             };
             if volume <= 0. {
                 return ERR!("Volume must be greater than 0");
@@ -1544,7 +1550,7 @@ pub fn lp_auto_buy(ctx: &MmArc, input: AutoBuyInput) -> Result<String, String> {
             dest_tx_fee = 10000;
         }
 
-        if price <= 0. {
+        if price <= BigDecimal::default() {
             return ERR!("Resulting price is <= 0");
         }
         if volume <= 0. {
@@ -1561,14 +1567,14 @@ pub fn lp_auto_buy(ctx: &MmArc, input: AutoBuyInput) -> Result<String, String> {
         let mut b = lp::LP_utxoinfo::default();
         let fill_flag = input.fill.unwrap_or(0);
 
-        let best_satoshis = lp_base_satoshis(sat_to_f(dest_satoshis), price, dest_tx_fee);
+        let best_satoshis = lp_base_satoshis(sat_to_f(dest_satoshis), price.to_f64().unwrap(), dest_tx_fee);
         strcpy(b.coin.as_ptr() as *mut c_char, base_str.as_ptr());
         let mut q = lp::LP_quoteinfo::default();
         if lp::LP_quoteinfoinit(
             &mut q as *mut lp::LP_quoteinfo,
             &mut b as *mut lp::LP_utxoinfo,
             rel_str.as_ptr() as *mut c_char,
-            price,
+            price.to_f64().unwrap(),
             best_satoshis,
             dest_satoshis,
         ) < 0 {
@@ -1581,16 +1587,18 @@ pub fn lp_auto_buy(ctx: &MmArc, input: AutoBuyInput) -> Result<String, String> {
         ) < 0 {
             return ERR!("cant set ordermatch quote info");
         }
-        let mut changed : i32 = 0;
         q.mpnet = lp::G.mpnet;
         q.fill = fill_flag;
         q.gtc = input.gtc.unwrap_or(0);
-        lp::LP_mypriceset(&mut changed as *mut i32,
-                          rel_str.as_ptr() as *mut c_char,
-                          base_str.as_ptr() as *mut c_char,
-                          1. / price,
-                          volume,
-        );
+        let portfolio_ctx = try_s!(PortfolioContext::from_ctx(&ctx));
+        let mut my_orders = try_s!(portfolio_ctx.my_orders.lock());
+        my_orders.insert((input.rel, input.base), Order {
+            max_base_vol: OrderAmount::Max,
+            min_base_vol: OrderAmount::Limit(0.into()),
+            price: BigDecimal::from(1) / price.clone(),
+        });
+        drop(my_orders);
+
         let uuid_str: [c_char; 100] = [0; 100];
         lp::gen_quote_uuid(uuid_str.as_ptr() as *mut c_char, base_str.as_ptr() as *mut c_char, rel_str.as_ptr() as *mut c_char);
         let dest_pub_key = lp::bits256::default();
@@ -1600,7 +1608,7 @@ pub fn lp_auto_buy(ctx: &MmArc, input: AutoBuyInput) -> Result<String, String> {
         }
         Ok(try_s!(lp_trade(
             &mut q as *mut lp::LP_quoteinfo,
-            price,
+            price.to_f64().unwrap(),
             0,
             dest_pub_key,
             uuid_str.as_ptr() as *mut c_char,

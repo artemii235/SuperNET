@@ -56,6 +56,7 @@ use super::{IguanaInfo, MarketCoinOps, MmCoin, MmCoinEnum, SwapOps, Transaction,
 use crate::utxo::rpc_clients::{NativeClientImpl, UtxoRpcClientOps};
 use std::cmp::Ordering;
 use bitcrypto::sha256;
+use bigdecimal::BigDecimal;
 
 impl Transaction for UtxoTx {
     fn tx_hex(&self) -> Vec<u8> {
@@ -998,7 +999,7 @@ impl MarketCoinOps for UtxoCoin {
         self.0.my_address.to_string().into()
     }
 
-    fn my_balance(&self) -> Box<Future<Item=f64, Error=String> + Send> {
+    fn my_balance(&self) -> Box<Future<Item=BigDecimal, Error=String> + Send> {
         self.rpc_client.display_balance(self.my_address.clone(), self.decimals)
     }
 
@@ -1071,7 +1072,7 @@ impl MmCoin for UtxoCoin {
                     } else {
                         amount + amount / 777.0 + 2.0 * fee_f64
                     };
-                    if balance < required {
+                    if balance < required.into() {
                         return ERR!("{} balance {} is too low, required {:.8}", arc.ticker(), balance, required);
                     }
                     Ok(())

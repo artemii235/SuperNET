@@ -28,6 +28,7 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::time::{Duration};
 use tokio::codec::{Encoder, Decoder};
 use tokio_tcp::TcpStream;
+use bigdecimal::BigDecimal;
 
 #[derive(Debug)]
 pub enum UtxoRpcClientEnum {
@@ -96,7 +97,7 @@ pub trait UtxoRpcClientOps: Debug + 'static {
         }
     }
 
-    fn display_balance(&self, address: Address, decimals: u8) -> RpcRes<f64>;
+    fn display_balance(&self, address: Address, decimals: u8) -> RpcRes<BigDecimal>;
 
     /// returns fee estimation per KByte in satoshis
     fn estimate_fee_sat(&self, decimals: u8) -> RpcRes<u64>;
@@ -304,9 +305,9 @@ impl UtxoRpcClientOps for NativeClient {
         }
     }
 
-    fn display_balance(&self, address: Address, _decimals: u8) -> RpcRes<f64> {
+    fn display_balance(&self, address: Address, _decimals: u8) -> RpcRes<BigDecimal> {
         Box::new(self.list_unspent(0, 999999, vec![address.to_string()]).map(|unspents|
-            unspents.iter().fold(0., |sum, unspent| sum + unspent.amount)
+            unspents.iter().fold(0., |sum, unspent| sum + unspent.amount).into()
         ))
     }
 
@@ -621,11 +622,11 @@ impl UtxoRpcClientOps for ElectrumClient {
         }
     }
 
-    fn display_balance(&self, address: Address, decimals: u8) -> RpcRes<f64> {
+    fn display_balance(&self, address: Address, decimals: u8) -> RpcRes<BigDecimal> {
         let hash = electrum_script_hash(&Builder::build_p2pkh(&address.hash));
         let hash_str = hex::encode(hash);
         Box::new(self.scripthash_get_balance(&hash_str).map(move |result| {
-            (result.confirmed as f64 + result.unconfirmed as f64) / 10.0_f64.powf(decimals as f64)
+            BigDecimal::from(result.confirmed + result.unconfirmed) / BigDecimal::from(10u64.pow(decimals as u32))
         }))
     }
 

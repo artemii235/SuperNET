@@ -18,6 +18,7 @@
 //  marketmaker
 //
 
+use bigdecimal::BigDecimal;
 use common::{dstr, free_c_ptr, lp, rpc_response, rpc_err_response, slurp_req, HyRes, SATOSHIDEN, SMALLVAL, CJSON};
 use common::mm_ctx::{MmArc, MmWeak};
 use common::log::TagParam;
@@ -29,6 +30,7 @@ use hashbrown::{HashMap, HashSet};
 use hyper::{Body, Request, StatusCode};
 use hyper::header::CONTENT_TYPE;
 use libc::{c_char, c_void};
+use num_traits::cast::ToPrimitive;
 use serde_json::{self as json, Value as Json};
 use std::borrow::Cow;
 use std::ffi::{CStr, CString};
@@ -36,7 +38,7 @@ use std::fmt;
 use std::iter::once;
 use std::ptr::null_mut;
 use std::sync::{Arc, Mutex};
-use super::{default_pricing_provider, register_interest_in_coin_prices, PortfolioContext, InterestingCoins};
+use super::{default_pricing_provider, register_interest_in_coin_prices, Order, OrderAmount, PortfolioContext, InterestingCoins};
 use url;
 
 const MIN_TRADE: f64 = 0.01;
@@ -47,17 +49,18 @@ struct PricePingRequest {
     pubkey: String,
     base: String,
     rel: String,
-    price: f64,
+    price: BigDecimal,
     price64: String,
     timestamp: u64,
     pubsecp: String,
     sig: String,
+    // TODO rename, it's called "balance", but it's actual meaning is max available volume to trade
     #[serde(rename="bal")]
-    balance: f64,
+    balance: BigDecimal,
 }
 
 impl PricePingRequest {
-    fn new(ctx: &MmArc, base: &str, rel: &str, price: f64) -> Result<PricePingRequest, String> {
+    fn new(ctx: &MmArc, base: &str, rel: &str, order: &Order) -> Result<PricePingRequest, String> {
         let base_coin = match try_s!(lp_coinfind(ctx, base)) {
             Some(coin) => coin,
             None => return ERR!("Base coin {} is not found", base),
@@ -68,7 +71,7 @@ impl PricePingRequest {
             None => return ERR!("Rel coin {} is not found", rel),
         };
 
-        let price64 = (price * 100000000.0) as u64;
+        let price64 = (order.price.clone() * BigDecimal::from(100000000.0)).to_u64().unwrap();
         let timestamp = now_ms() / 1000;
         let base_c: CString = try_s!(CString::new(base));
         let rel_c: CString = try_s!(CString::new(rel));
@@ -84,7 +87,10 @@ impl PricePingRequest {
             sig_str
         };
 
-        let balance = try_s!(base_coin.my_balance().wait());
+        let max_volume = match &order.max_base_vol {
+            OrderAmount::Max => try_s!(base_coin.my_balance().wait()),
+            OrderAmount::Limit(l) => l.clone(),
+        };
 
         Ok(PricePingRequest {
             method: "postprice",
@@ -92,11 +98,11 @@ impl PricePingRequest {
             base: base.into(),
             rel: rel.into(),
             price64: price64.to_string(),
-            price,
+            price: order.price.clone(),
             timestamp,
             pubsecp: unsafe { hex::encode(&lp::G.LP_pubsecp.to_vec()) },
             sig,
-            balance,
+            balance: max_volume,
         })
     }
 }
@@ -118,7 +124,7 @@ fn one() -> u8 { 1 }
 struct SetPriceReq {
     base: String,
     rel: String,
-    price: f64,
+    price: BigDecimal,
     #[serde(default = "one")]
     broadcast: u8,
 }
@@ -144,14 +150,18 @@ pub fn set_price(ctx: MmArc, req: Json) -> HyRes {
     let rel = try_h!(CString::new(req.rel.as_str()));
     Box::new(base_coin.check_i_have_enough_to_trade(MIN_TRADE, true).and_then(move |_|
         rel_coin.can_i_spend_other_payment().and_then(move |_| {
-            let price_set_res = unsafe { lp::LP_mypriceset(&mut changed, base.as_ptr() as *mut c_char, rel.as_ptr() as *mut c_char, req.price, 0.) };
+            let price_set_res = unsafe { lp::LP_mypriceset(&mut changed, base.as_ptr() as *mut c_char, rel.as_ptr() as *mut c_char, req.price.to_f64().unwrap(), 0.) };
             if price_set_res < 0 {
                 return rpc_err_response(500, "could not set price");
             }
             if req.broadcast == 1 {
                 let portfolio_ctx = try_h!(PortfolioContext::from_ctx(&ctx));
-                let mut my_prices = try_h!(portfolio_ctx.my_prices.lock());
-                my_prices.insert((req.base, req.rel), req.price);
+                let mut my_orders = try_h!(portfolio_ctx.my_orders.lock());
+                my_orders.insert((req.base, req.rel), Order {
+                    max_base_vol: OrderAmount::Max,
+                    min_base_vol: OrderAmount::Limit(0.into()),
+                    price: req.price,
+                });
             }
             rpc_response(200, json!({"result":"success"}).to_string())
         }))
@@ -160,10 +170,10 @@ pub fn set_price(ctx: MmArc, req: Json) -> HyRes {
 
 pub fn broadcast_my_prices(ctx: &MmArc) -> Result<(), String> {
     let portfolio_ctx = try_s!(PortfolioContext::from_ctx(ctx));
-    let my_prices = try_s!(portfolio_ctx.my_prices.lock()).clone();
+    let my_orders = try_s!(portfolio_ctx.my_orders.lock()).clone();
 
-    for ((base, rel), price) in my_prices.iter() {
-        let ping = match PricePingRequest::new(ctx, base, rel, *price) {
+    for ((base, rel), order) in my_orders.iter() {
+        let ping = match PricePingRequest::new(ctx, base, rel, order) {
             Ok(p) => p,
             Err(e) => {
                 ctx.log.log("", &[&"broadcast_my_prices", &base.as_str(), &rel.as_str()], &format! ("ping request creation failed {}", e));
