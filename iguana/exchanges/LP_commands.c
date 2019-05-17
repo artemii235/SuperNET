@@ -443,8 +443,6 @@ char *stats_JSON(void *ctx,char *myipaddr,int32_t pubsock,cJSON *argjson,char *r
     }
     else if ( strcmp(method,"postprice") == 0 )
         return(LP_postprice_recv(argjson));
-    else if ( strcmp(method,"uitem") == 0 )
-        return(LP_uitem_recv(argjson));
     else if ( strcmp(method,"dPoW") == 0 )
         return(LP_dPoW_recv(argjson));
     else if ( strcmp(method,"getpeers") == 0 )

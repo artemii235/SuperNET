@@ -207,7 +207,7 @@ void LP_gtc_iteration(uint32_t ctx_h)
                 gtc->pending = qp->timestamp = (uint32_t)time(NULL);
                 LP_query("request",qp, ctx_h);
                 LP_Alicequery = *qp, LP_Alicemaxprice = gtc->Q.maxprice, LP_Alicedestpubkey = qp->srchash;
-                char str[65]; printf("LP_gtc fill.%d gtc.%d %s/%s %.8f vol %.8f dest.(%s) maxprice %.8f etomicdest.(%s) uuid.%s fill.%d gtc.%d\n",qp->fill,qp->gtc,qp->srccoin,qp->destcoin,dstr(qp->satoshis),dstr(qp->destsatoshis),bits256_str(str,LP_Alicedestpubkey),gtc->Q.maxprice,qp->etomicdest,qp->uuidstr,qp->fill,qp->gtc);
+                char str[65]; printf("LP_gtc fill.%d gtc.%d %s/%s %.8f vol %.8f dest.(%s) maxprice %.8f uuid.%s fill.%d gtc.%d\n",qp->fill,qp->gtc,qp->srccoin,qp->destcoin,dstr(qp->satoshis),dstr(qp->destsatoshis),bits256_str(str,LP_Alicedestpubkey),gtc->Q.maxprice,qp->uuidstr,qp->fill,qp->gtc);
                 break;
             }
         }
@@ -250,7 +250,7 @@ char *LP_trade(struct LP_quoteinfo *qp,double maxprice,int32_t timeout,uint32_t 
         LP_mpnet_send(1,msg,1,0);
         free(msg);
     }
-    char str[65]; printf("LP_trade mpnet.%d fill.%d gtc.%d %s/%s %.8f vol %.8f dest.(%s) maxprice %.8f etomicdest.(%s) uuid.%s fill.%d gtc.%d\n",qp->mpnet,qp->fill,qp->gtc,qp->srccoin,qp->destcoin,dstr(qp->satoshis),dstr(qp->destsatoshis),bits256_str(str,LP_Alicedestpubkey),qp->maxprice,qp->etomicdest,qp->uuidstr,qp->fill,qp->gtc);
+    char str[65]; printf("LP_trade mpnet.%d fill.%d gtc.%d %s/%s %.8f vol %.8f dest.(%s) maxprice %.8f uuid.%s fill.%d gtc.%d\n",qp->mpnet,qp->fill,qp->gtc,qp->srccoin,qp->destcoin,dstr(qp->satoshis),dstr(qp->destsatoshis),bits256_str(str,LP_Alicedestpubkey),qp->maxprice,qp->uuidstr,qp->fill,qp->gtc);
     return(LP_recent_swaps(0,uuidstr));
 }
 
@@ -516,29 +516,11 @@ char *LP_autobuy(int32_t fomoflag,char *base,char *rel,double maxprice,double re
         return(clonestr("{\"error\":\"cant set ordermatch quote\"}"));
     if ( LP_quotedestinfo(&Q,G.LP_mypub25519,autxo->coinaddr) < 0 )
         return(clonestr("{\"error\":\"cant set ordermatch quote info\"}"));
-    if ( relcoin->etomic[0] != 0 || basecoin->etomic[0] != 0 )
-    {
-        struct iguana_info *coin;
-        if ( relcoin->etomic[0] != 0 )
-            strcpy(Q.etomicdest,relcoin->smartaddr);
-        else if (basecoin->etomic[0] != 0 )
-        {
-            strcpy(Q.etomicdest,basecoin->smartaddr);
-            //printf("Q.etomicdest (%s)\n",Q.etomicdest);
-        }
-        if ( relcoin->etomic[0] != 0 )
-        {
-            if ((coin= LP_coinfind("ETOMIC")) != 0 )
-                strcpy(Q.destaddr,coin->smartaddr);
-            else return(clonestr("{\"error\":\"cant find ETOMIC\"}"));
-        }
-    }
-    int32_t changed;
     Q.mpnet = G.mpnet;
     Q.fill = fillflag;
     Q.gtc = gtcflag;
-    LP_mypriceset(&changed,rel,base,1. / maxprice,0.);
-    LP_mypriceset(&changed,base,rel,0.,0.);
+    LP_mypriceset(rel,base,1. / maxprice,0.);
+    LP_mypriceset(base,rel,0.,0.);
     char uuidstr[65];
     gen_quote_uuid(uuidstr, base, rel);
     return(LP_trade(&Q,maxprice,timeout,tradeid,destpubkey,uuidstr,ctx_h));

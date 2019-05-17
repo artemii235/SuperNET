@@ -145,12 +145,11 @@ pub fn set_price(ctx: MmArc, req: Json) -> HyRes {
         None => return rpc_err_response(500, &format!("Rel coin {} is not found", req.rel)),
     };
 
-    let mut changed: i32 = 0;
     let base = try_h!(CString::new(req.base.as_str()));
     let rel = try_h!(CString::new(req.rel.as_str()));
     Box::new(base_coin.check_i_have_enough_to_trade(MIN_TRADE, true).and_then(move |_|
         rel_coin.can_i_spend_other_payment().and_then(move |_| {
-            let price_set_res = unsafe { lp::LP_mypriceset(&mut changed, base.as_ptr() as *mut c_char, rel.as_ptr() as *mut c_char, req.price.to_f64().unwrap(), 0.) };
+            let price_set_res = unsafe { lp::LP_mypriceset(base.as_ptr() as *mut c_char, rel.as_ptr() as *mut c_char, req.price.to_f64().unwrap(), 0.) };
             if price_set_res < 0 {
                 return rpc_err_response(500, "could not set price");
             }

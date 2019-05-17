@@ -811,7 +811,7 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
             "base": base,
             "rel": rel,
             "relvolume": 0.1,
-            "price": 1
+            "price": 2
         })));
         assert!(rc.0.is_success(), "!buy: {}", rc.1);
         let buy_json: Json = unwrap!(serde_json::from_str(&rc.1));

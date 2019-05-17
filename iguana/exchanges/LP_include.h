@@ -366,7 +366,7 @@ struct LP_quoteinfo
     uint64_t satoshis,txfee,destsatoshis,desttxfee,aliceid;
     uint32_t timestamp,quotetime,tradeid,gtc,fill,mpnet;
     int32_t pair;
-    char srccoin[65],coinaddr[64],destcoin[65],destaddr[64],gui[64],etomicsrc[65],etomicdest[65],uuidstr[65];
+    char srccoin[65],coinaddr[64],destcoin[65],destaddr[64],gui[64],uuidstr[65];
 };
 
 struct LP_pubkey_quote
@@ -677,7 +677,7 @@ struct LP_utxoinfo *LP_address_myutxopair(struct LP_utxoinfo *butxo,int32_t iamb
 uint64_t LP_basesatoshis(double relvolume,double price,uint64_t txfee,uint64_t desttxfee);
 int32_t LP_quoteinfoinit(struct LP_quoteinfo *qp,struct LP_utxoinfo *utxo,char *destcoin,double price,uint64_t satoshis,uint64_t destsatoshis);
 int32_t LP_quotedestinfo(struct LP_quoteinfo *qp,bits256 desthash,char *destaddr);
-int32_t LP_mypriceset(int32_t *changedp,char *base,char *rel,double price,double_t balance);
+int32_t LP_mypriceset(char *base,char *rel,double price,double_t balance);
 char *LP_trade(struct LP_quoteinfo *qp,double maxprice,int32_t timeout,uint32_t tradeid,bits256 destpubkey,char *uuidstr, uint32_t ctx_h);
 void gen_quote_uuid(char *result, char *base, char* rel);
 int32_t decode_hex(unsigned char *bytes,int32_t n,char *hex);

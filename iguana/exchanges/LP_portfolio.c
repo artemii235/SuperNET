@@ -103,7 +103,7 @@ void LP_autopriceset(int32_t ind,void *ctx,int32_t dir,struct LP_priceinfo *base
     oppomargin = basepp->buymargins[relpp->ind];
     if ( (fixedprice= basepp->fixedprices[relpp->ind]) > SMALLVAL )
     {
-        LP_mypriceset(&changed,relpp->symbol,basepp->symbol,fixedprice,0.);
+        LP_mypriceset(relpp->symbol,basepp->symbol,fixedprice,0.);
         //printf("autoprice FIXED %s/%s <- %.8f\n",basepp->symbol,relpp->symbol,fixedprice);
         LP_pricepings(relpp->symbol,basepp->symbol,fixedprice);
         return;
@@ -141,7 +141,7 @@ void LP_autopriceset(int32_t ind,void *ctx,int32_t dir,struct LP_priceinfo *base
                     newprice = LP_autorefs[ind].lastask;
                     //printf("autopriceset %s/%s <- %.8f %.8f (%.8f %.8f)\n",basepp->symbol,relpp->symbol,price,newprice,LP_autorefs[ind].lastbid,LP_autorefs[ind].lastask);
                 }
-                LP_mypriceset(&changed,relpp->symbol,basepp->symbol,newprice,0.);
+                LP_mypriceset(relpp->symbol,basepp->symbol,newprice,0.);
                 if ( changed != 0 || time(NULL) > lasttime+LP_ORDERBOOK_DURATION*.777)
                 {
                     lasttime = (uint32_t)time(NULL);

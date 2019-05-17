@@ -445,17 +445,14 @@ char *LP_myprices(int32_t iambob)
     return(jprint(array,1));
 }
 
-int32_t LP_mypriceset(int32_t *changedp,char *base,char *rel,double price,double_t balance) {
+int32_t LP_mypriceset(char *base,char *rel,double price,double_t balance) {
     struct LP_priceinfo *basepp = 0, *relpp = 0;
     struct LP_pubkey_info *pubp;
     double minprice, maxprice, margin, buymargin, sellmargin;
-    *changedp = 0;
     //if ( strcmp("DEX",base) == 0 || strcmp("DEX",rel) == 0 )
     //    printf("%s/%s setprice %.8f\n",base,rel,price);
     if (base != 0 && rel != 0 && (basepp = LP_priceinfofind(base)) != 0 && (relpp = LP_priceinfofind(rel)) != 0) {
 
-        if (price == 0. || fabs(basepp->myprices[relpp->ind] - price) / price > 0.001)
-            *changedp = 1;
         sellmargin = relpp->sellmargins[basepp->ind];
         buymargin = relpp->buymargins[basepp->ind];
         margin = (sellmargin + buymargin) * 0.5;
