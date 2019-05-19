@@ -794,11 +794,11 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
         log!("Issue bob " (base) "/" (rel) " sell request");
             let rc = unwrap!(mm_bob.rpc (json! ({
             "userpass": mm_bob.userpass,
-            "method": "buy",
-            "base": rel,
-            "rel": base,
+            "method": "sell",
+            "base": base,
+            "rel": rel,
             "price": 1,
-            "relvolume": 0.1
+            "basevolume": 0.1
         })));
         assert!(rc.0.is_success(), "!setprice: {}", rc.1);
     }
@@ -811,11 +811,11 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
             "base": base,
             "rel": rel,
             "relvolume": 0.1,
-            "price": 2
+            "price": 1
         })));
         assert!(rc.0.is_success(), "!buy: {}", rc.1);
         let buy_json: Json = unwrap!(serde_json::from_str(&rc.1));
-        uuids.push(unwrap!(buy_json["pending"]["uuid"].as_str()).to_owned());
+        uuids.push(unwrap!(buy_json["result"]["uuid"].as_str()).to_owned());
     }
 
     for (base, rel) in pairs.iter() {
@@ -1384,9 +1384,9 @@ fn test_multiple_buy_sell_no_delay() {
     let bids = bob_orderbook["bids"].as_array().unwrap();
     let asks = bob_orderbook["asks"].as_array().unwrap();
     assert!(bids.len() > 0, "BEER/PIZZA bids are empty");
-    assert_eq!(asks.len(), 0, "BEER/PIZZA asks are not empty");
+    assert_eq!(0, asks.len(), "BEER/PIZZA asks are not empty");
     let vol = bids[0]["maxvolume"].as_f64().unwrap();
-    assert_eq!(vol, 0.1);
+    assert_eq!(0.1, vol);
 
     log!("Get BEER/ETOMIC orderbook");
     let rc = unwrap! (mm.rpc (json! ({

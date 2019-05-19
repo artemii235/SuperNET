@@ -404,17 +404,6 @@ int32_t LP_trades_canceluuid(char *uuidstr)
      */
 }
 
-void gen_quote_uuid(char *result, char *base, char* rel) {
-    uint8_t uuidhash[256]; bits256 hash; uint64_t millis; int32_t len = 0;
-    memcpy(uuidhash,&G.LP_mypub25519,sizeof(bits256)), len += sizeof(bits256);
-    millis = OS_milliseconds();
-    memcpy(&uuidhash[len],&millis,sizeof(millis)), len += sizeof(millis);
-    memcpy(&uuidhash[len],base,(int32_t)strlen(base)), len += (int32_t)strlen(base);
-    memcpy(&uuidhash[len],rel,(int32_t)strlen(rel)), len += (int32_t)strlen(rel);
-    vcalc_sha256(0,hash.bytes,uuidhash,len);
-    bits256_str(result,hash);
-}
-
 char *LP_autobuy(int32_t fomoflag,char *base,char *rel,double maxprice,double relvolume,int32_t timeout,int32_t duration,char *gui,uint32_t nonce,bits256 destpubkey,uint32_t tradeid,int32_t fillflag,int32_t gtcflag, uint32_t ctx_h)
 {
     uint64_t desttxfee,txfee; uint32_t lastnonce; int64_t bestsatoshis=0,destsatoshis; struct iguana_info *basecoin,*relcoin; struct LP_utxoinfo *autxo,B,A; struct LP_quoteinfo Q; bits256 pubkeys[100]; struct LP_address_utxo *utxos[4096]; int32_t num=0,maxiters=100,i,max=(int32_t)(sizeof(utxos)/sizeof(*utxos));
@@ -522,6 +511,5 @@ char *LP_autobuy(int32_t fomoflag,char *base,char *rel,double maxprice,double re
     LP_mypriceset(rel,base,1. / maxprice,0.);
     LP_mypriceset(base,rel,0.,0.);
     char uuidstr[65];
-    gen_quote_uuid(uuidstr, base, rel);
     return(LP_trade(&Q,maxprice,timeout,tradeid,destpubkey,uuidstr,ctx_h));
 }
