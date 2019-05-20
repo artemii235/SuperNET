@@ -47,13 +47,6 @@ macro_rules! c2s {($cs: expr) => {unwrap!(CStr::from_ptr($cs.as_ptr()).to_str())
 extern {
     fn printf(_: *const libc::c_char, ...) -> libc::c_int;
 }
-#[derive(Default, Clone, Copy)]
-struct BobCompetition {
-    pub alice_id: u64,
-    pub best_price: f64,
-    pub start_time: u64,
-    pub counter: i32,
-}
 
 struct OrdermatchContext {
     pub taker_matches: Mutex<HashMap<Uuid, TakerOrderMatch>>,
@@ -726,9 +719,10 @@ pub unsafe fn lp_trade_command(
                         } else if method == Some("connected") {
                             // alice
                             if lp::G.LP_mypub25519 == q.desthash && lp::G.LP_mypub25519 != q.srchash {
+                                let reserved = my_match.reserved.as_mut().unwrap();
                                 lp_connected_alice(
                                     &ctx,
-                                    &mut my_match.request,
+                                    reserved,
                                 );
                                 // AG: Bob's p2p ID (`LP_mypub25519`) is in `json["srchash"]`.
                                 log!("CONNECTED.(" (json) ")");
@@ -763,7 +757,7 @@ pub unsafe fn lp_trade_command(
                                     },
                                     Entry::Occupied(entry) => entry.into_mut()
                                 };
-                                if let Some(qp) = lp_trades_got_connect(&ctx, &q) {
+                                if let Some(qp) = lp_trades_got_connect(&ctx, &my_match.reserved) {
                                     my_match.connect = Some(q);
                                     my_match.connected = Some(qp);
                                 }
