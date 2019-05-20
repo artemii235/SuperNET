@@ -1497,8 +1497,9 @@ fn ensure_file_is_writable(file_path: &Path) -> Result<(), String> {
 }
 
 fn fix_directories(ctx: &MmCtx) -> Result<(), String> {
-    unsafe {os::OS_ensure_directory (lp::GLOBAL_DBDIR.as_ptr() as *mut c_char)};
     let dbdir = ctx.dbdir();
+    try_s!(std::fs::create_dir_all(&dbdir));
+    unsafe {os::OS_ensure_directory (lp::GLOBAL_DBDIR.as_ptr() as *mut c_char)};
     if !ensure_dir_is_writable(&dbdir.join ("SWAPS")) {return ERR!("SWAPS db dir is not writeable")}
     if !ensure_dir_is_writable(&dbdir.join ("SWAPS").join ("MY")) {return ERR!("SWAPS/MY db dir is not writeable")}
     if !ensure_dir_is_writable(&dbdir.join ("SWAPS").join ("STATS")) {return ERR!("SWAPS/STATS db dir is not writeable")}

@@ -71,11 +71,11 @@ pub fn peers_dht() {
         let message: Vec<u8> = (0..*message_len) .map (|_| rng.gen()) .collect();
 
         println! ("Sending {} bytes …", message.len());
-        let _sending_f = super::send (&alice, unwrap! (super::key (&bob)), b"test_dht", message.clone());
+        let _sending_f = super::send (&alice, unwrap! (super::key (&bob)), b"test_dht", 255, message.clone());
 
         // Get that message from Alice.
 
-        let receiving_f = super::recv (&bob, b"test_dht", Box::new ({
+        let receiving_f = super::recv (&bob, b"test_dht", 255, Box::new ({
             let message = message.clone();
             move |payload| payload == &message[..]
         }));
@@ -104,8 +104,8 @@ pub fn peers_direct_send() {
     let mut rng = rand::thread_rng();
     let message: Vec<u8> = (0..33) .map (|_| rng.gen()) .collect();
 
-    let _send_f = super::send (&alice, bob_key, b"subj", message.clone());
-    let recv_f = super::recv (&bob, b"subj", Box::new (|_| true));
+    let _send_f = super::send (&alice, bob_key, b"subj", 255, message.clone());
+    let recv_f = super::recv (&bob, b"subj", 255, Box::new (|_| true));
 
     // Confirm that Bob was added into the friendlist and that we don't know its address yet.
     {
