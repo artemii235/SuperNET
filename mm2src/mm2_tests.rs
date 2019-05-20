@@ -802,7 +802,8 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
         })));
         assert!(rc.0.is_success(), "!setprice: {}", rc.1);
     }
-
+    // allow order to be converted to maker if it's not matched in 5 seconds
+    thread::sleep(Duration::from_secs(6));
     for (base, rel) in pairs.iter() {
         log!("Issue alice " (base) "/" (rel) " buy request");
         let rc = unwrap!(mm_alice.rpc (json! ({

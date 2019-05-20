@@ -71,6 +71,7 @@ pub struct Order {
     pub max_base_vol: OrderAmount,
     pub min_base_vol: OrderAmount,
     pub price: BigDecimal,
+    pub created_at: u64,
 }
 
 pub struct PortfolioContext {
@@ -78,7 +79,8 @@ pub struct PortfolioContext {
     //     That's why we keep the price resources in the `PortfolioContext` and not in a singleton.
     price_resources: Mutex<HashMap<(PricingProvider, PriceUnit), (Arc<Coins>, RefreshedExternalResource<ExternalPrices>)>>,
     // Fixed prices explicitly set by "setprice" RPC call
-    pub my_orders: Mutex<HashMap<(String, String), Order>>,
+    pub my_maker_orders: Mutex<HashMap<(String, String), Order>>,
+    pub my_taker_orders: Mutex<HashMap<(String, String), Order>>,
 }
 impl PortfolioContext {
     /// Obtains a reference to this crate context, creating it if necessary.
@@ -86,7 +88,8 @@ impl PortfolioContext {
         Ok (try_s! (from_ctx (&ctx.portfolio_ctx, move || {
             Ok (PortfolioContext {
                 price_resources: Mutex::new (HashMap::new()),
-                my_orders: Mutex::new (HashMap::new())
+                my_maker_orders: Mutex::new (HashMap::new()),
+                my_taker_orders: Mutex::new (HashMap::new()),
             })
         })))
     }

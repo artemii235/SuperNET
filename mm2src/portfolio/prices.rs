@@ -155,11 +155,12 @@ pub fn set_price(ctx: MmArc, req: Json) -> HyRes {
             }
             if req.broadcast == 1 {
                 let portfolio_ctx = try_h!(PortfolioContext::from_ctx(&ctx));
-                let mut my_orders = try_h!(portfolio_ctx.my_orders.lock());
+                let mut my_orders = try_h!(portfolio_ctx.my_maker_orders.lock());
                 my_orders.insert((req.base, req.rel), Order {
                     max_base_vol: OrderAmount::Max,
                     min_base_vol: OrderAmount::Limit(0.into()),
                     price: req.price,
+                    created_at: now_ms(),
                 });
             }
             rpc_response(200, json!({"result":"success"}).to_string())
@@ -169,7 +170,7 @@ pub fn set_price(ctx: MmArc, req: Json) -> HyRes {
 
 pub fn broadcast_my_prices(ctx: &MmArc) -> Result<(), String> {
     let portfolio_ctx = try_s!(PortfolioContext::from_ctx(ctx));
-    let my_orders = try_s!(portfolio_ctx.my_orders.lock()).clone();
+    let my_orders = try_s!(portfolio_ctx.my_maker_orders.lock()).clone();
 
     for ((base, rel), order) in my_orders.iter() {
         let ping = match PricePingRequest::new(ctx, base, rel, order) {
