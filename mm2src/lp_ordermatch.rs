@@ -31,7 +31,6 @@ use libc::{self, c_void, c_char, strcpy};
 use num_traits::cast::ToPrimitive;
 use portfolio::{Order, OrderAmount, PortfolioContext};
 use serde_json::{self as json, Value as Json};
-use std::collections::{VecDeque};
 use std::ffi::{CString, CStr};
 use std::ptr::null_mut;
 use std::sync::{Arc, Mutex};
@@ -57,10 +56,8 @@ struct BobCompetition {
 }
 
 struct OrdermatchContext {
-    pub lp_trades: Mutex<HashMap<u64, lp::LP_trade>>,
     pub taker_matches: Mutex<HashMap<Uuid, TakerOrderMatch>>,
     pub maker_matches: Mutex<HashMap<Uuid, MakerOrderMatch>>,
-    lp_trades_queue: Mutex<VecDeque<lp::LP_trade>>,
 }
 
 impl OrdermatchContext {
@@ -68,10 +65,8 @@ impl OrdermatchContext {
     fn from_ctx (ctx: &MmArc) -> Result<Arc<OrdermatchContext>, String> {
         Ok (try_s! (from_ctx (&ctx.ordermatch_ctx, move || {
             Ok (OrdermatchContext {
-                lp_trades: Mutex::new (HashMap::default()),
                 taker_matches: Mutex::new (HashMap::default()),
                 maker_matches: Mutex::new (HashMap::default()),
-                lp_trades_queue: Mutex::new (VecDeque::new()),
             })
         })))
     }
@@ -81,21 +76,6 @@ impl OrdermatchContext {
     fn from_ctx_weak (ctx_weak: &MmWeak) -> Result<Arc<OrdermatchContext>, String> {
         let ctx = try_s! (MmArc::from_weak (ctx_weak) .ok_or ("Context expired"));
         Self::from_ctx (&ctx)
-    }
-
-    fn add_trade_to_queue(&self, trade: lp::LP_trade) {
-        let mut queue = unwrap!(self.lp_trades_queue.lock());
-        queue.push_back(trade);
-    }
-
-    fn pop_trade_from_queue(&self) -> Option<lp::LP_trade> {
-        let mut queue = unwrap!(self.lp_trades_queue.lock());
-        queue.pop_front()
-    }
-
-    fn is_trade_queue_empty(&self) -> bool {
-        let queue = unwrap!(self.lp_trades_queue.lock());
-        queue.is_empty()
     }
 }
 
@@ -521,22 +501,21 @@ double LP_trades_pricevalidate(struct LP_quoteinfo *qp,struct iguana_info *coin,
     return(qprice);
 }
 */
-unsafe fn lp_trades_gotrequest(ctx: &MmArc, qp: *mut lp::LP_quoteinfo, newqp: *mut lp::LP_quoteinfo) -> *mut lp::LP_quoteinfo {
+unsafe fn lp_trades_gotrequest(ctx: &MmArc, qp: &lp::LP_quoteinfo) -> Option<lp::LP_quoteinfo> {
     let p;
     let qprice;
-    *newqp = *qp;
-    let qp = newqp;
     let mut str: [c_char; 65] = [0; 65];
+    let mut qp = qp.clone();
     // AG: The Alice p2p ID seems to be in the `qp.desthash`.
-    printf(b"bob %s received REQUEST.(%s) mpnet.%d fill.%d gtc.%d\n\x00".as_ptr() as *const c_char, lp::bits256_str(str.as_mut_ptr(), lp::G.LP_mypub25519), (*qp).uuidstr[32..].as_ptr(), (*qp).mpnet, (*qp).fill, (*qp).gtc);
-    if lp::G.LP_mypub25519 == (*qp).desthash {
+    printf(b"bob %s received REQUEST.(%s) mpnet.%d fill.%d gtc.%d\n\x00".as_ptr() as *const c_char, lp::bits256_str(str.as_mut_ptr(), lp::G.LP_mypub25519), qp.uuidstr[32..].as_ptr(), qp.mpnet, qp.fill, qp.gtc);
+    if lp::G.LP_mypub25519 == qp.desthash {
         log!("Skip the request originating from our pubkey");
-        return null_mut();
+        return None;
     }
-    let src_coin = c2s!((*qp).srccoin);
-    let dest_coin = c2s!((*qp).destcoin);
+    let src_coin = c2s!(qp.srccoin);
+    let dest_coin = c2s!(qp.destcoin);
 
-    let coin = match unwrap!(lp_coinfind(ctx, src_coin)) {Some(c) => c, None => return null_mut()};
+    let coin = match unwrap!(lp_coinfind(ctx, src_coin)) {Some(c) => c, None => return None};
     let portfolio_ctx = unwrap!(PortfolioContext::from_ctx(ctx));
     let my_orders = unwrap!(portfolio_ctx.my_maker_orders.lock());
 
@@ -544,84 +523,77 @@ unsafe fn lp_trades_gotrequest(ctx: &MmArc, qp: *mut lp::LP_quoteinfo, newqp: *m
         Some(order) => order.price.to_f64().unwrap(),
         None => {
             log!("No order for " (src_coin) "/" (dest_coin));
-            return null_mut();
+            return None;
         }
     };
     drop(my_orders);
 
-    log!({"dest sat {} sat {} tx_fee {}", (*qp).destsatoshis, (*qp).satoshis, (*qp).txfee});
-    unwrap!(safecopy!((*qp).coinaddr, "{}", coin.my_address()));
-    if (*qp).srchash.nonz() == false || (*qp).srchash == lp::G.LP_mypub25519 {
-        qprice = (*qp).destsatoshis as f64 / (*qp).satoshis as f64;
-        strcpy((*qp).gui.as_mut_ptr(), lp::G.gui.as_ptr());
-        (*qp).srchash = lp::G.LP_mypub25519;
+    log!({"dest sat {} sat {} tx_fee {}", qp.destsatoshis, qp.satoshis, qp.txfee});
+    unwrap!(safecopy!(qp.coinaddr, "{}", coin.my_address()));
+    if qp.srchash.nonz() == false || qp.srchash == lp::G.LP_mypub25519 {
+        qprice = qp.destsatoshis as f64 / qp.satoshis as f64;
+        strcpy(qp.gui.as_mut_ptr(), lp::G.gui.as_ptr());
+        qp.srchash = lp::G.LP_mypub25519;
     } else {
-        return null_mut();
+        return None;
     }
 
     if qprice < my_price {
-        printf(b"%s/%s ignore as qprice %.8f vs myprice %.8f\n\x00".as_ptr() as *const c_char, (*qp).srccoin.as_ptr(), (*qp).destcoin.as_ptr(), qprice, my_price);
-        return null_mut();
+        printf(b"%s/%s ignore as qprice %.8f vs myprice %.8f\n\x00".as_ptr() as *const c_char, qp.srccoin.as_ptr(), qp.destcoin.as_ptr(), qprice, my_price);
+        return None;
     }
 //LP_RTmetrics_update(qp->srccoin,qp->destcoin);
-    if lp::LP_RTmetrics_blacklisted((*qp).desthash) >= 0 {
-        printf(b"request from blacklisted %s, ignore\n\x00".as_ptr() as *const c_char, lp::bits256_str(str.as_mut_ptr(), (*qp).desthash));
-        return null_mut();
+    if lp::LP_RTmetrics_blacklisted(qp.desthash) >= 0 {
+        printf(b"request from blacklisted %s, ignore\n\x00".as_ptr() as *const c_char, lp::bits256_str(str.as_mut_ptr(), qp.desthash));
+        return None;
     }
     if qprice >= my_price {
-        unwrap!(safecopy!((*qp).gui, "{}", c2s!(lp::G.gui)));
-        unwrap!(safecopy!((*qp).coinaddr, "{}", coin.my_address()));
-        (*qp).srchash = lp::G.LP_mypub25519;
-        (*qp).satoshis = lp_base_satoshis(dstr((*qp).destsatoshis as i64, 8), my_price, (*qp).desttxfee);
-        (*qp).quotetime = (now_ms() / 1000) as u32;
-        /*
-        if (*qp).fill != 0 {
-            break;
-        }
-        (*qp).destsatoshis = ((*qp).destsatoshis * 2) / 3;
-        */
+        unwrap!(safecopy!(qp.gui, "{}", c2s!(lp::G.gui)));
+        unwrap!(safecopy!(qp.coinaddr, "{}", coin.my_address()));
+        qp.srchash = lp::G.LP_mypub25519;
+        qp.satoshis = lp_base_satoshis(dstr(qp.destsatoshis as i64, 8), my_price, qp.desttxfee);
+        qp.quotetime = (now_ms() / 1000) as u32;
     } else {
-        return null_mut();
+        return None;
     }
 
-    if (*qp).satoshis <= (*qp).txfee {
-        return null_mut();
+    if qp.satoshis <= qp.txfee {
+        return None;
     }
-    p = (*qp).destsatoshis as f64 / (*qp).satoshis as f64;
-    if lp::LP_trades_pricevalidate(qp, coin.iguana_info(), p) < 0. {
-        if (*qp).fill != 0 {
-            return null_mut();
+    p = qp.destsatoshis as f64 / qp.satoshis as f64;
+    if lp::LP_trades_pricevalidate(&mut qp, coin.iguana_info(), p) < 0. {
+        if qp.fill != 0 {
+            return None;
         }
     }
 
-    printf(b"%s/%s qprice %.8f myprice %.8f [%.8f]\n\x00".as_ptr() as *const c_char, (*qp).srccoin.as_ptr(), (*qp).destcoin.as_ptr(), qprice, my_price, p);
-    let reqjson = lp::LP_quotejson(qp);
-    if (*qp).quotetime == 0 {
-        (*qp).quotetime = (now_ms() / 1000) as u32;
+    printf(b"%s/%s qprice %.8f myprice %.8f [%.8f]\n\x00".as_ptr() as *const c_char, qp.srccoin.as_ptr(), qp.destcoin.as_ptr(), qprice, my_price, p);
+    let reqjson = lp::LP_quotejson(&mut qp);
+    if qp.quotetime == 0 {
+        qp.quotetime = (now_ms() / 1000) as u32;
     }
-    lp::jaddnum(reqjson, b"quotetime\x00".as_ptr() as *mut c_char, (*qp).quotetime as f64);
-    lp::jaddnum(reqjson, b"pending\x00".as_ptr() as *mut c_char, ((*qp).timestamp + lp::LP_RESERVETIME) as f64);
+    lp::jaddnum(reqjson, b"quotetime\x00".as_ptr() as *mut c_char, qp.quotetime as f64);
+    lp::jaddnum(reqjson, b"pending\x00".as_ptr() as *mut c_char, (qp.timestamp + lp::LP_RESERVETIME) as f64);
     lp::jaddstr(reqjson, b"method\x00".as_ptr() as *mut c_char, b"reserved\x00".as_ptr() as *mut c_char);
-    broadcast_p2p_msg_for_c((*qp).desthash, lp::jprint(reqjson, 0), unwrap!(ctx.ffi_handle()));
+    broadcast_p2p_msg_for_c(qp.desthash, lp::jprint(reqjson, 0), unwrap!(ctx.ffi_handle()));
     // let zero = lp::bits256::default();
     // broadcast_p2p_msg(zero, lp::jprint(reqjson, 0));
-    if (*qp).mpnet != 0 && (*qp).gtc == 0 {
+    if qp.mpnet != 0 && qp.gtc == 0 {
         let msg = lp::jprint(reqjson, 0);
-        lp::LP_mpnet_send(0, msg, 1, (*qp).destaddr.as_mut_ptr());
+        lp::LP_mpnet_send(0, msg, 1, qp.destaddr.as_mut_ptr());
         free_c_ptr(msg as *mut c_void);
     }
     lp::free_json(reqjson);
-    log!({"Send RESERVED id.{}",(*qp).aliceid});
-    qp
+    log!({"Send RESERVED id.{}",qp.aliceid});
+    Some(qp)
 }
 
-unsafe fn lp_trades_got_connect(ctx: &MmArc, qp: *mut lp::LP_quoteinfo, new_qp: *mut lp::LP_quoteinfo) -> *mut lp::LP_quoteinfo {
-    *new_qp = *qp;
-    let qp = new_qp;
-    let coin = unwrap!(lp_coinfind(ctx, c2s!((*qp).srccoin)));
-    if coin.is_none() {return null_mut()}
-    let src_coin = c2s!((*qp).srccoin);
-    let dest_coin = c2s!((*qp).destcoin);
+unsafe fn lp_trades_got_connect(ctx: &MmArc, qp: &lp::LP_quoteinfo) -> Option<lp::LP_quoteinfo> {
+    let mut qp = qp.clone();
+    let coin = unwrap!(lp_coinfind(ctx, c2s!(qp.srccoin)));
+    if coin.is_none() {return None};
+    let src_coin = c2s!(qp.srccoin);
+    let dest_coin = c2s!(qp.destcoin);
     let portfolio_ctx = unwrap!(PortfolioContext::from_ctx(ctx));
     let my_orders = unwrap!(portfolio_ctx.my_maker_orders.lock());
 
@@ -629,7 +601,7 @@ unsafe fn lp_trades_got_connect(ctx: &MmArc, qp: *mut lp::LP_quoteinfo, new_qp: 
         Some(_) => (),
         None => {
             log!("No order for " (src_coin) "/" (dest_coin));
-            return null_mut();
+            return None;
         }
     };
     drop(my_orders);
@@ -640,139 +612,20 @@ unsafe fn lp_trades_got_connect(ctx: &MmArc, qp: *mut lp::LP_quoteinfo, new_qp: 
     //}
     //if lp::LP_reservation_check((*qp).txid, (*qp).vout, (*qp).desthash) == 0 && lp::LP_reservation_check((*qp).txid2, (*qp).vout2, (*qp).desthash) == 0 {
     // AG: The Alice p2p ID seems to be in the `qp.desthash`.
-    log!({"bob {} received CONNECT.({})", lp::G.LP_mypub25519, c2s!((*qp).uuidstr[32..])});
-    lp_connect_start_bob(&ctx, (*qp).srccoin.as_mut_ptr(), (*qp).destcoin.as_mut_ptr(), qp);
-    return qp;
+    log!({"bob {} received CONNECT.({})", lp::G.LP_mypub25519, c2s!(qp.uuidstr[32..])});
+    lp_connect_start_bob(&ctx, qp.srccoin.as_mut_ptr(), qp.destcoin.as_mut_ptr(), &mut qp);
+    Some(qp)
     //} else {
     //    lp::LP_failedmsg((*qp).R.requestid, (*qp).R.quoteid, -1.0, (*qp).uuidstr.as_mut_ptr());
     //    log!({"connect message from non-reserved ({})", (*qp).aliceid});
     //}
 }
 
-/*
-int32_t LP_trades_canceluuid(char *uuidstr)
-{
-    int32_t num = 0; struct LP_trade *qtp,*tp,*tmp;
-    HASH_ITER(hh,LP_trades,tp,tmp)
-    {
-        if ( strcmp(tp->Q.uuidstr,uuidstr) == 0 )
-        {
-            tp->cancelled = (uint32_t)time(NULL);
-            num++;
-        }
-    }
-    DL_FOREACH_SAFE(LP_tradesQ,qtp,tmp)
-    {
-        if ( strcmp(qtp->Q.uuidstr,uuidstr) == 0 )
-        {
-            qtp->cancelled = (uint32_t)time(NULL);
-            num++;
-        }
-    }
-    if ( num > 0 )
-        fprintf(stderr,"uuid.%s %d cancelled\n",uuidstr,num);
-    return(num);
-}
-*/
 pub unsafe fn lp_trades_loop(ctx: MmArc) {
-    let mut timeout: u32;
-    let mut now: u64;
-    let mut q: lp::LP_quoteinfo;
-    let mut funcid: u32;
-    let mut flag: i32;
     thread::sleep(Duration::from_secs(5));
 
     loop {
         if ctx.is_stopping() { break }
-
-        let ordermatch_ctx = unwrap!(OrdermatchContext::from_ctx(&ctx));
-        let mut trades_map = unwrap!(ordermatch_ctx.lp_trades.lock());
-        now = now_ms() / 1000;
-        for (key, trade) in (*trades_map).clone().iter_mut() {
-            timeout = lp::LP_AUTOTRADE_TIMEOUT;
-            if now > trade.firstprocessed + timeout as u64 * 10 || trade.cancelled != 0 {
-                //printf("purge swap aliceid.%llu\n",(long long)tp->aliceid);
-                trades_map.remove(key);
-            }
-        }
-
-        while !ordermatch_ctx.is_trade_queue_empty() {
-            now = now_ms() / 1000;
-            let mut qtp = unwrap!(ordermatch_ctx.pop_trade_from_queue());
-            q = qtp.Q;
-            funcid = qtp.funcid;
-//printf("dequeue %p funcid.%d aliceid.%llu iambob.%d\n",qtp,funcid,(long long)qtp->aliceid,qtp->iambob);
-            match trades_map.entry(qtp.aliceid) {
-                Entry::Occupied(t) => {
-                    if t.get().cancelled != 0 {
-                        t.remove();
-                        continue;
-                    }
-                },
-                Entry::Vacant(t) => {
-                    if now > (q.timestamp + lp::LP_AUTOTRADE_TIMEOUT * 2) as u64 || qtp.cancelled != 0 {
-                        // eat expired?
-                    } else {
-                        if qtp.iambob != 0 && funcid == lp::LP_REQUEST { // bob maybe sends LP_RESERVED
-                            let qp = lp_trades_gotrequest(
-                                &ctx,
-                                &mut q,
-                                &mut qtp.Qs[lp::LP_REQUEST as usize],
-                            );
-                            if qp != null_mut() {
-                                qtp.Qs[lp::LP_RESERVED as usize] = q;
-                            }
-                        }
-                        qtp.firstprocessed = now_ms() / 1000;
-                        qtp.lastprocessed = now_ms() / 1000;
-                        if funcid == lp::LP_CONNECT && qtp.negotiationdone == 0 { // bob all done
-                            qtp.negotiationdone = now;
-                            //printf("bob sets negotiationdone.%u\n",now);
-                            lp_trades_got_connect(
-                                &ctx,
-                                &mut qtp.Q,
-                                &mut qtp.Qs[lp::LP_CONNECT as usize],
-                            );
-                        }
-                        t.insert(qtp);
-                    }
-                    continue;
-                }
-            };
-
-            let trade = unwrap!(trades_map.get_mut(&qtp.aliceid));
-            (*trade).Q = qtp.Q;
-            if qtp.iambob == trade.iambob && qtp.pairstr[0] != 0 {
-                strcpy(trade.pairstr.as_mut_ptr(), qtp.pairstr.as_ptr());
-            }
-//printf("finished dequeue %p funcid.%d aliceid.%llu iambob.%d/%d done.%u\n",qtp,funcid,(long long)qtp->aliceid,qtp->iambob,tp->iambob,tp->negotiationdone);
-            flag = 0;
-            if funcid == lp::LP_REQUEST { // bob maybe sends LP_RESERVED
-                let qp = lp_trades_gotrequest(
-                    &ctx,
-                    &mut q,
-                    &mut trade.Qs[lp::LP_REQUEST as usize],
-                );
-                if !qp.is_null() {
-                    (*trade).Qs[lp::LP_RESERVED as usize] = q;
-                    flag = 1;
-                }
-            } else if funcid == lp::LP_CONNECT && trade.negotiationdone == 0 { // bob all done
-                flag = 1;
-                (*trade).negotiationdone = now;
-                log!({ "bob sets negotiationdone.{}", now_ms() / 1000 });
-                lp_trades_got_connect(
-                    &ctx,
-                    &mut trade.Q,
-                    &mut trade.Qs[lp::LP_CONNECT as usize],
-                );
-            }
-            if flag != 0 {
-                (*trade).lastprocessed = now_ms() / 1000;
-            }
-        }
-        // drop trades map lock before sleeping to unlock the mutex
-        drop(trades_map);
         let portfolio_ctx = unwrap!(PortfolioContext::from_ctx(&ctx));
         let mut my_taker_orders = unwrap!(portfolio_ctx.my_taker_orders.lock());
         let mut my_maker_orders = unwrap!(portfolio_ctx.my_maker_orders.lock());
@@ -788,28 +641,6 @@ pub unsafe fn lp_trades_loop(ctx: MmArc) {
     }
 }
 
-unsafe fn lp_trade_command_q(ctx: &MmArc, qp: *mut lp::LP_quoteinfo, pairstr: *mut c_char, funcid: u32) {
-    let ordermatch_ctx = unwrap!(OrdermatchContext::from_ctx(ctx));
-
-    let mut trade = lp::LP_trade::default();
-    if funcid >= 4 {
-        return;
-    }
-    trade.iambob = if funcid == lp::LP_REQUEST || funcid == lp::LP_CONNECT {
-        1
-    } else {
-        0
-    };
-    trade.aliceid = (*qp).aliceid;
-    trade.funcid = funcid;
-    trade.newtime = now_ms() / 1000;
-    trade.Q = *qp;
-    if pairstr != null_mut() {
-        strcpy(trade.pairstr.as_mut_ptr(), pairstr);
-    }
-    ordermatch_ctx.add_trade_to_queue(trade);
-}
-
 pub unsafe fn lp_trade_command(
     ctx: MmArc,
     json: Json,
@@ -819,6 +650,7 @@ pub unsafe fn lp_trade_command(
     let mut q = lp::LP_quoteinfo::default();
     let mut retval: i32 = -1i32;
     let method = json["method"].as_str();
+    let ordermatch_ctx = unwrap!(OrdermatchContext::from_ctx(&ctx));
     match method {
         Some("reserved") | Some("connected") | Some("request") | Some("connect") => {
             log!([json]);
@@ -856,20 +688,19 @@ pub unsafe fn lp_trade_command(
                     log!("Json " [json]);
                     return 1i32;
                 } else {
+                    let uuid_str = c2s!(q.uuidstr);
+                    let uuid: Uuid = match uuid_str.parse() {
+                        Ok(u) => u,
+                        Err(e) => {
+                            log!("Error " (e) " parsing uuid " (uuid_str));
+                            return 1;
+                        }
+                    };
                     lp::LP_tradecommand_log(c_json.0);
                     //jdouble(argjson,"price");
                     //printf("%s\n",jprint(argjson,0));
                     retval = 1i32;
                     if method == Some("reserved") || method == Some("connected") {
-                        let uuid_str = c2s!(q.uuidstr);
-                        let uuid: Uuid = match uuid_str.parse() {
-                            Ok(u) => u,
-                            Err(e) => {
-                                log!("Error " (e) " parsing uuid " (uuid_str));
-                                return 1;
-                            }
-                        };
-                        let ordermatch_ctx = unwrap!(OrdermatchContext::from_ctx(&ctx));
                         let mut taker_matches = unwrap!(ordermatch_ctx.taker_matches.lock());
                         let my_match = match taker_matches.entry(uuid) {
                             Entry::Vacant(_) => {
@@ -911,37 +742,31 @@ pub unsafe fn lp_trade_command(
                     } else {
                         // bob
                         if method == Some("request") {
-                            //if ( LP_Alicemaxprice != 0. )
-                            //    return(retval);
-                            //printf("bestprice %.8f\n",bestprice);
-                            //|| (bits256_cmp(Q.srchash,lp::G.LP_mypub25519) == 0 && bits256_cmp(lp::G.LP_mypub25519,Q.desthash) != 0) )
-                            lp_trade_command_q(
-                                &ctx,
-                                &mut q,
-                                lp::jstr(
-                                    c_json.0,
-                                    b"pair\x00" as *const u8 as *const libc::c_char
-                                        as *mut libc::c_char,
-                                ),
-                                lp::LP_REQUEST,
-                            );
+                            if let Some(qp) = lp_trades_gotrequest(&ctx, &q) {
+                                let maker_match = MakerOrderMatch {
+                                    request: q,
+                                    reserved: qp,
+                                    connect: None,
+                                    connected: None,
+                                };
+                                let mut maker_matches = unwrap!(ordermatch_ctx.maker_matches.lock());
+                                maker_matches.insert(uuid, maker_match);
+                            }
                         } else if method == Some("connect") {
                             // bob
                             if lp::G.LP_mypub25519 == q.srchash && lp::G.LP_mypub25519 != q.desthash {
-                                printf(
-                                    b"CONNECT.(%s)\n\x00" as *const u8 as *const libc::c_char,
-                                    lp::jprint(c_json.0, 0),
-                                );
-                                lp_trade_command_q(
-                                    &ctx,
-                                    &mut q,
-                                    lp::jstr(
-                                        c_json.0,
-                                        b"pair\x00" as *const u8 as *const libc::c_char
-                                            as *mut libc::c_char,
-                                    ),
-                                    2,
-                                );
+                                let mut maker_matches = unwrap!(ordermatch_ctx.maker_matches.lock());
+                                let my_match = match maker_matches.entry(uuid) {
+                                    Entry::Vacant(_) => {
+                                        log!("Our node doesn't have the order with uuid "(uuid));
+                                        return 1;
+                                    },
+                                    Entry::Occupied(entry) => entry.into_mut()
+                                };
+                                if let Some(qp) = lp_trades_got_connect(&ctx, &q) {
+                                    my_match.connect = Some(q);
+                                    my_match.connected = Some(qp);
+                                }
                             }
                         }
                         return retval;
@@ -1015,7 +840,7 @@ pub struct TakerOrderMatch {
 
 pub struct MakerOrderMatch {
     request: lp::LP_quoteinfo,
-    reserved: Option<lp::LP_quoteinfo>,
+    reserved: lp::LP_quoteinfo,
     connect: Option<lp::LP_quoteinfo>,
     connected: Option<lp::LP_quoteinfo>,
 }
@@ -1094,9 +919,7 @@ pub fn lp_auto_buy(ctx: &MmArc, input: AutoBuyInput) -> Result<String, String> {
         }
         q.mpnet = lp::G.mpnet;
         let portfolio_ctx = try_s!(PortfolioContext::from_ctx(&ctx));
-        log!("before lock");
         let mut my_taker_orders = try_s!(portfolio_ctx.my_taker_orders.lock());
-        log!("after lock");
         my_taker_orders.insert((input.base, input.rel), Order {
             max_base_vol: OrderAmount::Limit(volume.clone()),
             min_base_vol: OrderAmount::Limit(0.into()),

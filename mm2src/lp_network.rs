@@ -28,7 +28,6 @@ use libc::{c_void};
 use primitives::hash::H160;
 use serde_json::{self as json, Value as Json};
 use std::ffi::{CStr};
-use std::fmt;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::time::Duration;
@@ -37,10 +36,6 @@ use crate::mm2::lp_native_dex::lp_command_process;
 use crate::mm2::lp_swap::save_stats_swap_status;
 use crate::mm2::rpc::{dispatcher, DispatcherRes};
 use gstuff::now_ms;
-
-pub fn nanomsg_transportname (bindflag: i32, ipaddr: &fmt::Display, port: u16) -> String {
-    fomat! ("tcp://" if bindflag == 0 {(ipaddr)} else {"*"} ':' (port))
-}
 
 #[derive(Serialize)]
 struct CommandForNn {
