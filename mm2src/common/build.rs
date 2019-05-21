@@ -197,7 +197,6 @@ fn generate_bindings() {
             "LP_pubkeyfind",
             "LP_pubkey_sigcheck",
             "LP_aliceid",
-            "LP_quotereceived",
             "LP_dynamictrust",
             "LP_kmdvalue",
             "LP_trades_alicevalidate",

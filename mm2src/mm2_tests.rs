@@ -260,12 +260,12 @@ fn alice_can_see_the_active_order_after_connection() {
     assert! (rc.0.is_success(), "!orderbook: {}", rc.1);
 
     let bob_orderbook: Json = unwrap!(json::from_str(&rc.1));
+    log!("Bob orderbook " [bob_orderbook]);
     let asks = bob_orderbook["asks"].as_array().unwrap();
     assert!(asks.len() > 0, "Bob BEER/PIZZA asks are empty");
     let vol = asks[0]["maxvolume"].as_f64().unwrap();
     assert_eq!(vol, 1.0);
 
-    log!("Bob orderbook " [bob_orderbook]);
     let mut mm_alice = unwrap! (MarketMakerIt::start (
         json! ({
             "gui": "nogui",
@@ -794,11 +794,11 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
         log!("Issue bob " (base) "/" (rel) " sell request");
             let rc = unwrap!(mm_bob.rpc (json! ({
             "userpass": mm_bob.userpass,
-            "method": "sell",
-            "base": base,
-            "rel": rel,
+            "method": "buy",
+            "base": rel,
+            "rel": base,
             "price": 1,
-            "basevolume": 0.1
+            "relvolume": 0.1
         })));
         assert!(rc.0.is_success(), "!setprice: {}", rc.1);
     }
@@ -883,6 +883,24 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
 
     check_recent_swaps(&mm_alice, uuids.len());
     check_recent_swaps(&mm_bob, uuids.len());
+    for (base, rel) in pairs.iter() {
+        log!("Get " (base) "/" (rel) " orderbook");
+        let rc = unwrap!(mm_bob.rpc (json! ({
+            "userpass": mm_bob.userpass,
+            "method": "orderbook",
+            "base": base,
+            "rel": rel,
+        })));
+        assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
+
+        let bob_orderbook: Json = unwrap!(json::from_str(&rc.1));
+        log!((base) "/" (rel) " orderbook " [bob_orderbook]);
+
+        let bids = bob_orderbook["bids"].as_array().unwrap();
+        let asks = bob_orderbook["asks"].as_array().unwrap();
+        assert_eq!(0, bids.len(), "{} {} bids must be empty", base, rel);
+        assert_eq!(0, asks.len(), "{} {} asks must be empty", base, rel);
+    }
     unwrap! (mm_bob.stop());
     unwrap! (mm_alice.stop());
 }
@@ -1318,7 +1336,6 @@ fn test_startup_passphrase() {
 /// MM2 should allow to issue several buy/sell calls in a row without delays.
 /// https://github.com/artemii235/SuperNET/issues/245
 #[test]
-#[ignore]
 fn test_multiple_buy_sell_no_delay() {
     let coins = json!([
         {"coin":"BEER","asset":"BEER","txversion":4},
@@ -1370,7 +1387,7 @@ fn test_multiple_buy_sell_no_delay() {
         "relvolume": 0.1,
     })));
     assert! (rc.0.is_success(), "buy should have succeed, but got {:?}", rc);
-    thread::sleep(Duration::from_secs(5));
+    thread::sleep(Duration::from_secs(20));
 
     log!("Get BEER/PIZZA orderbook");
     let rc = unwrap! (mm.rpc (json! ({

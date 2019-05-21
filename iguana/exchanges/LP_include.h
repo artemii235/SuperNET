@@ -714,7 +714,6 @@ double LP_pricecache(struct LP_quoteinfo *qp,char *base,char *rel,bits256 txid,i
 int32_t LP_pricevalid(double price);
 
 extern struct LP_quoteinfo LP_Alicereserved;
-char *LP_quotereceived(struct LP_quoteinfo *qp);
 double LP_trades_alicevalidate(struct LP_quoteinfo *qp);
 void LP_abutxo_set(struct LP_utxoinfo *autxo,struct LP_utxoinfo *butxo,struct LP_quoteinfo *qp);
 double LP_quote_validate(struct LP_utxoinfo *autxo,struct LP_utxoinfo *butxo,struct LP_quoteinfo *qp,int32_t iambob);

@@ -174,19 +174,6 @@ int32_t LP_quotedestinfo(struct LP_quoteinfo *qp,bits256 desthash,char *destaddr
     return(0);
 }
 
-char *LP_quotereceived(struct LP_quoteinfo *qp)
-{
-    struct LP_cacheinfo *ptr; double price;
-    //LP_quoteparse(&Q,argjson);
-    price = (double)qp->destsatoshis / (qp->satoshis - qp->txfee);
-    //if ( (ptr= LP_cacheadd(qp->srccoin,qp->destcoin,qp->txid,qp->vout,price,qp)) != 0 )
-    //{
-      //  ptr->Q = *qp;
-        printf(">>>>>>>>>> received quote %s/%s %.8f\n",qp->srccoin,qp->destcoin,price);
-        return(clonestr("{\"result\":\"updated\"}"));
-    //} else return(clonestr("{\"error\":\"nullptr\"}"));
-}
-
 char *LP_bitcoinsig_str(bits256 priv,uint8_t *pubsecp,bits256 sighash)
 {
     static void *ctx; int32_t i,j,siglen; uint8_t pub33[33],sig[65]; char *sigstr;

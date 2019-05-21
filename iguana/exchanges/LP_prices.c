@@ -88,18 +88,23 @@ void LP_pubkey_update(struct LP_pubkey_info *pubp,uint32_t baseind,uint32_t reli
             break;
         pq = 0;
     }
-    if ( pq == 0 )
+    if ( pq == 0 && price > 0. )
     {
         pq = calloc(1,sizeof(*pq));
         pq->baseind = baseind;
         pq->relind = relind;
         pq->scale = 6; // millions of SATOSHIS, ie. 0.01
+        pq->price = price;
+        pq->balance = balance;
         DL_APPEND(pubp->quotes,pq); // already serialized as only path is via stats_JSON()
         //printf("create pubp quotes %d/%d\n",baseind,relind);
+    } else if (pq != 0 && price == 0) {
+        DL_DELETE(pubp->quotes, pq);
+    } else if (pq != 0 && price > 0.) {
+        pq->price = price;
+        pq->balance = balance;
     }
-//printf("%d/%d price %.8f balance %.8f %s num.%d min %.8f max %.8f\n",baseind,relind,price,dstr(balance),utxocoin,numutxos,dstr(minutxo),dstr(maxutxo));
-    pq->price = price;
-    pq->balance = balance;
+//printf("%d/%d price %.8f balance %.8f %s num.%d min %.8f max %.8f\n",baseind,relind,price,dstr(balance),utxocoin,numutxos,dstr(minutxo),dstr(maxutxo))
     pubp->timestamp = (uint32_t)time(NULL);
 }
 
@@ -1063,7 +1068,7 @@ void LP_pricefeedupdate(bits256 pubkey,char *base,char *rel,double price,double_
 {
     struct LP_priceinfo *basepp,*relpp; uint32_t now; int64_t price64; struct LP_pubkey_info *pubp = 0; char str[65],fname[512]; FILE *fp;
 //printf("check PRICEFEED UPDATE.(%s/%s) %.8f %s balance %.8f min %.8f max %.8f\n",base,rel,price,bits256_str(str,pubkey),dstr(balance),dstr(minutxo),dstr(maxutxo));
-    if ( LP_pricevalid(price) > 0 && (basepp= LP_priceinfofind(base)) != 0 && (relpp= LP_priceinfofind(rel)) != 0 )
+    if ( (basepp= LP_priceinfofind(base)) != 0 && (relpp= LP_priceinfofind(rel)) != 0 )
     {
         //if ( (fp= basepp->fps[relpp->ind]) == 0 )
         {

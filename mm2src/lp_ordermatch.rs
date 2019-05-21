@@ -512,8 +512,8 @@ unsafe fn lp_trades_gotrequest(ctx: &MmArc, qp: &lp::LP_quoteinfo) -> Option<lp:
     let portfolio_ctx = unwrap!(PortfolioContext::from_ctx(ctx));
     let my_orders = unwrap!(portfolio_ctx.my_maker_orders.lock());
 
-    let my_price = match my_orders.get(&(src_coin.to_string(), dest_coin.to_string())) {
-        Some(order) => order.price.to_f64().unwrap(),
+    let my_price = match my_orders.iter().find(|(_, order)| order.base == src_coin && order.rel == dest_coin) {
+        Some((_, order)) => order.price.to_f64().unwrap(),
         None => {
             log!("No order for " (src_coin) "/" (dest_coin));
             return None;
@@ -521,7 +521,6 @@ unsafe fn lp_trades_gotrequest(ctx: &MmArc, qp: &lp::LP_quoteinfo) -> Option<lp:
     };
     drop(my_orders);
 
-    log!({"dest sat {} sat {} tx_fee {}", qp.destsatoshis, qp.satoshis, qp.txfee});
     unwrap!(safecopy!(qp.coinaddr, "{}", coin.my_address()));
     if qp.srchash.nonz() == false || qp.srchash == lp::G.LP_mypub25519 {
         qprice = qp.destsatoshis as f64 / qp.satoshis as f64;
@@ -588,10 +587,10 @@ unsafe fn lp_trades_got_connect(ctx: &MmArc, qp: &lp::LP_quoteinfo) -> Option<lp
     let src_coin = c2s!(qp.srccoin);
     let dest_coin = c2s!(qp.destcoin);
     let portfolio_ctx = unwrap!(PortfolioContext::from_ctx(ctx));
-    let my_orders = unwrap!(portfolio_ctx.my_maker_orders.lock());
+    let mut my_orders = unwrap!(portfolio_ctx.my_maker_orders.lock());
 
-    match my_orders.get(&(src_coin.to_string(), dest_coin.to_string())) {
-        Some(_) => (),
+    match my_orders.iter_mut().find(|(_, order)| order.base == src_coin && order.rel == dest_coin) {
+        Some((_, order)) => { order.price = 0.into(); },
         None => {
             log!("No order for " (src_coin) "/" (dest_coin));
             return None;
@@ -694,10 +693,12 @@ pub unsafe fn lp_trade_command(
                     //printf("%s\n",jprint(argjson,0));
                     retval = 1i32;
                     if method == Some("reserved") || method == Some("connected") {
+                        let portfolio_ctx = unwrap!(PortfolioContext::from_ctx(&ctx));
+                        let mut my_taker_orders = unwrap!(portfolio_ctx.my_taker_orders.lock());
                         let mut taker_matches = unwrap!(ordermatch_ctx.taker_matches.lock());
                         let my_match = match taker_matches.entry(uuid) {
                             Entry::Vacant(_) => {
-                                log!("Our node doesn't have the order with uuid "(uuid));
+                                log!("Our node doesn't have the ordermatch with uuid "(uuid));
                                 return 1;
                             },
                             Entry::Occupied(entry) => entry.into_mut()
@@ -715,6 +716,7 @@ pub unsafe fn lp_trade_command(
                                 my_match.request.srchash = q.srchash;
                                 lp_reserved(&mut connect_q, &ctx); // send LP_CONNECT
                                 my_match.connect = Some(connect_q);
+                                my_taker_orders.remove(&uuid);
                             }
                         } else if method == Some("connected") {
                             // alice
@@ -914,16 +916,28 @@ pub fn lp_auto_buy(ctx: &MmArc, input: AutoBuyInput) -> Result<String, String> {
         q.mpnet = lp::G.mpnet;
         let portfolio_ctx = try_s!(PortfolioContext::from_ctx(&ctx));
         let mut my_taker_orders = try_s!(portfolio_ctx.my_taker_orders.lock());
-        my_taker_orders.insert((input.base, input.rel), Order {
-            max_base_vol: OrderAmount::Limit(volume.clone()),
-            min_base_vol: OrderAmount::Limit(0.into()),
-            price: BigDecimal::from(1) / price.clone(),
-            created_at: now_ms(),
-        });
-        lp::LP_mypriceset(rel_str.as_ptr() as *mut c_char, base_str.as_ptr() as *mut c_char, 1. / price.to_f64().unwrap(), volume.to_f64().unwrap());
+        let uuid = Uuid::new_v4();
+        if input.method == "buy" {
+            my_taker_orders.insert(uuid, Order {
+                max_base_vol: OrderAmount::Limit(volume.clone()),
+                min_base_vol: OrderAmount::Limit(0.into()),
+                price: BigDecimal::from(1) / price.clone(),
+                created_at: now_ms(),
+                base: input.rel.clone(),
+                rel: input.base.clone(),
+            });
+        } else {
+            my_taker_orders.insert(uuid, Order {
+                max_base_vol: OrderAmount::Limit(volume.clone()),
+                min_base_vol: OrderAmount::Limit(0.into()),
+                price: BigDecimal::from(1),
+                created_at: now_ms(),
+                base: input.base.clone(),
+                rel: input.rel.clone(),
+            });
+        }
         drop(my_taker_orders);
 
-        let uuid = Uuid::new_v4();
         let dest_pub_key = lp::bits256::default();
         if let Some(pub_key) = input.dest_pub_key {
             let pub_key_str = try_s!(CString::new(pub_key));

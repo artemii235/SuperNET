@@ -40,6 +40,7 @@ use std::ptr::null_mut;
 use std::sync::{Arc, Mutex};
 use super::{default_pricing_provider, register_interest_in_coin_prices, Order, OrderAmount, PortfolioContext, InterestingCoins};
 use url;
+use uuid::Uuid;
 
 const MIN_TRADE: f64 = 0.01;
 
@@ -60,21 +61,21 @@ struct PricePingRequest {
 }
 
 impl PricePingRequest {
-    fn new(ctx: &MmArc, base: &str, rel: &str, order: &Order) -> Result<PricePingRequest, String> {
-        let base_coin = match try_s!(lp_coinfind(ctx, base)) {
+    fn new(ctx: &MmArc, order: &Order) -> Result<PricePingRequest, String> {
+        let base_coin = match try_s!(lp_coinfind(ctx, &order.base)) {
             Some(coin) => coin,
-            None => return ERR!("Base coin {} is not found", base),
+            None => return ERR!("Base coin {} is not found", order.base),
         };
 
-        let _rel_coin = match try_s!(lp_coinfind(ctx, rel)) {
+        let _rel_coin = match try_s!(lp_coinfind(ctx, &order.rel)) {
             Some(coin) => coin,
-            None => return ERR!("Rel coin {} is not found", rel),
+            None => return ERR!("Rel coin {} is not found", order.rel),
         };
 
         let price64 = (order.price.clone() * BigDecimal::from(100000000.0)).to_u64().unwrap();
         let timestamp = now_ms() / 1000;
-        let base_c: CString = try_s!(CString::new(base));
-        let rel_c: CString = try_s!(CString::new(rel));
+        let base_c: CString = try_s!(CString::new(order.base.clone()));
+        let rel_c: CString = try_s!(CString::new(order.rel.clone()));
 
         let sig = unsafe {
             let sig_c = lp::LP_price_sig(timestamp as u32, lp::G.LP_privkey, lp::G.LP_pubsecp.as_mut_ptr(), lp::G.LP_mypub25519,
@@ -95,8 +96,8 @@ impl PricePingRequest {
         Ok(PricePingRequest {
             method: "postprice",
             pubkey: unsafe { hex::encode(&lp::G.LP_mypub25519.bytes) },
-            base: base.into(),
-            rel: rel.into(),
+            base: order.base.clone(),
+            rel: order.rel.clone(),
             price64: price64.to_string(),
             price: order.price.clone(),
             timestamp,
@@ -145,22 +146,19 @@ pub fn set_price(ctx: MmArc, req: Json) -> HyRes {
         None => return rpc_err_response(500, &format!("Rel coin {} is not found", req.rel)),
     };
 
-    let base = try_h!(CString::new(req.base.as_str()));
-    let rel = try_h!(CString::new(req.rel.as_str()));
     Box::new(base_coin.check_i_have_enough_to_trade(MIN_TRADE, true).and_then(move |_|
         rel_coin.can_i_spend_other_payment().and_then(move |_| {
-            let price_set_res = unsafe { lp::LP_mypriceset(base.as_ptr() as *mut c_char, rel.as_ptr() as *mut c_char, req.price.to_f64().unwrap(), 0.) };
-            if price_set_res < 0 {
-                return rpc_err_response(500, "could not set price");
-            }
             if req.broadcast == 1 {
                 let portfolio_ctx = try_h!(PortfolioContext::from_ctx(&ctx));
                 let mut my_orders = try_h!(portfolio_ctx.my_maker_orders.lock());
-                my_orders.insert((req.base, req.rel), Order {
+                let uuid = Uuid::new_v4();
+                my_orders.insert(uuid, Order {
                     max_base_vol: OrderAmount::Max,
                     min_base_vol: OrderAmount::Limit(0.into()),
                     price: req.price,
                     created_at: now_ms(),
+                    base: req.base,
+                    rel: req.rel,
                 });
             }
             rpc_response(200, json!({"result":"success"}).to_string())
@@ -172,17 +170,17 @@ pub fn broadcast_my_prices(ctx: &MmArc) -> Result<(), String> {
     let portfolio_ctx = try_s!(PortfolioContext::from_ctx(ctx));
     let my_orders = try_s!(portfolio_ctx.my_maker_orders.lock()).clone();
 
-    for ((base, rel), order) in my_orders.iter() {
-        let ping = match PricePingRequest::new(ctx, base, rel, order) {
+    for (_, order) in my_orders.iter() {
+        let ping = match PricePingRequest::new(ctx, order) {
             Ok(p) => p,
             Err(e) => {
-                ctx.log.log("", &[&"broadcast_my_prices", &base.as_str(), &rel.as_str()], &format! ("ping request creation failed {}", e));
+                ctx.log.log("", &[&"broadcast_my_prices", &order.base, &order.rel], &format! ("ping request creation failed {}", e));
                 continue;
             },
         };
 
         if let Err(e) = lp_send_price_ping(&ping, ctx) {
-            ctx.log.log("", &[&"broadcast_my_prices", &base.as_str(), &rel.as_str()], &format! ("ping request send failed {}", e));
+            ctx.log.log("", &[&"broadcast_my_prices", &order.base, &order.rel], &format! ("ping request send failed {}", e));
             continue;
         }
     }

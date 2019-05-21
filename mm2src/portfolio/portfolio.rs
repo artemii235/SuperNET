@@ -55,6 +55,7 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use std::thread::sleep;
+use uuid::Uuid;
 
 
 /// Enum representing the order amount
@@ -72,6 +73,8 @@ pub struct Order {
     pub min_base_vol: OrderAmount,
     pub price: BigDecimal,
     pub created_at: u64,
+    pub base: String,
+    pub rel: String,
 }
 
 pub struct PortfolioContext {
@@ -79,8 +82,8 @@ pub struct PortfolioContext {
     //     That's why we keep the price resources in the `PortfolioContext` and not in a singleton.
     price_resources: Mutex<HashMap<(PricingProvider, PriceUnit), (Arc<Coins>, RefreshedExternalResource<ExternalPrices>)>>,
     // Fixed prices explicitly set by "setprice" RPC call
-    pub my_maker_orders: Mutex<HashMap<(String, String), Order>>,
-    pub my_taker_orders: Mutex<HashMap<(String, String), Order>>,
+    pub my_maker_orders: Mutex<HashMap<Uuid, Order>>,
+    pub my_taker_orders: Mutex<HashMap<Uuid, Order>>,
 }
 impl PortfolioContext {
     /// Obtains a reference to this crate context, creating it if necessary.
