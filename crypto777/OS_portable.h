@@ -144,15 +144,6 @@ typedef struct queue
     char name[64],initflag;
 } queue_t;
 
-struct rpcrequest_info
-{
-    struct rpcrequest_info *next,*prev;
-    pthread_t T;
-    int32_t sock;
-    uint32_t ipbits;
-    uint16_t port,pad;
-};
-
 struct OS_mappedptr
 {
 	char fname[512];

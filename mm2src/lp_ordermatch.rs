@@ -181,9 +181,6 @@ fn lp_trade(
             connect: None,
             connected: None,
         });
-        lp::LP_Alicemaxprice = (*qp).maxprice;
-        log!({"lp_trade] Alice max price: {}", lp::LP_Alicemaxprice});
-        lp::LP_Alicedestpubkey = (*qp).srchash;
         if (*qp).gtc == 0 {
             let msg = lp::jprint(lp::LP_quotejson(qp), 1);
             lp::LP_mpnet_send(1, msg, 1, null_mut());
@@ -196,95 +193,7 @@ fn lp_trade(
         }).to_string())
     }
 }
-/*
-int32_t LP_quotecmp(int32_t strictflag,struct LP_quoteinfo *qp,struct LP_quoteinfo *qp2)
-{
-    if ( lp::bits256_nonz(LP_Alicedestpubkey) != 0 )
-    {
-        if (bits256_cmp(LP_Alicedestpubkey,qp->srchash) != 0 )
-        {
-            printf("reject quote from non-matching pubkey\n");
-            return(-1);
-        } else printf("dont reject quote from destpubkey\n");
-    }
-    if ( bits256_cmp(qp->desthash,qp2->desthash) == 0 && strcmp(qp->srccoin,qp2->srccoin) == 0 && strcmp(qp->destcoin,qp2->destcoin) == 0 && bits256_cmp(qp->desttxid,qp2->desttxid) == 0 && qp->destvout == qp2->destvout && bits256_cmp(qp->feetxid,qp2->feetxid) == 0 && qp->feevout == qp2->feevout && qp->destsatoshis == qp2->destsatoshis && qp->txfee >= qp2->txfee && qp->desttxfee == qp2->desttxfee )
-    {
-        if ( strictflag == 0 || (qp->aliceid == qp2->aliceid && qp->R.requestid == qp2->R.requestid && qp->R.quoteid == qp2->R.quoteid && qp->vout == qp2->vout && qp->vout2 == qp2->vout2 && qp->satoshis == qp2->satoshis && bits256_cmp(qp->txid,qp2->txid) == 0 && bits256_cmp(qp->txid2,qp2->txid2) == 0 && bits256_cmp(qp->srchash,qp2->srchash) == 0) )
-            return(0);
-        else printf("strict compare failure\n");
-    }
-    return(-1);
-}
 
-void LP_alicequery_clear()
-{
-    memset(&LP_Alicequery,0,sizeof(LP_Alicequery));
-    memset(&LP_Alicedestpubkey,0,sizeof(LP_Alicedestpubkey));
-    LP_Alicemaxprice = 0.;
-    Alice_expiration = 0;
-}
-
-int32_t LP_alice_eligible(uint32_t quotetime)
-{
-    if ( Alice_expiration != 0 && quotetime > Alice_expiration )
-    {
-        if ( LP_Alicequery.uuidstr[0] != 0 )
-            LP_failedmsg(LP_Alicequery.R.requestid,LP_Alicequery.R.quoteid,-9999,LP_Alicequery.uuidstr);
-        printf("time expired for Alice_request\n");
-        LP_alicequery_clear();
-    }
-    return(Alice_expiration == 0 || time(NULL) < Alice_expiration);
-}
-
-char *LP_cancel_order(char *uuidstr)
-{
-    int32_t num = 0; cJSON *retjson;
-    if ( uuidstr != 0 )
-    {
-        if ( uuidstr[0] == 'G' )
-        {
-            struct LP_gtcorder *gtc,*tmp;
-            DL_FOREACH_SAFE(GTCorders,gtc,tmp)
-            {
-                if ( strcmp(gtc->Q.uuidstr,uuidstr) == 0 )
-                {
-                    retjson = cJSON_CreateObject();
-                    jaddstr(retjson,"result","success");
-                    jaddstr(retjson,"cancelled",uuidstr);
-                    jaddnum(retjson,"pending",gtc->pending);
-                    if ( gtc->cancelled == 0 )
-                    {
-                        gtc->cancelled = (uint32_t)time(NULL);
-                        jaddstr(retjson,"status","uuid canceled");
-                        LP_failedmsg(gtc->Q.R.requestid,gtc->Q.R.quoteid,-9997,gtc->Q.uuidstr);
-                    }
-                    else
-                    {
-                        jaddstr(retjson,"status","uuid already canceled");
-                        LP_failedmsg(gtc->Q.R.requestid,gtc->Q.R.quoteid,-9996,gtc->Q.uuidstr);
-                    }
-                }
-            }
-            return(clonestr("{\"error\":\"gtc uuid not found\"}"));
-        }
-        else
-        {
-            num = LP_trades_canceluuid(uuidstr);
-            retjson = cJSON_CreateObject();
-            jaddstr(retjson,"result","success");
-            jaddnum(retjson,"numentries",num);
-            if ( strcmp(LP_Alicequery.uuidstr,uuidstr) == 0 )
-            {
-                LP_failedmsg(LP_Alicequery.R.requestid,LP_Alicequery.R.quoteid,-9998,LP_Alicequery.uuidstr);
-                LP_alicequery_clear();
-                jaddstr(retjson,"status","uuid canceled");
-            } else jaddstr(retjson,"status","will stop trade negotiation, but if swap started it wont cancel");
-        }
-        return(jprint(retjson,1));
-    }
-    return(clonestr("{\"error\":\"uuid not cancellable\"}"));
-}
-*/
 unsafe fn lp_connected_alice(ctx: &MmArc, qp: *mut lp::LP_quoteinfo) { // alice
     if (*qp).desthash != lp::G.LP_mypub25519 {
         lp::LP_aliceid((*qp).tradeid, (*qp).aliceid, b"error1\x00".as_ptr() as *mut c_char, 0, 0);
@@ -296,7 +205,6 @@ unsafe fn lp_connected_alice(ctx: &MmArc, qp: *mut lp::LP_quoteinfo) { // alice
     let dex_selector = 0;
     lp::LP_requestinit(&mut (*qp).R, (*qp).srchash, (*qp).desthash, (*qp).srccoin.as_mut_ptr(), (*qp).satoshis, (*qp).destcoin.as_mut_ptr(), (*qp).destsatoshis, (*qp).timestamp, (*qp).quotetime, dex_selector, (*qp).fill as i32, (*qp).gtc as i32);
 //printf("calculated requestid.%u quoteid.%u\n",qp->R.requestid,qp->R.quoteid);
-    lp::LP_Alicereserved = lp::LP_quoteinfo::default();
     lp::LP_aliceid((*qp).tradeid, (*qp).aliceid, b"connected\x00".as_ptr() as *mut c_char, (*qp).R.requestid, (*qp).R.quoteid);
     /*
     let qprice = lp::LP_quote_validate(&mut autxo, &mut butxo, qp, 0);
@@ -428,9 +336,7 @@ double LP_trades_alicevalidate(void *ctx,struct LP_quoteinfo *qp)
 }
 */
 unsafe fn lp_reserved(qp: *mut lp::LP_quoteinfo, ctx: &MmArc) {
-    //let price = lp::LP_pricecache(qp, (*qp).srccoin.as_mut_ptr(), (*qp).destcoin.as_mut_ptr(), (*qp).txid, (*qp).vout);
     (*qp).tradeid = lp::LP_Alicequery.tradeid;
-    lp::LP_Alicereserved = *qp;
     //printf("send CONNECT\n");
     lp::LP_query(
         b"connect\x00" as *const u8 as *mut libc::c_char,

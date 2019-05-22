@@ -19,9 +19,7 @@
 //  marketmaker
 //
 
-struct LP_quoteinfo LP_Alicequery,LP_Alicereserved;
-double LP_Alicemaxprice;
-bits256 LP_Alicedestpubkey,LP_bobs_reserved;
+struct LP_quoteinfo LP_Alicequery;
 
 void LP_failedmsg(uint32_t requestid,uint32_t quoteid,double val,char *uuidstr)
 {
@@ -182,38 +180,6 @@ struct LP_utxoinfo *LP_address_myutxopair(struct LP_utxoinfo *butxo,int32_t iamb
     return(0);
 }
 
-void LP_gtc_iteration(uint32_t ctx_h)
-{
-    struct LP_gtcorder *gtc,*tmp; struct LP_quoteinfo *qp; uint64_t destvalue,destvalue2; uint32_t oldest = 0;
-    DL_FOREACH_SAFE(GTCorders,gtc,tmp)
-    {
-        if ( gtc->cancelled == 0 && (oldest == 0 || gtc->pending < oldest) )
-            oldest = gtc->pending;
-    }
-    DL_FOREACH_SAFE(GTCorders,gtc,tmp)
-    {
-        qp = &gtc->Q;
-        if ( gtc->cancelled != 0 )
-        {
-            portable_mutex_lock(&LP_gtcmutex);
-            DL_DELETE(GTCorders,gtc);
-            free(gtc);
-            portable_mutex_unlock(&LP_gtcmutex);
-        }
-        else
-        {
-            if ( gtc->pending <= oldest+60 && time(NULL) > gtc->pending+LP_AUTOTRADE_TIMEOUT*10 )
-            {
-                gtc->pending = qp->timestamp = (uint32_t)time(NULL);
-                LP_query("request",qp, ctx_h);
-                LP_Alicequery = *qp, LP_Alicemaxprice = gtc->Q.maxprice, LP_Alicedestpubkey = qp->srchash;
-                char str[65]; printf("LP_gtc fill.%d gtc.%d %s/%s %.8f vol %.8f dest.(%s) maxprice %.8f uuid.%s fill.%d gtc.%d\n",qp->fill,qp->gtc,qp->srccoin,qp->destcoin,dstr(qp->satoshis),dstr(qp->destsatoshis),bits256_str(str,LP_Alicedestpubkey),gtc->Q.maxprice,qp->uuidstr,qp->fill,qp->gtc);
-                break;
-            }
-        }
-    }
-}
-
 void LP_gtc_addorder(struct LP_quoteinfo *qp)
 {
     struct LP_gtcorder *gtc;
@@ -241,7 +207,7 @@ char *LP_trade(struct LP_quoteinfo *qp,double maxprice,int32_t timeout,uint32_t 
     }
     {
         LP_query("request",qp, ctx_h);
-        LP_Alicequery = *qp, LP_Alicemaxprice = qp->maxprice, LP_Alicedestpubkey = qp->srchash;
+        LP_Alicequery = *qp;
     }
     if ( qp->gtc == 0 )
     {
@@ -250,27 +216,8 @@ char *LP_trade(struct LP_quoteinfo *qp,double maxprice,int32_t timeout,uint32_t 
         LP_mpnet_send(1,msg,1,0);
         free(msg);
     }
-    char str[65]; printf("LP_trade mpnet.%d fill.%d gtc.%d %s/%s %.8f vol %.8f dest.(%s) maxprice %.8f uuid.%s fill.%d gtc.%d\n",qp->mpnet,qp->fill,qp->gtc,qp->srccoin,qp->destcoin,dstr(qp->satoshis),dstr(qp->destsatoshis),bits256_str(str,LP_Alicedestpubkey),qp->maxprice,qp->uuidstr,qp->fill,qp->gtc);
+    printf("LP_trade mpnet.%d fill.%d gtc.%d %s/%s %.8f vol %.8f maxprice %.8f uuid.%s fill.%d gtc.%d\n",qp->mpnet,qp->fill,qp->gtc,qp->srccoin,qp->destcoin,dstr(qp->satoshis),dstr(qp->destsatoshis),qp->maxprice,qp->uuidstr,qp->fill,qp->gtc);
     return(LP_recent_swaps(0,uuidstr));
-}
-
-int32_t LP_quotecmp(int32_t strictflag,struct LP_quoteinfo *qp,struct LP_quoteinfo *qp2)
-{
-    if ( bits256_nonz(LP_Alicedestpubkey) != 0 )
-    {
-        if (bits256_cmp(LP_Alicedestpubkey,qp->srchash) != 0 )
-        {
-            printf("reject quote from non-matching pubkey\n");
-            return(-1);
-        } else printf("dont reject quote from destpubkey\n");
-    }
-    if ( bits256_cmp(qp->desthash,qp2->desthash) == 0 && strcmp(qp->srccoin,qp2->srccoin) == 0 && strcmp(qp->destcoin,qp2->destcoin) == 0 && qp->destsatoshis == qp2->destsatoshis && qp->txfee >= qp2->txfee && qp->desttxfee == qp2->desttxfee )
-    {
-        if ( strictflag == 0 || (qp->aliceid == qp2->aliceid && qp->R.requestid == qp2->R.requestid && qp->R.quoteid == qp2->R.quoteid && qp->satoshis == qp2->satoshis && bits256_cmp(qp->srchash,qp2->srchash) == 0) )
-            return(0);
-        else printf("strict compare failure\n");
-    }
-    return(-1);
 }
 
 int32_t LP_alice_eligible(uint32_t quotetime)

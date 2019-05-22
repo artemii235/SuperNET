@@ -471,7 +471,6 @@ cJSON *electrum_address_gethistory(char *symbol,struct electrum_info *ep,cJSON *
 cJSON *LP_myzdebits();
 int32_t LP_opreturn_decrypt(uint16_t *ind16p,uint8_t *decoded,uint8_t *encoded,int32_t encodedlen,char *passphrase);
 int32_t LP_opreturn_encrypt(uint8_t *dest,int32_t maxsize,uint8_t *data,int32_t datalen,char *passphrase,uint16_t ind16);
-void LP_pendswap_add(uint32_t expiration,uint32_t requestid,uint32_t quoteid);
 char *bitcoin_address(char *symbol,char *coinaddr,uint8_t taddr,uint8_t addrtype,uint8_t *pubkey_or_rmd160,int32_t len);
 void LP_tradebot_finished(uint32_t tradeid,uint32_t requestid,uint32_t quoteid);
 uint64_t LP_txfeecalc(struct iguana_info *coin,uint64_t txfee,int32_t txlen);
@@ -552,7 +551,7 @@ struct LP_priceinfo *LP_priceinfoadd(char *symbol);
 // Gradual port temporaries.
 
 cJSON *LP_NXT_redeems();
-void LPinit(char* myipaddr,uint16_t mypullport,uint16_t mypubport,char *passphrase,cJSON *argjson,uint32_t mm_ctx_id);
+void LPinit(uint32_t mm_ctx_id);
 void unbuffered_output_support(const char* log_path);
 void LP_dPoW_request(struct iguana_info *coin);
 struct iguana_info *LP_conflicts_find(struct iguana_info *refcoin);
@@ -685,7 +684,6 @@ uint32_t LP_rand();
 void LP_gtc_addorder(struct LP_quoteinfo *qp);
 void LP_query(char *method,struct LP_quoteinfo *qp, uint32_t ctx_h);
 extern struct LP_quoteinfo LP_Alicequery;
-extern double LP_Alicemaxprice;
 extern bits256 LP_Alicedestpubkey;
 
 cJSON *LP_quotejson(struct LP_quoteinfo *qp);
@@ -707,13 +705,11 @@ void LP_tradecommand_log(cJSON *argjson);
 extern uint32_t LP_RTcount,LP_swapscount;
 int32_t bits256_cmp(bits256 a,bits256 b);
 char *bits256_str(char hexstr[65],bits256 x);
-int32_t LP_quotecmp(int32_t strictflag,struct LP_quoteinfo *qp,struct LP_quoteinfo *qp2);
 int64_t LP_instantdex_proofcheck(char *symbol,char *coinaddr,cJSON *proof,int32_t num);
 double LP_myprice(double *bidp,double *askp,char *base,char *rel);
 double LP_pricecache(struct LP_quoteinfo *qp,char *base,char *rel,bits256 txid,int32_t vout);
 int32_t LP_pricevalid(double price);
 
-extern struct LP_quoteinfo LP_Alicereserved;
 double LP_trades_alicevalidate(struct LP_quoteinfo *qp);
 void LP_abutxo_set(struct LP_utxoinfo *autxo,struct LP_utxoinfo *butxo,struct LP_quoteinfo *qp);
 double LP_quote_validate(struct LP_utxoinfo *autxo,struct LP_utxoinfo *butxo,struct LP_quoteinfo *qp,int32_t iambob);
