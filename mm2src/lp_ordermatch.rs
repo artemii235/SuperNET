@@ -261,11 +261,6 @@ unsafe fn lp_connected_alice(ctx: &MmArc, qp: *mut lp::LP_quoteinfo) { // alice
     }
 }
 /*
-int32_t LP_aliceonly(char *symbol)
-{
-    return(0);
-}
-
 int32_t LP_validSPV(char *symbol,char *coinaddr,bits256 txid,int32_t vout)
 {
     struct electrum_info *ep,*backupep; cJSON *txobj; struct LP_address_utxo *up; struct iguana_info *coin; int32_t height; struct LP_transaction *tx;

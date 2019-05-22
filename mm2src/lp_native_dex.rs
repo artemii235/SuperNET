@@ -1355,7 +1355,7 @@ fn test_ip (ctx: &MmArc, ip: IpAddr) -> Result<(Sender<()>, u16), String> {
     Ok ((shutdown_tx, port))
 }
 
-pub fn lp_init (mypullport: u16, mypubport: u16, conf: Json, c_conf: CJSON, ctx_cb: &Fn (u32))
+pub fn lp_init (mypubport: u16, conf: Json, ctx_cb: &Fn (u32))
 -> Result<(), String> {
     unsafe {lp::G.initializing = 1}  // Tells some of the spawned threads to wait till the `lp_passphrase_init` is done.
     BITCOIND_RPC_INITIALIZING.store (true, Ordering::Relaxed);
@@ -1601,7 +1601,6 @@ pub fn lp_init (mypullport: u16, mypubport: u16, conf: Json, c_conf: CJSON, ctx_
     sleep(5);
     exit(0);
 */
-    let passphrase = try_s! (CString::new (unwrap! (ctx.conf["passphrase"].as_str())));
     let ctx_id = try_s! (ctx.ffi_handle());
 
     // `LPinit` currently fails to stop in a timely manner, so we're dropping the `lp_init` context early
@@ -1615,7 +1614,6 @@ pub fn lp_init (mypullport: u16, mypubport: u16, conf: Json, c_conf: CJSON, ctx_
     unsafe {lp::SPAWN_RPC = Some (rpc::spawn_rpc)};
     unsafe {lp::LP_QUEUE_COMMAND = Some (lp_queue_command_for_c)};
 
-    let myipaddr = unsafe {lp::LP_myipaddr.as_ptr() as *mut c_char};
     unsafe {lp::LPinit (ctx_id)};
     unwrap! (prices.join());
     unwrap! (trades.join());

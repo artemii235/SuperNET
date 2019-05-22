@@ -285,9 +285,10 @@ char *LP_pricepings(char *base,char *rel,double price)
 
 char *LP_postprice_recv(cJSON *argjson)
 {
-    bits256 pubkey; double price; uint8_t pubkey33[33]; char *base,*rel,*argstr,coinaddr[64];
+    bits256 pubkey; uint8_t pubkey33[33]; char *base,*rel,*argstr,coinaddr[64];
     //printf("PRICE POSTED.(%s)\n",jprint(argjson,0));
-    if ( (base= jstr(argjson,"base")) != 0 && (rel= jstr(argjson,"rel")) != 0 && (price= jdouble(argjson,"price")) > SMALLVAL )
+    double price = jdouble(argjson,"price");
+    if ( (base= jstr(argjson,"base")) != 0 && (rel= jstr(argjson,"rel")) != 0 )
     {
         pubkey = jbits256(argjson,"pubkey");
         if ( bits256_nonz(pubkey) != 0 )

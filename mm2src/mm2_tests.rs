@@ -4,13 +4,11 @@ use dirs;
 use gstuff::{slurp};
 use hyper::StatusCode;
 use hyper::header::ACCESS_CONTROL_ALLOW_ORIGIN;
-use libc::c_char;
 use peers;
 use serde_json::{self as json, Value as Json};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::env::{self, var};
-use std::ffi::CString;
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
@@ -121,7 +119,7 @@ fn test_rpc() {
     // TODO (workaround libtorrent hanging in delete) // unwrap! (mm.wait_for_log (9., &|log| log.contains ("LogState] Bye!")));
 }
 
-use super::{btc2kmd, lp_main, CJSON};
+use super::{btc2kmd, lp_main};
 
 /// Integration (?) test for the "btc2kmd" command line invocation.
 /// The argument is the WIF example from https://en.bitcoin.it/wiki/Wallet_import_format.
@@ -139,9 +137,7 @@ fn test_mm_start() {
     if let Ok (conf) = var ("_MM2_TEST_CONF") {
         log! ("test_mm_start] Starting the MarketMaker...");
         let conf: Json = unwrap! (json::from_str (&conf));
-        let c_json = unwrap! (CString::new (unwrap! (json::to_string (&conf))));
-        let c_conf = unwrap! (CJSON::from_zero_terminated (c_json.as_ptr() as *const c_char));
-        unwrap! (lp_main (c_conf, conf, &|_ctx|()))
+        unwrap! (lp_main (conf, &|_ctx|()))
     }
 }
 
@@ -176,9 +172,7 @@ fn local_start_impl (folder: PathBuf, log_path: PathBuf, mut conf: Json) {
 
         chdir (&folder);
 
-        let c_json = unwrap! (CString::new (unwrap! (json::to_string (&conf))));
-        let c_conf = unwrap! (CJSON::from_zero_terminated (c_json.as_ptr() as *const c_char));
-        unwrap! (lp_main (c_conf, conf, &|_ctx|()))
+        unwrap! (lp_main (conf, &|_ctx|()))
     }));
 }
 

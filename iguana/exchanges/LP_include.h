@@ -520,7 +520,6 @@ int64_t LP_dynamictrust(int64_t credits,bits256 pubkey,int64_t kmdvalue);
 struct LP_address *LP_addressfind(struct iguana_info *coin,char *coinaddr);
 int32_t LP_trades_canceluuid(char *uuidstr);
 int _decreasing_uint64(const void *a,const void *b);
-int32_t LP_alice_eligible(uint32_t quotetime);
 int32_t LP_is_slowcoin(char *symbol);
 
 int32_t bitcoin_priv2wif(char *symbol,uint8_t wiftaddr,char *wifstr,bits256 privkey,uint8_t addrtype);

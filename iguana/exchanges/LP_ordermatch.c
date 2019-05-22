@@ -220,11 +220,6 @@ char *LP_trade(struct LP_quoteinfo *qp,double maxprice,int32_t timeout,uint32_t 
     return(LP_recent_swaps(0,uuidstr));
 }
 
-int32_t LP_alice_eligible(uint32_t quotetime)
-{
-    return(1);
-}
-
 char *LP_cancel_order(char *uuidstr)
 {
     int32_t num = 0; cJSON *retjson;
@@ -271,11 +266,6 @@ char *LP_cancel_order(char *uuidstr)
         return(jprint(retjson,1));
     }
     return(clonestr("{\"error\":\"uuid not cancellable\"}"));
-}
-
-int32_t LP_aliceonly(char *symbol)
-{
-    return(0);
 }
 
 double LP_trades_alicevalidate(struct LP_quoteinfo *qp)
@@ -360,8 +350,6 @@ char *LP_autobuy(int32_t fomoflag,char *base,char *rel,double maxprice,double re
         gui = "nogui";
     if ( basecoin == 0 || basecoin->inactive != 0 || relcoin == 0 || relcoin->inactive != 0 )
         return(clonestr("{\"error\":\"base or rel not found or inactive\"}"));
-    if ( LP_aliceonly(base) > 0 )
-        return(clonestr("{\"error\":\"GAME can only be alice coin\"}"));
     printf("LP_autobuy %s/%s price %.8f vol %.8f nonce %u\n",base,rel,maxprice,relvolume,nonce);
     if ( (lastnonce= LP_lastnonce) != 0 && nonce <= lastnonce )
     {
