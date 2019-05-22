@@ -143,6 +143,7 @@ fn test_mm_start() {
 
 #[cfg(windows)]
 fn chdir (dir: &Path) {
+    use std::ffi::CString;
     use winapi::um::processenv::SetCurrentDirectoryA;
 
     let dir = unwrap! (dir.to_str());
@@ -590,6 +591,7 @@ fn test_rpc_password_from_json_no_userpass() {
 
 #[cfg(windows)]
 fn get_special_folder_path() -> PathBuf {
+    use libc::c_char;
     use std::ffi::CStr;
     use std::mem::zeroed;
     use std::ptr::null_mut;
