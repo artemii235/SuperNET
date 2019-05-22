@@ -794,7 +794,7 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
             "base": rel,
             "rel": base,
             "price": 1,
-            "relvolume": 0.1
+            "volume": 0.1
         })));
         assert!(rc.0.is_success(), "!setprice: {}", rc.1);
     }
@@ -807,7 +807,7 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
             "method": "buy",
             "base": base,
             "rel": rel,
-            "relvolume": 0.1,
+            "volume": 0.1,
             "price": 2
         })));
         assert!(rc.0.is_success(), "!buy: {}", rc.1);

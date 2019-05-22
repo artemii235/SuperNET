@@ -74,6 +74,7 @@ use std::io::prelude::*;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
+use bigdecimal::BigDecimal;
 
 /// Includes the grace time we add to the "normal" timeouts
 /// in order to give different and/or heavy communication channels a chance.
@@ -886,8 +887,8 @@ pub struct TakerSwap {
     ctx: MmArc,
     maker_coin: MmCoinEnum,
     taker_coin: MmCoinEnum,
-    maker_amount: u64,
-    taker_amount: u64,
+    maker_amount: BigDecimal,
+    taker_amount: BigDecimal,
     my_persistent_pub: H264,
     maker: bits256,
     uuid: String,
