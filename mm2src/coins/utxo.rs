@@ -21,7 +21,8 @@
 pub mod rpc_clients;
 
 use base64::{encode_config as base64_encode, URL_SAFE};
-pub use bitcrypto::{dhash160, ChecksumType};
+use bigdecimal::BigDecimal;
+pub use bitcrypto::{dhash160, ChecksumType, sha256};
 use byteorder::{LittleEndian, WriteBytesExt};
 use chain::{TransactionOutput, TransactionInput, OutPoint};
 use chain::constants::{SEQUENCE_FINAL};
@@ -34,6 +35,7 @@ use hashbrown::hash_map::{HashMap, Entry};
 use keys::{Error as KeysError, KeyPair, Private, Public, Address, Secret, Type};
 use keys::bytes::Bytes;
 use keys::generator::{Random, Generator};
+use num_traits::cast::ToPrimitive;
 use primitives::hash::{H256, H264, H512};
 use rand::{thread_rng};
 use rand::seq::SliceRandom;
@@ -42,6 +44,7 @@ use script::{Opcode, Builder, Script, ScriptAddress, TransactionInputSigner, Uns
 use serde_json::{self as json, Value as Json};
 use serialization::{serialize, deserialize};
 use std::borrow::Cow;
+use std::cmp::Ordering;
 use std::ffi::CStr;
 use std::ops::Deref;
 use std::str::FromStr;
@@ -53,10 +56,10 @@ pub use chain::Transaction as UtxoTx;
 
 use self::rpc_clients::{UtxoRpcClientEnum, UnspentInfo, ElectrumClient, ElectrumClientImpl, NativeClient, electrum_script_hash};
 use super::{IguanaInfo, MarketCoinOps, MmCoin, MmCoinEnum, SwapOps, Transaction, TransactionEnum, TransactionFut, TransactionDetails};
-use crate::utxo::rpc_clients::{NativeClientImpl, UtxoRpcClientOps};
-use std::cmp::Ordering;
-use bitcrypto::sha256;
-use bigdecimal::BigDecimal;
+use crate::utxo::rpc_clients::{NativeClientImpl};
+
+#[cfg(test)]
+mod utxo_tests;
 
 impl Transaction for UtxoTx {
     fn tx_hex(&self) -> Vec<u8> {
@@ -415,16 +418,9 @@ fn sign_tx(
     })
 }
 
-/// MM2 uses satoshis with 8 decimals as amounts, but some UTXO coins have less than 8 decimals.
-/// Have not seen UTXO coins with more than 8 decimals but it's ok to handle this too just in case.
-fn adjust_sat_by_decimals(satoshis: u64, decimals: u8) -> u64 {
-    if decimals < 8 {
-        satoshis / 10_u64.pow(8 - decimals as u32)
-    } else if decimals > 8 {
-        satoshis * 10_u64.pow(decimals as u32 - 8)
-    } else {
-        satoshis
-    }
+/// Denominate BigDecimal amount in coin units to satoshis
+fn sat_from_big_decimal(amount: BigDecimal, decimals: u8) -> Result<u64, String> {
+    (amount.clone() * BigDecimal::from(10u64.pow(decimals as u32))).to_u64().ok_or(ERRL!("Could not get sat from amount {} with decimals {}", amount, decimals))
 }
 
 #[derive(Clone, Debug)]
@@ -473,10 +469,10 @@ impl UtxoCoin {
         first_pub0: &Public,
         second_pub0: &Public,
         priv_bn_hash: &[u8],
-        amount: u64,
+        amount: BigDecimal,
     ) -> Result<(), String> {
         let tx: UtxoTx = try_s!(deserialize(payment_tx).map_err(|e| ERRL!("{:?}", e)));
-        let amount = adjust_sat_by_decimals(amount, self.decimals);
+        let amount = try_s!(sat_from_big_decimal(amount, self.decimals));
 
         let mut attempts = 0;
         loop {
@@ -693,9 +689,9 @@ pub fn compressed_pub_key_from_priv_raw(raw_priv: &[u8], sum_type: ChecksumType)
 }
 
 impl SwapOps for UtxoCoin {
-    fn send_taker_fee(&self, fee_pub_key: &[u8], amount: u64) -> TransactionFut {
+    fn send_taker_fee(&self, fee_pub_key: &[u8], amount: BigDecimal) -> TransactionFut {
         let address = try_fus!(address_from_raw_pubkey(fee_pub_key, self.pub_addr_prefix, self.pub_t_addr_prefix, self.checksum_type));
-        let amount = adjust_sat_by_decimals(amount, self.decimals);
+        let amount = try_fus!(sat_from_big_decimal(amount, self.decimals));
         let output = TransactionOutput {
             value: amount,
             script_pubkey: Builder::build_p2pkh(&address.hash).to_bytes()
@@ -708,7 +704,7 @@ impl SwapOps for UtxoCoin {
         time_lock: u32,
         taker_pub: &[u8],
         secret_hash: &[u8],
-        amount: u64,
+        amount: BigDecimal,
     ) -> TransactionFut {
         let redeem_script = try_fus!(payment_script(
             time_lock,
@@ -716,7 +712,7 @@ impl SwapOps for UtxoCoin {
             self.key_pair.public(),
             &try_fus!(Public::from_slice(taker_pub)),
         ));
-        let amount = adjust_sat_by_decimals(amount, self.decimals);
+        let amount = try_fus!(sat_from_big_decimal(amount, self.decimals));
         let output = TransactionOutput {
             value: amount,
             script_pubkey: Builder::build_p2sh(&dhash160(&redeem_script)).into(),
@@ -729,7 +725,7 @@ impl SwapOps for UtxoCoin {
         time_lock: u32,
         maker_pub: &[u8],
         priv_bn_hash: &[u8],
-        amount: u64,
+        amount: BigDecimal,
     ) -> TransactionFut {
         let redeem_script = try_fus!(payment_script(
             time_lock,
@@ -738,7 +734,7 @@ impl SwapOps for UtxoCoin {
             &try_fus!(Public::from_slice(maker_pub)),
         ));
 
-        let amount = adjust_sat_by_decimals(amount, self.decimals);
+        let amount = try_fus!(sat_from_big_decimal(amount, self.decimals));
 
         let output = TransactionOutput {
             value: amount,
@@ -932,13 +928,13 @@ impl SwapOps for UtxoCoin {
         &self,
         fee_tx: TransactionEnum,
         fee_addr: &[u8],
-        amount: u64
+        amount: BigDecimal,
     ) -> Result<(), String> {
         let tx = match fee_tx {
             TransactionEnum::UtxoTx(tx) => tx,
             _ => panic!(),
         };
-        let amount = adjust_sat_by_decimals(amount, self.decimals);
+        let amount = try_s!(sat_from_big_decimal(amount, self.decimals));
         let tx_from_rpc = try_s!(self.rpc_client.get_transaction_bytes(tx.hash().reversed().into()).wait());
 
         if tx_from_rpc.0 != serialize(&tx).take() {
@@ -963,7 +959,7 @@ impl SwapOps for UtxoCoin {
         time_lock: u32,
         maker_pub: &[u8],
         priv_bn_hash: &[u8],
-        amount: u64,
+        amount: BigDecimal,
     ) -> Result<(), String> {
         self.validate_payment(
             payment_tx,
@@ -981,7 +977,7 @@ impl SwapOps for UtxoCoin {
         time_lock: u32,
         taker_pub: &[u8],
         priv_bn_hash: &[u8],
-        amount: u64,
+        amount: BigDecimal,
     ) -> Result<(), String> {
         self.validate_payment(
             payment_tx,
@@ -1085,24 +1081,24 @@ impl MmCoin for UtxoCoin {
         Box::new(futures::future::ok(()))
     }
 
-    fn withdraw(&self, to: &str, amount: f64, max: bool) -> Box<Future<Item=TransactionDetails, Error=String> + Send> {
+    fn withdraw(&self, to: &str, amount: BigDecimal, max: bool) -> Box<Future<Item=TransactionDetails, Error=String> + Send> {
         let to: Address = try_fus!(Address::from_str(to));
         let script_pubkey = Builder::build_p2pkh(&to.hash).to_bytes();
         let utxo_lock = MutexGuardWrapper(try_fus!(UTXO_LOCK.lock()));
         let unspent_fut = self.rpc_client.list_unspent_ordered(&self.my_address);
         let arc = self.clone();
-        Box::new(unspent_fut.and_then(move |unspents| {
+        Box::new(unspent_fut.and_then(move |unspents| -> Box<Future<Item=TransactionDetails, Error=String> + Send> {
             let (value, fee_policy) = if max {
                 (unspents.iter().fold(0, |sum, unspent| sum + unspent.value), FeePolicy::DeductFromOutput(0))
             } else {
-                ((amount * 10.0_f64.powf(arc.decimals as f64)) as u64, FeePolicy::SendExact)
+                (try_fus!(sat_from_big_decimal(amount, arc.decimals)), FeePolicy::SendExact)
             };
             let outputs = vec![TransactionOutput {
                 value,
                 script_pubkey,
             }];
 
-            arc.generate_transaction(
+            Box::new(arc.generate_transaction(
                 unspents,
                 outputs,
                 fee_policy,
@@ -1128,7 +1124,7 @@ impl MmCoin for UtxoCoin {
                     internal_id: vec![].into(),
                     timestamp: now_ms() / 1000,
                 })
-            })
+            }))
         }))
     }
 
@@ -1493,163 +1489,4 @@ fn kmd_interest(height: u64, value: u64, lock_time: u64, current_time: u64) -> u
     // next 2 lines ported as is from Komodo codebase
     minutes -= 59;
     (value / 10512000) * minutes
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn utxo_coin_for_test() -> UtxoCoin {
-        let checksum_type = ChecksumType::DSHA256;
-        let key_pair = key_pair_from_seed("spice describe gravity federal blast come thank unfair canal monkey style afraid").unwrap();
-        let my_address = Address {
-            prefix: 60,
-            hash: key_pair.public().address_hash(),
-            t_addr_prefix: 0,
-            checksum_type,
-        };
-
-        let mut client = ElectrumClientImpl::new();
-        log!("My address "(my_address));
-        client.add_server("electrum1.cipig.net:10025").unwrap();
-
-        let coin = UtxoCoinImpl {
-            decimals: 8,
-            rpc_client: UtxoRpcClientEnum::Electrum(ElectrumClient(Arc::new(client))),
-            key_pair,
-            is_pos: false,
-            notarized: false,
-            overwintered: true,
-            rpc_password: "".to_owned(),
-            rpc_port: 0,
-            rpc_user: "".to_owned(),
-            segwit: false,
-            tx_version: 4,
-            my_address,
-            asset_chain: true,
-            p2sh_addr_prefix: 85,
-            p2sh_t_addr_prefix: 0,
-            pub_addr_prefix: 60,
-            pub_t_addr_prefix: 0,
-            ticker: "ETOMIC".into(),
-            wif_prefix: 0,
-            tx_fee: TxFee::Fixed(1000),
-            version_group_id: 0x892f2085,
-            zcash: true,
-            checksum_type,
-        };
-
-        UtxoCoin(Arc::new(coin))
-    }
-
-    #[test]
-    fn test_extract_secret() {
-        let tx: UtxoTx = "0100000001de7aa8d29524906b2b54ee2e0281f3607f75662cbc9080df81d1047b78e21dbc00000000d7473044022079b6c50820040b1fbbe9251ced32ab334d33830f6f8d0bf0a40c7f1336b67d5b0220142ccf723ddabb34e542ed65c395abc1fbf5b6c3e730396f15d25c49b668a1a401209da937e5609680cb30bff4a7661364ca1d1851c2506fa80c443f00a3d3bf7365004c6b6304f62b0e5cb175210270e75970bb20029b3879ec76c4acd320a8d0589e003636264d01a7d566504bfbac6782012088a9142fb610d856c19fd57f2d0cffe8dff689074b3d8a882103f368228456c940ac113e53dad5c104cf209f2f102a409207269383b6ab9b03deac68ffffffff01d0dc9800000000001976a9146d9d2b554d768232320587df75c4338ecc8bf37d88ac40280e5c".into();
-        let secret = tx.extract_secret().unwrap();
-        let expected_secret = hex::decode("9da937e5609680cb30bff4a7661364ca1d1851c2506fa80c443f00a3d3bf7365").unwrap();
-        assert_eq!(expected_secret, secret);
-    }
-
-    #[test]
-    fn test_generate_transaction() {
-        let coin = utxo_coin_for_test();
-        let unspents = vec![UnspentInfo {
-            value: 10000000000,
-            outpoint: OutPoint::default(),
-        }];
-
-        let outputs = vec![TransactionOutput {
-            script_pubkey: vec![].into(),
-            value: 999,
-        }];
-
-        let generated = coin.generate_transaction(unspents, outputs, FeePolicy::SendExact).wait();
-        // must not allow to use output with value < dust
-        unwrap_err!(generated);
-
-        let unspents = vec![UnspentInfo {
-            value: 100000,
-            outpoint: OutPoint::default(),
-        }];
-
-        let outputs = vec![TransactionOutput {
-            script_pubkey: vec![].into(),
-            value: 98001,
-        }];
-
-        let generated = unwrap!(coin.generate_transaction(unspents, outputs, FeePolicy::SendExact).wait());
-        // the change that is less than dust must be included to miner fee
-        // so no extra outputs should appear in generated transaction
-        assert_eq!(generated.0.outputs.len(), 1);
-
-        assert_eq!(generated.1.fee_amount, 1999);
-        assert_eq!(generated.1.received_by_me, 0);
-        assert_eq!(generated.1.spent_by_me, 100000);
-
-        let unspents = vec![UnspentInfo {
-            value: 100000,
-            outpoint: OutPoint::default(),
-        }];
-
-        let outputs = vec![TransactionOutput {
-            script_pubkey: "76a91405aab5342166f8594baf17a7d9bef5d56744332788ac".into(),
-            value: 100000,
-        }];
-
-        // test that fee is properly deducted from output amount equal to input amount (max withdraw case)
-        let generated = unwrap!(coin.generate_transaction(unspents, outputs, FeePolicy::DeductFromOutput(0)).wait());
-        assert_eq!(generated.0.outputs.len(), 1);
-
-        assert_eq!(generated.1.fee_amount, 1000);
-        assert_eq!(generated.1.received_by_me, 99000);
-        assert_eq!(generated.1.spent_by_me, 100000);
-        assert_eq!(generated.0.outputs[0].value, 99000);
-
-        let unspents = vec![UnspentInfo {
-            value: 100000,
-            outpoint: OutPoint::default(),
-        }];
-
-        let outputs = vec![TransactionOutput {
-            script_pubkey: vec![].into(),
-            value: 100000,
-        }];
-
-        // test that generate_transaction returns an error when input amount is not sufficient to cover output + fee
-        unwrap_err!(coin.generate_transaction(unspents, outputs, FeePolicy::SendExact).wait());
-    }
-
-    #[test]
-    fn test_addresses_from_script() {
-        let coin = utxo_coin_for_test();
-        // P2PKH
-        let script: Script = "76a91405aab5342166f8594baf17a7d9bef5d56744332788ac".into();
-        let expected_addr: Vec<Address> = vec!["R9o9xTocqr6CeEDGDH6mEYpwLoMz6jNjMW".into()];
-        let actual_addr = unwrap!(coin.addresses_from_script(&script));
-        assert_eq!(expected_addr, actual_addr);
-
-        // P2SH
-        let script: Script = "a914e71a6120653ebd526e0f9d7a29cde5969db362d487".into();
-        let expected_addr: Vec<Address> = vec!["bZoEPR7DjTqSDiQTeRFNDJuQPTRY2335LD".into()];
-        let actual_addr = unwrap!(coin.addresses_from_script(&script));
-        assert_eq!(expected_addr, actual_addr);
-    }
-
-    #[test]
-    fn test_kmd_interest() {
-        let value = 64605500822;
-        let lock_time = 1556623906;
-        let current_time = 1556623906 + 3600 + 300;
-        let expected = 36870;
-        let actual = kmd_interest(1000001, value, lock_time, current_time);
-        assert_eq!(expected, actual);
-
-        // UTXO amount must be at least 10 KMD to be eligible for interest
-        let value = 999999999;
-        let lock_time = 1556623906;
-        let current_time = 1556623906 + 3600 + 300;
-        let expected = 0;
-        let actual = kmd_interest(1000001, value, lock_time, current_time);
-        assert_eq!(expected, actual);
-    }
 }

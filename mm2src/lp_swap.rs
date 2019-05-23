@@ -57,7 +57,7 @@
 use bitcrypto::dhash160;
 use rpc::v1::types::{H160 as H160Json, H256 as H256Json, H264 as H264Json};
 use coins::{MmCoinEnum, TransactionDetails};
-use common::{bits256, dstr, rpc_response, HyRes, Timeout};
+use common::{bits256, rpc_response, HyRes, Timeout};
 use common::log::{TagParam};
 use common::mm_ctx::MmArc;
 use crc::crc32;
@@ -75,6 +75,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use bigdecimal::BigDecimal;
+use num_traits::cast::ToPrimitive;
 
 /// Includes the grace time we add to the "normal" timeouts
 /// in order to give different and/or heavy communication channels a chance.
@@ -288,8 +289,8 @@ struct MakerSwapData {
     secret: H256Json,
     my_persistent_pub: H264Json,
     lock_duration: u64,
-    maker_amount: u64,
-    taker_amount: u64,
+    maker_amount: BigDecimal,
+    taker_amount: BigDecimal,
     maker_payment_confirmations: u32,
     taker_payment_confirmations: u32,
     maker_payment_lock: u64,
@@ -302,8 +303,8 @@ pub struct MakerSwap {
     ctx: MmArc,
     maker_coin: MmCoinEnum,
     taker_coin: MmCoinEnum,
-    maker_amount: u64,
-    taker_amount: u64,
+    maker_amount: BigDecimal,
+    taker_amount: BigDecimal,
     my_persistent_pub: H264,
     taker: bits256,
     uuid: String,
@@ -481,8 +482,8 @@ impl MakerSwap {
         taker: bits256,
         maker_coin: MmCoinEnum,
         taker_coin: MmCoinEnum,
-        maker_amount: u64,
-        taker_amount: u64,
+        maker_amount: BigDecimal,
+        taker_amount: BigDecimal,
         my_persistent_pub: H264,
         uuid: String,
     ) -> Self {
@@ -511,8 +512,7 @@ impl MakerSwap {
 
     fn start(&self) -> Result<(Option<MakerSwapCommand>, Vec<MakerSwapEvent>), String> {
         // maker and taker amounts are always in 10^-8 of coin units
-        let amount_f64 = dstr(self.maker_amount as i64, 8);
-        if let Err(e) = self.maker_coin.check_i_have_enough_to_trade(amount_f64, true).wait() {
+        if let Err(e) = self.maker_coin.check_i_have_enough_to_trade(self.maker_amount.to_f64().unwrap(), true).wait() {
             return Ok((
                 Some(MakerSwapCommand::Finish),
                 vec![MakerSwapEvent::StartFailed(ERRL!("!check_i_have_enough_to_trade {}", e).into())],
@@ -539,8 +539,8 @@ impl MakerSwap {
             secret: secret.into(),
             started_at,
             lock_duration,
-            maker_amount: self.maker_amount,
-            taker_amount: self.taker_amount,
+            maker_amount: self.maker_amount.clone(),
+            taker_amount: self.taker_amount.clone(),
             maker_payment_confirmations,
             taker_payment_confirmations,
             maker_payment_lock: started_at + lock_duration * 2,
@@ -623,9 +623,9 @@ impl MakerSwap {
         log!({"Taker fee tx {:02x}", hash});
 
         let fee_addr_pub_key = unwrap!(hex::decode("03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc06"));
-        let fee_amount = self.taker_amount / 777;
+        let fee_amount = self.taker_amount.clone() / 777;
         let fee_details = unwrap!(self.taker_coin.tx_details_by_hash(&hash));
-        match self.taker_coin.validate_fee(taker_fee, &fee_addr_pub_key, fee_amount as u64) {
+        match self.taker_coin.validate_fee(taker_fee, &fee_addr_pub_key, fee_amount) {
             Ok(_) => (),
             Err(err) => return Ok((
                 Some(MakerSwapCommand::Finish),
@@ -643,7 +643,7 @@ impl MakerSwap {
             self.data.maker_payment_lock as u32,
             &*self.other_persistent_pub,
             &*dhash160(&self.data.secret.0),
-            self.maker_amount,
+            self.maker_amount.clone(),
         );
 
         let transaction = match payment_fut.wait() {
@@ -707,7 +707,7 @@ impl MakerSwap {
             self.taker_payment_lock as u32,
             &*self.other_persistent_pub,
             &*dhash160(&self.data.secret.0),
-            self.taker_amount,
+            self.taker_amount.clone(),
         );
 
         if let Err(e) = validated {
@@ -865,8 +865,8 @@ struct TakerSwapData {
     maker: H256Json,
     my_persistent_pub: H264Json,
     lock_duration: u64,
-    maker_amount: u64,
-    taker_amount: u64,
+    maker_amount: BigDecimal,
+    taker_amount: BigDecimal,
     maker_payment_confirmations: u32,
     taker_payment_confirmations: u32,
     taker_payment_lock: u64,
@@ -1047,8 +1047,8 @@ impl TakerSwap {
         maker: bits256,
         maker_coin: MmCoinEnum,
         taker_coin: MmCoinEnum,
-        maker_amount: u64,
-        taker_amount: u64,
+        maker_amount: BigDecimal,
+        taker_amount: BigDecimal,
         my_persistent_pub: H264,
         uuid: String,
     ) -> Self {
@@ -1080,8 +1080,7 @@ impl TakerSwap {
 
     fn start(&self) -> Result<(Option<TakerSwapCommand>, Vec<TakerSwapEvent>), String> {
         // maker and taker amounts are always in 10^-8 of coin units
-        let amount_f64 = dstr(self.taker_amount as i64, 8);
-        if let Err(e) = self.taker_coin.check_i_have_enough_to_trade(amount_f64, true).wait() {
+        if let Err(e) = self.taker_coin.check_i_have_enough_to_trade(self.taker_amount.to_f64().unwrap(), true).wait() {
             return Ok((
                 Some(TakerSwapCommand::Finish),
                 vec![TakerSwapEvent::StartFailed(ERRL!("{}", e).into())],
@@ -1105,8 +1104,8 @@ impl TakerSwap {
             maker: unsafe { self.maker.bytes.into() },
             started_at,
             lock_duration,
-            maker_amount: self.maker_amount,
-            taker_amount: self.taker_amount,
+            maker_amount: self.maker_amount.clone(),
+            taker_amount: self.taker_amount.clone(),
             maker_payment_confirmations,
             taker_payment_confirmations,
             taker_payment_lock: started_at + lock_duration,
@@ -1189,8 +1188,8 @@ impl TakerSwap {
 
     fn send_taker_fee(&self) -> Result<(Option<TakerSwapCommand>, Vec<TakerSwapEvent>), String> {
         let fee_addr_pub_key = unwrap!(hex::decode("03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc06"));
-        let fee_amount = self.taker_amount / 777;
-        let fee_tx = self.taker_coin.send_taker_fee(&fee_addr_pub_key, fee_amount as u64).wait();
+        let fee_amount = self.taker_amount.clone() / 777;
+        let fee_tx = self.taker_coin.send_taker_fee(&fee_addr_pub_key, fee_amount).wait();
         let transaction = match fee_tx {
             Ok (t) => t,
             Err (err) => return Ok((
@@ -1246,7 +1245,7 @@ impl TakerSwap {
             self.maker_payment_lock as u32,
             &*self.other_persistent_pub,
             &self.secret_hash.0,
-            self.maker_amount,
+            self.maker_amount.clone(),
         );
 
         if let Err(e) = validated {
@@ -1279,7 +1278,7 @@ impl TakerSwap {
             self.data.taker_payment_lock as u32,
             &*self.other_persistent_pub,
             &self.secret_hash.0,
-            self.taker_amount,
+            self.taker_amount.clone(),
         );
 
         let transaction = match payment_fut.wait() {

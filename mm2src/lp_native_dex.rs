@@ -243,7 +243,7 @@ pub unsafe fn lp_command_process(
         let _lock = SINGLE_THREADED_C_LOCK.lock();
         let mut trade_command = -1;
         if stats_json_only == 0 {
-            trade_command = lp_trade_command(ctx.clone(), json, &c_json);
+            trade_command = lp_trade_command(ctx.clone(), json);
         }
         if trade_command <= 0 {
             lp::stats_JSON(

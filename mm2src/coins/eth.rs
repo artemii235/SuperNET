@@ -18,15 +18,17 @@
 //
 //  Copyright © 2017-2019 SuperNET. All rights reserved.
 //
+use bigdecimal::BigDecimal;
 use bitcrypto::sha256;
 use common::{lp, MutexGuardWrapper, slurp_url};
+use common::mm_ctx::MmArc;
 use secp256k1::key::PublicKey;
 use ethabi::{Contract, Token};
 use ethcore_transaction::{ Action, Transaction as UnSignedEthTx, UnverifiedTransaction};
 use ethereum_types::{Address, U256, H160};
 use ethkey::{ KeyPair, Public, public_to_address, SECP256K1 };
 use futures::Future;
-use futures::future::{loop_fn, Loop};
+use futures::future::{Either, loop_fn, Loop};
 use futures_timer::Delay;
 use gstuff::{now_ms, slurp};
 use hashbrown::HashMap;
@@ -54,9 +56,6 @@ pub use ethcore_transaction::SignedTransaction as SignedEthTx;
 
 mod web3_transport;
 use self::web3_transport::Web3Transport;
-use futures::future::Either;
-use common::mm_ctx::MmArc;
-use bigdecimal::BigDecimal;
 
 #[cfg(test)]
 mod eth_tests;
@@ -193,12 +192,12 @@ pub struct EthCoin(Arc<EthCoinImpl>);
 impl Deref for EthCoin {type Target = EthCoinImpl; fn deref (&self) -> &EthCoinImpl {&*self.0}}
 
 impl SwapOps for EthCoin {
-    fn send_taker_fee(&self, fee_addr: &[u8], amount: u64) -> TransactionFut {
+    fn send_taker_fee(&self, fee_addr: &[u8], amount: BigDecimal) -> TransactionFut {
         let address = try_fus!(addr_from_raw_pubkey(fee_addr));
 
         Box::new(self.send_to_address(
             address,
-            u256_denominate_from_satoshis(amount, self.decimals),
+            try_fus!(wei_from_big_decimal(amount, self.decimals)),
         ).map(TransactionEnum::from))
     }
 
@@ -207,12 +206,12 @@ impl SwapOps for EthCoin {
         time_lock: u32,
         taker_pub: &[u8],
         priv_bn_hash: &[u8],
-        amount: u64
+        amount: BigDecimal,
     ) -> TransactionFut {
         let taker_addr = try_fus!(addr_from_raw_pubkey(taker_pub));
 
         Box::new(self.send_hash_time_locked_payment(
-            u256_denominate_from_satoshis(amount, self.decimals),
+            try_fus!(wei_from_big_decimal(amount, self.decimals)),
             time_lock,
             priv_bn_hash,
             taker_addr,
@@ -224,12 +223,12 @@ impl SwapOps for EthCoin {
         time_lock: u32,
         maker_pub: &[u8],
         priv_bn_hash: &[u8],
-        amount: u64,
+        amount: BigDecimal,
     ) -> TransactionFut {
         let maker_addr = try_fus!(addr_from_raw_pubkey(maker_pub));
 
         Box::new(self.send_hash_time_locked_payment(
-            u256_denominate_from_satoshis(amount, self.decimals),
+            try_fus!(wei_from_big_decimal(amount, self.decimals)),
             time_lock,
             priv_bn_hash,
             maker_addr,
@@ -291,14 +290,14 @@ impl SwapOps for EthCoin {
         &self,
         fee_tx: TransactionEnum,
         fee_addr: &[u8],
-        amount: u64
+        amount: BigDecimal,
     ) -> Result<(), String> {
         let tx = match fee_tx {
             TransactionEnum::SignedEthTx(t) => t,
             _ => panic!(),
         };
 
-        let expected_value = u256_denominate_from_satoshis(amount, self.decimals);
+        let expected_value = try_s!(wei_from_big_decimal(amount, self.decimals));
         let fee_addr = try_s!(addr_from_raw_pubkey(fee_addr));
         let tx_from_rpc = try_s!(self.web3.eth().transaction(TransactionId::Hash(tx.hash)).wait());
         let tx_from_rpc = match tx_from_rpc {
@@ -342,7 +341,7 @@ impl SwapOps for EthCoin {
         time_lock: u32,
         maker_pub: &[u8],
         secret_hash: &[u8],
-        amount: u64,
+        amount: BigDecimal,
     ) -> Result<(), String> {
         self.validate_payment(
             payment_tx,
@@ -359,7 +358,7 @@ impl SwapOps for EthCoin {
         time_lock: u32,
         taker_pub: &[u8],
         secret_hash: &[u8],
-        amount: u64,
+        amount: BigDecimal,
     ) -> Result<(), String> {
         self.validate_payment(
             payment_tx,
@@ -831,12 +830,12 @@ impl EthCoin {
         time_lock: u32,
         sender_pub: &[u8],
         secret_hash: &[u8],
-        amount: u64,
+        amount: BigDecimal,
     ) -> Result<(), String> {
         let unsigned: UnverifiedTransaction = try_s!(rlp::decode(payment_tx));
         let tx = try_s!(SignedEthTx::new(unsigned));
 
-        let expected_value = u256_denominate_from_satoshis(amount, self.decimals);
+        let expected_value = try_s!(wei_from_big_decimal(amount, self.decimals));
         let tx_from_rpc = try_s!(self.web3.eth().transaction(TransactionId::Hash(tx.hash)).wait());
         let tx_from_rpc = match tx_from_rpc {
             Some(t) => t,
@@ -1395,14 +1394,14 @@ impl MmCoin for EthCoin {
         }))
     }
 
-    fn withdraw(&self, to: &str, amount: f64, max: bool) -> Box<Future<Item=TransactionDetails, Error=String> + Send> {
+    fn withdraw(&self, to: &str, amount: BigDecimal, max: bool) -> Box<Future<Item=TransactionDetails, Error=String> + Send> {
         let to_addr = try_fus!(addr_from_str(to));
         let arc = self.clone();
         Box::new(self.my_balance().and_then(move |my_balance| -> Box<Future<Item=TransactionDetails, Error=String> + Send> {
             let mut wei_amount = if max {
                 my_balance
             } else {
-                try_fus!(wei_from_f64(amount, arc.decimals))
+                try_fus!(wei_from_big_decimal(amount.clone(), arc.decimals))
             };
             if wei_amount > my_balance {
                 return Box::new(futures::future::err(ERRL!("The amount {} to withdraw is larger than balance", amount)));
@@ -1558,14 +1557,6 @@ fn addr_from_raw_pubkey(pubkey: &[u8]) -> Result<Address, String> {
     Ok(public_to_address(&eth_public))
 }
 
-fn u256_denominate_from_satoshis(satoshis: u64, decimals: u8) -> U256 {
-    if decimals < 8 {
-        U256::from(satoshis) / U256::exp10(8 - decimals as usize)
-    } else {
-        U256::from(satoshis) * U256::exp10(decimals as usize - 8)
-    }
-}
-
 fn display_u256_with_decimal_point(number: U256, decimals: u8) -> String {
     let mut string = number.to_string();
     let decimals = decimals as usize;
@@ -1587,7 +1578,7 @@ fn u256_to_big_decimal(number: U256, decimals: u8) -> Result<BigDecimal, String>
     Ok(try_s!(string.parse()))
 }
 
-fn wei_from_f64(amount: f64, decimals: u8) -> Result<U256, String> {
+fn wei_from_big_decimal(amount: BigDecimal, decimals: u8) -> Result<U256, String> {
     let mut amount = amount.to_string();
     let dot = amount.find(|c| c == '.');
     let decimals = decimals as usize;

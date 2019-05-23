@@ -44,7 +44,7 @@ fn enable_coins_eth_electrum(mm: &MarketMakerIt, eth_urls: Vec<&str>) -> HashMap
     let mut replies = HashMap::new();
     replies.insert ("BEER", enable_electrum (mm, "BEER", vec!["electrum1.cipig.net:10022","electrum2.cipig.net:10022","electrum3.cipig.net:10022"]));
     replies.insert ("PIZZA", enable_electrum (mm, "PIZZA", vec!["electrum1.cipig.net:10024","electrum2.cipig.net:10024","electrum3.cipig.net:10024"]));
-    replies.insert ("ETOMIC", enable_electrum (mm, "ETOMIC", vec!["electrum1.cipig.net:10025","electrum2.cipig.net:10025","electrum3.cipig.net:10025"]));
+    replies.insert ("ETOMIC", enable_electrum (mm, "ETOMIC", vec!["electrum1.cipig.net:10025","electrum2.cipig.net:10025"]));
     replies.insert ("ETH", enable_native (mm, "ETH", eth_urls.clone()));
     replies.insert ("JST", enable_native (mm, "JST", eth_urls));
     replies
@@ -120,6 +120,7 @@ fn test_rpc() {
 }
 
 use super::{btc2kmd, lp_main};
+use bigdecimal::BigDecimal;
 
 /// Integration (?) test for the "btc2kmd" command line invocation.
 /// The argument is the WIF example from https://en.bitcoin.it/wiki/Wallet_import_format.
@@ -646,8 +647,8 @@ fn check_my_swap_status(
     uuid: &str,
     expected_success_events: &Vec<&str>,
     expected_error_events: &Vec<&str>,
-    maker_amount: u64,
-    taker_amount: u64,
+    maker_amount: BigDecimal,
+    taker_amount: BigDecimal,
 ) {
     let response = unwrap!(mm.rpc (json! ({
             "userpass": mm.userpass,
@@ -664,8 +665,10 @@ fn check_my_swap_status(
     assert_eq!(expected_error_events, &error_events);
 
     let events_array = unwrap!(status_response["result"]["events"].as_array());
-    assert_eq!(events_array[0]["event"]["data"]["maker_amount"].as_u64(), Some(maker_amount));
-    assert_eq!(events_array[0]["event"]["data"]["taker_amount"].as_u64(), Some(taker_amount));
+    let actual_maker_amount = unwrap!(json::from_value(events_array[0]["event"]["data"]["maker_amount"].clone()));
+    assert_eq!(maker_amount, actual_maker_amount);
+    let actual_taker_amount = unwrap!(json::from_value(events_array[0]["event"]["data"]["taker_amount"].clone()));
+    assert_eq!(taker_amount, actual_taker_amount);
     let actual_events = events_array.iter().map(|item| unwrap!(item["event"]["type"].as_str()));
     let actual_events: Vec<&str> = actual_events.collect();
     assert_eq!(expected_success_events, &actual_events);
@@ -846,8 +849,8 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
             &uuid,
             &taker_success_events,
             &taker_error_events,
-            10000000,
-            10000000,
+            "0.1".parse().unwrap(),
+            "0.1".parse().unwrap(),
         );
 
         check_my_swap_status(
@@ -855,8 +858,8 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
             &uuid,
             &maker_success_events,
             &maker_error_events,
-            10000000,
-            10000000,
+            "0.1".parse().unwrap(),
+            "0.1".parse().unwrap(),
         );
     }
     // give nodes 3 seconds to broadcast their swaps data
@@ -1370,7 +1373,7 @@ fn test_multiple_buy_sell_no_delay() {
         "base": "BEER",
         "rel": "PIZZA",
         "price": 1,
-        "relvolume": 0.1,
+        "volume": 0.1,
     })));
     assert! (rc.0.is_success(), "buy should have succeed, but got {:?}", rc);
 
@@ -1380,7 +1383,7 @@ fn test_multiple_buy_sell_no_delay() {
         "base": "BEER",
         "rel": "ETOMIC",
         "price": 1,
-        "relvolume": 0.1,
+        "volume": 0.1,
     })));
     assert! (rc.0.is_success(), "buy should have succeed, but got {:?}", rc);
     thread::sleep(Duration::from_secs(20));
