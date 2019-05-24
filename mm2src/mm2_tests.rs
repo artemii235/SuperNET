@@ -44,7 +44,7 @@ fn enable_coins_eth_electrum(mm: &MarketMakerIt, eth_urls: Vec<&str>) -> HashMap
     let mut replies = HashMap::new();
     replies.insert ("BEER", enable_electrum (mm, "BEER", vec!["electrum1.cipig.net:10022","electrum2.cipig.net:10022","electrum3.cipig.net:10022"]));
     replies.insert ("PIZZA", enable_electrum (mm, "PIZZA", vec!["electrum1.cipig.net:10024","electrum2.cipig.net:10024","electrum3.cipig.net:10024"]));
-    replies.insert ("ETOMIC", enable_electrum (mm, "ETOMIC", vec!["electrum1.cipig.net:10025","electrum2.cipig.net:10025"]));
+    //replies.insert ("ETOMIC", enable_electrum (mm, "ETOMIC", vec!["electrum1.cipig.net:10025","electrum2.cipig.net:10025"]));
     replies.insert ("ETH", enable_native (mm, "ETH", eth_urls.clone()));
     replies.insert ("JST", enable_native (mm, "JST", eth_urls));
     replies
@@ -239,7 +239,8 @@ fn alice_can_see_the_active_order_after_connection() {
         "method": "setprice",
         "base": "BEER",
         "rel": "PIZZA",
-        "price": 0.9
+        "price": 0.9,
+        "volume": "0.9",
     })));
     assert! (rc.0.is_success(), "!setprice: {}", rc.1);
 
@@ -260,7 +261,7 @@ fn alice_can_see_the_active_order_after_connection() {
     let asks = bob_orderbook["asks"].as_array().unwrap();
     assert!(asks.len() > 0, "Bob BEER/PIZZA asks are empty");
     let vol = asks[0]["maxvolume"].as_f64().unwrap();
-    assert_eq!(vol, 1.0);
+    assert_eq!(vol, 0.9);
 
     let mut mm_alice = unwrap! (MarketMakerIt::start (
         json! ({
@@ -308,7 +309,7 @@ fn alice_can_see_the_active_order_after_connection() {
         let asks = alice_orderbook["asks"].as_array().unwrap();
         assert_eq!(asks.len(), 1, "Alice BEER/PIZZA orderbook must have exactly 1 ask");
         let vol = asks[0]["maxvolume"].as_f64().unwrap();
-        assert_eq!(vol, 1.0);
+        assert_eq!(vol, 0.9);
         // orderbook must display valid Bob address
         let address = asks[0]["address"].as_str().unwrap();
         assert_eq!("RRnMcSeKiLrNdbp91qNVQwwXx5azD4S4CD", address);
@@ -793,9 +794,9 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
         log!("Issue bob " (base) "/" (rel) " sell request");
             let rc = unwrap!(mm_bob.rpc (json! ({
             "userpass": mm_bob.userpass,
-            "method": "buy",
-            "base": rel,
-            "rel": base,
+            "method": "setprice",
+            "base": base,
+            "rel": rel,
             "price": 1,
             "volume": 0.1
         })));
@@ -906,7 +907,7 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
 
 #[test]
 fn trade_test_electrum_and_eth_coins() {
-    trade_base_rel_electrum(vec![("BEER", "ETOMIC"), ("ETH", "JST")]);
+    trade_base_rel_electrum(vec![("ETH", "JST")]);
 }
 
 fn trade_base_rel_native(base: &str, rel: &str) {

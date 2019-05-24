@@ -28,7 +28,7 @@ use hyper::rt::{Stream};
 use hyper::service::Service;
 use libc::{c_char, c_void};
 use portfolio::lp_autoprice;
-use portfolio::prices::{lp_fundvalue, set_price};
+use portfolio::prices::{lp_fundvalue};
 use serde_json::{self as json, Value as Json};
 use std::ffi::{CStr, CString};
 use std::net::{SocketAddr};
@@ -38,7 +38,7 @@ use std::sync::atomic::Ordering;
 use tokio_core::net::TcpListener;
 use hex;
 
-use crate::mm2::lp_ordermatch::{buy, sell};
+use crate::mm2::lp_ordermatch::{buy, sell, set_price};
 use crate::mm2::lp_swap::{my_swap_status, stats_swap_status, my_recent_swaps};
 use crate::mm2::CJSON;
 

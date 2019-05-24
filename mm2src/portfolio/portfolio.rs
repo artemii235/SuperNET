@@ -27,14 +27,13 @@
 #[macro_use] extern crate unwrap;
 
 pub mod prices;
-use self::prices::{lp_btcprice, lp_fundvalue, broadcast_my_prices, Coins, CoinId, ExternalPrices, FundvalueRes, PricingProvider, PriceUnit};
+use self::prices::{lp_btcprice, lp_fundvalue, Coins, CoinId, ExternalPrices, FundvalueRes, PricingProvider, PriceUnit};
 
 #[doc(hidden)]
 pub mod portfolio_tests;
 
-use bigdecimal::BigDecimal;
 use common::{lp, rpc_response, rpc_err_response, slurp_url,
-  HyRes, RefreshedExternalResource, CJSON, SMALLVAL};
+  HyRes, RefreshedExternalResource, SMALLVAL};
 use common::mm_ctx::{from_ctx, MmArc, MmWeak};
 use common::log::TagParam;
 use common::ser::de_none_if_empty;
@@ -55,35 +54,12 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use std::thread::sleep;
-use uuid::Uuid;
 
-
-/// Enum representing the order amount
-#[derive(Clone)]
-pub enum OrderAmount {
-    /// The entire balance is available to trade
-    Max,
-    /// Limit the amount to the value
-    Limit(BigDecimal)
-}
-
-#[derive(Clone)]
-pub struct Order {
-    pub max_base_vol: OrderAmount,
-    pub min_base_vol: OrderAmount,
-    pub price: BigDecimal,
-    pub created_at: u64,
-    pub base: String,
-    pub rel: String,
-}
 
 pub struct PortfolioContext {
     // NB: We're using the MM configuration ("coins"), therefore every MM must have its own set of price resources.
     //     That's why we keep the price resources in the `PortfolioContext` and not in a singleton.
     price_resources: Mutex<HashMap<(PricingProvider, PriceUnit), (Arc<Coins>, RefreshedExternalResource<ExternalPrices>)>>,
-    // Fixed prices explicitly set by "setprice" RPC call
-    pub my_maker_orders: Mutex<HashMap<Uuid, Order>>,
-    pub my_taker_orders: Mutex<HashMap<Uuid, Order>>,
 }
 impl PortfolioContext {
     /// Obtains a reference to this crate context, creating it if necessary.
@@ -91,8 +67,6 @@ impl PortfolioContext {
         Ok (try_s! (from_ctx (&ctx.portfolio_ctx, move || {
             Ok (PortfolioContext {
                 price_resources: Mutex::new (HashMap::new()),
-                my_maker_orders: Mutex::new (HashMap::new()),
-                my_taker_orders: Mutex::new (HashMap::new()),
             })
         })))
     }
@@ -1200,19 +1174,11 @@ int32_t LP_portfolio_order(struct LP_portfoliotrade *trades,int32_t max,cJSON *a
 pub fn prices_loop (ctx: MmArc) {
     let mut btc_wait_status = None;
     let mut trades: [lp::LP_portfoliotrade; 256] = unsafe {zeroed()};
-    let mut last_price_broadcast = 0;
     loop {
         sleep (Duration::from_millis (200));
         if ctx.is_stopping() {break}
 
         if !ctx.initialized.load (Ordering::Relaxed) {sleep (Duration::from_millis (100)); continue}
-
-        if now_ms() - last_price_broadcast > 10000 {
-            if let Err(e) = broadcast_my_prices(&ctx) {
-                ctx.log.log("", &[&"broadcast_my_prices"], &format!("error {}", e));
-            }
-            last_price_broadcast = now_ms();
-        }
 
         let btcpp = unsafe {lp::LP_priceinfofind (b"BTC\0".as_ptr() as *mut c_char)};
         if btcpp == null_mut() {
