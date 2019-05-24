@@ -98,7 +98,7 @@ void LP_pubkey_update(struct LP_pubkey_info *pubp,uint32_t baseind,uint32_t reli
         pq->balance = balance;
         DL_APPEND(pubp->quotes,pq); // already serialized as only path is via stats_JSON()
         //printf("create pubp quotes %d/%d\n",baseind,relind);
-    } else if (pq != 0 && price == 0) {
+    } else if (pq != 0 && balance == 0.) {
         DL_DELETE(pubp->quotes, pq);
     } else if (pq != 0 && price > 0.) {
         pq->price = price;

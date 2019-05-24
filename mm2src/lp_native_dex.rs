@@ -1552,7 +1552,7 @@ pub fn lp_init (mypubport: u16, conf: Json, ctx_cb: &Fn (u32))
 */
     let trades = try_s! (thread::Builder::new().name ("trades".into()) .spawn ({
         let ctx = ctx.clone();
-        move || unsafe { lp_trades_loop (ctx) }
+        move || lp_trades_loop (ctx)
     }));
 
     let command_queue = try_s! (thread::Builder::new().name ("command_queue".into()) .spawn ({
