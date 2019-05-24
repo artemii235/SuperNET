@@ -520,7 +520,7 @@ fn test_rpc_password_from_json() {
         "userpass": "password1",
         "method": "electrum",
         "coin": "BEER",
-        "urls": ["electrum1.cipig.net:10022"],
+        "urls": ["electrum2.cipig.net:10022"],
         "mm2": 1,
     })));
 
@@ -531,7 +531,7 @@ fn test_rpc_password_from_json() {
         "userpass": mm.userpass,
         "method": "electrum",
         "coin": "BEER",
-        "urls": ["electrum1.cipig.net:10022"],
+        "urls": ["electrum2.cipig.net:10022"],
         "mm2": 1,
     })));
 
@@ -542,7 +542,7 @@ fn test_rpc_password_from_json() {
         "userpass": mm.userpass,
         "method": "electrum",
         "coin": "PIZZA",
-        "urls": ["electrum1.cipig.net:10022"],
+        "urls": ["electrum1.cipig.net:10024"],
         "mm2": 1,
     })));
 
@@ -583,7 +583,7 @@ fn test_rpc_password_from_json_no_userpass() {
     let electrum = unwrap! (mm.rpc (json! ({
         "method": "electrum",
         "coin": "BEER",
-        "urls": ["electrum1.cipig.net:10022"],
+        "urls": ["electrum2.cipig.net:10022"],
     })));
 
     // electrum call must return 500 status code
@@ -1259,7 +1259,7 @@ fn test_order_errors_when_base_equal_rel() {
     let (_dump_log, _dump_dashboard) = mm_dump (&mm.log_path);
     log!({"Log path: {}", mm.log_path.display()});
     unwrap! (mm.wait_for_log (22., &|log| log.contains (">>>>>>>>> DEX stats ")));
-    enable_electrum (&mm, "BEER", vec!["electrum1.cipig.net:10022"]);
+    enable_electrum (&mm, "BEER", vec!["electrum2.cipig.net:10022"]);
 
     let rc = unwrap! (mm.rpc (json! ({
         "userpass": mm.userpass,
@@ -1293,7 +1293,7 @@ fn test_order_errors_when_base_equal_rel() {
 
 fn startup_passphrase(passphrase: &str, expected_address: &str) {
     let coins = json!([
-        {"coin":"BEER","asset":"BEER","rpcport":8923,"txversion":4},
+        {"coin":"KMD","rpcport":8923,"txversion":4},
     ]);
 
     let mut mm = unwrap! (MarketMakerIt::start (
@@ -1314,7 +1314,7 @@ fn startup_passphrase(passphrase: &str, expected_address: &str) {
     let (_dump_log, _dump_dashboard) = mm_dump (&mm.log_path);
     log!({"Log path: {}", mm.log_path.display()});
     unwrap! (mm.wait_for_log (22., &|log| log.contains (">>>>>>>>> DEX stats ")));
-    let enable = enable_electrum (&mm, "BEER", vec!["electrum1.cipig.net:10022"]);
+    let enable = enable_electrum (&mm, "KMD", vec!["electrum1.cipig.net:10001"]);
     let addr = addr_from_enable(&enable);
     assert_eq!(Json::from(expected_address), addr);
     unwrap!(mm.stop());

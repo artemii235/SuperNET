@@ -21,7 +21,7 @@ use sha2::{Sha256, Digest};
 use std::{io, thread};
 use std::fmt::Debug;
 use std::cmp::Ordering;
-use std::net::{ToSocketAddrs, SocketAddr, TcpStream as TcpStreamStd, Shutdown};
+use std::net::{ToSocketAddrs, SocketAddr, Shutdown};
 use std::ops::Deref;
 use std::sync::{Mutex, Arc};
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
@@ -802,8 +802,6 @@ fn electrum_connect(
     addr: SocketAddr,
     responses: Arc<Mutex<HashMap<String, JsonRpcResponse>>>,
 ) -> Result<mpsc::Sender<Vec<u8>>, String> {
-    // try to connect synchronously first using std TcpStream to check if the server is reachable
-    try_s!(TcpStreamStd::connect(&addr));
     let (tx, rx) = mpsc::channel(0);
     let rx = rx_to_stream(rx);
 
