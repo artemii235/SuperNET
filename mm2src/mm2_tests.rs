@@ -794,7 +794,7 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
         log!("Issue bob " (base) "/" (rel) " sell request");
             let rc = unwrap!(mm_bob.rpc (json! ({
             "userpass": mm_bob.userpass,
-            "method": "setprice",
+            "method": "sell",
             "base": base,
             "rel": rel,
             "price": 1,
@@ -812,7 +812,7 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
             "base": base,
             "rel": rel,
             "volume": 0.1,
-            "price": 2
+            "price": 1
         })));
         assert!(rc.0.is_success(), "!buy: {}", rc.1);
         let buy_json: Json = unwrap!(serde_json::from_str(&rc.1));

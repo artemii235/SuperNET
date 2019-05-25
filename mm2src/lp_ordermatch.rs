@@ -42,33 +42,37 @@ use crate::mm2::lp_swap::{MakerSwap, run_maker_swap, TakerSwap, run_taker_swap};
 #[path = "ordermatch_tests.rs"]
 mod ordermatch_tests;
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+enum TakerAction {
+    Buy,
+    Sell,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct TakerRequest {
+    base: String,
+    rel: String,
+    base_amount: BigDecimal,
+    rel_amount: BigDecimal,
+    action: TakerAction,
+    uuid: Uuid,
+    method: String,
+    sender_pubkey: H256Json,
+    dest_pub_key: H256Json,
+}
+
 #[derive(Clone)]
-pub struct TakerOrder {
-    pub max_base_vol: BigDecimal,
-    pub min_base_vol: BigDecimal,
-    pub price: BigDecimal,
-    pub created_at: u64,
-    pub base: String,
-    pub rel: String,
+struct TakerOrder {
+    created_at: u64,
     request: TakerRequest,
     matches: HashMap<Uuid, TakerMatch>
 }
 
-impl Into<MakerOrder> for TakerOrder {
-    fn into(self) -> MakerOrder {
-        MakerOrder {
-            max_base_vol: self.max_base_vol,
-            min_base_vol: self.min_base_vol,
-            price: self.price,
-            created_at: now_ms(),
-            base: self.base,
-            rel: self.rel,
-            matches: HashMap::new(),
-        }
-    }
-}
-
-#[derive(Clone)]
+#[derive(Clone, Debug)]
+/// Market maker order
+/// The "action" is missing here because it's easier to always consider maker order as "sell"
+/// So upon ordermatch with request we have only 2 combinations "sell":"sell" and "sell":"buy"
+/// Adding "action" to maker order will just double possible combinations making order match more complex.
 pub struct MakerOrder {
     pub max_base_vol: BigDecimal,
     pub min_base_vol: BigDecimal,
@@ -89,19 +93,34 @@ impl MakerOrder {
     }
 }
 
-#[derive(Clone, Deserialize, Serialize)]
-struct TakerRequest {
-    base: String,
-    rel: String,
-    base_amount: BigDecimal,
-    rel_amount: BigDecimal,
-    uuid: Uuid,
-    method: String,
-    sender_pubkey: H256Json,
-    dest_pub_key: H256Json,
+impl Into<MakerOrder> for TakerOrder {
+    fn into(self) -> MakerOrder {
+        let order = match self.request.action {
+            TakerAction::Sell => MakerOrder {
+                price: &self.request.rel_amount / &self.request.base_amount,
+                max_base_vol: self.request.base_amount,
+                min_base_vol: 0.into(),
+                created_at: now_ms(),
+                base: self.request.base,
+                rel: self.request.rel,
+                matches: HashMap::new(),
+            },
+            // The "buy" taker order is recreated with reversed pair as Maker order is always considered as "sell"
+            TakerAction::Buy => MakerOrder {
+                price: &self.request.base_amount / &self.request.rel_amount,
+                max_base_vol: self.request.rel_amount,
+                min_base_vol: 0.into(),
+                created_at: now_ms(),
+                base: self.request.rel,
+                rel: self.request.base,
+                matches: HashMap::new(),
+            },
+        };
+        order
+    }
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 struct TakerConnect {
     taker_order_uuid: Uuid,
     maker_order_uuid: Uuid,
@@ -110,7 +129,7 @@ struct TakerConnect {
     dest_pub_key: H256Json,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 struct MakerReserved {
     base: String,
     rel: String,
@@ -123,7 +142,7 @@ struct MakerReserved {
     dest_pub_key: H256Json,
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 struct MakerConnected {
     taker_order_uuid: Uuid,
     maker_order_uuid: Uuid,
@@ -472,7 +491,7 @@ pub fn sell(ctx: MmArc, json: Json) -> HyRes {
 }
 
 /// Created when maker order is matched with taker request
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct MakerMatch {
     request: TakerRequest,
     reserved: MakerReserved,
@@ -495,57 +514,36 @@ pub fn lp_auto_buy(ctx: &MmArc, input: AutoBuyInput) -> Result<String, String> {
         return ERR!("Price is too low, minimum is {}", SMALLVAL);
     }
 
-    let price = match Some(input.method.as_ref()) {
+    let action = match Some(input.method.as_ref()) {
         Some("buy") => {
-            input.price
+            TakerAction::Buy
         },
         Some("sell") => {
-            1. / input.price
+            TakerAction::Sell
         },
         _ => return ERR!("Auto buy must be called only from buy/sell RPC methods")
     };
-
-    if price <= BigDecimal::default() {
-        return ERR!("Resulting price is <= 0");
-    }
 
     let ordermatch_ctx = try_s!(OrdermatchContext::from_ctx(&ctx));
     let mut my_taker_orders = try_s!(ordermatch_ctx.my_taker_orders.lock());
     let uuid = Uuid::new_v4();
     let request = TakerRequest {
-        base: input.base.clone(),
-        rel: input.rel.clone(),
-        base_amount: input.volume.clone(),
-        rel_amount: &input.volume * &price,
+        base: input.base,
+        rel: input.rel,
+        rel_amount: &input.volume * input.price,
+        base_amount: input.volume,
         method: "request".into(),
         uuid,
         dest_pub_key: input.dest_pub_key,
         sender_pubkey: H256Json::from(unsafe { lp::G.LP_mypub25519.bytes }),
+        action,
     };
     ctx.broadcast_p2p_msg(&unwrap!(json::to_string(&request)));
-    if input.method == "buy" {
-        my_taker_orders.insert(uuid, TakerOrder {
-            max_base_vol: input.volume.clone(),
-            min_base_vol: 0.into(),
-            price: BigDecimal::from(1) / &price,
-            created_at: now_ms(),
-            base: input.rel.clone(),
-            rel: input.base.clone(),
-            matches: HashMap::new(),
-            request,
-        });
-    } else {
-        my_taker_orders.insert(uuid, TakerOrder {
-            max_base_vol: input.volume.clone(),
-            min_base_vol: 0.into(),
-            price: BigDecimal::from(1),
-            created_at: now_ms(),
-            base: input.base.clone(),
-            rel: input.rel.clone(),
-            matches: HashMap::new(),
-            request,
-        });
-    }
+    my_taker_orders.insert(uuid, TakerOrder {
+        created_at: now_ms(),
+        matches: HashMap::new(),
+        request,
+    });
     drop(my_taker_orders);
     Ok(json!({
         "result": {
@@ -713,14 +711,30 @@ enum OrderMatchResult {
 
 /// Attempts to match the Maker's order and Taker's request
 fn match_order_and_request(maker: &MakerOrder, taker: &TakerRequest) -> OrderMatchResult {
-    if maker.base == taker.base && maker.rel == taker.rel && taker.base_amount <= maker.available_amount() && taker.base_amount >= maker.min_base_vol {
-        let taker_price = &taker.rel_amount / &taker.base_amount;
-        if taker_price >= maker.price {
-            OrderMatchResult::Matched((taker.base_amount.clone(), &taker.base_amount * &maker.price))
-        } else {
-            OrderMatchResult::NotMatched
-        }
-    } else {
-        OrderMatchResult::NotMatched
+    match taker.action {
+        TakerAction::Buy => {
+            if maker.base == taker.base && maker.rel == taker.rel && taker.base_amount <= maker.available_amount() && taker.base_amount >= maker.min_base_vol {
+                let taker_price = &taker.rel_amount / &taker.base_amount;
+                if taker_price >= maker.price {
+                    OrderMatchResult::Matched((taker.base_amount.clone(), &taker.base_amount * &maker.price))
+                } else {
+                    OrderMatchResult::NotMatched
+                }
+            } else {
+                OrderMatchResult::NotMatched
+            }
+        },
+        TakerAction::Sell => {
+            if maker.base == taker.rel && maker.rel == taker.base && taker.rel_amount <= maker.available_amount() && taker.rel_amount >= maker.min_base_vol {
+                let taker_price = &taker.base_amount / &taker.rel_amount;
+                if taker_price >= maker.price {
+                    OrderMatchResult::Matched((&taker.base_amount / &maker.price, taker.base_amount.clone()))
+                } else {
+                    OrderMatchResult::NotMatched
+                }
+            } else {
+                OrderMatchResult::NotMatched
+            }
+        },
     }
 }
