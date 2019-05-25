@@ -88,7 +88,7 @@ void LP_pubkey_update(struct LP_pubkey_info *pubp,uint32_t baseind,uint32_t reli
             break;
         pq = 0;
     }
-    if ( pq == 0 && price > 0. )
+    if ( pq == 0 && price > 0. && balance > 0. )
     {
         pq = calloc(1,sizeof(*pq));
         pq->baseind = baseind;
@@ -100,7 +100,7 @@ void LP_pubkey_update(struct LP_pubkey_info *pubp,uint32_t baseind,uint32_t reli
         //printf("create pubp quotes %d/%d\n",baseind,relind);
     } else if (pq != 0 && balance == 0.) {
         DL_DELETE(pubp->quotes, pq);
-    } else if (pq != 0 && price > 0.) {
+    } else if (pq != 0 && price > 0. && balance > 0. ) {
         pq->price = price;
         pq->balance = balance;
     }

@@ -44,7 +44,7 @@ fn enable_coins_eth_electrum(mm: &MarketMakerIt, eth_urls: Vec<&str>) -> HashMap
     let mut replies = HashMap::new();
     replies.insert ("BEER", enable_electrum (mm, "BEER", vec!["electrum1.cipig.net:10022","electrum2.cipig.net:10022","electrum3.cipig.net:10022"]));
     replies.insert ("PIZZA", enable_electrum (mm, "PIZZA", vec!["electrum1.cipig.net:10024","electrum2.cipig.net:10024","electrum3.cipig.net:10024"]));
-    //replies.insert ("ETOMIC", enable_electrum (mm, "ETOMIC", vec!["electrum1.cipig.net:10025","electrum2.cipig.net:10025"]));
+    replies.insert ("ETOMIC", enable_electrum (mm, "ETOMIC", vec!["electrum1.cipig.net:10025","electrum2.cipig.net:10025"]));
     replies.insert ("ETH", enable_native (mm, "ETH", eth_urls.clone()));
     replies.insert ("JST", enable_native (mm, "JST", eth_urls));
     replies
@@ -907,7 +907,7 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
 
 #[test]
 fn trade_test_electrum_and_eth_coins() {
-    trade_base_rel_electrum(vec![("ETH", "JST")]);
+    trade_base_rel_electrum(vec![("BEER", "ETOMIC"), ("ETH", "JST")]);
 }
 
 fn trade_base_rel_native(base: &str, rel: &str) {
