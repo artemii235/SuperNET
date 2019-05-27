@@ -337,7 +337,11 @@ pub unsafe fn lp_trade_command(
             return 1;
         }
 
-        if H256Json::from(lp::G.LP_mypub25519.bytes) == reserved_msg.dest_pub_key && my_order.match_reserved(&reserved_msg) == MatchReservedResult::Matched {
+        // send "connect" message if reserved message targets our pubkey AND
+        // reserved amounts match our order AND order is NOT reserved by someone else (empty matches)
+        if H256Json::from(lp::G.LP_mypub25519.bytes) == reserved_msg.dest_pub_key
+            && my_order.match_reserved(&reserved_msg) == MatchReservedResult::Matched
+            && my_order.matches.is_empty() {
             let connect = TakerConnect {
                 sender_pubkey: H256Json::from(lp::G.LP_mypub25519.bytes),
                 dest_pub_key: reserved_msg.sender_pubkey.clone(),
