@@ -68,6 +68,34 @@ struct TakerOrder {
     matches: HashMap<Uuid, TakerMatch>
 }
 
+/// Result of match_reserved function
+#[derive(Debug, PartialEq)]
+enum MatchReservedResult {
+    /// Order and reserved message matched,
+    Matched,
+    /// Order and reserved didn't match
+    NotMatched,
+}
+
+impl TakerOrder {
+    fn match_reserved(&self, reserved: &MakerReserved) -> MatchReservedResult {
+        match self.request.action {
+            TakerAction::Buy => if self.request.base == reserved.base && self.request.rel == reserved.rel
+                && self.request.base_amount == reserved.base_amount && reserved.rel_amount <= self.request.rel_amount {
+                MatchReservedResult::Matched
+            } else {
+                MatchReservedResult::NotMatched
+            },
+            TakerAction::Sell => if self.request.base == reserved.rel && self.request.rel == reserved.base
+                && self.request.base_amount == reserved.rel_amount && self.request.rel_amount <= reserved.base_amount {
+                MatchReservedResult::Matched
+            } else {
+                MatchReservedResult::NotMatched
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 /// Market maker order
 /// The "action" is missing here because it's easier to always consider maker order as "sell"
@@ -309,7 +337,7 @@ pub unsafe fn lp_trade_command(
             return 1;
         }
 
-        if H256Json::from(lp::G.LP_mypub25519.bytes) == reserved_msg.dest_pub_key {
+        if H256Json::from(lp::G.LP_mypub25519.bytes) == reserved_msg.dest_pub_key && my_order.match_reserved(&reserved_msg) == MatchReservedResult::Matched {
             let connect = TakerConnect {
                 sender_pubkey: H256Json::from(lp::G.LP_mypub25519.bytes),
                 dest_pub_key: reserved_msg.sender_pubkey.clone(),

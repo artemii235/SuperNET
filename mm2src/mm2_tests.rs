@@ -812,7 +812,7 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
             "base": base,
             "rel": rel,
             "volume": 0.1,
-            "price": 1
+            "price": 2
         })));
         assert!(rc.0.is_success(), "!buy: {}", rc.1);
         let buy_json: Json = unwrap!(serde_json::from_str(&rc.1));
@@ -907,7 +907,7 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
 
 #[test]
 fn trade_test_electrum_and_eth_coins() {
-    trade_base_rel_electrum(vec![("BEER", "ETOMIC"), ("ETH", "JST")]);
+    trade_base_rel_electrum(vec![("ETH", "JST")]);
 }
 
 fn trade_base_rel_native(base: &str, rel: &str) {
