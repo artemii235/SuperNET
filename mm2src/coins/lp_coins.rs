@@ -167,6 +167,13 @@ pub trait SwapOps {
         priv_bn_hash: &[u8],
         amount: BigDecimal,
     ) -> Result<(), String>;
+
+    fn check_if_my_payment_sent(
+        &self,
+        time_lock: u32,
+        other_pub: &[u8],
+        secret_hash: &[u8],
+    ) -> Result<Option<TransactionEnum>, String>;
 }
 
 /// Operations that coins have independently from the MarketMaker.
@@ -218,7 +225,7 @@ struct WithdrawRequest {
 }
 
 /// Transaction details
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct TransactionDetails {
     /// Raw bytes of signed transaction in hexadecimal string, this should be sent as is to send_raw_transaction RPC to broadcast the transaction
     pub tx_hex: BytesJson,

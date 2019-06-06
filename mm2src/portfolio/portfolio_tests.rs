@@ -189,8 +189,8 @@ pub fn test_fundvalue (local_start: LocalStart) {
     })));
     assert! (fundvalue.0.is_server_error(), "Fundvalue must return error when BTC and KMD are not enabled, but got {:?}", fundvalue);
 
-    enable_electrum (&mm, "KMD", vec!["electrum1.cipig.net:10001"]);
-    enable_electrum (&mm, "BTC", vec!["electrum1.cipig.net:10000"]);
+    enable_electrum (&mm, "KMD", vec!["electrum1.cipig.net:10001", "electrum2.cipig.net:10001", "electrum3.cipig.net:10001"]);
+    enable_electrum (&mm, "BTC", vec!["electrum1.cipig.net:10000", "electrum2.cipig.net:10000", "electrum3.cipig.net:10000"]);
 
     let fundvalue = unwrap! (mm.rpc (json! ({
         "userpass": mm.userpass,

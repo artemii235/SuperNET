@@ -53,6 +53,7 @@ use crate::common::log::TagParam;
 use crate::common::mm_ctx::{MmCtx, MmArc};
 use crate::mm2::lp_network::{lp_command_q_loop, seednode_loop, client_p2p_loop};
 use crate::mm2::lp_ordermatch::{lp_trade_command, lp_trades_loop};
+use crate::mm2::lp_swap::swap_kick_starts;
 use crate::mm2::rpc::{self, SINGLE_THREADED_C_LOCK};
 
 /*
@@ -1558,6 +1559,11 @@ pub fn lp_init (mypubport: u16, conf: Json, ctx_cb: &Fn (u32))
     let command_queue = try_s! (thread::Builder::new().name ("command_queue".into()) .spawn ({
         let ctx = ctx.clone();
         move || unsafe { lp_command_q_loop (ctx) }
+    }));
+
+    let swap_kick_start = try_s! (thread::Builder::new().name ("swap_kick_start".into()) .spawn ({
+        let ctx = ctx.clone();
+        move || swap_kick_starts (ctx)
     }));
 /*
     int32_t nonz,didremote=0;

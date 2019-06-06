@@ -238,7 +238,7 @@ unsafe fn lp_connect_start_bob(ctx: &MmArc, maker_match: &MakerMatch) -> i32 {
                 my_persistent_pub,
                 uuid,
             );
-            run_maker_swap(maker_swap);
+            run_maker_swap(maker_swap, None);
         }
     });
     match loop_thread {
@@ -275,7 +275,7 @@ unsafe fn lp_connected_alice(ctx: &MmArc, taker_match: &TakerMatch) { // alice
                 my_persistent_pub,
                 uuid,
             );
-            run_taker_swap(taker_swap);
+            run_taker_swap(taker_swap, None);
         }
     });
     match alice_loop_thread {

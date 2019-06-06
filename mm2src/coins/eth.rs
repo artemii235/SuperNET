@@ -368,6 +368,15 @@ impl SwapOps for EthCoin {
             amount,
         )
     }
+
+    fn check_if_my_payment_sent(
+        &self,
+        time_lock: u32,
+        other_pub: &[u8],
+        secret_hash: &[u8],
+    ) -> Result<Option<TransactionEnum>, String> {
+        Ok(None)
+    }
 }
 
 impl MarketCoinOps for EthCoin {

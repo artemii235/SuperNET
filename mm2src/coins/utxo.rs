@@ -23,7 +23,6 @@ pub mod rpc_clients;
 use base64::{encode_config as base64_encode, URL_SAFE};
 use bigdecimal::BigDecimal;
 pub use bitcrypto::{dhash160, ChecksumType, sha256};
-use byteorder::{LittleEndian, WriteBytesExt};
 use chain::{TransactionOutput, TransactionInput, OutPoint};
 use chain::constants::{SEQUENCE_FINAL};
 use common::{dstr, lp, MutexGuardWrapper};
@@ -56,7 +55,7 @@ pub use chain::Transaction as UtxoTx;
 
 use self::rpc_clients::{UtxoRpcClientEnum, UnspentInfo, ElectrumClient, ElectrumClientImpl, NativeClient, electrum_script_hash};
 use super::{IguanaInfo, MarketCoinOps, MmCoin, MmCoinEnum, SwapOps, Transaction, TransactionEnum, TransactionFut, TransactionDetails};
-use crate::utxo::rpc_clients::{NativeClientImpl};
+use crate::utxo::rpc_clients::{NativeClientImpl, UtxoRpcClientOps};
 
 #[cfg(test)]
 mod utxo_tests;
@@ -225,13 +224,11 @@ fn payment_script(
     secret_hash: &[u8],
     pub_0: &Public,
     pub_1: &Public
-) -> Result<Script, String> {
+) -> Script {
     let builder = Builder::default();
-    let mut wtr = vec![];
-    try_s!(wtr.write_u32::<LittleEndian>(time_lock));
-    Ok(builder
+    builder
         .push_opcode(Opcode::OP_IF)
-        .push_bytes(&wtr)
+        .push_bytes(&time_lock.to_le_bytes())
         .push_opcode(Opcode::OP_CHECKLOCKTIMEVERIFY)
         .push_opcode(Opcode::OP_DROP)
         .push_bytes(pub_0)
@@ -246,7 +243,7 @@ fn payment_script(
         .push_bytes(pub_1)
         .push_opcode(Opcode::OP_CHECKSIG)
         .push_opcode(Opcode::OP_ENDIF)
-        .into_script())
+        .into_script()
 }
 
 fn script_sig(message: &H256, key_pair: &KeyPair) -> Result<Bytes, String> {
@@ -503,12 +500,12 @@ impl UtxoCoin {
                 return ERR!("Provided payment tx {:?} doesn't match tx data from rpc {:?}", tx, tx_from_rpc);
             }
 
-            let expected_redeem = try_s!(payment_script(
+            let expected_redeem = payment_script(
                 time_lock,
                 priv_bn_hash,
                 &try_s!(Public::from_slice(first_pub0)),
                 &try_s!(Public::from_slice(second_pub0)),
-            ));
+            );
 
             let expected_output = TransactionOutput {
                 value: amount,
@@ -717,12 +714,12 @@ impl SwapOps for UtxoCoin {
         secret_hash: &[u8],
         amount: BigDecimal,
     ) -> TransactionFut {
-        let redeem_script = try_fus!(payment_script(
+        let redeem_script = payment_script(
             time_lock,
             secret_hash,
             self.key_pair.public(),
             &try_fus!(Public::from_slice(taker_pub)),
-        ));
+        );
         let amount = try_fus!(sat_from_big_decimal(amount, self.decimals));
         let output = TransactionOutput {
             value: amount,
@@ -738,12 +735,12 @@ impl SwapOps for UtxoCoin {
         priv_bn_hash: &[u8],
         amount: BigDecimal,
     ) -> TransactionFut {
-        let redeem_script = try_fus!(payment_script(
+        let redeem_script = payment_script(
             time_lock,
             priv_bn_hash,
             self.key_pair.public(),
             &try_fus!(Public::from_slice(maker_pub)),
-        ));
+        );
 
         let amount = try_fus!(sat_from_big_decimal(amount, self.decimals));
 
@@ -766,9 +763,7 @@ impl SwapOps for UtxoCoin {
             .push_data(secret)
             .push_opcode(Opcode::OP_0)
             .into_script();
-        let redeem_script = try_fus!(
-            payment_script(time_lock, &*dhash160(secret), &try_fus!(Public::from_slice(taker_pub)), self.key_pair.public())
-        );
+        let redeem_script = payment_script(time_lock, &*dhash160(secret), &try_fus!(Public::from_slice(taker_pub)), self.key_pair.public());
         let arc = self.clone();
         Box::new(self.get_tx_fee().and_then(move |coin_fee| -> TransactionFut {
             let fee = match coin_fee {
@@ -812,9 +807,7 @@ impl SwapOps for UtxoCoin {
             .push_data(secret)
             .push_opcode(Opcode::OP_0)
             .into_script();
-        let redeem_script = try_fus!(
-            payment_script(time_lock, &*dhash160(secret), &try_fus!(Public::from_slice(maker_pub)), self.key_pair.public())
-        );
+        let redeem_script = payment_script(time_lock, &*dhash160(secret), &try_fus!(Public::from_slice(maker_pub)), self.key_pair.public());
         let arc = self.clone();
         Box::new(self.get_tx_fee().and_then(move |coin_fee| -> TransactionFut {
             let fee = match coin_fee {
@@ -857,9 +850,7 @@ impl SwapOps for UtxoCoin {
         let script_data = Builder::default()
             .push_opcode(Opcode::OP_1)
             .into_script();
-        let redeem_script = try_fus!(
-            payment_script(time_lock, secret_hash, self.key_pair.public(), &try_fus!(Public::from_slice(maker_pub)))
-        );
+        let redeem_script = payment_script(time_lock, secret_hash, self.key_pair.public(), &try_fus!(Public::from_slice(maker_pub)));
         let arc = self.clone();
         Box::new(self.get_tx_fee().and_then(move |coin_fee| -> TransactionFut {
             let fee = match coin_fee {
@@ -902,12 +893,12 @@ impl SwapOps for UtxoCoin {
         let script_data = Builder::default()
             .push_opcode(Opcode::OP_1)
             .into_script();
-        let redeem_script = try_fus!(payment_script(
+        let redeem_script = payment_script(
             time_lock,
             secret_hash,
             self.key_pair.public(),
             &try_fus!(Public::from_slice(taker_pub)),
-        ));
+        );
         let arc = self.clone();
         Box::new(self.get_tx_fee().and_then(move |coin_fee| -> TransactionFut {
             let fee = match coin_fee {
@@ -1002,6 +993,36 @@ impl SwapOps for UtxoCoin {
             priv_bn_hash,
             amount
         )
+    }
+
+    fn check_if_my_payment_sent(
+        &self,
+        time_lock: u32,
+        other_pub: &[u8],
+        secret_hash: &[u8],
+    ) -> Result<Option<TransactionEnum>, String> {
+        let script = payment_script(
+            time_lock,
+            secret_hash,
+            self.key_pair.public(),
+            &try_s!(Public::from_slice(other_pub)),
+        );
+        let p2sh = Builder::build_p2sh(&dhash160(&script));
+        let script_hash = electrum_script_hash(&p2sh);
+        match &self.rpc_client {
+            UtxoRpcClientEnum::Electrum(client) => {
+                let history = try_s!(client.scripthash_get_history(&hex::encode(script_hash)).wait());
+                match history.first() {
+                    Some(item) => {
+                        let tx_bytes = try_s!(client.get_transaction_bytes(item.tx_hash.clone()).wait());
+                        let tx: UtxoTx = try_s!(deserialize(tx_bytes.0.as_slice()).map_err(|e| ERRL!("{:?}", e)));
+                        Ok(Some(tx.into()))
+                    },
+                    None => Ok(None),
+                }
+            },
+            UtxoRpcClientEnum::Native(_) => unimplemented!(),
+        }
     }
 }
 
@@ -1511,4 +1532,16 @@ fn kmd_interest(height: u64, value: u64, lock_time: u64, current_time: u64) -> u
     // next 2 lines ported as is from Komodo codebase
     minutes -= 59;
     (value / 10512000) * minutes
+}
+
+#[test]
+fn display_payment_script() {
+    let key_pair = key_pair_from_seed("spice describe gravity federal blast come thank unfair canal monkey style afraid").unwrap();
+    let script = payment_script(
+        (now_ms() / 1000) as u32,
+        &*key_pair.private().secret,
+        key_pair.public(),
+        key_pair.public(),
+    );
+    log!((script));
 }
