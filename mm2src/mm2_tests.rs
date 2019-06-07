@@ -244,7 +244,7 @@ fn alice_can_see_the_active_order_after_connection() {
     })));
     assert! (rc.0.is_success(), "!setprice: {}", rc.1);
 
-    thread::sleep(Duration::from_secs(10));
+    thread::sleep(Duration::from_secs(12));
 
     // Bob orderbook must show the new order
     log!("Get BEER/PIZZA orderbook on Bob side");
@@ -1497,8 +1497,8 @@ fn test_cancel_order() {
     // Enable coins on Alice side. Print the replies in case we need the "address".
     log! ({"enable_coins (alice): {:?}", enable_coins_eth_electrum (&mm_alice, vec!["http://195.201.0.6:8545"])});
 
-    // give Alice 20 seconds to recognize the Bob, MM2 nodes broadcast their pubkey data every 20 seconds
-    thread::sleep(Duration::from_secs(20));
+    // give Alice 40 seconds to recognize the Bob and import the order
+    thread::sleep(Duration::from_secs(40));
 
     log!("Get BEER/PIZZA orderbook on Alice side");
     let rc = unwrap!(mm_alice.rpc (json! ({

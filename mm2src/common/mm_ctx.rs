@@ -1,4 +1,5 @@
 use crossbeam::{channel, Sender, Receiver};
+use hashbrown::HashSet;
 use hashbrown::hash_map::{Entry, HashMap};
 use keys::KeyPair;
 use libc::{c_void};
@@ -77,6 +78,8 @@ pub struct MmCtx {
     /// secp256k1 key pair derived from passphrase
     /// future replacement of lp::G.LP_privkey
     pub secp256k1_key_pair: KeyPair,
+    /// Coins that should be enabled to kick start the interrupted swaps
+    pub coins_needed_for_kick_start: Mutex<HashSet<String>>,
 }
 impl MmCtx {
     pub fn new (conf: Json, key_pair: KeyPair) -> MmArc {
@@ -100,6 +103,7 @@ impl MmCtx {
             client_p2p_channel: channel::unbounded(),
             rmd160: key_pair.public().address_hash(),
             secp256k1_key_pair: key_pair,
+            coins_needed_for_kick_start: Mutex::new(HashSet::new()),
         }))
     }
 

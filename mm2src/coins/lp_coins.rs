@@ -173,6 +173,7 @@ pub trait SwapOps {
         time_lock: u32,
         other_pub: &[u8],
         secret_hash: &[u8],
+        search_from_block: u64,
     ) -> Result<Option<TransactionEnum>, String>;
 }
 
@@ -193,7 +194,7 @@ pub trait MarketCoinOps {
         wait_until: u64,
     ) -> Result<(), String>;
 
-    fn wait_for_tx_spend(&self, transaction: &[u8], wait_until: u64) -> Result<TransactionEnum, String>;
+    fn wait_for_tx_spend(&self, transaction: &[u8], wait_until: u64, from_block: u64) -> Result<TransactionEnum, String>;
 
     fn tx_enum_from_bytes(&self, bytes: &[u8]) -> Result<TransactionEnum, String>;
 

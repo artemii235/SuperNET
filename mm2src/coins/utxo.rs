@@ -56,6 +56,7 @@ pub use chain::Transaction as UtxoTx;
 use self::rpc_clients::{UtxoRpcClientEnum, UnspentInfo, ElectrumClient, ElectrumClientImpl, NativeClient, electrum_script_hash};
 use super::{IguanaInfo, MarketCoinOps, MmCoin, MmCoinEnum, SwapOps, Transaction, TransactionEnum, TransactionFut, TransactionDetails};
 use crate::utxo::rpc_clients::{NativeClientImpl, UtxoRpcClientOps};
+use futures::future::Either;
 
 #[cfg(test)]
 mod utxo_tests;
@@ -725,7 +726,23 @@ impl SwapOps for UtxoCoin {
             value: amount,
             script_pubkey: Builder::build_p2sh(&dhash160(&redeem_script)).into(),
         };
-        self.send_outputs_from_my_address(vec![output])
+        let send_fut = match &self.rpc_client {
+            UtxoRpcClientEnum::Electrum(_) => Either::A(self.send_outputs_from_my_address(vec![output])),
+            UtxoRpcClientEnum::Native(client) => {
+                let payment_addr = Address {
+                    checksum_type: self.checksum_type,
+                    hash: dhash160(&redeem_script),
+                    prefix: self.p2sh_addr_prefix,
+                    t_addr_prefix: self.p2sh_t_addr_prefix,
+                };
+                let arc = self.clone();
+                let addr_string = payment_addr.to_string();
+                Either::B(client.import_address(&addr_string, &addr_string, false).and_then(move |_|
+                    arc.send_outputs_from_my_address(vec![output])
+                ))
+            }
+        };
+        Box::new(send_fut)
     }
 
     fn send_taker_payment(
@@ -748,7 +765,23 @@ impl SwapOps for UtxoCoin {
             value: amount,
             script_pubkey: Builder::build_p2sh(&dhash160(&redeem_script)).into(),
         };
-        self.send_outputs_from_my_address(vec![output])
+        let send_fut = match &self.rpc_client {
+            UtxoRpcClientEnum::Electrum(_) => Either::A(self.send_outputs_from_my_address(vec![output])),
+            UtxoRpcClientEnum::Native(client) => {
+                let payment_addr = Address {
+                    checksum_type: self.checksum_type,
+                    hash: dhash160(&redeem_script),
+                    prefix: self.p2sh_addr_prefix,
+                    t_addr_prefix: self.p2sh_t_addr_prefix,
+                };
+                let arc = self.clone();
+                let addr_string = payment_addr.to_string();
+                Either::B(client.import_address(&addr_string, &addr_string, false).and_then(move |_|
+                    arc.send_outputs_from_my_address(vec![output])
+                ))
+            }
+        };
+        Box::new(send_fut)
     }
 
     fn send_maker_spends_taker_payment(
@@ -1000,6 +1033,7 @@ impl SwapOps for UtxoCoin {
         time_lock: u32,
         other_pub: &[u8],
         secret_hash: &[u8],
+        _from_block: u64,
     ) -> Result<Option<TransactionEnum>, String> {
         let script = payment_script(
             time_lock,
@@ -1007,7 +1041,8 @@ impl SwapOps for UtxoCoin {
             self.key_pair.public(),
             &try_s!(Public::from_slice(other_pub)),
         );
-        let p2sh = Builder::build_p2sh(&dhash160(&script));
+        let hash = dhash160(&script);
+        let p2sh = Builder::build_p2sh(&hash);
         let script_hash = electrum_script_hash(&p2sh);
         match &self.rpc_client {
             UtxoRpcClientEnum::Electrum(client) => {
@@ -1021,7 +1056,23 @@ impl SwapOps for UtxoCoin {
                     None => Ok(None),
                 }
             },
-            UtxoRpcClientEnum::Native(_) => unimplemented!(),
+            UtxoRpcClientEnum::Native(client) => {
+                let target_addr = Address {
+                    t_addr_prefix: self.p2sh_t_addr_prefix,
+                    prefix: self.p2sh_addr_prefix,
+                    hash,
+                    checksum_type: self.checksum_type,
+                }.to_string();
+                let received_by_addr = client.list_received_by_address(0, true, true).wait().unwrap();
+                for item in received_by_addr {
+                    if item.address == target_addr && !item.txids.is_empty() {
+                        let tx_bytes = try_s!(client.get_transaction_bytes(item.txids[0].clone()).wait());
+                        let tx: UtxoTx = try_s!(deserialize(tx_bytes.0.as_slice()).map_err(|e| ERRL!("{:?}", e)));
+                        return Ok(Some(tx.into()))
+                    }
+                }
+                Ok(None)
+            },
         }
     }
 }
@@ -1054,7 +1105,7 @@ impl MarketCoinOps for UtxoCoin {
         )
     }
 
-    fn wait_for_tx_spend(&self, tx_bytes: &[u8], wait_until: u64) -> Result<TransactionEnum, String> {
+    fn wait_for_tx_spend(&self, tx_bytes: &[u8], wait_until: u64, _from_block: u64) -> Result<TransactionEnum, String> {
         let tx: UtxoTx = try_s!(deserialize(tx_bytes).map_err(|e| ERRL!("{:?}", e)));
 
         let res = try_s!(self.rpc_client.wait_for_payment_spend(&tx, 0, wait_until));

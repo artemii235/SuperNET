@@ -1560,11 +1560,10 @@ pub fn lp_init (mypubport: u16, conf: Json, ctx_cb: &Fn (u32))
         let ctx = ctx.clone();
         move || unsafe { lp_command_q_loop (ctx) }
     }));
-
-    let swap_kick_start = try_s! (thread::Builder::new().name ("swap_kick_start".into()) .spawn ({
-        let ctx = ctx.clone();
-        move || swap_kick_starts (ctx)
-    }));
+    // launch kickstart threads before RPC is available, this will prevent the API user to place
+    // an order and start new swap that might get started 2 times because of kick-start
+    let coins_needed_for_kick_start = swap_kick_starts (ctx.clone());
+    *(unwrap!(ctx.coins_needed_for_kick_start.lock())) = coins_needed_for_kick_start;
 /*
     int32_t nonz,didremote=0;
     LP_statslog_parse();

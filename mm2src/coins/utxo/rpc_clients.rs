@@ -134,7 +134,7 @@ pub struct ValidateAddressRes {
     pub account: Option<String>,
 }
 
-#[derive(Clone, Deserialize, Debug)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct ListTransactionsItem {
     pub account: String,
     #[serde(default)]
@@ -153,6 +153,14 @@ pub struct ListTransactionsItem {
     #[serde(default)]
     pub txid: H256Json,
     pub timereceived: u64,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct ReceivedByAddressItem {
+    #[serde(default)]
+    pub account: String,
+    pub address: String,
+    pub txids: Vec<H256Json>,
 }
 
 /// RPC client for UTXO based coins
@@ -334,7 +342,7 @@ impl NativeClientImpl {
     }
 
     /// https://bitcoin.org/en/developer-reference#importaddress
-    pub fn import_address(&self, address: String, label: String, rescan: bool) -> RpcRes<()> {
+    pub fn import_address(&self, address: &str, label: &str, rescan: bool) -> RpcRes<()> {
         rpc_func!(self, "importaddress", address, label, rescan)
     }
 
@@ -377,6 +385,11 @@ impl NativeClientImpl {
         let account = "*";
         let watch_only = true;
         rpc_func!(self, "listtransactions", account, count, from, watch_only)
+    }
+
+    /// https://bitcoin.org/en/developer-reference#listreceivedbyaddress
+    pub fn list_received_by_address(&self, min_conf: u64, include_empty: bool, include_watch_only: bool) -> RpcRes<Vec<ReceivedByAddressItem>> {
+        rpc_func!(self, "listreceivedbyaddress", min_conf, include_empty, include_watch_only)
     }
 }
 

@@ -64,6 +64,7 @@ use common::mm_ctx::MmArc;
 use crc::crc32;
 use futures::{Future};
 use gstuff::{now_ms, slurp};
+use hashbrown::HashSet;
 use rand::Rng;
 use primitives::hash::{H160, H264};
 use serde_json::{self as json, Value as Json};
@@ -456,12 +457,56 @@ struct MakerSavedSwap {
     error_events: Vec<String>,
 }
 
+impl MakerSavedSwap {
+    fn maker_coin(&self) -> Result<String, String> {
+        match self.events.first() {
+            Some(event) => match &event.event {
+                MakerSwapEvent::Started(data) => Ok(data.maker_coin.clone()),
+                _ => ERR!("First swap event must be Started"),
+            },
+            None => ERR!("Can't get maker coin, events are empty"),
+        }
+    }
+
+    fn taker_coin(&self) -> Result<String, String> {
+        match self.events.first() {
+            Some(event) => match &event.event {
+                MakerSwapEvent::Started(data) => Ok(data.taker_coin.clone()),
+                _ => ERR!("First swap event must be Started"),
+            },
+            None => ERR!("Can't get maker coin, events are empty"),
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct TakerSavedSwap {
     uuid: String,
     events: Vec<TakerSavedEvent>,
     success_events: Vec<String>,
     error_events: Vec<String>,
+}
+
+impl TakerSavedSwap {
+    fn maker_coin(&self) -> Result<String, String> {
+        match self.events.first() {
+            Some(event) => match &event.event {
+                TakerSwapEvent::Started(data) => Ok(data.maker_coin.clone()),
+                _ => ERR!("First swap event must be Started"),
+            },
+            None => ERR!("Can't get maker coin, events are empty"),
+        }
+    }
+
+    fn taker_coin(&self) -> Result<String, String> {
+        match self.events.first() {
+            Some(event) => match &event.event {
+                TakerSwapEvent::Started(data) => Ok(data.taker_coin.clone()),
+                _ => ERR!("First swap event must be Started"),
+            },
+            None => ERR!("Can't get maker coin, events are empty"),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -489,6 +534,20 @@ impl SavedSwap {
         match self {
             SavedSwap::Maker(swap) => &swap.uuid,
             SavedSwap::Taker(swap) => &swap.uuid,
+        }
+    }
+
+    fn maker_coin_ticker(&self) -> Result<String, String> {
+        match self {
+            SavedSwap::Maker(swap) => swap.maker_coin(),
+            SavedSwap::Taker(swap) => swap.maker_coin(),
+        }
+    }
+
+    fn taker_coin_ticker(&self) -> Result<String, String> {
+        match self {
+            SavedSwap::Maker(swap) => swap.taker_coin(),
+            SavedSwap::Taker(swap) => swap.taker_coin(),
         }
     }
 }
@@ -733,10 +792,20 @@ impl MakerSwap {
     }
 
     fn maker_payment(&self) -> Result<(Option<MakerSwapCommand>, Vec<MakerSwapEvent>), String> {
+        let timeout = self.data.started_at + self.data.lock_duration / 3;
+        let now = now_ms() / 1000;
+        if now > timeout {
+            return Ok((
+                Some(MakerSwapCommand::Finish),
+                vec![MakerSwapEvent::MakerPaymentTransactionFailed(ERRL!("Timeout {} > {}", now, timeout).into())],
+            ));
+        }
+
         let transaction = match self.maker_coin.check_if_my_payment_sent(
             self.data.maker_payment_lock as u32,
             &*self.other_persistent_pub,
             &*dhash160(&self.data.secret.0),
+            self.data.maker_coin_start_block,
         ) {
             Ok(res) => match res {
                 Some(tx) => tx,
@@ -1365,8 +1434,17 @@ impl TakerSwap {
     }
 
     fn send_taker_fee(&self) -> Result<(Option<TakerSwapCommand>, Vec<TakerSwapEvent>), String> {
+        let timeout = self.data.started_at + self.data.lock_duration / 3;
+        let now = now_ms() / 1000;
+        if now > timeout {
+            return Ok((
+                Some(TakerSwapCommand::Finish),
+                vec![TakerSwapEvent::TakerFeeSendFailed(ERRL!("Timeout {} > {}", now, timeout).into())],
+            ));
+        }
+
         let fee_addr_pub_key = unwrap!(hex::decode("03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc06"));
-        let fee_amount = self.taker_amount.clone() / 777;
+        let fee_amount = &self.taker_amount / 777;
         let fee_tx = self.taker_coin.send_taker_fee(&fee_addr_pub_key, fee_amount).wait();
         let transaction = match fee_tx {
             Ok (t) => t,
@@ -1454,10 +1532,20 @@ impl TakerSwap {
 
 
     fn send_taker_payment(&self) -> Result<(Option<TakerSwapCommand>, Vec<TakerSwapEvent>), String> {
+        let timeout = self.data.started_at + self.data.lock_duration / 3;
+        let now = now_ms() / 1000;
+        if now > timeout {
+            return Ok((
+                Some(TakerSwapCommand::Finish),
+                vec![TakerSwapEvent::TakerPaymentTransactionFailed(ERRL!("Timeout {} > {}", now, timeout).into())],
+            ));
+        }
+
         let transaction = match self.taker_coin.check_if_my_payment_sent(
             self.data.taker_payment_lock as u32,
             &*self.other_persistent_pub,
             &self.secret_hash.0,
+            self.data.taker_coin_start_block,
         ) {
             Ok(res) => match res {
                 Some(tx) => tx,
@@ -1504,7 +1592,7 @@ impl TakerSwap {
             ))
         };
 
-        let tx = match self.taker_coin.wait_for_tx_spend(&self.taker_payment.clone().unwrap().tx_hex, self.data.taker_payment_lock) {
+        let tx = match self.taker_coin.wait_for_tx_spend(&self.taker_payment.clone().unwrap().tx_hex, self.data.taker_payment_lock, self.data.taker_coin_start_block) {
             Ok(t) => t,
             Err(e) => return Ok((
                 Some(TakerSwapCommand::RefundTakerPayment),
@@ -1771,7 +1859,10 @@ pub fn my_recent_swaps(ctx: MmArc, req: Json) -> HyRes {
     }).to_string())
 }
 
-pub fn swap_kick_starts(ctx: MmArc) {
+/// Find out the swaps that need to be kick-started, continue from the point where swap was interrupted
+/// Return the tickers of coins that must be enabled for swaps to continue
+pub fn swap_kick_starts(ctx: MmArc) -> HashSet<String> {
+    let mut coins = HashSet::new();
     let entries: Vec<DirEntry> = unwrap!(my_swaps_dir(&ctx).read_dir()).filter_map(|dir_entry| {
         let entry = match dir_entry {
             Ok(ent) => ent,
@@ -1793,6 +1884,20 @@ pub fn swap_kick_starts(ctx: MmArc) {
             Ok(swap) => {
                 if !swap.is_finished() {
                     log!("Kick starting the swap " [swap.uuid()]);
+                    match swap.maker_coin_ticker() {
+                        Ok(t) => coins.insert(t),
+                        Err(e) => {
+                            log!("Error " (e) " getting maker coin of swap " (swap.uuid()));
+                            return;
+                        }
+                    };
+                    match swap.taker_coin_ticker() {
+                        Ok(t) => coins.insert(t),
+                        Err(e) => {
+                            log!("Error " (e) " getting taker coin of swap " (swap.uuid()));
+                            return;
+                        }
+                    };
                     thread::spawn({
                         let ctx = ctx.clone();
                         move ||
@@ -1812,4 +1917,11 @@ pub fn swap_kick_starts(ctx: MmArc) {
             Err(_) => (),
         }
     });
+    coins
+}
+
+pub fn coins_needed_for_kick_start(ctx: MmArc) -> HyRes {
+    rpc_response(200, json!({
+        "result": *(unwrap!(ctx.coins_needed_for_kick_start.lock()))
+    }).to_string())
 }
