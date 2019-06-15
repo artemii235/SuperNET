@@ -25,7 +25,8 @@ use common::mm_ctx::{from_ctx, MmArc, MmWeak};
 use coins::{lp_coinfind, MmCoinEnum};
 use coins::utxo::{compressed_pub_key_from_priv_raw, ChecksumType};
 use futures::future::{Either, Future};
-use gstuff::now_ms;
+use gstuff::{now_ms, slurp};
+use hashbrown::HashSet;
 use hashbrown::hash_map::{Entry, HashMap};
 use keys::{Public, Signature};
 use libc::c_char;
@@ -33,7 +34,9 @@ use num_traits::cast::ToPrimitive;
 use primitives::hash::H256;
 use rpc::v1::types::{H256 as H256Json};
 use serde_json::{self as json, Value as Json};
-use std::ffi::CString;
+use std::ffi::{CString, OsStr};
+use std::fs::{self, DirEntry};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::thread;
@@ -298,7 +301,9 @@ pub fn lp_trades_loop(ctx: MmArc) {
         // move the timed out taker orders to maker
         *my_taker_orders = my_taker_orders.drain().filter_map(|(uuid, order)| if order.created_at + ORDERMATCH_TIMEOUT < now_ms() {
             if order.matches.is_empty() {
-                my_maker_orders.insert(uuid, order.into());
+                let maker_order = order.into();
+                save_my_maker_order(&ctx, &maker_order);
+                my_maker_orders.insert(uuid, maker_order);
             }
             None
         } else {
@@ -309,6 +314,7 @@ pub fn lp_trades_loop(ctx: MmArc) {
             order.matches = order.matches.drain().filter(
                 |(_, order_match)| order_match.last_updated + ORDERMATCH_TIMEOUT > now_ms() || order_match.connected.is_some()
             ).collect();
+            save_my_maker_order(&ctx, order);
         });
         drop(my_taker_orders);
         drop(my_maker_orders);
@@ -442,6 +448,7 @@ pub unsafe fn lp_trade_command(
                     last_updated: now_ms(),
                 };
                 order.matches.insert(maker_match.request.uuid, maker_match);
+                save_my_maker_order(&ctx, &order);
                 return 1;
             }
         }
@@ -482,6 +489,7 @@ pub unsafe fn lp_trade_command(
             order_match.connected = Some(connected);
             my_order.started_swaps.push(order_match.request.uuid);
             lp_connect_start_bob(&ctx, order_match);
+            save_my_maker_order(&ctx, &my_order);
         }
         return 1;
     }
@@ -784,6 +792,7 @@ pub fn set_price(ctx: MmArc, req: Json) -> HyRes {
                         uuid,
                     };
                     let response = json!({"result":order}).to_string();
+                    save_my_maker_order(&ctx, &order);
                     my_orders.insert(uuid, order);
                     rpc_response(200, response)
                 })
@@ -914,6 +923,7 @@ pub fn cancel_order(ctx: MmArc, req: Json) -> HyRes {
             let mut cancelled_orders = try_h!(ordermatch_ctx.cancelled_orders.lock());
             // TODO cancel means setting the volume to 0 as of now, should refactor
             order.max_base_vol = 0.into();
+            delete_my_maker_order(&ctx, &order);
             cancelled_orders.insert(req.uuid, order);
             rpc_response(200, json!({
                 "result": "success"
@@ -935,4 +945,55 @@ pub fn my_orders(ctx: MmArc) -> HyRes {
             "taker_orders": *taker_orders,
         }
     }).to_string())
+}
+
+fn my_maker_orders_dir(ctx: &MmArc) -> PathBuf {
+    ctx.dbdir().join("ORDERS").join("MY").join("MAKER")
+}
+
+fn my_maker_order_file_path(ctx: &MmArc, uuid: &Uuid) -> PathBuf {
+    my_maker_orders_dir(ctx).join(format!("{}.json", uuid))
+}
+
+fn save_my_maker_order(ctx: &MmArc, order: &MakerOrder) {
+    let path = my_maker_order_file_path(ctx, &order.uuid);
+    let content = unwrap!(json::to_vec(order));
+    unwrap!(fs::write(path, content));
+}
+
+fn delete_my_maker_order(ctx: &MmArc, order: &MakerOrder) {
+    unwrap!(fs::remove_file(my_maker_order_file_path(ctx, &order.uuid)));
+}
+
+pub fn orders_kick_start(ctx: &MmArc) -> Result<HashSet<String>, String> {
+    let mut coins = HashSet::new();
+    let ordermatch_ctx = try_s!(OrdermatchContext::from_ctx(ctx));
+    let mut maker_orders = try_s!(ordermatch_ctx.my_maker_orders.lock());
+    let entries: Vec<DirEntry> = unwrap!(my_maker_orders_dir(&ctx).read_dir()).filter_map(|dir_entry| {
+        let entry = match dir_entry {
+            Ok(ent) => ent,
+            Err(e) => {
+                log!("Error " (e) " reading from dir " (my_maker_orders_dir(&ctx).display()));
+                return None;
+            }
+        };
+
+        if entry.path().extension() == Some(OsStr::new("json")) {
+            Some(entry)
+        } else {
+            None
+        }
+    }).collect();
+
+    entries.iter().for_each(|entry| {
+        match json::from_slice::<MakerOrder>(&slurp(&entry.path())) {
+            Ok(order) => {
+                coins.insert(order.base.clone());
+                coins.insert(order.rel.clone());
+                maker_orders.insert(order.uuid, order);
+            }
+            Err(_) => (),
+        }
+    });
+    Ok(coins)
 }
