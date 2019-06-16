@@ -1557,6 +1557,12 @@ pub fn lp_init (mypubport: u16, conf: Json, ctx_cb: &Fn (u32))
         exit(-1);
     }
 */
+    // launch kickstart threads before RPC is available, this will prevent the API user to place
+    // an order and start new swap that might get started 2 times because of kick-start
+    let mut coins_needed_for_kick_start = swap_kick_starts (ctx.clone());
+    coins_needed_for_kick_start.extend(try_s!(orders_kick_start(&ctx)));
+    *(try_s!(ctx.coins_needed_for_kick_start.lock())) = coins_needed_for_kick_start;
+
     let trades = try_s! (thread::Builder::new().name ("trades".into()) .spawn ({
         let ctx = ctx.clone();
         move || lp_trades_loop (ctx)
@@ -1566,11 +1572,6 @@ pub fn lp_init (mypubport: u16, conf: Json, ctx_cb: &Fn (u32))
         let ctx = ctx.clone();
         move || unsafe { lp_command_q_loop (ctx) }
     }));
-    // launch kickstart threads before RPC is available, this will prevent the API user to place
-    // an order and start new swap that might get started 2 times because of kick-start
-    let mut coins_needed_for_kick_start = swap_kick_starts (ctx.clone());
-    coins_needed_for_kick_start.extend(try_s!(orders_kick_start(&ctx)));
-    *(unwrap!(ctx.coins_needed_for_kick_start.lock())) = coins_needed_for_kick_start;
 /*
     int32_t nonz,didremote=0;
     LP_statslog_parse();
