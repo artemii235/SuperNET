@@ -1,4 +1,5 @@
 use super::*;
+use crate::utxo::rpc_clients::ElectrumProtocol;
 
 fn utxo_coin_for_test() -> UtxoCoin {
     let checksum_type = ChecksumType::DSHA256;
@@ -11,7 +12,11 @@ fn utxo_coin_for_test() -> UtxoCoin {
     };
 
     let mut client = ElectrumClientImpl::new();
-    client.add_server("electrum1.cipig.net:10025").unwrap();
+    client.add_server(&ElectrumRpcRequest {
+        url: "electrum1.cipig.net:10025".into(),
+        protocol: ElectrumProtocol::TCP,
+        disable_cert_verification: false,
+    }).unwrap();
 
     let coin = UtxoCoinImpl {
         decimals: 8,

@@ -54,9 +54,9 @@ use std::time::Duration;
 
 pub use chain::Transaction as UtxoTx;
 
-use self::rpc_clients::{UtxoRpcClientEnum, UnspentInfo, ElectrumClient, ElectrumClientImpl, NativeClient, electrum_script_hash};
+use self::rpc_clients::{electrum_script_hash, ElectrumClient, ElectrumClientImpl, NativeClient, UtxoRpcClientEnum, UnspentInfo };
 use super::{IguanaInfo, MarketCoinOps, MmCoin, MmCoinEnum, SwapOps, Transaction, TransactionEnum, TransactionFut, TransactionDetails};
-use crate::utxo::rpc_clients::{NativeClientImpl, UtxoRpcClientOps};
+use crate::utxo::rpc_clients::{NativeClientImpl, UtxoRpcClientOps, ElectrumRpcRequest};
 use futures::future::Either;
 
 #[cfg(test)]
@@ -1443,7 +1443,7 @@ pub fn key_pair_from_seed(seed: &str) -> Result<KeyPair, String> {
 
 pub enum UtxoInitMode {
     Native,
-    Electrum(Vec<String>),
+    Electrum(Vec<ElectrumRpcRequest>),
 }
 
 pub fn utxo_coin_from_iguana_info(
@@ -1489,21 +1489,21 @@ pub fn utxo_coin_from_iguana_info(
 
             UtxoRpcClientEnum::Native(NativeClient(client))
         },
-        UtxoInitMode::Electrum(mut urls) => {
+        UtxoInitMode::Electrum(mut servers) => {
             let mut rng = thread_rng();
-            urls.as_mut_slice().shuffle(&mut rng);
+            servers.as_mut_slice().shuffle(&mut rng);
             let mut client = ElectrumClientImpl::new();
-            for url in urls.iter() {
-                match client.add_server(url) {
+            for server in servers.iter() {
+                match client.add_server(server) {
                     Ok(_) => (),
-                    Err(e) => log!("Error " (e) " connecting to " (url) ". Address won't be used")
+                    Err(e) => log!("Error " (e) " connecting to " [server] ". Address won't be used")
                 };
             }
 
             let mut attempts = 0;
             while !client.is_connected() {
                 if attempts >= 10 {
-                    return ERR!("Failed to connect to at least 1 of {:?} in 5 seconds.", urls);
+                    return ERR!("Failed to connect to at least 1 of {:?} in 5 seconds.", servers);
                 }
 
                 thread::sleep(Duration::from_millis(500));
@@ -1520,7 +1520,7 @@ pub fn utxo_coin_from_iguana_info(
                 loop {
                     if let Some(client) = weak_client.upgrade() {
                         if let Err(e) = client.server_ping().wait() {
-                            log!("Electrum servers " [urls] " ping error " [e]);
+                            log!("Electrum servers " [servers] " ping error " [e]);
                         }
                     } else {
                         break;

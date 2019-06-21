@@ -40,6 +40,7 @@ primitives = { git = "https://github.com/artemii235/parity-bitcoin.git" }
 rand = "0.6"
 rlp = { git = "https://github.com/artemii235/parity-common" }
 rpc = { git = "https://github.com/artemii235/parity-bitcoin.git" }
+rustls = { version = "0.15.2", features = ["dangerous_configuration"] }
 script = { git = "https://github.com/artemii235/parity-bitcoin.git" }
 serde = "1.0"
 serde_derive = "1.0"
@@ -47,8 +48,10 @@ serde_json = "1.0"
 serialization = { git = "https://github.com/artemii235/parity-bitcoin.git" }
 sha2 = "0.8"
 sha3 = "0.8"
-tokio-timer = "0.1"
 tokio = "0.1.13"
+tokio-timer = "0.1"
+tokio-io = "0.1.10"
+tokio-rustls = { version = "=0.9.1" }
 # Need try_clone to shutdown and reconnect the tcp connection when there's no data received from Electrum after some time.
 tokio-tcp = "=0.1.2"
 unwrap = "1.2"
