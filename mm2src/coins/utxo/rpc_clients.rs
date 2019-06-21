@@ -1,3 +1,4 @@
+use bigdecimal::BigDecimal;
 use bytes::{BytesMut};
 use chain::{OutPoint, Transaction as UtxoTransaction};
 use common::{CORE, slurp_req, StringError};
@@ -33,7 +34,7 @@ use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_rustls::{TlsConnector, TlsStream};
 use tokio_rustls::webpki::{DNSName, DNSNameRef};
 use tokio_tcp::TcpStream;
-use bigdecimal::BigDecimal;
+use webpki_roots::TLS_SERVER_ROOTS;
 
 /// Skips the server certificate verification on TLS connection
 pub struct NoCertificateVerification {}
@@ -977,6 +978,7 @@ fn electrum_connect(
             ElectrumConfig::SSL(dns, skip_validation) => {
                 let dns = dns.clone();
                 let mut ssl_config = ClientConfig::new();
+                ssl_config.root_store.add_server_trust_anchors(&TLS_SERVER_ROOTS);
                 if *skip_validation {
                     ssl_config
                         .dangerous()
