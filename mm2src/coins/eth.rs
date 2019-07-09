@@ -582,6 +582,12 @@ impl MarketCoinOps for EthCoin {
     fn current_block(&self) -> Box<dyn Future<Item=u64, Error=String> + Send> {
         Box::new(self.web3.eth().block_number().map(|res| res.into()).map_err(|e| ERRL!("{}", e)))
     }
+
+    fn address_from_pubkey_str(&self, pubkey: &str) -> Result<String, String> {
+        let pubkey_bytes = try_s!(hex::decode(pubkey));
+        let addr = try_s!(addr_from_raw_pubkey(&pubkey_bytes));
+        Ok(format!("{:#02x}", addr))
+    }
 }
 
 // We can use a shared nonce lock for all ETH coins.

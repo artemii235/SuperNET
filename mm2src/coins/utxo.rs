@@ -1149,6 +1149,12 @@ impl MarketCoinOps for UtxoCoin {
     fn current_block(&self) -> Box<dyn Future<Item=u64, Error=String> + Send> {
         Box::new(self.rpc_client.get_block_count().map_err(|e| ERRL!("{}", e)))
     }
+
+    fn address_from_pubkey_str(&self, pubkey: &str) -> Result<String, String> {
+        let pubkey_bytes = try_s!(hex::decode(pubkey));
+        let addr = try_s!(address_from_raw_pubkey(&pubkey_bytes, self.pub_addr_prefix, self.pub_t_addr_prefix, self.checksum_type));
+        Ok(addr.to_string())
+    }
 }
 
 impl IguanaInfo for UtxoCoin {

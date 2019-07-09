@@ -14,7 +14,7 @@ pub fn test_autoprice_coingecko (local_start: LocalStart) {
     // it should be readable, there should be enough information for both the users and the GUI to understand what's going on
     // and to make an informed decision about whether the MarketMaker is performing correctly.
 
-    let (passphrase, mut mm, _dump_log, _dump_dashboard) = mm_spat (local_start, &identity);
+    let (_passphrase, mut mm, _dump_log, _dump_dashboard) = mm_spat (local_start, &identity);
     unwrap! (mm.wait_for_log (19., &mut |log| log.contains (">>>>>>>>> DEX stats ")));
 
     enable_electrum (&mm, "KMD", vec!["electrum1.cipig.net:10001","electrum2.cipig.net:10001","electrum3.cipig.net:10001"]);
@@ -46,15 +46,6 @@ pub fn test_autoprice_coingecko (local_start: LocalStart) {
     //     "port": 10061
     // })));
     // assert_eq! (electrum_dash.0, StatusCode::OK);
-
-    let address = unwrap! (mm.rpc (json! ({
-        "userpass": mm.userpass,
-        "method": "calcaddress",
-        "passphrase": passphrase
-    })));
-    assert_eq! (address.0, StatusCode::OK);
-    let address: Json = unwrap! (json::from_str (&address.1));
-    log! ({"test_autoprice] coinaddr: {}.", unwrap! (address["coinaddr"].as_str(), "!coinaddr")});
 
     // Trigger the autoprice.
 
@@ -92,7 +83,7 @@ pub fn test_autoprice_coingecko (local_start: LocalStart) {
 
 /// Uses a private `conf["cmc_key"]` to test the CMC mode.
 pub fn test_autoprice_coinmarketcap (local_start: LocalStart) {
-    let (passphrase, mut mm, _dump_log, _dump_dashboard) = mm_spat (local_start, &|mut conf| {
+    let (_passphrase, mut mm, _dump_log, _dump_dashboard) = mm_spat (local_start, &|mut conf| {
         conf["cmc_key"] = "8498a278-a031-4ff1-9a7b-5f576d36149a".into();  // From "https://pro.coinmarketcap.com/account".
         // The command-line "coins" configuration is used to map the coin names to the corresponding ticker symbols.
         let coins = unwrap! (conf["coins"].as_array_mut());
@@ -127,14 +118,6 @@ pub fn test_autoprice_coinmarketcap (local_start: LocalStart) {
 
     enable_electrum (&mm, "KMD", vec!["electrum1.cipig.net:10001","electrum2.cipig.net:10001","electrum3.cipig.net:10001"]);
     enable_electrum (&mm, "BTC", vec!["electrum1.cipig.net:10000","electrum2.cipig.net:10000","electrum3.cipig.net:10000"]);
-    let address = unwrap! (mm.rpc (json! ({
-        "userpass": mm.userpass,
-        "method": "calcaddress",
-        "passphrase": passphrase
-    })));
-    assert_eq! (address.0, StatusCode::OK);
-    let address: Json = unwrap! (json::from_str (&address.1));
-    log! ({"test_autoprice] coinaddr: {}.", unwrap! (address["coinaddr"].as_str(), "!coinaddr")});
 
     // Trigger the autoprice.
 

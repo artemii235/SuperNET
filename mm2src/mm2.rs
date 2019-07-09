@@ -19,7 +19,7 @@
 //  Copyright © 2017-2019 SuperNET. All rights reserved.
 //
 
-use common::{bits256, _bits256, bitcoin_priv2wif, lp, os, BitcoinCtx, CJSON, MM_VERSION};
+use common::{bits256, _bits256, bitcoin_priv2wif, lp, os, BitcoinCtx, MM_VERSION};
 use common::mm_ctx::MmCtx;
 
 use gstuff::{now_ms, slurp};

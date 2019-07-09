@@ -24,7 +24,7 @@ use gstuff::now_ms;
 use hex;
 use http::StatusCode;
 use keys::KeyPair;
-use libc::{self, c_char, c_void};
+use libc::{self, c_char};
 use rand::{random, Rng, SeedableRng};
 use rand::rngs::SmallRng;
 use serde_json::{self as json, Value as Json};
@@ -46,14 +46,14 @@ use coins::utxo::{key_pair_from_seed};
 use peers::http_fallback::new_http_fallback;
 use portfolio::prices_loop;
 
-use crate::common::{coins_iter, lp, lp_queue_command_for_c, nonz, os, CJSON, MM_VERSION};
+use crate::common::{coins_iter, lp, lp_queue_command_for_c, nonz, os, MM_VERSION};
 use crate::common::wio::{slurp_url, CORE};
 use crate::common::log::TagParam;
 use crate::common::mm_ctx::{MmCtx, MmArc};
 use crate::mm2::lp_network::{lp_command_q_loop, seednode_loop, client_p2p_loop};
 use crate::mm2::lp_ordermatch::{lp_trade_command, lp_trades_loop, orders_kick_start};
 use crate::mm2::lp_swap::swap_kick_starts;
-use crate::mm2::rpc::{self, SINGLE_THREADED_C_LOCK};
+use crate::mm2::rpc::{self};
 use common::mm_ctx::MmCtxBuilder;
 
 /*
@@ -229,37 +229,16 @@ char *blocktrail_listtransactions(char *symbol,char *coinaddr,int32_t num,int32_
 /// 4) No need for `unsafe`, `CJSON` and `*mut c_char` there.
 pub unsafe fn lp_command_process(
     ctx: MmArc,
-    pub_sock: i32,
     json: Json,
-    c_json: CJSON,
-    stats_json_only: i32,
 ) -> *mut libc::c_char {
-    let my_ip = fomat!((unwrap!(ctx.rpc_ip_port()).ip()) '\0');
     if !json["result"].is_null() || !json["error"].is_null() {
         null_mut()
     } else {
         if std::env::var("LOG_COMMANDS").is_ok() {
             log!("Got command: " [json]);
         }
-        let _lock = SINGLE_THREADED_C_LOCK.lock();
-        let mut trade_command = -1;
-        if stats_json_only == 0 {
-            trade_command = lp_trade_command(ctx.clone(), json);
-        }
-        if trade_command <= 0 {
-            lp::stats_JSON(
-                ctx.btc_ctx() as *mut c_void,
-                my_ip.as_ptr() as *mut c_char,
-                pub_sock,
-                c_json.0,
-                b"127.0.0.1\x00" as *const u8 as *const libc::c_char as *mut libc::c_char,
-                stats_json_only as u16,
-                0,
-                1,
-            )
-        } else {
-            null_mut()
-        }
+        lp_trade_command(ctx.clone(), json);
+        null_mut()
     }
 }
 
