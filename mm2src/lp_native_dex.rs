@@ -51,7 +51,7 @@ use crate::common::wio::{slurp_url, CORE};
 use crate::common::log::TagParam;
 use crate::common::mm_ctx::{MmCtx, MmArc};
 use crate::mm2::lp_network::{lp_command_q_loop, seednode_loop, client_p2p_loop};
-use crate::mm2::lp_ordermatch::{lp_trade_command, lp_trades_loop, orders_kick_start};
+use crate::mm2::lp_ordermatch::{lp_ordermatch_loop, lp_trade_command, orders_kick_start};
 use crate::mm2::lp_swap::swap_kick_starts;
 use crate::mm2::rpc::{self};
 use common::mm_ctx::MmCtxBuilder;
@@ -1543,7 +1543,7 @@ pub fn lp_init (mypubport: u16, conf: Json, ctx_cb: &dyn Fn (u32))
 
     let trades = try_s! (thread::Builder::new().name ("trades".into()) .spawn ({
         let ctx = ctx.clone();
-        move || lp_trades_loop (ctx)
+        move || lp_ordermatch_loop (ctx)
     }));
 
     let command_queue = try_s! (thread::Builder::new().name ("command_queue".into()) .spawn ({

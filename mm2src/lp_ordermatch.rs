@@ -29,12 +29,11 @@ use gstuff::{now_ms, slurp};
 use hashbrown::HashSet;
 use hashbrown::hash_map::{Entry, HashMap};
 use keys::{Public, Signature};
-use libc::c_char;
 use num_traits::cast::ToPrimitive;
 use primitives::hash::H256;
 use rpc::v1::types::{H256 as H256Json};
 use serde_json::{self as json, Value as Json};
-use std::ffi::{CString, OsStr};
+use std::ffi::{OsStr};
 use std::fs::{self, DirEntry};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -354,7 +353,7 @@ unsafe fn lp_connected_alice(ctx: &MmArc, taker_match: &TakerMatch) { // alice
     }
 }
 
-pub fn lp_trades_loop(ctx: MmArc) {
+pub fn lp_ordermatch_loop(ctx: MmArc) {
     const ORDERMATCH_TIMEOUT: u64 = 30000;
     let mut last_price_broadcast = 0;
 
@@ -403,6 +402,22 @@ pub fn lp_trades_loop(ctx: MmArc) {
             }
             last_price_broadcast = now_ms();
         }
+
+        let mut orderbook = unwrap!(ordermatch_ctx.orderbook.lock());
+        *orderbook = orderbook.drain().filter_map(|((base, rel), mut pair_orderbook)| {
+            pair_orderbook = pair_orderbook.drain().filter_map(|(pubkey, order)| if now_ms() / 1000 > order.timestamp + 30 {
+                None
+            } else {
+                Some((pubkey, order))
+            }).collect();
+            if pair_orderbook.is_empty() {
+                None
+            } else {
+                Some(((base, rel), pair_orderbook))
+            }
+        }).collect();
+        drop(orderbook);
+
         thread::sleep(Duration::from_secs(1));
     }
 }
@@ -816,14 +831,14 @@ pub fn lp_post_price_recv(ctx: &MmArc, req: Json) -> HyRes {
         let ordermatch_ctx: Arc<OrdermatchContext> = try_h!(OrdermatchContext::from_ctx(ctx));
         let mut orderbook = try_h!(ordermatch_ctx.orderbook.lock());
         match orderbook.entry((req.base.clone(), req.rel.clone())) {
-            Entry::Vacant(pair_orders) => if req.balance > 0.into() {
+            Entry::Vacant(pair_orders) => if req.balance > 0.into() && req.price > 0.into() {
                 let mut orders = HashMap::new();
                 orders.insert(req.pubkey.clone(), req);
                 pair_orders.insert(orders);
             },
             Entry::Occupied(mut pair_orders) => {
                 match pair_orders.get_mut().entry(req.pubkey.clone()) {
-                    Entry::Vacant(order) => if req.balance > 0.into() {
+                    Entry::Vacant(order) => if req.balance > 0.into() && req.price > 0.into() {
                         order.insert(req);
                     },
                     Entry::Occupied(mut order) => if req.balance > 0.into() {
