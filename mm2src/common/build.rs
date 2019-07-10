@@ -126,6 +126,7 @@ fn generate_bindings() {
             "LP_coinadd_",
             "LP_conflicts_find",
             "LPinit",
+            "LP_mutex_init",
             "LP_ports",
             "LP_priceinfoadd",
             "LP_privkeycalc",
