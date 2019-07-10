@@ -272,6 +272,10 @@ iguana/exchanges/manychains
 /marketmaker_depends
 /x64
 
+# JS artefacts
+/js/node_modules
+/js/*.dll
+
 # Rust artefacts
 /MM_VERSION
 /target

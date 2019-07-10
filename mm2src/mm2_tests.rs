@@ -46,9 +46,9 @@ fn enable_coins(mm: &MarketMakerIt) -> Vec<(&'static str, Json)> {
 
 fn enable_coins_eth_electrum(mm: &MarketMakerIt, eth_urls: Vec<&str>) -> HashMap<&'static str, Json> {
     let mut replies = HashMap::new();
-    replies.insert ("BEER", enable_electrum (mm, "BEER", vec!["electrum1.cipig.net:10022","electrum2.cipig.net:10022","electrum3.cipig.net:10022"]));
-    replies.insert ("PIZZA", enable_electrum (mm, "PIZZA", vec!["electrum1.cipig.net:10024","electrum2.cipig.net:10024","electrum3.cipig.net:10024"]));
-    replies.insert ("ETOMIC", enable_electrum (mm, "ETOMIC", vec!["electrum1.cipig.net:10025","electrum2.cipig.net:10025"]));
+    replies.insert ("BEER", enable_electrum (mm, "BEER", vec!["test1.cipig.net:10022","test2.cipig.net:10022","test3.cipig.net:10022"]));
+    replies.insert ("PIZZA", enable_electrum (mm, "PIZZA", vec!["test1.cipig.net:10024","test2.cipig.net:10024","test3.cipig.net:10024"]));
+    replies.insert ("ETOMIC", enable_electrum (mm, "ETOMIC", vec!["test1.cipig.net:10025","test2.cipig.net:10025"]));
     replies.insert ("ETH", enable_native (mm, "ETH", eth_urls.clone()));
     replies.insert ("JST", enable_native (mm, "JST", eth_urls));
     replies
@@ -77,7 +77,7 @@ fn test_rpc() {
     let no_method = unwrap! (mm.rpc (json! ({
         "userpass": mm.userpass,
         "coin": "BEER",
-        "ipaddr": "electrum1.cipig.net",
+        "ipaddr": "test1.cipig.net",
         "port": 10022
     })));
     assert! (no_method.0.is_server_error());
@@ -363,7 +363,7 @@ fn test_my_balance() {
     log!({"log path: {}", mm.log_path.display()});
     unwrap! (mm.wait_for_log (22., &|log| log.contains (">>>>>>>>> DEX stats ")));
     // Enable BEER.
-    let json = enable_electrum(&mm, "BEER", vec!["electrum1.cipig.net:10022","electrum2.cipig.net:10022","electrum3.cipig.net:10022"]);
+    let json = enable_electrum(&mm, "BEER", vec!["test1.cipig.net:10022","test2.cipig.net:10022","test3.cipig.net:10022"]);
     let balance_on_enable = unwrap!(json["balance"].as_str());
     assert_eq!(balance_on_enable, "1");
 
@@ -529,7 +529,7 @@ fn test_rpc_password_from_json() {
         "userpass": "password1",
         "method": "electrum",
         "coin": "BEER",
-        "servers": [{"url":"electrum1.cipig.net:10022"},{"url":"electrum2.cipig.net:10022"},{"url":"electrum3.cipig.net:10022"}],
+        "servers": [{"url":"test1.cipig.net:10022"},{"url":"test2.cipig.net:10022"},{"url":"test3.cipig.net:10022"}],
         "mm2": 1,
     })));
 
@@ -540,7 +540,7 @@ fn test_rpc_password_from_json() {
         "userpass": mm.userpass,
         "method": "electrum",
         "coin": "BEER",
-        "servers": [{"url":"electrum1.cipig.net:10022"},{"url":"electrum2.cipig.net:10022"},{"url":"electrum3.cipig.net:10022"}],
+        "servers": [{"url":"test1.cipig.net:10022"},{"url":"test2.cipig.net:10022"},{"url":"test3.cipig.net:10022"}],
         "mm2": 1,
     })));
 
@@ -551,7 +551,7 @@ fn test_rpc_password_from_json() {
         "userpass": mm.userpass,
         "method": "electrum",
         "coin": "PIZZA",
-        "servers": [{"url":"electrum1.cipig.net:10024"},{"url":"electrum2.cipig.net:10024"},{"url":"electrum3.cipig.net:10024"}],
+        "servers": [{"url":"test1.cipig.net:10024"},{"url":"test2.cipig.net:10024"},{"url":"test3.cipig.net:10024"}],
         "mm2": 1,
     })));
 
@@ -592,7 +592,7 @@ fn test_rpc_password_from_json_no_userpass() {
     let electrum = unwrap! (mm.rpc (json! ({
         "method": "electrum",
         "coin": "BEER",
-        "urls": ["electrum2.cipig.net:10022"],
+        "urls": ["test2.cipig.net:10022"],
     })));
 
     // electrum call must return 500 status code
@@ -1268,7 +1268,7 @@ fn test_order_errors_when_base_equal_rel() {
     let (_dump_log, _dump_dashboard) = mm_dump (&mm.log_path);
     log!({"Log path: {}", mm.log_path.display()});
     unwrap! (mm.wait_for_log (22., &|log| log.contains (">>>>>>>>> DEX stats ")));
-    enable_electrum (&mm, "BEER", vec!["electrum1.cipig.net:10022","electrum2.cipig.net:10022","electrum3.cipig.net:10022"]);
+    enable_electrum (&mm, "BEER", vec!["test1.cipig.net:10022","test2.cipig.net:10022","test3.cipig.net:10022"]);
 
     let rc = unwrap! (mm.rpc (json! ({
         "userpass": mm.userpass,
@@ -1372,9 +1372,9 @@ fn test_multiple_buy_sell_no_delay() {
     let (_dump_log, _dump_dashboard) = mm_dump (&mm.log_path);
     log!({"Log path: {}", mm.log_path.display()});
     unwrap! (mm.wait_for_log (22., &|log| log.contains (">>>>>>>>> DEX stats ")));
-    enable_electrum (&mm, "BEER", vec!["electrum1.cipig.net:10022", "electrum2.cipig.net:10022", "electrum3.cipig.net:10022"]);
-    enable_electrum (&mm, "PIZZA", vec!["electrum1.cipig.net:10024", "electrum2.cipig.net:10024", "electrum3.cipig.net:10024"]);
-    enable_electrum (&mm, "ETOMIC", vec!["electrum1.cipig.net:10025", "electrum2.cipig.net:10025", "electrum3.cipig.net:10025"]);
+    enable_electrum (&mm, "BEER", vec!["test1.cipig.net:10022", "test2.cipig.net:10022", "test3.cipig.net:10022"]);
+    enable_electrum (&mm, "PIZZA", vec!["test1.cipig.net:10024", "test2.cipig.net:10024", "test3.cipig.net:10024"]);
+    enable_electrum (&mm, "ETOMIC", vec!["test1.cipig.net:10025", "test2.cipig.net:10025", "test3.cipig.net:10025"]);
 
     let rc = unwrap! (mm.rpc (json! ({
         "userpass": mm.userpass,

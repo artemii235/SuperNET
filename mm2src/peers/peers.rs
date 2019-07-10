@@ -1595,12 +1595,6 @@ pub fn key (ctx: &MmArc) -> Result<bits256, String> {
     Ok (pk.clone())
 }
 
-/*
-  The `main` function might be useful now and then for trying the Emscripten build of the peers crate.
-
 #[cfg(not(feature = "native"))]
-pub fn main() {
-    extern "C" {fn emscripten_exit_with_live_runtime();}
-    unsafe {emscripten_exit_with_live_runtime()}
-}
-*/
+#[no_mangle]
+pub extern fn peers_check() -> i32 {1}

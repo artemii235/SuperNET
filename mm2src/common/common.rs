@@ -11,6 +11,7 @@
 //!                   binary
 
 #![feature(non_ascii_idents, integer_atomics)]
+#![cfg_attr(not(feature = "native"), allow(unused_imports))]
 
 #[macro_use] extern crate fomat_macros;
 #[macro_use] extern crate gstuff;
