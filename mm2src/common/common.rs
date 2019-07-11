@@ -78,7 +78,7 @@ use serde_json::{self as json, Value as Json};
 use std::env::args;
 use std::fmt::{self, Write as FmtWrite};
 use std::fs;
-use std::ffi::{CStr, CString};
+use std::ffi::{CStr};
 use std::intrinsics::copy;
 use std::io::{Write};
 use std::mem::{forget, size_of, uninitialized, zeroed};
@@ -88,19 +88,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::str;
 
-// Make sure we're linking the eth-secp256k1 in for it is used in the MM1 C code.
-#[cfg(feature = "native")]
-use secp256k1::Secp256k1;
-#[cfg(feature = "native")]
-pub extern fn _we_are_using_secp256k1() -> Secp256k1 {Secp256k1::new()}
-
 #[cfg(feature = "native")]
 #[allow(dead_code,non_upper_case_globals,non_camel_case_types,non_snake_case)]
 pub mod lp {include! ("c_headers/LP_include.rs");}
-
-#[cfg(feature = "native")]
-#[allow(dead_code,non_upper_case_globals,non_camel_case_types,non_snake_case)]
-pub mod os {include! ("c_headers/OS_portable.rs");}
 
 pub const MM_VERSION: &'static str = env! ("MM_VERSION");
 
@@ -108,19 +98,6 @@ pub const SATOSHIS: u64 = 100000000;
 
 /// Converts u64 satoshis to f64
 pub fn sat_to_f(sat: u64) -> f64 { sat as f64 / SATOSHIS as f64 }
-
-/// Created by `void *bitcoin_ctx()`.
-pub enum BitcoinCtx {}
-
-extern "C" {
-    pub fn bitcoin_ctx() -> *mut BitcoinCtx;
-    fn bitcoin_ctx_destroy (ctx: *mut BitcoinCtx);
-    #[cfg(feature = "native")]
-    pub fn bitcoin_priv2wif (symbol: *const u8, wiftaddr: u8, wifstr: *mut c_char, privkey: _bits256, addrtype: u8) -> i32;
-}
-
-#[cfg(feature = "native")]
-pub use self::lp::_bits256;
 
 #[allow(non_camel_case_types)]
 #[derive(Clone, Copy, Eq, Hash, PartialEq)]
@@ -153,9 +130,9 @@ impl From<lp::_bits256> for bits256 {
 }
 
 #[cfg(feature = "native")]
-impl From<bits256> for _bits256 {
-    fn from (k: bits256) -> _bits256 {unsafe {
-        let mut bits: _bits256 = zeroed();
+impl From<bits256> for lp::_bits256 {
+    fn from (k: bits256) -> lp::_bits256 {unsafe {
+        let mut bits: lp::_bits256 = zeroed();
         bits.bytes.copy_from_slice (&k.bytes[..]);
         bits
     }}
@@ -185,27 +162,6 @@ pub fn jbits256 (json: &Json) -> Result<bits256, String> {
             return Ok (bits256::from (bytes))
     }   }
     Ok (unsafe {zeroed()})
-}
-
-#[cfg(feature = "native")]
-pub fn bitcoin_address (coin: &str, addrtype: u8, rmd160: [u8; 20usize]) -> Result<String, String> {
-    let coinaddr: [u8; 64] = unsafe {zeroed()};
-    let coin = try_s! (CString::new (coin));
-    unsafe {lp::bitcoin_address (coin.as_ptr() as *mut c_char, coinaddr.as_ptr() as *mut c_char, 0, addrtype, rmd160.as_ptr() as *mut u8, 20)};
-    Ok (try_s! (try_s! (CStr::from_bytes_with_nul (&coinaddr[..])) .to_str()) .to_string())
-}
-
-/// A safer version of `HASH_ITER` over `iguana_info` coins from `for_c::COINS`.
-#[cfg(feature = "native")]
-pub fn coins_iter (cb: &mut dyn FnMut (*mut lp::iguana_info) -> Result<(), String>) -> Result<(), String> {
-    let coins = try_s! (for_c::COINS.lock());
-    let mut iis = Vec::with_capacity (coins.len());
-    for (_ticker, ii) in coins.iter() {iis.push (ii.0)}
-    drop (coins);  // Unlock before callbacks, avoiding possibility of deadlocks and poisoning.
-
-    for ii in iis {try_s! (cb (ii))}
-
-    Ok(())
 }
 
 pub const SATOSHIDEN: i64 = 100000000;

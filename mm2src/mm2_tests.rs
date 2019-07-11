@@ -116,18 +116,8 @@ fn test_rpc() {
     // TODO (workaround libtorrent hanging in delete) // unwrap! (mm.wait_for_log (9., &|log| log.contains ("LogState] Bye!")));
 }
 
-use super::{btc2kmd, lp_main};
+use super::{lp_main};
 use bigdecimal::BigDecimal;
-
-/// Integration (?) test for the "btc2kmd" command line invocation.
-/// The argument is the WIF example from https://en.bitcoin.it/wiki/Wallet_import_format.
-#[test]
-fn test_btc2kmd() {
-    let output = unwrap! (btc2kmd ("5HueCGU8rMjxEXxiPuD5BDku4MkFqeZyd4dZ1jvhTVqvbTLvyTJ"));
-    assert_eq! (output, "BTC 5HueCGU8rMjxEXxiPuD5BDku4MkFqeZyd4dZ1jvhTVqvbTLvyTJ \
-    -> KMD UpRBUQtkA5WqFnSztd7sCYyyhtd4aq6AggQ9sXFh2fXeSnLHtd3Z: \
-    privkey 0c28fca386c7a227600b2fe50b7cae11ec86d3bf1fbe471be89827e19d72aa1d");
-}
 
 /// This is not a separate test but a helper used by `MarketMakerIt` to run the MarketMaker from the test binary.
 #[test]
@@ -222,9 +212,10 @@ fn alice_can_see_the_active_order_after_connection() {
             "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| unwrap! (s.parse::<i64>())),
             "passphrase": "bob passphrase",
             "coins": coins,
+            "rpc_password": "pass",
             "i_am_seed": true,
         }),
-        "db4be27033b636c6644c356ded97b0ad08914fcb8a1e2a1efc915b833c2cbd19".into(),
+        "pass".into(),
         match var ("LOCAL_THREAD_MM") {Ok (ref e) if e == "bob" => Some (local_start()), _ => None}
     ));
     let (_bob_dump_log, _bob_dump_dashboard) = mm_dump (&mm_bob.log_path);
@@ -272,8 +263,9 @@ fn alice_can_see_the_active_order_after_connection() {
             "passphrase": "alice passphrase",
             "coins": coins,
             "seednodes": [fomat!((mm_bob.ip))],
+            "rpc_password": "pass",
         }),
-        "08bfc72a25d860a6399005abc27d1aea35318c137fbaad686ab8d59f5716b473".into(),
+        "pass".into(),
         match var ("LOCAL_THREAD_MM") {Ok (ref e) if e == "alice" => Some (local_start()), _ => None}
     ));
 
@@ -343,8 +335,9 @@ fn test_my_balance() {
             "passphrase": "bob passphrase",
             "coins": coins,
             "i_am_seed": true,
+            "rpc_password": "pass",
         }),
-        "db4be27033b636c6644c356ded97b0ad08914fcb8a1e2a1efc915b833c2cbd19".into(),
+        "pass".into(),
         match var ("LOCAL_THREAD_MM") {Ok (ref e) if e == "bob" => Some (local_start()), _ => None}
     ));
     let (_dump_log, _dump_dashboard) = mm_dump (&mm.log_path);
@@ -424,8 +417,9 @@ fn test_check_balance_on_order_post() {
             "passphrase": "bob passphrase",
             "coins": coins,
             "i_am_seed": true,
+            "rpc_password": "pass",
         }),
-        "db4be27033b636c6644c356ded97b0ad08914fcb8a1e2a1efc915b833c2cbd19".into(),
+        "pass".into(),
         match var ("LOCAL_THREAD_MM") {Ok (ref e) if e == "bob" => Some (local_start()), _ => None}
     ));
     let (_dump_log, _dump_dashboard) = mm_dump (&mm.log_path);
@@ -1444,8 +1438,9 @@ fn test_cancel_order() {
             "passphrase": "bob passphrase",
             "coins": coins,
             "i_am_seed": true,
+            "rpc_password": "pass",
         }),
-        "db4be27033b636c6644c356ded97b0ad08914fcb8a1e2a1efc915b833c2cbd19".into(),
+        "pass".into(),
         match var ("LOCAL_THREAD_MM") {Ok (ref e) if e == "bob" => Some (local_start()), _ => None}
     ));
     let (_bob_dump_log, _bob_dump_dashboard) = mm_dump (&mm_bob.log_path);
@@ -1477,11 +1472,9 @@ fn test_cancel_order() {
             "passphrase": "alice passphrase",
             "coins": coins,
             "seednodes": [fomat!((mm_bob.ip))],
-            "alice_contract":"0xe1d4236c5774d35dc47dcc2e5e0ccfc463a3289c",
-            "bob_contract":"0x105aFE60fDC8B5c021092b09E8a042135A4A976E",
-            "ethnode":"http://195.201.0.6:8545"
+            "rpc_password": "pass",
         }),
-        "08bfc72a25d860a6399005abc27d1aea35318c137fbaad686ab8d59f5716b473".into(),
+        "pass".into(),
         match var ("LOCAL_THREAD_MM") {Ok (ref e) if e == "alice" => Some (local_start()), _ => None}
     ));
 
@@ -1571,8 +1564,9 @@ fn test_electrum_enable_conn_errors() {
             "passphrase": "bob passphrase",
             "coins": coins,
             "i_am_seed": true,
+            "rpc_password": "pass",
         }),
-        "db4be27033b636c6644c356ded97b0ad08914fcb8a1e2a1efc915b833c2cbd19".into(),
+        "pass".into(),
         match var ("LOCAL_THREAD_MM") {Ok (ref e) if e == "bob" => Some (local_start()), _ => None}
     ));
     let (_bob_dump_log, _bob_dump_dashboard) = mm_dump (&mm_bob.log_path);
@@ -1615,8 +1609,9 @@ fn test_order_should_not_be_displayed_when_node_is_down() {
             "passphrase": "bob passphrase",
             "coins": coins,
             "i_am_seed": true,
+            "rpc_password": "pass",
         }),
-        "db4be27033b636c6644c356ded97b0ad08914fcb8a1e2a1efc915b833c2cbd19".into(),
+        "pass".into(),
         match var ("LOCAL_THREAD_MM") {Ok (ref e) if e == "bob" => Some (local_start()), _ => None}
     ));
     let (_bob_dump_log, _bob_dump_dashboard) = mm_dump (&mm_bob.log_path);
@@ -1644,8 +1639,9 @@ fn test_order_should_not_be_displayed_when_node_is_down() {
             "passphrase": "alice passphrase",
             "coins": coins,
             "seednodes": [fomat!((mm_bob.ip))],
+            "rpc_password": "pass",
         }),
-        "08bfc72a25d860a6399005abc27d1aea35318c137fbaad686ab8d59f5716b473".into(),
+        "pass".into(),
         match var ("LOCAL_THREAD_MM") {Ok (ref e) if e == "alice" => Some (local_start()), _ => None}
     ));
 

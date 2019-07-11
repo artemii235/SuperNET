@@ -17,12 +17,11 @@
 //  rpc_commands.rs
 //  marketmaker
 //
-use common::{lp, rpc_response, HyRes, MM_VERSION};
+use common::{rpc_response, HyRes, MM_VERSION};
 use common::wio::CORE;
 use common::mm_ctx::MmArc;
 use futures::Future;
 use futures_timer::Delay;
-use std::ptr::{write_volatile};
 use std::time::Duration;
 
 pub fn help() -> HyRes {
@@ -108,7 +107,6 @@ pub fn stop (ctx: MmArc) -> HyRes {
     let pause_f = Delay::new (Duration::from_millis (50));
     let stop_f = pause_f.then (move |r| -> Result<(), ()> {
         if let Err (err) = r {log! ("stop] Warning, there was a Delay error: " (err))}
-        unsafe {write_volatile (&mut lp::LP_STOP_RECEIVED, 1)}
         ctx.stop();
         Ok(())
     });

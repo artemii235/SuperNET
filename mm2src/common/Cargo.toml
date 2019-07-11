@@ -6,7 +6,7 @@ edition = "2018"
 
 [features]
 native = [
-  "eth-secp256k1", "hyper", "hyper-rustls", "libc", "ring", "tokio-core"
+  "hyper", "hyper-rustls", "libc", "ring", "tokio-core"
 ]
 
 [lib]
@@ -19,7 +19,6 @@ backtrace = "0.3"
 # Using the `chrono` because the `time` formatting has serious limits, like the lack of subsecond support, IIRC.
 chrono = "0.4"
 crossbeam = "0.6"
-eth-secp256k1 = { git = "https://github.com/paritytech/rust-secp256k1", optional = true }
 fomat-macros = "0.2"
 futures = "0.1"
 gstuff = "0.5"

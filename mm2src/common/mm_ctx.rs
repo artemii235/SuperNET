@@ -10,16 +10,11 @@ use std::net::IpAddr;
 #[cfg(feature = "native")]
 use std::net::SocketAddr;
 use std::ops::Deref;
-use std::os::raw::{c_void};
 use std::path::{Path, PathBuf};
-use std::ptr::null_mut;
 #[cfg(feature = "native")]
-use std::ptr::read_volatile;
 use std::sync::{Arc, Mutex, Weak};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use super::{bitcoin_ctx, bitcoin_ctx_destroy, log, BitcoinCtx};
-#[cfg(feature = "native")]
-use super::lp;
+use super::{log};
 
 /// MarketMaker state, shared between the various MarketMaker threads.
 ///
@@ -45,8 +40,6 @@ pub struct MmCtx {
     pub conf: Json,
     /// Human-readable log and status dashboard.
     pub log: log::LogState,
-    /// Bitcoin elliptic curve context, obtained from the C library linked with "eth-secp256k1".
-    btc_ctx: *mut BitcoinCtx,
     /// Set to true after `lp_passphrase_init`, indicating that we have a usable state.
     /// 
     /// Should be refactored away in the future. State should always be valid.
@@ -96,7 +89,6 @@ impl MmCtx {
         MmCtx {
             conf: Json::Object (json::Map::new()),
             log: log::LogState::in_memory(),
-            btc_ctx: unsafe {bitcoin_ctx()},
             initialized: AtomicBool::new (false),
             rpc_started: AtomicBool::new (false),
             stop: AtomicBool::new (false),
@@ -118,12 +110,9 @@ impl MmCtx {
         }
     }
 
-    /// This field is freed when `MmCtx` is dropped, make sure `MmCtx` stays around while it's used.
-    pub unsafe fn btc_ctx (&self) -> *mut BitcoinCtx {self.btc_ctx}
-
     #[cfg(feature = "native")]
     pub fn rpc_ip_port (&self) -> Result<SocketAddr, String> {
-        let port = self.conf["rpcport"].as_u64().unwrap_or (lp::LP_RPCPORT as u64);
+        let port = self.conf["rpcport"].as_u64().unwrap_or (7783);
         if port < 1000 {return ERR! ("rpcport < 1000")}
         if port > u16::max_value() as u64 {return ERR! ("rpcport > u16")}
 
@@ -181,7 +170,6 @@ impl MmCtx {
     /// True if the MarketMaker instance needs to stop.
     #[cfg(feature = "native")]
     pub fn is_stopping (&self) -> bool {
-        if unsafe {read_volatile (&lp::LP_STOP_RECEIVED) != 0} {return true}
         self.stop.load (Ordering::Relaxed)
     }
 
@@ -217,11 +205,6 @@ impl MmCtx {
     /// Get the reference to secp256k1 key pair
     pub fn secp256k1_key_pair(&self) -> &KeyPair {
         unwrap!(self.secp256k1_key_pair.as_ref())
-    }
-}
-impl Drop for MmCtx {
-    fn drop (&mut self) {
-        unsafe {bitcoin_ctx_destroy (self.btc_ctx)}
     }
 }
 
@@ -296,15 +279,6 @@ impl MmArc {
     /// Tries to obtain the MM context from the weak link.  
     pub fn from_weak (weak: &MmWeak) -> Option<MmArc> {
         weak.0.upgrade().map (|arc| MmArc (arc))
-    }
-}
-
-#[no_mangle]
-pub fn r_btc_ctx (mm_ctx_id: u32) -> *mut c_void {
-    if let Ok (ctx) = MmArc::from_ffi_handle (mm_ctx_id) {
-        unsafe {ctx.btc_ctx() as *mut c_void}
-    } else {
-        null_mut()
     }
 }
 
