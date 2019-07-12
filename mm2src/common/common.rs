@@ -602,9 +602,10 @@ pub mod wio {
     }
 
     #[test]
+    #[ignore]
     fn test_slurp_req() {
-        let (status, _headers, _body) = unwrap! (slurp_url ("https://httpbin.org/get") .wait());
-        assert! (status.is_success());
+        let (status, headers, body) = unwrap! (slurp_url ("https://httpbin.org/get") .wait());
+        assert! (status.is_success(), format!("{:?} {:?} {:?}", status, headers, body));
     }
 
     /// Fetch URL by HTTPS and parse JSON response
