@@ -1545,7 +1545,7 @@ fn read_native_mode_conf<P: AsRef<Path>>(filename: P) -> Result<(Option<u16>, St
     };
     let rpc_user = try_s!(section.get("rpcuser").ok_or(ERRL!("Conf file {} doesn't have the rpcuser key", filename.as_ref().display())));
     let rpc_password = try_s!(section.get("rpcpassword").ok_or(ERRL!("Conf file {} doesn't have the rpcpassword key", filename.as_ref().display())));
-    Ok((rpc_port, rpc_user.into(), rpc_password.into()))
+    Ok((rpc_port, rpc_user.clone(), rpc_password.clone()))
 }
 
 pub fn utxo_coin_from_conf_and_request(
