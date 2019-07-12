@@ -32,7 +32,6 @@
 use bigdecimal::BigDecimal;
 use common::{rpc_response, rpc_err_response, HyRes};
 use common::mm_ctx::{from_ctx, MmArc};
-use dirs::home_dir;
 use futures::{Future};
 use gstuff::{slurp};
 use hashbrown::hash_map::{HashMap, RawEntryMut};
@@ -628,35 +627,6 @@ struct iguana_info *LP_coinadd(struct iguana_info *cdata)
     return(coin);
 }
 */
-
-/// Returns a path to the native coin wallet configuration.  
-/// (This path is used in `LP_userpassfp` to read the wallet credentials).  
-/// cf. https://github.com/artemii235/SuperNET/issues/346
-fn confpath (coins_en: &Json) -> Result<PathBuf, String> {
-    // Documented at https://github.com/jl777/coins#bitcoin-protocol-specific-json
-    // "USERHOME/" prefix should be replaced with the user's home folder.
-    let confpathˢ = coins_en["confpath"].as_str().unwrap_or ("") .trim();
-    if confpathˢ.is_empty() {
-        let home = try_s! (home_dir().ok_or ("Can not detect the user home directory"));
-        if let Some (assetˢ) = coins_en["asset"].as_str() {
-            return Ok (home.join (".komodo") .join (&assetˢ) .join (fomat! ((assetˢ) ".conf")))
-        } else if let Some (nameˢ) = coins_en["name"].as_str() {
-            return Ok (home.join (fomat! ('.' (nameˢ))) .join (fomat! ((nameˢ) ".conf")))
-        }
-        return Ok (home.join ("mm2-default-coin-config.conf"))
-    }
-    let (confpathˢ, rel_to_home) =
-        if confpathˢ.starts_with ("~/") {(&confpathˢ[2..], true)}
-        else if confpathˢ.starts_with ("USERHOME/") {(&confpathˢ[9..], true)}
-        else {(confpathˢ, false)};
-
-    if rel_to_home {
-        let home = try_s! (home_dir().ok_or ("Can not detect the user home directory"));
-        Ok (home.join (confpathˢ))
-    } else {
-        Ok (confpathˢ.into())
-    }
-}
 
 /// Adds a new currency into the list of currencies configured.
 ///
