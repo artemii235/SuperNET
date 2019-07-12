@@ -1222,7 +1222,7 @@ fn fix_directories(ctx: &MmCtx) -> Result<(), String> {
 ///     in order to avoid the possibility of invalid state.
 /// AP: Totally agree, moreover maybe we even `must` deny calling this on a working MM as it's being refactored
 #[allow(unused_unsafe)]
-pub unsafe fn lp_passphrase_init (passphrase: Option<&str>, gui: Option<&str>) -> Result<KeyPair, String> {
+pub unsafe fn lp_passphrase_init (passphrase: Option<&str>, _gui: Option<&str>) -> Result<KeyPair, String> {
     let passphrase = match passphrase {
         None | Some ("") => return ERR! ("jeezy says we cant use the nullstring as passphrase and I agree"),
         Some (s) => s.to_string()

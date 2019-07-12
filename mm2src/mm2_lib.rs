@@ -17,7 +17,6 @@ mod mm2;
 
 use crate::common::mm_ctx::MmArc;
 use crate::common::log::LOG_OUTPUT;
-use crate::common::lp;
 use futures::Future;
 use gstuff::{any_to_str, now_float};
 use libc::c_char;
@@ -25,7 +24,6 @@ use num_traits::FromPrimitive;
 use serde_json::{self as json};
 use std::ffi::{CStr, CString};
 use std::panic::catch_unwind;
-use std::ptr::write_volatile;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::thread;
 use std::time::Duration;
