@@ -1,4 +1,4 @@
-# BarterDEX Marketmaker V2
+# AtomicDEX Marketmaker V2
 
 This repository contains the `work in progress` code of brand new Marketmaker version built mainly on Rust.  
 The current state can be considered as very early alpha.  

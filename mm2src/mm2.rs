@@ -139,7 +139,7 @@ fn help() {
 #[allow(dead_code)]
 pub fn mm2_main() {
     init_crash_reports();
-    log!({"BarterDEX MarketMaker {}", MM_VERSION});
+    log!({"AtomicDEX MarketMaker {}", MM_VERSION});
 
     // Temporarily simulate `argv[]` for the C version of the main method.
     let args: Vec<String> = env::args().map (|mut arg| {arg.push ('\0'); arg}) .collect();

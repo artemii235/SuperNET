@@ -37,7 +37,7 @@ jobs:
       - bash: |
           rm -rf upload
           mkdir upload
-          echo 2.0.$(Build.BuildId)_$(Build.SourceBranchName)_$(COMMIT_HASH) > MM_VERSION
+          echo 2.0.$(Build.BuildId)_$(Build.SourceBranchName)_$(COMMIT_HASH)_$(Agent.OS) > MM_VERSION
           cat MM_VERSION
           touch mm2src/common/build.rs
           cargo build --features native -vv
