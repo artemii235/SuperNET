@@ -565,13 +565,32 @@ impl MarketCoinOps for EthCoin {
                 return ERR!("Waited too long until {} for transaction {:?} to be spent ", wait_until, tx);
             }
 
-            let events = try_s!(self.spend_events(from_block).wait());
+            let events = match self.spend_events(from_block).wait() {
+                Ok(ev) => ev,
+                Err(e) => {
+                    log!("Error " (e) " getting spend events");
+                    thread::sleep(Duration::from_secs(15));
+                    continue;
+                },
+            };
 
             let found = events.iter().find(|event| &event.data.0[..32] == id.as_slice());
 
             if let Some(event) = found {
                 if let Some(tx_hash) = event.transaction_hash {
-                    let transaction = try_s!(self.web3.eth().transaction(TransactionId::Hash(tx_hash)).wait()).unwrap();
+                    let transaction = match self.web3.eth().transaction(TransactionId::Hash(tx_hash)).wait() {
+                        Ok(Some(t)) => t,
+                        Ok(None) => {
+                            log!("Tx " (tx_hash) " not found yet");
+                            thread::sleep(Duration::from_secs(15));
+                            continue;
+                        }
+                        Err(e) => {
+                            log!("Get tx " (tx_hash) " error " (e));
+                            thread::sleep(Duration::from_secs(15));
+                            continue;
+                        }
+                    };
 
                     return Ok(TransactionEnum::from(try_s!(signed_tx_from_web3_tx(transaction))))
                 }

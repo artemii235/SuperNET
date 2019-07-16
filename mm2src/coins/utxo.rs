@@ -1139,10 +1139,10 @@ impl MarketCoinOps for UtxoCoin {
         )
     }
 
-    fn wait_for_tx_spend(&self, tx_bytes: &[u8], wait_until: u64, _from_block: u64) -> Result<TransactionEnum, String> {
+    fn wait_for_tx_spend(&self, tx_bytes: &[u8], wait_until: u64, from_block: u64) -> Result<TransactionEnum, String> {
         let tx: UtxoTx = try_s!(deserialize(tx_bytes).map_err(|e| ERRL!("{:?}", e)));
 
-        let res = try_s!(self.rpc_client.wait_for_payment_spend(&tx, 0, wait_until));
+        let res = try_s!(self.rpc_client.wait_for_payment_spend(&tx, 0, wait_until, from_block));
 
         Ok(res.into())
     }
