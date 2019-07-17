@@ -317,6 +317,23 @@ pub fn stack_trace (format: &mut dyn FnMut (&mut dyn Write, &backtrace::Symbol),
     });
 }
 
+/// Sets our own panic handler using patched backtrace crate. It was discovered that standard Rust panic
+/// handlers print only "unknown" in Android backtraces which is not helpful.
+/// Using custom hook with patched backtrace version solves this issue.
+/// NB: https://github.com/rust-lang/backtrace-rs/issues/227
+#[cfg(feature = "native")]
+pub fn set_panic_hook() {
+    use std::panic::{set_hook, PanicInfo};
+
+    set_hook (Box::new (|info: &PanicInfo| {
+        let mut trace = String::new();
+        stack_trace (&mut stack_trace_frame, &mut |l| trace.push_str (l));
+        log!((info));
+        log!("backtrace");
+        log!((trace));
+    }))
+}
+
 /// Helps logging binary data (particularly with text-readable parts, such as bencode, netstring)
 /// by replacing all the non-printable bytes with the `blank` character.
 pub fn binprint (bin: &[u8], blank: u8) -> String {
