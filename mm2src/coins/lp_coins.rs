@@ -837,7 +837,11 @@ pub fn my_tx_history(ctx: MmArc, req: Json) -> HyRes {
             json["confirmations"] = if tx_block == 0 {
                 Json::from(0)
             } else {
-                Json::from(block_number - tx_block + 1)
+                if block_number >= tx_block {
+                    Json::from((block_number - tx_block) + 1)
+                } else {
+                    Json::from(0)
+                }
             };
             json
         }).collect();
