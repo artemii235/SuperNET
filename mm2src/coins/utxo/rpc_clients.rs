@@ -252,7 +252,7 @@ impl JsonRpcClient for NativeClientImpl {
 impl UtxoRpcClientOps for NativeClient {
     fn list_unspent_ordered(&self, address: &Address) -> UtxoRpcRes<Vec<UnspentInfo>> {
         let clone = self.0.clone();
-        Box::new(self.list_unspent(0, 999999, vec![address.to_string()]).map_err(|e| ERRL!("{}", e)).and_then(move |unspents| {
+        Box::new(self.list_unspent(0, 9999999, vec![address.to_string()]).map_err(|e| ERRL!("{}", e)).and_then(move |unspents| {
             let mut futures = vec![];
             for unspent in unspents.iter() {
                 let delay_f = Delay::new(Duration::from_millis(10)).map_err(|e| ERRL!("{}", e));
@@ -373,7 +373,7 @@ impl UtxoRpcClientOps for NativeClient {
     }
 
     fn display_balance(&self, address: Address, _decimals: u8) -> RpcRes<BigDecimal> {
-        Box::new(self.list_unspent(0, 999999, vec![address.to_string()]).map(|unspents|
+        Box::new(self.list_unspent(0, 9999999, vec![address.to_string()]).map(|unspents|
             unspents.iter().fold(0., |sum, unspent| sum + unspent.amount).into()
         ))
     }
