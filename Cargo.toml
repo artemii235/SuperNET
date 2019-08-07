@@ -96,6 +96,9 @@ unwrap = "1.2"
 uuid = { version = "0.7", features = ["serde", "v4"] }
 winapi = "0.3"
 
+[dev-dependencies]
+mocktopus = "0.7.0"
+
 [workspace]
 members = [
   "mm2src/coins"

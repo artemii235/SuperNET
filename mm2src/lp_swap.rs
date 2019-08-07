@@ -54,11 +54,10 @@
 //  lp_swap.rs
 //  marketmaker
 //
-use bitcrypto::{ChecksumType, dhash160};
+use bitcrypto::{dhash160};
 use rpc::v1::types::{H160 as H160Json, H256 as H256Json, H264 as H264Json};
-use coins::{lp_coinfind, MmCoinEnum, TradeInfo, TransactionDetails};
-use coins::utxo::compressed_pub_key_from_priv_raw;
-use common::{bits256, HyRes, lp, rpc_response};
+use coins::{lp_coinfind, MmCoinEnum, TradeInfo, TransactionDetails, TransactionEnum};
+use common::{bits256, HyRes, rpc_response};
 use common::wio::Timeout;
 use common::log::{TagParam};
 use common::mm_ctx::{from_ctx, MmArc};
@@ -1237,20 +1236,26 @@ impl MakerSwap {
             MakerSwapEvent::Started(data) => {
                 let mut taker = bits256::from([0; 32]);
                 taker.bytes = data.taker.0;
-                let mut taker_coin = None;
-                while taker_coin.is_none() {
-                    thread::sleep(Duration::from_secs(5));
-                    log!("Can't kickstart the swap " (saved.uuid) " until the coin " (data.taker_coin) " is activated");
+                let mut taker_coin;
+                loop {
                     taker_coin = try_s!(lp_coinfind(&ctx, &data.taker_coin));
+                    if taker_coin.is_some() {
+                        break;
+                    }
+                    log!("Can't kickstart the swap " (saved.uuid) " until the coin " (data.taker_coin) " is activated");
+                    thread::sleep(Duration::from_secs(5));
                 };
 
-                let mut maker_coin = None;
-                while maker_coin.is_none() {
-                    thread::sleep(Duration::from_secs(5));
-                    log!("Can't kickstart the swap " (saved.uuid) " until the coin " (data.maker_coin) " is activated");
+                let mut maker_coin;
+                loop {
                     maker_coin = try_s!(lp_coinfind(&ctx, &data.maker_coin));
+                    if maker_coin.is_some() {
+                        break;
+                    }
+                    log!("Can't kickstart the swap " (saved.uuid) " until the coin " (data.maker_coin) " is activated");
+                    thread::sleep(Duration::from_secs(5));
                 };
-                let my_persistent_pub = unsafe { unwrap!(compressed_pub_key_from_priv_raw(&lp::G.LP_privkey.bytes, ChecksumType::DSHA256)) };
+                let my_persistent_pub = H264::from(&**ctx.secp256k1_key_pair().public());
 
                 let mut swap = MakerSwap::new(
                     ctx,
@@ -1270,6 +1275,38 @@ impl MakerSwap {
             },
             _ => ERR!("First swap event must be Started"),
         }
+    }
+
+    fn recover_funds(&self) -> Result<TransactionEnum, String> {
+        if self.finished_at == 0 {
+            return ERR!("Swap should finish before recover funds attempt");
+        }
+        if self.maker_payment.is_some() && self.maker_payment_refund.is_some() {
+            return ERR!("Maker payment was already refunded, there's nothing to recover");
+        }
+        if self.maker_payment.is_some() && self.taker_payment_spend.is_some() {
+            return ERR!("Taker payment was already spent, there's nothing to recover");
+        }
+
+        if self.maker_payment.is_none() {
+            let maker_payment = try_s!(self.maker_coin.check_if_my_payment_sent(
+                self.data.maker_payment_lock as u32,
+                &*self.other_persistent_pub,
+                &*dhash160(&self.data.secret.0),
+                self.data.maker_coin_start_block,
+            ));
+            let tx = match maker_payment {
+                Some(tx) => try_s!(self.maker_coin.send_maker_refunds_payment(
+                    &tx.tx_hex(),
+                    self.data.maker_payment_lock as u32,
+                    &*self.other_persistent_pub,
+                    &*dhash160(&self.data.secret.0),
+                ).wait()),
+                None => unimplemented!(),
+            };
+            return Ok(tx);
+        }
+        ERR!("Not implemented")
     }
 }
 
@@ -2329,6 +2366,11 @@ pub async fn coins_needed_for_kick_start(ctx: MmArc) -> Result<Response<Vec<u8>>
 
 #[cfg(test)]
 mod lp_swap_tests {
+    use coins::{lp_coinfind, MarketCoinOps, SwapOps, TestCoin};
+    use coins::utxo::{key_pair_from_seed};
+    use coins::eth::{signed_eth_tx_from_bytes};
+    use common::mm_ctx::MmCtxBuilder;
+    use mocktopus::mocking::*;
     use super::*;
 
     #[test]
@@ -2368,5 +2410,49 @@ mod lp_swap_tests {
         let bytes = serialize(&data);
         let deserialized = unwrap!(deserialize(bytes.as_slice()));
         assert_eq!(data, deserialized);
+    }
+
+    // failed swaps cases to cover:
+    // maker payment errored but was sent in real, needs to be refunded
+    // IO error on maker refund attempt, repeat refund
+    // taker payment IO errored but was sent in real, needs to be refunded
+    // taker payment was spent, but it wasn't recognized so refund attempt happened, need to find the taker payment spend and then spend maker payment
+    // taker payment is unspent, but refund errored for some reason
+    #[test]
+    fn test_recover_funds_maker_swap_payment_errored_but_sent() {
+        // the swap ends up with MakerPaymentTransactionFailed error but the transaction is actually
+        // sent, need to find it and refund
+        let maker_saved_json = r#"{"error_events":["StartFailed","NegotiateFailed","TakerFeeValidateFailed","MakerPaymentTransactionFailed","MakerPaymentDataSendFailed","TakerPaymentValidateFailed","TakerPaymentSpendFailed","MakerPaymentRefunded","MakerPaymentRefundFailed"],"events":[{"event":{"data":{"lock_duration":7800,"maker_amount":"3.54932734","maker_coin":"KMD","maker_coin_start_block":1452970,"maker_payment_confirmations":1,"maker_payment_lock":1563759539,"my_persistent_pub":"031bb83b58ec130e28e0a6d5d2acf2eb01b0d3f1670e021d47d31db8a858219da8","secret":"0000000000000000000000000000000000000000000000000000000000000000","started_at":1563743939,"taker":"101ace6b08605b9424b0582b5cce044b70a3c8d8d10cb2965e039b0967ae92b9","taker_amount":"0.02004833998671660000000000","taker_coin":"ETH","taker_coin_start_block":8196380,"taker_payment_confirmations":1,"uuid":"3447b727-fe93-4357-8e5a-8cf2699b7e86"},"type":"Started"},"timestamp":1563743939211},{"event":{"data":{"taker_payment_locktime":1563751737,"taker_pubkey":"03101ace6b08605b9424b0582b5cce044b70a3c8d8d10cb2965e039b0967ae92b9"},"type":"Negotiated"},"timestamp":1563743979835},{"event":{"data":{"block_height":8196386,"coin":"ETH","fee_details":null,"from":["0x3D6a2f4Dd6085b34EeD6cBc2D3aaABd0D3B697C1"],"internal_id":"00","my_balance_change":0,"received_by_me":0,"spent_by_me":0,"timestamp":1563744052,"to":["0xD8997941Dd1346e9231118D5685d866294f59e5b"],"total_amount":0.0001,"tx_hash":"a59203eb2328827de00bed699a29389792906e4f39fdea145eb40dc6b3821bd6","tx_hex":"f8690284ee6b280082520894d8997941dd1346e9231118d5685d866294f59e5b865af3107a4000801ca0743d2b7c9fad65805d882179062012261be328d7628ae12ee08eff8d7657d993a07eecbd051f49d35279416778faa4664962726d516ce65e18755c9b9406a9c2fd"},"type":"TakerFeeValidated"},"timestamp":1563744052878},{"event":{"data":{"error":"lp_swap:1888] eth:654] RPC error: Error { code: ServerError(-32010), message: \"Transaction with the same hash was already imported.\", data: None }"},"type":"MakerPaymentTransactionFailed"},"timestamp":1563744118577},{"event":{"type":"Finished"},"timestamp":1563763243350}],"success_events":["Started","Negotiated","TakerFeeValidated","MakerPaymentSent","TakerPaymentReceived","TakerPaymentWaitConfirmStarted","TakerPaymentValidatedAndConfirmed","TakerPaymentSpent","Finished"],"uuid":"3447b727-fe93-4357-8e5a-8cf2699b7e86"}"#;
+        let maker_saved_swap: MakerSavedSwap = unwrap!(json::from_str(maker_saved_json));
+        let key_pair = unwrap!(key_pair_from_seed("spice describe gravity federal blast come thank unfair canal monkey style afraid"));
+        let ctx = MmCtxBuilder::default().with_secp256k1_key_pair(key_pair).into_mm_arc();
+
+        lp_coinfind.mock_safe(|_, _| {
+            let coin = TestCoin {};
+            MockResult::Return(Ok(Some(coin.into())))
+        });
+        TestCoin::ticker.mock_safe(|_| MockResult::Return("ticker"));
+        static mut MY_PAYMENT_SENT_CALLED: bool = false;
+        TestCoin::check_if_my_payment_sent.mock_safe(|_, _, _, _, _| {
+            // raw transaction bytes of https://etherscan.io/tx/0x0869be3e5d4456a29d488a533ad6c118620fef450f36778aecf31d356ff8b41f
+            let tx_bytes = [248, 240, 3, 133, 1, 42, 5, 242, 0, 131, 2, 73, 240, 148, 133, 0, 175, 192, 188, 82, 20, 114, 128, 130, 22, 51, 38, 194, 255, 12, 115, 244, 168, 113, 135, 110, 205, 245, 24, 127, 34, 254, 184, 132, 21, 44, 243, 175, 73, 33, 143, 82, 117, 16, 110, 27, 133, 82, 200, 114, 233, 42, 140, 198, 35, 21, 201, 249, 187, 180, 20, 46, 148, 40, 9, 228, 193, 130, 71, 199, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 152, 41, 132, 9, 201, 73, 19, 94, 237, 137, 35, 61, 4, 194, 207, 239, 152, 75, 175, 245, 157, 174, 10, 214, 161, 207, 67, 70, 87, 246, 231, 212, 47, 216, 119, 68, 237, 197, 125, 141, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 93, 72, 125, 102, 28, 159, 180, 237, 198, 97, 87, 80, 82, 200, 104, 40, 245, 221, 7, 28, 122, 104, 91, 99, 1, 159, 140, 25, 131, 101, 74, 87, 50, 168, 146, 187, 90, 160, 51, 1, 123, 247, 6, 108, 165, 181, 188, 40, 56, 47, 211, 229, 221, 73, 5, 15, 89, 81, 117, 225, 216, 108, 98, 226, 119, 232, 94, 184, 42, 106];
+            let eth_tx = unwrap!(signed_eth_tx_from_bytes(&tx_bytes));
+            unsafe { MY_PAYMENT_SENT_CALLED = true };
+            MockResult::Return(Ok(Some(eth_tx.into())))
+        });
+
+        static mut MAKER_REFUND_CALLED: bool = false;
+        TestCoin::send_maker_refunds_payment.mock_safe(|_, _, _, _, _| {
+            // raw transaction bytes of https://etherscan.io/tx/0x0869be3e5d4456a29d488a533ad6c118620fef450f36778aecf31d356ff8b41f
+            let tx_bytes = [248, 240, 3, 133, 1, 42, 5, 242, 0, 131, 2, 73, 240, 148, 133, 0, 175, 192, 188, 82, 20, 114, 128, 130, 22, 51, 38, 194, 255, 12, 115, 244, 168, 113, 135, 110, 205, 245, 24, 127, 34, 254, 184, 132, 21, 44, 243, 175, 73, 33, 143, 82, 117, 16, 110, 27, 133, 82, 200, 114, 233, 42, 140, 198, 35, 21, 201, 249, 187, 180, 20, 46, 148, 40, 9, 228, 193, 130, 71, 199, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 152, 41, 132, 9, 201, 73, 19, 94, 237, 137, 35, 61, 4, 194, 207, 239, 152, 75, 175, 245, 157, 174, 10, 214, 161, 207, 67, 70, 87, 246, 231, 212, 47, 216, 119, 68, 237, 197, 125, 141, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 93, 72, 125, 102, 28, 159, 180, 237, 198, 97, 87, 80, 82, 200, 104, 40, 245, 221, 7, 28, 122, 104, 91, 99, 1, 159, 140, 25, 131, 101, 74, 87, 50, 168, 146, 187, 90, 160, 51, 1, 123, 247, 6, 108, 165, 181, 188, 40, 56, 47, 211, 229, 221, 73, 5, 15, 89, 81, 117, 225, 216, 108, 98, 226, 119, 232, 94, 184, 42, 106];
+            let eth_tx = unwrap!(signed_eth_tx_from_bytes(&tx_bytes));
+            unsafe { MAKER_REFUND_CALLED = true };
+            MockResult::Return(Box::new(futures::future::ok(eth_tx.into())))
+        });
+
+        let (maker_swap, _) = unwrap!(MakerSwap::load_from_saved(ctx, maker_saved_swap));
+        assert!(maker_swap.recover_funds().is_ok());
+        assert!(unsafe { MY_PAYMENT_SENT_CALLED });
+        assert!(unsafe { MAKER_REFUND_CALLED });
     }
 }

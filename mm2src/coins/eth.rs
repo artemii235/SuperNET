@@ -56,6 +56,7 @@ use super::{HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeInfo, Transac
             TransactionEnum, Transaction, TransactionDetails};
 
 pub use ethcore_transaction::SignedTransaction as SignedEthTx;
+pub use rlp;
 
 mod web3_transport;
 use self::web3_transport::Web3Transport;
@@ -616,9 +617,7 @@ impl MarketCoinOps for EthCoin {
     }
 
     fn tx_enum_from_bytes(&self, bytes: &[u8]) -> Result<TransactionEnum, String> {
-        let tx: UnverifiedTransaction = try_s!(rlp::decode(bytes));
-        let signed = try_s!(SignedEthTx::new(tx));
-        Ok(TransactionEnum::from(signed))
+        Ok(try_s!(signed_eth_tx_from_bytes(bytes)).into())
     }
 
     fn current_block(&self) -> Box<dyn Future<Item=u64, Error=String> + Send> {
@@ -630,6 +629,12 @@ impl MarketCoinOps for EthCoin {
         let addr = try_s!(addr_from_raw_pubkey(&pubkey_bytes));
         Ok(format!("{:#02x}", addr))
     }
+}
+
+pub fn signed_eth_tx_from_bytes(bytes: &[u8]) -> Result<SignedEthTx, String> {
+    let tx: UnverifiedTransaction = try_s!(rlp::decode(bytes));
+    let signed = try_s!(SignedEthTx::new(tx));
+    Ok(signed)
 }
 
 // We can use a shared nonce lock for all ETH coins.
@@ -2037,7 +2042,7 @@ fn is_valid_checksum_addr(addr: &str) -> bool {
 
 /// Requests the nonce from all available nodes and checks that returned results equal.
 /// Nodes might need some time to sync and there can be other coins that use same nodes in different order.
-/// We need to be sure that nonce is updated on all of them after transaction is sent.
+/// We need to be sure that nonce is updated on all of them before and after transaction is sent.
 fn get_addr_nonce(addr: Address, web3s: &Vec<Web3Instance>) -> impl Future<Item=U256, Error=String> {
     loop_fn((addr, web3s.clone(), true, 0), move |(addr, web3s, first_run, mut errors)| {
         let futures: Vec<_> = web3s.iter().map(|web3| if web3.is_parity {

@@ -205,7 +205,7 @@ impl MmCtx {
 
     /// Get the reference to secp256k1 key pair
     pub fn secp256k1_key_pair(&self) -> &KeyPair {
-        unwrap!(self.secp256k1_key_pair.as_ref())
+        unwrap!(self.secp256k1_key_pair.as_ref(), "secp256k1_key_pair must be initialized before used")
     }
 }
 impl Default for MmCtx {
