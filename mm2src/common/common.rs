@@ -357,14 +357,39 @@ pub fn stack_trace (format: &mut dyn FnMut (&mut dyn Write, &backtrace::Symbol),
 /// NB: https://github.com/rust-lang/backtrace-rs/issues/227
 #[cfg(feature = "native")]
 pub fn set_panic_hook() {
+    use atomic::Atomic;
     use std::panic::{set_hook, PanicInfo};
 
+    thread_local! {static ENTERED: Atomic<bool> = Atomic::new (false);}
+
     set_hook (Box::new (|info: &PanicInfo| {
+        // Stack tracing and logging might panic (in `println!` for example).
+        // Let us detect this and do nothing on second panic.
+        // We'll likely still get a crash after the hook is finished
+        // (experimenting with this I'm getting the "thread panicked while panicking. aborting." on Windows)
+        // but that crash will have a better stack trace compared to the one with deep hook recursion.
+        if let Ok (Err (_)) = ENTERED.try_with (
+            |e| e.compare_exchange (false, true, Ordering::Relaxed, Ordering::Relaxed)) {
+                return}
+
         let mut trace = String::new();
         stack_trace (&mut stack_trace_frame, &mut |l| trace.push_str (l));
         log! ((info));
         log! ("backtrace\n" (trace));
+
+        let _ = ENTERED.try_with (|e| e.compare_exchange (true, false, Ordering::Relaxed, Ordering::Relaxed));
     }))
+}
+
+/// Simulates the panic-in-panic crash.
+pub fn double_panic_crash() {
+    struct Panicker (u32);
+    impl Drop for Panicker {
+        fn drop (&mut self) {
+            panic! ("panic in drop; {}", self.0)
+    }   }
+    let panicker = Panicker (1);
+    panic! ("first panic; {}", panicker.0)
 }
 
 /// Helps logging binary data (particularly with text-readable parts, such as bencode, netstring)
