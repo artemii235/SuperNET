@@ -41,7 +41,8 @@ use std::time::Duration;
 use std::thread;
 use uuid::Uuid;
 
-use crate::mm2::lp_swap::{dex_fee_amount, get_locked_amount, MakerSwap, run_maker_swap, run_taker_swap, TakerSwap};
+use crate::mm2::lp_swap::{dex_fee_amount, get_locked_amount, run_taker_swap, TakerSwap};
+use crate::mm2::lp_swap::maker_swap::{MakerSwap, run_maker_swap};
 
 #[cfg(test)]
 #[path = "ordermatch_tests.rs"]
