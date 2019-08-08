@@ -1,26 +1,8 @@
-use bigdecimal::{BigDecimal};
-use bitcrypto::{dhash160};
-use coins::{lp_coinfind, MmCoinEnum, TradeInfo, TransactionDetails, TransactionEnum};
-use common::{bits256};
-use common::log::TagParam;
-use common::mm_ctx::{MmArc};
-use common::wio::Timeout;
+use bitcrypto::dhash160;
+use coins::TransactionEnum;
 use crc::crc32;
-use futures::{Future};
-use gstuff::{now_ms, slurp};
-use primitives::hash::{H264};
 use rand::Rng;
-use rpc::v1::types::{H256 as H256Json, H264 as H264Json};
-use serde_json::{self as json};
-use serialization::{deserialize, serialize};
-use std::fs::{File};
-use std::io::prelude::*;
-use std::path::{PathBuf};
-use std::thread;
-use std::time::Duration;
-use super::{BASIC_COMM_TIMEOUT, broadcast_my_swap_status, dex_fee_amount, get_locked_amount_by_other_swaps,
-            lock_amount, lp_atomic_locktime, my_swap_file_path, payment_confirmations, SavedSwap, SwapError,
-            SwapNegotiationData, TakerNegotiationData, unlock_amount};
+use super::*;
 
 pub fn stats_maker_swap_file_path(ctx: &MmArc, uuid: &str) -> PathBuf {
     ctx.dbdir().join("SWAPS").join("STATS").join("MAKER").join(format!("{}.json", uuid))
@@ -58,22 +40,28 @@ fn save_my_maker_swap_event(ctx: &MmArc, uuid: &str, event: MakerSavedEvent) -> 
     }
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TakerNegotiationData {
+    pub taker_payment_locktime: u64,
+    pub taker_pubkey: H264Json,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
 pub struct MakerSwapData {
-    pub taker_coin: String,
-    pub maker_coin: String,
+    taker_coin: String,
+    maker_coin: String,
     taker: H256Json,
-    pub secret: H256Json,
+    secret: H256Json,
     my_persistent_pub: H264Json,
     lock_duration: u64,
-    pub maker_amount: BigDecimal,
-    pub taker_amount: BigDecimal,
+    maker_amount: BigDecimal,
+    taker_amount: BigDecimal,
     maker_payment_confirmations: u32,
     taker_payment_confirmations: u32,
     maker_payment_lock: u64,
     /// Allows to recognize one SWAP from the other in the logs. #274.
     uuid: String,
-    pub started_at: u64,
+    started_at: u64,
     maker_coin_start_block: u64,
     taker_coin_start_block: u64,
 }
@@ -671,10 +659,10 @@ impl MakerSwap {
         if self.finished_at == 0 {
             return ERR!("Swap must be finished before recover funds attempt");
         }
-        if self.maker_payment.is_some() && self.maker_payment_refund.is_some() {
+        if self.maker_payment_refund.is_some() {
             return ERR!("Maker payment was already refunded, there's nothing to recover");
         }
-        if self.maker_payment.is_some() && self.taker_payment_spend.is_some() {
+        if self.taker_payment_spend.is_some() {
             return ERR!("Taker payment was already spent, there's nothing to recover");
         }
 
@@ -772,9 +760,9 @@ impl MakerSwapEvent {
 }
 
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
-pub struct MakerSavedEvent {
-    pub timestamp: u64,
-    pub event: MakerSwapEvent,
+struct MakerSavedEvent {
+    timestamp: u64,
+    event: MakerSwapEvent,
 }
 
 impl MakerSavedEvent {
@@ -806,7 +794,7 @@ impl MakerSavedEvent {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MakerSavedSwap {
     pub uuid: String,
-    pub events: Vec<MakerSavedEvent>,
+    events: Vec<MakerSavedEvent>,
     success_events: Vec<String>,
     error_events: Vec<String>,
 }
@@ -829,6 +817,41 @@ impl MakerSavedSwap {
                 _ => ERR!("First swap event must be Started"),
             },
             None => ERR!("Can't get maker coin, events are empty"),
+        }
+    }
+
+    pub fn is_finished(&self) -> bool {
+        match self.events.last() {
+            Some(event) => event.event == MakerSwapEvent::Finished,
+            None => false,
+        }
+    }
+
+    pub fn get_my_info(&self) -> Option<MySwapInfo> {
+        match self.events.first() {
+            Some(event) => match &event.event {
+                MakerSwapEvent::Started(data) => {
+                    Some(MySwapInfo {
+                        my_coin: data.maker_coin.clone(),
+                        other_coin: data.taker_coin.clone(),
+                        my_amount: data.maker_amount.clone(),
+                        other_amount: data.taker_amount.clone(),
+                        started_at: data.started_at,
+                    })
+                },
+                _ => None,
+            },
+            None => None,
+        }
+    }
+
+    pub fn hide_secret(&mut self) {
+        match self.events.first_mut() {
+            Some(ref mut event) => match &mut event.event {
+                MakerSwapEvent::Started(ref mut data) => data.secret = H256Json::default(),
+                _ => (),
+            }
+            None => (),
         }
     }
 }

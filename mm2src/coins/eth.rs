@@ -486,6 +486,14 @@ impl SwapOps for EthCoin {
             None => Ok(None)
         }
     }
+
+    fn search_for_tx_spend(
+        &self,
+        tx: &[u8],
+        search_from_block: u64,
+    ) -> Result<Option<TransactionEnum>, String> {
+        unimplemented!()
+    }
 }
 
 impl MarketCoinOps for EthCoin {

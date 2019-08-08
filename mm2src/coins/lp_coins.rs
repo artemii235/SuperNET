@@ -174,6 +174,12 @@ pub trait SwapOps {
         secret_hash: &[u8],
         search_from_block: u64,
     ) -> Result<Option<TransactionEnum>, String>;
+
+    fn search_for_tx_spend(
+        &self,
+        tx: &[u8],
+        search_from_block: u64,
+    ) -> Result<Option<TransactionEnum>, String>;
 }
 
 /// Operations that coins have independently from the MarketMaker.
