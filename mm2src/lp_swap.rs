@@ -55,6 +55,7 @@
 //  marketmaker
 //
 use bigdecimal::BigDecimal;
+use futures03::executor::block_on;
 use rpc::v1::types::{H160 as H160Json, H256 as H256Json, H264 as H264Json};
 use coins::{lp_coinfind, MmCoinEnum, TradeInfo, TransactionDetails};
 use common::{bits256, HyRes, rpc_response};
@@ -290,6 +291,46 @@ pub fn dex_fee_amount(base: &str, rel: &str, trade_amount: &BigDecimal) -> BigDe
     } else {
         fee_amount
     }
+}
+
+// NB: Using a macro instead of a function in order to preserve the line numbers in the log.
+macro_rules! send {
+    ($ctx: expr, $to: expr, $subj: expr, $fallback: expr, $payload: expr) => {{
+        // Checksum here helps us visually verify the logistics between the Maker and Taker logs.
+        let crc = crc32::checksum_ieee (&$payload);
+        log!("Sending '" ($subj) "' (" ($payload.len()) " bytes, crc " (crc) ")");
+
+        block_on (peers::send ($ctx.clone(), $to, Vec::from ($subj.as_bytes()), $fallback, $payload.into()))
+    }}
+}
+
+macro_rules! recv_ {
+    ($swap: expr, $subj: expr, $timeout_sec: expr, $ec: expr, $validator: block) => {{
+        let recv_subject = fomat! (($subj) '@' ($swap.uuid));
+        let validator = Box::new ($validator) as Box<dyn Fn(&[u8]) -> Result<(), String> + Send>;
+        let fallback = ($timeout_sec / 3) .min (30) .max (60) as u8;
+        let recv_f = peers::recv (&$swap.ctx, recv_subject.as_bytes(), fallback, Box::new ({
+            // NB: `peers::recv` is generic and not responsible for handling errors.
+            //     Here, on the other hand, we should know enough to log the errors.
+            //     Also through the macros the logging statements will carry informative line numbers on them.
+            move |payload: &[u8]| -> bool {
+                match validator (payload) {
+                    Ok (()) => true,
+                    Err (err) => {
+                        log! ("Error validating payload '" ($subj) "' (" (payload.len()) " bytes, crc " (crc32::checksum_ieee (payload)) "): " (err) ". Retrying…");
+                        false
+                    }
+                }
+            }
+        }));
+        let recv_f = Timeout::new (recv_f, Duration::from_secs (BASIC_COMM_TIMEOUT + $timeout_sec));
+        recv_f.wait().map(|payload| {
+            // Checksum here helps us visually verify the logistics between the Maker and Taker logs.
+            let crc = crc32::checksum_ieee (&payload);
+            log! ("Received '" (recv_subject) "' (" (payload.len()) " bytes, crc " (crc) ")");
+            payload
+        })
+    }}
 }
 
 /// Data to be exchanged and validated on swap start, the replacement of LP_pubkeys_data, LP_choosei_data, etc.
