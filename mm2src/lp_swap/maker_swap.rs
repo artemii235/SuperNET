@@ -257,7 +257,7 @@ impl MakerSwap {
         };
 
         let bytes = serialize(&maker_negotiation_data);
-        let sending_f = match send!(&self.ctx, self.taker, fomat!(("negotiation") '@' (self.uuid)), 30, bytes.as_slice()) {
+        let sending_f = match send!(self.ctx, self.taker, fomat!(("negotiation") '@' (self.uuid)), 30, bytes.as_slice()) {
             Ok(f) => f,
             Err(e) => return Ok((
                 Some(MakerSwapCommand::Finish),
@@ -308,7 +308,7 @@ impl MakerSwap {
 
     fn wait_taker_fee(&self) -> Result<(Option<MakerSwapCommand>, Vec<MakerSwapEvent>), String> {
         let negotiated = serialize(&true);
-        let sending_f = match send!(&self.ctx, self.taker, fomat!(("negotiated") '@' (self.uuid)), 30, negotiated.as_slice()) {
+        let sending_f = match send!(self.ctx, self.taker, fomat!(("negotiated") '@' (self.uuid)), 30, negotiated.as_slice()) {
             Ok(f) => f,
             Err(e) => return Ok((
                 Some(MakerSwapCommand::Finish),
@@ -439,7 +439,7 @@ impl MakerSwap {
 
     fn wait_for_taker_payment(&self) -> Result<(Option<MakerSwapCommand>, Vec<MakerSwapEvent>), String> {
         let maker_payment_hex = self.maker_payment.as_ref().unwrap().tx_hex.clone();
-        let sending_f = match send!(&self.ctx, self.taker, fomat!(("maker-payment") '@' (self.uuid)), 60, maker_payment_hex) {
+        let sending_f = match send!(self.ctx, self.taker, fomat!(("maker-payment") '@' (self.uuid)), 60, maker_payment_hex) {
             Ok(f) => f,
             Err(e) => return Ok((
                 Some(MakerSwapCommand::RefundMakerPayment),
