@@ -52,7 +52,7 @@ use std::time::Duration;
 use web3::{ self, Web3 };
 use web3::types::{Action as TraceAction, BlockId, BlockNumber, Bytes, CallRequest, FilterBuilder, Log, Transaction as Web3Transaction, TransactionId, H256, Trace, TraceFilterBuilder};
 
-use super::{HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeInfo, TransactionFut,
+use super::{FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeInfo, TransactionFut,
             TransactionEnum, Transaction, TransactionDetails};
 
 pub use ethcore_transaction::SignedTransaction as SignedEthTx;
@@ -487,11 +487,11 @@ impl SwapOps for EthCoin {
         }
     }
 
-    fn search_for_tx_spend(
+    fn search_for_swap_tx_spend(
         &self,
         tx: &[u8],
         search_from_block: u64,
-    ) -> Result<Option<TransactionEnum>, String> {
+    ) -> Result<Option<FoundSwapTxSpend>, String> {
         unimplemented!()
     }
 }

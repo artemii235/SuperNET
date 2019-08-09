@@ -59,7 +59,8 @@ use std::time::Duration;
 pub use chain::Transaction as UtxoTx;
 
 use self::rpc_clients::{electrum_script_hash, ElectrumClient, ElectrumClientImpl, EstimateFeeMethod, NativeClient, UtxoRpcClientEnum, UnspentInfo };
-use super::{HistorySyncState, MarketCoinOps, MmCoin, MmCoinEnum, SwapOps, TradeInfo, Transaction, TransactionEnum, TransactionFut, TransactionDetails};
+use super::{FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, MmCoinEnum, SwapOps, TradeInfo,
+            Transaction, TransactionEnum, TransactionFut, TransactionDetails};
 use crate::utxo::rpc_clients::{NativeClientImpl, UtxoRpcClientOps, ElectrumRpcRequest};
 use futures::future::Either;
 
@@ -1108,11 +1109,11 @@ impl SwapOps for UtxoCoin {
         }
     }
 
-    fn search_for_tx_spend(
+    fn search_for_swap_tx_spend(
         &self,
         tx: &[u8],
         search_from_block: u64,
-    ) -> Result<Option<TransactionEnum>, String> {
+    ) -> Result<Option<FoundSwapTxSpend>, String> {
         unimplemented!()
     }
 }

@@ -1,7 +1,7 @@
 use bigdecimal::BigDecimal;
 use common::HyRes;
 use common::mm_ctx::MmArc;
-use crate::TradeInfo;
+use crate::{TradeInfo, FoundSwapTxSpend};
 use futures::Future;
 use mocktopus::macros::*;
 use std::borrow::Cow;
@@ -164,11 +164,11 @@ impl SwapOps for TestCoin {
         unimplemented!()
     }
 
-    fn search_for_tx_spend(
+    fn search_for_swap_tx_spend(
         &self,
         tx: &[u8],
         search_from_block: u64,
-    ) -> Result<Option<TransactionEnum>, String> {
+    ) -> Result<Option<FoundSwapTxSpend>, String> {
         unimplemented!()
     }
 }

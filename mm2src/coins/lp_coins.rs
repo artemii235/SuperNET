@@ -90,6 +90,11 @@ impl Deref for TransactionEnum {
 
 pub type TransactionFut = Box<dyn Future<Item=TransactionEnum, Error=String>>;
 
+pub enum FoundSwapTxSpend {
+    Spent(TransactionEnum),
+    Refunded(TransactionEnum),
+}
+
 /// Swap operations (mostly based on the Hash/Time locked transactions implemented by coin wallets).
 pub trait SwapOps {
     fn send_taker_fee(&self, fee_addr: &[u8], amount: BigDecimal) -> TransactionFut;
@@ -175,11 +180,11 @@ pub trait SwapOps {
         search_from_block: u64,
     ) -> Result<Option<TransactionEnum>, String>;
 
-    fn search_for_tx_spend(
+    fn search_for_swap_tx_spend(
         &self,
         tx: &[u8],
         search_from_block: u64,
-    ) -> Result<Option<TransactionEnum>, String>;
+    ) -> Result<Option<FoundSwapTxSpend>, String>;
 }
 
 /// Operations that coins have independently from the MarketMaker.
