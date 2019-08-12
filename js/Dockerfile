@@ -34,7 +34,7 @@ RUN \
 ENV PATH="/root/.cargo/bin:${PATH}"
 
 # First 7 characters of the commit ID.
-ENV MM_VERSION="f236ad1"
+ENV MM_VERSION="8cf193c"
 
 RUN cd /tmp &&\
     wget https://api.github.com/repos/KomodoPlatform/atomicDEX-API/tarball/$MM_VERSION &&\

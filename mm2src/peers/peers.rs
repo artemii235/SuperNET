@@ -19,12 +19,6 @@
 #[macro_use] extern crate serde_json;
 #[macro_use] extern crate unwrap;
 
-#[cfg(feature = "native")]
-mod executor {}
-
-#[cfg(not(feature = "native"))]
-pub mod executor;
-
 #[doc(hidden)]
 pub mod peers_tests;
 

@@ -7,6 +7,8 @@
 
 // TODO: The portable executor should be available under `CORE.spawn`.
 
+// TODO: call https://docs.rs/futures-preview/0.3.0-alpha.17/futures/executor/fn.enter.html
+
 use futures03::{FutureExt};
 use futures03::task::{waker_ref, ArcWake, Context, Poll};
 use futures03::future::BoxFuture;
@@ -16,7 +18,7 @@ use std::sync::{Arc, Mutex};
 struct Task {future: Mutex<BoxFuture<'static, ()>>}
 
 impl ArcWake for Task {
-    fn wake_by_ref (arc_self: &Arc<Self>) {
+    fn wake_by_ref (_arc_self: &Arc<Self>) {
         // Currently a NOP because `run` will run all the tasks anyway.  
         // Should later reimplement it to wake a specific future.  
         // cf. https://rust-lang.github.io/async-book/02_execution/04_executor.html

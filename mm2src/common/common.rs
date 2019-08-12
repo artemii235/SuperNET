@@ -12,6 +12,7 @@
 
 #![feature(non_ascii_idents, integer_atomics, panic_info_message)]
 #![feature(async_await, async_closure)]
+#![feature(duration_float)]
 #![cfg_attr(not(feature = "native"), allow(unused_imports))]
 #![cfg_attr(not(feature = "native"), allow(dead_code))]
 
@@ -74,7 +75,7 @@ use futures::task::Task;
 #[cfg(not(feature = "native"))]
 use futures03::task::{Context, Poll as Poll03, Waker};
 use hex::FromHex;
-use http::{Response, StatusCode, HeaderMap};
+use http::{Request, Response, StatusCode, HeaderMap};
 use http::header::{HeaderValue, CONTENT_TYPE};
 #[cfg(feature = "native")]
 use libc::{c_char, c_void, malloc, free};
@@ -479,10 +480,8 @@ pub mod wio {
     use future::IntoFuture;
     use gstuff::{any_to_str, duration_to_float, now_float};
     use http::{Request, StatusCode, HeaderMap};
-    //use http_body::Body;
     use hyper::Client;
     use hyper::client::HttpConnector;
-    use hyper::header::{ HeaderValue, CONTENT_TYPE };
     use hyper::rt::Stream;
     use hyper::server::conn::Http;
     use hyper_rustls::HttpsConnector;
@@ -492,7 +491,6 @@ pub mod wio {
     use std::thread;
     use std::thread::JoinHandle;
     use std::time::Duration;
-    use std::str;
     use tokio_core::reactor::Remote;
     use tokio_core::reactor::Handle;
 
@@ -676,61 +674,116 @@ pub mod wio {
         });
         Box::new (drive_s (response_f))
     }
+}
 
-    /// Executes a GET request, returning the response status, headers and body.
-    pub fn slurp_url (url: &str) -> SlurpFut {
-        slurp_req (try_fus! (Request::builder().uri (url) .body (Vec::new())))
+#[cfg(feature = "native")]
+pub mod executor {
+    use futures03::{FutureExt, Future as Future03, Poll as Poll03, TryFutureExt};
+    use futures03::task::Context;
+    use gstuff::now_float;
+    use std::pin::Pin;
+    use std::time::Duration;
+    use std::thread;
+
+    pub fn spawn (future: impl Future03<Output = ()> + 'static + Send) {
+        let f = future.unit_error().boxed().compat();
+        crate::wio::CORE.spawn (|_| f)
     }
 
-    #[test]
-    #[ignore]
-    fn test_slurp_req() {
-        let (status, headers, body) = unwrap! (slurp_url ("https://httpbin.org/get") .wait());
-        assert! (status.is_success(), format!("{:?} {:?} {:?}", status, headers, body));
+    /// A future that completes at a given time.  
+    pub struct Timer {till_utc: f64}
+
+    impl Timer {
+        pub fn till (till_utc: f64) -> Timer {Timer {till_utc}}
+        pub fn after (seconds: f64) -> Timer {Timer {till_utc: now_float() + seconds}}
+        pub fn till_utc (&self) -> f64 {self.till_utc}
     }
 
-    /// Fetch URL by HTTPS and parse JSON response
-    pub fn fetch_json<T>(url: &str) -> Box<dyn Future<Item=T, Error=String>>
-    where T: serde::de::DeserializeOwned + Send + 'static {
-        Box::new(slurp_url(url).and_then(|result| {
-            // try to parse as json with serde_json
-            let result = try_s!(serde_json::from_slice(&result.2));
-
-            Ok(result)
-        }))
-    }
-
-    /// Send POST JSON HTTPS request and parse response
-    pub fn post_json<T>(url: &str, json: String) -> Box<dyn Future<Item=T, Error=String>>
-    where T: serde::de::DeserializeOwned + Send + 'static {
-        let request = try_fus!(Request::builder()
-            .method("POST")
-            .uri(url)
-            .header(
-                CONTENT_TYPE,
-                HeaderValue::from_static("application/json")
-            )
-            .body(json.into())
-        );
-
-        Box::new(slurp_req(request).and_then(|result| {
-            // try to parse as json with serde_json
-            let result = try_s!(serde_json::from_slice(&result.2));
-
-            Ok(result)
-        }))
-    }
-
-    /// Returns a JSON error HyRes on a failure.
-    #[macro_export]
-    macro_rules! try_h {
-        ($e: expr) => {
-            match $e {
-                Ok (ok) => ok,
-                Err (err) => {return $crate::rpc_err_response (500, &ERRL! ("{}", err))}
-            }
+    impl Future03 for Timer {
+        type Output = ();
+        fn poll (self: Pin<&mut Self>, cx: &mut Context) -> Poll03<Self::Output> {
+            let delta = self.till_utc - now_float();
+            if delta <= 0. {return Poll03::Ready(())}
+            // NB: We should get a new `Waker` on every `poll` in case the future migrates between executors.
+            let waker = cx.waker().clone();
+            unwrap! (thread::Builder::new().name ("Timer".into()) .spawn (move || {
+                thread::sleep (Duration::from_secs_f64 (delta));
+                waker.wake()
+            }), "Can't spawn a Timer thread");
+            Poll03::Pending
         }
     }
+
+    #[test] fn test_timer() {
+        use futures03::executor::block_on;
+
+        let started = now_float();
+        let ti = Timer::after (0.2);
+        assert! (now_float() - started < 0.01);
+        block_on (ti);
+        let delta = now_float() - started;
+        println! ("time delta is {}", delta);
+        assert! (delta > 0.2);
+        assert! (delta < 0.4)
+    }
+}
+
+#[cfg(not(feature = "native"))]
+pub mod executor;
+
+/// Returns a JSON error HyRes on a failure.
+#[macro_export]
+macro_rules! try_h {
+    ($e: expr) => {
+        match $e {
+            Ok (ok) => ok,
+            Err (err) => {return $crate::rpc_err_response (500, &ERRL! ("{}", err))}
+        }
+    }
+}
+
+/// Executes a GET request, returning the response status, headers and body.
+pub fn slurp_url (url: &str) -> SlurpFut {
+    wio::slurp_req (try_fus! (Request::builder().uri (url) .body (Vec::new())))
+}
+
+#[test]
+#[ignore]
+fn test_slurp_req() {
+    let (status, headers, body) = unwrap! (slurp_url ("https://httpbin.org/get") .wait());
+    assert! (status.is_success(), format!("{:?} {:?} {:?}", status, headers, body));
+}
+
+/// Fetch URL by HTTPS and parse JSON response
+pub fn fetch_json<T>(url: &str) -> Box<dyn Future<Item=T, Error=String>>
+where T: serde::de::DeserializeOwned + Send + 'static {
+    Box::new(slurp_url(url).and_then(|result| {
+        // try to parse as json with serde_json
+        let result = try_s!(serde_json::from_slice(&result.2));
+
+        Ok(result)
+    }))
+}
+
+/// Send POST JSON HTTPS request and parse response
+pub fn post_json<T>(url: &str, json: String) -> Box<dyn Future<Item=T, Error=String>>
+where T: serde::de::DeserializeOwned + Send + 'static {
+    let request = try_fus!(Request::builder()
+        .method("POST")
+        .uri(url)
+        .header(
+            CONTENT_TYPE,
+            HeaderValue::from_static("application/json")
+        )
+        .body(json.into())
+    );
+
+    Box::new(wio::slurp_req(request).and_then(|result| {
+        // try to parse as json with serde_json
+        let result = try_s!(serde_json::from_slice(&result.2));
+
+        Ok(result)
+    }))
 }
 
 /// Wraps a JSON string into the `HyRes` RPC response future.

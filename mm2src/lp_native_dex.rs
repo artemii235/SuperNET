@@ -40,10 +40,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self};
 
 use coins::utxo::{key_pair_from_seed};
-use peers::http_fallback::new_http_fallback;
 
-use crate::common::{nonz, lp, MM_VERSION};
-use crate::common::wio::{slurp_url, CORE};
+use crate::common::{nonz, lp, slurp_url, MM_VERSION};
+use crate::common::wio::{CORE};
 use crate::common::log::TagParam;
 use crate::common::mm_ctx::{MmCtx, MmArc};
 use crate::mm2::lp_network::{lp_command_q_loop, seednode_loop, client_p2p_loop};
@@ -1256,6 +1255,8 @@ pub unsafe fn lp_passphrase_init (passphrase: Option<&str>, _gui: Option<&str>) 
 /// 
 /// Also the port of the HTTP fallback server is returned.
 fn test_ip (ctx: &MmArc, ip: IpAddr) -> Result<(Sender<()>, u16), String> {
+    use peers::http_fallback::new_http_fallback;
+
     // NB: The `bind` just always works on certain operating systems.
     // To actually check the address we should try communicating on it.
     // Reusing the HTTP fallback server for that.

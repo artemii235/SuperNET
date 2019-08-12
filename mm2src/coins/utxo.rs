@@ -34,8 +34,6 @@ use dirs::home_dir;
 use futures::{Future};
 use gstuff::{now_ms};
 use hashbrown::hash_map::{HashMap, Entry};
-#[cfg(feature = "native")]
-use ini::Ini;
 use keys::{Error as KeysError, KeyPair, Private, Public, Address, Secret, Type};
 use keys::bytes::Bytes;
 use num_traits::cast::ToPrimitive;
@@ -49,7 +47,6 @@ use serialization::{serialize, deserialize};
 use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::ops::Deref;
-#[cfg(feature = "native")]
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
@@ -1562,9 +1559,14 @@ fn confpath (coins_en: &Json) -> Result<PathBuf, String> {
     }
 }
 
-#[cfg(feature = "native")]
+#[cfg(not(feature = "native"))]
+fn confpath (coins_en: &Json) -> Result<PathBuf, String> {unimplemented!()}
+
 /// Attempts to parse native daemon conf file and return rpcport, rpcuser and rpcpassword
-fn read_native_mode_conf<P: AsRef<Path>>(filename: P) -> Result<(Option<u16>, String, String), String> {
+#[cfg(feature = "native")]
+fn read_native_mode_conf(filename: &dyn AsRef<Path>) -> Result<(Option<u16>, String, String), String> {
+    use ini::Ini;
+
     let conf: Ini = try_s!(Ini::load_from_file(&filename));
     let section = conf.general_section();
     let rpc_port = match section.get("rpcport") {
@@ -1574,6 +1576,11 @@ fn read_native_mode_conf<P: AsRef<Path>>(filename: P) -> Result<(Option<u16>, St
     let rpc_user = try_s!(section.get("rpcuser").ok_or(ERRL!("Conf file {} doesn't have the rpcuser key", filename.as_ref().display())));
     let rpc_password = try_s!(section.get("rpcpassword").ok_or(ERRL!("Conf file {} doesn't have the rpcpassword key", filename.as_ref().display())));
     Ok((rpc_port, rpc_user.clone(), rpc_password.clone()))
+}
+
+#[cfg(not(feature = "native"))]
+fn read_native_mode_conf(_filename: &AsRef<Path>) -> Result<(Option<u16>, String, String), String> {
+    unimplemented!()
 }
 
 pub fn utxo_coin_from_conf_and_request(
@@ -1612,7 +1619,7 @@ pub fn utxo_coin_from_conf_and_request(
         Some("enable") => {
             if cfg!(feature = "native") {
                 let native_conf_path = try_s!(confpath(conf));
-                let (rpc_port, rpc_user, rpc_password) = try_s!(read_native_mode_conf(native_conf_path));
+                let (rpc_port, rpc_user, rpc_password) = try_s!(read_native_mode_conf(&native_conf_path));
                 let auth_str = fomat!((rpc_user)":"(rpc_password));
                 let rpc_port = match rpc_port {
                     Some(p) => p,

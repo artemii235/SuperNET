@@ -20,8 +20,7 @@
 //
 use bigdecimal::BigDecimal;
 use bitcrypto::sha256;
-use common::{HyRes, MutexGuardWrapper, rpc_response};
-use common::wio::slurp_url;
+use common::{rpc_response, slurp_url, HyRes, MutexGuardWrapper};
 use common::mm_ctx::MmArc;
 use secp256k1::PublicKey;
 use ethabi::{Contract, Token};

@@ -2,14 +2,17 @@ use bigdecimal::BigDecimal;
 use bytes::{BytesMut};
 use chain::{OutPoint, Transaction as UtxoTransaction};
 use common::StringError;
-use common::wio::{slurp_req, CORE};
+use common::wio::slurp_req;
+use common::executor::{spawn, Timer};
 use common::custom_futures::{join_all_sequential, select_ok_sequential, SendAll};
 use common::jsonrpc_client::{JsonRpcClient, JsonRpcResponseFut, JsonRpcRequest, JsonRpcResponse, RpcRes};
 use futures::{Async, Future, Poll, Sink, Stream};
 use futures::future::{Either, loop_fn, Loop, select_ok};
 use futures::sync::mpsc;
-use futures_timer::{Delay, Interval, FutureExt};
-use gstuff::now_ms;
+use futures03::compat::Future01CompatExt;
+use futures03::future::FutureExt;
+use futures_timer::{Delay, FutureExt as FutureTimerExt};
+use gstuff::{now_float, now_ms};
 use hashbrown::HashMap;
 use hashbrown::hash_map::Entry;
 use http::{Request, StatusCode};
@@ -19,6 +22,7 @@ use keys::Address;
 #[cfg(test)]
 use mocktopus::macros::*;
 use rpc::v1::types::{Bytes as BytesJson, H256 as H256Json, Transaction as RpcTransaction, VerboseBlockClient};
+#[cfg(feature = "native")]
 use rustls::{self, ClientConfig, Session};
 use script::{Builder};
 use serde_json::{self as json, Value as Json};
@@ -32,16 +36,23 @@ use std::ops::Deref;
 use std::sync::{Mutex, Arc};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrdering};
 use std::time::{Duration};
+#[cfg(feature = "native")]
 use tokio::codec::{Encoder, Decoder};
+#[cfg(feature = "native")]
 use tokio_io::{AsyncRead, AsyncWrite};
+#[cfg(feature = "native")]
 use tokio_rustls::{TlsConnector, TlsStream};
-use tokio_rustls::webpki::{DNSName, DNSNameRef};
+#[cfg(feature = "native")]
+use tokio_rustls::webpki::DNSNameRef;
+#[cfg(feature = "native")]
 use tokio_tcp::TcpStream;
+#[cfg(feature = "native")]
 use webpki_roots::TLS_SERVER_ROOTS;
 
 /// Skips the server certificate verification on TLS connection
 pub struct NoCertificateVerification {}
 
+#[cfg(feature = "native")]
 impl rustls::ServerCertVerifier for NoCertificateVerification {
     fn verify_server_cert(&self,
                           _roots: &rustls::RootCertStore,
@@ -603,7 +614,7 @@ impl Default for ElectrumProtocol {
 /// Electrum client configuration
 enum ElectrumConfig {
     TCP,
-    SSL(DNSName, bool)
+    SSL {dns_name: String, skip_validation: bool}
 }
 
 /// Attempts to proccess the request (parse url, etc), build up the config and create new electrum connection
@@ -623,8 +634,20 @@ pub fn spawn_electrum(
         ElectrumProtocol::SSL => {
             let uri: Uri = try_s!(req.url.parse());
             let host = try_s!(uri.host().ok_or(ERRL!("Couldn't retrieve host from addr {}", req.url)));
-            let dns = try_s!(DNSNameRef::try_from_ascii_str(host).map_err(|e| ERRL!("{:?}", e)));
-            ElectrumConfig::SSL(dns.into(), req.disable_cert_verification)
+
+            #[cfg(feature = "native")]
+            fn check(host: &str) -> Result<(), String> {
+                DNSNameRef::try_from_ascii_str(host).map(|_|()).map_err(|e| fomat!([e]))
+            }
+            #[cfg(not(feature = "native"))]
+            fn check(host: &str) -> Result<(), String> {Ok(())}
+
+            try_s!(check(host));
+
+            ElectrumConfig::SSL {
+                dns_name: host.into(),
+                skip_validation: req.disable_cert_verification
+            }
         }
     };
 
@@ -1075,14 +1098,14 @@ fn electrum_connect(
         responses: Arc::new(Mutex::new(HashMap::new())),
     };
 
+    // TODO: Refactor into async/await loop.
     let connect_loop = loop_fn((rx, connection.clone(), 0), move |(rx, connection, mut delay)| {
-        let connect_f = match &connection.config {
+        let connect_f = match connection.config.clone() {
             ElectrumConfig::TCP => Either::A(TcpStream::connect(&connection.addr).map(|stream| ElectrumStream::Tcp(stream))),
-            ElectrumConfig::SSL(dns, skip_validation) => {
-                let dns = dns.clone();
+            ElectrumConfig::SSL {dns_name, skip_validation} => {
                 let mut ssl_config = ClientConfig::new();
                 ssl_config.root_store.add_server_trust_anchors(&TLS_SERVER_ROOTS);
-                if *skip_validation {
+                if skip_validation {
                     ssl_config
                         .dangerous()
                         .set_certificate_verifier(Arc::new(NoCertificateVerification {}));
@@ -1090,7 +1113,9 @@ fn electrum_connect(
                 let tls_connector = TlsConnector::from(Arc::new(ssl_config));
 
                 Either::B(TcpStream::connect(&connection.addr).and_then(move |stream| {
-                    tls_connector.connect(dns.as_ref(), stream).map(|stream| ElectrumStream::Tls(stream))
+                    // Can use `unwrap` cause `dns_name` is pre-checked.
+                    let dns = unwrap!(DNSNameRef::try_from_ascii_str(&dns_name).map_err(|e| fomat!([e])));
+                    tls_connector.connect(dns, stream).map(|stream| ElectrumStream::Tls(stream))
                 }))
             }
         };
@@ -1108,38 +1133,37 @@ fn electrum_connect(
             delay = 5;
             let stream_clone = try_loop!(stream.as_ref().try_clone(), rx, connection, delay);
             let last_chunk = Arc::new(AtomicU64::new(now_ms()));
-            let interval = Interval::new(Duration::from_secs(ELECTRUM_TIMEOUT)).map_err(|e| { log!([e]); () });
-            CORE.spawn({
-                let last_chunk = last_chunk.clone();
-                move |_| interval.for_each(move |_| {
-                    let last = last_chunk.load(AtomicOrdering::Relaxed);
-                    if now_ms() > last + ELECTRUM_TIMEOUT * 1000 {
-                        log!([addr] " Didn't receive any data since " (last / 1000) ". Shutting down the connection.");
+            let last_chunkʹ = last_chunk.clone();
+            spawn ((async move || {
+                loop {
+                    Timer::after(ELECTRUM_TIMEOUT as f64).await;
+                    let last = last_chunkʹ.load(AtomicOrdering::Relaxed) as f64 * 1000.;
+                    if now_float() - last < ELECTRUM_TIMEOUT as f64 {continue}
+                    // AG: NB: In certain situations a TCP/IP shutdown can block!
+                    unwrap!(thread::Builder::new().name("ElectrumShutdown".into()).spawn(move || {
+                        log!([addr] " Didn't receive any data since " (last as i64) ". Shutting down the connection.");
                         if let Err(e) = stream_clone.shutdown(Shutdown::Both) {
                             log!([addr] " error shutting down the connection " [e]);
                         }
-                        // return err to shutdown interval execution
-                        return futures::future::err(());
-                    };
-                    futures::future::ok(())
-                })
-            });
+                    }), "Can't spawn ElectrumShutdown");
+                    break
+                }
+            })());
             let (sink, stream) = Bytes.framed(stream).split();
             // this forwards the messages from rx to sink (write) part of tcp stream
             let send_all = SendAll::new(sink, rx);
-            CORE.spawn({
-                let responses = connection.responses.clone();
-                move |_| stream
-                    .for_each(move |chunk| {
-                        last_chunk.store(now_ms(), AtomicOrdering::Relaxed);
-                        electrum_process_chunk(&chunk, responses.clone());
-                        futures::future::ok(())
-                    })
-                    .map_err(move |e| {
-                        log!([e]);
-                        ()
-                    })
-            });
+            let responsesʹ = connection.responses.clone();
+            spawn(stream
+                .for_each(move |chunk| {
+                    last_chunk.store(now_ms(), AtomicOrdering::Relaxed);
+                    electrum_process_chunk(&chunk, responsesʹ.clone());
+                    futures::future::ok(())
+                })
+                .map_err(move |e| {
+                    log!([e]);
+                    ()
+                })
+                .compat().map(|_|()));
 
             Box::new(send_all.then(move |result| {
                 connection.is_connected.store(false, AtomicOrdering::Relaxed);
@@ -1152,7 +1176,7 @@ fn electrum_connect(
         })
     });
 
-    CORE.spawn(|_| connect_loop);
+    spawn(connect_loop.compat().map(|_r: Result<(), ()>| ()));
     connection
 }
 

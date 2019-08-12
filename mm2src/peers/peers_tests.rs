@@ -135,7 +135,7 @@ pub fn peers_dht() -> impl Future03<Output=()> {peers_exchange (json! ({"dht": "
 #[cfg(not(feature = "native"))]
 #[no_mangle]
 pub extern fn test_peers_dht() {
-    crate::executor::spawn (peers_dht())
+    common::executor::spawn (peers_dht())
 }
 
 /// Using a minimal one second HTTP fallback which should happen before the DHT kicks in.
