@@ -17,12 +17,16 @@
 //  rpc_commands.rs
 //  marketmaker
 //
-use common::{rpc_response, HyRes, MM_VERSION};
+use coins::{lp_coinfind};
+use common::{rpc_err_response, rpc_response, HyRes, MM_VERSION};
 use common::wio::CORE;
 use common::mm_ctx::MmArc;
 use futures::Future;
 use futures_timer::Delay;
+use serde_json::{Value as Json};
 use std::time::Duration;
+
+use crate::mm2::lp_swap::get_locked_amount;
 
 pub fn help() -> HyRes {
     rpc_response(200, "
@@ -40,6 +44,22 @@ pub fn help() -> HyRes {
         version
         withdraw(coin, amount, to)
     ")
+}
+
+/// Get my_balance of a coin
+pub fn my_balance (ctx: MmArc, req: Json) -> HyRes {
+    let ticker = try_h! (req["coin"].as_str().ok_or ("No 'coin' field")).to_owned();
+    let coin = match lp_coinfind (&ctx, &ticker) {
+        Ok (Some (t)) => t,
+        Ok (None) => return rpc_err_response (500, &fomat! ("No such coin: " (ticker))),
+        Err (err) => return rpc_err_response (500, &fomat! ("!lp_coinfind(" (ticker) "): " (err)))
+    };
+    Box::new(coin.my_balance().and_then(move |balance| rpc_response(200, json!({
+        "coin": ticker,
+        "balance": balance,
+        "locked_by_swaps": get_locked_amount(&ctx, &ticker),
+        "address": coin.my_address(),
+    }).to_string())))
 }
 
 pub fn version() -> HyRes { rpc_response(200, json!({"result": MM_VERSION}).to_string()) }

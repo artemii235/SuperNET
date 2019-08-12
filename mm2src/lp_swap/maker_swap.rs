@@ -100,10 +100,7 @@ impl MakerSwap {
             MakerSwapEvent::NegotiateFailed(err) => self.errors.push(err),
             MakerSwapEvent::TakerFeeValidated(tx) => self.taker_fee = Some(tx),
             MakerSwapEvent::TakerFeeValidateFailed(err) => self.errors.push(err),
-            MakerSwapEvent::MakerPaymentSent(tx) => {
-                self.maker_payment = Some(tx);
-                unlock_amount(&self.ctx, &self.uuid, &self.maker_amount);
-            },
+            MakerSwapEvent::MakerPaymentSent(tx) => self.maker_payment = Some(tx),
             MakerSwapEvent::MakerPaymentTransactionFailed(err) => self.errors.push(err),
             MakerSwapEvent::MakerPaymentDataSendFailed(err) => self.errors.push(err),
             MakerSwapEvent::TakerPaymentReceived(tx) => self.taker_payment = Some(tx),
@@ -114,10 +111,7 @@ impl MakerSwap {
             MakerSwapEvent::TakerPaymentSpendFailed(err) => self.errors.push(err),
             MakerSwapEvent::MakerPaymentRefunded(tx) => self.maker_payment_refund = Some(tx),
             MakerSwapEvent::MakerPaymentRefundFailed(err) => self.errors.push(err),
-            MakerSwapEvent::Finished => {
-                self.finished_at = now_ms() / 1000;
-                unlock_amount(&self.ctx, &self.uuid, &self.maker_amount);
-            },
+            MakerSwapEvent::Finished => self.finished_at = now_ms() / 1000,
         }
         Ok(())
     }
@@ -147,7 +141,6 @@ impl MakerSwap {
         my_persistent_pub: H264,
         uuid: String,
     ) -> Self {
-        lock_amount(&ctx, uuid.clone(), maker_coin.ticker().into(), maker_amount.clone());
         MakerSwap {
             ctx: ctx.clone(),
             maker_coin,
@@ -689,9 +682,22 @@ impl MakerSwap {
     }
 }
 
-impl Drop for MakerSwap {
-    fn drop(&mut self) {
-        unlock_amount(&self.ctx, &self.uuid, &self.maker_amount);
+impl AtomicSwap for MakerSwap {
+    fn locked_amount(&self) -> LockedAmount {
+        // if maker payment is not sent yet the maker amount must be virtually locked
+        let amount = match self.maker_payment {
+            Some(_) => 0.into(),
+            None => self.maker_amount.clone(),
+        };
+
+        LockedAmount {
+            coin: self.maker_coin.ticker().to_string(),
+            amount,
+        }
+    }
+
+    fn uuid(&self) -> &str {
+        &self.uuid
     }
 }
 
@@ -856,30 +862,35 @@ impl MakerSavedSwap {
 /// Panics in case of command or event apply fails, not sure yet how to handle such situations
 /// because it's usually means that swap is in invalid state which is possible only if there's developer error.
 /// Every produced event is saved to local DB. Swap status is broadcasted to P2P network after completion.
-pub fn run_maker_swap(mut swap: MakerSwap, initial_command: Option<MakerSwapCommand>) {
+pub fn run_maker_swap(swap: MakerSwap, initial_command: Option<MakerSwapCommand>) {
     let mut command = initial_command.unwrap_or(MakerSwapCommand::Start);
     let mut events;
     let ctx = swap.ctx.clone();
     let mut status = ctx.log.status_handle();
     let uuid = swap.uuid.clone();
     let swap_tags: &[&dyn TagParam] = &[&"swap", &("uuid", &uuid[..])];
+    let running_swap = Arc::new(RwLock::new(swap));
+    let weak_ref = Arc::downgrade(&running_swap);
+    let swap_ctx = unwrap!(SwapsContext::from_ctx(&ctx));
+    unwrap!(swap_ctx.running_swaps.lock()).push(weak_ref);
+
     loop {
-        let res = unwrap!(swap.handle_command(command));
+        let res = unwrap!(unwrap!(running_swap.read()).handle_command(command));
         events = res.1;
         for event in events {
             let to_save = MakerSavedEvent {
                 timestamp: now_ms(),
                 event: event.clone(),
             };
-            unwrap!(save_my_maker_swap_event(&ctx, &swap.uuid, to_save));
+            unwrap!(save_my_maker_swap_event(&ctx, &uuid, to_save));
             status.status(swap_tags, &event.status_str());
-            unwrap!(swap.apply_event(event));
+            unwrap!(running_swap.write().unwrap().apply_event(event));
         }
         match res.0 {
             Some(c) => { command = c; },
             None => {
-                if let Err(e) = broadcast_my_swap_status(&swap.uuid, &swap.ctx) {
-                    log!("!broadcast_my_swap_status(" (swap.uuid) "): " (e));
+                if let Err(e) = broadcast_my_swap_status(&uuid, &ctx) {
+                    log!("!broadcast_my_swap_status(" (uuid) "): " (e));
                 }
                 break;
             },
@@ -1071,5 +1082,21 @@ mod maker_swap_tests {
         TestCoin::ticker.mock_safe(|_| MockResult::Return("ticker"));
         let (maker_swap, _) = unwrap!(MakerSwap::load_from_saved(ctx, maker_saved_swap));
         assert!(maker_swap.recover_funds().is_err());
+    }
+
+    #[test]
+    fn swap_must_not_lock_funds_by_default() {
+        let maker_saved_json = r#"{"error_events":["StartFailed","NegotiateFailed","TakerFeeValidateFailed","MakerPaymentTransactionFailed","MakerPaymentDataSendFailed","TakerPaymentValidateFailed","TakerPaymentSpendFailed","MakerPaymentRefunded","MakerPaymentRefundFailed"],"events":[{"event":{"data":{"lock_duration":7800,"maker_amount":"3.54932734","maker_coin":"KMD","maker_coin_start_block":1452970,"maker_payment_confirmations":1,"maker_payment_lock":1563759539,"my_persistent_pub":"031bb83b58ec130e28e0a6d5d2acf2eb01b0d3f1670e021d47d31db8a858219da8","secret":"0000000000000000000000000000000000000000000000000000000000000000","started_at":1563743939,"taker":"101ace6b08605b9424b0582b5cce044b70a3c8d8d10cb2965e039b0967ae92b9","taker_amount":"0.02004833998671660000000000","taker_coin":"ETH","taker_coin_start_block":8196380,"taker_payment_confirmations":1,"uuid":"3447b727-fe93-4357-8e5a-8cf2699b7e86"},"type":"Started"},"timestamp":1563743939211},{"event":{"data":{"taker_payment_locktime":1563751737,"taker_pubkey":"03101ace6b08605b9424b0582b5cce044b70a3c8d8d10cb2965e039b0967ae92b9"},"type":"Negotiated"},"timestamp":1563743979835},{"event":{"data":{"block_height":8196386,"coin":"ETH","fee_details":null,"from":["0x3D6a2f4Dd6085b34EeD6cBc2D3aaABd0D3B697C1"],"internal_id":"00","my_balance_change":0,"received_by_me":0,"spent_by_me":0,"timestamp":1563744052,"to":["0xD8997941Dd1346e9231118D5685d866294f59e5b"],"total_amount":0.0001,"tx_hash":"a59203eb2328827de00bed699a29389792906e4f39fdea145eb40dc6b3821bd6","tx_hex":"f8690284ee6b280082520894d8997941dd1346e9231118d5685d866294f59e5b865af3107a4000801ca0743d2b7c9fad65805d882179062012261be328d7628ae12ee08eff8d7657d993a07eecbd051f49d35279416778faa4664962726d516ce65e18755c9b9406a9c2fd"},"type":"TakerFeeValidated"},"timestamp":1563744052878}],"success_events":["Started","Negotiated","TakerFeeValidated","MakerPaymentSent","TakerPaymentReceived","TakerPaymentWaitConfirmStarted","TakerPaymentValidatedAndConfirmed","TakerPaymentSpent","Finished"],"uuid":"3447b727-fe93-4357-8e5a-8cf2699b7e86"}"#;
+        let maker_saved_swap: MakerSavedSwap = unwrap!(json::from_str(maker_saved_json));
+        let key_pair = unwrap!(key_pair_from_seed("spice describe gravity federal blast come thank unfair canal monkey style afraid"));
+        let ctx = MmCtxBuilder::default().with_secp256k1_key_pair(key_pair).into_mm_arc();
+
+        lp_coinfind.mock_safe(|_, _| {
+            let coin = TestCoin {};
+            MockResult::Return(Ok(Some(coin.into())))
+        });
+        TestCoin::ticker.mock_safe(|_| MockResult::Return("ticker"));
+        let (_maker_swap, _) = unwrap!(MakerSwap::load_from_saved(ctx.clone(), maker_saved_swap));
+        assert_eq!(get_locked_amount(&ctx, "ticker"), BigDecimal::from(0));
     }
 }

@@ -132,30 +132,35 @@ impl TakerSavedSwap {
 /// Panics in case of command or event apply fails, not sure yet how to handle such situations
 /// because it's usually means that swap is in invalid state which is possible only if there's developer error
 /// Every produced event is saved to local DB. Swap status is broadcasted to P2P network after completion.
-pub fn run_taker_swap(mut swap: TakerSwap, initial_command: Option<TakerSwapCommand>) {
+pub fn run_taker_swap(swap: TakerSwap, initial_command: Option<TakerSwapCommand>) {
     let mut command = initial_command.unwrap_or(TakerSwapCommand::Start);
     let mut events;
     let ctx = swap.ctx.clone();
     let mut status = ctx.log.status_handle();
     let uuid = swap.uuid.clone();
     let swap_tags: &[&dyn TagParam] = &[&"swap", &("uuid", &uuid[..])];
+    let running_swap = Arc::new(RwLock::new(swap));
+    let weak_ref = Arc::downgrade(&running_swap);
+    let swap_ctx = unwrap!(SwapsContext::from_ctx(&ctx));
+    unwrap!(swap_ctx.running_swaps.lock()).push(weak_ref);
+
     loop {
-        let res = unwrap!(swap.handle_command(command));
+        let res = unwrap!(unwrap!(running_swap.read()).handle_command(command));
         events = res.1;
         for event in events {
             let to_save = TakerSavedEvent {
                 timestamp: now_ms(),
                 event: event.clone(),
             };
-            unwrap!(save_my_taker_swap_event(&ctx, &swap.uuid, to_save));
+            unwrap!(save_my_taker_swap_event(&ctx, &uuid, to_save));
             status.status(swap_tags, &event.status_str());
-            unwrap!(swap.apply_event(event));
+            unwrap!(unwrap!(running_swap.write()).apply_event(event));
         }
         match res.0 {
             Some(c) => { command = c; },
             None => {
-                if let Err(e) = broadcast_my_swap_status(&swap.uuid, &swap.ctx) {
-                    log!("!broadcast_my_swap_status(" (swap.uuid) "): " (e));
+                if let Err(e) = broadcast_my_swap_status(&uuid, &ctx) {
+                    log!("!broadcast_my_swap_status(" (uuid) "): " (e));
                 }
                 break;
             },
@@ -297,20 +302,13 @@ impl TakerSwap {
                 self.secret_hash = data.secret_hash;
             },
             TakerSwapEvent::NegotiateFailed(err) => self.errors.push(err),
-            TakerSwapEvent::TakerFeeSent(tx) => {
-                self.taker_fee = Some(tx);
-                let fee_amount = &self.taker_amount / 777;
-                unlock_amount(&self.ctx, &self.uuid, &fee_amount);
-            },
+            TakerSwapEvent::TakerFeeSent(tx) => self.taker_fee = Some(tx),
             TakerSwapEvent::TakerFeeSendFailed(err) => self.errors.push(err),
             TakerSwapEvent::MakerPaymentReceived(tx) => self.maker_payment = Some(tx),
             TakerSwapEvent::MakerPaymentWaitConfirmStarted => (),
             TakerSwapEvent::MakerPaymentValidatedAndConfirmed => self.maker_payment_confirmed = true,
             TakerSwapEvent::MakerPaymentValidateFailed(err) => self.errors.push(err),
-            TakerSwapEvent::TakerPaymentSent(tx) => {
-                self.taker_payment = Some(tx);
-                unlock_amount(&self.ctx, &self.uuid, &self.taker_amount);
-            },
+            TakerSwapEvent::TakerPaymentSent(tx) => self.taker_payment = Some(tx),
             TakerSwapEvent::TakerPaymentTransactionFailed(err) => self.errors.push(err),
             TakerSwapEvent::TakerPaymentDataSendFailed(err) => self.errors.push(err),
             TakerSwapEvent::TakerPaymentSpent(data) => {
@@ -353,7 +351,6 @@ impl TakerSwap {
         my_persistent_pub: H264,
         uuid: String,
     ) -> Self {
-        lock_amount(&ctx, uuid.clone(), taker_coin.ticker().into(), &taker_amount + &taker_amount / 777);
         TakerSwap {
             ctx,
             maker_coin,
@@ -972,10 +969,27 @@ impl TakerSwap {
     }
 }
 
-impl Drop for TakerSwap {
-    fn drop(&mut self) {
-        let amount_to_unlock = &self.taker_amount + &self.taker_amount / 777;
-        unlock_amount(&self.ctx, &self.uuid, &amount_to_unlock);
+impl AtomicSwap for TakerSwap {
+    fn locked_amount(&self) -> LockedAmount {
+        // if taker payment is not sent yet the taker fee amount must be virtually locked
+        let fee_amount = match self.taker_fee {
+            Some(_) => 0.into(),
+            None => dex_fee_amount(self.maker_coin.ticker(), self.taker_coin.ticker(), &self.taker_amount),
+        };
+
+        let amount = match self.taker_payment {
+            Some(_) => 0.into(),
+            None => fee_amount + &self.taker_amount,
+        };
+
+        LockedAmount {
+            coin: self.taker_coin.ticker().to_string(),
+            amount,
+        }
+    }
+
+    fn uuid(&self) -> &str {
+        &self.uuid
     }
 }
 

@@ -16,7 +16,7 @@
 //
 //  Copyright © 2014-2018 SuperNET. All rights reserved.
 //
-use coins::{enable, electrum, get_enabled_coins, get_trade_fee, my_balance, send_raw_transaction, withdraw, my_tx_history};
+use coins::{enable, electrum, get_enabled_coins, get_trade_fee, send_raw_transaction, withdraw, my_tx_history};
 use common::{err_to_rpc_json_string, rpc_response, rpc_err_response, HyRes};
 use common::wio::{CORE, HTTP};
 use common::lift_body::LiftBody;

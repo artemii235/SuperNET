@@ -771,21 +771,6 @@ void LP_otheraddress(char *destcoin,char *otheraddr,char *srccoin,char *coinaddr
 }
 */
 
-/// Get my_balance of a coin
-pub fn my_balance (ctx: MmArc, req: Json) -> HyRes {
-    let ticker = try_h! (req["coin"].as_str().ok_or ("No 'coin' field")).to_owned();
-    let coin = match lp_coinfind (&ctx, &ticker) {
-        Ok (Some (t)) => t,
-        Ok (None) => return rpc_err_response (500, &fomat! ("No such coin: " (ticker))),
-        Err (err) => return rpc_err_response (500, &fomat! ("!lp_coinfind(" (ticker) "): " (err)))
-    };
-    Box::new(coin.my_balance().and_then(move |balance| rpc_response(200, json!({
-        "coin": ticker,
-        "balance": balance,
-        "address": coin.my_address(),
-    }).to_string())))
-}
-
 pub fn withdraw (ctx: MmArc, req: Json) -> HyRes {
     let ticker = try_h! (req["coin"].as_str().ok_or ("No 'coin' field")).to_owned();
     let coin = match lp_coinfind (&ctx, &ticker) {

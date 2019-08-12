@@ -64,8 +64,7 @@ use common::log::{TagParam};
 use common::mm_ctx::{from_ctx, MmArc};
 use futures::{Future};
 use gstuff::{now_ms, slurp};
-use hashbrown::{HashSet, HashMap};
-use hashbrown::hash_map::Entry;
+use hashbrown::{HashSet};
 use http::Response;
 use primitives::hash::{H160, H264};
 use serde_json::{self as json, Value as Json};
@@ -74,7 +73,7 @@ use std::ffi::OsStr;
 use std::fs::{File, DirEntry};
 use std::io::prelude::*;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock, Weak};
 use std::thread;
 use std::time::{Duration, SystemTime};
 
@@ -152,13 +151,19 @@ const _SWAP_DEFAULT_NUM_CONFIRMS: u32 = 1;
 const _SWAP_DEFAULT_MAX_CONFIRMS: u32 = 6;
 
 /// Represents the amount of a coin locked by ongoing swap
-struct LockedAmount {
+pub struct LockedAmount {
     coin: String,
     amount: BigDecimal,
 }
 
+pub trait AtomicSwap: Send + Sync {
+    fn locked_amount(&self) -> LockedAmount;
+
+    fn uuid(&self) -> &str;
+}
+
 struct SwapsContext {
-    locked_amounts: Mutex<HashMap<String, LockedAmount>>,
+    running_swaps: Mutex<Vec<Weak<RwLock<dyn AtomicSwap>>>>,
 }
 
 impl SwapsContext {
@@ -166,50 +171,34 @@ impl SwapsContext {
     fn from_ctx (ctx: &MmArc) -> Result<Arc<SwapsContext>, String> {
         Ok (try_s! (from_ctx (&ctx.swaps_ctx, move || {
             Ok (SwapsContext {
-                locked_amounts: Mutex::new(HashMap::new()),
+                running_swaps: Mutex::new(vec![]),
             })
         })))
     }
 }
 
-/// Virtually locks the amount of a coin, called when swap is instantiated
-fn lock_amount(ctx: &MmArc, uuid: String, coin: String, amount: BigDecimal) {
-    let swap_ctx = unwrap!(SwapsContext::from_ctx(&ctx));
-    let mut locked = unwrap!(swap_ctx.locked_amounts.lock());
-    locked.insert(uuid, LockedAmount {
-        coin,
-        amount,
-    });
-}
-
-/// Virtually unlocks the amount of a coin, called when swap transaction is sent so the real balance
-/// is updated and virtual lock is not required.
-fn unlock_amount(ctx: &MmArc, uuid: &str, amount: &BigDecimal) {
-    let swap_ctx = unwrap!(SwapsContext::from_ctx(&ctx));
-    let mut locked = unwrap!(swap_ctx.locked_amounts.lock());
-    match locked.entry(uuid.into()) {
-        Entry::Occupied(mut e) => {
-            let entry = e.get_mut();
-            if &entry.amount <= amount {
-                e.remove();
-            } else {
-                entry.amount -= amount;
-            };
-        },
-        Entry::Vacant(_) => (),
-    };
-}
-
 /// Get total amount of selected coin locked by all currently ongoing swaps
 pub fn get_locked_amount(ctx: &MmArc, coin: &str) -> BigDecimal {
     let swap_ctx = unwrap!(SwapsContext::from_ctx(&ctx));
-    let locked = unwrap!(swap_ctx.locked_amounts.lock());
-    locked.iter().fold(
+    let mut swaps = unwrap!(swap_ctx.running_swaps.lock());
+    *swaps = swaps.drain_filter(|swap| match swap.upgrade() {
+        Some(_) => true,
+        None => false,
+    }).collect();
+    swaps.iter().fold(
         0.into(),
-        |total, (_, locked)| if locked.coin == coin {
-            total + &locked.amount
-        } else {
-            total
+        |total, swap| {
+            match swap.upgrade() {
+                Some(swap) => {
+                    let locked = unwrap!(swap.read()).locked_amount();
+                    if locked.coin == coin {
+                        total + &locked.amount
+                    } else {
+                        total
+                    }
+                },
+                None => total,
+            }
         }
     )
 }
@@ -217,13 +206,25 @@ pub fn get_locked_amount(ctx: &MmArc, coin: &str) -> BigDecimal {
 /// Get total amount of selected coin locked by all currently ongoing swaps except the one with selected uuid
 fn get_locked_amount_by_other_swaps(ctx: &MmArc, except_uuid: &str, coin: &str) -> BigDecimal {
     let swap_ctx = unwrap!(SwapsContext::from_ctx(&ctx));
-    let locked = unwrap!(swap_ctx.locked_amounts.lock());
-    locked.iter().fold(
+    let mut swaps = unwrap!(swap_ctx.running_swaps.lock());
+    *swaps = swaps.drain_filter(|swap| match swap.upgrade() {
+        Some(_) => true,
+        None => false,
+    }).collect();
+    swaps.iter().fold(
         0.into(),
-        |total, (uuid, locked)| if uuid != except_uuid && locked.coin == coin {
-            total + &locked.amount
-        } else {
-            total
+        |total, swap| {
+            match swap.upgrade() {
+                Some(swap) => {
+                    let locked = unwrap!(swap.read()).locked_amount();
+                    if locked.coin == coin && unwrap!(swap.read()).uuid() != except_uuid {
+                        total + &locked.amount
+                    } else {
+                        total
+                    }
+                },
+                None => total,
+            }
         }
     )
 }
