@@ -71,7 +71,7 @@ pub trait Transaction: Debug + 'static {
     fn fee_details(&self) -> Result<Json, String>;
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum TransactionEnum {
     UtxoTx (UtxoTx),
     SignedEthTx (SignedEthTx)
@@ -90,6 +90,7 @@ impl Deref for TransactionEnum {
 
 pub type TransactionFut = Box<dyn Future<Item=TransactionEnum, Error=String>>;
 
+#[derive(Debug, PartialEq)]
 pub enum FoundSwapTxSpend {
     Spent(TransactionEnum),
     Refunded(TransactionEnum),
