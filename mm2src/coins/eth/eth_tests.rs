@@ -274,6 +274,9 @@ fn test_search_for_swap_tx_spend_was_spent() {
     let spend_tx = FoundSwapTxSpend::Spent(unwrap!(signed_eth_tx_from_bytes(&spend_tx)).into());
 
     let found_tx = unwrap!(unwrap!(coin.search_for_swap_tx_spend(
+        0,
+        &[],
+        &[],
         &payment_tx,
         6051857,
     )));
@@ -306,6 +309,9 @@ fn test_search_for_swap_tx_spend_was_refunded() {
     let refund_tx = FoundSwapTxSpend::Refunded(unwrap!(signed_eth_tx_from_bytes(&refund_tx)).into());
 
     let found_tx = unwrap!(unwrap!(coin.search_for_swap_tx_spend(
+        0,
+        &[],
+        &[],
         &payment_tx,
         5886908,
     )));

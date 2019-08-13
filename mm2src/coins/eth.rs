@@ -501,6 +501,9 @@ impl SwapOps for EthCoin {
 
     fn search_for_swap_tx_spend(
         &self,
+        _time_lock: u32,
+        _other_pub: &[u8],
+        _secret_hash: &[u8],
         tx: &[u8],
         search_from_block: u64,
     ) -> Result<Option<FoundSwapTxSpend>, String> {

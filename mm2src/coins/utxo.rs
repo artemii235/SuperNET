@@ -296,7 +296,7 @@ fn p2pkh_spend(
     })
 }
 
-/// Creates signed input spending p2sh output
+/// Creates signed input spending hash time locked p2sh output
 fn p2sh_spend(
     signer: &TransactionInputSigner,
     input_index: usize,
@@ -1108,10 +1108,43 @@ impl SwapOps for UtxoCoin {
 
     fn search_for_swap_tx_spend(
         &self,
+        time_lock: u32,
+        other_pub: &[u8],
+        secret_hash: &[u8],
         tx: &[u8],
         search_from_block: u64,
     ) -> Result<Option<FoundSwapTxSpend>, String> {
-        unimplemented!()
+        let tx: UtxoTx = try_s!(deserialize(tx).map_err(|e| ERRL!("{:?}", e)));
+        let script = payment_script(time_lock, secret_hash, self.key_pair.public(), &try_s!(Public::from_slice(other_pub)));
+        let expected_script_pubkey = Builder::build_p2sh(&dhash160(&script)).to_bytes();
+        if tx.outputs[0].script_pubkey != expected_script_pubkey {
+            return ERR!("Transaction {:?} output 0 script_pubkey doesn't match expected {:?}", tx, expected_script_pubkey);
+        }
+
+        let spend = try_s!(self.rpc_client.find_output_spend(&tx, 0, search_from_block));
+        match spend {
+            Some(tx) => {
+                let script: Script = tx.inputs[0].script_sig.clone().into();
+                match script.iter().nth(2) {
+                    Some(instruction) => match instruction {
+                        Ok(ref i) if i.opcode == Opcode::OP_0 => return Ok(Some(FoundSwapTxSpend::Spent(tx.into()))),
+                        _ => (),
+                    },
+                    None => (),
+                };
+
+                match script.iter().nth(1) {
+                    Some(instruction) => match instruction {
+                        Ok(ref i) if i.opcode == Opcode::OP_1 => return Ok(Some(FoundSwapTxSpend::Refunded(tx.into()))),
+                        _ => (),
+                    },
+                    None => (),
+                };
+
+                ERR!("Couldn't find required instruction in script_sig of input 0 of tx {:?}", tx)
+            },
+            None => Ok(None),
+        }
     }
 }
 

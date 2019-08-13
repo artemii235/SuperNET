@@ -1,6 +1,6 @@
 use bigdecimal::BigDecimal;
 use bytes::{BytesMut};
-use chain::{OutPoint, Transaction as UtxoTransaction};
+use chain::{OutPoint, Transaction as UtxoTx};
 use common::StringError;
 use common::wio::slurp_req;
 use common::executor::{spawn, Timer};
@@ -93,7 +93,7 @@ pub type UtxoRpcRes<T> = Box<dyn Future<Item=T, Error=String> + Send + 'static>;
 pub trait UtxoRpcClientOps: Debug + 'static {
     fn list_unspent_ordered(&self, address: &Address) -> UtxoRpcRes<Vec<UnspentInfo>>;
 
-    fn send_transaction(&self, tx: &UtxoTransaction, my_addr: Address) -> UtxoRpcRes<H256Json>;
+    fn send_transaction(&self, tx: &UtxoTx, my_addr: Address) -> UtxoRpcRes<H256Json>;
 
     fn send_raw_transaction(&self, tx: BytesJson) -> RpcRes<H256Json>;
 
@@ -105,11 +105,11 @@ pub trait UtxoRpcClientOps: Debug + 'static {
 
     // TODO This operation is synchronous because it's currently simpler to do it this way.
     // Might consider refactoring when async/await is released.
-    fn wait_for_payment_spend(&self, tx: &UtxoTransaction, vout: usize, wait_until: u64, from_block: u64) -> Result<UtxoTransaction, String>;
+    fn wait_for_payment_spend(&self, tx: &UtxoTx, vout: usize, wait_until: u64, from_block: u64) -> Result<UtxoTx, String>;
 
     // TODO This operation is synchronous because it's currently simpler to do it this way.
     // Might consider refactoring when async/await is released.
-    fn wait_for_confirmations(&self, tx: &UtxoTransaction, confirmations: u32, wait_until: u64) -> Result<(), String> {
+    fn wait_for_confirmations(&self, tx: &UtxoTx, confirmations: u32, wait_until: u64) -> Result<(), String> {
         loop {
             if now_ms() / 1000 > wait_until {
                 return ERR!("Waited too long until {} for transaction {:?} to be confirmed {} times", wait_until, tx, confirmations);
@@ -134,6 +134,8 @@ pub trait UtxoRpcClientOps: Debug + 'static {
 
     /// returns fee estimation per KByte in satoshis
     fn estimate_fee_sat(&self, decimals: u8, fee_method: &EstimateFeeMethod) -> RpcRes<u64>;
+
+    fn find_output_spend(&self, tx: &UtxoTx, vout: usize, from_block: u64) -> Result<Option<UtxoTx>, String>;
 }
 
 #[derive(Clone, Deserialize, Debug, PartialEq)]
@@ -298,7 +300,7 @@ impl UtxoRpcClientOps for NativeClient {
         }))
     }
 
-    fn send_transaction(&self, tx: &UtxoTransaction, _addr: Address) -> UtxoRpcRes<H256Json> {
+    fn send_transaction(&self, tx: &UtxoTx, _addr: Address) -> UtxoRpcRes<H256Json> {
         Box::new(self.send_raw_transaction(BytesJson::from(serialize(tx))).map_err(|e| ERRL!("{}", e)))
     }
 
@@ -314,7 +316,7 @@ impl UtxoRpcClientOps for NativeClient {
         self.0.get_block_count()
     }
 
-    fn wait_for_payment_spend(&self, tx: &UtxoTransaction, vout: usize, wait_until: u64, from_block: u64) -> Result<UtxoTransaction, String> {
+    fn wait_for_payment_spend(&self, tx: &UtxoTx, vout: usize, wait_until: u64, from_block: u64) -> Result<UtxoTx, String> {
         let mut current_height = from_block;
         loop {
             let coin_height = match self.get_block_count().wait() {
@@ -345,7 +347,7 @@ impl UtxoRpcClientOps for NativeClient {
                         },
                     };
 
-                    let maybe_spend_tx: UtxoTransaction = match deserialize(transaction.as_slice()) {
+                    let maybe_spend_tx: UtxoTx = match deserialize(transaction.as_slice()) {
                         Ok(t) => t,
                         Err(e) => {
                             log!("Error " [e] " deserializing transaction " [transaction]);
@@ -404,6 +406,10 @@ impl UtxoRpcClientOps for NativeClient {
     fn send_raw_transaction(&self, tx: BytesJson) -> RpcRes<H256Json> {
         rpc_func!(self, "sendrawtransaction", tx)
     }
+
+    fn find_output_spend(&self, tx: &UtxoTx, vout: usize, from_block: u64) -> Result<Option<UtxoTx>, String> {
+        unimplemented!()
+    }
 }
 
 #[cfg_attr(test, mockable)]
@@ -426,7 +432,7 @@ impl NativeClientImpl {
     pub fn output_amount(&self, txid: H256Json, index: usize) -> UtxoRpcRes<u64> {
         let fut = self.get_raw_transaction_bytes(txid).map_err(|e| ERRL!("{}", e));
         Box::new(fut.and_then(move |bytes| {
-            let tx: UtxoTransaction = try_s!(deserialize(bytes.as_slice()).map_err(|e| ERRL!("Error {:?} trying to deserialize the transaction {:?}", e, bytes)));
+            let tx: UtxoTx = try_s!(deserialize(bytes.as_slice()).map_err(|e| ERRL!("Error {:?} trying to deserialize the transaction {:?}", e, bytes)));
             Ok(tx.outputs[index].value)
         }))
     }
@@ -757,7 +763,7 @@ impl UtxoRpcClientOps for ElectrumClient {
         }))
     }
 
-    fn send_transaction(&self, tx: &UtxoTransaction, my_addr: Address) -> UtxoRpcRes<H256Json> {
+    fn send_transaction(&self, tx: &UtxoTx, my_addr: Address) -> UtxoRpcRes<H256Json> {
         let bytes = BytesJson::from(serialize(tx));
         let inputs = tx.inputs.clone();
         let arc = self.0.clone();
@@ -815,7 +821,7 @@ impl UtxoRpcClientOps for ElectrumClient {
 
     /// This function is assumed to be used to search for spend of swap payment.
     /// For this case we can just wait that address history contains 2 or more records: the payment itself and spending transaction.
-    fn wait_for_payment_spend(&self, tx: &UtxoTransaction, vout: usize, wait_until: u64, _from_block: u64) -> Result<UtxoTransaction, String> {
+    fn wait_for_payment_spend(&self, tx: &UtxoTx, vout: usize, wait_until: u64, _from_block: u64) -> Result<UtxoTx, String> {
         let script_hash = hex::encode(electrum_script_hash(&tx.outputs[vout].script_pubkey));
 
         loop {
@@ -844,7 +850,7 @@ impl UtxoRpcClientOps for ElectrumClient {
                     },
                 };
 
-                let maybe_spend_tx: UtxoTransaction = match deserialize(transaction.as_slice()) {
+                let maybe_spend_tx: UtxoTx = match deserialize(transaction.as_slice()) {
                     Ok(t) => t,
                     Err(e) => {
                         log!("Error " [e] " deserializing transaction " [transaction]);
@@ -886,6 +892,29 @@ impl UtxoRpcClientOps for ElectrumClient {
 
     fn send_raw_transaction(&self, tx: BytesJson) -> RpcRes<H256Json> {
         self.blockchain_transaction_broadcast(tx)
+    }
+
+    fn find_output_spend(&self, tx: &UtxoTx, vout: usize, from_block: u64) -> Result<Option<UtxoTx>, String> {
+        let script_hash = hex::encode(electrum_script_hash(&tx.outputs[vout].script_pubkey));
+
+        let history = try_s!(self.scripthash_get_history(&script_hash).wait());
+
+        if history.len() < 2 {
+            return Ok(None);
+        }
+
+        for item in history.iter() {
+            let transaction = try_s!(self.get_transaction_bytes(item.tx_hash.clone()).wait());
+
+            let maybe_spend_tx: UtxoTx = try_s!(deserialize(transaction.as_slice()).map_err(|e| ERRL!("{:?}", e)));
+
+            for input in maybe_spend_tx.inputs.iter() {
+                if input.previous_output.hash == tx.hash() && input.previous_output.index == vout as u32 {
+                    return Ok(Some(maybe_spend_tx));
+                }
+            }
+        }
+        Ok(None)
     }
 }
 

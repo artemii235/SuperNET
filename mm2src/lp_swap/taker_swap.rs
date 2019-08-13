@@ -934,6 +934,9 @@ impl TakerSwap {
         }
 
         let taker_payment_spend = try_s!(self.taker_coin.search_for_swap_tx_spend(
+            self.data.taker_payment_lock as u32,
+            &*self.other_persistent_pub,
+            &self.secret_hash.0,
             &taker_payment,
             self.data.taker_coin_start_block,
         ));
@@ -1053,7 +1056,7 @@ mod taker_swap_tests {
         });
 
         static mut TX_SPEND_CALLED: bool = false;
-        TestCoin::search_for_swap_tx_spend.mock_safe(|_, _, _| {
+        TestCoin::search_for_swap_tx_spend.mock_safe(|_, _, _, _, _, _| {
             unsafe { TX_SPEND_CALLED = true };
             MockResult::Return(Ok(None))
         });
@@ -1098,7 +1101,7 @@ mod taker_swap_tests {
         });
 
         static mut SEARCH_TX_SPEND_CALLED: bool = false;
-        TestCoin::search_for_swap_tx_spend.mock_safe(|_, _, _| {
+        TestCoin::search_for_swap_tx_spend.mock_safe(|_, _, _, _, _, _| {
             let tx: UtxoTx = "0100000001de7aa8d29524906b2b54ee2e0281f3607f75662cbc9080df81d1047b78e21dbc00000000d7473044022079b6c50820040b1fbbe9251ced32ab334d33830f6f8d0bf0a40c7f1336b67d5b0220142ccf723ddabb34e542ed65c395abc1fbf5b6c3e730396f15d25c49b668a1a401209da937e5609680cb30bff4a7661364ca1d1851c2506fa80c443f00a3d3bf7365004c6b6304f62b0e5cb175210270e75970bb20029b3879ec76c4acd320a8d0589e003636264d01a7d566504bfbac6782012088a9142fb610d856c19fd57f2d0cffe8dff689074b3d8a882103f368228456c940ac113e53dad5c104cf209f2f102a409207269383b6ab9b03deac68ffffffff01d0dc9800000000001976a9146d9d2b554d768232320587df75c4338ecc8bf37d88ac40280e5c".into();
             unsafe { SEARCH_TX_SPEND_CALLED = true };
             MockResult::Return(Ok(Some(FoundSwapTxSpend::Spent(tx.into()))))
@@ -1135,7 +1138,7 @@ mod taker_swap_tests {
         TestCoin::ticker.mock_safe(|_| MockResult::Return("ticker"));
 
         static mut SEARCH_TX_SPEND_CALLED: bool = false;
-        TestCoin::search_for_swap_tx_spend.mock_safe(|_, _, _| {
+        TestCoin::search_for_swap_tx_spend.mock_safe(|_, _, _, _, _, _| {
             let tx: UtxoTx = "0100000001de7aa8d29524906b2b54ee2e0281f3607f75662cbc9080df81d1047b78e21dbc00000000d7473044022079b6c50820040b1fbbe9251ced32ab334d33830f6f8d0bf0a40c7f1336b67d5b0220142ccf723ddabb34e542ed65c395abc1fbf5b6c3e730396f15d25c49b668a1a401209da937e5609680cb30bff4a7661364ca1d1851c2506fa80c443f00a3d3bf7365004c6b6304f62b0e5cb175210270e75970bb20029b3879ec76c4acd320a8d0589e003636264d01a7d566504bfbac6782012088a9142fb610d856c19fd57f2d0cffe8dff689074b3d8a882103f368228456c940ac113e53dad5c104cf209f2f102a409207269383b6ab9b03deac68ffffffff01d0dc9800000000001976a9146d9d2b554d768232320587df75c4338ecc8bf37d88ac40280e5c".into();
             unsafe { SEARCH_TX_SPEND_CALLED = true };
             MockResult::Return(Ok(Some(FoundSwapTxSpend::Spent(tx.into()))))
@@ -1171,7 +1174,7 @@ mod taker_swap_tests {
         TestCoin::ticker.mock_safe(|_| MockResult::Return("ticker"));
 
         static mut SEARCH_TX_SPEND_CALLED: bool = false;
-        TestCoin::search_for_swap_tx_spend.mock_safe(|_, _, _| {
+        TestCoin::search_for_swap_tx_spend.mock_safe(|_, _, _, _, _, _| {
             unsafe {SEARCH_TX_SPEND_CALLED = true};
             MockResult::Return(Ok(None))
         });
@@ -1197,7 +1200,7 @@ mod taker_swap_tests {
         TestCoin::ticker.mock_safe(|_| MockResult::Return("ticker"));
 
         static mut SEARCH_TX_SPEND_CALLED: bool = false;
-        TestCoin::search_for_swap_tx_spend.mock_safe(|_, _, _| {
+        TestCoin::search_for_swap_tx_spend.mock_safe(|_, _, _, _, _, _| {
             unsafe { SEARCH_TX_SPEND_CALLED = true };
             MockResult::Return(Ok(None))
         });
