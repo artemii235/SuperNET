@@ -1180,10 +1180,23 @@ impl MarketCoinOps for UtxoCoin {
 
     fn wait_for_tx_spend(&self, tx_bytes: &[u8], wait_until: u64, from_block: u64) -> Result<TransactionEnum, String> {
         let tx: UtxoTx = try_s!(deserialize(tx_bytes).map_err(|e| ERRL!("{:?}", e)));
+        let vout = 0;
 
-        let res = try_s!(self.rpc_client.wait_for_payment_spend(&tx, 0, wait_until, from_block));
+        loop {
+            match self.rpc_client.find_output_spend(&tx, vout, from_block) {
+                Ok(Some(tx)) => return Ok(tx.into()),
+                Ok(None) => (),
+                Err(e) => {
+                    log!("Error " (e) " on find_output_spend of tx " [e]);
+                    ()
+                },
+            };
 
-        Ok(res.into())
+            if now_ms() / 1000 > wait_until {
+                return ERR!("Waited too long until {} for transaction {:?} {} to be spent ", wait_until, tx, vout);
+            }
+            thread::sleep(Duration::from_secs(10));
+        }
     }
 
     fn tx_enum_from_bytes(&self, bytes: &[u8]) -> Result<TransactionEnum, String> {

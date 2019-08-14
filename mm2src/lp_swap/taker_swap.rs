@@ -1,4 +1,4 @@
-use coins::{FoundSwapTxSpend, TransactionEnum};
+use coins::{FoundSwapTxSpend};
 use crc::crc32;
 use super::*;
 
@@ -896,7 +896,7 @@ impl TakerSwap {
         }
     }
 
-    pub fn recover_funds(&self) -> Result<TransactionEnum, String> {
+    pub fn recover_funds(&self) -> Result<RecoveredSwap, String> {
         if self.finished_at == 0 { return ERR!("Swap must be finished before recover funds attempt"); }
 
         if self.taker_payment_refund.is_some() { return ERR!("Taker payment is refunded, swap is not recoverable"); }
@@ -925,12 +925,12 @@ impl TakerSwap {
         };
 
         if self.taker_payment_spend.is_some() {
-            return Ok(try_s!(self.maker_coin.send_taker_spends_maker_payment(
+            return Ok(RecoveredSwap::SpentOtherPayment(try_s!(self.maker_coin.send_taker_spends_maker_payment(
                 &maker_payment,
                 self.maker_payment_lock as u32,
                 &*self.other_persistent_pub,
                 &self.secret.0,
-            ).wait()));
+            ).wait())));
         }
 
         let taker_payment_spend = try_s!(self.taker_coin.search_for_swap_tx_spend(
@@ -945,12 +945,12 @@ impl TakerSwap {
             Some(spend) => match spend {
                 FoundSwapTxSpend::Spent(tx) => {
                     let secret = try_s!(tx.extract_secret());
-                    Ok(try_s!(self.maker_coin.send_taker_spends_maker_payment(
+                    Ok(RecoveredSwap::SpentOtherPayment(try_s!(self.maker_coin.send_taker_spends_maker_payment(
                         &maker_payment,
                         self.maker_payment_lock as u32,
                         &*self.other_persistent_pub,
                         &secret,
-                    ).wait()))
+                    ).wait())))
                 },
                 FoundSwapTxSpend::Refunded(tx) => {
                    ERR!("Taker payment has been refunded already by transaction {:02x}", tx.tx_hash())
@@ -961,12 +961,12 @@ impl TakerSwap {
                     return ERR!("Too early to refund, wait until {}", self.data.taker_payment_lock + 3700);
                 }
 
-                Ok(try_s!(self.taker_coin.send_taker_refunds_payment(
+                Ok(RecoveredSwap::RefundedMyPayment(try_s!(self.taker_coin.send_taker_refunds_payment(
                     &taker_payment,
                     self.data.taker_payment_lock as u32,
                     &*self.other_persistent_pub,
                     &self.secret_hash.0,
-                ).wait()))
+                ).wait())))
             },
         }
     }
@@ -1000,10 +1000,16 @@ impl AtomicSwap for TakerSwap {
 mod taker_swap_tests {
     use coins::{FoundSwapTxSpend, lp_coinfind, MarketCoinOps, SwapOps, TestCoin};
     use coins::utxo::{key_pair_from_seed, UtxoTx};
-    use coins::eth::{signed_eth_tx_from_bytes};
+    use coins::eth::{signed_eth_tx_from_bytes, SignedEthTx};
     use common::mm_ctx::MmCtxBuilder;
     use mocktopus::mocking::*;
     use super::*;
+
+    fn eth_tx_for_test() -> SignedEthTx {
+        // raw transaction bytes of https://etherscan.io/tx/0x0869be3e5d4456a29d488a533ad6c118620fef450f36778aecf31d356ff8b41f
+        let tx_bytes = [248, 240, 3, 133, 1, 42, 5, 242, 0, 131, 2, 73, 240, 148, 133, 0, 175, 192, 188, 82, 20, 114, 128, 130, 22, 51, 38, 194, 255, 12, 115, 244, 168, 113, 135, 110, 205, 245, 24, 127, 34, 254, 184, 132, 21, 44, 243, 175, 73, 33, 143, 82, 117, 16, 110, 27, 133, 82, 200, 114, 233, 42, 140, 198, 35, 21, 201, 249, 187, 180, 20, 46, 148, 40, 9, 228, 193, 130, 71, 199, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 152, 41, 132, 9, 201, 73, 19, 94, 237, 137, 35, 61, 4, 194, 207, 239, 152, 75, 175, 245, 157, 174, 10, 214, 161, 207, 67, 70, 87, 246, 231, 212, 47, 216, 119, 68, 237, 197, 125, 141, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 93, 72, 125, 102, 28, 159, 180, 237, 198, 97, 87, 80, 82, 200, 104, 40, 245, 221, 7, 28, 122, 104, 91, 99, 1, 159, 140, 25, 131, 101, 74, 87, 50, 168, 146, 187, 90, 160, 51, 1, 123, 247, 6, 108, 165, 181, 188, 40, 56, 47, 211, 229, 221, 73, 5, 15, 89, 81, 117, 225, 216, 108, 98, 226, 119, 232, 94, 184, 42, 106];
+        unwrap!(signed_eth_tx_from_bytes(&tx_bytes))
+    }
 
     #[test]
     fn test_recover_funds_taker_swap_maker_payment_spend_errored() {
@@ -1020,15 +1026,14 @@ mod taker_swap_tests {
         TestCoin::ticker.mock_safe(|_| MockResult::Return("ticker"));
         static mut MAKER_PAYMENT_SPEND_CALLED: bool = false;
         TestCoin::send_taker_spends_maker_payment.mock_safe(|_, _, _, _, _| {
-            // raw transaction bytes of https://etherscan.io/tx/0x0869be3e5d4456a29d488a533ad6c118620fef450f36778aecf31d356ff8b41f
-            let tx_bytes = [248, 240, 3, 133, 1, 42, 5, 242, 0, 131, 2, 73, 240, 148, 133, 0, 175, 192, 188, 82, 20, 114, 128, 130, 22, 51, 38, 194, 255, 12, 115, 244, 168, 113, 135, 110, 205, 245, 24, 127, 34, 254, 184, 132, 21, 44, 243, 175, 73, 33, 143, 82, 117, 16, 110, 27, 133, 82, 200, 114, 233, 42, 140, 198, 35, 21, 201, 249, 187, 180, 20, 46, 148, 40, 9, 228, 193, 130, 71, 199, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 152, 41, 132, 9, 201, 73, 19, 94, 237, 137, 35, 61, 4, 194, 207, 239, 152, 75, 175, 245, 157, 174, 10, 214, 161, 207, 67, 70, 87, 246, 231, 212, 47, 216, 119, 68, 237, 197, 125, 141, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 93, 72, 125, 102, 28, 159, 180, 237, 198, 97, 87, 80, 82, 200, 104, 40, 245, 221, 7, 28, 122, 104, 91, 99, 1, 159, 140, 25, 131, 101, 74, 87, 50, 168, 146, 187, 90, 160, 51, 1, 123, 247, 6, 108, 165, 181, 188, 40, 56, 47, 211, 229, 221, 73, 5, 15, 89, 81, 117, 225, 216, 108, 98, 226, 119, 232, 94, 184, 42, 106];
-            let eth_tx = unwrap!(signed_eth_tx_from_bytes(&tx_bytes));
             unsafe { MAKER_PAYMENT_SPEND_CALLED = true };
-            MockResult::Return(Box::new(futures::future::ok(eth_tx.into())))
+            MockResult::Return(Box::new(futures::future::ok(eth_tx_for_test().into())))
         });
 
         let (taker_swap, _) = unwrap!(TakerSwap::load_from_saved(ctx, taker_saved_swap));
-        assert!(taker_swap.recover_funds().is_ok());
+        let actual = unwrap!(taker_swap.recover_funds());
+        let expected = RecoveredSwap::SpentOtherPayment(eth_tx_for_test().into());
+        assert_eq!(expected, actual);
         assert!(unsafe { MAKER_PAYMENT_SPEND_CALLED });
     }
 
@@ -1048,11 +1053,8 @@ mod taker_swap_tests {
 
         static mut MY_PAYMENT_SENT_CALLED: bool = false;
         TestCoin::check_if_my_payment_sent.mock_safe(|_, _, _, _, _| {
-            // raw transaction bytes of https://etherscan.io/tx/0x0869be3e5d4456a29d488a533ad6c118620fef450f36778aecf31d356ff8b41f
-            let tx_bytes = [248, 240, 3, 133, 1, 42, 5, 242, 0, 131, 2, 73, 240, 148, 133, 0, 175, 192, 188, 82, 20, 114, 128, 130, 22, 51, 38, 194, 255, 12, 115, 244, 168, 113, 135, 110, 205, 245, 24, 127, 34, 254, 184, 132, 21, 44, 243, 175, 73, 33, 143, 82, 117, 16, 110, 27, 133, 82, 200, 114, 233, 42, 140, 198, 35, 21, 201, 249, 187, 180, 20, 46, 148, 40, 9, 228, 193, 130, 71, 199, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 152, 41, 132, 9, 201, 73, 19, 94, 237, 137, 35, 61, 4, 194, 207, 239, 152, 75, 175, 245, 157, 174, 10, 214, 161, 207, 67, 70, 87, 246, 231, 212, 47, 216, 119, 68, 237, 197, 125, 141, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 93, 72, 125, 102, 28, 159, 180, 237, 198, 97, 87, 80, 82, 200, 104, 40, 245, 221, 7, 28, 122, 104, 91, 99, 1, 159, 140, 25, 131, 101, 74, 87, 50, 168, 146, 187, 90, 160, 51, 1, 123, 247, 6, 108, 165, 181, 188, 40, 56, 47, 211, 229, 221, 73, 5, 15, 89, 81, 117, 225, 216, 108, 98, 226, 119, 232, 94, 184, 42, 106];
-            let eth_tx = unwrap!(signed_eth_tx_from_bytes(&tx_bytes));
             unsafe { MY_PAYMENT_SENT_CALLED = true };
-            MockResult::Return(Ok(Some(eth_tx.into())))
+            MockResult::Return(Ok(Some(eth_tx_for_test().into())))
         });
 
         static mut TX_SPEND_CALLED: bool = false;
@@ -1063,15 +1065,14 @@ mod taker_swap_tests {
 
         static mut TAKER_PAYMENT_REFUND_CALLED: bool = false;
         TestCoin::send_taker_refunds_payment.mock_safe(|_, _, _, _, _| {
-            // raw transaction bytes of https://etherscan.io/tx/0x0869be3e5d4456a29d488a533ad6c118620fef450f36778aecf31d356ff8b41f
-            let tx_bytes = [248, 240, 3, 133, 1, 42, 5, 242, 0, 131, 2, 73, 240, 148, 133, 0, 175, 192, 188, 82, 20, 114, 128, 130, 22, 51, 38, 194, 255, 12, 115, 244, 168, 113, 135, 110, 205, 245, 24, 127, 34, 254, 184, 132, 21, 44, 243, 175, 73, 33, 143, 82, 117, 16, 110, 27, 133, 82, 200, 114, 233, 42, 140, 198, 35, 21, 201, 249, 187, 180, 20, 46, 148, 40, 9, 228, 193, 130, 71, 199, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 152, 41, 132, 9, 201, 73, 19, 94, 237, 137, 35, 61, 4, 194, 207, 239, 152, 75, 175, 245, 157, 174, 10, 214, 161, 207, 67, 70, 87, 246, 231, 212, 47, 216, 119, 68, 237, 197, 125, 141, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 93, 72, 125, 102, 28, 159, 180, 237, 198, 97, 87, 80, 82, 200, 104, 40, 245, 221, 7, 28, 122, 104, 91, 99, 1, 159, 140, 25, 131, 101, 74, 87, 50, 168, 146, 187, 90, 160, 51, 1, 123, 247, 6, 108, 165, 181, 188, 40, 56, 47, 211, 229, 221, 73, 5, 15, 89, 81, 117, 225, 216, 108, 98, 226, 119, 232, 94, 184, 42, 106];
-            let eth_tx = unwrap!(signed_eth_tx_from_bytes(&tx_bytes));
             unsafe { TAKER_PAYMENT_REFUND_CALLED = true };
-            MockResult::Return(Box::new(futures::future::ok(eth_tx.into())))
+            MockResult::Return(Box::new(futures::future::ok(eth_tx_for_test().into())))
         });
 
         let (taker_swap, _) = unwrap!(TakerSwap::load_from_saved(ctx, taker_saved_swap));
-        assert!(taker_swap.recover_funds().is_ok());
+        let actual = unwrap!(taker_swap.recover_funds());
+        let expected = RecoveredSwap::RefundedMyPayment(eth_tx_for_test().into());
+        assert_eq!(expected, actual);
         assert!(unsafe { MY_PAYMENT_SENT_CALLED });
         assert!(unsafe { TX_SPEND_CALLED });
         assert!(unsafe { TAKER_PAYMENT_REFUND_CALLED });
@@ -1093,11 +1094,8 @@ mod taker_swap_tests {
 
         static mut MY_PAYMENT_SENT_CALLED: bool = false;
         TestCoin::check_if_my_payment_sent.mock_safe(|_, _, _, _, _| {
-            // raw transaction bytes of https://etherscan.io/tx/0x0869be3e5d4456a29d488a533ad6c118620fef450f36778aecf31d356ff8b41f
-            let tx_bytes = [248, 240, 3, 133, 1, 42, 5, 242, 0, 131, 2, 73, 240, 148, 133, 0, 175, 192, 188, 82, 20, 114, 128, 130, 22, 51, 38, 194, 255, 12, 115, 244, 168, 113, 135, 110, 205, 245, 24, 127, 34, 254, 184, 132, 21, 44, 243, 175, 73, 33, 143, 82, 117, 16, 110, 27, 133, 82, 200, 114, 233, 42, 140, 198, 35, 21, 201, 249, 187, 180, 20, 46, 148, 40, 9, 228, 193, 130, 71, 199, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 152, 41, 132, 9, 201, 73, 19, 94, 237, 137, 35, 61, 4, 194, 207, 239, 152, 75, 175, 245, 157, 174, 10, 214, 161, 207, 67, 70, 87, 246, 231, 212, 47, 216, 119, 68, 237, 197, 125, 141, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 93, 72, 125, 102, 28, 159, 180, 237, 198, 97, 87, 80, 82, 200, 104, 40, 245, 221, 7, 28, 122, 104, 91, 99, 1, 159, 140, 25, 131, 101, 74, 87, 50, 168, 146, 187, 90, 160, 51, 1, 123, 247, 6, 108, 165, 181, 188, 40, 56, 47, 211, 229, 221, 73, 5, 15, 89, 81, 117, 225, 216, 108, 98, 226, 119, 232, 94, 184, 42, 106];
-            let eth_tx = unwrap!(signed_eth_tx_from_bytes(&tx_bytes));
             unsafe { MY_PAYMENT_SENT_CALLED = true };
-            MockResult::Return(Ok(Some(eth_tx.into())))
+            MockResult::Return(Ok(Some(eth_tx_for_test().into())))
         });
 
         static mut SEARCH_TX_SPEND_CALLED: bool = false;
@@ -1109,15 +1107,14 @@ mod taker_swap_tests {
 
         static mut MAKER_PAYMENT_SPEND_CALLED: bool = false;
         TestCoin::send_taker_spends_maker_payment.mock_safe(|_, _, _, _, _| {
-            // raw transaction bytes of https://etherscan.io/tx/0x0869be3e5d4456a29d488a533ad6c118620fef450f36778aecf31d356ff8b41f
-            let tx_bytes = [248, 240, 3, 133, 1, 42, 5, 242, 0, 131, 2, 73, 240, 148, 133, 0, 175, 192, 188, 82, 20, 114, 128, 130, 22, 51, 38, 194, 255, 12, 115, 244, 168, 113, 135, 110, 205, 245, 24, 127, 34, 254, 184, 132, 21, 44, 243, 175, 73, 33, 143, 82, 117, 16, 110, 27, 133, 82, 200, 114, 233, 42, 140, 198, 35, 21, 201, 249, 187, 180, 20, 46, 148, 40, 9, 228, 193, 130, 71, 199, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 152, 41, 132, 9, 201, 73, 19, 94, 237, 137, 35, 61, 4, 194, 207, 239, 152, 75, 175, 245, 157, 174, 10, 214, 161, 207, 67, 70, 87, 246, 231, 212, 47, 216, 119, 68, 237, 197, 125, 141, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 93, 72, 125, 102, 28, 159, 180, 237, 198, 97, 87, 80, 82, 200, 104, 40, 245, 221, 7, 28, 122, 104, 91, 99, 1, 159, 140, 25, 131, 101, 74, 87, 50, 168, 146, 187, 90, 160, 51, 1, 123, 247, 6, 108, 165, 181, 188, 40, 56, 47, 211, 229, 221, 73, 5, 15, 89, 81, 117, 225, 216, 108, 98, 226, 119, 232, 94, 184, 42, 106];
-            let eth_tx = unwrap!(signed_eth_tx_from_bytes(&tx_bytes));
             unsafe { MAKER_PAYMENT_SPEND_CALLED = true };
-            MockResult::Return(Box::new(futures::future::ok(eth_tx.into())))
+            MockResult::Return(Box::new(futures::future::ok(eth_tx_for_test().into())))
         });
 
         let (taker_swap, _) = unwrap!(TakerSwap::load_from_saved(ctx, taker_saved_swap));
-        assert!(taker_swap.recover_funds().is_ok());
+        let actual = unwrap!(taker_swap.recover_funds());
+        let expected = RecoveredSwap::SpentOtherPayment(eth_tx_for_test().into());
+        assert_eq!(expected, actual);
         assert!(unsafe { MY_PAYMENT_SENT_CALLED });
         assert!(unsafe { SEARCH_TX_SPEND_CALLED });
         assert!(unsafe { MAKER_PAYMENT_SPEND_CALLED });
@@ -1139,24 +1136,22 @@ mod taker_swap_tests {
 
         static mut SEARCH_TX_SPEND_CALLED: bool = false;
         TestCoin::search_for_swap_tx_spend.mock_safe(|_, _, _, _, _, _| {
-            let tx: UtxoTx = "0100000001de7aa8d29524906b2b54ee2e0281f3607f75662cbc9080df81d1047b78e21dbc00000000d7473044022079b6c50820040b1fbbe9251ced32ab334d33830f6f8d0bf0a40c7f1336b67d5b0220142ccf723ddabb34e542ed65c395abc1fbf5b6c3e730396f15d25c49b668a1a401209da937e5609680cb30bff4a7661364ca1d1851c2506fa80c443f00a3d3bf7365004c6b6304f62b0e5cb175210270e75970bb20029b3879ec76c4acd320a8d0589e003636264d01a7d566504bfbac6782012088a9142fb610d856c19fd57f2d0cffe8dff689074b3d8a882103f368228456c940ac113e53dad5c104cf209f2f102a409207269383b6ab9b03deac68ffffffff01d0dc9800000000001976a9146d9d2b554d768232320587df75c4338ecc8bf37d88ac40280e5c".into();
             unsafe { SEARCH_TX_SPEND_CALLED = true };
-            MockResult::Return(Ok(Some(FoundSwapTxSpend::Spent(tx.into()))))
+            MockResult::Return(Ok(None))
         });
 
-        static mut MAKER_PAYMENT_SPEND_CALLED: bool = false;
-        TestCoin::send_taker_spends_maker_payment.mock_safe(|_, _, _, _, _| {
-            // raw transaction bytes of https://etherscan.io/tx/0x0869be3e5d4456a29d488a533ad6c118620fef450f36778aecf31d356ff8b41f
-            let tx_bytes = [248, 240, 3, 133, 1, 42, 5, 242, 0, 131, 2, 73, 240, 148, 133, 0, 175, 192, 188, 82, 20, 114, 128, 130, 22, 51, 38, 194, 255, 12, 115, 244, 168, 113, 135, 110, 205, 245, 24, 127, 34, 254, 184, 132, 21, 44, 243, 175, 73, 33, 143, 82, 117, 16, 110, 27, 133, 82, 200, 114, 233, 42, 140, 198, 35, 21, 201, 249, 187, 180, 20, 46, 148, 40, 9, 228, 193, 130, 71, 199, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 152, 41, 132, 9, 201, 73, 19, 94, 237, 137, 35, 61, 4, 194, 207, 239, 152, 75, 175, 245, 157, 174, 10, 214, 161, 207, 67, 70, 87, 246, 231, 212, 47, 216, 119, 68, 237, 197, 125, 141, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 93, 72, 125, 102, 28, 159, 180, 237, 198, 97, 87, 80, 82, 200, 104, 40, 245, 221, 7, 28, 122, 104, 91, 99, 1, 159, 140, 25, 131, 101, 74, 87, 50, 168, 146, 187, 90, 160, 51, 1, 123, 247, 6, 108, 165, 181, 188, 40, 56, 47, 211, 229, 221, 73, 5, 15, 89, 81, 117, 225, 216, 108, 98, 226, 119, 232, 94, 184, 42, 106];
-            let eth_tx = unwrap!(signed_eth_tx_from_bytes(&tx_bytes));
-            unsafe { MAKER_PAYMENT_SPEND_CALLED = true };
-            MockResult::Return(Box::new(futures::future::ok(eth_tx.into())))
+        static mut REFUND_CALLED: bool = false;
+        TestCoin::send_taker_refunds_payment.mock_safe(|_, _, _, _, _| {
+            unsafe { REFUND_CALLED = true };
+            MockResult::Return(Box::new(futures::future::ok(eth_tx_for_test().into())))
         });
 
         let (taker_swap, _) = unwrap!(TakerSwap::load_from_saved(ctx, taker_saved_swap));
-        assert!(taker_swap.recover_funds().is_ok());
+        let actual = unwrap!(taker_swap.recover_funds());
+        let expected = RecoveredSwap::RefundedMyPayment(eth_tx_for_test().into());
+        assert_eq!(expected, actual);
         assert!(unsafe { SEARCH_TX_SPEND_CALLED });
-        assert!(unsafe { MAKER_PAYMENT_SPEND_CALLED });
+        assert!(unsafe { REFUND_CALLED });
     }
 
     #[test]
@@ -1201,23 +1196,23 @@ mod taker_swap_tests {
 
         static mut SEARCH_TX_SPEND_CALLED: bool = false;
         TestCoin::search_for_swap_tx_spend.mock_safe(|_, _, _, _, _, _| {
+            let tx: UtxoTx = "0100000001de7aa8d29524906b2b54ee2e0281f3607f75662cbc9080df81d1047b78e21dbc00000000d7473044022079b6c50820040b1fbbe9251ced32ab334d33830f6f8d0bf0a40c7f1336b67d5b0220142ccf723ddabb34e542ed65c395abc1fbf5b6c3e730396f15d25c49b668a1a401209da937e5609680cb30bff4a7661364ca1d1851c2506fa80c443f00a3d3bf7365004c6b6304f62b0e5cb175210270e75970bb20029b3879ec76c4acd320a8d0589e003636264d01a7d566504bfbac6782012088a9142fb610d856c19fd57f2d0cffe8dff689074b3d8a882103f368228456c940ac113e53dad5c104cf209f2f102a409207269383b6ab9b03deac68ffffffff01d0dc9800000000001976a9146d9d2b554d768232320587df75c4338ecc8bf37d88ac40280e5c".into();
             unsafe { SEARCH_TX_SPEND_CALLED = true };
-            MockResult::Return(Ok(None))
+            MockResult::Return(Ok(Some(FoundSwapTxSpend::Spent(tx.into()))))
         });
 
-        static mut TAKER_PAYMENT_REFUND_CALLED: bool = false;
-        TestCoin::send_taker_refunds_payment.mock_safe(|_, _, _, _, _| {
-            // raw transaction bytes of https://etherscan.io/tx/0x0869be3e5d4456a29d488a533ad6c118620fef450f36778aecf31d356ff8b41f
-            let tx_bytes = [248, 240, 3, 133, 1, 42, 5, 242, 0, 131, 2, 73, 240, 148, 133, 0, 175, 192, 188, 82, 20, 114, 128, 130, 22, 51, 38, 194, 255, 12, 115, 244, 168, 113, 135, 110, 205, 245, 24, 127, 34, 254, 184, 132, 21, 44, 243, 175, 73, 33, 143, 82, 117, 16, 110, 27, 133, 82, 200, 114, 233, 42, 140, 198, 35, 21, 201, 249, 187, 180, 20, 46, 148, 40, 9, 228, 193, 130, 71, 199, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 152, 41, 132, 9, 201, 73, 19, 94, 237, 137, 35, 61, 4, 194, 207, 239, 152, 75, 175, 245, 157, 174, 10, 214, 161, 207, 67, 70, 87, 246, 231, 212, 47, 216, 119, 68, 237, 197, 125, 141, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 93, 72, 125, 102, 28, 159, 180, 237, 198, 97, 87, 80, 82, 200, 104, 40, 245, 221, 7, 28, 122, 104, 91, 99, 1, 159, 140, 25, 131, 101, 74, 87, 50, 168, 146, 187, 90, 160, 51, 1, 123, 247, 6, 108, 165, 181, 188, 40, 56, 47, 211, 229, 221, 73, 5, 15, 89, 81, 117, 225, 216, 108, 98, 226, 119, 232, 94, 184, 42, 106];
-            let eth_tx = unwrap!(signed_eth_tx_from_bytes(&tx_bytes));
-            unsafe { TAKER_PAYMENT_REFUND_CALLED = true };
-            MockResult::Return(Box::new(futures::future::ok(eth_tx.into())))
+        static mut MAKER_PAYMENT_SPEND_CALLED: bool = false;
+        TestCoin::send_taker_spends_maker_payment.mock_safe(|_, _, _, _, _| {
+            unsafe { MAKER_PAYMENT_SPEND_CALLED = true };
+            MockResult::Return(Box::new(futures::future::ok(eth_tx_for_test().into())))
         });
 
         let (taker_swap, _) = unwrap!(TakerSwap::load_from_saved(ctx, taker_saved_swap));
-        assert!(taker_swap.recover_funds().is_ok());
+        let actual = unwrap!(taker_swap.recover_funds());
+        let expected = RecoveredSwap::SpentOtherPayment(eth_tx_for_test().into());
+        assert_eq!(expected, actual);
         assert!(unsafe { SEARCH_TX_SPEND_CALLED });
-        assert!(unsafe { TAKER_PAYMENT_REFUND_CALLED });
+        assert!(unsafe { MAKER_PAYMENT_SPEND_CALLED });
     }
 
     #[test]

@@ -105,10 +105,6 @@ pub trait UtxoRpcClientOps: Debug + 'static {
 
     // TODO This operation is synchronous because it's currently simpler to do it this way.
     // Might consider refactoring when async/await is released.
-    fn wait_for_payment_spend(&self, tx: &UtxoTx, vout: usize, wait_until: u64, from_block: u64) -> Result<UtxoTx, String>;
-
-    // TODO This operation is synchronous because it's currently simpler to do it this way.
-    // Might consider refactoring when async/await is released.
     fn wait_for_confirmations(&self, tx: &UtxoTx, confirmations: u32, wait_until: u64) -> Result<(), String> {
         loop {
             if now_ms() / 1000 > wait_until {
@@ -208,6 +204,13 @@ pub struct EstimateSmartFeeRes {
     pub blocks: i64,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+pub struct ListSinceBlockRes {
+    transactions: Vec<ListTransactionsItem>,
+    #[serde(rename = "lastblock")]
+    last_block: H256Json,
+}
+
 #[derive(Debug)]
 pub enum EstimateFeeMethod {
     /// estimatefee, deprecated in many coins: https://bitcoincore.org/en/doc/0.16.0/rpc/util/estimatefee/
@@ -262,6 +265,7 @@ impl JsonRpcClient for NativeClientImpl {
     }
 }
 
+#[cfg_attr(test, mockable)]
 impl UtxoRpcClientOps for NativeClient {
     fn list_unspent_ordered(&self, address: &Address) -> UtxoRpcRes<Vec<UnspentInfo>> {
         let clone = self.0.clone();
@@ -316,67 +320,6 @@ impl UtxoRpcClientOps for NativeClient {
         self.0.get_block_count()
     }
 
-    fn wait_for_payment_spend(&self, tx: &UtxoTx, vout: usize, wait_until: u64, from_block: u64) -> Result<UtxoTx, String> {
-        let mut current_height = from_block;
-        loop {
-            let coin_height = match self.get_block_count().wait() {
-                Ok(h) => h,
-                Err(e) => {
-                    log!("Error " (e) " getting block count");
-                    thread::sleep(Duration::from_secs(10));
-                    continue;
-                }
-            };
-            while current_height <= coin_height {
-                let block = match self.get_block(current_height.to_string()).wait() {
-                    Ok(b) => b,
-                    Err(e) => {
-                        log!("Error " (e) " getting block " (current_height));
-                        break;
-                    }
-                };
-                let mut got_error = false;
-
-                for tx_hash in block.tx.iter() {
-                    let transaction = match self.get_raw_transaction_bytes(tx_hash.clone()).wait() {
-                        Ok(tx) => tx,
-                        Err(e) => {
-                            log!("Error " (e) " getting transaction " [tx_hash]);
-                            got_error = true;
-                            break;
-                        },
-                    };
-
-                    let maybe_spend_tx: UtxoTx = match deserialize(transaction.as_slice()) {
-                        Ok(t) => t,
-                        Err(e) => {
-                            log!("Error " [e] " deserializing transaction " [transaction]);
-                            got_error = true;
-                            break;
-                        }
-                    };
-
-                    for input in maybe_spend_tx.inputs.iter() {
-                        if input.previous_output.hash == tx.hash() && input.previous_output.index == vout as u32 {
-                            return Ok(maybe_spend_tx);
-                        }
-                    }
-                };
-
-                if !got_error {
-                    current_height += 1;
-                } else {
-                    thread::sleep(Duration::from_secs(10));
-                }
-            }
-
-            if now_ms() / 1000 > wait_until {
-                return ERR!("Waited too long until {} for transaction {:?} {} to be spent ", wait_until, tx, vout);
-            }
-            thread::sleep(Duration::from_secs(10));
-        }
-    }
-
     fn display_balance(&self, address: Address, _decimals: u8) -> RpcRes<BigDecimal> {
         Box::new(self.list_unspent(0, std::i32::MAX, vec![address.to_string()]).map(|unspents|
             unspents.iter().fold(0., |sum, unspent| sum + unspent.amount).into()
@@ -408,7 +351,19 @@ impl UtxoRpcClientOps for NativeClient {
     }
 
     fn find_output_spend(&self, tx: &UtxoTx, vout: usize, from_block: u64) -> Result<Option<UtxoTx>, String> {
-        unimplemented!()
+        let from_block_hash = try_s!(self.get_block_hash(from_block).wait());
+        let list_since_block: ListSinceBlockRes = try_s!(self.list_since_block(from_block_hash).wait());
+        for transaction in list_since_block.transactions {
+            let maybe_spend_tx_bytes = try_s!(self.get_raw_transaction_bytes(transaction.txid).wait());
+            let maybe_spend_tx: UtxoTx = try_s!(deserialize(maybe_spend_tx_bytes.as_slice()).map_err(|e| ERRL!("{:?}", e)));
+
+            for input in maybe_spend_tx.inputs.iter() {
+                if input.previous_output.hash == tx.hash() && input.previous_output.index == vout as u32 {
+                    return Ok(Some(maybe_spend_tx));
+                }
+            }
+        }
+        Ok(None)
     }
 }
 
@@ -513,6 +468,19 @@ impl NativeClientImpl {
                 }
             }
         })
+    }
+
+    /// https://bitcoin.org/en/developer-reference#listsinceblock
+    /// uses default target confirmations 1 and always includes watch_only addresses
+    fn list_since_block(&self, block_hash: H256Json) -> RpcRes<ListSinceBlockRes> {
+        let target_confirmations = 1;
+        let include_watch_only = true;
+        rpc_func!(self, "listsinceblock", block_hash, target_confirmations, include_watch_only)
+    }
+
+    /// https://bitcoin.org/en/developer-reference#getblockhash
+    fn get_block_hash(&self, block_number: u64) -> RpcRes<H256Json> {
+        rpc_func!(self, "getblockhash", block_number)
     }
 }
 
@@ -739,6 +707,7 @@ impl JsonRpcClient for ElectrumClientImpl {
     }
 }
 
+#[cfg_attr(test, mockable)]
 impl UtxoRpcClientOps for ElectrumClient {
     fn list_unspent_ordered(&self, address: &Address) -> UtxoRpcRes<Vec<UnspentInfo>> {
         let script = Builder::build_p2pkh(&address.hash);
@@ -819,59 +788,6 @@ impl UtxoRpcClientOps for ElectrumClient {
         Box::new(self.blockchain_headers_subscribe().map(|r| r.block_height()))
     }
 
-    /// This function is assumed to be used to search for spend of swap payment.
-    /// For this case we can just wait that address history contains 2 or more records: the payment itself and spending transaction.
-    fn wait_for_payment_spend(&self, tx: &UtxoTx, vout: usize, wait_until: u64, _from_block: u64) -> Result<UtxoTx, String> {
-        let script_hash = hex::encode(electrum_script_hash(&tx.outputs[vout].script_pubkey));
-
-        loop {
-            let history = match self.scripthash_get_history(&script_hash).wait() {
-                Ok(h) => h,
-                Err(e) => {
-                    log!("Error {} " (e) " getting scripthash history");
-                    thread::sleep(Duration::from_secs(10));
-                    continue;
-                }
-            };
-            if history.len() < 2 {
-                if now_ms() / 1000 > wait_until {
-                    return ERR!("Waited too long until {} for output {:?} to be spent ", wait_until, tx.outputs[vout]);
-                }
-                thread::sleep(Duration::from_secs(10));
-                continue;
-            }
-
-            for item in history.iter() {
-                let transaction = match self.get_transaction_bytes(item.tx_hash.clone()).wait() {
-                    Ok(tx) => tx,
-                    Err(e) => {
-                        log!("Error " (e) " getting transaction " [item.tx_hash]);
-                        continue;
-                    },
-                };
-
-                let maybe_spend_tx: UtxoTx = match deserialize(transaction.as_slice()) {
-                    Ok(t) => t,
-                    Err(e) => {
-                        log!("Error " [e] " deserializing transaction " [transaction]);
-                        continue;
-                    }
-                };
-
-                for input in maybe_spend_tx.inputs.iter() {
-                    if input.previous_output.hash == tx.hash() && input.previous_output.index == vout as u32 {
-                        return Ok(maybe_spend_tx);
-                    }
-                }
-            }
-
-            if now_ms() / 1000 > wait_until {
-                return ERR!("Waited too long until {} for output {:?} to be spent ", wait_until, tx.outputs[vout]);
-            }
-            thread::sleep(Duration::from_secs(10));
-        }
-    }
-
     fn display_balance(&self, address: Address, decimals: u8) -> RpcRes<BigDecimal> {
         let hash = electrum_script_hash(&Builder::build_p2pkh(&address.hash));
         let hash_str = hex::encode(hash);
@@ -894,7 +810,7 @@ impl UtxoRpcClientOps for ElectrumClient {
         self.blockchain_transaction_broadcast(tx)
     }
 
-    fn find_output_spend(&self, tx: &UtxoTx, vout: usize, from_block: u64) -> Result<Option<UtxoTx>, String> {
+    fn find_output_spend(&self, tx: &UtxoTx, vout: usize, _from_block: u64) -> Result<Option<UtxoTx>, String> {
         let script_hash = hex::encode(electrum_script_hash(&tx.outputs[vout].script_pubkey));
 
         let history = try_s!(self.scripthash_get_history(&script_hash).wait());

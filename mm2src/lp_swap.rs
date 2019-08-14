@@ -56,8 +56,8 @@
 //
 use bigdecimal::BigDecimal;
 use futures03::executor::block_on;
-use rpc::v1::types::{H160 as H160Json, H256 as H256Json, H264 as H264Json};
-use coins::{lp_coinfind, MmCoinEnum, TradeInfo, TransactionDetails};
+use rpc::v1::types::{Bytes as BytesJson, H160 as H160Json, H256 as H256Json, H264 as H264Json};
+use coins::{lp_coinfind, MmCoinEnum, TradeInfo, TransactionDetails, TransactionEnum};
 use common::{bits256, HyRes, rpc_response};
 use common::wio::Timeout;
 use common::log::{TagParam};
@@ -149,6 +149,12 @@ const BASIC_COMM_TIMEOUT: u64 = 90;
 const PAYMENT_LOCKTIME: u64 = 3600 * 2 + 300 * 2;
 const _SWAP_DEFAULT_NUM_CONFIRMS: u32 = 1;
 const _SWAP_DEFAULT_MAX_CONFIRMS: u32 = 6;
+
+#[derive(Debug, PartialEq)]
+pub enum RecoveredSwap {
+    RefundedMyPayment(TransactionEnum),
+    SpentOtherPayment(TransactionEnum),
+}
 
 /// Represents the amount of a coin locked by ongoing swap
 pub struct LockedAmount {
@@ -372,6 +378,19 @@ impl SavedSwap {
         match self {
             SavedSwap::Maker(swap) => swap.get_my_info(),
             SavedSwap::Taker(swap) => swap.get_my_info(),
+        }
+    }
+
+    fn recover_funds(self, ctx: MmArc) -> Result<RecoveredSwap, String> {
+        match self {
+            SavedSwap::Maker(saved) => {
+                let (maker_swap, _) = try_s!(MakerSwap::load_from_saved(ctx, saved));
+                Ok(try_s!(maker_swap.recover_funds()))
+            },
+            SavedSwap::Taker(saved) => {
+                let (taker_swap, _) = try_s!(TakerSwap::load_from_saved(ctx, saved));
+                Ok(try_s!(taker_swap.recover_funds()))
+            },
         }
     }
 }
@@ -604,6 +623,25 @@ pub fn swap_kick_starts(ctx: MmArc) -> HashSet<String> {
 pub async fn coins_needed_for_kick_start(ctx: MmArc) -> Result<Response<Vec<u8>>, String> {
     let res = try_s!(json::to_vec(&json!({
         "result": *(try_s!(ctx.coins_needed_for_kick_start.lock()))
+    })));
+    Ok(try_s!(Response::builder().body(res)))
+}
+
+pub async fn recover_swap_funds(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
+    let uuid = try_s!(req["params"]["uuid"].as_str().ok_or("uuid parameter is not set or is not string"));
+    let path = my_swap_file_path(&ctx, uuid);
+    let content = slurp(&path);
+    if content.is_empty() { return ERR!("swap data is not found") }
+
+    let swap: SavedSwap = try_s!(json::from_slice(&content));
+
+    // TODO display what happened and to what coin transaction belongs to
+    let recover_tx = try_s!(swap.recover_funds(ctx));
+    let res = try_s!(json::to_vec(&json!({
+        "result": {
+            // "tx_hash": recover_tx.tx_hash(),
+            // "tx_hex": BytesJson::from(recover_tx.tx_hex()),
+        }
     })));
     Ok(try_s!(Response::builder().body(res)))
 }
