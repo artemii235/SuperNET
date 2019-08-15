@@ -150,10 +150,17 @@ const PAYMENT_LOCKTIME: u64 = 3600 * 2 + 300 * 2;
 const _SWAP_DEFAULT_NUM_CONFIRMS: u32 = 1;
 const _SWAP_DEFAULT_MAX_CONFIRMS: u32 = 6;
 
+#[derive(Debug, PartialEq, Serialize)]
+pub enum RecoveredSwapAction {
+    RefundedMyPayment,
+    SpentOtherPayment,
+}
+
 #[derive(Debug, PartialEq)]
-pub enum RecoveredSwap {
-    RefundedMyPayment(TransactionEnum),
-    SpentOtherPayment(TransactionEnum),
+pub struct RecoveredSwap {
+    action: RecoveredSwapAction,
+    coin: String,
+    transaction: TransactionEnum,
 }
 
 /// Represents the amount of a coin locked by ongoing swap
@@ -627,7 +634,7 @@ pub async fn coins_needed_for_kick_start(ctx: MmArc) -> Result<Response<Vec<u8>>
     Ok(try_s!(Response::builder().body(res)))
 }
 
-pub async fn recover_swap_funds(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
+pub async fn recover_funds_of_swap(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
     let uuid = try_s!(req["params"]["uuid"].as_str().ok_or("uuid parameter is not set or is not string"));
     let path = my_swap_file_path(&ctx, uuid);
     let content = slurp(&path);
@@ -635,12 +642,13 @@ pub async fn recover_swap_funds(ctx: MmArc, req: Json) -> Result<Response<Vec<u8
 
     let swap: SavedSwap = try_s!(json::from_slice(&content));
 
-    // TODO display what happened and to what coin transaction belongs to
-    let recover_tx = try_s!(swap.recover_funds(ctx));
+    let recover_data = try_s!(swap.recover_funds(ctx));
     let res = try_s!(json::to_vec(&json!({
         "result": {
-            // "tx_hash": recover_tx.tx_hash(),
-            // "tx_hex": BytesJson::from(recover_tx.tx_hex()),
+            "action": recover_data.action,
+            "coin": recover_data.coin,
+            "tx_hash": recover_data.transaction.tx_hash(),
+            "tx_hex": BytesJson::from(recover_data.transaction.tx_hex()),
         }
     })));
     Ok(try_s!(Response::builder().body(res)))

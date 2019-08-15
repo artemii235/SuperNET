@@ -1115,6 +1115,7 @@ impl SwapOps for UtxoCoin {
         search_from_block: u64,
     ) -> Result<Option<FoundSwapTxSpend>, String> {
         let tx: UtxoTx = try_s!(deserialize(tx).map_err(|e| ERRL!("{:?}", e)));
+        // TODO pubkey order should be inversed if we're looking for other side payment spend
         let script = payment_script(time_lock, secret_hash, self.key_pair.public(), &try_s!(Public::from_slice(other_pub)));
         let expected_script_pubkey = Builder::build_p2sh(&dhash160(&script)).to_bytes();
         if tx.outputs[0].script_pubkey != expected_script_pubkey {

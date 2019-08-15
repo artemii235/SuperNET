@@ -37,7 +37,7 @@ use std::sync::atomic::Ordering;
 use tokio_core::net::TcpListener;
 
 use crate::mm2::lp_ordermatch::{buy, cancel_all_orders, cancel_order, my_orders, order_status, orderbook, sell, set_price};
-use crate::mm2::lp_swap::{coins_needed_for_kick_start, my_swap_status, my_recent_swaps, recover_swap_funds,
+use crate::mm2::lp_swap::{coins_needed_for_kick_start, my_swap_status, my_recent_swaps, recover_funds_of_swap,
                           stats_swap_status};
 
 #[path = "rpc/lp_commands.rs"]
@@ -157,7 +157,7 @@ pub fn dispatcher (req: Json, _remote_addr: Option<SocketAddr>, ctx: MmArc) -> D
         "stop" => stop (ctx),
         "my_recent_swaps" => my_recent_swaps(ctx, req),
         "my_swap_status" => my_swap_status(ctx, req),
-        "recover_swap_funds" => Box::new(CPUPOOL.spawn_fn(move || { hyres(recover_swap_funds (ctx, req)) })),
+        "recover_funds_of_swap" => Box::new(CPUPOOL.spawn_fn(move || { hyres(recover_funds_of_swap (ctx, req)) })),
         "stats_swap_status" => stats_swap_status(ctx, req),
         "version" => version(),
         "withdraw" => withdraw(ctx, req),

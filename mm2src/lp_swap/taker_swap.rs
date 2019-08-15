@@ -908,6 +908,24 @@ impl TakerSwap {
             None => return ERR!("No info about maker payment, swap is not recoverable"),
         };
 
+        macro_rules! check_maker_payment_is_not_spent {
+            // validate that maker payment is not spent
+            () => {
+                match self.maker_coin.search_for_swap_tx_spend(
+                    self.maker_payment_lock as u32,
+                    &*self.other_persistent_pub,
+                    &self.secret_hash.0,
+                    &maker_payment,
+                    self.data.maker_coin_start_block,
+                ) {
+                    Ok(Some(FoundSwapTxSpend::Spent(tx))) => return ERR!("Maker payment was already spent by {} tx {:02x}", self.maker_coin.ticker(), tx.tx_hash()),
+                    Ok(Some(FoundSwapTxSpend::Refunded(tx))) => return ERR!("Maker payment was already refunded by {} tx {:02x}", self.maker_coin.ticker(), tx.tx_hash()),
+                    Err(e) => return ERR!("Error {} when trying to find maker payment spend", e),
+                    Ok(None) => (), // payment is not spent, continue
+                }
+            }
+        }
+
         let taker_payment = match &self.taker_payment {
             Some(tx) => tx.tx_hex.0.clone(),
             None => {
@@ -919,18 +937,25 @@ impl TakerSwap {
                 ));
                 match maybe_sent {
                     Some(tx) => tx.tx_hex(),
-                    None => return ERR!("Taker payment is not found, there's nothing to recover"),
+                    None => return ERR!("Taker payment is not found, swap is not recoverable"),
                 }
             }
         };
 
         if self.taker_payment_spend.is_some() {
-            return Ok(RecoveredSwap::SpentOtherPayment(try_s!(self.maker_coin.send_taker_spends_maker_payment(
+            check_maker_payment_is_not_spent!();
+            let transaction = try_s!(self.maker_coin.send_taker_spends_maker_payment(
                 &maker_payment,
                 self.maker_payment_lock as u32,
                 &*self.other_persistent_pub,
                 &self.secret.0,
-            ).wait())));
+            ).wait());
+
+            return Ok(RecoveredSwap {
+                action: RecoveredSwapAction::SpentOtherPayment,
+                coin: self.maker_coin.ticker().to_string(),
+                transaction,
+            });
         }
 
         let taker_payment_spend = try_s!(self.taker_coin.search_for_swap_tx_spend(
@@ -944,13 +969,20 @@ impl TakerSwap {
         match taker_payment_spend {
             Some(spend) => match spend {
                 FoundSwapTxSpend::Spent(tx) => {
+                    check_maker_payment_is_not_spent!();
                     let secret = try_s!(tx.extract_secret());
-                    Ok(RecoveredSwap::SpentOtherPayment(try_s!(self.maker_coin.send_taker_spends_maker_payment(
+                    let transaction = try_s!(self.maker_coin.send_taker_spends_maker_payment(
                         &maker_payment,
                         self.maker_payment_lock as u32,
                         &*self.other_persistent_pub,
                         &secret,
-                    ).wait())))
+                    ).wait());
+
+                    Ok(RecoveredSwap {
+                        action: RecoveredSwapAction::SpentOtherPayment,
+                        coin: self.maker_coin.ticker().to_string(),
+                        transaction,
+                    })
                 },
                 FoundSwapTxSpend::Refunded(tx) => {
                    ERR!("Taker payment has been refunded already by transaction {:02x}", tx.tx_hash())
@@ -961,12 +993,18 @@ impl TakerSwap {
                     return ERR!("Too early to refund, wait until {}", self.data.taker_payment_lock + 3700);
                 }
 
-                Ok(RecoveredSwap::RefundedMyPayment(try_s!(self.taker_coin.send_taker_refunds_payment(
+                let transaction = try_s!(self.taker_coin.send_taker_refunds_payment(
                     &taker_payment,
                     self.data.taker_payment_lock as u32,
                     &*self.other_persistent_pub,
                     &self.secret_hash.0,
-                ).wait())))
+                ).wait());
+
+                Ok(RecoveredSwap {
+                    action: RecoveredSwapAction::RefundedMyPayment,
+                    coin: self.maker_coin.ticker().to_string(),
+                    transaction,
+                })
             },
         }
     }
@@ -1029,10 +1067,15 @@ mod taker_swap_tests {
             unsafe { MAKER_PAYMENT_SPEND_CALLED = true };
             MockResult::Return(Box::new(futures::future::ok(eth_tx_for_test().into())))
         });
+        TestCoin::search_for_swap_tx_spend.mock_safe(|_, _, _, _, _, _| MockResult::Return(Ok(None)));
 
         let (taker_swap, _) = unwrap!(TakerSwap::load_from_saved(ctx, taker_saved_swap));
         let actual = unwrap!(taker_swap.recover_funds());
-        let expected = RecoveredSwap::SpentOtherPayment(eth_tx_for_test().into());
+        let expected = RecoveredSwap {
+            action: RecoveredSwapAction::SpentOtherPayment,
+            coin: "ticker".to_string(),
+            transaction: eth_tx_for_test().into(),
+        };
         assert_eq!(expected, actual);
         assert!(unsafe { MAKER_PAYMENT_SPEND_CALLED });
     }
@@ -1071,7 +1114,11 @@ mod taker_swap_tests {
 
         let (taker_swap, _) = unwrap!(TakerSwap::load_from_saved(ctx, taker_saved_swap));
         let actual = unwrap!(taker_swap.recover_funds());
-        let expected = RecoveredSwap::RefundedMyPayment(eth_tx_for_test().into());
+        let expected = RecoveredSwap {
+            action: RecoveredSwapAction::RefundedMyPayment,
+            coin: "ticker".to_string(),
+            transaction: eth_tx_for_test().into(),
+        };
         assert_eq!(expected, actual);
         assert!(unsafe { MY_PAYMENT_SENT_CALLED });
         assert!(unsafe { TX_SPEND_CALLED });
@@ -1099,10 +1146,15 @@ mod taker_swap_tests {
         });
 
         static mut SEARCH_TX_SPEND_CALLED: bool = false;
-        TestCoin::search_for_swap_tx_spend.mock_safe(|_, _, _, _, _, _| {
-            let tx: UtxoTx = "0100000001de7aa8d29524906b2b54ee2e0281f3607f75662cbc9080df81d1047b78e21dbc00000000d7473044022079b6c50820040b1fbbe9251ced32ab334d33830f6f8d0bf0a40c7f1336b67d5b0220142ccf723ddabb34e542ed65c395abc1fbf5b6c3e730396f15d25c49b668a1a401209da937e5609680cb30bff4a7661364ca1d1851c2506fa80c443f00a3d3bf7365004c6b6304f62b0e5cb175210270e75970bb20029b3879ec76c4acd320a8d0589e003636264d01a7d566504bfbac6782012088a9142fb610d856c19fd57f2d0cffe8dff689074b3d8a882103f368228456c940ac113e53dad5c104cf209f2f102a409207269383b6ab9b03deac68ffffffff01d0dc9800000000001976a9146d9d2b554d768232320587df75c4338ecc8bf37d88ac40280e5c".into();
+        TestCoin::search_for_swap_tx_spend.mock_safe(|_, _, _, _, input_tx, _| {
             unsafe { SEARCH_TX_SPEND_CALLED = true };
-            MockResult::Return(Ok(Some(FoundSwapTxSpend::Spent(tx.into()))))
+            let maker_payment = unwrap!(hex::decode("0400008085202f89025d5ae3e8c87418c9b735f8f2f7d29e26820c33c9f30d53f2d31f8b99ea9b1490010000006a47304402201185c06ca575261c539b287175751b7de642eb7466c59128639a19b4c2dd2f9b02201c8c4167d581864bedd4d1deb5596472e6e3ce29fe9e7996907a7b59c905d5490121031bb83b58ec130e28e0a6d5d2acf2eb01b0d3f1670e021d47d31db8a858219da8ffffffff06dbf9971c8dfd4a0c8c49f4f15c51de59ba13b2efa702682e26869843af9a87000000006a473044022012b47c12c7f6ad7d8b778fc4b5dcfd56a39325daf302f56e7b84753ba5216cfa022076bf571cf9e20facf70d2f134e8ed2de67aa08581a27ff3128bf93a9b594ac770121031bb83b58ec130e28e0a6d5d2acf2eb01b0d3f1670e021d47d31db8a858219da8ffffffff02fed727150000000017a914d5268b31131a652f9b6ddf57db62f02285cdfad1874e1d7835000000001976a914c3f710deb7320b0efa6edb14e3ebeeb9155fa90d88ac37cf345d000000000000000000000000000000"));
+            if input_tx == maker_payment.as_slice() {
+                MockResult::Return(Ok(None))
+            } else {
+                let tx: UtxoTx = "0100000001de7aa8d29524906b2b54ee2e0281f3607f75662cbc9080df81d1047b78e21dbc00000000d7473044022079b6c50820040b1fbbe9251ced32ab334d33830f6f8d0bf0a40c7f1336b67d5b0220142ccf723ddabb34e542ed65c395abc1fbf5b6c3e730396f15d25c49b668a1a401209da937e5609680cb30bff4a7661364ca1d1851c2506fa80c443f00a3d3bf7365004c6b6304f62b0e5cb175210270e75970bb20029b3879ec76c4acd320a8d0589e003636264d01a7d566504bfbac6782012088a9142fb610d856c19fd57f2d0cffe8dff689074b3d8a882103f368228456c940ac113e53dad5c104cf209f2f102a409207269383b6ab9b03deac68ffffffff01d0dc9800000000001976a9146d9d2b554d768232320587df75c4338ecc8bf37d88ac40280e5c".into();
+                MockResult::Return(Ok(Some(FoundSwapTxSpend::Spent(tx.into()))))
+            }
         });
 
         static mut MAKER_PAYMENT_SPEND_CALLED: bool = false;
@@ -1113,7 +1165,11 @@ mod taker_swap_tests {
 
         let (taker_swap, _) = unwrap!(TakerSwap::load_from_saved(ctx, taker_saved_swap));
         let actual = unwrap!(taker_swap.recover_funds());
-        let expected = RecoveredSwap::SpentOtherPayment(eth_tx_for_test().into());
+        let expected = RecoveredSwap {
+            action: RecoveredSwapAction::SpentOtherPayment,
+            coin: "ticker".to_string(),
+            transaction: eth_tx_for_test().into(),
+        };
         assert_eq!(expected, actual);
         assert!(unsafe { MY_PAYMENT_SENT_CALLED });
         assert!(unsafe { SEARCH_TX_SPEND_CALLED });
@@ -1148,7 +1204,11 @@ mod taker_swap_tests {
 
         let (taker_swap, _) = unwrap!(TakerSwap::load_from_saved(ctx, taker_saved_swap));
         let actual = unwrap!(taker_swap.recover_funds());
-        let expected = RecoveredSwap::RefundedMyPayment(eth_tx_for_test().into());
+        let expected = RecoveredSwap {
+            action: RecoveredSwapAction::RefundedMyPayment,
+            coin: "ticker".to_string(),
+            transaction: eth_tx_for_test().into(),
+        };
         assert_eq!(expected, actual);
         assert!(unsafe { SEARCH_TX_SPEND_CALLED });
         assert!(unsafe { REFUND_CALLED });
@@ -1195,10 +1255,15 @@ mod taker_swap_tests {
         TestCoin::ticker.mock_safe(|_| MockResult::Return("ticker"));
 
         static mut SEARCH_TX_SPEND_CALLED: bool = false;
-        TestCoin::search_for_swap_tx_spend.mock_safe(|_, _, _, _, _, _| {
-            let tx: UtxoTx = "0100000001de7aa8d29524906b2b54ee2e0281f3607f75662cbc9080df81d1047b78e21dbc00000000d7473044022079b6c50820040b1fbbe9251ced32ab334d33830f6f8d0bf0a40c7f1336b67d5b0220142ccf723ddabb34e542ed65c395abc1fbf5b6c3e730396f15d25c49b668a1a401209da937e5609680cb30bff4a7661364ca1d1851c2506fa80c443f00a3d3bf7365004c6b6304f62b0e5cb175210270e75970bb20029b3879ec76c4acd320a8d0589e003636264d01a7d566504bfbac6782012088a9142fb610d856c19fd57f2d0cffe8dff689074b3d8a882103f368228456c940ac113e53dad5c104cf209f2f102a409207269383b6ab9b03deac68ffffffff01d0dc9800000000001976a9146d9d2b554d768232320587df75c4338ecc8bf37d88ac40280e5c".into();
+        TestCoin::search_for_swap_tx_spend.mock_safe(|_, _, _, _, input_tx, _| {
             unsafe { SEARCH_TX_SPEND_CALLED = true };
-            MockResult::Return(Ok(Some(FoundSwapTxSpend::Spent(tx.into()))))
+            let maker_payment = unwrap!(hex::decode("0400008085202f89019f1cbda354342cdf982046b331bbd3791f53b692efc6e4becc36be495b2977d9000000006b483045022100fa9d4557394141f6a8b9bfb8cd594a521fd8bcd1965dbf8bc4e04abc849ac66e0220589f521814c10a7561abfd5e432f7a2ee60d4875fe4604618af3207dae531ac00121031bb83b58ec130e28e0a6d5d2acf2eb01b0d3f1670e021d47d31db8a858219da8ffffffff029e537e030000000017a9145534898009f1467191065f6890b96914b39a1c018791857702000000001976a914c3f710deb7320b0efa6edb14e3ebeeb9155fa90d88ac72ee325d000000000000000000000000000000"));
+            if input_tx == maker_payment.as_slice() {
+                MockResult::Return(Ok(None))
+            } else {
+                let tx: UtxoTx = "0100000001de7aa8d29524906b2b54ee2e0281f3607f75662cbc9080df81d1047b78e21dbc00000000d7473044022079b6c50820040b1fbbe9251ced32ab334d33830f6f8d0bf0a40c7f1336b67d5b0220142ccf723ddabb34e542ed65c395abc1fbf5b6c3e730396f15d25c49b668a1a401209da937e5609680cb30bff4a7661364ca1d1851c2506fa80c443f00a3d3bf7365004c6b6304f62b0e5cb175210270e75970bb20029b3879ec76c4acd320a8d0589e003636264d01a7d566504bfbac6782012088a9142fb610d856c19fd57f2d0cffe8dff689074b3d8a882103f368228456c940ac113e53dad5c104cf209f2f102a409207269383b6ab9b03deac68ffffffff01d0dc9800000000001976a9146d9d2b554d768232320587df75c4338ecc8bf37d88ac40280e5c".into();
+                MockResult::Return(Ok(Some(FoundSwapTxSpend::Spent(tx.into()))))
+            }
         });
 
         static mut MAKER_PAYMENT_SPEND_CALLED: bool = false;
@@ -1209,7 +1274,11 @@ mod taker_swap_tests {
 
         let (taker_swap, _) = unwrap!(TakerSwap::load_from_saved(ctx, taker_saved_swap));
         let actual = unwrap!(taker_swap.recover_funds());
-        let expected = RecoveredSwap::SpentOtherPayment(eth_tx_for_test().into());
+        let expected = RecoveredSwap {
+            action: RecoveredSwapAction::SpentOtherPayment,
+            coin: "ticker".to_string(),
+            transaction: eth_tx_for_test().into(),
+        };
         assert_eq!(expected, actual);
         assert!(unsafe { SEARCH_TX_SPEND_CALLED });
         assert!(unsafe { MAKER_PAYMENT_SPEND_CALLED });
