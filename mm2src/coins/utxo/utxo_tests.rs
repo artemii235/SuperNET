@@ -279,7 +279,8 @@ fn test_search_for_swap_tx_spend_electrum_was_spent() {
 
     let found = unwrap!(unwrap!(coin.search_for_swap_tx_spend(
         1565626145,
-        &unwrap!(hex::decode("02631dcf1d4b1b693aa8c2751afc68e4794b1e5996566cfc701a663f8b7bbbe640")),
+        coin.key_pair.public(),
+        &unwrap!(Public::from_slice(&unwrap!(hex::decode("02631dcf1d4b1b693aa8c2751afc68e4794b1e5996566cfc701a663f8b7bbbe640")))),
         &unwrap!(hex::decode("954f5a3f3b5de4410e5e1a82949410de95a4b6ba")),
         &payment_tx_bytes,
         0
@@ -301,7 +302,8 @@ fn test_search_for_swap_tx_spend_electrum_was_refunded() {
 
     let found = unwrap!(unwrap!(coin.search_for_swap_tx_spend(
         1565692879,
-        &unwrap!(hex::decode("02031d4256c4bc9f99ac88bf3dba21773132281f65f9bf23a59928bce08961e2f3")),
+        coin.key_pair.public(),
+        &unwrap!(Public::from_slice(&unwrap!(hex::decode("02031d4256c4bc9f99ac88bf3dba21773132281f65f9bf23a59928bce08961e2f3")))),
         &unwrap!(hex::decode("02031d4256c4bc9f99ac88bf3dba21773132281f65f9bf23a59928bce08961e2f3")),
         &payment_tx_bytes,
         0
@@ -310,7 +312,6 @@ fn test_search_for_swap_tx_spend_electrum_was_refunded() {
 }
 
 #[test]
-#[ignore]
 // ignored, will work only when ETOMIC daemon is running locally and has following addresses imported
 // with rescan: R9o9xTocqr6CeEDGDH6mEYpwLoMz6jNjMW, bVrUo5BSwzghCobtJs9Su1JxHyBGAhFVzc
 fn test_search_for_swap_tx_spend_native_was_spent() {
@@ -326,7 +327,7 @@ fn test_search_for_swap_tx_spend_native_was_spent() {
     let spend_tx_bytes = unwrap!(hex::decode("0400008085202f89016b0a5768575cdffe1fe73d188698b35a3d85b57c817435bc6e63663d16b314c500000000d8483045022100d3cf75d26d977c0358e46c5db3753aa332ba12130b36b24b541cb90416f4606102201d805c5bdfc4d630cb78adb63239911c97a09c41125af37be219e876610f15f201209ac4a742e81a47dc26a3ddf83de84783fdb49c2322c4a3fdafc0613bf3335c40004c6b6304218f515db1752102031d4256c4bc9f99ac88bf3dba21773132281f65f9bf23a59928bce08961e2f3ac6782012088a914954f5a3f3b5de4410e5e1a82949410de95a4b6ba882102631dcf1d4b1b693aa8c2751afc68e4794b1e5996566cfc701a663f8b7bbbe640ac68ffffffff0198929800000000001976a91464ae8510aac9546d5e7704e31ce177451386455588ac3963515d000000000000000000000000000000"));
     let spend_tx = TransactionEnum::UtxoTx(unwrap!(deserialize(spend_tx_bytes.as_slice())));
 
-    let found = unwrap!(unwrap!(coin.search_for_swap_tx_spend(
+    let found = unwrap!(unwrap!(coin.search_for_swap_tx_spend_my(
         1565626145,
         &unwrap!(hex::decode("02631dcf1d4b1b693aa8c2751afc68e4794b1e5996566cfc701a663f8b7bbbe640")),
         &unwrap!(hex::decode("954f5a3f3b5de4410e5e1a82949410de95a4b6ba")),
@@ -337,7 +338,6 @@ fn test_search_for_swap_tx_spend_native_was_spent() {
 }
 
 #[test]
-#[ignore]
 // ignored, will work only when ETOMIC daemon is running locally and has following addresses imported
 // with rescan: R9o9xTocqr6CeEDGDH6mEYpwLoMz6jNjMW, bQGZYDnEvifgehVKxEzFt8ygNSnLV6Dqiz
 fn test_search_for_swap_tx_spend_native_was_refunded() {
@@ -353,7 +353,7 @@ fn test_search_for_swap_tx_spend_native_was_refunded() {
     let spend_tx_bytes = unwrap!(hex::decode("0400008085202f890196fa423474a0646eaa6c759159eecb8367ae6e439de6d45c35980ae8c67ca4c900000000c4483045022100969c3b2c1ab630b67a6ee74316c9356e38872276a070d126da1d731503bb6e3e02204398d8c23cb59c2caddc33ce9c9716c54b11574126a3c3350a17043f3751696d01514c786304cf93525db1752102031d4256c4bc9f99ac88bf3dba21773132281f65f9bf23a59928bce08961e2f3ac6782012088a92102031d4256c4bc9f99ac88bf3dba21773132281f65f9bf23a59928bce08961e2f3882102031d4256c4bc9f99ac88bf3dba21773132281f65f9bf23a59928bce08961e2f3ac68feffffff0198929800000000001976a91405aab5342166f8594baf17a7d9bef5d56744332788ac01a5525d000000000000000000000000000000"));
     let spend_tx = TransactionEnum::UtxoTx(unwrap!(deserialize(spend_tx_bytes.as_slice())));
 
-    let found = unwrap!(unwrap!(coin.search_for_swap_tx_spend(
+    let found = unwrap!(unwrap!(coin.search_for_swap_tx_spend_my(
         1565692879,
         &unwrap!(hex::decode("02031d4256c4bc9f99ac88bf3dba21773132281f65f9bf23a59928bce08961e2f3")),
         &unwrap!(hex::decode("02031d4256c4bc9f99ac88bf3dba21773132281f65f9bf23a59928bce08961e2f3")),

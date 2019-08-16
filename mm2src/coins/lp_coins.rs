@@ -36,7 +36,6 @@ use common::mm_ctx::{from_ctx, MmArc};
 use futures::{Future};
 use gstuff::{slurp};
 use hashbrown::hash_map::{HashMap, RawEntryMut};
-use mocktopus::macros::*;
 use rpc::v1::types::{Bytes as BytesJson};
 use serde_json::{self as json, Value as Json};
 use std::borrow::Cow;
@@ -52,6 +51,8 @@ pub mod eth;
 use self::eth::{eth_coin_from_conf_and_request, EthCoin, SignedEthTx};
 pub mod utxo;
 use self::utxo::{utxo_coin_from_conf_and_request, UtxoTx, UtxoCoin};
+#[doc(hidden)]
+#[allow(unused_variables)]
 pub mod test_coin;
 pub use self::test_coin::TestCoin;
 
@@ -181,7 +182,16 @@ pub trait SwapOps {
         search_from_block: u64,
     ) -> Result<Option<TransactionEnum>, String>;
 
-    fn search_for_swap_tx_spend(
+    fn search_for_swap_tx_spend_my(
+        &self,
+        time_lock: u32,
+        other_pub: &[u8],
+        secret_hash: &[u8],
+        tx: &[u8],
+        search_from_block: u64,
+    ) -> Result<Option<FoundSwapTxSpend>, String>;
+
+    fn search_for_swap_tx_spend_other(
         &self,
         time_lock: u32,
         other_pub: &[u8],
@@ -756,7 +766,6 @@ int32_t LP_isdisabled(char *base,char *rel)
 */
 
 /// NB: Returns only the enabled (aka active) coins.
-#[mockable]
 pub fn lp_coinfind (ctx: &MmArc, ticker: &str) -> Result<Option<MmCoinEnum>, String> {
     let cctx = try_s! (CoinsContext::from_ctx (ctx));
     let coins = try_s! (cctx.coins.lock());

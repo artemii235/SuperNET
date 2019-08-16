@@ -598,7 +598,12 @@ impl MakerSwap {
         ))
     }
 
-    pub fn load_from_saved(ctx: MmArc, saved: MakerSavedSwap) -> Result<(Self, Option<MakerSwapCommand>), String> {
+    pub fn load_from_saved(
+        ctx: MmArc,
+        maker_coin: MmCoinEnum,
+        taker_coin: MmCoinEnum,
+        saved: MakerSavedSwap
+    ) -> Result<(Self, Option<MakerSwapCommand>), String> {
         if saved.events.is_empty() {
             return ERR!("Can't restore swap from empty events set");
         };
@@ -607,32 +612,13 @@ impl MakerSwap {
             MakerSwapEvent::Started(data) => {
                 let mut taker = bits256::from([0; 32]);
                 taker.bytes = data.taker.0;
-                let mut taker_coin;
-                loop {
-                    taker_coin = try_s!(lp_coinfind(&ctx, &data.taker_coin));
-                    if taker_coin.is_some() {
-                        break;
-                    }
-                    log!("Can't kickstart the swap " (saved.uuid) " until the coin " (data.taker_coin) " is activated");
-                    thread::sleep(Duration::from_secs(5));
-                };
-
-                let mut maker_coin;
-                loop {
-                    maker_coin = try_s!(lp_coinfind(&ctx, &data.maker_coin));
-                    if maker_coin.is_some() {
-                        break;
-                    }
-                    log!("Can't kickstart the swap " (saved.uuid) " until the coin " (data.maker_coin) " is activated");
-                    thread::sleep(Duration::from_secs(5));
-                };
                 let my_persistent_pub = H264::from(&**ctx.secp256k1_key_pair().public());
 
                 let mut swap = MakerSwap::new(
                     ctx,
                     taker.into(),
-                    maker_coin.unwrap(),
-                    taker_coin.unwrap(),
+                    maker_coin,
+                    taker_coin,
                     data.maker_amount.clone(),
                     data.taker_amount.clone(),
                     my_persistent_pub,
@@ -671,7 +657,7 @@ impl MakerSwap {
             }
         };
         // validate that maker payment is not spent
-        match self.maker_coin.search_for_swap_tx_spend(
+        match self.maker_coin.search_for_swap_tx_spend_my(
             self.data.maker_payment_lock as u32,
             &*self.other_persistent_pub,
             &*dhash160(&self.data.secret.0),
@@ -920,7 +906,7 @@ pub fn run_maker_swap(swap: MakerSwap, initial_command: Option<MakerSwapCommand>
 
 #[cfg(test)]
 mod maker_swap_tests {
-    use coins::{lp_coinfind, MarketCoinOps, SwapOps, TestCoin};
+    use coins::{MarketCoinOps, SwapOps, TestCoin};
     use coins::utxo::{key_pair_from_seed};
     use coins::eth::{signed_eth_tx_from_bytes, SignedEthTx};
     use common::mm_ctx::MmCtxBuilder;
@@ -942,10 +928,6 @@ mod maker_swap_tests {
         let key_pair = unwrap!(key_pair_from_seed("spice describe gravity federal blast come thank unfair canal monkey style afraid"));
         let ctx = MmCtxBuilder::default().with_secp256k1_key_pair(key_pair).into_mm_arc();
 
-        lp_coinfind.mock_safe(|_, _| {
-            let coin = TestCoin {};
-            MockResult::Return(Ok(Some(coin.into())))
-        });
         TestCoin::ticker.mock_safe(|_| MockResult::Return("ticker"));
         static mut MY_PAYMENT_SENT_CALLED: bool = false;
         TestCoin::check_if_my_payment_sent.mock_safe(|_, _, _, _, _| {
@@ -958,9 +940,10 @@ mod maker_swap_tests {
             unsafe { MAKER_REFUND_CALLED = true };
             MockResult::Return(Box::new(futures::future::ok(eth_tx_for_test().into())))
         });
-        TestCoin::search_for_swap_tx_spend.mock_safe(|_, _, _, _, _, _| MockResult::Return(Ok(None)));
-
-        let (maker_swap, _) = unwrap!(MakerSwap::load_from_saved(ctx, maker_saved_swap));
+        TestCoin::search_for_swap_tx_spend_my.mock_safe(|_, _, _, _, _, _| MockResult::Return(Ok(None)));
+        let maker_coin = MmCoinEnum::Test(TestCoin {});
+        let taker_coin = MmCoinEnum::Test(TestCoin {});
+        let (maker_swap, _) = unwrap!(MakerSwap::load_from_saved(ctx, maker_coin, taker_coin, maker_saved_swap));
         let actual = unwrap!(maker_swap.recover_funds());
         let expected = RecoveredSwap {
             action: RecoveredSwapAction::RefundedMyPayment,
@@ -980,10 +963,6 @@ mod maker_swap_tests {
         let key_pair = unwrap!(key_pair_from_seed("spice describe gravity federal blast come thank unfair canal monkey style afraid"));
         let ctx = MmCtxBuilder::default().with_secp256k1_key_pair(key_pair).into_mm_arc();
 
-        lp_coinfind.mock_safe(|_, _| {
-            let coin = TestCoin {};
-            MockResult::Return(Ok(Some(coin.into())))
-        });
         TestCoin::ticker.mock_safe(|_| MockResult::Return("ticker"));
         static mut MAKER_REFUND_CALLED: bool = false;
 
@@ -992,9 +971,10 @@ mod maker_swap_tests {
             MockResult::Return(Box::new(futures::future::ok(eth_tx_for_test().into())))
         });
 
-        TestCoin::search_for_swap_tx_spend.mock_safe(|_, _, _, _, _, _| MockResult::Return(Ok(None)));
-
-        let (maker_swap, _) = unwrap!(MakerSwap::load_from_saved(ctx, maker_saved_swap));
+        TestCoin::search_for_swap_tx_spend_my.mock_safe(|_, _, _, _, _, _| MockResult::Return(Ok(None)));
+        let maker_coin = MmCoinEnum::Test(TestCoin {});
+        let taker_coin = MmCoinEnum::Test(TestCoin {});
+        let (maker_swap, _) = unwrap!(MakerSwap::load_from_saved(ctx, maker_coin, taker_coin, maker_saved_swap));
         let actual = unwrap!(maker_swap.recover_funds());
         let expected = RecoveredSwap {
             action: RecoveredSwapAction::RefundedMyPayment,
@@ -1013,16 +993,13 @@ mod maker_swap_tests {
         let key_pair = unwrap!(key_pair_from_seed("spice describe gravity federal blast come thank unfair canal monkey style afraid"));
         let ctx = MmCtxBuilder::default().with_secp256k1_key_pair(key_pair).into_mm_arc();
 
-        lp_coinfind.mock_safe(|_, _| {
-            let coin = TestCoin {};
-            MockResult::Return(Ok(Some(coin.into())))
-        });
         TestCoin::ticker.mock_safe(|_| MockResult::Return("ticker"));
-        TestCoin::search_for_swap_tx_spend.mock_safe(|_, _, _, _, _, _|
+        TestCoin::search_for_swap_tx_spend_my.mock_safe(|_, _, _, _, _, _|
             MockResult::Return(Ok(Some(FoundSwapTxSpend::Refunded(eth_tx_for_test().into()))))
         );
-
-        let (maker_swap, _) = unwrap!(MakerSwap::load_from_saved(ctx, maker_saved_swap));
+        let maker_coin = MmCoinEnum::Test(TestCoin {});
+        let taker_coin = MmCoinEnum::Test(TestCoin {});
+        let (maker_swap, _) = unwrap!(MakerSwap::load_from_saved(ctx, maker_coin, taker_coin, maker_saved_swap));
         assert!(maker_swap.recover_funds().is_err());
     }
 
@@ -1034,16 +1011,13 @@ mod maker_swap_tests {
         let key_pair = unwrap!(key_pair_from_seed("spice describe gravity federal blast come thank unfair canal monkey style afraid"));
         let ctx = MmCtxBuilder::default().with_secp256k1_key_pair(key_pair).into_mm_arc();
 
-        lp_coinfind.mock_safe(|_, _| {
-            let coin = TestCoin {};
-            MockResult::Return(Ok(Some(coin.into())))
-        });
         TestCoin::ticker.mock_safe(|_| MockResult::Return("ticker"));
-        TestCoin::search_for_swap_tx_spend.mock_safe(|_, _, _, _, _, _|
+        TestCoin::search_for_swap_tx_spend_my.mock_safe(|_, _, _, _, _, _|
             MockResult::Return(Ok(Some(FoundSwapTxSpend::Spent(eth_tx_for_test().into()))))
         );
-
-        let (maker_swap, _) = unwrap!(MakerSwap::load_from_saved(ctx, maker_saved_swap));
+        let maker_coin = MmCoinEnum::Test(TestCoin {});
+        let taker_coin = MmCoinEnum::Test(TestCoin {});
+        let (maker_swap, _) = unwrap!(MakerSwap::load_from_saved(ctx, maker_coin, taker_coin, maker_saved_swap));
         assert!(maker_swap.recover_funds().is_err());
     }
 
@@ -1056,19 +1030,16 @@ mod maker_swap_tests {
         let key_pair = unwrap!(key_pair_from_seed("spice describe gravity federal blast come thank unfair canal monkey style afraid"));
         let ctx = MmCtxBuilder::default().with_secp256k1_key_pair(key_pair).into_mm_arc();
 
-        lp_coinfind.mock_safe(|_, _| {
-            let coin = TestCoin {};
-            MockResult::Return(Ok(Some(coin.into())))
-        });
         TestCoin::ticker.mock_safe(|_| MockResult::Return("ticker"));
         static mut MY_PAYMENT_SENT_CALLED: bool = false;
         TestCoin::check_if_my_payment_sent.mock_safe(|_, _, _, _, _| {
             unsafe { MY_PAYMENT_SENT_CALLED = true };
             MockResult::Return(Ok(Some(eth_tx_for_test().into())))
         });
-        TestCoin::search_for_swap_tx_spend.mock_safe(|_, _, _, _, _, _| MockResult::Return(Ok(None)));
-
-        let (mut maker_swap, _) = unwrap!(MakerSwap::load_from_saved(ctx, maker_saved_swap));
+        TestCoin::search_for_swap_tx_spend_my.mock_safe(|_, _, _, _, _, _| MockResult::Return(Ok(None)));
+        let maker_coin = MmCoinEnum::Test(TestCoin {});
+        let taker_coin = MmCoinEnum::Test(TestCoin {});
+        let (mut maker_swap, _) = unwrap!(MakerSwap::load_from_saved(ctx, maker_coin, taker_coin, maker_saved_swap));
         maker_swap.data.maker_payment_lock = (now_ms() / 1000) - 3690;
         assert!(maker_swap.recover_funds().is_err());
         assert!(unsafe { MY_PAYMENT_SENT_CALLED });
@@ -1083,18 +1054,15 @@ mod maker_swap_tests {
         let key_pair = unwrap!(key_pair_from_seed("spice describe gravity federal blast come thank unfair canal monkey style afraid"));
         let ctx = MmCtxBuilder::default().with_secp256k1_key_pair(key_pair).into_mm_arc();
 
-        lp_coinfind.mock_safe(|_, _| {
-            let coin = TestCoin {};
-            MockResult::Return(Ok(Some(coin.into())))
-        });
         TestCoin::ticker.mock_safe(|_| MockResult::Return("ticker"));
         static mut MY_PAYMENT_SENT_CALLED: bool = false;
         TestCoin::check_if_my_payment_sent.mock_safe(|_, _, _, _, _| {
             unsafe { MY_PAYMENT_SENT_CALLED = true };
             MockResult::Return(Ok(None))
         });
-
-        let (maker_swap, _) = unwrap!(MakerSwap::load_from_saved(ctx, maker_saved_swap));
+        let maker_coin = MmCoinEnum::Test(TestCoin {});
+        let taker_coin = MmCoinEnum::Test(TestCoin {});
+        let (maker_swap, _) = unwrap!(MakerSwap::load_from_saved(ctx, maker_coin, taker_coin, maker_saved_swap));
         assert!(maker_swap.recover_funds().is_err());
         assert!(unsafe { MY_PAYMENT_SENT_CALLED });
     }
@@ -1107,12 +1075,10 @@ mod maker_swap_tests {
         let key_pair = unwrap!(key_pair_from_seed("spice describe gravity federal blast come thank unfair canal monkey style afraid"));
         let ctx = MmCtxBuilder::default().with_secp256k1_key_pair(key_pair).into_mm_arc();
 
-        lp_coinfind.mock_safe(|_, _| {
-            let coin = TestCoin {};
-            MockResult::Return(Ok(Some(coin.into())))
-        });
         TestCoin::ticker.mock_safe(|_| MockResult::Return("ticker"));
-        let (maker_swap, _) = unwrap!(MakerSwap::load_from_saved(ctx, maker_saved_swap));
+        let maker_coin = MmCoinEnum::Test(TestCoin {});
+        let taker_coin = MmCoinEnum::Test(TestCoin {});
+        let (maker_swap, _) = unwrap!(MakerSwap::load_from_saved(ctx, maker_coin, taker_coin, maker_saved_swap));
         assert!(maker_swap.recover_funds().is_err());
     }
 
@@ -1124,13 +1090,10 @@ mod maker_swap_tests {
         let key_pair = unwrap!(key_pair_from_seed("spice describe gravity federal blast come thank unfair canal monkey style afraid"));
         let ctx = MmCtxBuilder::default().with_secp256k1_key_pair(key_pair).into_mm_arc();
 
-        lp_coinfind.mock_safe(|_, _| {
-            let coin = TestCoin {};
-            MockResult::Return(Ok(Some(coin.into())))
-        });
         TestCoin::ticker.mock_safe(|_| MockResult::Return("ticker"));
-
-        let (maker_swap, _) = unwrap!(MakerSwap::load_from_saved(ctx, maker_saved_swap));
+        let maker_coin = MmCoinEnum::Test(TestCoin {});
+        let taker_coin = MmCoinEnum::Test(TestCoin {});
+        let (maker_swap, _) = unwrap!(MakerSwap::load_from_saved(ctx, maker_coin, taker_coin, maker_saved_swap));
         assert!(maker_swap.recover_funds().is_err());
     }
 
@@ -1142,12 +1105,10 @@ mod maker_swap_tests {
         let key_pair = unwrap!(key_pair_from_seed("spice describe gravity federal blast come thank unfair canal monkey style afraid"));
         let ctx = MmCtxBuilder::default().with_secp256k1_key_pair(key_pair).into_mm_arc();
 
-        lp_coinfind.mock_safe(|_, _| {
-            let coin = TestCoin {};
-            MockResult::Return(Ok(Some(coin.into())))
-        });
         TestCoin::ticker.mock_safe(|_| MockResult::Return("ticker"));
-        let (maker_swap, _) = unwrap!(MakerSwap::load_from_saved(ctx, maker_saved_swap));
+        let maker_coin = MmCoinEnum::Test(TestCoin {});
+        let taker_coin = MmCoinEnum::Test(TestCoin {});
+        let (maker_swap, _) = unwrap!(MakerSwap::load_from_saved(ctx, maker_coin, taker_coin, maker_saved_swap));
         assert!(maker_swap.recover_funds().is_err());
     }
 
@@ -1158,12 +1119,10 @@ mod maker_swap_tests {
         let key_pair = unwrap!(key_pair_from_seed("spice describe gravity federal blast come thank unfair canal monkey style afraid"));
         let ctx = MmCtxBuilder::default().with_secp256k1_key_pair(key_pair).into_mm_arc();
 
-        lp_coinfind.mock_safe(|_, _| {
-            let coin = TestCoin {};
-            MockResult::Return(Ok(Some(coin.into())))
-        });
         TestCoin::ticker.mock_safe(|_| MockResult::Return("ticker"));
-        let (_maker_swap, _) = unwrap!(MakerSwap::load_from_saved(ctx.clone(), maker_saved_swap));
+        let maker_coin = MmCoinEnum::Test(TestCoin {});
+        let taker_coin = MmCoinEnum::Test(TestCoin {});
+        let (_maker_swap, _) = unwrap!(MakerSwap::load_from_saved(ctx.clone(), maker_coin, taker_coin, maker_saved_swap));
         assert_eq!(get_locked_amount(&ctx, "ticker"), BigDecimal::from(0));
     }
 }
