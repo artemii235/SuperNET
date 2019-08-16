@@ -312,6 +312,7 @@ fn test_search_for_swap_tx_spend_electrum_was_refunded() {
 }
 
 #[test]
+#[ignore]
 // ignored, will work only when ETOMIC daemon is running locally and has following addresses imported
 // with rescan: R9o9xTocqr6CeEDGDH6mEYpwLoMz6jNjMW, bVrUo5BSwzghCobtJs9Su1JxHyBGAhFVzc
 fn test_search_for_swap_tx_spend_native_was_spent() {
@@ -338,6 +339,7 @@ fn test_search_for_swap_tx_spend_native_was_spent() {
 }
 
 #[test]
+#[ignore]
 // ignored, will work only when ETOMIC daemon is running locally and has following addresses imported
 // with rescan: R9o9xTocqr6CeEDGDH6mEYpwLoMz6jNjMW, bQGZYDnEvifgehVKxEzFt8ygNSnLV6Dqiz
 fn test_search_for_swap_tx_spend_native_was_refunded() {
