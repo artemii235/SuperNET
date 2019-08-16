@@ -73,7 +73,10 @@ use crossbeam::{channel};
 use futures::{future, Future};
 use futures::task::Task;
 #[cfg(not(feature = "native"))]
-use futures03::task::{Context, Poll as Poll03, Waker};
+use futures03::task::{Context, Poll as Poll03};
+use futures03::task::Waker;
+use futures03::compat::Future01CompatExt;
+use futures03::future::FutureExt;
 use hex::FromHex;
 use http::{Request, Response, StatusCode, HeaderMap};
 use http::header::{HeaderValue, CONTENT_TYPE};
@@ -84,6 +87,7 @@ use std::pin::Pin;
 use rand::{SeedableRng, rngs::SmallRng};
 use serde::{ser, de};
 use serde_json::{self as json, Value as Json};
+use std::collections::HashMap;
 use std::env::{args, var, VarError};
 use std::fmt::{self, Write as FmtWrite};
 use std::fs;
@@ -398,14 +402,6 @@ pub fn double_panic_crash() {
     drop (panicker)  // Delays the drop.
 }
 
-/// Helps logging binary data (particularly with text-readable parts, such as bencode, netstring)
-/// by replacing all the non-printable bytes with the `blank` character.
-pub fn binprint (bin: &[u8], blank: u8) -> String {
-    let mut bin: Vec<u8> = bin.into();
-    for ch in bin.iter_mut() {if *ch < 0x20 || *ch >= 0x7F {*ch = blank}}
-    unsafe {String::from_utf8_unchecked (bin)}
-}
-
 /// Tries to detect if we're running under a test, allowing us to be lazy and *delay* some costly operations.
 /// 
 /// Note that the code SHOULD behave uniformely regardless of where it's invoked from
@@ -445,25 +441,11 @@ pub type HyRes = Box<dyn Future<Item=Response<Vec<u8>>, Error=String> + Send>;
 // wio stands for "web I/O" or "wasm I/O",
 // it contains the parts which aren't directly available with WASM.
 
-// TODO: Move this.
-// How to link them together...
-// 1) Use separate folders for wasm and native builds in order not to mess the C objects and linking.
-// 2) In the native Rust binary add a mode which will run the WASM core (on wasmi),
-//    supplying it with the necessary helpers.
-
 #[cfg(not(feature = "native"))]
 pub mod wio {
     use futures::future::IntoFuture;
     use http::Request;
     use super::SlurpFut;
-
-    pub fn spawn<F, R> (_f: F) where
-        F: FnOnce(()) -> R + Send + 'static,
-        R: IntoFuture<Item = (), Error = ()>,
-        R::Future: 'static
-    {
-        unimplemented!()
-    }
 
     #[allow(dead_code)]
     pub fn slurp_req (_request: Request<Vec<u8>>) -> SlurpFut {
@@ -475,9 +457,8 @@ pub mod wio {
 pub mod wio {
     use crate::lift_body::LiftBody;
     use crate::SlurpFut;
-    use futures::{future, Async, Future, Poll};
+    use futures::{Async, Future, Poll};
     use futures::sync::oneshot::{self, Receiver};
-    use future::IntoFuture;
     use gstuff::{any_to_str, duration_to_float, now_float};
     use http::{Request, StatusCode, HeaderMap};
     use hyper::Client;
@@ -492,7 +473,6 @@ pub mod wio {
     use std::thread::JoinHandle;
     use std::time::Duration;
     use tokio_core::reactor::Remote;
-    use tokio_core::reactor::Handle;
 
     fn start_core_thread() -> Remote {
         let (tx, rx) = oneshot::channel();
@@ -515,14 +495,6 @@ pub mod wio {
         pub static ref CORE: Remote = start_core_thread();
         /// Shared HTTP server.
         pub static ref HTTP: Http = Http::new();
-    }
-
-    pub fn spawn<F, R> (f: F) where
-        F: FnOnce(&Handle) -> R + Send + 'static,
-        R: IntoFuture<Item = (), Error = ()>,
-        R::Future: 'static
-    {
-        CORE.spawn (f);
     }
 
     /// With a shared reactor drives the future `f` to completion.
@@ -685,7 +657,7 @@ pub mod executor {
     use std::time::Duration;
     use std::thread;
 
-    pub fn spawn (future: impl Future03<Output = ()> + 'static + Send) {
+    pub fn spawn (future: impl Future03<Output = ()> + Send + 'static) {
         let f = future.unit_error().boxed().compat();
         crate::wio::CORE.spawn (|_| f)
     }
@@ -695,7 +667,7 @@ pub mod executor {
 
     impl Timer {
         pub fn till (till_utc: f64) -> Timer {Timer {till_utc}}
-        pub fn after (seconds: f64) -> Timer {Timer {till_utc: now_float() + seconds}}
+        pub fn sleep (seconds: f64) -> Timer {Timer {till_utc: now_float() + seconds}}
         pub fn till_utc (&self) -> f64 {self.till_utc}
     }
 
@@ -705,6 +677,7 @@ pub mod executor {
             let delta = self.till_utc - now_float();
             if delta <= 0. {return Poll03::Ready(())}
             // NB: We should get a new `Waker` on every `poll` in case the future migrates between executors.
+            // cf. https://rust-lang.github.io/async-book/02_execution/03_wakeups.html
             let waker = cx.waker().clone();
             unwrap! (thread::Builder::new().name ("Timer".into()) .spawn (move || {
                 thread::sleep (Duration::from_secs_f64 (delta));
@@ -718,7 +691,7 @@ pub mod executor {
         use futures03::executor::block_on;
 
         let started = now_float();
-        let ti = Timer::after (0.2);
+        let ti = Timer::sleep (0.2);
         assert! (now_float() - started < 0.01);
         block_on (ti);
         let delta = now_float() - started;
@@ -920,7 +893,7 @@ impl<R: Send + 'static> RefreshedExternalResource<R> {
                 }
                 Ok(())
             });
-            wio::spawn (move |_| f);  // Polls `f` in background.
+            executor::spawn (f.compat().map(|_|()));  // Polls `f` in background.
         }
 
         Ok(())
@@ -1076,17 +1049,8 @@ pub extern fn set_panic_hook() {
     use std::panic::{set_hook, PanicInfo};
 
     set_hook (Box::new (|info: &PanicInfo| {
-        let mut msg = String::new();
-        if let Some (loc) = info.location() {
-            let _ = wite! (&mut msg, (filename (loc.file())) ':' (loc.line()) "] ");
-        } else {
-            msg.push_str ("?] ");
-        }
-        if let Some (message) = info.message() {
-            let _ = wite! (&mut msg, "panick: " (message));
-        } else {
-            msg.push_str ("panick!")
-        }
+        let mut msg = String::with_capacity (256);
+        let _ = wite! (&mut msg, ((info)));
         writeln (&msg)
     }))
 }
@@ -1105,7 +1069,21 @@ extern "C" {fn http_helper_if (
 
 /// Check with the WASM host to see if the given HTTP request is ready.
 #[cfg(not(feature = "native"))]
-extern "C" {pub fn http_helper_check (http_request_id: i32, rbuf: *mut u8, rcap: i32) -> i32;}
+extern "C" {pub fn http_helper_check (helper_request_id: i32, rbuf: *mut u8, rcap: i32) -> i32;}
+
+lazy_static! {
+    /// Maps helper request ID to the corresponding Waker,
+    /// allowing WASM host to wake the `HelperReply`.
+    static ref HELPER_REQUESTS: Mutex<HashMap<i32, Waker>> = Mutex::new (HashMap::new());
+}
+
+/// WASM host invokes this method to signal the readiness of the HTTP request.
+#[no_mangle]
+#[cfg(not(feature = "native"))]
+pub extern fn http_ready (helper_request_id: i32) {
+    let mut helper_requests = unwrap! (HELPER_REQUESTS.lock());
+    if let Some (waker) = helper_requests.remove (&helper_request_id) {waker.wake()}
+}
 
 #[cfg(not(feature = "native"))]
 pub async fn helperᶜ (helper: &'static str, args: Vec<u8>) -> Result<Vec<u8>, String> {
@@ -1114,29 +1092,33 @@ pub async fn helperᶜ (helper: &'static str, args: Vec<u8>) -> Result<Vec<u8>, 
         args.as_ptr(), args.len() as i32,
         9999)};
 
-    struct HttpReply {helper: &'static str, helper_request_id: i32, waker: Option<Waker>}
-    impl std::future::Future for HttpReply {
+    struct HelperReply {helper: &'static str, helper_request_id: i32}
+    impl std::future::Future for HelperReply {
         type Output = Result<Vec<u8>, String>;
-        fn poll (mut self: Pin<&mut Self>, cx: &mut Context) -> Poll03<Self::Output> {
-            log! ("HttpReply (ri " (self.helper_request_id) ", " (self.helper) ") being polled...");
+        fn poll (self: Pin<&mut Self>, cx: &mut Context) -> Poll03<Self::Output> {
             let mut buf: [u8; 65535] = unsafe {uninitialized()};
             let rlen = unsafe {http_helper_check (self.helper_request_id, buf.as_mut_ptr(), buf.len() as i32)};
             if rlen < -1 {  // Response is larger than capacity.
                 return Poll03::Ready (ERR! ("Helper result is too large ({})", rlen))
             }
             if rlen >= 0 {
-                log! ("HttpReply, got " (rlen) " bytes!");
                 return Poll03::Ready (Ok (Vec::from (&buf[0..rlen as usize])))
             }
+
             // NB: Need a fresh waker each time `Pending` is returned, to support switching tasks.
             // cf. https://rust-lang.github.io/async-book/02_execution/03_wakeups.html
-            self.waker = Some (cx.waker().clone());
+            let waker = cx.waker().clone();
+            unwrap! (HELPER_REQUESTS.lock()) .insert (self.helper_request_id, waker);
+
             Poll03::Pending
         }
     }
-    log! ("Waiting for " (helper_request_id) ", " (helper));
-    let rv = try_s! (HttpReply {helper, helper_request_id, waker: None} .await);
-    log! ("Done waiting for " (helper_request_id) ", " (helper) ": " (binprint (&rv, b'.') ));
+    impl Drop for HelperReply {
+        fn drop (&mut self) {
+            unwrap! (HELPER_REQUESTS.lock()) .remove (&self.helper_request_id);
+        }
+    }
+    let rv = try_s! (HelperReply {helper, helper_request_id} .await);
     Ok (rv)
 }
 
@@ -1160,6 +1142,8 @@ macro_rules! helper {
         }
     }
 }
+
+pub mod for_tests;
 
 fn without_trailing_zeroes (decimal: &str, dot: usize) -> &str {
     let mut pos = decimal.len() - 1;
@@ -1256,5 +1240,3 @@ fn test_round_to() {
     assert_eq! (round_to (&BigDecimal::from (0), 0), "0");
     assert_eq! (round_to (&BigDecimal::from (-0), 0), "0");
 }
-
-pub mod for_tests;

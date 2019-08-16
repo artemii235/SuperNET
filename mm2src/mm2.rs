@@ -55,6 +55,7 @@ pub mod rpc;
 #[path = "mm2_tests.rs"]
 mod mm2_tests;
 
+/// * `ctx_cb` - callback used to share the `MmCtx` ID with the call site.
 fn lp_main (conf: Json, ctx_cb: &dyn Fn (u32)) -> Result<(), String> {
     if !conf["rpc_password"].is_null() {
         if !conf["rpc_password"].is_string() {
@@ -110,6 +111,7 @@ fn help() {
         "  myipaddr       ..  IP address to bind to for P2P networking.\n"
         "  netid          ..  Subnetwork. Affects ports and keys.\n"
         "  passphrase *   ..  Wallet seed.\n"
+        "                     Compressed WIFs and hexadecimal ECDSA keys (prefixed with 0x) are also accepted.\n"
         "  panic          ..  Simulate a panic to see if backtrace works.\n"
         // cf. https://github.com/atomiclabs/hyperdex/pull/563/commits/6d17c0c994693b768e30130855c679a7849a2b27
         "  rpccors        ..  Access-Control-Allow-Origin header value to be used in all the RPC responses.\n"

@@ -33,7 +33,6 @@ use hyper::service::Service;
 use serde_json::{self as json, Value as Json};
 use std::future::{Future as Future03};
 use std::net::{SocketAddr};
-use std::sync::atomic::Ordering;
 use tokio_core::net::TcpListener;
 
 use crate::mm2::lp_ordermatch::{buy, cancel_all_orders, cancel_order, my_orders, order_status, orderbook, sell, set_price};
@@ -301,7 +300,7 @@ pub extern fn spawn_rpc(ctx_h: u32) {
     CORE.spawn (move |_| {
         log!(">>>>>>>>>> DEX stats " (rpc_ip_port.ip())":"(rpc_ip_port.port()) " \
                 DEX stats API enabled at unixtime." (gstuff::now_ms() / 1000) " <<<<<<<<<");
-        ctx.rpc_started.store (true, Ordering::Relaxed);
+        let _ = ctx.rpc_started.pin (true);
         server
     });
 }

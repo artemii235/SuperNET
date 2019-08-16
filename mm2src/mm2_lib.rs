@@ -99,7 +99,7 @@ pub extern fn mm2_main_status() -> i8 {
         let ctx = CTX.load (Ordering::Relaxed);
         if ctx != 0 {
             if let Ok (ctx) = MmArc::from_ffi_handle (ctx) {
-                if ctx.rpc_started.load (Ordering::Relaxed) {
+                if ctx.rpc_started.copy_or (false) {
                     3
                 } else {2}
             } else {2}

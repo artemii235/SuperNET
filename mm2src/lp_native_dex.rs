@@ -19,9 +19,10 @@
 
 use futures::{Future};
 use futures::sync::oneshot::Sender;
+use futures03::compat::Future01CompatExt;
 use futures03::executor::block_on;
+use futures03::future::FutureExt;
 use http::StatusCode;
-use keys::KeyPair;
 use libc::{self, c_char};
 use rand::{random, Rng, SeedableRng};
 use rand::rngs::SmallRng;
@@ -39,12 +40,13 @@ use std::str::from_utf8;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self};
 
-use coins::utxo::{key_pair_from_seed};
-
-use crate::common::{nonz, lp, slurp_url, MM_VERSION};
-use crate::common::wio::{CORE};
+#[cfg(feature = "native")]
+use crate::common::lp;
+use crate::common::executor::spawn;
+use crate::common::{nonz, slurp_url, MM_VERSION};
 use crate::common::log::TagParam;
 use crate::common::mm_ctx::{MmCtx, MmArc};
+use crate::common::lp_privkey::key_pair_from_seed;
 use crate::mm2::lp_network::{lp_command_q_loop, seednode_loop, client_p2p_loop};
 use crate::mm2::lp_ordermatch::{lp_ordermatch_loop, lp_trade_command, orders_kick_start};
 use crate::mm2::lp_swap::swap_kick_starts;
@@ -1034,7 +1036,7 @@ pub unsafe fn lp_initpeers (ctx: &MmArc, myipaddr: &IpAddr, netid: u16, seednode
     }
     *try_s! (ctx.seeds.lock()) = seed_ips;
 
-    try_s! (block_on (peers::initialize (ctx, netid, lp::G.LP_mypub25519.into(), pubport + 1)));
+    try_s! (block_on (peers::initialize (ctx, netid, pubport + 1)));
 
     Ok(())
 }
@@ -1215,14 +1217,15 @@ fn fix_directories(ctx: &MmCtx) -> Result<(), String> {
 /// Restarts the peer connections.
 /// Reloads the coin keys.
 /// 
-/// Besides the `passphrase` it also allows changing the `seednode` and `gui` at runtime.  
+/// Besides the `passphrase` it also allows changing the `seednode` at runtime.  
 /// AG: While there might be value in changing `seednode` at runtime, I'm not sure if changing `gui` is actually necessary.
 /// 
 /// AG: If possible, I think we should avoid calling this function on a working MM, using it for initialization only,
 ///     in order to avoid the possibility of invalid state.
 /// AP: Totally agree, moreover maybe we even `must` deny calling this on a working MM as it's being refactored
 #[allow(unused_unsafe)]
-pub unsafe fn lp_passphrase_init (passphrase: Option<&str>, _gui: Option<&str>) -> Result<KeyPair, String> {
+pub unsafe fn lp_passphrase_init (ctx: &MmArc) -> Result<(), String> {
+    let passphrase = ctx.conf["passphrase"].as_str();
     let passphrase = match passphrase {
         None | Some ("") => return ERR! ("jeezy says we cant use the nullstring as passphrase and I agree"),
         Some (s) => s.to_string()
@@ -1231,12 +1234,15 @@ pub unsafe fn lp_passphrase_init (passphrase: Option<&str>, _gui: Option<&str>) 
     let netid = lp::G.netid;
     lp::G = zeroed();
     lp::G.netid = netid;
-    let global_key_pair = try_s!(key_pair_from_seed(&passphrase));
-    lp::G.LP_privkey.bytes.clone_from_slice(&*global_key_pair.private().secret);
-    lp::G.LP_pubsecp.clone_from_slice(&**global_key_pair.public());
-    lp::G.LP_mypub25519.bytes.clone_from_slice(&global_key_pair.public()[1..]);
+
+    let key_pair = try_s! (key_pair_from_seed (&passphrase));
+    let key_pair = try_s! (ctx.secp256k1_key_pair.pin (key_pair));
+    try_s! (ctx.rmd160.pin (key_pair.public().address_hash()));
+
+    lp::G.LP_privkey.bytes.clone_from_slice(&*key_pair.private().secret);
+    lp::G.LP_pubsecp.clone_from_slice(&**key_pair.public());
     if !nonz(lp::G.LP_privkey.bytes) {return ERR! ("Error initializing the global private key (G.LP_privkey)")}
-    Ok(global_key_pair)
+    Ok(())
 }
 
 /// Tries to serve on the given IP to check if it's available.  
@@ -1296,7 +1302,7 @@ fn test_ip (ctx: &MmArc, ip: IpAddr) -> Result<(Sender<()>, u16), String> {
     // Finish the server `Future` when `shutdown_rx` fires.
     let (shutdown_tx, shutdown_rx) = futures::sync::oneshot::channel::<()>();
     let server = server.select2 (shutdown_rx) .then (|_| Ok(()));
-    CORE.spawn (move |_| server);
+    spawn (server.compat().map(|_:Result<(),()>|()));
 
     let url = fomat! ("http://" if ip.is_unspecified() {"127.0.0.1"} else {(ip)} ":" (port) "/test_ip");
     log! ("test_ip] Checking " (url));
@@ -1307,12 +1313,13 @@ fn test_ip (ctx: &MmArc, ip: IpAddr) -> Result<(Sender<()>, u16), String> {
     Ok ((shutdown_tx, port))
 }
 
+/// * `ctx_cb` - callback used to share the `MmCtx` ID with the call site.
 pub fn lp_init (mypubport: u16, conf: Json, ctx_cb: &dyn Fn (u32))
 -> Result<(), String> {
     BITCOIND_RPC_INITIALIZING.store (true, Ordering::Relaxed);
     log! ({"version: {}", MM_VERSION});
-    let key_pair = unsafe {try_s! (lp_passphrase_init (conf["passphrase"].as_str(), conf["gui"].as_str()))};
-    let ctx = MmCtxBuilder::new().with_conf(conf).with_secp256k1_key_pair(key_pair).into_mm_arc();
+    let ctx = MmCtxBuilder::new().with_conf(conf).into_mm_arc();
+    unsafe {try_s! (lp_passphrase_init (&ctx))}
     let global: &mut [c_char] = unsafe {&mut lp::GLOBAL_DBDIR[..]};
     let global: &mut [u8] = unsafe {transmute (global)};
     let mut cur = Cursor::new (global);
@@ -1448,7 +1455,7 @@ pub fn lp_init (mypubport: u16, conf: Json, ctx_cb: &dyn Fn (u32))
     };
     let seednodes: Option<Vec<String>> = try_s!(json::from_value(ctx.conf["seednodes"].clone()));
     unsafe { try_s! (lp_initpeers (&ctx, &myipaddr, netid, seednodes)); }
-    ctx.initialized.store (true, Ordering::Relaxed);
+    try_s! (ctx.initialized.pin (true));
     // launch kickstart threads before RPC is available, this will prevent the API user to place
     // an order and start new swap that might get started 2 times because of kick-start
     let mut coins_needed_for_kick_start = swap_kick_starts (ctx.clone());

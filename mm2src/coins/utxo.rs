@@ -34,7 +34,7 @@ use dirs::home_dir;
 use futures::{Future};
 use gstuff::{now_ms};
 use hashbrown::hash_map::{HashMap, Entry};
-use keys::{Error as KeysError, KeyPair, Private, Public, Address, Secret, Type};
+use keys::{KeyPair, Private, Public, Address, Secret, Type};
 use keys::bytes::Bytes;
 use num_traits::cast::ToPrimitive;
 use primitives::hash::{H256, H264, H512};
@@ -1575,43 +1575,6 @@ impl MmCoin for UtxoCoin {
     }
 }
 
-fn private_from_seed(seed: &str) -> Result<Private, String> {
-    match seed.parse() {
-        Ok(private) => return Ok(private),
-        Err(e) => match e {
-            KeysError::InvalidChecksum => return ERR!("Provided WIF passphrase has invalid checksum!"),
-            _ => (), // ignore other errors, assume the passphrase is not WIF
-        },
-    }
-
-    if seed.starts_with("0x") {
-        let hash = try_s!(H256::from_str(&seed[2..]));
-        Ok(Private {
-            prefix: 0,
-            secret: hash,
-            compressed: true,
-            checksum_type: ChecksumType::DSHA256,
-        })
-    } else {
-        let mut hash = sha256(seed.as_bytes());
-        hash[0] &= 248;
-        hash[31] &= 127;
-        hash[31] |= 64;
-
-        Ok(Private {
-            prefix: 0,
-            secret: hash,
-            compressed: true,
-            checksum_type: ChecksumType::DSHA256,
-        })
-    }
-}
-
-pub fn key_pair_from_seed(seed: &str) -> Result<KeyPair, String> {
-    let private = try_s!(private_from_seed(seed));
-    Ok(try_s!(KeyPair::from_private(private)))
-}
-
 #[cfg(feature = "native")]
 /// Returns a path to the native coin wallet configuration.
 /// (This path is used in to read the wallet credentials).
@@ -1662,7 +1625,7 @@ fn read_native_mode_conf(filename: &dyn AsRef<Path>) -> Result<(Option<u16>, Str
 }
 
 #[cfg(not(feature = "native"))]
-fn read_native_mode_conf(_filename: &AsRef<Path>) -> Result<(Option<u16>, String, String), String> {
+fn read_native_mode_conf(_filename: &dyn AsRef<Path>) -> Result<(Option<u16>, String, String), String> {
     unimplemented!()
 }
 

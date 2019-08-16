@@ -112,6 +112,7 @@ fn test_crash_handling() {
 
 /// Setup the crash handlers.
 #[allow(dead_code)]
+#[cfg(feature = "native")]
 pub fn init_crash_reports() {
     static ONCE: Once = Once::new();
     ONCE.call_once (|| {
@@ -132,6 +133,9 @@ pub fn init_crash_reports() {
         // ^^ NB: In the future this might also affect the normal errors, cf. https://github.com/rust-lang/rfcs/blob/master/text/2504-fix-error.md.
     })
 }
+
+#[cfg(not(feature = "native"))]
+pub fn init_crash_reports() {unimplemented!()}
 
 // Make sure Rust panics still work in the presence of the VEH handler.
 #[test]

@@ -27,9 +27,7 @@ char GLOBAL_DBDIR[512];
 
 struct LP_globals
 {
-    /// Our public peer-to-peer key.
-    bits256 LP_mypub25519;
-    bits256 LP_privkey,LP_mypriv25519;
+    bits256 LP_privkey;
     uint16_t netid;
     uint8_t LP_pubsecp[33];
 } G;

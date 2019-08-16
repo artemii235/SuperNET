@@ -1,5 +1,6 @@
 use super::*;
 use crate::utxo::rpc_clients::{ElectrumProtocol};
+use common::lp_privkey::key_pair_from_seed;
 use mocktopus::mocking::*;
 
 fn electrum_client_for_test(servers: &[&str]) -> UtxoRpcClientEnum {
