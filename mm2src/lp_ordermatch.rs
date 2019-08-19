@@ -745,7 +745,7 @@ pub fn lp_auto_buy(ctx: &MmArc, input: AutoBuyInput) -> Result<String, String> {
     Ok(result)
 }
 
-fn price_ping_sig_hash(timestamp: u32, pubsecp: &[u8], pubkey: &[u8], base: &[u8], rel: &[u8], price64: u64, uuid: Uuid) -> H256 {
+fn price_ping_sig_hash(timestamp: u32, pubsecp: &[u8], pubkey: &[u8], base: &[u8], rel: &[u8], price64: u64) -> H256 {
     let mut input = vec![];
     input.extend_from_slice(&timestamp.to_le_bytes());
     input.extend_from_slice(pubsecp);
@@ -753,7 +753,6 @@ fn price_ping_sig_hash(timestamp: u32, pubsecp: &[u8], pubkey: &[u8], base: &[u8
     input.extend_from_slice(base);
     input.extend_from_slice(rel);
     input.extend_from_slice(&price64.to_le_bytes());
-    input.extend_from_slice(uuid.as_bytes());
     sha256(&input)
 }
 
@@ -797,7 +796,6 @@ impl PricePingRequest {
             order.base.as_bytes(),
             order.rel.as_bytes(),
             price64,
-            order.uuid,
         );
 
         let sig = try_s!(ctx.secp256k1_key_pair().private().sign(&sig_hash));
@@ -842,7 +840,6 @@ pub fn lp_post_price_recv(ctx: &MmArc, req: Json) -> HyRes {
         req.base.as_bytes(),
         req.rel.as_bytes(),
         try_h!(req.price64.parse()),
-        req.uuid,
     );
     let sig_check = try_h!(pub_secp.verify(&sig_hash, &signature));
     if sig_check {
