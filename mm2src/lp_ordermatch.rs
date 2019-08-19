@@ -770,7 +770,7 @@ struct PricePingRequest {
     // TODO rename, it's called "balance", but it's actual meaning is max available volume to trade
     #[serde(rename="bal")]
     balance: BigDecimal,
-    uuid: Uuid,
+    uuid: Option<Uuid>,
 }
 
 impl PricePingRequest {
@@ -823,7 +823,7 @@ impl PricePingRequest {
             pubsecp: hex::encode(&**ctx.secp256k1_key_pair().public()),
             sig: hex::encode(&*sig),
             balance: max_volume,
-            uuid: order.uuid,
+            uuid: Some(order.uuid),
         })
     }
 }
@@ -843,16 +843,21 @@ pub fn lp_post_price_recv(ctx: &MmArc, req: Json) -> HyRes {
     );
     let sig_check = try_h!(pub_secp.verify(&sig_hash, &signature));
     if sig_check {
+        // identify the order by first 16 bytes of node pubkey to keep backwards-compatibility
+        // TODO remove this when all nodes are updated
+        let mut bytes = [0; 16];
+        bytes.copy_from_slice(&pubkey[..16]);
+        let uuid = req.uuid.unwrap_or(Uuid::from_bytes(bytes));
         let ordermatch_ctx: Arc<OrdermatchContext> = try_h!(OrdermatchContext::from_ctx(ctx));
         let mut orderbook = try_h!(ordermatch_ctx.orderbook.lock());
         match orderbook.entry((req.base.clone(), req.rel.clone())) {
             Entry::Vacant(pair_orders) => if req.balance > 0.into() && req.price > 0.into() {
                 let mut orders = HashMap::new();
-                orders.insert(req.uuid, req);
+                orders.insert(uuid, req);
                 pair_orders.insert(orders);
             },
             Entry::Occupied(mut pair_orders) => {
-                match pair_orders.get_mut().entry(req.uuid) {
+                match pair_orders.get_mut().entry(uuid) {
                     Entry::Vacant(order) => if req.balance > 0.into() && req.price > 0.into() {
                         order.insert(req);
                     },
