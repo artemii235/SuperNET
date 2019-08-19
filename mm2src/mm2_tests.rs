@@ -1750,3 +1750,72 @@ fn test_order_should_not_be_displayed_when_node_is_down() {
 
     unwrap! (mm_alice.stop());
 }
+
+#[test]
+// https://github.com/KomodoPlatform/atomicDEX-API/issues/511
+fn test_all_orders_per_pair_per_node_must_be_displayed_in_orderbook() {
+    let coins = json!([
+        {"coin":"RICK","asset":"RICK"},
+        {"coin":"MORTY","asset":"MORTY"},
+    ]);
+
+    let mut mm = unwrap! (MarketMakerIt::start (
+        json! ({
+            "gui": "nogui",
+            "netid": 9998,
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| unwrap! (s.parse::<i64>())),
+            "passphrase": "bob passphrase",
+            "coins": coins,
+            "rpc_password": "pass",
+            "i_am_seed": true,
+        }),
+        "pass".into(),
+        match var ("LOCAL_THREAD_MM") {Ok (ref e) if e == "bob" => Some (local_start()), _ => None}
+    ));
+    let (_dump_log, _dump_dashboard) = mm_dump (&mm.log_path);
+    log!({"Log path: {}", mm.log_path.display()});
+    unwrap! (mm.wait_for_log (22., &|log| log.contains (">>>>>>>>> DEX stats ")));
+    enable_electrum(&mm, "RICK", vec!["electrum3.cipig.net:10017", "electrum2.cipig.net:10017", "electrum1.cipig.net:10017"]);
+    enable_electrum(&mm, "MORTY", vec!["electrum3.cipig.net:10018", "electrum2.cipig.net:10018", "electrum1.cipig.net:10018"]);
+
+    // set 2 orders with different prices
+    let rc = unwrap! (mm.rpc (json! ({
+        "userpass": mm.userpass,
+        "method": "setprice",
+        "base": "RICK",
+        "rel": "MORTY",
+        "price": 0.9,
+        "volume": "0.9",
+        "cancel_previous": false,
+    })));
+    assert! (rc.0.is_success(), "!setprice: {}", rc.1);
+
+    let rc = unwrap! (mm.rpc (json! ({
+        "userpass": mm.userpass,
+        "method": "setprice",
+        "base": "RICK",
+        "rel": "MORTY",
+        "price": 1,
+        "volume": "0.9",
+        "cancel_previous": false,
+    })));
+    assert! (rc.0.is_success(), "!setprice: {}", rc.1);
+
+    thread::sleep(Duration::from_secs(12));
+
+    log!("Get RICK/MORTY orderbook");
+    let rc = unwrap!(mm.rpc (json! ({
+            "userpass": mm.userpass,
+            "method": "orderbook",
+            "base": "RICK",
+            "rel": "MORTY",
+        })));
+    assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
+
+    let orderbook: Json = unwrap!(json::from_str(&rc.1));
+    log!("orderbook " [orderbook]);
+    let asks = orderbook["asks"].as_array().unwrap();
+    assert_eq!(asks.len(), 2, "RICK/MORTY orderbook must have exactly 2 asks");
+}
