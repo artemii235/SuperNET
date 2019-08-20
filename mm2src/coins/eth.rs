@@ -20,7 +20,8 @@
 //
 use bigdecimal::BigDecimal;
 use bitcrypto::sha256;
-use common::{rpc_response, slurp_url, HyRes, MutexGuardWrapper};
+use common::{rpc_response, slurp_url, HyRes};
+use common::executor::Timer;
 use common::mm_ctx::MmArc;
 use secp256k1::PublicKey;
 use ethabi::{Contract, Token};
@@ -31,6 +32,7 @@ use futures::Future;
 use futures::future::{Either, join_all, loop_fn, Loop};
 use futures03::compat::Future01CompatExt;
 use futures03::future::{FutureExt, TryFutureExt};
+use futures03::lock::{Mutex as FutureMutex};
 use futures_timer::Delay;
 use gstuff::{now_ms, slurp};
 use http::StatusCode;
@@ -359,7 +361,7 @@ async fn withdraw_impl(coin: EthCoin, to: String, amount: BigDecimal, max: bool)
             (0.into(), data, token_addr)
         }
     };
-    let _nonce_lock = MutexGuardWrapper(try_s!(NONCE_LOCK.lock()));
+    let _nonce_lock = NONCE_LOCK.lock().await;
     let nonce = try_s!(get_addr_nonce(coin.my_address, &coin.web3_instances).compat().await);
     let gas_price = try_s!(coin.get_gas_price().compat().await);
     let estimate_gas_req = CallRequest {
@@ -807,9 +809,49 @@ pub fn signed_eth_tx_from_bytes(bytes: &[u8]) -> Result<SignedEthTx, String> {
 // It's highly likely that we won't experience any issues with it as we won't need to send "a lot" of transactions concurrently.
 // For ETH it makes even more sense because different ERC20 tokens can be running on same ETH blockchain.
 // So we would need to handle shared locks anyway.
-lazy_static! {static ref NONCE_LOCK: Mutex<()> = Mutex::new(());}
+lazy_static! {static ref NONCE_LOCK: FutureMutex<()> = FutureMutex::new(());}
 
 type EthTxFut = Box<dyn Future<Item=SignedEthTx, Error=String> + Send + 'static>;
+
+async fn sign_and_send_transaction_impl(
+    coin: EthCoin,
+    value: U256,
+    action: Action,
+    data: Vec<u8>,
+    gas: U256,
+) -> Result<SignedEthTx, String> {
+    let _nonce_lock = NONCE_LOCK.lock().await;
+    let nonce = try_s!(get_addr_nonce(coin.my_address, &coin.web3_instances).compat().await);
+    let gas_price = try_s!(coin.get_gas_price().compat().await);
+    let tx = UnSignedEthTx {
+        nonce,
+        value,
+        action,
+        data,
+        gas,
+        gas_price,
+    };
+    let signed = tx.sign(coin.key_pair.secret(), None);
+    let bytes = web3::types::Bytes(rlp::encode(&signed).to_vec());
+    try_s!(coin.web3.eth().send_raw_transaction(bytes).map_err(|e| ERRL!("{}", e)).compat().await);
+    loop {
+        // Check every second till ETH nodes recognize that nonce is increased
+        // Parity has reliable "nextNonce" method that always returns correct nonce for address
+        // But we can't expect that all nodes will always be Parity.
+        // Some of ETH forks use Geth only so they don't have Parity nodes at all.
+        Timer::sleep(1.).await;
+        let new_nonce = match get_addr_nonce(coin.my_address, &coin.web3_instances).compat().await {
+            Ok(n) => n,
+            Err(e) => {
+                log!("Error " [e] " getting " [coin.ticker()] " " [coin.my_address] " nonce");
+                // we can just keep looping in case of error hoping it will go away
+                continue;
+            }
+        };
+        if new_nonce > nonce { break };
+    }
+    Ok(signed)
+}
 
 impl EthCoin {
     fn sign_and_send_transaction(
@@ -819,54 +861,8 @@ impl EthCoin {
         data: Vec<u8>,
         gas: U256,
     ) -> EthTxFut {
-        let arc = self.clone();
-        let nonce_lock = MutexGuardWrapper(try_fus!(NONCE_LOCK.lock()));
-        let nonce_fut = get_addr_nonce(self.my_address, &self.web3_instances);
-        Box::new(nonce_fut.then(move |nonce| -> EthTxFut {
-            let nonce = try_fus!(nonce);
-            Box::new(arc.get_gas_price().then(move |gas_price| -> EthTxFut {
-                let gas_price = try_fus!(gas_price);
-                let tx = UnSignedEthTx {
-                    nonce,
-                    value,
-                    action,
-                    data,
-                    gas,
-                    gas_price,
-                };
-
-                let signed = tx.sign(arc.key_pair.secret(), None);
-                let bytes = web3::types::Bytes(rlp::encode(&signed).to_vec());
-                let send_fut = arc.web3.eth().send_raw_transaction(bytes).map_err(|e| ERRL!("{}", e));
-                Box::new(send_fut.and_then(move |res| {
-                    // Check every second till ETH nodes recognize that nonce is increased
-                    // Parity has reliable "nextNonce" method that always returns correct nonce for address
-                    // But we can't expect that all nodes will always be Parity.
-                    // Some of ETH forks use Geth only so they don't have Parity nodes at all.
-                    loop_fn((res, arc, nonce, nonce_lock), move |(res, arc, nonce, nonce_lock)| {
-                        let delay_f = Delay::new(Duration::from_secs(1)).map_err(|e| ERRL!("{}", e));
-                        delay_f.and_then(move |_res| {
-                            get_addr_nonce(arc.my_address, &arc.web3_instances).then(move |new_nonce| {
-                                let new_nonce = match new_nonce {
-                                    Ok(n) => n,
-                                    Err(e) => {
-                                        log!("Error " [e] " getting " [arc.ticker()] " " [arc.my_address] " nonce");
-                                        // we can just keep looping in case of error hoping it will go away
-                                        return Ok(Loop::Continue((res, arc, nonce, nonce_lock)));
-                                    }
-                                };
-                                if new_nonce > nonce {
-                                    drop(nonce_lock);
-                                    Ok(Loop::Break(res))
-                                } else {
-                                    Ok(Loop::Continue((res, arc, nonce, nonce_lock)))
-                                }
-                            })
-                        })
-                    })
-                }).map(move |_res| signed))
-            }))
-        }))
+        let fut = sign_and_send_transaction_impl(self.clone(), value, action, data, gas);
+        Box::new(fut.boxed().compat())
     }
 
     fn send_to_address(&self, address: Address, value: U256) -> EthTxFut {
