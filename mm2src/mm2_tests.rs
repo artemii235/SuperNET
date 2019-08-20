@@ -1207,7 +1207,7 @@ fn test_withdraw_and_send() {
         "amount": "0.001"
     })));
 
-    assert! (withdraw.0.is_server_error(), "PIZZA withdraw: {}", withdraw.1);
+    assert! (withdraw.0.is_server_error(), "ETH withdraw: {}", withdraw.1);
     let withdraw_json: Json = unwrap!(json::from_str(&withdraw.1));
     assert!(unwrap!(withdraw_json["error"].as_str()).contains("Invalid address checksum"));
     unwrap!(mm_alice.stop());
