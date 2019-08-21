@@ -1,9 +1,29 @@
+use futures03::executor::block_on;
 use super::*;
 use mocktopus::mocking::*;
 
 fn check_sum(addr: &str, expected: &str) {
     let actual = checksum_address(addr);
     assert_eq!(expected, actual);
+}
+
+fn eth_coin_for_test(coin_type: EthCoinType) -> EthCoin {
+    let key_pair = KeyPair::from_secret_slice(&hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap()).unwrap();
+    let transport = Web3Transport::new(vec!["http://dummy.dummy".into()]).unwrap();
+    let web3 = Web3::new(transport);
+
+    EthCoin(Arc::new(EthCoinImpl {
+        coin_type,
+        decimals: 18,
+        gas_station_url: None,
+        history_sync_state: Mutex::new(HistorySyncState::NotEnabled),
+        my_address: key_pair.address(),
+        key_pair,
+        swap_contract_address: Address::from("0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94"),
+        ticker: "ETH".into(),
+        web3_instances: vec![Web3Instance {web3: web3.clone(), is_parity: true}],
+        web3,
+    }))
 }
 
 #[test]
@@ -310,4 +330,30 @@ fn test_search_for_swap_tx_spend_was_refunded() {
         5886908,
     )));
     assert_eq!(refund_tx, found_tx);
+}
+
+#[test]
+fn test_withdraw_impl_manual_fee() {
+    EthCoin::my_balance.mock_safe(|_| {
+        let balance = wei_from_big_decimal(&1000000000.into(), 18).unwrap();
+        MockResult::Return(Box::new(futures::future::ok(balance)))
+    });
+    get_addr_nonce.mock_safe(|_, _| MockResult::Return(Box::new(futures::future::ok(0.into()))));
+
+    let coin = eth_coin_for_test(EthCoinType::Eth);
+    let withdraw_req = WithdrawRequest {
+        amount: 1.into(),
+        to: "0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94".to_string(),
+        coin: "ETH".to_string(),
+        max: false,
+        fee: Some(WithdrawFee::EthGas { gas: 150000, gas_price: 1.into() }),
+    };
+    let tx_details = unwrap!(block_on(withdraw_impl(coin.clone(), withdraw_req)));
+    let expected = json!({
+        "coin": "ETH",
+        "gas_price": "0.000000001",
+        "gas": 150000,
+        "total_fee": "0.00015"
+    });
+    assert_eq!(expected, tx_details.fee_details);
 }

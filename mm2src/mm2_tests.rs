@@ -1114,7 +1114,7 @@ fn trade_etomic_pizza() {
     trade_base_rel_native("ETOMIC", "PIZZA");
 }
 
-fn withdraw_and_send(mm: &MarketMakerIt, coin: &str, to: &str, enable_res: &HashMap<&'static str, Json>, expected_bal_change: f64) {
+fn withdraw_and_send(mm: &MarketMakerIt, coin: &str, to: &str, enable_res: &HashMap<&'static str, Json>, expected_bal_change: &str) {
     let addr = addr_from_enable(unwrap!(enable_res.get(coin)));
 
     let withdraw = unwrap! (mm.rpc (json! ({
@@ -1128,7 +1128,7 @@ fn withdraw_and_send(mm: &MarketMakerIt, coin: &str, to: &str, enable_res: &Hash
     assert! (withdraw.0.is_success(), "!{} withdraw: {}", coin, withdraw.1);
     let withdraw_json: Json = unwrap!(json::from_str(&withdraw.1));
     assert_eq!(Some(&vec![Json::from(to)]), withdraw_json["to"].as_array());
-    assert_eq!(Some(expected_bal_change), withdraw_json["my_balance_change"].as_f64());
+    assert_eq!(Json::from(expected_bal_change), withdraw_json["my_balance_change"]);
     assert_eq!(Some(&vec![addr]), withdraw_json["from"].as_array());
 
     let send = unwrap! (mm.rpc (json! ({
@@ -1180,10 +1180,10 @@ fn test_withdraw_and_send() {
     // Enable coins. Print the replies in case we need the address.
     let enable_res = enable_coins_eth_electrum (&mm_alice, vec!["http://195.201.0.6:8565"]);
     log! ("enable_coins (alice): " [enable_res]);
-    withdraw_and_send(&mm_alice, "PIZZA", "RJTYiYeJ8eVvJ53n2YbrVmxWNNMVZjDGLh", &enable_res, -0.00101);
+    withdraw_and_send(&mm_alice, "PIZZA", "RJTYiYeJ8eVvJ53n2YbrVmxWNNMVZjDGLh", &enable_res, "-0.00101");
     // dev chain gas price is 0 so ETH expected balance change doesn't include the fee
-    withdraw_and_send(&mm_alice, "ETH", "0x657980d55733B41c0C64c06003864e1aAD917Ca7", &enable_res, -0.001);
-    withdraw_and_send(&mm_alice, "JST", "0x657980d55733B41c0C64c06003864e1aAD917Ca7", &enable_res, -0.001);
+    withdraw_and_send(&mm_alice, "ETH", "0x657980d55733B41c0C64c06003864e1aAD917Ca7", &enable_res, "-0.001");
+    withdraw_and_send(&mm_alice, "JST", "0x657980d55733B41c0C64c06003864e1aAD917Ca7", &enable_res, "-0.001");
 
     // must not allow to withdraw to non-P2PKH addresses
     let withdraw = unwrap! (mm_alice.rpc (json! ({

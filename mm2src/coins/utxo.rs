@@ -25,13 +25,16 @@ use bigdecimal::BigDecimal;
 pub use bitcrypto::{dhash160, ChecksumType, sha256};
 use chain::{TransactionOutput, TransactionInput, OutPoint};
 use chain::constants::{SEQUENCE_FINAL};
-use common::{dstr, HyRes, MutexGuardWrapper, rpc_response};
+use common::{HyRes, rpc_response};
 use common::custom_futures::join_all_sequential;
 use common::jsonrpc_client::{JsonRpcError, JsonRpcErrorType};
 use common::mm_ctx::MmArc;
 #[cfg(feature = "native")]
 use dirs::home_dir;
 use futures::{Future};
+use futures03::compat::Future01CompatExt;
+use futures03::future::{FutureExt, TryFutureExt};
+use futures03::lock::{Mutex as AsyncMutex};
 use gstuff::{now_ms};
 use keys::{KeyPair, Private, Public, Address, Secret, Type};
 use keys::bytes::Bytes;
@@ -57,7 +60,7 @@ pub use chain::Transaction as UtxoTx;
 
 use self::rpc_clients::{electrum_script_hash, ElectrumClient, ElectrumClientImpl, EstimateFeeMethod, NativeClient, UtxoRpcClientEnum, UnspentInfo };
 use super::{FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, MmCoinEnum, SwapOps, TradeInfo,
-            Transaction, TransactionEnum, TransactionFut, TransactionDetails};
+            Transaction, TransactionEnum, TransactionFut, TransactionDetails, WithdrawFee, WithdrawRequest};
 use crate::utxo::rpc_clients::{NativeClientImpl, UtxoRpcClientOps, ElectrumRpcRequest};
 use futures::future::Either;
 
@@ -484,7 +487,7 @@ fn sat_from_big_decimal(amount: &BigDecimal, decimals: u8) -> Result<u64, String
 }
 
 /// Convert satoshis to BigDecimal amount of coin units
-fn big_decimal_from_sat(satoshis: u64, decimals: u8) -> BigDecimal {
+fn big_decimal_from_sat(satoshis: i64, decimals: u8) -> BigDecimal {
     BigDecimal::from(satoshis) / BigDecimal::from(10u64.pow(decimals as u32))
 }
 
@@ -494,7 +497,7 @@ impl Deref for UtxoCoin {type Target = UtxoCoinImpl; fn deref (&self) -> &UtxoCo
 
 // We can use a shared UTXO lock for all UTXO coins at 1 time.
 // It's highly likely that we won't experience any issues with it as we won't need to send "a lot" of transactions concurrently.
-lazy_static! {static ref UTXO_LOCK: Mutex<()> = Mutex::new(());}
+lazy_static! {static ref UTXO_LOCK: AsyncMutex<()> = AsyncMutex::new(());}
 
 macro_rules! true_or_err {
     ($cond: expr, $msg: expr $(, $args:ident)*) => {
@@ -504,27 +507,21 @@ macro_rules! true_or_err {
     };
 }
 
+async fn send_outputs_from_my_address_impl(coin: UtxoCoin, outputs: Vec<TransactionOutput>)
+    -> Result<UtxoTx, String> {
+    let _utxo_lock = UTXO_LOCK.lock().await;
+    let unspents = try_s!(coin.rpc_client.list_unspent_ordered(&coin.my_address).map_err(|e| ERRL!("{}", e)).compat().await);
+    let (unsigned, _) = try_s!(coin.generate_transaction(unspents, outputs, FeePolicy::SendExact, None).compat().await);
+    let prev_script = Builder::build_p2pkh(&coin.my_address.hash);
+    let signed = try_s!(sign_tx(unsigned, &coin.key_pair, prev_script, coin.signature_version, coin.fork_id));
+    try_s!(coin.rpc_client.send_transaction(&signed, coin.my_address.clone()).map_err(|e| ERRL!("{}", e)).compat().await);
+    Ok(signed)
+}
+
 impl UtxoCoin {
     fn send_outputs_from_my_address(&self, outputs: Vec<TransactionOutput>) -> TransactionFut {
-        let arc = self.clone();
-        let utxo_lock = MutexGuardWrapper(try_fus!(UTXO_LOCK.lock()));
-        let unspent_fut = self.rpc_client.list_unspent_ordered(&self.my_address).map_err(|e| ERRL!("{}", e));
-        Box::new(unspent_fut.and_then(move |unspents| {
-            arc.generate_transaction(
-                unspents,
-                outputs,
-                FeePolicy::SendExact,
-            ).and_then(move |(unsigned, _)| -> TransactionFut {
-                let prev_script = Builder::build_p2pkh(&arc.my_address.hash);
-                let signed = try_fus!(sign_tx(unsigned, &arc.key_pair, prev_script, arc.signature_version, arc.fork_id));
-                Box::new(arc.rpc_client.send_transaction(&signed, arc.my_address.clone()).map_err(|e| ERRL!("{}", e)).then(move |res| {
-                    // Drop the UTXO lock only when the transaction send result is known.
-                    drop(utxo_lock);
-                    try_s!(res);
-                    Ok(signed.into())
-                }))
-            })
-        }))
+        let fut = send_outputs_from_my_address_impl(self.clone(), outputs);
+        Box::new(fut.boxed().compat().map(|tx| tx.into()))
     }
 
     fn validate_payment(
@@ -585,13 +582,18 @@ impl UtxoCoin {
         &self,
         utxos: Vec<UnspentInfo>,
         mut outputs: Vec<TransactionOutput>,
-        fee_policy: FeePolicy
+        fee_policy: FeePolicy,
+        fee: Option<ActualTxFee>,
     ) -> Box<dyn Future<Item=(TransactionInputSigner, AdditionalTxData), Error=String> + Send> {
         const DUST: u64 = 1000;
         let lock_time = (now_ms() / 1000) as u32;
         let change_script_pubkey = Builder::build_p2pkh(&self.my_address.hash).to_bytes();
         let arc = self.clone();
-        Box::new(self.get_tx_fee().map_err(|e| ERRL!("{}", e)).and_then(move |coin_tx_fee| -> Box<dyn Future<Item=(TransactionInputSigner, AdditionalTxData), Error=String> + Send> {
+        let fee_fut = match fee {
+            Some(f) => Either::A(futures::future::ok(f)),
+            None => Either::B(self.get_tx_fee().map_err(|e| ERRL!("{}", e))),
+        };
+        Box::new(fee_fut.and_then(move |coin_tx_fee| -> Box<dyn Future<Item=(TransactionInputSigner, AdditionalTxData), Error=String> + Send> {
             true_or_err!(!utxos.is_empty(), "Couldn't generate tx from empty utxos set");
             true_or_err!(!outputs.is_empty(), "Couldn't generate tx from empty outputs set");
             let mut tx_fee = match &coin_tx_fee {
@@ -1252,9 +1254,58 @@ impl MarketCoinOps for UtxoCoin {
     }
 }
 
+async fn withdraw_impl(coin: UtxoCoin, req: WithdrawRequest) -> Result<TransactionDetails, String> {
+    let to: Address = try_s!(Address::from_str(&req.to));
+    if to.prefix != coin.pub_addr_prefix || to.t_addr_prefix != coin.pub_t_addr_prefix {
+        return ERR!("Address {} has invalid format, it must start with {}", to, &coin.my_address()[..1]);
+    }
+    if to.checksum_type != coin.checksum_type {
+        return ERR!("Address {} has invalid checksum type, it must be {:?}", to, coin.checksum_type);
+    }
+    let script_pubkey = Builder::build_p2pkh(&to.hash).to_bytes();
+    let _utxo_lock = UTXO_LOCK.lock().await;
+    let unspents = try_s!(coin.rpc_client.list_unspent_ordered(&coin.my_address).map_err(|e| ERRL!("{}", e)).compat().await);
+    let (value, fee_policy) = if req.max {
+        (unspents.iter().fold(0, |sum, unspent| sum + unspent.value), FeePolicy::DeductFromOutput(0))
+    } else {
+        (try_s!(sat_from_big_decimal(&req.amount, coin.decimals)), FeePolicy::SendExact)
+    };
+    let outputs = vec![TransactionOutput {
+        value,
+        script_pubkey,
+    }];
+    let fee = match req.fee {
+        Some(WithdrawFee::UtxoFixed { amount }) => Some(ActualTxFee::Fixed(try_s!(sat_from_big_decimal(&amount, coin.decimals)))),
+        Some(WithdrawFee::UtxoPerKbyte { amount }) => Some(ActualTxFee::Dynamic(try_s!(sat_from_big_decimal(&amount, coin.decimals)))),
+        Some(_) => return ERR!("Unsupported input fee type"),
+        None => None,
+    };
+    let (unsigned, data) = try_s!(coin.generate_transaction(unspents, outputs, fee_policy, fee).compat().await);
+    let prev_script = Builder::build_p2pkh(&coin.my_address.hash);
+    let signed = try_s!(sign_tx(unsigned, &coin.key_pair, prev_script, coin.signature_version, coin.fork_id));
+    let fee_details = UtxoFeeDetails {
+        amount: big_decimal_from_sat(data.fee_amount as i64, coin.decimals),
+    };
+    Ok(TransactionDetails {
+        from: vec![coin.my_address().into()],
+        to: vec![format!("{}", to)],
+        total_amount: big_decimal_from_sat(data.spent_by_me as i64, coin.decimals),
+        spent_by_me: big_decimal_from_sat(data.spent_by_me as i64, coin.decimals),
+        received_by_me: big_decimal_from_sat(data.received_by_me as i64, coin.decimals),
+        my_balance_change: big_decimal_from_sat(data.received_by_me as i64 - data.spent_by_me as i64, coin.decimals),
+        tx_hash: signed.hash().reversed().to_vec().into(),
+        tx_hex: serialize(&signed).into(),
+        fee_details: try_s!(json::to_value(fee_details)),
+        block_height: 0,
+        coin: coin.ticker.clone(),
+        internal_id: vec![].into(),
+        timestamp: now_ms() / 1000,
+    })
+}
+
 #[derive(Serialize)]
 struct UtxoFeeDetails {
-    amount: f64,
+    amount: BigDecimal,
 }
 
 impl MmCoin for UtxoCoin {
@@ -1291,57 +1342,9 @@ impl MmCoin for UtxoCoin {
         Box::new(futures::future::ok(()))
     }
 
-    fn withdraw(&self, to: &str, amount: BigDecimal, max: bool) -> Box<dyn Future<Item=TransactionDetails, Error=String> + Send> {
-        let to: Address = try_fus!(Address::from_str(to));
-        if to.prefix != self.pub_addr_prefix || to.t_addr_prefix != self.pub_t_addr_prefix {
-            return Box::new(futures::future::err(ERRL!("Address {} has invalid format, it must start with {}", to, &self.my_address()[..1])));
-        }
-        if to.checksum_type != self.checksum_type {
-            return Box::new(futures::future::err(ERRL!("Address {} has invalid checksum type, it must be {:?}", to, self.checksum_type)));
-        }
-        let script_pubkey = Builder::build_p2pkh(&to.hash).to_bytes();
-        let utxo_lock = MutexGuardWrapper(try_fus!(UTXO_LOCK.lock()));
-        let unspent_fut = self.rpc_client.list_unspent_ordered(&self.my_address).map_err(|e| ERRL!("{}", e));
-        let arc = self.clone();
-        Box::new(unspent_fut.and_then(move |unspents| -> Box<dyn Future<Item=TransactionDetails, Error=String> + Send> {
-            let (value, fee_policy) = if max {
-                (unspents.iter().fold(0, |sum, unspent| sum + unspent.value), FeePolicy::DeductFromOutput(0))
-            } else {
-                (try_fus!(sat_from_big_decimal(&amount, arc.decimals)), FeePolicy::SendExact)
-            };
-            let outputs = vec![TransactionOutput {
-                value,
-                script_pubkey,
-            }];
-
-            Box::new(arc.generate_transaction(
-                unspents,
-                outputs,
-                fee_policy,
-            ).and_then(move |(unsigned, data)| {
-                drop(utxo_lock);
-                let prev_script = Builder::build_p2pkh(&arc.my_address.hash);
-                let signed = try_s!(sign_tx(unsigned, &arc.key_pair, prev_script, arc.signature_version, arc.fork_id));
-                let fee_details = UtxoFeeDetails {
-                    amount: dstr(data.fee_amount as i64, arc.decimals),
-                };
-                Ok(TransactionDetails {
-                    from: vec![arc.my_address().into()],
-                    to: vec![format!("{}", to)],
-                    total_amount: dstr(data.spent_by_me as i64, arc.decimals),
-                    spent_by_me: dstr(data.spent_by_me as i64, arc.decimals),
-                    received_by_me: dstr(data.received_by_me as i64, arc.decimals),
-                    my_balance_change: dstr(data.received_by_me as i64 - data.spent_by_me as i64, arc.decimals),
-                    tx_hash: signed.hash().reversed().to_vec().into(),
-                    tx_hex: serialize(&signed).into(),
-                    fee_details: try_s!(json::to_value(fee_details)),
-                    block_height: 0,
-                    coin: arc.ticker.clone(),
-                    internal_id: vec![].into(),
-                    timestamp: now_ms() / 1000,
-                })
-            }))
-        }))
+    fn withdraw(&self, req: WithdrawRequest) -> Box<dyn Future<Item=TransactionDetails, Error=String> + Send> {
+        let fut = withdraw_impl(self.clone(), req);
+        Box::new(fut.boxed().compat())
     }
 
     fn decimals(&self) -> u8 {
@@ -1536,10 +1539,10 @@ impl MmCoin for UtxoCoin {
         Ok(TransactionDetails {
             from: from_addresses,
             to: to_addresses,
-            received_by_me: self.denominate_satoshis(received_by_me as i64),
-            spent_by_me: self.denominate_satoshis(spent_by_me as i64),
-            my_balance_change: self.denominate_satoshis(received_by_me as i64 - spent_by_me as i64),
-            total_amount: self.denominate_satoshis(input_amount as i64),
+            received_by_me: big_decimal_from_sat(received_by_me as i64, self.decimals),
+            spent_by_me: big_decimal_from_sat(spent_by_me as i64, self.decimals),
+            my_balance_change: big_decimal_from_sat(received_by_me as i64 - spent_by_me as i64, self.decimals),
+            total_amount: big_decimal_from_sat(input_amount as i64, self.decimals),
             tx_hash: tx.hash().reversed().to_vec().into(),
             tx_hex: verbose_tx.hex,
             fee_details: json!({
@@ -1568,7 +1571,7 @@ impl MmCoin for UtxoCoin {
             rpc_response(200, json!({
                 "result": {
                     "coin": ticker,
-                    "amount": big_decimal_from_sat(amount, decimals)
+                    "amount": big_decimal_from_sat(amount as i64, decimals)
                 }
             }).to_string())
         }))

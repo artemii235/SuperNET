@@ -1,7 +1,7 @@
 use bigdecimal::BigDecimal;
 use common::HyRes;
 use common::mm_ctx::MmArc;
-use crate::{TradeInfo, FoundSwapTxSpend};
+use crate::{TradeInfo, FoundSwapTxSpend, WithdrawRequest};
 use futures::Future;
 use mocktopus::macros::*;
 use std::borrow::Cow;
@@ -201,7 +201,7 @@ impl MmCoin for TestCoin {
         unimplemented!()
     }
 
-    fn withdraw(&self, to: &str, amount: BigDecimal, max: bool) -> Box<dyn Future<Item=TransactionDetails, Error=String> + Send> {
+    fn withdraw(&self, req: WithdrawRequest) -> Box<dyn Future<Item=TransactionDetails, Error=String> + Send> {
         unimplemented!()
     }
 

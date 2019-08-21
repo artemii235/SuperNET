@@ -32,7 +32,7 @@ use futures::Future;
 use futures::future::{Either, join_all, loop_fn, Loop};
 use futures03::compat::Future01CompatExt;
 use futures03::future::{FutureExt, TryFutureExt};
-use futures03::lock::{Mutex as FutureMutex};
+use futures03::lock::{Mutex as AsyncMutex};
 use futures_timer::Delay;
 use gstuff::{now_ms, slurp};
 use http::StatusCode;
@@ -56,7 +56,7 @@ use web3::{ self, Web3 };
 use web3::types::{Action as TraceAction, BlockId, BlockNumber, Bytes, CallRequest, FilterBuilder, Log, Transaction as Web3Transaction, TransactionId, H256, Trace, TraceFilterBuilder};
 
 use super::{FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeInfo, TransactionFut,
-            TransactionEnum, Transaction, TransactionDetails};
+            TransactionEnum, Transaction, TransactionDetails, WithdrawFee, WithdrawRequest};
 
 pub use ethcore_transaction::SignedTransaction as SignedEthTx;
 pub use rlp;
@@ -342,18 +342,18 @@ impl EthCoinImpl {
     }
 }
 
-async fn withdraw_impl(coin: EthCoin, to: String, amount: BigDecimal, max: bool) -> Result<TransactionDetails, String> {
-    let to_addr = try_s!(addr_from_str(&to));
+async fn withdraw_impl(coin: EthCoin, req: WithdrawRequest) -> Result<TransactionDetails, String> {
+    let to_addr = try_s!(addr_from_str(&req.to));
     let my_balance = try_s!(coin.my_balance().compat().await);
-    let mut wei_amount = if max {
+    let mut wei_amount = if req.max {
         my_balance
     } else {
-        try_s!(wei_from_big_decimal(&amount, coin.decimals))
+        try_s!(wei_from_big_decimal(&req.amount, coin.decimals))
     };
     if wei_amount > my_balance {
-        return ERR!("The amount {} to withdraw is larger than balance", amount);
+        return ERR!("The amount {} to withdraw is larger than balance", req.amount);
     };
-    let (mut value, data, call_addr) = match coin.coin_type {
+    let (mut eth_value, data, call_addr) = match coin.coin_type {
         EthCoinType::Eth => (wei_amount, vec![], to_addr),
         EthCoinType::Erc20(token_addr) => {
             let function = try_s!(ERC20_CONTRACT.function("transfer"));
@@ -361,50 +361,59 @@ async fn withdraw_impl(coin: EthCoin, to: String, amount: BigDecimal, max: bool)
             (0.into(), data, token_addr)
         }
     };
-    let _nonce_lock = NONCE_LOCK.lock().await;
-    let nonce = try_s!(get_addr_nonce(coin.my_address, &coin.web3_instances).compat().await);
-    let gas_price = try_s!(coin.get_gas_price().compat().await);
-    let estimate_gas_req = CallRequest {
-        value: Some(value),
-        data: Some(data.clone().into()),
-        from: Some(coin.my_address),
-        to: call_addr,
-        gas: None,
-        gas_price: Some(gas_price)
-    };
 
-    let gas = try_s!(coin.web3.eth().estimate_gas(estimate_gas_req, None).map_err(|e| ERRL!("{}", e)).compat().await);
+    let (gas, gas_price) = match req.fee {
+        Some(WithdrawFee::EthGas { gas_price, gas }) => {
+            (gas.into(), try_s!(wei_from_big_decimal(&gas_price, 9)))
+        },
+        Some(_) => return ERR!("Unsupported input fee type"),
+        None => {
+            let gas_price_fut = coin.get_gas_price().compat();
+            let estimate_gas_req = CallRequest {
+                value: Some(eth_value),
+                data: Some(data.clone().into()),
+                from: Some(coin.my_address),
+                to: call_addr,
+                gas: None,
+                gas_price: None,
+            };
+            let gas_fut = coin.web3.eth().estimate_gas(estimate_gas_req, None).map_err(|e| ERRL!("{}", e)).compat();
+            try_s!(try_join!(gas_fut, gas_price_fut))
+        }
+    };
     let total_fee = gas * gas_price;
 
-    if max && coin.coin_type == EthCoinType::Eth {
-        if value < total_fee || wei_amount < total_fee {
-            return ERR!("The value {} to withdraw is lower than fee {}", value, total_fee);
+    if req.max && coin.coin_type == EthCoinType::Eth {
+        if eth_value < total_fee || wei_amount < total_fee {
+            return ERR!("The value {} to withdraw is lower than fee {}", eth_value, total_fee);
         }
-        value -= total_fee;
+        eth_value -= total_fee;
         wei_amount -= total_fee;
     };
-    let tx = UnSignedEthTx { nonce, value, action: Action::Call(call_addr), data, gas, gas_price };
+    let _nonce_lock = NONCE_LOCK.lock().await;
+    let nonce = try_s!(get_addr_nonce(coin.my_address, &coin.web3_instances).compat().await);
+    let tx = UnSignedEthTx { nonce, value: eth_value, action: Action::Call(call_addr), data, gas, gas_price };
 
     let signed = tx.sign(coin.key_pair.secret(), None);
     let bytes = rlp::encode(&signed);
-    let amount_f64 = try_s!(u256_to_f64(wei_amount, coin.decimals));
-    let mut spent_by_me = amount_f64;
-    let mut received_by_me = 0.;
+    let amount_decimal = try_s!(u256_to_big_decimal(wei_amount, coin.decimals));
+    let mut spent_by_me = amount_decimal.clone();
+    let mut received_by_me = 0.into();
     if to_addr == coin.my_address {
-        received_by_me = amount_f64;
+        received_by_me = amount_decimal.clone();
     }
     let fee_details = try_s!(EthTxFeeDetails::new(gas, gas_price, "ETH"));
     if coin.coin_type == EthCoinType::Eth {
-        spent_by_me += fee_details.total_fee;
+        spent_by_me += &fee_details.total_fee;
     }
     let fee_details = try_s!(json::to_value(fee_details));
     Ok(TransactionDetails {
         to: vec![checksum_address(&format!("{:#02x}", to_addr))],
         from: vec![coin.my_address().into()],
-        total_amount: amount_f64,
+        total_amount: amount_decimal,
+        my_balance_change: &received_by_me - &spent_by_me,
         spent_by_me,
         received_by_me,
-        my_balance_change: received_by_me - spent_by_me,
         tx_hex: bytes.into(),
         tx_hash: signed.tx_hash(),
         block_height: 0,
@@ -809,7 +818,7 @@ pub fn signed_eth_tx_from_bytes(bytes: &[u8]) -> Result<SignedEthTx, String> {
 // It's highly likely that we won't experience any issues with it as we won't need to send "a lot" of transactions concurrently.
 // For ETH it makes even more sense because different ERC20 tokens can be running on same ETH blockchain.
 // So we would need to handle shared locks anyway.
-lazy_static! {static ref NONCE_LOCK: FutureMutex<()> = FutureMutex::new(());}
+lazy_static! {static ref NONCE_LOCK: AsyncMutex<()> = AsyncMutex::new(());}
 
 type EthTxFut = Box<dyn Future<Item=SignedEthTx, Error=String> + Send + 'static>;
 
@@ -853,6 +862,7 @@ async fn sign_and_send_transaction_impl(
     Ok(signed)
 }
 
+#[cfg_attr(test, mockable)]
 impl EthCoin {
     fn sign_and_send_transaction(
         &self,
@@ -1354,19 +1364,19 @@ impl EthCoin {
                 };
 
                 let amount = U256::from(event.data.0.as_slice());
-                let total_amount: f64 = display_u256_with_decimal_point(amount, self.decimals).parse().unwrap();
-                let mut received_by_me = 0.;
-                let mut spent_by_me = 0.;
+                let total_amount = u256_to_big_decimal(amount, self.decimals).unwrap();
+                let mut received_by_me = 0.into();
+                let mut spent_by_me = 0.into();
 
                 let from_addr = H160::from(event.topics[1]);
                 let to_addr = H160::from(event.topics[2]);
 
                 if from_addr == self.my_address {
-                    spent_by_me = total_amount;
+                    spent_by_me = total_amount.clone();
                 }
 
                 if to_addr == self.my_address {
-                    received_by_me = total_amount;
+                    received_by_me = total_amount.clone();
                 }
 
                 let web3_tx = match self.web3.eth().transaction(TransactionId::Hash(event.transaction_hash.unwrap())).wait() {
@@ -1410,6 +1420,7 @@ impl EthCoin {
 
                 let raw = signed_tx_from_web3_tx(web3_tx).unwrap();
                 let details = TransactionDetails {
+                    my_balance_change: &received_by_me - &spent_by_me,
                     spent_by_me,
                     received_by_me,
                     total_amount,
@@ -1418,7 +1429,6 @@ impl EthCoin {
                     coin: self.ticker.clone(),
                     fee_details: unwrap!(json::to_value(fee_details)),
                     block_height: block_number.into(),
-                    my_balance_change: received_by_me - spent_by_me,
                     tx_hash: BytesJson(raw.hash.to_vec()),
                     tx_hex: BytesJson(rlp::encode(&raw)),
                     internal_id: BytesJson(internal_id.to_vec()),
@@ -1604,24 +1614,24 @@ impl EthCoin {
                     None => None,
                 };
 
-                let total_amount: f64 = display_u256_with_decimal_point(call_data.value, 18).parse().unwrap();
-                let mut received_by_me = 0.;
-                let mut spent_by_me = 0.;
+                let total_amount: BigDecimal = u256_to_big_decimal(call_data.value, 18).unwrap();
+                let mut received_by_me = 0.into();
+                let mut spent_by_me = 0.into();
 
                 if call_data.from == self.my_address {
                     // ETH transfer is actually happening only if no error occurred
                     if trace.error.is_none() {
-                        spent_by_me = total_amount;
+                        spent_by_me = total_amount.clone();
                     }
                     if let Some(ref fee) = fee_details {
-                        spent_by_me += fee.total_fee;
+                        spent_by_me += &fee.total_fee;
                     }
                 }
 
                 if call_data.to == self.my_address {
                     // ETH transfer is actually happening only if no error occurred
                     if trace.error.is_none() {
-                        received_by_me = total_amount;
+                        received_by_me = total_amount.clone();
                     }
                 }
 
@@ -1635,6 +1645,7 @@ impl EthCoin {
                 };
 
                 let details = TransactionDetails {
+                    my_balance_change: &received_by_me - &spent_by_me,
                     spent_by_me,
                     received_by_me,
                     total_amount,
@@ -1643,7 +1654,6 @@ impl EthCoin {
                     coin: self.ticker.clone(),
                     fee_details: unwrap!(json::to_value(fee_details)),
                     block_height: trace.block_number,
-                    my_balance_change: received_by_me - spent_by_me,
                     tx_hash: BytesJson(raw.hash.to_vec()),
                     tx_hex: BytesJson(rlp::encode(&raw)),
                     internal_id,
@@ -1674,17 +1684,17 @@ impl EthCoin {
 struct EthTxFeeDetails {
     coin: String,
     gas: u64,
-    /// ETH units per 1 gas
-    gas_price: f64,
-    total_fee: f64,
+    /// WEI units per 1 gas
+    gas_price: BigDecimal,
+    total_fee: BigDecimal,
 }
 
 impl EthTxFeeDetails {
     fn new(gas: U256, gas_price: U256, coin: &str) -> Result<EthTxFeeDetails, String> {
         let total_fee = gas * gas_price;
         // Fees are always paid in ETH, can use 18 decimals by default
-        let total_fee = try_s!(u256_to_f64(total_fee, 18));
-        let gas_price = try_s!(u256_to_f64(gas_price, 18));
+        let total_fee = try_s!(u256_to_big_decimal(total_fee, 18));
+        let gas_price = try_s!(u256_to_big_decimal(gas_price, 18));
 
         Ok(EthTxFeeDetails {
             coin: coin.to_owned(),
@@ -1742,8 +1752,8 @@ impl MmCoin for EthCoin {
         }))
     }
 
-    fn withdraw(&self, to: &str, amount: BigDecimal, max: bool) -> Box<dyn Future<Item=TransactionDetails, Error=String> + Send> {
-        Box::new(withdraw_impl(self.clone(), to.to_owned(), amount, max).boxed().compat())
+    fn withdraw(&self, req: WithdrawRequest) -> Box<dyn Future<Item=TransactionDetails, Error=String> + Send> {
+        Box::new(withdraw_impl(self.clone(), req).boxed().compat())
     }
 
     fn decimals(&self) -> u8 {
@@ -1755,26 +1765,27 @@ impl MmCoin for EthCoin {
         let tx = try_s!(self.web3.eth().transaction(TransactionId::Hash(hash)).wait());
         let tx: Web3Transaction = try_s!(tx.ok_or(format!("tx hash {:02x} is not found", hash)));
         let raw = try_s!(signed_tx_from_web3_tx(tx.clone()));
-        let mut received_by_me = 0f64;
-        let mut spent_by_me = 0f64;
+        let mut received_by_me = 0.into();
+        let mut spent_by_me = 0.into();
 
         let to = match tx.to {
             Some(addr) => vec![checksum_address(&format!("{:#02x}", addr))],
             None => vec![],
         };
-        let total_amount = try_s!(display_u256_with_decimal_point(tx.value, self.decimals).parse());
+        let total_amount: BigDecimal = try_s!(display_u256_with_decimal_point(tx.value, self.decimals).parse());
 
         match self.coin_type {
             EthCoinType::Eth => {
                 if tx.to == Some(self.my_address) {
-                    received_by_me = total_amount;
+                    received_by_me = total_amount.clone();
                 }
 
                 if tx.from == self.my_address {
-                    spent_by_me = total_amount;
+                    spent_by_me = total_amount.clone();
                 }
 
                 Ok(TransactionDetails {
+                    my_balance_change: &received_by_me - &spent_by_me,
                     from: vec![checksum_address(&format!("{:#02x}", tx.from))],
                     to,
                     coin: self.ticker.clone(),
@@ -1783,7 +1794,6 @@ impl MmCoin for EthCoin {
                     tx_hash: tx.hash.0.to_vec().into(),
                     received_by_me,
                     spent_by_me,
-                    my_balance_change: received_by_me - spent_by_me,
                     total_amount,
                     fee_details: Json::Null,
                     internal_id: vec![0].into(),
@@ -1792,6 +1802,7 @@ impl MmCoin for EthCoin {
             },
             EthCoinType::Erc20(_addr) => {
                 Ok(TransactionDetails {
+                    my_balance_change: &received_by_me - &spent_by_me,
                     from: vec![checksum_address(&format!("{:#02x}", tx.from))],
                     to,
                     coin: self.ticker.clone(),
@@ -1800,7 +1811,6 @@ impl MmCoin for EthCoin {
                     tx_hash: tx.hash.0.to_vec().into(),
                     received_by_me,
                     spent_by_me,
-                    my_balance_change: received_by_me - spent_by_me,
                     total_amount,
                     fee_details: Json::Null,
                     internal_id: vec![0].into(),
@@ -1850,11 +1860,6 @@ fn display_u256_with_decimal_point(number: U256, decimals: u8) -> String {
 
     string.insert(string.len() - decimals, '.');
     string.trim_end_matches('0').into()
-}
-
-fn u256_to_f64(number: U256, decimals: u8) -> Result<f64, String> {
-    let string = display_u256_with_decimal_point(number, decimals);
-    Ok(try_s!(string.parse()))
 }
 
 fn u256_to_big_decimal(number: U256, decimals: u8) -> Result<BigDecimal, String> {
@@ -2129,8 +2134,9 @@ fn is_valid_checksum_addr(addr: &str) -> bool {
 /// Requests the nonce from all available nodes and checks that returned results equal.
 /// Nodes might need some time to sync and there can be other coins that use same nodes in different order.
 /// We need to be sure that nonce is updated on all of them before and after transaction is sent.
-fn get_addr_nonce(addr: Address, web3s: &Vec<Web3Instance>) -> impl Future<Item=U256, Error=String> {
-    loop_fn((addr, web3s.clone(), true, 0), move |(addr, web3s, first_run, mut errors)| {
+#[cfg_attr(test, mockable)]
+fn get_addr_nonce(addr: Address, web3s: &Vec<Web3Instance>) -> Box<dyn Future<Item=U256, Error=String> + Send> {
+    Box::new(loop_fn((addr, web3s.clone(), true, 0), move |(addr, web3s, first_run, mut errors)| {
         let futures: Vec<_> = web3s.iter().map(|web3| if web3.is_parity {
                 web3.web3.eth().parity_next_nonce(addr)
             } else {
@@ -2166,5 +2172,5 @@ fn get_addr_nonce(addr: Address, web3s: &Vec<Web3Instance>) -> impl Future<Item=
                 }
             }
         })
-    })
+    }))
 }

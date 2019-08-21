@@ -25,6 +25,7 @@
 
 #[macro_use] extern crate common;
 #[macro_use] extern crate fomat_macros;
+#[macro_use] extern crate futures03;
 #[macro_use] extern crate gstuff;
 #[macro_use] extern crate lazy_static;
 #[macro_use] extern crate serde_derive;
@@ -230,15 +231,28 @@ pub trait MarketCoinOps {
     fn address_from_pubkey_str(&self, pubkey: &str) -> Result<String, String>;
 }
 
+#[derive(Deserialize)]
+#[serde(tag = "type")]
+pub enum WithdrawFee {
+    UtxoFixed { amount: BigDecimal },
+    UtxoPerKbyte { amount: BigDecimal },
+    EthGas {
+        // in gwei
+        gas_price: BigDecimal,
+        gas: u64,
+    },
+}
+
 #[allow(dead_code)]
 #[derive(Deserialize)]
-struct WithdrawRequest {
+pub struct WithdrawRequest {
     coin: String,
     to: String,
     #[serde(default)]
     amount: BigDecimal,
     #[serde(default)]
-    max: bool
+    max: bool,
+    fee: Option<WithdrawFee>,
 }
 
 /// Transaction details
@@ -253,13 +267,13 @@ pub struct TransactionDetails {
     /// Coins are sent to these addresses
     to: Vec<String>,
     /// Total tx amount
-    total_amount: f64,
+    total_amount: BigDecimal,
     /// The amount spent from "my" address
-    spent_by_me: f64,
+    spent_by_me: BigDecimal,
     /// The amount received by "my" address
-    received_by_me: f64,
+    received_by_me: BigDecimal,
     /// Resulting "my" balance change
-    my_balance_change: f64,
+    my_balance_change: BigDecimal,
     /// Block height
     block_height: u64,
     /// Transaction timestamp
@@ -296,7 +310,7 @@ pub trait MmCoin: SwapOps + MarketCoinOps + Debug + 'static {
 
     fn can_i_spend_other_payment(&self) -> Box<dyn Future<Item=(), Error=String> + Send>;
 
-    fn withdraw(&self, to: &str, amount: BigDecimal, max: bool) -> Box<dyn Future<Item=TransactionDetails, Error=String> + Send>;
+    fn withdraw(&self, req: WithdrawRequest) -> Box<dyn Future<Item=TransactionDetails, Error=String> + Send>;
 
     /// Maximum number of digits after decimal point used to denominate integer coin units (satoshis, wei, etc.)
     fn decimals(&self) -> u8;
@@ -793,7 +807,7 @@ pub fn withdraw (ctx: MmArc, req: Json) -> HyRes {
         Err (err) => return rpc_err_response (500, &fomat! ("!lp_coinfind(" (ticker) "): " (err)))
     };
     let withdraw_req: WithdrawRequest = try_h!(json::from_value(req));
-    Box::new(coin.withdraw(&withdraw_req.to, withdraw_req.amount, withdraw_req.max).and_then(|res| {
+    Box::new(coin.withdraw(withdraw_req).and_then(|res| {
         let body = try_h!(json::to_string(&res));
         rpc_response(200, body)
     }))

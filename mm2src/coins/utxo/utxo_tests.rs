@@ -1,7 +1,9 @@
-use super::*;
-use crate::utxo::rpc_clients::{ElectrumProtocol};
 use common::privkey::key_pair_from_seed;
+use crate::WithdrawFee;
+use crate::utxo::rpc_clients::{ElectrumProtocol};
+use futures03::executor::block_on;
 use mocktopus::mocking::*;
+use super::*;
 
 fn electrum_client_for_test(servers: &[&str]) -> UtxoRpcClientEnum {
     let mut client = ElectrumClientImpl::new();
@@ -87,7 +89,7 @@ fn test_generate_transaction() {
         value: 999,
     }];
 
-    let generated = coin.generate_transaction(unspents, outputs, FeePolicy::SendExact).wait();
+    let generated = coin.generate_transaction(unspents, outputs, FeePolicy::SendExact, None).wait();
     // must not allow to use output with value < dust
     unwrap_err!(generated);
 
@@ -101,7 +103,7 @@ fn test_generate_transaction() {
         value: 98001,
     }];
 
-    let generated = unwrap!(coin.generate_transaction(unspents, outputs, FeePolicy::SendExact).wait());
+    let generated = unwrap!(coin.generate_transaction(unspents, outputs, FeePolicy::SendExact, None).wait());
     // the change that is less than dust must be included to miner fee
     // so no extra outputs should appear in generated transaction
     assert_eq!(generated.0.outputs.len(), 1);
@@ -121,7 +123,7 @@ fn test_generate_transaction() {
     }];
 
     // test that fee is properly deducted from output amount equal to input amount (max withdraw case)
-    let generated = unwrap!(coin.generate_transaction(unspents, outputs, FeePolicy::DeductFromOutput(0)).wait());
+    let generated = unwrap!(coin.generate_transaction(unspents, outputs, FeePolicy::DeductFromOutput(0), None).wait());
     assert_eq!(generated.0.outputs.len(), 1);
 
     assert_eq!(generated.1.fee_amount, 1000);
@@ -140,7 +142,7 @@ fn test_generate_transaction() {
     }];
 
     // test that generate_transaction returns an error when input amount is not sufficient to cover output + fee
-    unwrap_err!(coin.generate_transaction(unspents, outputs, FeePolicy::SendExact).wait());
+    unwrap_err!(coin.generate_transaction(unspents, outputs, FeePolicy::SendExact, None).wait());
 }
 
 #[test]
@@ -364,4 +366,32 @@ fn test_search_for_swap_tx_spend_native_was_refunded() {
         166864
     )));
     assert_eq!(FoundSwapTxSpend::Refunded(spend_tx), found);
+}
+
+#[test]
+fn test_withdraw_impl_set_fixed_fee() {
+    NativeClient::list_unspent_ordered.mock_safe(|_,_| {
+        let unspents = vec![UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 1000000000 }];
+        MockResult::Return(Box::new(futures::future::ok(unspents)))
+    });
+
+    let client = NativeClient(Arc::new(NativeClientImpl {
+        uri: "http://127.0.0.1".to_owned(),
+        auth: fomat!("Basic " (base64_encode("user481805103:pass97a61c8d048bcf468c6c39a314970e557f57afd1d8a5edee917fb29bafb3a43371", URL_SAFE))),
+    }));
+
+    let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client));
+
+    let withdraw_req = WithdrawRequest {
+        amount: 1.into(),
+        to: "RQq6fWoy8aGGMLjvRfMY5mBNVm2RQxJyLa".to_string(),
+        coin: "ETOMIC".to_string(),
+        max: false,
+        fee: Some(WithdrawFee::UtxoFixed { amount: "0.1".parse().unwrap() }),
+    };
+    let expected = json!({
+        "amount": "0.1"
+    });
+    let tx_details = unwrap!(block_on(withdraw_impl(coin.clone(), withdraw_req)));
+    assert_eq!(expected, tx_details.fee_details);
 }
