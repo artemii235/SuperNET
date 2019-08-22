@@ -67,7 +67,7 @@ pub trait Transaction: Debug + 'static {
     /// Transaction amount
     fn amount(&self, decimals: u8) -> Result<f64, String>;
     /// From addresses
-    fn from(&self) -> Vec<String>;
+    fn from_addrs(&self) -> Vec<String>;
     /// To addresses
     fn to(&self) -> Vec<String>;
     /// Fee details

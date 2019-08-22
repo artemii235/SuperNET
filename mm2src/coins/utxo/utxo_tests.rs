@@ -395,3 +395,155 @@ fn test_withdraw_impl_set_fixed_fee() {
     let tx_details = unwrap!(block_on(withdraw_impl(coin.clone(), withdraw_req)));
     assert_eq!(expected, tx_details.fee_details);
 }
+
+#[test]
+fn test_withdraw_impl_sat_per_kb_fee() {
+    NativeClient::list_unspent_ordered.mock_safe(|_,_| {
+        let unspents = vec![UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 1000000000 }];
+        MockResult::Return(Box::new(futures::future::ok(unspents)))
+    });
+
+    let client = NativeClient(Arc::new(NativeClientImpl {
+        uri: "http://127.0.0.1".to_owned(),
+        auth: fomat!("Basic " (base64_encode("user481805103:pass97a61c8d048bcf468c6c39a314970e557f57afd1d8a5edee917fb29bafb3a43371", URL_SAFE))),
+    }));
+
+    let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client));
+
+    let withdraw_req = WithdrawRequest {
+        amount: 1.into(),
+        to: "RQq6fWoy8aGGMLjvRfMY5mBNVm2RQxJyLa".to_string(),
+        coin: "ETOMIC".to_string(),
+        max: false,
+        fee: Some(WithdrawFee::UtxoPerKbyte { amount: "0.1".parse().unwrap() }),
+    };
+    // The resulting transaction size might be 244 or 245 bytes depending on signature size
+    // MM2 always expects the worst case during fee calculation
+    // 0.1 * 245 / 1024 ~ 0.02392577
+    let expected = json!({
+        "amount": "0.02392577"
+    });
+    let tx_details = unwrap!(block_on(withdraw_impl(coin.clone(), withdraw_req)));
+    assert_eq!(expected, tx_details.fee_details);
+}
+
+#[test]
+fn test_withdraw_impl_sat_per_kb_fee_amount_equal_to_max() {
+    NativeClient::list_unspent_ordered.mock_safe(|_,_| {
+        let unspents = vec![UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 1000000000 }];
+        MockResult::Return(Box::new(futures::future::ok(unspents)))
+    });
+
+    let client = NativeClient(Arc::new(NativeClientImpl {
+        uri: "http://127.0.0.1".to_owned(),
+        auth: fomat!("Basic " (base64_encode("user481805103:pass97a61c8d048bcf468c6c39a314970e557f57afd1d8a5edee917fb29bafb3a43371", URL_SAFE))),
+    }));
+
+    let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client));
+
+    let withdraw_req = WithdrawRequest {
+        amount: "9.97939454".parse().unwrap(),
+        to: "RQq6fWoy8aGGMLjvRfMY5mBNVm2RQxJyLa".to_string(),
+        coin: "ETOMIC".to_string(),
+        max: false,
+        fee: Some(WithdrawFee::UtxoPerKbyte { amount: "0.1".parse().unwrap() }),
+    };
+    let tx_details = unwrap!(block_on(withdraw_impl(coin.clone(), withdraw_req)));
+    // The resulting transaction size might be 210 or 211 bytes depending on signature size
+    // MM2 always expects the worst case during fee calculation
+    // 0.1 * 211 / 1024 ~ 0.02060546
+    let expected_fee = json!({
+        "amount": "0.02060546"
+    });
+    assert_eq!(expected_fee, tx_details.fee_details);
+    let expected_balance_change = BigDecimal::from(-10);
+    assert_eq!(expected_balance_change, tx_details.my_balance_change);
+}
+
+#[test]
+fn test_withdraw_impl_sat_per_kb_fee_amount_equal_to_max_dust_included_to_fee() {
+    NativeClient::list_unspent_ordered.mock_safe(|_,_| {
+        let unspents = vec![UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 1000000000 }];
+        MockResult::Return(Box::new(futures::future::ok(unspents)))
+    });
+
+    let client = NativeClient(Arc::new(NativeClientImpl {
+        uri: "http://127.0.0.1".to_owned(),
+        auth: fomat!("Basic " (base64_encode("user481805103:pass97a61c8d048bcf468c6c39a314970e557f57afd1d8a5edee917fb29bafb3a43371", URL_SAFE))),
+    }));
+
+    let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client));
+
+    let withdraw_req = WithdrawRequest {
+        amount: "9.97939454".parse().unwrap(),
+        to: "RQq6fWoy8aGGMLjvRfMY5mBNVm2RQxJyLa".to_string(),
+        coin: "ETOMIC".to_string(),
+        max: false,
+        fee: Some(WithdrawFee::UtxoPerKbyte { amount: "0.09999999".parse().unwrap() }),
+    };
+    let tx_details = unwrap!(block_on(withdraw_impl(coin.clone(), withdraw_req)));
+    // The resulting transaction size might be 210 or 211 bytes depending on signature size
+    // MM2 always expects the worst case during fee calculation
+    // 0.1 * 211 / 1024 ~ 0.02060546
+    let expected_fee = json!({
+        "amount": "0.02060546"
+    });
+    assert_eq!(expected_fee, tx_details.fee_details);
+    let expected_balance_change = BigDecimal::from(-10);
+    assert_eq!(expected_balance_change, tx_details.my_balance_change);
+}
+
+#[test]
+fn test_withdraw_impl_sat_per_kb_fee_amount_over_max() {
+    NativeClient::list_unspent_ordered.mock_safe(|_,_| {
+        let unspents = vec![UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 1000000000 }];
+        MockResult::Return(Box::new(futures::future::ok(unspents)))
+    });
+
+    let client = NativeClient(Arc::new(NativeClientImpl {
+        uri: "http://127.0.0.1".to_owned(),
+        auth: fomat!("Basic " (base64_encode("user481805103:pass97a61c8d048bcf468c6c39a314970e557f57afd1d8a5edee917fb29bafb3a43371", URL_SAFE))),
+    }));
+
+    let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client));
+
+    let withdraw_req = WithdrawRequest {
+        amount: "9.97939455".parse().unwrap(),
+        to: "RQq6fWoy8aGGMLjvRfMY5mBNVm2RQxJyLa".to_string(),
+        coin: "ETOMIC".to_string(),
+        max: false,
+        fee: Some(WithdrawFee::UtxoPerKbyte { amount: "0.1".parse().unwrap() }),
+    };
+    unwrap_err!(block_on(withdraw_impl(coin.clone(), withdraw_req)));
+}
+
+#[test]
+fn test_withdraw_impl_sat_per_kb_fee_max() {
+    NativeClient::list_unspent_ordered.mock_safe(|_,_| {
+        let unspents = vec![UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 1000000000 }];
+        MockResult::Return(Box::new(futures::future::ok(unspents)))
+    });
+
+    let client = NativeClient(Arc::new(NativeClientImpl {
+        uri: "http://127.0.0.1".to_owned(),
+        auth: fomat!("Basic " (base64_encode("user481805103:pass97a61c8d048bcf468c6c39a314970e557f57afd1d8a5edee917fb29bafb3a43371", URL_SAFE))),
+    }));
+
+    let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client));
+
+    let withdraw_req = WithdrawRequest {
+        amount: 0.into(),
+        to: "RQq6fWoy8aGGMLjvRfMY5mBNVm2RQxJyLa".to_string(),
+        coin: "ETOMIC".to_string(),
+        max: true,
+        fee: Some(WithdrawFee::UtxoPerKbyte { amount: "0.1".parse().unwrap() }),
+    };
+    // The resulting transaction size might be 210 or 211 bytes depending on signature size
+    // MM2 always expects the worst case during fee calculation
+    // 0.1 * 211 / 1024 ~ 0.02060546
+    let expected = json!({
+        "amount": "0.02060546"
+    });
+    let tx_details = unwrap!(block_on(withdraw_impl(coin.clone(), withdraw_req)));
+    assert_eq!(expected, tx_details.fee_details);
+}

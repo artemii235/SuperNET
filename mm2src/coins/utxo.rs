@@ -91,7 +91,7 @@ impl Transaction for UtxoTx {
 
     fn to(&self) -> Vec<String> { vec!["".into()] }
 
-    fn from(&self) -> Vec<String> { vec!["".into()] }
+    fn from_addrs(&self) -> Vec<String> { vec!["".into()] }
 
     fn fee_details(&self) -> Result<Json, String> { Ok(Json::Null) }
 }
@@ -500,7 +500,7 @@ impl Deref for UtxoCoin {type Target = UtxoCoinImpl; fn deref (&self) -> &UtxoCo
 lazy_static! {static ref UTXO_LOCK: AsyncMutex<()> = AsyncMutex::new(());}
 
 macro_rules! true_or_err {
-    ($cond: expr, $msg: expr $(, $args:ident)*) => {
+    ($cond: expr, $msg: expr $(, $args:expr)*) => {
         if !$cond {
             return Box::new(futures::future::err(ERRL!($msg $(, $args)*)));
         }
@@ -577,11 +577,11 @@ impl UtxoCoin {
     /// This function expects that utxos are sorted by amounts in ascending order
     /// Consider sorting before calling this function
     /// Sends the change (inputs amount - outputs amount) to "my_address"
-    /// Also returns the resulting transaction fee in satoshis
+    /// Also returns additional transaction data
     fn generate_transaction(
         &self,
         utxos: Vec<UnspentInfo>,
-        mut outputs: Vec<TransactionOutput>,
+        outputs: Vec<TransactionOutput>,
         fee_policy: FeePolicy,
         fee: Option<ActualTxFee>,
     ) -> Box<dyn Future<Item=(TransactionInputSigner, AdditionalTxData), Error=String> + Send> {
@@ -596,78 +596,21 @@ impl UtxoCoin {
         Box::new(fee_fut.and_then(move |coin_tx_fee| -> Box<dyn Future<Item=(TransactionInputSigner, AdditionalTxData), Error=String> + Send> {
             true_or_err!(!utxos.is_empty(), "Couldn't generate tx from empty utxos set");
             true_or_err!(!outputs.is_empty(), "Couldn't generate tx from empty outputs set");
-            let mut tx_fee = match &coin_tx_fee {
-                ActualTxFee::Fixed(f) => *f,
-                // every tx has version, locktime and maybe other fields depending on coin, using 20 bytes as default value for this
-                // change output size is also included here
-                ActualTxFee::Dynamic(f) => (f * (20 + 8 + 1 + 25)) / 1024,
-            };
 
-            let mut target_value = 0;
+            let mut sum_outputs_value = 0;
             let mut received_by_me = 0;
             for output in outputs.iter() {
-                let value = output.value;
-                true_or_err!(value >= DUST, "Output value {} is less than dust amount {}", value, DUST);
-                target_value += value;
+                true_or_err!(output.value >= DUST, "Output value {} is less than dust amount {}", output.value, DUST);
+                sum_outputs_value += output.value;
                 if output.script_pubkey == change_script_pubkey {
-                    received_by_me += value;
-                }
-                if let ActualTxFee::Dynamic(ref fee_per_kb) = coin_tx_fee {
-                    // output size: 8 byte (value) + 1 byte (script_pubkey length) + script_pubkey length
-                    tx_fee += (fee_per_kb * (8 + 1 + output.script_pubkey.len() as u64)) / 1024;
+                    received_by_me += output.value;
                 }
             }
 
-            true_or_err!(target_value > 0, "Total target value calculated from outputs {:?} is zero", outputs);
-            let mut value_to_spend = 0;
-            let mut inputs = vec![];
-            for utxo in utxos.iter() {
-                value_to_spend += utxo.value;
-                inputs.push(UnsignedTransactionInput {
-                    previous_output: utxo.outpoint.clone(),
-                    sequence: SEQUENCE_FINAL,
-                    amount: utxo.value,
-                });
-                if let ActualTxFee::Dynamic(ref fee_per_kb) = coin_tx_fee {
-                    // final input size: 1 byte (signature length) + 72 bytes (signature + sighash with length)
-                    // + 34 bytes (pubkey with length) + 32 bytes (prev_out hash) + 4 bytes (prev_out index)
-                    tx_fee += (fee_per_kb * (1 + 72 + 34 + 32 + 4)) / 1024;
-                }
-                let target = match fee_policy {
-                    FeePolicy::SendExact => target_value + tx_fee,
-                    FeePolicy::DeductFromOutput(_) => target_value,
-                };
-                if value_to_spend >= target { break; }
-            }
-            match fee_policy {
-                FeePolicy::SendExact => target_value += tx_fee,
-                FeePolicy::DeductFromOutput(i) => {
-                    let min_output = tx_fee + DUST;
-                    let val = outputs[i].value;
-                    true_or_err!(val >= min_output, "Output {} value {} is too small, required no less than {}", i, val, min_output);
-                    outputs[i].value -= tx_fee;
-                    if outputs[i].script_pubkey == change_script_pubkey {
-                        received_by_me -= tx_fee;
-                    }
-                },
-            };
-            true_or_err!(value_to_spend >= target_value, "Not sufficient balance. Couldn't collect enough value from utxos {:?} to create tx with outputs {:?}", utxos, outputs);
+            true_or_err!(sum_outputs_value > 0, "Sum of outputs {:?} is zero", outputs);
 
-            let change = value_to_spend - target_value;
-            if change >= DUST {
-                outputs.push({
-                    TransactionOutput {
-                        value: change,
-                        script_pubkey: change_script_pubkey.clone()
-                    }
-                });
-                received_by_me += change;
-            } else {
-                tx_fee += change;
-            }
-
-            let tx = TransactionInputSigner {
-                inputs,
+            let mut tx = TransactionInputSigner {
+                inputs: vec![],
                 outputs,
                 lock_time,
                 version: arc.tx_version,
@@ -680,13 +623,85 @@ impl UtxoCoin {
                 version_group_id: arc.version_group_id,
                 zcash: arc.zcash,
             };
+            let mut value_to_spend = 0;
+            let mut tx_fee = 0;
+            for utxo in utxos.iter() {
+                value_to_spend += utxo.value;
+                tx.inputs.push(UnsignedTransactionInput {
+                    previous_output: utxo.outpoint.clone(),
+                    sequence: SEQUENCE_FINAL,
+                    amount: utxo.value,
+                });
+                tx_fee = match &coin_tx_fee {
+                    ActualTxFee::Fixed(f) => *f,
+                    ActualTxFee::Dynamic(f) => {
+                        let transaction = UtxoTx::from(tx.clone());
+                        let transaction_bytes = serialize(&transaction);
+                        let tx_size = transaction_bytes.len() + transaction.inputs().len() * 107;
+                        (f * tx_size as u64) / 1024
+                    },
+                };
+                match fee_policy {
+                    FeePolicy::SendExact => {
+                        let mut target_value = sum_outputs_value + tx_fee;
+                        if value_to_spend >= target_value {
+                            if value_to_spend - target_value > DUST {
+                                if let ActualTxFee::Dynamic(ref f) = coin_tx_fee {
+                                    tx_fee += (f * 34) / 1024;
+                                    target_value += (f * 34) / 1024;
+                                }
+                            }
+                            if value_to_spend >= target_value {
+                                break;
+                            }
+                        }
+                        ()
+                    },
+                    FeePolicy::DeductFromOutput(_) => {
+                        if value_to_spend >= sum_outputs_value {
+                            if value_to_spend - sum_outputs_value > DUST {
+                                if let ActualTxFee::Dynamic(ref f) = coin_tx_fee {
+                                    tx_fee += (f * 34) / 1024;
+                                }
+                            }
+                            break;
+                        }
+                    },
+                };
+            }
+            match fee_policy {
+                FeePolicy::SendExact => sum_outputs_value += tx_fee,
+                FeePolicy::DeductFromOutput(i) => {
+                    let min_output = tx_fee + DUST;
+                    let val = tx.outputs[i].value;
+                    true_or_err!(val >= min_output, "Output {} value {} is too small, required no less than {}", i, val, min_output);
+                    tx.outputs[i].value -= tx_fee;
+                    if tx.outputs[i].script_pubkey == change_script_pubkey {
+                        received_by_me -= tx_fee;
+                    }
+                },
+            };
+            true_or_err!(value_to_spend >= sum_outputs_value, "Not sufficient balance. Couldn't collect enough value from utxos {:?} to create tx with outputs {:?}", utxos, tx.outputs);
+
+            let change = value_to_spend - sum_outputs_value;
+            if change >= DUST {
+                tx.outputs.push({
+                    TransactionOutput {
+                        value: change,
+                        script_pubkey: change_script_pubkey.clone()
+                    }
+                });
+                received_by_me += change;
+            } else {
+                tx_fee += change;
+            }
 
             let data = AdditionalTxData {
                 fee_amount: tx_fee,
                 received_by_me,
                 spent_by_me: value_to_spend,
             };
-            arc.calc_interest_if_required(tx, data, change_script_pubkey)
+            arc.calc_interest_if_required(tx.into(), data, change_script_pubkey)
         }))
     }
 

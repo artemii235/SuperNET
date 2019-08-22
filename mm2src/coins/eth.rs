@@ -1904,7 +1904,7 @@ impl Transaction for SignedEthTx {
         Ok(try_s!(display_u256_with_decimal_point(self.value, decimals).parse()))
     }
 
-    fn from(&self) -> Vec<String> { vec![format!("{:#02x}", self.sender)] }
+    fn from_addrs(&self) -> Vec<String> { vec![format!("{:#02x}", self.sender)] }
 
     fn to(&self) -> Vec<String> {
         match self.action {
