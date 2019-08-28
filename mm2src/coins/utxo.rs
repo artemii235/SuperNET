@@ -1328,7 +1328,7 @@ async fn withdraw_impl(coin: UtxoCoin, req: WithdrawRequest) -> Result<Transacti
         my_balance_change: big_decimal_from_sat(data.received_by_me as i64 - data.spent_by_me as i64, coin.decimals),
         tx_hash: signed.hash().reversed().to_vec().into(),
         tx_hex: serialize(&signed).into(),
-        fee_details: try_s!(json::to_value(fee_details)),
+        fee_details: Some(fee_details.into()),
         block_height: 0,
         coin: coin.ticker.clone(),
         internal_id: vec![].into(),
@@ -1336,8 +1336,8 @@ async fn withdraw_impl(coin: UtxoCoin, req: WithdrawRequest) -> Result<Transacti
     })
 }
 
-#[derive(Serialize)]
-struct UtxoFeeDetails {
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct UtxoFeeDetails {
     amount: BigDecimal,
 }
 
@@ -1568,7 +1568,7 @@ impl MmCoin for UtxoCoin {
         to_addresses.sort();
         to_addresses.dedup();
 
-        let fee = self.denominate_satoshis(input_amount as i64 - output_amount as i64);
+        let fee = big_decimal_from_sat(input_amount as i64 - output_amount as i64, self.decimals);
         Ok(TransactionDetails {
             from: from_addresses,
             to: to_addresses,
@@ -1578,9 +1578,9 @@ impl MmCoin for UtxoCoin {
             total_amount: big_decimal_from_sat(input_amount as i64, self.decimals),
             tx_hash: tx.hash().reversed().to_vec().into(),
             tx_hex: verbose_tx.hex,
-            fee_details: json!({
-                "amount": fee
-            }),
+            fee_details: Some(UtxoFeeDetails {
+                amount: fee,
+            }.into()),
             block_height: verbose_tx.height,
             coin: self.ticker.clone(),
             internal_id: tx.hash().reversed().to_vec().into(),

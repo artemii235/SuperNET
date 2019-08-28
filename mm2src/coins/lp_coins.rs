@@ -50,9 +50,9 @@ use std::thread;
 #[doc(hidden)]
 pub mod coins_tests;
 pub mod eth;
-use self::eth::{eth_coin_from_conf_and_request, EthCoin, SignedEthTx};
+use self::eth::{eth_coin_from_conf_and_request, EthCoin, EthTxFeeDetails, SignedEthTx};
 pub mod utxo;
-use self::utxo::{utxo_coin_from_conf_and_request, UtxoTx, UtxoCoin};
+use self::utxo::{utxo_coin_from_conf_and_request, UtxoCoin, UtxoFeeDetails, UtxoTx};
 #[doc(hidden)]
 #[allow(unused_variables)]
 pub mod test_coin;
@@ -251,6 +251,25 @@ pub struct WithdrawRequest {
     fee: Option<WithdrawFee>,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum TxFeeDetails {
+    Utxo(UtxoFeeDetails),
+    Eth(EthTxFeeDetails),
+}
+
+impl Into<TxFeeDetails> for EthTxFeeDetails {
+    fn into(self: EthTxFeeDetails) -> TxFeeDetails {
+        TxFeeDetails::Eth(self)
+    }
+}
+
+impl Into<TxFeeDetails> for UtxoFeeDetails {
+    fn into(self: UtxoFeeDetails) -> TxFeeDetails {
+        TxFeeDetails::Utxo(self)
+    }
+}
+
 /// Transaction details
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct TransactionDetails {
@@ -275,10 +294,9 @@ pub struct TransactionDetails {
     /// Transaction timestamp
     timestamp: u64,
     /// Every coin can has specific fee details:
-    /// When you send UTXO tx you pay fee with the coin itself (e.g. 1 BTC and 0.0001 BTC fee).
-    /// But for ERC20 token transfer you pay fee with another coin: ETH, because it's ETH smart contract function call that requires gas to be burnt.
-    /// So it's just generic JSON for now, maybe we will change it to Rust generic later.
-    fee_details: Json,
+    /// In UTXO tx fee is paid with the coin itself (e.g. 1 BTC and 0.0001 BTC fee).
+    /// But for ERC20 token transfer fee is paid with another coin: ETH, because it's ETH smart contract function call that requires gas to be burnt.
+    fee_details: Option<TxFeeDetails>,
     /// The coin transaction belongs to
     coin: String,
     /// Internal MM2 id used for internal transaction identification, for some coins it might be equal to transaction hash
