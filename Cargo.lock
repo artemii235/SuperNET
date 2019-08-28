@@ -380,7 +380,7 @@ dependencies = [
  "serialization 0.1.0 (git+https://github.com/artemii235/parity-bitcoin.git)",
  "sha2 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "sha3 0.8.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "testcontainers 0.7.0",
+ "testcontainers 0.7.0 (git+https://github.com/artemii235/testcontainers-rs.git)",
  "tokio 0.1.17 (registry+https://github.com/rust-lang/crates.io-index)",
  "tokio-io 0.1.12 (registry+https://github.com/rust-lang/crates.io-index)",
  "tokio-rustls 0.9.1 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -2189,29 +2189,32 @@ dependencies = [
 [[package]]
 name = "tc_cli_client"
 version = "0.2.0"
+source = "git+https://github.com/artemii235/testcontainers-rs.git#65e738093488f1b37185af0f1d3cf0ffd23e840d"
 dependencies = [
  "log 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde 1.0.82 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde_derive 1.0.82 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde_json 1.0.33 (registry+https://github.com/rust-lang/crates.io-index)",
- "tc_core 0.3.0",
+ "tc_core 0.3.0 (git+https://github.com/artemii235/testcontainers-rs.git)",
 ]
 
 [[package]]
 name = "tc_coblox_bitcoincore"
 version = "0.5.0"
+source = "git+https://github.com/artemii235/testcontainers-rs.git#65e738093488f1b37185af0f1d3cf0ffd23e840d"
 dependencies = [
  "hex 0.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "hmac 0.7.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "rand 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "sha2 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "tc_core 0.3.0",
+ "tc_core 0.3.0 (git+https://github.com/artemii235/testcontainers-rs.git)",
 ]
 
 [[package]]
 name = "tc_core"
 version = "0.3.0"
+source = "git+https://github.com/artemii235/testcontainers-rs.git#65e738093488f1b37185af0f1d3cf0ffd23e840d"
 dependencies = [
  "debug_stub_derive 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -2220,53 +2223,60 @@ dependencies = [
 [[package]]
 name = "tc_dynamodb_local"
 version = "0.2.0"
+source = "git+https://github.com/artemii235/testcontainers-rs.git#65e738093488f1b37185af0f1d3cf0ffd23e840d"
 dependencies = [
  "log 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
- "tc_core 0.3.0",
+ "tc_core 0.3.0 (git+https://github.com/artemii235/testcontainers-rs.git)",
 ]
 
 [[package]]
 name = "tc_elasticmq"
 version = "0.2.0"
+source = "git+https://github.com/artemii235/testcontainers-rs.git#65e738093488f1b37185af0f1d3cf0ffd23e840d"
 dependencies = [
- "tc_core 0.3.0",
+ "tc_core 0.3.0 (git+https://github.com/artemii235/testcontainers-rs.git)",
 ]
 
 [[package]]
 name = "tc_generic"
 version = "0.2.0"
+source = "git+https://github.com/artemii235/testcontainers-rs.git#65e738093488f1b37185af0f1d3cf0ffd23e840d"
 dependencies = [
- "tc_core 0.3.0",
+ "tc_core 0.3.0 (git+https://github.com/artemii235/testcontainers-rs.git)",
 ]
 
 [[package]]
 name = "tc_parity_parity"
 version = "0.5.0"
+source = "git+https://github.com/artemii235/testcontainers-rs.git#65e738093488f1b37185af0f1d3cf0ffd23e840d"
 dependencies = [
  "log 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
- "tc_core 0.3.0",
+ "tc_core 0.3.0 (git+https://github.com/artemii235/testcontainers-rs.git)",
 ]
 
 [[package]]
 name = "tc_postgres"
 version = "0.2.0"
+source = "git+https://github.com/artemii235/testcontainers-rs.git#65e738093488f1b37185af0f1d3cf0ffd23e840d"
 dependencies = [
  "log 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
- "tc_core 0.3.0",
+ "tc_core 0.3.0 (git+https://github.com/artemii235/testcontainers-rs.git)",
 ]
 
 [[package]]
 name = "tc_redis"
 version = "0.2.0"
+source = "git+https://github.com/artemii235/testcontainers-rs.git#65e738093488f1b37185af0f1d3cf0ffd23e840d"
 dependencies = [
- "tc_core 0.3.0",
+ "tc_core 0.3.0 (git+https://github.com/artemii235/testcontainers-rs.git)",
 ]
 
 [[package]]
 name = "tc_trufflesuite_ganachecli"
 version = "0.4.0"
+source = "git+https://github.com/artemii235/testcontainers-rs.git#65e738093488f1b37185af0f1d3cf0ffd23e840d"
 dependencies = [
- "tc_core 0.3.0",
+ "tc_core 0.3.0 (git+https://github.com/artemii235/testcontainers-rs.git)",
 ]
 
 [[package]]
@@ -2299,17 +2309,18 @@ dependencies = [
 [[package]]
 name = "testcontainers"
 version = "0.7.0"
+source = "git+https://github.com/artemii235/testcontainers-rs.git#65e738093488f1b37185af0f1d3cf0ffd23e840d"
 dependencies = [
- "tc_cli_client 0.2.0",
- "tc_coblox_bitcoincore 0.5.0",
- "tc_core 0.3.0",
- "tc_dynamodb_local 0.2.0",
- "tc_elasticmq 0.2.0",
- "tc_generic 0.2.0",
- "tc_parity_parity 0.5.0",
- "tc_postgres 0.2.0",
- "tc_redis 0.2.0",
- "tc_trufflesuite_ganachecli 0.4.0",
+ "tc_cli_client 0.2.0 (git+https://github.com/artemii235/testcontainers-rs.git)",
+ "tc_coblox_bitcoincore 0.5.0 (git+https://github.com/artemii235/testcontainers-rs.git)",
+ "tc_core 0.3.0 (git+https://github.com/artemii235/testcontainers-rs.git)",
+ "tc_dynamodb_local 0.2.0 (git+https://github.com/artemii235/testcontainers-rs.git)",
+ "tc_elasticmq 0.2.0 (git+https://github.com/artemii235/testcontainers-rs.git)",
+ "tc_generic 0.2.0 (git+https://github.com/artemii235/testcontainers-rs.git)",
+ "tc_parity_parity 0.5.0 (git+https://github.com/artemii235/testcontainers-rs.git)",
+ "tc_postgres 0.2.0 (git+https://github.com/artemii235/testcontainers-rs.git)",
+ "tc_redis 0.2.0 (git+https://github.com/artemii235/testcontainers-rs.git)",
+ "tc_trufflesuite_ganachecli 0.4.0 (git+https://github.com/artemii235/testcontainers-rs.git)",
 ]
 
 [[package]]
@@ -3032,9 +3043,20 @@ dependencies = [
 "checksum synstructure 0.10.1 (registry+https://github.com/rust-lang/crates.io-index)" = "73687139bf99285483c96ac0add482c3776528beac1d97d444f6e91f203a2015"
 "checksum take_mut 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)" = "f764005d11ee5f36500a149ace24e00e3da98b0158b3e2d53a7495660d3f4d60"
 "checksum tar 0.4.22 (registry+https://github.com/rust-lang/crates.io-index)" = "c2167ff53da2a661702b3299f71a91b61b1dffef36b4b2884b1f9c67254c0133"
+"checksum tc_cli_client 0.2.0 (git+https://github.com/artemii235/testcontainers-rs.git)" = "<none>"
+"checksum tc_coblox_bitcoincore 0.5.0 (git+https://github.com/artemii235/testcontainers-rs.git)" = "<none>"
+"checksum tc_core 0.3.0 (git+https://github.com/artemii235/testcontainers-rs.git)" = "<none>"
+"checksum tc_dynamodb_local 0.2.0 (git+https://github.com/artemii235/testcontainers-rs.git)" = "<none>"
+"checksum tc_elasticmq 0.2.0 (git+https://github.com/artemii235/testcontainers-rs.git)" = "<none>"
+"checksum tc_generic 0.2.0 (git+https://github.com/artemii235/testcontainers-rs.git)" = "<none>"
+"checksum tc_parity_parity 0.5.0 (git+https://github.com/artemii235/testcontainers-rs.git)" = "<none>"
+"checksum tc_postgres 0.2.0 (git+https://github.com/artemii235/testcontainers-rs.git)" = "<none>"
+"checksum tc_redis 0.2.0 (git+https://github.com/artemii235/testcontainers-rs.git)" = "<none>"
+"checksum tc_trufflesuite_ganachecli 0.4.0 (git+https://github.com/artemii235/testcontainers-rs.git)" = "<none>"
 "checksum term 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)" = "5e6b677dd1e8214ea1ef4297f85dbcbed8e8cdddb561040cc998ca2551c37561"
 "checksum termcolor 1.0.4 (registry+https://github.com/rust-lang/crates.io-index)" = "4096add70612622289f2fdcdbd5086dc81c1e2675e6ae58d6c4f62a16c6d7f2f"
 "checksum termion 1.5.1 (registry+https://github.com/rust-lang/crates.io-index)" = "689a3bdfaab439fd92bc87df5c4c78417d3cbe537487274e9b0b2dce76e92096"
+"checksum testcontainers 0.7.0 (git+https://github.com/artemii235/testcontainers-rs.git)" = "<none>"
 "checksum textwrap 0.10.0 (registry+https://github.com/rust-lang/crates.io-index)" = "307686869c93e71f94da64286f9a9524c0f308a9e1c87a583de8e9c9039ad3f6"
 "checksum thread_local 0.3.6 (registry+https://github.com/rust-lang/crates.io-index)" = "c6b53e329000edc2b34dbe8545fd20e55a333362d0a321909685a19bd28c3f1b"
 "checksum time 0.1.41 (registry+https://github.com/rust-lang/crates.io-index)" = "847da467bf0db05882a9e2375934a8a55cffdc9db0d128af1518200260ba1f6c"
