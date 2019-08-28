@@ -485,6 +485,11 @@ impl NativeClientImpl {
     fn get_block_hash(&self, block_number: u64) -> RpcRes<H256Json> {
         rpc_func!(self, "getblockhash", block_number)
     }
+
+    /// https://bitcoin.org/en/developer-reference#sendtoaddress
+    pub fn send_to_address(&self, addr: &str, amount: &BigDecimal) -> RpcRes<H256Json> {
+        rpc_func!(self, "sendtoaddress", addr, amount)
+    }
 }
 
 #[derive(Debug, Deserialize)]

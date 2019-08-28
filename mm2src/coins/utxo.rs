@@ -59,7 +59,7 @@ use std::time::Duration;
 pub use chain::Transaction as UtxoTx;
 
 use self::rpc_clients::{electrum_script_hash, ElectrumClient, ElectrumClientImpl, EstimateFeeMethod, NativeClient, UtxoRpcClientEnum, UnspentInfo };
-use super::{FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, MmCoinEnum, SwapOps, TradeInfo,
+use super::{FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeInfo,
             Transaction, TransactionEnum, TransactionFut, TransactionDetails, WithdrawFee, WithdrawRequest};
 use crate::utxo::rpc_clients::{NativeClientImpl, UtxoRpcClientOps, ElectrumRpcRequest};
 use futures::future::Either;
@@ -1288,7 +1288,7 @@ impl MarketCoinOps for UtxoCoin {
 }
 
 async fn withdraw_impl(coin: UtxoCoin, req: WithdrawRequest) -> Result<TransactionDetails, String> {
-    let to: Address = try_s!(Address::from_str(&req.to));
+    let to = try_s!(Address::from_str(&req.to));
     if to.prefix != coin.pub_addr_prefix || to.t_addr_prefix != coin.pub_t_addr_prefix {
         return ERR!("Address {} has invalid format, it must start with {}", to, &coin.my_address()[..1]);
     }
@@ -1708,7 +1708,7 @@ pub fn utxo_coin_from_conf_and_request(
     conf: &Json,
     req: &Json,
     priv_key: &[u8],
-) -> Result<MmCoinEnum, String> {
+) -> Result<UtxoCoin, String> {
     let checksum_type = if ticker == "GRS" {
         ChecksumType::DGROESTL512
     } else if ticker == "SMART" {
@@ -1869,7 +1869,7 @@ pub fn utxo_coin_from_conf_and_request(
         fork_id,
         history_sync_state: Mutex::new(initial_history_state),
     };
-    Ok(UtxoCoin(Arc::new(coin)).into())
+    Ok(UtxoCoin(Arc::new(coin)))
 }
 
 /// Function calculating KMD interest

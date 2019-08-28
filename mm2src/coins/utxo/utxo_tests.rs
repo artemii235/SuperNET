@@ -4,6 +4,7 @@ use crate::utxo::rpc_clients::{ElectrumProtocol};
 use futures03::executor::block_on;
 use mocktopus::mocking::*;
 use super::*;
+use std::process::Command;
 
 fn electrum_client_for_test(servers: &[&str]) -> UtxoRpcClientEnum {
     let mut client = ElectrumClientImpl::new();
@@ -342,30 +343,84 @@ fn test_search_for_swap_tx_spend_native_was_spent() {
 }
 
 #[test]
-#[ignore]
-// ignored, will work only when ETOMIC daemon is running locally and has following addresses imported
-// with rescan: R9o9xTocqr6CeEDGDH6mEYpwLoMz6jNjMW, bQGZYDnEvifgehVKxEzFt8ygNSnLV6Dqiz
 fn test_search_for_swap_tx_spend_native_was_refunded() {
-    let conf = json!({"asset":"ETOMIC"});
+    use testcontainers::images::generic::{GenericImage, WaitFor};
+    use testcontainers::clients::Cli;
+    use testcontainers::{Docker, Image};
+
+    let timeout = (now_ms() / 1000) + 120; // timeout if test takes more than 120 seconds to run
+    let docker = Cli::default();
+    let image = GenericImage::new("artempikulin/testblockchain")
+        .with_args(vec!["-v".into(), "/home/artem/.zcash-params:/root/.zcash-params".into(), "-p".into(), "127.0.0.1:7000:7000".into()])
+        .with_env_var("CLIENTS", "2")
+        .with_env_var("CHAIN", "MYCOIN")
+        .with_env_var("TEST_ADDY", "R9imXLs1hEcU9KbFDQq2hJEEJ1P5UoekaF")
+        .with_env_var("TEST_WIF", "UqqW7f766rADem9heD8vSBvvrdfJb3zg5r8du9rJxPtccjWf7RG9")
+        .with_env_var("TEST_PUBKEY", "021607076d7a2cb148d542fb9644c04ffc22d2cca752f80755a0402a24c567b17a")
+        .with_wait_for(WaitFor::message_on_stdout("config is ready"));
+    let node = docker.run(image);
+    Command::new("docker")
+        .arg("cp")
+        .arg(format!("{}:/node_0/MYCOIN.conf", node.id()))
+        .arg("/home/artem/.komodo/MYCOIN/MYCOIN.conf")
+        .spawn()
+        .expect("Failed to execute docker command");
+
+    let conf = json!({"asset":"MYCOIN"});
     let req = json!({"method":"enable"});
     let priv_key = unwrap!(hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f"));
-    let coin = unwrap!(utxo_coin_from_conf_and_request("ETOMIC", &conf, &req, &priv_key));
+    let coin = unwrap!(utxo_coin_from_conf_and_request("MYCOIN", &conf, &req, &priv_key));
+    if let UtxoRpcClientEnum::Native(client) = &coin.rpc_client {
+        loop {
+            match coin.rpc_client.get_block_count().wait() {
+                Ok(n) => if n > 1 { break },
+                Err(_) => (),
+            }
+            assert!(now_ms() / 1000 < timeout, "Test timed out");
+            thread::sleep(Duration::from_secs(1));
+        }
+        log!([client.import_address("R9o9xTocqr6CeEDGDH6mEYpwLoMz6jNjMW", "R9o9xTocqr6CeEDGDH6mEYpwLoMz6jNjMW", false).wait().unwrap()]);
+        let hash = client.send_to_address("R9o9xTocqr6CeEDGDH6mEYpwLoMz6jNjMW", &1000.into()).wait().unwrap();
+        let tx_bytes = client.get_transaction_bytes(hash).wait().unwrap();
+        log!({"{:02x}", tx_bytes});
+        loop {
+            let unspents = client.list_unspent(0, std::i32::MAX, vec!["R9o9xTocqr6CeEDGDH6mEYpwLoMz6jNjMW".into()]).wait().unwrap();
+            log!([unspents]);
+            if !unspents.is_empty() {
+                break;
+            }
+            assert!(now_ms() / 1000 < timeout, "Test timed out");
+            thread::sleep(Duration::from_secs(1));
+        };
+    }
 
-    // raw tx bytes of https://etomic.explorer.dexstats.info/tx/c9a47cc6e80a98355cd4e69d436eae6783cbee5991756caa6e64a0743442fa96
-    let payment_tx_bytes = unwrap!(hex::decode("0400008085202f8901887e809b10738b1625b7f47fd5d2201f32e8a4c6c0aaefc3b9ab6c07dc6a5925010000006a47304402203966f49ba8acc9fcc0e53e7b917ca5599ce6054a0c2d22752c57a3dc1b0fc83502206fde12c869da20a21cedd5bbc4bcd12977d25ff4b00e0999de5ac4254668e891012102031d4256c4bc9f99ac88bf3dba21773132281f65f9bf23a59928bce08961e2f3ffffffff02809698000000000017a9147e9456f37fa53cf9053e192ea4951d2c8b58647c8784631684010000001976a91405aab5342166f8594baf17a7d9bef5d56744332788ac0fb3525d000000000000000000000000000000"));
+    let time_lock = (now_ms() / 1000) as u32 - 3600;
+    let tx = coin.send_taker_payment(
+        time_lock,
+        &*coin.key_pair.public(),
+        &[0; 20],
+        1.into(),
+    ).wait().unwrap();
 
-    // raw tx bytes of https://etomic.explorer.dexstats.info/tx/a5f11bdb657ee834a4c410e2001beccce0374bfa3f662bd890fd3d01b0b3d101
-    let spend_tx_bytes = unwrap!(hex::decode("0400008085202f890196fa423474a0646eaa6c759159eecb8367ae6e439de6d45c35980ae8c67ca4c900000000c4483045022100969c3b2c1ab630b67a6ee74316c9356e38872276a070d126da1d731503bb6e3e02204398d8c23cb59c2caddc33ce9c9716c54b11574126a3c3350a17043f3751696d01514c786304cf93525db1752102031d4256c4bc9f99ac88bf3dba21773132281f65f9bf23a59928bce08961e2f3ac6782012088a92102031d4256c4bc9f99ac88bf3dba21773132281f65f9bf23a59928bce08961e2f3882102031d4256c4bc9f99ac88bf3dba21773132281f65f9bf23a59928bce08961e2f3ac68feffffff0198929800000000001976a91405aab5342166f8594baf17a7d9bef5d56744332788ac01a5525d000000000000000000000000000000"));
-    let spend_tx = TransactionEnum::UtxoTx(unwrap!(deserialize(spend_tx_bytes.as_slice())));
+    unwrap!(coin.wait_for_confirmations(&tx.tx_hex(), 1, timeout));
+
+    let refund_tx = coin.send_taker_refunds_payment(
+        &tx.tx_hex(),
+        time_lock,
+        &*coin.key_pair.public(),
+        &[0; 20],
+    ).wait().unwrap();
+
+    unwrap!(coin.wait_for_confirmations(&refund_tx.tx_hex(), 1, timeout));
 
     let found = unwrap!(unwrap!(coin.search_for_swap_tx_spend_my(
-        1565692879,
-        &unwrap!(hex::decode("02031d4256c4bc9f99ac88bf3dba21773132281f65f9bf23a59928bce08961e2f3")),
-        &unwrap!(hex::decode("02031d4256c4bc9f99ac88bf3dba21773132281f65f9bf23a59928bce08961e2f3")),
-        &payment_tx_bytes,
-        166864
+        time_lock,
+        &*coin.key_pair.public(),
+        &[0; 20],
+        &tx.tx_hex(),
+        0,
     )));
-    assert_eq!(FoundSwapTxSpend::Refunded(spend_tx), found);
+    assert_eq!(FoundSwapTxSpend::Refunded(refund_tx), found);
 }
 
 #[test]
