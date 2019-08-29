@@ -347,7 +347,7 @@ fn test_search_for_swap_tx_spend_native_was_refunded() {
     use testcontainers::images::generic::{GenericImage, WaitFor};
     use testcontainers::clients::Cli;
     use testcontainers::{Docker, Image};
-
+    pretty_env_logger::try_init();
     let timeout = (now_ms() / 1000) + 120; // timeout if test takes more than 120 seconds to run
     let docker = Cli::default();
     let image = GenericImage::new("artempikulin/testblockchain")
