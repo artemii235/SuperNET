@@ -360,6 +360,7 @@ fn test_search_for_swap_tx_spend_native_was_refunded() {
         .with_wait_for(WaitFor::message_on_stdout("config is ready"));
     let node = docker.run(image);
     let mut conf_path = coin_daemon_data_dir("MYCOIN", true);
+    unwrap!(std::fs::create_dir_all(&conf_path));
     conf_path.push("MYCOIN.conf");
     Command::new("docker")
         .arg("cp")
