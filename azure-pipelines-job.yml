@@ -46,7 +46,7 @@ jobs:
       # Explicit --test-threads=8 makes the process faster
       - bash: |
       # cargo test --features native --all -- --test-threads=8
-          cargo test -p coins test_search_for_swap_tx_spend_native_was_refunded --features native
+          cargo test --features native -p coins test_search_for_swap_tx_spend_native_was_refunded
         displayName: 'Test MM2'
         timeoutInMinutes: 22
         env:
