@@ -342,6 +342,19 @@ fn test_search_for_swap_tx_spend_native_was_spent() {
     assert_eq!(FoundSwapTxSpend::Spent(spend_tx), found);
 }
 
+// https://github.com/KomodoPlatform/komodo/blob/master/zcutil/fetch-params.sh#L5
+// https://github.com/KomodoPlatform/komodo/blob/master/zcutil/fetch-params.bat#L4
+fn zcash_params_path() -> PathBuf {
+    if cfg! (windows) {
+        // >= Vista: c:\Users\$username\AppData\Roaming
+        get_special_folder_path().join("ZcashParams")
+    } else if cfg! (target_os = "macos") {
+        unwrap!(home_dir()).join("Library").join("Application Support").join("ZcashParams")
+    } else {
+        unwrap!(home_dir()).join(".zcash-params")
+    }
+}
+
 #[test]
 fn test_search_for_swap_tx_spend_native_was_refunded() {
     use testcontainers::images::generic::{GenericImage, WaitFor};
@@ -351,7 +364,7 @@ fn test_search_for_swap_tx_spend_native_was_refunded() {
     let timeout = (now_ms() / 1000) + 120; // timeout if test takes more than 120 seconds to run
     let docker = Cli::default();
     let image = GenericImage::new("artempikulin/testblockchain")
-        .with_args(vec!["-v".into(), "/home/artem/.zcash-params:/root/.zcash-params".into(), "-p".into(), "127.0.0.1:7000:7000".into()])
+        .with_args(vec!["-v".into(), format!("{}:/root/.zcash-params", zcash_params_path().display()), "-p".into(), "127.0.0.1:7000:7000".into()])
         .with_env_var("CLIENTS", "2")
         .with_env_var("CHAIN", "MYCOIN")
         .with_env_var("TEST_ADDY", "R9imXLs1hEcU9KbFDQq2hJEEJ1P5UoekaF")
