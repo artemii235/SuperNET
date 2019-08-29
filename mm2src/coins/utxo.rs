@@ -1612,6 +1612,47 @@ impl MmCoin for UtxoCoin {
 }
 
 #[cfg(feature = "native")]
+pub fn coin_daemon_data_dir(name: &str, is_asset_chain: bool) -> PathBuf {
+    // komodo/util.cpp/GetDefaultDataDir
+    let mut data_dir = match dirs::home_dir() {
+        Some (hd) => hd,
+        None => Path::new ("/") .to_path_buf()
+    };
+
+    if cfg! (windows) {
+        // >= Vista: c:\Users\$username\AppData\Roaming
+        data_dir = get_special_folder_path();
+        if is_asset_chain {
+            data_dir.push ("Komodo");
+        } else {
+            data_dir.push (first_char_to_upper(name));
+        }
+    } else if cfg! (target_os = "macos") {
+        data_dir.push ("Library");
+        data_dir.push ("Application Support");
+        if is_asset_chain {
+            data_dir.push ("Komodo");
+        } else {
+            data_dir.push (first_char_to_upper(name));
+        }
+    } else {
+        if is_asset_chain {
+            data_dir.push (".komodo");
+        } else {
+            data_dir.push (format!(".{}", name));
+        }
+    }
+
+    if is_asset_chain {data_dir.push (name)};
+    data_dir
+}
+
+#[cfg(not(feature = "native"))]
+pub fn coin_daemon_data_dir(name: &str, is_asset_chain: bool) -> PathBuf {
+    unimplemented!()
+}
+
+#[cfg(feature = "native")]
 /// Returns a path to the native coin wallet configuration.
 /// (This path is used in to read the wallet credentials).
 /// cf. https://github.com/artemii235/SuperNET/issues/346
@@ -1627,37 +1668,7 @@ fn confpath (coins_en: &Json) -> Result<PathBuf, String> {
             }
         };
 
-        // komodo/util.cpp/GetDefaultDataDir
-        let mut data_dir = match dirs::home_dir() {
-            Some (hd) => hd,
-            None => Path::new ("/") .to_path_buf()
-        };
-
-        if cfg! (windows) {
-            // >= Vista: c:\Users\$username\AppData\Roaming
-            data_dir = get_special_folder_path();
-            if is_asset_chain {
-                data_dir.push ("Komodo");
-            } else {
-                data_dir.push (first_char_to_upper(name));
-            }
-        } else if cfg! (target_os = "macos") {
-            data_dir.push ("Library");
-            data_dir.push ("Application Support");
-            if is_asset_chain {
-                data_dir.push ("Komodo");
-            } else {
-                data_dir.push (first_char_to_upper(name));
-            }
-        } else {
-            if is_asset_chain {
-                data_dir.push (".komodo");
-            } else {
-                data_dir.push (format!(".{}", name));
-            }
-        }
-
-        if is_asset_chain {data_dir.push (name)}
+        let data_dir = coin_daemon_data_dir(name, is_asset_chain);
 
         let confname = format! ("{}.conf", name);
 

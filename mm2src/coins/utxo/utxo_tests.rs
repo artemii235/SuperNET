@@ -359,10 +359,12 @@ fn test_search_for_swap_tx_spend_native_was_refunded() {
         .with_env_var("TEST_PUBKEY", "021607076d7a2cb148d542fb9644c04ffc22d2cca752f80755a0402a24c567b17a")
         .with_wait_for(WaitFor::message_on_stdout("config is ready"));
     let node = docker.run(image);
+    let mut conf_path = coin_daemon_data_dir("MYCOIN", true);
+    conf_path.push("MYCOIN.conf");
     Command::new("docker")
         .arg("cp")
         .arg(format!("{}:/node_0/MYCOIN.conf", node.id()))
-        .arg("/home/artem/.komodo/MYCOIN/MYCOIN.conf")
+        .arg(conf_path)
         .spawn()
         .expect("Failed to execute docker command");
 
