@@ -1021,6 +1021,10 @@ impl AtomicSwap for TakerSwap {
     fn uuid(&self) -> &str {
         &self.uuid
     }
+
+    fn maker_coin(&self) -> &str { self.maker_coin.ticker() }
+
+    fn taker_coin(&self) -> &str { self.taker_coin.ticker() }
 }
 
 #[cfg(test)]

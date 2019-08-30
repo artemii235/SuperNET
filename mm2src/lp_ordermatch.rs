@@ -1281,20 +1281,23 @@ struct Pair {
 
 #[derive(Deserialize)]
 #[serde(tag = "type", content = "data")]
-enum CancelBy {
+pub enum CancelBy {
+    /// All orders of current node
     All,
-    Pair(Pair)
+    /// All orders of specific pair
+    Pair(Pair),
+    /// All orders using the coin ticker as base or rel
+    Coin(String),
 }
 
-pub fn cancel_all_orders(ctx: MmArc, req: Json) -> HyRes {
-    let cancel_by: CancelBy = try_h!(json::from_value(req["cancel_by"].clone()));
+pub fn cancel_orders_by(ctx: &MmArc, cancel_by: CancelBy) -> Result<(Vec<Uuid>, Vec<Uuid>), String> {
     let mut cancelled = vec![];
     let mut currently_matching = vec![];
 
-    let ordermatch_ctx = try_h!(OrdermatchContext::from_ctx(&ctx));
-    let mut maker_orders = try_h!(ordermatch_ctx.my_maker_orders.lock());
-    let mut taker_orders = try_h!(ordermatch_ctx.my_taker_orders.lock());
-    let mut my_cancelled_orders = try_h!(ordermatch_ctx.my_cancelled_orders.lock());
+    let ordermatch_ctx = try_s!(OrdermatchContext::from_ctx(ctx));
+    let mut maker_orders = try_s!(ordermatch_ctx.my_maker_orders.lock());
+    let mut taker_orders = try_s!(ordermatch_ctx.my_taker_orders.lock());
+    let mut my_cancelled_orders = try_s!(ordermatch_ctx.my_cancelled_orders.lock());
 
     match cancel_by {
         CancelBy::All => {
@@ -1351,7 +1354,47 @@ pub fn cancel_all_orders(ctx: MmArc, req: Json) -> HyRes {
                 }
             }).collect();
         },
-    }
+        CancelBy::Coin(ticker) => {
+            *maker_orders = maker_orders.drain().filter_map(|(uuid, order)| {
+                if order.base == ticker || order.rel == ticker {
+                    if order.is_cancellable() {
+                        delete_my_maker_order(&ctx, &order);
+                        my_cancelled_orders.insert(uuid, order);
+                        cancelled.push(uuid);
+                        None
+                    } else {
+                        currently_matching.push(uuid);
+                        Some((uuid, order))
+                    }
+                } else {
+                    Some((uuid, order))
+                }
+            }).collect();
+            *taker_orders = taker_orders.drain().filter_map(|(uuid, order)| {
+                if order.request.base == ticker || order.request.rel == ticker {
+                    if order.is_cancellable() {
+                        delete_my_taker_order(&ctx, &order);
+                        cancelled.push(uuid);
+                        None
+                    } else {
+                        currently_matching.push(uuid);
+                        Some((uuid, order))
+                    }
+                } else {
+                    Some((uuid, order))
+                }
+            }).collect();
+        },
+    };
+
+    Ok((cancelled, currently_matching))
+}
+
+pub fn cancel_all_orders(ctx: MmArc, req: Json) -> HyRes {
+    let cancel_by: CancelBy = try_h!(json::from_value(req["cancel_by"].clone()));
+
+    let (cancelled, currently_matching) = try_h!(cancel_orders_by(&ctx, cancel_by));
+
     rpc_response(200, json!({
         "result": {
             "cancelled": cancelled,

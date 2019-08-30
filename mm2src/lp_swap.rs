@@ -175,6 +175,10 @@ pub trait AtomicSwap: Send + Sync {
     fn locked_amount(&self) -> LockedAmount;
 
     fn uuid(&self) -> &str;
+
+    fn maker_coin(&self) -> &str;
+
+    fn taker_coin(&self) -> &str;
 }
 
 struct SwapsContext {
@@ -242,6 +246,18 @@ fn get_locked_amount_by_other_swaps(ctx: &MmArc, except_uuid: &str, coin: &str) 
             }
         }
     )
+}
+
+pub fn is_coin_swapping(ctx: &MmArc, coin: &str) -> Result<bool, String> {
+    let swap_ctx = try_s!(SwapsContext::from_ctx(&ctx));
+    let swaps = try_s!(swap_ctx.running_swaps.lock());
+    for swap in swaps.iter() {
+        match swap.upgrade() {
+            Some(swap) => if try_s!(swap.read()).maker_coin() == coin || try_s!(swap.read()).taker_coin() == coin { return Ok(true) },
+            None => (),
+        }
+    }
+    Ok(false)
 }
 
 /// Some coins are "slow" (block time is high - e.g. BTC average block time is ~10 minutes).
