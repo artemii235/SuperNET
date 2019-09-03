@@ -1053,7 +1053,7 @@ impl<S: Session> AsyncWrite for ElectrumStream<S> {
     }
 }
 
-const ELECTRUM_TIMEOUT: u64 = 10;
+const ELECTRUM_TIMEOUT: u64 = 60;
 
 async fn electrum_last_chunk_loop(last_chunk: Arc<AtomicU64>) -> Result<(), String> {
     loop {
@@ -1065,6 +1065,7 @@ async fn electrum_last_chunk_loop(last_chunk: Arc<AtomicU64>) -> Result<(), Stri
     }
 }
 
+#[cfg(feature = "native")]
 async fn connect_loop(
     config: ElectrumConfig,
     addr: SocketAddr,

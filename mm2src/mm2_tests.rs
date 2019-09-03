@@ -24,6 +24,7 @@ use std::time::Duration;
 
 /// Asks MM to enable the given currency in native mode.  
 /// Returns the RPC reply containing the corresponding wallet address.
+#[cfg(feature = "native")]
 fn enable_native(mm: &MarketMakerIt, coin: &str, urls: Vec<&str>) -> Json {
     let native = unwrap! (mm.rpc (json! ({
         "userpass": mm.userpass,
@@ -36,6 +37,11 @@ fn enable_native(mm: &MarketMakerIt, coin: &str, urls: Vec<&str>) -> Json {
     })));
     assert_eq! (native.0, StatusCode::OK, "'enable' failed: {}", native.1);
     unwrap!(json::from_str(&native.1))
+}
+
+#[cfg(not(feature = "native"))]
+fn enable_native(mm: &MarketMakerIt, coin: &str, urls: Vec<&str>) -> Json {
+    unimplemented!()
 }
 
 /// Enables BEER, PIZZA, ETOMIC and ETH.

@@ -1815,7 +1815,7 @@ pub fn utxo_coin_from_conf_and_request(
                         log!("Electrum servers " [servers] " ping loop stopped");
                         break;
                     }
-                    thread::sleep(Duration::from_secs(5));
+                    thread::sleep(Duration::from_secs(30));
                 }
             }));
             UtxoRpcClientEnum::Electrum(ElectrumClient(client))
