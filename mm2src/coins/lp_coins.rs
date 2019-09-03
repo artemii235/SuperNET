@@ -458,7 +458,7 @@ pub fn lp_coininit (ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoinEnum,
     let coin: MmCoinEnum = if coins_en["etomic"].is_null() {
         try_s! (utxo_coin_from_conf_and_request (ticker, coins_en, req, secret)) .into()
     } else {
-        try_s! (eth_coin_from_conf_and_request (ticker, coins_en, req, secret)) .into()
+        try_s! (eth_coin_from_conf_and_request (ctx, ticker, coins_en, req, secret)) .into()
     };
 
     let block_count = try_s!(coin.current_block().wait());

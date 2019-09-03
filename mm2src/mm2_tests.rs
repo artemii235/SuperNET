@@ -1,9 +1,10 @@
+use common::slurp;
 #[cfg(not(feature = "native"))]
 use common::call_back;
-use common::for_tests::{enable_electrum, from_env_file, mm_dump, mm_spat, LocalStart, MarketMakerIt};
+use common::for_tests::{enable_electrum, from_env_file, get_passphrase, mm_dump, mm_spat,
+  LocalStart, MarketMakerIt};
 use common::privkey::key_pair_from_seed;
 use futures03::executor::block_on;
-use gstuff::{slurp};
 #[cfg(feature = "native")]
 use hyper::StatusCode;
 #[cfg(feature = "native")]
@@ -23,7 +24,6 @@ use std::time::Duration;
 
 /// Asks MM to enable the given currency in native mode.  
 /// Returns the RPC reply containing the corresponding wallet address.
-#[cfg(feature = "native")]
 fn enable_native(mm: &MarketMakerIt, coin: &str, urls: Vec<&str>) -> Json {
     let native = unwrap! (mm.rpc (json! ({
         "userpass": mm.userpass,
@@ -50,7 +50,6 @@ fn enable_coins(mm: &MarketMakerIt) -> Vec<(&'static str, Json)> {
     replies
 }
 
-#[cfg(feature = "native")]
 fn enable_coins_eth_electrum(mm: &MarketMakerIt, eth_urls: Vec<&str>) -> HashMap<&'static str, Json> {
     let mut replies = HashMap::new();
     replies.insert ("BEER", enable_electrum (mm, "BEER", vec!["test1.cipig.net:10022","test2.cipig.net:10022","test3.cipig.net:10022"]));
@@ -667,13 +666,9 @@ fn check_recent_swaps(
 
 /// Trading test using coins with remote RPC (Electrum, ETH nodes), it needs only ENV variables to be set, coins daemons are not required.
 /// Trades few pairs concurrently to speed up the process and also act like "load" test
-#[cfg(feature = "native")]
-fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
-    let (bob_file_passphrase, _bob_file_userpass) = from_env_file (slurp (&".env.seed"));
-    let (alice_file_passphrase, _alice_file_userpass) = from_env_file (slurp (&".env.client"));
-
-    let bob_passphrase = unwrap! (var ("BOB_PASSPHRASE") .ok().or (bob_file_passphrase), "No BOB_PASSPHRASE or .env.seed/PASSPHRASE");
-    let alice_passphrase = unwrap! (var ("ALICE_PASSPHRASE") .ok().or (alice_file_passphrase), "No ALICE_PASSPHRASE or .env.client/PASSPHRASE");
+async fn trade_base_rel_electrum (pairs: Vec<(&'static str, &'static str)>) {
+    let bob_passphrase = unwrap! (get_passphrase (&".env.seed", "BOB_PASSPHRASE"));
+    let alice_passphrase = unwrap! (get_passphrase (&".env.client", "ALICE_PASSPHRASE"));
 
     let coins = json! ([
         {"coin":"BEER","asset":"BEER"},
@@ -861,7 +856,7 @@ fn trade_base_rel_electrum(pairs: Vec<(&str, &str)>) {
 #[cfg(feature = "native")]
 #[test]
 fn trade_test_electrum_and_eth_coins() {
-    trade_base_rel_electrum(vec![("BEER", "ETOMIC"), ("ETH", "JST")]);
+    block_on(trade_base_rel_electrum(vec![("BEER", "ETOMIC"), ("ETH", "JST")]));
 }
 
 #[cfg(not(feature = "native"))]
@@ -870,7 +865,7 @@ pub extern fn trade_test_electrum_and_eth_coins (cb_id: i32) {
     use std::ptr::null;
 
     common::executor::spawn (async move {
-        if 1 == 1 {panic! ("TBD")}
+        trade_base_rel_electrum (vec! [("BEER", "ETOMIC"), ("ETH", "JST")]) .await;
         unsafe {call_back (cb_id, null(), 0)}
     })
 }

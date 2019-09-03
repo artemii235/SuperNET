@@ -21,8 +21,9 @@
 use bigdecimal::BigDecimal;
 use bitcrypto::sha256;
 use common::{rpc_response, slurp_url, HyRes};
+use common::custom_futures::TimedAsyncMutex;
 use common::executor::Timer;
-use common::mm_ctx::MmArc;
+use common::mm_ctx::{MmArc, MmWeak};
 use secp256k1::PublicKey;
 use ethabi::{Contract, Token};
 use ethcore_transaction::{ Action, Transaction as UnSignedEthTx, UnverifiedTransaction};
@@ -33,7 +34,6 @@ use futures01::future::{Either, join_all, loop_fn, Loop};
 use futures::compat::Future01CompatExt;
 use futures::future::{FutureExt, TryFutureExt};
 use futures::try_join;
-use futures::lock::{Mutex as AsyncMutex};
 use futures_timer::Delay;
 use gstuff::{now_ms, slurp};
 use http::StatusCode;
@@ -130,6 +130,9 @@ pub struct EthCoinImpl {  // pImpl idiom.
     decimals: u8,
     gas_station_url: Option<String>,
     history_sync_state: Mutex<HistorySyncState>,
+    /// Coin needs access to the context in order to reuse the logging and shutdown facilities.
+    /// Using a weak reference by default in order to avoid circular references and leaks.
+    ctx: MmWeak
 }
 
 #[derive(Clone, Debug)]
@@ -343,7 +346,7 @@ impl EthCoinImpl {
     }
 }
 
-async fn withdraw_impl(coin: EthCoin, req: WithdrawRequest) -> Result<TransactionDetails, String> {
+async fn withdraw_impl(ctx: MmArc, coin: EthCoin, req: WithdrawRequest) -> Result<TransactionDetails, String> {
     let to_addr = try_s!(addr_from_str(&req.to));
     let my_balance = try_s!(coin.my_balance().compat().await);
     let mut wei_amount = if req.max {
@@ -391,7 +394,10 @@ async fn withdraw_impl(coin: EthCoin, req: WithdrawRequest) -> Result<Transactio
         eth_value -= total_fee;
         wei_amount -= total_fee;
     };
-    let _nonce_lock = NONCE_LOCK.lock().await;
+    let _nonce_lock = try_s!(NONCE_LOCK.lock(|_start, _now| {
+        if ctx.is_stopping() {return ERR!("MM is stopping, aborting withdraw_impl in NONCE_LOCK")}
+        Ok(0.5)
+    }).await);
     let nonce = try_s!(get_addr_nonce(coin.my_address, &coin.web3_instances).compat().await);
     let tx = UnSignedEthTx { nonce, value: eth_value, action: Action::Call(call_addr), data, gas, gas_price };
 
@@ -818,19 +824,28 @@ pub fn signed_eth_tx_from_bytes(bytes: &[u8]) -> Result<SignedEthTx, String> {
 // It's highly likely that we won't experience any issues with it as we won't need to send "a lot" of transactions concurrently.
 // For ETH it makes even more sense because different ERC20 tokens can be running on same ETH blockchain.
 // So we would need to handle shared locks anyway.
-lazy_static! {static ref NONCE_LOCK: AsyncMutex<()> = AsyncMutex::new(());}
+lazy_static! {static ref NONCE_LOCK: TimedAsyncMutex<()> = TimedAsyncMutex::new(());}
 
 type EthTxFut = Box<dyn Future<Item=SignedEthTx, Error=String> + Send + 'static>;
 
 async fn sign_and_send_transaction_impl(
+    ctx: MmArc,
     coin: EthCoin,
     value: U256,
     action: Action,
     data: Vec<u8>,
     gas: U256,
 ) -> Result<SignedEthTx, String> {
-    let _nonce_lock = NONCE_LOCK.lock().await;
+    let mut status = ctx.log.status_handle();
+    macro_rules! tags {() => {&[&"sign-and-send"]}};
+    let _nonce_lock = NONCE_LOCK.lock(|start, now| {
+        if ctx.is_stopping() {return ERR!("MM is stopping, aborting sign_and_send_transaction_impl in NONCE_LOCK")}
+        if start < now {status.status(tags!(), "Waiting for NONCE_LOCK…")}
+        Ok(0.5)
+    }).await;
+    status.status(tags!(), "get_addr_nonce…");
     let nonce = try_s!(get_addr_nonce(coin.my_address, &coin.web3_instances).compat().await);
+    status.status(tags!(), "get_gas_price…");
     let gas_price = try_s!(coin.get_gas_price().compat().await);
     let tx = UnSignedEthTx {
         nonce,
@@ -842,7 +857,9 @@ async fn sign_and_send_transaction_impl(
     };
     let signed = tx.sign(coin.key_pair.secret(), None);
     let bytes = web3::types::Bytes(rlp::encode(&signed).to_vec());
+    status.status(tags!(), "send_raw_transaction…");
     try_s!(coin.web3.eth().send_raw_transaction(bytes).map_err(|e| ERRL!("{}", e)).compat().await);
+    status.status(tags!(), "get_addr_nonce…");
     loop {
         // Check every second till ETH nodes recognize that nonce is increased
         // Parity has reliable "nextNonce" method that always returns correct nonce for address
@@ -871,7 +888,8 @@ impl EthCoin {
         data: Vec<u8>,
         gas: U256,
     ) -> EthTxFut {
-        let fut = sign_and_send_transaction_impl(self.clone(), value, action, data, gas);
+        let ctx = try_fus!(MmArc::from_weak(&self.ctx).ok_or("!ctx"));
+        let fut = sign_and_send_transaction_impl(ctx, self.clone(), value, action, data, gas);
         Box::new(fut.boxed().compat())
     }
 
@@ -1771,7 +1789,8 @@ impl MmCoin for EthCoin {
     }
 
     fn withdraw(&self, req: WithdrawRequest) -> Box<dyn Future<Item=TransactionDetails, Error=String> + Send> {
-        Box::new(withdraw_impl(self.clone(), req).boxed().compat())
+        let ctx = try_fus!(MmArc::from_weak(&self.ctx).ok_or("!ctx"));
+        Box::new(withdraw_impl(ctx, self.clone(), req).boxed().compat())
     }
 
     fn decimals(&self) -> u8 {
@@ -2025,6 +2044,7 @@ fn addr_from_str(addr_str: &str) -> Result<Address, String> {
 }
 
 pub fn eth_coin_from_conf_and_request(
+    ctx: &MmArc,
     ticker: &str,
     conf: &Json,
     req: &Json,
@@ -2099,6 +2119,7 @@ pub fn eth_coin_from_conf_and_request(
         web3,
         web3_instances,
         history_sync_state: Mutex::new(initial_history_state),
+        ctx: ctx.weak()
     };
     Ok(EthCoin(Arc::new(coin)))
 }

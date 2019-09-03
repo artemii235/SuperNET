@@ -1,3 +1,5 @@
+use common::mm_ctx::{MmArc, MmCtxBuilder};
+use common::for_tests::wait_for_log;
 use futures::executor::block_on;
 use futures::future::join_all;
 use super::*;
@@ -8,12 +10,13 @@ fn check_sum(addr: &str, expected: &str) {
     assert_eq!(expected, actual);
 }
 
-fn eth_coin_for_test(coin_type: EthCoinType, urls: Vec<String>) -> EthCoin {
+fn eth_coin_for_test(coin_type: EthCoinType, urls: Vec<String>) -> (MmArc, EthCoin) {
     let key_pair = KeyPair::from_secret_slice(&hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap()).unwrap();
     let transport = Web3Transport::new(urls).unwrap();
     let web3 = Web3::new(transport);
+    let ctx = MmCtxBuilder::new().into_mm_arc();
 
-    EthCoin(Arc::new(EthCoinImpl {
+    let eth_coin = EthCoin(Arc::new(EthCoinImpl {
         coin_type,
         decimals: 18,
         gas_station_url: None,
@@ -24,7 +27,9 @@ fn eth_coin_for_test(coin_type: EthCoinType, urls: Vec<String>) -> EthCoin {
         ticker: "ETH".into(),
         web3_instances: vec![Web3Instance {web3: web3.clone(), is_parity: true}],
         web3,
-    }))
+        ctx: ctx.weak()
+    }));
+    (ctx, eth_coin)
 }
 
 #[test]
@@ -134,6 +139,7 @@ fn send_and_refund_erc20_payment() {
     let key_pair = KeyPair::from_secret_slice(&hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap()).unwrap();
     let transport = Web3Transport::new(vec!["http://195.201.0.6:8545".into()]).unwrap();
     let web3 = Web3::new(transport);
+    let ctx = MmCtxBuilder::new().into_mm_arc();
     let coin = EthCoin(Arc::new(EthCoinImpl {
         ticker: "ETH".into(),
         coin_type: EthCoinType::Erc20(Address::from("0xc0eb7AeD740E1796992A08962c15661bDEB58003")),
@@ -145,6 +151,7 @@ fn send_and_refund_erc20_payment() {
         decimals: 18,
         gas_station_url: None,
         history_sync_state: Mutex::new(HistorySyncState::NotStarted),
+        ctx: ctx.weak()
     }));
 
     let payment = coin.send_maker_payment(
@@ -175,6 +182,7 @@ fn send_and_refund_eth_payment() {
     let key_pair = KeyPair::from_secret_slice(&hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap()).unwrap();
     let transport = Web3Transport::new(vec!["http://195.201.0.6:8545".into()]).unwrap();
     let web3 = Web3::new(transport);
+    let ctx = MmCtxBuilder::new().into_mm_arc();
     let coin = EthCoin(Arc::new(EthCoinImpl {
         ticker: "ETH".into(),
         coin_type: EthCoinType::Eth,
@@ -186,6 +194,7 @@ fn send_and_refund_eth_payment() {
         decimals: 18,
         gas_station_url: None,
         history_sync_state: Mutex::new(HistorySyncState::NotStarted),
+        ctx: ctx.weak()
     }));
 
     let payment = coin.send_maker_payment(
@@ -217,6 +226,7 @@ fn test_nonce_several_urls() {
     let infura_transport = Web3Transport::new(vec!["https://ropsten-rpc.linkpool.io".into()]).unwrap();
     let web_infura = Web3::new(infura_transport);
     let web3 = Web3::new(my_transport);
+    let ctx = MmCtxBuilder::new().into_mm_arc();
     let coin = EthCoin(Arc::new(EthCoinImpl {
         ticker: "ETH".into(),
         coin_type: EthCoinType::Eth,
@@ -228,6 +238,7 @@ fn test_nonce_several_urls() {
         decimals: 18,
         gas_station_url: Some("https://ethgasstation.info/json/ethgasAPI.json".into()),
         history_sync_state: Mutex::new(HistorySyncState::NotStarted),
+        ctx: ctx.weak()
     }));
 
     log!("My address " [coin.my_address]);
@@ -246,6 +257,7 @@ fn test_wait_for_payment_spend_timeout() {
     let key_pair = KeyPair::from_secret_slice(&hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap()).unwrap();
     let transport = Web3Transport::new(vec!["http://195.201.0.6:8555".into()]).unwrap();
     let web3 = Web3::new(transport);
+    let ctx = MmCtxBuilder::new().into_mm_arc();
 
     let coin = EthCoinImpl {
         coin_type: EthCoinType::Eth,
@@ -258,6 +270,7 @@ fn test_wait_for_payment_spend_timeout() {
         ticker: "ETH".into(),
         web3_instances: vec![Web3Instance {web3: web3.clone(), is_parity: true}],
         web3,
+        ctx: ctx.weak()
     };
 
     let coin = EthCoin(Arc::new(coin));
@@ -274,6 +287,7 @@ fn test_search_for_swap_tx_spend_was_spent() {
     let key_pair = KeyPair::from_secret_slice(&hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap()).unwrap();
     let transport = Web3Transport::new(vec!["http://195.201.0.6:8545".into()]).unwrap();
     let web3 = Web3::new(transport);
+    let ctx = MmCtxBuilder::new().into_mm_arc();
 
     let coin = EthCoin(Arc::new(EthCoinImpl {
         coin_type: EthCoinType::Eth,
@@ -286,6 +300,7 @@ fn test_search_for_swap_tx_spend_was_spent() {
         ticker: "ETH".into(),
         web3_instances: vec![Web3Instance {web3: web3.clone(), is_parity: true}],
         web3,
+        ctx: ctx.weak()
     }));
 
     // raw transaction bytes of https://ropsten.etherscan.io/tx/0xb1c987e2ac79581bb8718267b5cb49a18274890494299239d1d0dfdb58d6d76a
@@ -306,6 +321,7 @@ fn test_search_for_swap_tx_spend_was_refunded() {
     let key_pair = KeyPair::from_secret_slice(&hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap()).unwrap();
     let transport = Web3Transport::new(vec!["http://195.201.0.6:8545".into()]).unwrap();
     let web3 = Web3::new(transport);
+    let ctx = MmCtxBuilder::new().into_mm_arc();
 
     let coin = EthCoin(Arc::new(EthCoinImpl {
         coin_type: EthCoinType::Erc20(Address::from("0xc0eb7aed740e1796992a08962c15661bdeb58003")),
@@ -318,6 +334,7 @@ fn test_search_for_swap_tx_spend_was_refunded() {
         ticker: "ETH".into(),
         web3_instances: vec![Web3Instance {web3: web3.clone(), is_parity: true}],
         web3,
+        ctx: ctx.weak()
     }));
 
     // raw transaction bytes of https://ropsten.etherscan.io/tx/0xe18bbca69dea9a4624e1f5b0b2021d5fe4c8daa03f36084a8ba011b08e5cd938
@@ -341,7 +358,7 @@ fn test_withdraw_impl_manual_fee() {
     });
     get_addr_nonce.mock_safe(|_, _| MockResult::Return(Box::new(futures01::future::ok(0.into()))));
 
-    let coin = eth_coin_for_test(EthCoinType::Eth, vec!["http://dummy.dummy".into()]);
+    let (ctx, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://dummy.dummy".into()]);
     let withdraw_req = WithdrawRequest {
         amount: 1.into(),
         to: "0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94".to_string(),
@@ -349,7 +366,7 @@ fn test_withdraw_impl_manual_fee() {
         max: false,
         fee: Some(WithdrawFee::EthGas { gas: 150000, gas_price: 1.into() }),
     };
-    let tx_details = unwrap!(block_on(withdraw_impl(coin.clone(), withdraw_req)));
+    let tx_details = unwrap!(block_on(withdraw_impl(ctx, coin.clone(), withdraw_req)));
     let expected = Some(EthTxFeeDetails {
         coin: "ETH".into(),
         gas_price: "0.000000001".parse().unwrap(),
@@ -363,10 +380,11 @@ fn test_withdraw_impl_manual_fee() {
 fn test_nonce_lock() {
     // send several transactions concurrently to check that they are not using same nonce
     // using real ETH dev node
-    let coin = eth_coin_for_test(EthCoinType::Eth, vec!["http://195.201.0.6:8565".into()]);
+    let (ctx, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://195.201.0.6:8565".into()]);
     let mut futures = vec![];
     for _ in 0..5 {
         futures.push(sign_and_send_transaction_impl(
+            ctx.clone(),
             coin.clone(),
             1000000000000u64.into(),
             Action::Call(coin.my_address),
@@ -378,4 +396,6 @@ fn test_nonce_lock() {
     for result in results {
         unwrap!(result);
     }
+    unwrap!(wait_for_log(&ctx.log, 1.1, &|line| line.contains("Waiting for NONCE_LOCK…")));
+    unwrap!(wait_for_log(&ctx.log, 1.1, &|line| line.contains("get_addr_nonce…")));
 }

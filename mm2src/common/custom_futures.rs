@@ -1,8 +1,13 @@
 /// Custom future combinators/implementations - some of standard do not match our requirements.
 
+use crate::executor::Timer;
+
 use futures::{Async, AsyncSink, Future, Poll, Sink};
 use futures::future::{self, Either, IntoFuture, Loop, loop_fn};
 use futures::stream::{Stream, Fuse};
+
+use futures03::future::select;
+use futures03::lock::{Mutex as AsyncMutex};
 
 /// The analogue of join_all combinator running futures `sequentially`.
 /// `join_all` runs futures `concurrently` which cause issues with native coins daemons RPC.
@@ -171,5 +176,39 @@ impl<T, U> Future for SendAll<T, U>
                 }
             }
         }
+    }
+}
+
+pub struct TimedMutexGuard<'a, T> (futures03::lock::MutexGuard<'a, T>);
+//impl<'a, T> Drop for TimedMutexGuard<'a, T> {fn drop (&mut self) {}}
+
+/// Like `AsyncMutex` but periodically invokes a callback,
+/// allowing the application to implement timeouts, status updates and shutdowns.
+pub struct TimedAsyncMutex<T> (AsyncMutex<T>);
+impl<T> TimedAsyncMutex<T> {
+    pub fn new (v: T) -> TimedAsyncMutex<T> {TimedAsyncMutex (AsyncMutex::new (v))}
+
+    /// Like `AsyncMutex::lock` but invokes the `tick` callback periodically.  
+    /// `tick` returns a time till the next tick, or an error to abort the locking attempt.  
+    /// `tick` parameters are the time when the locking attempt has started and the current time
+    /// (they are equal on the first invocation of `tick`).
+    pub async fn lock<F> (&self, mut tick: F) -> Result<TimedMutexGuard<T>, String>
+    where F: FnMut (f64, f64) -> Result<f64, String> {
+        use gstuff::now_float;
+        use futures03::future::Either;
+        let start = now_float();
+        let mut now = start;
+        let mut l = self.0.lock();
+        let l = loop {
+            let tick_after = try_s! (tick (start, now));
+            let t = Timer::till (now + tick_after);
+            let rc = select (l, t) .await;
+            match rc {
+                Either::Left ((l, _t)) => break l,
+                Either::Right ((_t, lʹ)) => {
+                    now = now_float();
+                    l = lʹ
+        }   }   };
+        Ok (TimedMutexGuard (l))
     }
 }

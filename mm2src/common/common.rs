@@ -988,6 +988,12 @@ pub fn now_float() -> f64 {
     duration_to_float (Duration::from_millis (now_ms()))
 }
 
+#[cfg(feature = "native")]
+pub fn slurp (path: &dyn AsRef<Path>) -> Vec<u8> {gstuff::slurp (path)}
+
+#[cfg(not(feature = "native"))]
+pub fn slurp (_path: &dyn AsRef<Path>) -> Vec<u8> {Vec::new()}
+
 /// If the `MM_LOG` variable is present then tries to open that file.  
 /// Prints a warning to `stdout` if there's a problem opening the file.  
 /// Returns `None` if `MM_LOG` variable is not present or if the specified path can't be opened.
