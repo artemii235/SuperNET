@@ -1,8 +1,8 @@
 use common::privkey::key_pair_from_seed;
 use crate::WithdrawFee;
 use crate::utxo::rpc_clients::{ElectrumProtocol};
-use futures03::executor::block_on;
-use futures03::future::join_all;
+use futures::executor::block_on;
+use futures::future::join_all;
 use mocktopus::mocking::*;
 use super::*;
 
@@ -373,7 +373,7 @@ fn test_search_for_swap_tx_spend_native_was_refunded() {
 fn test_withdraw_impl_set_fixed_fee() {
     NativeClient::list_unspent_ordered.mock_safe(|_,_| {
         let unspents = vec![UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 1000000000 }];
-        MockResult::Return(Box::new(futures::future::ok(unspents)))
+        MockResult::Return(Box::new(futures01::future::ok(unspents)))
     });
 
     let client = NativeClient(Arc::new(NativeClientImpl {
@@ -401,7 +401,7 @@ fn test_withdraw_impl_set_fixed_fee() {
 fn test_withdraw_impl_sat_per_kb_fee() {
     NativeClient::list_unspent_ordered.mock_safe(|_,_| {
         let unspents = vec![UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 1000000000 }];
-        MockResult::Return(Box::new(futures::future::ok(unspents)))
+        MockResult::Return(Box::new(futures01::future::ok(unspents)))
     });
 
     let client = NativeClient(Arc::new(NativeClientImpl {
@@ -432,7 +432,7 @@ fn test_withdraw_impl_sat_per_kb_fee() {
 fn test_withdraw_impl_sat_per_kb_fee_amount_equal_to_max() {
     NativeClient::list_unspent_ordered.mock_safe(|_,_| {
         let unspents = vec![UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 1000000000 }];
-        MockResult::Return(Box::new(futures::future::ok(unspents)))
+        MockResult::Return(Box::new(futures01::future::ok(unspents)))
     });
 
     let client = NativeClient(Arc::new(NativeClientImpl {
@@ -465,7 +465,7 @@ fn test_withdraw_impl_sat_per_kb_fee_amount_equal_to_max() {
 fn test_withdraw_impl_sat_per_kb_fee_amount_equal_to_max_dust_included_to_fee() {
     NativeClient::list_unspent_ordered.mock_safe(|_,_| {
         let unspents = vec![UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 1000000000 }];
-        MockResult::Return(Box::new(futures::future::ok(unspents)))
+        MockResult::Return(Box::new(futures01::future::ok(unspents)))
     });
 
     let client = NativeClient(Arc::new(NativeClientImpl {
@@ -498,7 +498,7 @@ fn test_withdraw_impl_sat_per_kb_fee_amount_equal_to_max_dust_included_to_fee() 
 fn test_withdraw_impl_sat_per_kb_fee_amount_over_max() {
     NativeClient::list_unspent_ordered.mock_safe(|_,_| {
         let unspents = vec![UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 1000000000 }];
-        MockResult::Return(Box::new(futures::future::ok(unspents)))
+        MockResult::Return(Box::new(futures01::future::ok(unspents)))
     });
 
     let client = NativeClient(Arc::new(NativeClientImpl {
@@ -522,7 +522,7 @@ fn test_withdraw_impl_sat_per_kb_fee_amount_over_max() {
 fn test_withdraw_impl_sat_per_kb_fee_max() {
     NativeClient::list_unspent_ordered.mock_safe(|_,_| {
         let unspents = vec![UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 1000000000 }];
-        MockResult::Return(Box::new(futures::future::ok(unspents)))
+        MockResult::Return(Box::new(futures01::future::ok(unspents)))
     });
 
     let client = NativeClient(Arc::new(NativeClientImpl {

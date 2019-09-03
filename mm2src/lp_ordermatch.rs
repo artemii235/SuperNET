@@ -1274,7 +1274,7 @@ pub fn orders_kick_start(ctx: &MmArc) -> Result<HashSet<String>, String> {
 }
 
 #[derive(Deserialize)]
-struct Pair {
+pub struct Pair {
     base: String,
     rel: String,
 }

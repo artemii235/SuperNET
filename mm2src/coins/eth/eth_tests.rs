@@ -1,5 +1,5 @@
-use futures03::executor::block_on;
-use futures03::future::join_all;
+use futures::executor::block_on;
+use futures::future::join_all;
 use super::*;
 use mocktopus::mocking::*;
 
@@ -241,7 +241,7 @@ fn test_nonce_several_urls() {
 
 #[test]
 fn test_wait_for_payment_spend_timeout() {
-    EthCoinImpl::spend_events.mock_safe(|_, _| MockResult::Return(Box::new(futures::future::ok(vec![]))));
+    EthCoinImpl::spend_events.mock_safe(|_, _| MockResult::Return(Box::new(futures01::future::ok(vec![]))));
 
     let key_pair = KeyPair::from_secret_slice(&hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap()).unwrap();
     let transport = Web3Transport::new(vec!["http://195.201.0.6:8555".into()]).unwrap();
@@ -337,9 +337,9 @@ fn test_search_for_swap_tx_spend_was_refunded() {
 fn test_withdraw_impl_manual_fee() {
     EthCoin::my_balance.mock_safe(|_| {
         let balance = wei_from_big_decimal(&1000000000.into(), 18).unwrap();
-        MockResult::Return(Box::new(futures::future::ok(balance)))
+        MockResult::Return(Box::new(futures01::future::ok(balance)))
     });
-    get_addr_nonce.mock_safe(|_, _| MockResult::Return(Box::new(futures::future::ok(0.into()))));
+    get_addr_nonce.mock_safe(|_, _| MockResult::Return(Box::new(futures01::future::ok(0.into()))));
 
     let coin = eth_coin_for_test(EthCoinType::Eth, vec!["http://dummy.dummy".into()]);
     let withdraw_req = WithdrawRequest {

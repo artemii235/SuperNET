@@ -20,7 +20,7 @@
 
 #![cfg_attr(not(feature = "native"), allow(dead_code))]
 
-use coins::{lp_coinfind, lp_coininit, MmCoinEnum};
+use coins::{disable_coin as disable_coin_impl, lp_coinfind, lp_coininit, MmCoinEnum};
 use common::{rpc_err_response, rpc_response, HyRes, MM_VERSION};
 use common::executor::{spawn, Timer};
 use common::mm_ctx::MmArc;
@@ -37,7 +37,7 @@ pub fn disable_coin (ctx: MmArc, req: Json) -> HyRes {
     // cancel all orders if base or rel == coin to disable
     // stop tx_history loops if coin is disabled
     // stop electrum connect loops on coin disable
-    let coin = match lp_coinfind (&ctx, &ticker) {
+    let _coin = match lp_coinfind (&ctx, &ticker) {
         Ok (Some (t)) => t,
         Ok (None) => return rpc_err_response (500, &fomat! ("No such coin: " (ticker))),
         Err (err) => return rpc_err_response (500, &fomat! ("!lp_coinfind(" (ticker) "): " (err)))
@@ -50,7 +50,12 @@ pub fn disable_coin (ctx: MmArc, req: Json) -> HyRes {
         return rpc_err_response (500, &fomat! ("There're currently matching orders using " (ticker)));
     }
 
-    rpc_response(200, "")
+    try_h!(disable_coin_impl(&ctx, &ticker));
+    rpc_response(200, json!({
+        "result": "success",
+        "coin": ticker,
+        "cancelled_orders": cancelled,
+    }).to_string())
 }
 
 /// Enable a coin in the Electrum mode.

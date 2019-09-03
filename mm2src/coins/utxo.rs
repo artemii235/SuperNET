@@ -34,10 +34,11 @@ use common::jsonrpc_client::{JsonRpcError, JsonRpcErrorType};
 use common::mm_ctx::MmArc;
 #[cfg(feature = "native")]
 use dirs::home_dir;
-use futures::{Future};
-use futures03::compat::Future01CompatExt;
-use futures03::future::{FutureExt, TryFutureExt};
-use futures03::lock::{Mutex as AsyncMutex};
+use futures01::{Future};
+use futures01::future::Either;
+use futures::compat::Future01CompatExt;
+use futures::future::{FutureExt, TryFutureExt};
+use futures::lock::{Mutex as AsyncMutex};
 use gstuff::{now_ms};
 use keys::{KeyPair, Private, Public, Address, Secret, Type};
 use keys::bytes::Bytes;
@@ -62,10 +63,9 @@ use std::time::Duration;
 pub use chain::Transaction as UtxoTx;
 
 use self::rpc_clients::{electrum_script_hash, ElectrumClient, ElectrumClientImpl, EstimateFeeMethod, NativeClient, UtxoRpcClientEnum, UnspentInfo };
-use super::{FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, MmCoinEnum, SwapOps, TradeInfo,
+use super::{CoinsContext, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, MmCoinEnum, SwapOps, TradeInfo,
             Transaction, TransactionEnum, TransactionFut, TransactionDetails, WithdrawFee, WithdrawRequest};
 use crate::utxo::rpc_clients::{NativeClientImpl, UtxoRpcClientOps, ElectrumRpcRequest};
-use futures::future::Either;
 
 #[cfg(test)]
 mod utxo_tests;
@@ -216,7 +216,7 @@ pub struct UtxoCoinImpl {  // pImpl idiom.
 impl UtxoCoinImpl {
     fn get_tx_fee(&self) -> Box<dyn Future<Item=ActualTxFee, Error=JsonRpcError> + Send> {
         match &self.tx_fee {
-            TxFee::Fixed(fee) => Box::new(futures::future::ok(ActualTxFee::Fixed(*fee))),
+            TxFee::Fixed(fee) => Box::new(futures01::future::ok(ActualTxFee::Fixed(*fee))),
             TxFee::Dynamic(method) => Box::new(self.rpc_client.estimate_fee_sat(self.decimals, method).map(|fee| ActualTxFee::Dynamic(fee))),
         }
     }
@@ -528,7 +528,7 @@ lazy_static! {static ref UTXO_LOCK: AsyncMutex<()> = AsyncMutex::new(());}
 macro_rules! true_or_err {
     ($cond: expr, $msg: expr $(, $args:expr)*) => {
         if !$cond {
-            return Box::new(futures::future::err(ERRL!($msg $(, $args)*)));
+            return Box::new(futures01::future::err(ERRL!($msg $(, $args)*)));
         }
     };
 }
@@ -616,7 +616,7 @@ impl UtxoCoin {
         let change_script_pubkey = Builder::build_p2pkh(&self.my_address.hash).to_bytes();
         let arc = self.clone();
         let fee_fut = match fee {
-            Some(f) => Either::A(futures::future::ok(f)),
+            Some(f) => Either::A(futures01::future::ok(f)),
             None => Either::B(self.get_tx_fee().map_err(|e| ERRL!("{}", e))),
         };
         Box::new(fee_fut.and_then(move |coin_tx_fee| -> Box<dyn Future<Item=(TransactionInputSigner, AdditionalTxData), Error=String> + Send> {
@@ -742,7 +742,7 @@ impl UtxoCoin {
         my_script_pub: Bytes,
     ) -> Box<dyn Future<Item=(TransactionInputSigner, AdditionalTxData), Error=String> + Send> {
         if self.ticker != "KMD" {
-            return Box::new(futures::future::ok((unsigned, data)));
+            return Box::new(futures01::future::ok((unsigned, data)));
         }
         unsigned.lock_time = (now_ms() / 1000) as u32 - 777;
         let prev_tx_futures: Vec<_> = unsigned.inputs
@@ -1385,7 +1385,7 @@ impl MmCoin for UtxoCoin {
     }
 
     fn can_i_spend_other_payment(&self) -> Box<dyn Future<Item=(), Error=String> + Send> {
-        Box::new(futures::future::ok(()))
+        Box::new(futures01::future::ok(()))
     }
 
     fn withdraw(&self, req: WithdrawRequest) -> Box<dyn Future<Item=TransactionDetails, Error=String> + Send> {
@@ -1406,6 +1406,15 @@ impl MmCoin for UtxoCoin {
         let history = self.load_history_from_file(&ctx);
         let mut history_map: HashMap<H256Json, TransactionDetails> = history.into_iter().map(|tx| (H256Json::from(tx.tx_hash.as_slice()), tx)).collect();
         loop {
+            if ctx.is_stopping() { break };
+            {
+                let coins_ctx = unwrap!(CoinsContext::from_ctx(&ctx));
+                if !unwrap!(coins_ctx.coins.lock()).contains_key(&self.ticker) {
+                    ctx.log.log("", &[&"tx_history", &self.ticker], "Loop stopped");
+                    break
+                };
+            }
+
             let tx_ids: Vec<(H256Json, u64)> = match &self.rpc_client {
                 UtxoRpcClientEnum::Native(client) => {
                     let mut from = 0;
@@ -1799,13 +1808,14 @@ pub fn utxo_coin_from_conf_and_request(
             try_s!(thread::Builder::new().name(format!("electrum_ping_{}", ticker)).spawn(move || {
                 loop {
                     if let Some(client) = weak_client.upgrade() {
-                        if let Err(e) = client.server_ping().wait() {
+                        if let Err(e) = ElectrumClient(client).server_ping().wait() {
                             log!("Electrum servers " [servers] " ping error " [e]);
                         }
                     } else {
+                        log!("Electrum servers " [servers] " ping loop stopped");
                         break;
                     }
-                    thread::sleep(Duration::from_secs(30));
+                    thread::sleep(Duration::from_secs(5));
                 }
             }));
             UtxoRpcClientEnum::Electrum(ElectrumClient(client))

@@ -28,11 +28,12 @@ use ethabi::{Contract, Token};
 use ethcore_transaction::{ Action, Transaction as UnSignedEthTx, UnverifiedTransaction};
 use ethereum_types::{Address, U256, H160};
 use ethkey::{ KeyPair, Public, public_to_address };
-use futures::Future;
-use futures::future::{Either, join_all, loop_fn, Loop};
-use futures03::compat::Future01CompatExt;
-use futures03::future::{FutureExt, TryFutureExt};
-use futures03::lock::{Mutex as AsyncMutex};
+use futures01::Future;
+use futures01::future::{Either, join_all, loop_fn, Loop};
+use futures::compat::Future01CompatExt;
+use futures::future::{FutureExt, TryFutureExt};
+use futures::try_join;
+use futures::lock::{Mutex as AsyncMutex};
 use futures_timer::Delay;
 use gstuff::{now_ms, slurp};
 use http::StatusCode;
@@ -55,8 +56,8 @@ use std::time::Duration;
 use web3::{ self, Web3 };
 use web3::types::{Action as TraceAction, BlockId, BlockNumber, Bytes, CallRequest, FilterBuilder, Log, Transaction as Web3Transaction, TransactionId, H256, Trace, TraceFilterBuilder};
 
-use super::{FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeInfo, TransactionFut,
-            TransactionEnum, Transaction, TransactionDetails, WithdrawFee, WithdrawRequest};
+use super::{CoinsContext, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeInfo,
+            TransactionFut, TransactionEnum, Transaction, TransactionDetails, WithdrawFee, WithdrawRequest};
 
 pub use ethcore_transaction::SignedTransaction as SignedEthTx;
 pub use rlp;
@@ -955,7 +956,7 @@ impl EthCoin {
                 let state_f = self.payment_status(decoded[0].clone());
                 Box::new(state_f.and_then(move |state| -> EthTxFut {
                     if state != PAYMENT_STATE_SENT.into() {
-                        return Box::new(futures::future::err(ERRL!("Payment {:?} state is not PAYMENT_STATE_SENT, got {}", payment, state)));
+                        return Box::new(futures01::future::err(ERRL!("Payment {:?} state is not PAYMENT_STATE_SENT, got {}", payment, state)));
                     }
 
                     let value = payment.value;
@@ -977,7 +978,7 @@ impl EthCoin {
 
                 Box::new(state_f.and_then(move |state| -> EthTxFut {
                     if state != PAYMENT_STATE_SENT.into() {
-                        return Box::new(futures::future::err(ERRL!("Payment {:?} state is not PAYMENT_STATE_SENT, got {}", payment, state)));
+                        return Box::new(futures01::future::err(ERRL!("Payment {:?} state is not PAYMENT_STATE_SENT, got {}", payment, state)));
                     }
                     let data = try_fus!(spend_func.encode_input(&[
                         decoded[0].clone(),
@@ -1008,7 +1009,7 @@ impl EthCoin {
                 let state_f = self.payment_status(decoded[0].clone());
                 Box::new(state_f.and_then(move |state| -> EthTxFut {
                     if state != PAYMENT_STATE_SENT.into() {
-                        return Box::new(futures::future::err(ERRL!("Payment {:?} state is not PAYMENT_STATE_SENT, got {}", payment, state)));
+                        return Box::new(futures01::future::err(ERRL!("Payment {:?} state is not PAYMENT_STATE_SENT, got {}", payment, state)));
                     }
 
                     let value = payment.value;
@@ -1029,7 +1030,7 @@ impl EthCoin {
                 let state_f = self.payment_status(decoded[0].clone());
                 Box::new(state_f.and_then(move |state| -> EthTxFut {
                     if state != PAYMENT_STATE_SENT.into() {
-                        return Box::new(futures::future::err(ERRL!("Payment {:?} state is not PAYMENT_STATE_SENT, got {}", payment, state)));
+                        return Box::new(futures01::future::err(ERRL!("Payment {:?} state is not PAYMENT_STATE_SENT, got {}", payment, state)));
                     }
 
                     let data = try_fus!(refund_func.encode_input(&[
@@ -1236,6 +1237,15 @@ impl EthCoin {
         let delta = U256::from(10000);
 
         loop {
+            if ctx.is_stopping() { break };
+            {
+                let coins_ctx = unwrap!(CoinsContext::from_ctx(&ctx));
+                if !unwrap!(coins_ctx.coins.lock()).contains_key(&self.ticker) {
+                    ctx.log.log("", &[&"tx_history", &self.ticker], "Loop stopped");
+                    break
+                };
+            }
+
             let current_block = match self.web3.eth().block_number().wait() {
                 Ok(block) => block,
                 Err(e) => {
@@ -1463,6 +1473,15 @@ impl EthCoin {
         let delta = U256::from(1000);
 
         loop {
+            if ctx.is_stopping() { break };
+            {
+                let coins_ctx = unwrap!(CoinsContext::from_ctx(&ctx));
+                if !unwrap!(coins_ctx.coins.lock()).contains_key(&self.ticker) {
+                    ctx.log.log("", &[&"tx_history", &self.ticker], "Loop stopped");
+                    break;
+                };
+            }
+
             let current_block = match self.web3.eth().block_number().wait() {
                 Ok(block) => block,
                 Err(e) => {
@@ -1717,14 +1736,14 @@ impl MmCoin for EthCoin {
             EthCoinType::Eth => {
                 let required = required + BigDecimal::from_str("0.0002").unwrap();
                 if balance < &required {
-                    Box::new(futures::future::err(ERRL!("{} balance {} too low, required {}", ticker, balance, required)))
+                    Box::new(futures01::future::err(ERRL!("{} balance {} too low, required {}", ticker, balance, required)))
                 } else {
-                    Box::new(futures::future::ok(()))
+                    Box::new(futures01::future::ok(()))
                 }
             },
             EthCoinType::Erc20(_) => {
                 if balance < &required {
-                    Box::new(futures::future::err(ERRL!("{} balance {} too low, required {}", ticker, balance, required)))
+                    Box::new(futures01::future::err(ERRL!("{} balance {} too low, required {}", ticker, balance, required)))
                 } else {
                     // need to check ETH balance too, address should have some to cover gas fees
                     Box::new(self.eth_balance().and_then(move |eth_balance| {

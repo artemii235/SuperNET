@@ -198,6 +198,7 @@ pub fn dispatcher (req: Json, ctx: MmArc) -> DispatcherRes {
         "cancel_all_orders" => cancel_all_orders (ctx, req),
         "cancel_order" => cancel_order (ctx, req),
         "coins_needed_for_kick_start" => hyres(coins_needed_for_kick_start(ctx)),
+        "disable_coin" => disable_coin(ctx, req),
         // TODO coin initialization performs blocking IO, i.e request.wait(), have to run it on CPUPOOL to avoid blocking shared CORE.
         //      at least until we refactor the functions like `utxo_coin_from_iguana_info` to async versions.
         "enable" => {

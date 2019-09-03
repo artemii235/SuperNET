@@ -25,7 +25,6 @@
 
 #[macro_use] extern crate common;
 #[macro_use] extern crate fomat_macros;
-#[macro_use] extern crate futures03;
 #[macro_use] extern crate gstuff;
 #[macro_use] extern crate lazy_static;
 #[macro_use] extern crate serde_derive;
@@ -35,7 +34,7 @@
 use bigdecimal::BigDecimal;
 use common::{rpc_response, rpc_err_response, HyRes};
 use common::mm_ctx::{from_ctx, MmArc};
-use futures::{Future};
+use futures01::{Future};
 use gstuff::{slurp};
 use rpc::v1::types::{Bytes as BytesJson};
 use serde_json::{self as json, Value as Json};
@@ -46,6 +45,12 @@ use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
+
+// using custom copy of try_fus as futures crate was renamed to futures01
+macro_rules! try_fus {
+  ($e: expr) => {match $e {
+    Ok (ok) => ok,
+    Err (err) => {return Box::new (futures01::future::err (ERRL! ("{}", err)))}}}}
 
 #[doc(hidden)]
 pub mod coins_tests;
@@ -612,4 +617,13 @@ pub fn get_enabled_coins(ctx: MmArc) -> HyRes {
     rpc_response(200, json!({
         "result": enabled_coins
     }).to_string())
+}
+
+pub fn disable_coin(ctx: &MmArc, ticker: &str) -> Result<(), String> {
+    let coins_ctx = try_s!(CoinsContext::from_ctx(&ctx));
+    let mut coins = try_s!(coins_ctx.coins.lock());
+    match coins.remove(ticker) {
+        Some(_) => Ok(()),
+        None => ERR!("{} is disabled already", ticker)
+    }
 }
