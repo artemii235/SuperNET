@@ -33,10 +33,6 @@ use crate::mm2::lp_swap::{get_locked_amount, is_coin_swapping};
 /// Attempts to disables the coin
 pub fn disable_coin (ctx: MmArc, req: Json) -> HyRes {
     let ticker = try_h!(req["coin"].as_str().ok_or ("No 'coin' field")).to_owned();
-    // do not allow disable if there're active swaps with coin
-    // cancel all orders if base or rel == coin to disable
-    // stop tx_history loops if coin is disabled
-    // stop electrum connect loops on coin disable
     let _coin = match lp_coinfind (&ctx, &ticker) {
         Ok (Some (t)) => t,
         Ok (None) => return rpc_err_response (500, &fomat! ("No such coin: " (ticker))),
