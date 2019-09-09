@@ -374,7 +374,6 @@ fn test_search_for_swap_tx_spend_native_was_refunded() {
     use testcontainers::images::generic::{GenericImage, WaitFor};
     use testcontainers::clients::Cli;
     use testcontainers::{Docker, Image};
-    pretty_env_logger::try_init();
     let timeout = (now_ms() / 1000) + 120; // timeout if test takes more than 120 seconds to run
     let docker = Cli::default();
     let image = GenericImage::new("artempikulin/testblockchain")
@@ -392,9 +391,14 @@ fn test_search_for_swap_tx_spend_native_was_refunded() {
     Command::new("docker")
         .arg("cp")
         .arg(format!("{}:/node_0/MYCOIN.conf", node.id()))
-        .arg(conf_path)
+        .arg(&conf_path)
         .spawn()
         .expect("Failed to execute docker command");
+    loop {
+        if conf_path.exists() { break };
+        assert!(now_ms() / 1000 < timeout, "Test timed out");
+        thread::sleep(Duration::from_secs(1));
+    }
 
     let conf = json!({"asset":"MYCOIN"});
     let req = json!({"method":"enable"});
