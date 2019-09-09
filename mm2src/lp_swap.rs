@@ -58,15 +58,15 @@
 #![cfg_attr(not(feature = "native"), allow(dead_code))]
 
 use bigdecimal::BigDecimal;
-use futures03::executor::block_on;
 use rpc::v1::types::{Bytes as BytesJson, H160 as H160Json, H256 as H256Json, H264 as H264Json};
 use coins::{lp_coinfind, MmCoinEnum, TradeInfo, TransactionDetails, TransactionEnum};
 use common::{bits256, HyRes, rpc_response};
 use common::executor::Timer;
 use common::log::{TagParam};
 use common::mm_ctx::{from_ctx, MmArc};
-use futures::{Future};
-use futures03::future::Either;
+use futures01::Future;
+use futures::executor::block_on;
+use futures::future::Either;
 use gstuff::{now_float, now_ms, slurp};
 use http::Response;
 use primitives::hash::{H160, H264};
@@ -80,6 +80,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock, Weak};
 use std::thread;
 use std::time::{Duration, SystemTime};
+use uuid::Uuid;
 
 // NB: Using a macro instead of a function in order to preserve the line numbers in the log.
 macro_rules! send {
@@ -105,7 +106,7 @@ macro_rules! recv_ {
         let timeout = (BASIC_COMM_TIMEOUT + $timeout_sec) as f64;
         let timeoutᶠ = Timer::till (started + timeout);
         block_on (async move {
-            let r = match futures03::future::select (Box::pin (recv_f), timeoutᶠ) .await {
+            let r = match futures::future::select (Box::pin (recv_f), timeoutᶠ) .await {
                 Either::Left ((r, _)) => r,
                 Either::Right (_) => return ERR! ("timeout ({:.1} > {:.1})", now_float() - started, timeout)
             };
@@ -175,6 +176,10 @@ pub trait AtomicSwap: Send + Sync {
     fn locked_amount(&self) -> LockedAmount;
 
     fn uuid(&self) -> &str;
+
+    fn maker_coin(&self) -> &str;
+
+    fn taker_coin(&self) -> &str;
 }
 
 struct SwapsContext {
@@ -244,6 +249,24 @@ fn get_locked_amount_by_other_swaps(ctx: &MmArc, except_uuid: &str, coin: &str) 
     )
 }
 
+pub fn active_swaps_using_coin(ctx: &MmArc, coin: &str) -> Result<Vec<Uuid>, String> {
+    let swap_ctx = try_s!(SwapsContext::from_ctx(&ctx));
+    let swaps = try_s!(swap_ctx.running_swaps.lock());
+    let mut uuids = vec![];
+    for swap in swaps.iter() {
+        match swap.upgrade() {
+            Some(swap) => {
+                let swap = try_s!(swap.read());
+                if swap.maker_coin() == coin || swap.taker_coin() == coin {
+                    uuids.push(try_s!(swap.uuid().parse()))
+                }
+            },
+            None => (),
+        }
+    }
+    Ok(uuids)
+}
+
 /// Some coins are "slow" (block time is high - e.g. BTC average block time is ~10 minutes).
 /// https://bitinfocharts.com/comparison/bitcoin-confirmationtime.html
 /// We need to increase payment locktime accordingly when at least 1 side of swap uses "slow" coin.
@@ -255,38 +278,6 @@ fn lp_atomic_locktime(base: &str, rel: &str) -> u64 {
     } else {
         PAYMENT_LOCKTIME
     }
-}
-
-fn payment_confirmations(_maker_coin: &MmCoinEnum, _taker_coin: &MmCoinEnum) -> (u32, u32) {
-    /*
-    let mut maker_confirmations = SWAP_DEFAULT_NUM_CONFIRMS;
-    let mut taker_confirmations = SWAP_DEFAULT_NUM_CONFIRMS;
-    if maker_coin.ticker() == "BTC" {
-        maker_confirmations = 1;
-    }
-
-    if taker_coin.ticker() == "BTC" {
-        taker_confirmations = 1;
-    }
-
-    if maker_coin.is_asset_chain() {
-        maker_confirmations = 1;
-    }
-
-    if taker_coin.is_asset_chain() {
-        taker_confirmations = 1;
-    }
-    */
-
-    // TODO recognize why the BAY case is special, ask JL777
-    /*
-        if ( strcmp("BAY",swap->I.req.src) != 0 && strcmp("BAY",swap->I.req.dest) != 0 )
-    {
-        swap->I.bobconfirms *= !swap->I.bobistrusted;
-        swap->I.aliceconfirms *= !swap->I.aliceistrusted;
-    }
-    */
-    (1, 1)
 }
 
 fn dex_fee_rate(base: &str, rel: &str) -> BigDecimal {

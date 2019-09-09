@@ -59,8 +59,8 @@ pub struct MakerSwapData {
     lock_duration: u64,
     maker_amount: BigDecimal,
     taker_amount: BigDecimal,
-    maker_payment_confirmations: u32,
-    taker_payment_confirmations: u32,
+    maker_payment_confirmations: u64,
+    taker_payment_confirmations: u64,
     maker_payment_lock: u64,
     /// Allows to recognize one SWAP from the other in the logs. #274.
     uuid: String,
@@ -202,7 +202,6 @@ impl MakerSwap {
         };
 
         let lock_duration = lp_atomic_locktime(self.maker_coin.ticker(), self.taker_coin.ticker());
-        let (maker_payment_confirmations, taker_payment_confirmations) = payment_confirmations(&self.maker_coin, &self.taker_coin);
         let mut rng = rand::thread_rng();
         let secret: [u8; 32] = rng.gen();
         let started_at = now_ms() / 1000;
@@ -232,8 +231,8 @@ impl MakerSwap {
             lock_duration,
             maker_amount: self.maker_amount.clone(),
             taker_amount: self.taker_amount.clone(),
-            maker_payment_confirmations,
-            taker_payment_confirmations,
+            maker_payment_confirmations: self.maker_coin.required_confirmations(),
+            taker_payment_confirmations: self.taker_coin.required_confirmations(),
             maker_payment_lock: started_at + lock_duration * 2,
             my_persistent_pub: self.my_persistent_pub.clone().into(),
             uuid: self.uuid.clone(),
@@ -708,6 +707,10 @@ impl AtomicSwap for MakerSwap {
     fn uuid(&self) -> &str {
         &self.uuid
     }
+
+    fn maker_coin(&self) -> &str { self.maker_coin.ticker() }
+
+    fn taker_coin(&self) -> &str { self.taker_coin.ticker() }
 }
 
 pub enum MakerSwapCommand {
@@ -941,7 +944,7 @@ mod maker_swap_tests {
         static mut MAKER_REFUND_CALLED: bool = false;
         TestCoin::send_maker_refunds_payment.mock_safe(|_, _, _, _, _| {
             unsafe { MAKER_REFUND_CALLED = true };
-            MockResult::Return(Box::new(futures::future::ok(eth_tx_for_test().into())))
+            MockResult::Return(Box::new(futures01::future::ok(eth_tx_for_test().into())))
         });
         TestCoin::search_for_swap_tx_spend_my.mock_safe(|_, _, _, _, _, _| MockResult::Return(Ok(None)));
         let maker_coin = MmCoinEnum::Test(TestCoin {});
@@ -971,7 +974,7 @@ mod maker_swap_tests {
 
         TestCoin::send_maker_refunds_payment.mock_safe(|_, _, _, _, _| {
             unsafe { MAKER_REFUND_CALLED = true };
-            MockResult::Return(Box::new(futures::future::ok(eth_tx_for_test().into())))
+            MockResult::Return(Box::new(futures01::future::ok(eth_tx_for_test().into())))
         });
 
         TestCoin::search_for_swap_tx_spend_my.mock_safe(|_, _, _, _, _, _| MockResult::Return(Ok(None)));

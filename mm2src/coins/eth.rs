@@ -21,18 +21,19 @@
 use bigdecimal::BigDecimal;
 use bitcrypto::sha256;
 use common::{rpc_response, slurp_url, HyRes};
+use common::custom_futures::TimedAsyncMutex;
 use common::executor::Timer;
-use common::mm_ctx::MmArc;
+use common::mm_ctx::{MmArc, MmWeak};
 use secp256k1::PublicKey;
 use ethabi::{Contract, Token};
 use ethcore_transaction::{ Action, Transaction as UnSignedEthTx, UnverifiedTransaction};
 use ethereum_types::{Address, U256, H160};
 use ethkey::{ KeyPair, Public, public_to_address };
-use futures::Future;
-use futures::future::{Either, join_all, loop_fn, Loop};
-use futures03::compat::Future01CompatExt;
-use futures03::future::{FutureExt, TryFutureExt};
-use futures03::lock::{Mutex as AsyncMutex};
+use futures01::Future;
+use futures01::future::{Either, join_all, loop_fn, Loop};
+use futures::compat::Future01CompatExt;
+use futures::future::{FutureExt, TryFutureExt};
+use futures::try_join;
 use futures_timer::Delay;
 use gstuff::{now_ms, slurp};
 use http::StatusCode;
@@ -50,13 +51,14 @@ use std::ops::Deref;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrderding};
 use std::thread;
 use std::time::Duration;
 use web3::{ self, Web3 };
 use web3::types::{Action as TraceAction, BlockId, BlockNumber, Bytes, CallRequest, FilterBuilder, Log, Transaction as Web3Transaction, TransactionId, H256, Trace, TraceFilterBuilder};
 
-use super::{FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeInfo, TransactionFut,
-            TransactionEnum, Transaction, TransactionDetails, WithdrawFee, WithdrawRequest};
+use super::{CoinsContext, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeInfo,
+            TransactionFut, TransactionEnum, Transaction, TransactionDetails, WithdrawFee, WithdrawRequest};
 
 pub use ethcore_transaction::SignedTransaction as SignedEthTx;
 pub use rlp;
@@ -129,6 +131,10 @@ pub struct EthCoinImpl {  // pImpl idiom.
     decimals: u8,
     gas_station_url: Option<String>,
     history_sync_state: Mutex<HistorySyncState>,
+    required_confirmations: AtomicU64,
+    /// Coin needs access to the context in order to reuse the logging and shutdown facilities.
+    /// Using a weak reference by default in order to avoid circular references and leaks.
+    ctx: MmWeak,
 }
 
 #[derive(Clone, Debug)]
@@ -342,7 +348,7 @@ impl EthCoinImpl {
     }
 }
 
-async fn withdraw_impl(coin: EthCoin, req: WithdrawRequest) -> Result<TransactionDetails, String> {
+async fn withdraw_impl(ctx: MmArc, coin: EthCoin, req: WithdrawRequest) -> Result<TransactionDetails, String> {
     let to_addr = try_s!(addr_from_str(&req.to));
     let my_balance = try_s!(coin.my_balance().compat().await);
     let mut wei_amount = if req.max {
@@ -390,7 +396,10 @@ async fn withdraw_impl(coin: EthCoin, req: WithdrawRequest) -> Result<Transactio
         eth_value -= total_fee;
         wei_amount -= total_fee;
     };
-    let _nonce_lock = NONCE_LOCK.lock().await;
+    let _nonce_lock = try_s!(NONCE_LOCK.lock(|_start, _now| {
+        if ctx.is_stopping() {return ERR!("MM is stopping, aborting withdraw_impl in NONCE_LOCK")}
+        Ok(0.5)
+    }).await);
     let nonce = try_s!(get_addr_nonce(coin.my_address, &coin.web3_instances).compat().await);
     let tx = UnSignedEthTx { nonce, value: eth_value, action: Action::Call(call_addr), data, gas, gas_price };
 
@@ -693,7 +702,7 @@ impl MarketCoinOps for EthCoin {
     fn wait_for_confirmations(
         &self,
         tx: &[u8],
-        confirmations: u32,
+        confirmations: u64,
         wait_until: u64,
     ) -> Result<(), String> {
         let unsigned: UnverifiedTransaction = try_s!(rlp::decode(tx));
@@ -817,19 +826,28 @@ pub fn signed_eth_tx_from_bytes(bytes: &[u8]) -> Result<SignedEthTx, String> {
 // It's highly likely that we won't experience any issues with it as we won't need to send "a lot" of transactions concurrently.
 // For ETH it makes even more sense because different ERC20 tokens can be running on same ETH blockchain.
 // So we would need to handle shared locks anyway.
-lazy_static! {static ref NONCE_LOCK: AsyncMutex<()> = AsyncMutex::new(());}
+lazy_static! {static ref NONCE_LOCK: TimedAsyncMutex<()> = TimedAsyncMutex::new(());}
 
 type EthTxFut = Box<dyn Future<Item=SignedEthTx, Error=String> + Send + 'static>;
 
 async fn sign_and_send_transaction_impl(
+    ctx: MmArc,
     coin: EthCoin,
     value: U256,
     action: Action,
     data: Vec<u8>,
     gas: U256,
 ) -> Result<SignedEthTx, String> {
-    let _nonce_lock = NONCE_LOCK.lock().await;
+    let mut status = ctx.log.status_handle();
+    macro_rules! tags {() => {&[&"sign-and-send"]}};
+    let _nonce_lock = NONCE_LOCK.lock(|start, now| {
+        if ctx.is_stopping() {return ERR!("MM is stopping, aborting sign_and_send_transaction_impl in NONCE_LOCK")}
+        if start < now {status.status(tags!(), "Waiting for NONCE_LOCK…")}
+        Ok(0.5)
+    }).await;
+    status.status(tags!(), "get_addr_nonce…");
     let nonce = try_s!(get_addr_nonce(coin.my_address, &coin.web3_instances).compat().await);
+    status.status(tags!(), "get_gas_price…");
     let gas_price = try_s!(coin.get_gas_price().compat().await);
     let tx = UnSignedEthTx {
         nonce,
@@ -841,7 +859,9 @@ async fn sign_and_send_transaction_impl(
     };
     let signed = tx.sign(coin.key_pair.secret(), None);
     let bytes = web3::types::Bytes(rlp::encode(&signed).to_vec());
+    status.status(tags!(), "send_raw_transaction…");
     try_s!(coin.web3.eth().send_raw_transaction(bytes).map_err(|e| ERRL!("{}", e)).compat().await);
+    status.status(tags!(), "get_addr_nonce…");
     loop {
         // Check every second till ETH nodes recognize that nonce is increased
         // Parity has reliable "nextNonce" method that always returns correct nonce for address
@@ -870,7 +890,8 @@ impl EthCoin {
         data: Vec<u8>,
         gas: U256,
     ) -> EthTxFut {
-        let fut = sign_and_send_transaction_impl(self.clone(), value, action, data, gas);
+        let ctx = try_fus!(MmArc::from_weak(&self.ctx).ok_or("!ctx"));
+        let fut = sign_and_send_transaction_impl(ctx, self.clone(), value, action, data, gas);
         Box::new(fut.boxed().compat())
     }
 
@@ -955,7 +976,7 @@ impl EthCoin {
                 let state_f = self.payment_status(decoded[0].clone());
                 Box::new(state_f.and_then(move |state| -> EthTxFut {
                     if state != PAYMENT_STATE_SENT.into() {
-                        return Box::new(futures::future::err(ERRL!("Payment {:?} state is not PAYMENT_STATE_SENT, got {}", payment, state)));
+                        return Box::new(futures01::future::err(ERRL!("Payment {:?} state is not PAYMENT_STATE_SENT, got {}", payment, state)));
                     }
 
                     let value = payment.value;
@@ -977,7 +998,7 @@ impl EthCoin {
 
                 Box::new(state_f.and_then(move |state| -> EthTxFut {
                     if state != PAYMENT_STATE_SENT.into() {
-                        return Box::new(futures::future::err(ERRL!("Payment {:?} state is not PAYMENT_STATE_SENT, got {}", payment, state)));
+                        return Box::new(futures01::future::err(ERRL!("Payment {:?} state is not PAYMENT_STATE_SENT, got {}", payment, state)));
                     }
                     let data = try_fus!(spend_func.encode_input(&[
                         decoded[0].clone(),
@@ -1008,7 +1029,7 @@ impl EthCoin {
                 let state_f = self.payment_status(decoded[0].clone());
                 Box::new(state_f.and_then(move |state| -> EthTxFut {
                     if state != PAYMENT_STATE_SENT.into() {
-                        return Box::new(futures::future::err(ERRL!("Payment {:?} state is not PAYMENT_STATE_SENT, got {}", payment, state)));
+                        return Box::new(futures01::future::err(ERRL!("Payment {:?} state is not PAYMENT_STATE_SENT, got {}", payment, state)));
                     }
 
                     let value = payment.value;
@@ -1029,7 +1050,7 @@ impl EthCoin {
                 let state_f = self.payment_status(decoded[0].clone());
                 Box::new(state_f.and_then(move |state| -> EthTxFut {
                     if state != PAYMENT_STATE_SENT.into() {
-                        return Box::new(futures::future::err(ERRL!("Payment {:?} state is not PAYMENT_STATE_SENT, got {}", payment, state)));
+                        return Box::new(futures01::future::err(ERRL!("Payment {:?} state is not PAYMENT_STATE_SENT, got {}", payment, state)));
                     }
 
                     let data = try_fus!(refund_func.encode_input(&[
@@ -1236,6 +1257,15 @@ impl EthCoin {
         let delta = U256::from(10000);
 
         loop {
+            if ctx.is_stopping() { break };
+            {
+                let coins_ctx = unwrap!(CoinsContext::from_ctx(&ctx));
+                if !unwrap!(coins_ctx.coins.lock()).contains_key(&self.ticker) {
+                    ctx.log.log("", &[&"tx_history", &self.ticker], "Loop stopped");
+                    break
+                };
+            }
+
             let current_block = match self.web3.eth().block_number().wait() {
                 Ok(block) => block,
                 Err(e) => {
@@ -1463,6 +1493,15 @@ impl EthCoin {
         let delta = U256::from(1000);
 
         loop {
+            if ctx.is_stopping() { break };
+            {
+                let coins_ctx = unwrap!(CoinsContext::from_ctx(&ctx));
+                if !unwrap!(coins_ctx.coins.lock()).contains_key(&self.ticker) {
+                    ctx.log.log("", &[&"tx_history", &self.ticker], "Loop stopped");
+                    break;
+                };
+            }
+
             let current_block = match self.web3.eth().block_number().wait() {
                 Ok(block) => block,
                 Err(e) => {
@@ -1717,14 +1756,14 @@ impl MmCoin for EthCoin {
             EthCoinType::Eth => {
                 let required = required + BigDecimal::from_str("0.0002").unwrap();
                 if balance < &required {
-                    Box::new(futures::future::err(ERRL!("{} balance {} too low, required {}", ticker, balance, required)))
+                    Box::new(futures01::future::err(ERRL!("{} balance {} too low, required {}", ticker, balance, required)))
                 } else {
-                    Box::new(futures::future::ok(()))
+                    Box::new(futures01::future::ok(()))
                 }
             },
             EthCoinType::Erc20(_) => {
                 if balance < &required {
-                    Box::new(futures::future::err(ERRL!("{} balance {} too low, required {}", ticker, balance, required)))
+                    Box::new(futures01::future::err(ERRL!("{} balance {} too low, required {}", ticker, balance, required)))
                 } else {
                     // need to check ETH balance too, address should have some to cover gas fees
                     Box::new(self.eth_balance().and_then(move |eth_balance| {
@@ -1752,11 +1791,19 @@ impl MmCoin for EthCoin {
     }
 
     fn withdraw(&self, req: WithdrawRequest) -> Box<dyn Future<Item=TransactionDetails, Error=String> + Send> {
-        Box::new(withdraw_impl(self.clone(), req).boxed().compat())
+        let ctx = try_fus!(MmArc::from_weak(&self.ctx).ok_or("!ctx"));
+        Box::new(withdraw_impl(ctx, self.clone(), req).boxed().compat())
     }
 
     fn decimals(&self) -> u8 {
         self.decimals
+    }
+
+    fn process_history_loop(&self, ctx: MmArc) {
+        match self.coin_type {
+            EthCoinType::Eth => self.process_eth_history(&ctx),
+            EthCoinType::Erc20(token) => self.process_erc20_history(token, &ctx),
+        }
     }
 
     fn tx_details_by_hash(&self, hash: &[u8]) -> Result<TransactionDetails, String> {
@@ -1819,13 +1866,6 @@ impl MmCoin for EthCoin {
         }
     }
 
-    fn process_history_loop(&self, ctx: MmArc) {
-        match self.coin_type {
-            EthCoinType::Eth => self.process_eth_history(&ctx),
-            EthCoinType::Erc20(token) => self.process_erc20_history(token, &ctx),
-        }
-    }
-
     fn history_sync_status(&self) -> HistorySyncState {
         unwrap!(self.history_sync_state.lock()).clone()
     }
@@ -1841,6 +1881,14 @@ impl MmCoin for EthCoin {
                 }
             }).to_string())
         }))
+    }
+
+    fn required_confirmations(&self) -> u64 {
+        self.required_confirmations.load(AtomicOrderding::Relaxed)
+    }
+
+    fn set_required_confirmations(&self, confirmations: u64) {
+        self.required_confirmations.store(confirmations, AtomicOrderding::Relaxed);
     }
 }
 
@@ -1898,15 +1946,6 @@ impl Transaction for SignedEthTx {
     }
 
     fn tx_hash(&self) -> BytesJson { self.hash.to_vec().into() }
-
-    fn amount(&self, decimals: u8) -> Result<f64, String> {
-        Ok(try_s!(display_u256_with_decimal_point(self.value, decimals).parse()))
-    }
-
-    fn fee_details(&self) -> Result<Json, String> {
-        let fee = try_s!(EthTxFeeDetails::new(self.gas, self.gas_price, "ETH"));
-        Ok(try_s!(json::to_value(fee)))
-    }
 }
 
 fn signed_tx_from_web3_tx(transaction: Web3Transaction) -> Result<SignedEthTx, String> {
@@ -2006,6 +2045,7 @@ fn addr_from_str(addr_str: &str) -> Result<Address, String> {
 }
 
 pub fn eth_coin_from_conf_and_request(
+    ctx: &MmArc,
     ticker: &str,
     conf: &Json,
     req: &Json,
@@ -2080,6 +2120,8 @@ pub fn eth_coin_from_conf_and_request(
         web3,
         web3_instances,
         history_sync_state: Mutex::new(initial_history_state),
+        ctx: ctx.weak(),
+        required_confirmations: conf["required_confirmations"].as_u64().unwrap_or(1).into(),
     };
     Ok(EthCoin(Arc::new(coin)))
 }

@@ -25,7 +25,6 @@
 
 #[macro_use] extern crate common;
 #[macro_use] extern crate fomat_macros;
-#[macro_use] extern crate futures03;
 #[macro_use] extern crate gstuff;
 #[macro_use] extern crate lazy_static;
 #[macro_use] extern crate serde_derive;
@@ -35,8 +34,9 @@
 use bigdecimal::BigDecimal;
 use common::{rpc_response, rpc_err_response, HyRes};
 use common::mm_ctx::{from_ctx, MmArc};
-use futures::{Future};
+use futures01::{Future};
 use gstuff::{slurp};
+use http::Response;
 use rpc::v1::types::{Bytes as BytesJson};
 use serde_json::{self as json, Value as Json};
 use std::borrow::Cow;
@@ -46,6 +46,12 @@ use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
+
+// using custom copy of try_fus as futures crate was renamed to futures01
+macro_rules! try_fus {
+  ($e: expr) => {match $e {
+    Ok (ok) => ok,
+    Err (err) => {return Box::new (futures01::future::err (ERRL! ("{}", err)))}}}}
 
 #[doc(hidden)]
 pub mod coins_tests;
@@ -64,10 +70,6 @@ pub trait Transaction: Debug + 'static {
     fn extract_secret(&self) -> Result<Vec<u8>, String>;
     /// Serializable representation of tx hash for displaying purpose
     fn tx_hash(&self) -> BytesJson;
-    /// Transaction amount
-    fn amount(&self, decimals: u8) -> Result<f64, String>;
-    /// Fee details
-    fn fee_details(&self) -> Result<Json, String>;
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -214,7 +216,7 @@ pub trait MarketCoinOps {
     fn wait_for_confirmations(
         &self,
         tx: &[u8],
-        confirmations: u32,
+        confirmations: u64,
         wait_until: u64,
     ) -> Result<(), String>;
 
@@ -370,6 +372,12 @@ pub trait MmCoin: SwapOps + MarketCoinOps + Debug + 'static {
 
     /// Get fee to be paid per 1 swap transaction
     fn get_trade_fee(&self) -> HyRes;
+
+    /// required transaction confirmations number to ensure double-spend safety
+    fn required_confirmations(&self) -> u64;
+
+    /// set required transaction confirmations number
+    fn set_required_confirmations(&self, confirmations: u64);
 }
 
 #[derive(Clone, Debug)]
@@ -453,7 +461,7 @@ pub fn lp_coininit (ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoinEnum,
     let coin: MmCoinEnum = if coins_en["etomic"].is_null() {
         try_s! (utxo_coin_from_conf_and_request (ticker, coins_en, req, secret)) .into()
     } else {
-        try_s! (eth_coin_from_conf_and_request (ticker, coins_en, req, secret)) .into()
+        try_s! (eth_coin_from_conf_and_request (ctx, ticker, coins_en, req, secret)) .into()
     };
 
     let block_count = try_s!(coin.current_block().wait());
@@ -612,4 +620,36 @@ pub fn get_enabled_coins(ctx: MmArc) -> HyRes {
     rpc_response(200, json!({
         "result": enabled_coins
     }).to_string())
+}
+
+pub fn disable_coin(ctx: &MmArc, ticker: &str) -> Result<(), String> {
+    let coins_ctx = try_s!(CoinsContext::from_ctx(&ctx));
+    let mut coins = try_s!(coins_ctx.coins.lock());
+    match coins.remove(ticker) {
+        Some(_) => Ok(()),
+        None => ERR!("{} is disabled already", ticker)
+    }
+}
+
+#[derive(Deserialize)]
+pub struct ConfirmationsReq {
+    coin: String,
+    confirmations: u64,
+}
+
+pub async fn set_required_confirmations(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
+    let req: ConfirmationsReq = try_s!(json::from_value(req));
+    let coin = match lp_coinfind(&ctx, &req.coin) {
+        Ok(Some(t)) => t,
+        Ok(None) => return ERR!("No such coin {}", req.coin),
+        Err(err) => return ERR!("!lp_coinfind ({}): {}", req.coin, err),
+    };
+    coin.set_required_confirmations(req.confirmations);
+    let res = try_s!(json::to_vec(&json!({
+        "result": {
+            "coin": req.coin,
+            "confirmations": req.confirmations,
+        }
+    })));
+    Ok(try_s!(Response::builder().body(res)))
 }
