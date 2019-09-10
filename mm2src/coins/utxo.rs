@@ -69,7 +69,7 @@ use super::{CoinsContext, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmC
 use crate::utxo::rpc_clients::{NativeClientImpl, UtxoRpcClientOps, ElectrumRpcRequest};
 
 #[cfg(test)]
-mod utxo_tests;
+pub mod utxo_tests;
 
 #[cfg(windows)]
 #[cfg(feature = "native")]

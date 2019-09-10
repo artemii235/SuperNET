@@ -369,13 +369,33 @@ fn zcash_params_path() -> PathBuf {
     }
 }
 
-#[test]
-fn test_search_for_swap_tx_spend_native_was_refunded() {
-    use testcontainers::images::generic::{GenericImage, WaitFor};
-    use testcontainers::clients::Cli;
-    use testcontainers::{Docker, Image};
-    let timeout = (now_ms() / 1000) + 120; // timeout if test takes more than 120 seconds to run
-    let docker = Cli::default();
+use testcontainers::clients::Cli;
+use testcontainers::images::generic::{GenericImage, WaitFor};
+use testcontainers::{Container, Docker, Image};
+
+pub struct UtxoDockerNode<'a> {
+    container: Container<'a, Cli, GenericImage>
+}
+
+impl<'a> UtxoDockerNode<'a> {
+    pub fn wait_ready(&self) {
+        let conf = json!({"asset":"MYCOIN"});
+        let req = json!({"method":"enable"});
+        let priv_key = unwrap!(hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f"));
+        let coin = unwrap!(utxo_coin_from_conf_and_request("MYCOIN", &conf, &req, &priv_key));
+        let timeout = now_ms() + 20000;
+        loop {
+            match coin.rpc_client.get_block_count().wait() {
+                Ok(n) => if n > 1 { break },
+                Err(e) => log!([e]),
+            }
+            assert!(now_ms() < timeout, "Test timed out");
+            thread::sleep(Duration::from_secs(1));
+        }
+    }
+}
+
+pub fn utxo_docker_node(docker: &Cli) -> UtxoDockerNode {
     let image = GenericImage::new("artempikulin/testblockchain")
         .with_args(vec!["-v".into(), format!("{}:/root/.zcash-params", zcash_params_path().display()), "-p".into(), "127.0.0.1:7000:7000".into()])
         .with_env_var("CLIENTS", "2")
@@ -384,35 +404,34 @@ fn test_search_for_swap_tx_spend_native_was_refunded() {
         .with_env_var("TEST_WIF", "UqqW7f766rADem9heD8vSBvvrdfJb3zg5r8du9rJxPtccjWf7RG9")
         .with_env_var("TEST_PUBKEY", "021607076d7a2cb148d542fb9644c04ffc22d2cca752f80755a0402a24c567b17a")
         .with_wait_for(WaitFor::message_on_stdout("config is ready"));
-    let node = docker.run(image);
+    let container = docker.run(image);
     let mut conf_path = coin_daemon_data_dir("MYCOIN", true);
     unwrap!(std::fs::create_dir_all(&conf_path));
     conf_path.push("MYCOIN.conf");
     Command::new("docker")
         .arg("cp")
-        .arg(format!("{}:/node_0/MYCOIN.conf", node.id()))
+        .arg(format!("{}:/node_0/MYCOIN.conf", container.id()))
         .arg(&conf_path)
         .spawn()
         .expect("Failed to execute docker command");
+    let timeout = now_ms() + 3000;
     loop {
         if conf_path.exists() { break };
-        assert!(now_ms() / 1000 < timeout, "Test timed out");
-        thread::sleep(Duration::from_secs(1));
+        assert!(now_ms() < timeout, "Test timed out");
     }
+    UtxoDockerNode {
+        container
+    }
+}
 
+#[test]
+fn test_search_for_swap_tx_spend_native_was_refunded() {
+    let timeout = (now_ms() / 1000) + 120; // timeout if test takes more than 120 seconds to run
     let conf = json!({"asset":"MYCOIN"});
     let req = json!({"method":"enable"});
     let priv_key = unwrap!(hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f"));
     let coin = unwrap!(utxo_coin_from_conf_and_request("MYCOIN", &conf, &req, &priv_key));
     if let UtxoRpcClientEnum::Native(client) = &coin.rpc_client {
-        loop {
-            match coin.rpc_client.get_block_count().wait() {
-                Ok(n) => if n > 1 { break },
-                Err(_) => (),
-            }
-            assert!(now_ms() / 1000 < timeout, "Test timed out");
-            thread::sleep(Duration::from_secs(1));
-        }
         log!([client.import_address("R9o9xTocqr6CeEDGDH6mEYpwLoMz6jNjMW", "R9o9xTocqr6CeEDGDH6mEYpwLoMz6jNjMW", false).wait().unwrap()]);
         let hash = client.send_to_address("R9o9xTocqr6CeEDGDH6mEYpwLoMz6jNjMW", &1000.into()).wait().unwrap();
         let tx_bytes = client.get_transaction_bytes(hash).wait().unwrap();

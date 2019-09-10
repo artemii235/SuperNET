@@ -22,6 +22,43 @@
 #![feature(non_ascii_idents)]
 #![feature(async_await, async_closure)]
 #![feature(hash_raw_entry)]
+#![feature(custom_test_frameworks)]
+#![feature(test)]
+#![test_runner(my_runner)]
+#[cfg(test)]
+extern crate test;
+
+#[cfg(test)]
+// AP: custom test runner is intended to initialize the required environment (e.g. coin daemons in the docker containers)
+// and then gracefully clear it by dropping the RAII docker container handlers
+// I've tried to use static for such singleton initialization but it turned out that despite
+// rustc allows to use Drop as static the drop fn won't ever be called
+// NB: https://github.com/rust-lang/rfcs/issues/1111
+fn my_runner(tests: &[&test::TestDescAndFn]) {
+    use testcontainers::clients::Cli;
+    use utxo::utxo_tests::utxo_docker_node;
+    let docker = Cli::default();
+    let utxo_node = utxo_docker_node(&docker);
+    utxo_node.wait_ready();
+
+    let owned_tests = tests
+        .iter()
+        .map(|t| match t.testfn {
+            test::StaticTestFn(f) => test::TestDescAndFn {
+                testfn: test::StaticTestFn(f),
+                desc: t.desc.clone(),
+            },
+            test::StaticBenchFn(f) => test::TestDescAndFn {
+                testfn: test::StaticBenchFn(f),
+                desc: t.desc.clone(),
+            },
+            _ => panic!("non-static tests passed to lp_coins test runner"),
+        })
+        .collect();
+
+    let args: Vec<String> = std::env::args().collect();
+    test::test_main(&args, owned_tests, test::Options::new());
+}
 
 #[macro_use] extern crate common;
 #[macro_use] extern crate fomat_macros;
