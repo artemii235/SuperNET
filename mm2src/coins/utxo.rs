@@ -284,6 +284,14 @@ impl UtxoCoinImpl {
             None => Ok(None),
         }
     }
+
+    pub fn my_public_key(&self) -> &Public {
+        self.key_pair.public()
+    }
+
+    pub fn rpc_client(&self) -> &UtxoRpcClientEnum {
+        &self.rpc_client
+    }
 }
 
 fn payment_script(
@@ -1641,6 +1649,20 @@ impl MmCoin for UtxoCoin {
 
     fn set_required_confirmations(&self, confirmations: u64) {
         self.required_confirmations.store(confirmations, AtomicOrderding::Relaxed);
+    }
+}
+
+#[cfg(feature = "native")]
+// https://github.com/KomodoPlatform/komodo/blob/master/zcutil/fetch-params.sh#L5
+// https://github.com/KomodoPlatform/komodo/blob/master/zcutil/fetch-params.bat#L4
+pub fn zcash_params_path() -> PathBuf {
+    if cfg! (windows) {
+        // >= Vista: c:\Users\$username\AppData\Roaming
+        get_special_folder_path().join("ZcashParams")
+    } else if cfg! (target_os = "macos") {
+        unwrap!(home_dir()).join("Library").join("Application Support").join("ZcashParams")
+    } else {
+        unwrap!(home_dir()).join(".zcash-params")
     }
 }
 

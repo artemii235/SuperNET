@@ -15,7 +15,7 @@ default-run = "mm2"
 
 [features]
 native = [
-  "hyper", "tokio-core", "dirs",
+  "hyper", "tokio-core", "dirs", "docker_tests",
   "common/native", "peers/native", "coins/native", # "portfolio/native"
 ]
 
@@ -58,6 +58,7 @@ crc = "1.8"
 crc32fast = { version = "1.2", features = ["std", "nightly"] }
 crossbeam = "0.6"
 dirs = { version = "1", optional = true }
+docker_tests = { path = "mm2src/docker_tests", optional = true }
 enum-primitive-derive = "0.1"
 fomat-macros = "0.2"
 futures01 = { version = "0.1", package = "futures" }
@@ -102,7 +103,7 @@ mocktopus = "0.7.0"
 
 [workspace]
 members = [
-  "mm2src/coins"
+  "mm2src/coins",
 ]
 
 # The backtrace disables build.define("HAVE_DL_ITERATE_PHDR", "1"); for android which results in "unknown" function

@@ -21,7 +21,7 @@ use std::env::{self, var};
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
-use super::{lp_init, lp_main, lp_ports};
+use super::{lp_main};
 
 // TODO: Consider and/or try moving the integration tests into separate Rust files.
 // "Tests in your src files should be unit tests, and tests in tests/ should be integration-style tests."
