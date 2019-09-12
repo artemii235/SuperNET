@@ -12,7 +12,7 @@
 #[cfg(test)]
 mod docker_tests {
     use coins::{FoundSwapTxSpend, MarketCoinOps, SwapOps};
-    use coins::utxo::{coin_daemon_data_dir, utxo_coin_from_conf_and_request, zcash_params_path, UtxoCoin};
+    use coins::utxo::{coin_daemon_data_dir, dhash160, utxo_coin_from_conf_and_request, zcash_params_path, UtxoCoin};
     use coins::utxo::rpc_clients::{UtxoRpcClientEnum, UtxoRpcClientOps};
     use futures01::Future;
     use gstuff::now_ms;
@@ -160,6 +160,7 @@ mod docker_tests {
         }
     }
 
+    // generate random privkey, create a coin and fill it's address with 1000 coins
     fn generate_coin_with_random_privkey() -> UtxoCoin {
         let timeout = (now_ms() / 1000) + 120; // timeout if test takes more than 120 seconds to run
         let conf = json!({"asset":"MYCOIN"});
@@ -216,5 +217,40 @@ mod docker_tests {
             0,
         )));
         assert_eq!(FoundSwapTxSpend::Refunded(refund_tx), found);
+    }
+
+    #[test]
+    fn test_search_for_swap_tx_spend_native_was_spent() {
+        let timeout = (now_ms() / 1000) + 120; // timeout if test takes more than 120 seconds to run
+        let coin = generate_coin_with_random_privkey();
+        let secret = [0; 32];
+
+        let time_lock = (now_ms() / 1000) as u32 - 3600;
+        let tx = coin.send_taker_payment(
+            time_lock,
+            &*coin.my_public_key(),
+            &*dhash160(&secret),
+            1.into(),
+        ).wait().unwrap();
+
+        unwrap!(coin.wait_for_confirmations(&tx.tx_hex(), 1, timeout));
+
+        let spend_tx = coin.send_maker_spends_taker_payment(
+            &tx.tx_hex(),
+            time_lock,
+            &*coin.my_public_key(),
+            &secret,
+        ).wait().unwrap();
+
+        unwrap!(coin.wait_for_confirmations(&spend_tx.tx_hex(), 1, timeout));
+
+        let found = unwrap!(unwrap!(coin.search_for_swap_tx_spend_my(
+            time_lock,
+            &*coin.my_public_key(),
+            &*dhash160(&secret),
+            &tx.tx_hex(),
+            0,
+        )));
+        assert_eq!(FoundSwapTxSpend::Spent(spend_tx), found);
     }
 }
