@@ -21,7 +21,7 @@ use std::env::{self, var};
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
-use super::{lp_main};
+use super::lp_main;
 
 // TODO: Consider and/or try moving the integration tests into separate Rust files.
 // "Tests in your src files should be unit tests, and tests in tests/ should be integration-style tests."
@@ -192,8 +192,10 @@ fn local_start_impl (folder: PathBuf, log_path: PathBuf, mut conf: Json) {
 #[cfg(not(feature = "native"))]
 fn wasm_start_impl (ctx: MmArc) {
     let netid = ctx.conf["netid"].as_u64().unwrap_or (0) as u16;
-    let (_, pubport, _) = unwrap! (lp_ports (netid));
-    unwrap! (lp_init (pubport, ctx));
+    let (_, pubport, _) = unwrap! (super::lp_ports (netid));
+    common::executor::spawn (async move {
+        unwrap! (super::lp_init (pubport, ctx) .await);
+    })
 }
 
 #[cfg(feature = "native")]
