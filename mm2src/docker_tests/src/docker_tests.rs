@@ -5,6 +5,7 @@
 #[cfg(test)] use docker_tests::docker_tests_runner;
 #[cfg(test)] #[macro_use] extern crate common;
 #[cfg(test)] #[macro_use] extern crate fomat_macros;
+#[cfg(test)] #[macro_use] extern crate lazy_static;
 #[cfg(test)] #[macro_use] extern crate serde_json;
 #[cfg(test)] extern crate test;
 #[cfg(test)] #[macro_use] extern crate unwrap;
@@ -19,6 +20,7 @@ mod docker_tests {
     use secp256k1::SecretKey;
     use std::io::{BufRead, BufReader};
     use std::process::Command;
+    use std::sync::Mutex;
     use std::thread;
     use std::time::Duration;
     use test::{list_tests_console, Options, parse_opts, run_tests_console, StaticTestFn, StaticBenchFn, TestDescAndFn};
@@ -160,17 +162,26 @@ mod docker_tests {
         }
     }
 
+    lazy_static! {
+        static ref COINS_LOCK: Mutex<()> = Mutex::new(());
+    }
+
     // generate random privkey, create a coin and fill it's address with 1000 coins
     fn generate_coin_with_random_privkey() -> UtxoCoin {
+        // prevent concurrent initialization since daemon RPC returns errors if send_to_address
+        // is called concurrently (insufficient funds) and it also may return other errors
+        // if previous transaction is not confirmed yet
+        let _lock = unwrap!(COINS_LOCK.lock());
         let timeout = (now_ms() / 1000) + 120; // timeout if test takes more than 120 seconds to run
         let conf = json!({"asset":"MYCOIN"});
         let req = json!({"method":"enable"});
         let priv_key = SecretKey::random(&mut rand::thread_rng());
         let coin = unwrap!(utxo_coin_from_conf_and_request("MYCOIN", &conf, &req, &priv_key.serialize()));
         if let UtxoRpcClientEnum::Native(client) = &coin.rpc_client() {
-            log!([client.import_address(&coin.my_address(), &coin.my_address(), false).wait().unwrap()]);
+            unwrap!(client.import_address(&coin.my_address(), &coin.my_address(), false).wait());
             let hash = client.send_to_address(&coin.my_address(), &1000.into()).wait().unwrap();
             let tx_bytes = client.get_transaction_bytes(hash).wait().unwrap();
+            unwrap!(coin.wait_for_confirmations(&tx_bytes, 1, timeout, 1));
             log!({ "{:02x}", tx_bytes });
             loop {
                 let unspents = client.list_unspent(0, std::i32::MAX, vec![coin.my_address().into()]).wait().unwrap();
@@ -198,7 +209,7 @@ mod docker_tests {
             1.into(),
         ).wait().unwrap();
 
-        unwrap!(coin.wait_for_confirmations(&tx.tx_hex(), 1, timeout));
+        unwrap!(coin.wait_for_confirmations(&tx.tx_hex(), 1, timeout, 1));
 
         let refund_tx = coin.send_taker_refunds_payment(
             &tx.tx_hex(),
@@ -207,7 +218,7 @@ mod docker_tests {
             &[0; 20],
         ).wait().unwrap();
 
-        unwrap!(coin.wait_for_confirmations(&refund_tx.tx_hex(), 1, timeout));
+        unwrap!(coin.wait_for_confirmations(&refund_tx.tx_hex(), 1, timeout, 1));
 
         let found = unwrap!(unwrap!(coin.search_for_swap_tx_spend_my(
             time_lock,
@@ -233,7 +244,7 @@ mod docker_tests {
             1.into(),
         ).wait().unwrap();
 
-        unwrap!(coin.wait_for_confirmations(&tx.tx_hex(), 1, timeout));
+        unwrap!(coin.wait_for_confirmations(&tx.tx_hex(), 1, timeout, 1));
 
         let spend_tx = coin.send_maker_spends_taker_payment(
             &tx.tx_hex(),
@@ -242,7 +253,7 @@ mod docker_tests {
             &secret,
         ).wait().unwrap();
 
-        unwrap!(coin.wait_for_confirmations(&spend_tx.tx_hex(), 1, timeout));
+        unwrap!(coin.wait_for_confirmations(&spend_tx.tx_hex(), 1, timeout, 1));
 
         let found = unwrap!(unwrap!(coin.search_for_swap_tx_spend_my(
             time_lock,

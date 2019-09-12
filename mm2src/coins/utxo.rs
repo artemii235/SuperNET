@@ -1260,12 +1260,14 @@ impl MarketCoinOps for UtxoCoin {
         tx: &[u8],
         confirmations: u64,
         wait_until: u64,
+        check_every: u64,
     ) -> Result<(), String> {
         let tx: UtxoTx = try_s!(deserialize(tx).map_err(|e| ERRL!("{:?}", e)));
         self.rpc_client.wait_for_confirmations(
             &tx,
             confirmations as u32,
             wait_until,
+            check_every,
         )
     }
 

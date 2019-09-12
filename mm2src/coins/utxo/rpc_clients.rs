@@ -111,7 +111,7 @@ pub trait UtxoRpcClientOps: Debug + 'static {
 
     // TODO This operation is synchronous because it's currently simpler to do it this way.
     // Might consider refactoring when async/await is released.
-    fn wait_for_confirmations(&self, tx: &UtxoTx, confirmations: u32, wait_until: u64) -> Result<(), String> {
+    fn wait_for_confirmations(&self, tx: &UtxoTx, confirmations: u32, wait_until: u64, check_every: u64) -> Result<(), String> {
         loop {
             if now_ms() / 1000 > wait_until {
                 return ERR!("Waited too long until {} for transaction {:?} to be confirmed {} times", wait_until, tx, confirmations);
@@ -128,7 +128,7 @@ pub trait UtxoRpcClientOps: Debug + 'static {
                 Err(e) => log!("Error " [e] " getting the transaction " [tx.hash().reversed()] ", retrying in 10 seconds"),
             }
 
-            thread::sleep(Duration::from_secs(10));
+            thread::sleep(Duration::from_secs(check_every));
         }
     }
 
