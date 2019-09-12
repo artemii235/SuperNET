@@ -23,7 +23,7 @@
 
 use bigdecimal::BigDecimal;
 use bitcrypto::sha256;
-use common::{bits256, new_uuid, round_to, rpc_response, rpc_err_response, HyRes, SMALLVAL};
+use common::{bits256, MmNumber, new_uuid, round_to, rpc_response, rpc_err_response, HyRes, SMALLVAL};
 use common::mm_ctx::{from_ctx, MmArc, MmWeak};
 use coins::{lp_coinfind, MmCoinEnum, TradeInfo};
 use coins::utxo::{compressed_pub_key_from_priv_raw, ChecksumType};
@@ -599,11 +599,11 @@ pub unsafe fn lp_trade_command(
     -1
 }
 
-fn check_locked_coins(ctx: &MmArc, amount: &BigDecimal, balance: &BigDecimal, ticker: &str) -> impl Future<Item=(), Error=String> {
+fn check_locked_coins(ctx: &MmArc, amount: &MmNumber, balance: &BigDecimal, ticker: &str) -> impl Future<Item=(), Error=String> {
     let locked = get_locked_amount(ctx, ticker);
     let available = balance - &locked;
-    if *amount > available {
-        futures01::future::err(ERRL!("The amount {:.8} is larger than available {:.8}, balance: {}, locked by swaps: {:.8}", amount, available, balance, locked))
+    if *amount > available.clone().into() {
+        futures01::future::err(ERRL!("The amount {:?} is larger than available {:.8}, balance: {}, locked by swaps: {:.8}", amount, available, balance, locked))
     } else {
         futures01::future::ok(())
     }
@@ -613,8 +613,8 @@ fn check_locked_coins(ctx: &MmArc, amount: &BigDecimal, balance: &BigDecimal, ti
 pub struct AutoBuyInput {
     base: String,
     rel: String,
-    price: BigDecimal,
-    volume: BigDecimal,
+    price: MmNumber,
+    volume: MmNumber,
     timeout: Option<u32>,
     /// Not used. Deprecated.
     duration: Option<u32>,
@@ -644,9 +644,9 @@ pub fn buy(ctx: MmArc, json: Json) -> HyRes {
     let my_amount = &input.volume * &input.price;
     Box::new(rel_coin.my_balance().and_then(move |my_balance| {
         check_locked_coins(&ctx, &my_amount, &my_balance, rel_coin.ticker()).and_then(move |_| {
-            let dex_fee = dex_fee_amount(base_coin.ticker(), rel_coin.ticker(), &my_amount);
+            let dex_fee = dex_fee_amount(base_coin.ticker(), rel_coin.ticker(), &my_amount.clone().into());
             let trade_info = TradeInfo::Taker(dex_fee);
-            rel_coin.check_i_have_enough_to_trade(&my_amount, &my_balance, trade_info).and_then(move |_|
+            rel_coin.check_i_have_enough_to_trade(&my_amount.clone().into(), &my_balance.clone().into(), trade_info).and_then(move |_|
                 base_coin.can_i_spend_other_payment().and_then(move |_|
                     rpc_response(200, try_h!(lp_auto_buy(&ctx, input)))
                 )
@@ -672,9 +672,9 @@ pub fn sell(ctx: MmArc, json: Json) -> HyRes {
     };
     Box::new(base_coin.my_balance().and_then(move |my_balance| {
         check_locked_coins(&ctx, &input.volume, &my_balance, base_coin.ticker()).and_then(move |_| {
-            let dex_fee = dex_fee_amount(base_coin.ticker(), rel_coin.ticker(), &input.volume);
+            let dex_fee = dex_fee_amount(base_coin.ticker(), rel_coin.ticker(), &input.volume.clone().into());
             let trade_info = TradeInfo::Taker(dex_fee);
-            base_coin.check_i_have_enough_to_trade(&input.volume, &my_balance, trade_info).and_then(move |_|
+            base_coin.check_i_have_enough_to_trade(&input.volume.clone().into(), &my_balance.clone().into(), trade_info).and_then(move |_|
                 rel_coin.can_i_spend_other_payment().and_then(move |_|
                     rpc_response(200, try_h!(lp_auto_buy(&ctx, input)))
                 )
@@ -703,9 +703,11 @@ struct TakerMatch {
 }
 
 pub fn lp_auto_buy(ctx: &MmArc, input: AutoBuyInput) -> Result<String, String> {
+    /*
     if input.price < SMALLVAL.into() {
         return ERR!("Price is too low, minimum is {}", SMALLVAL);
     }
+    */
 
     let action = match Some(input.method.as_ref()) {
         Some("buy") => {
@@ -721,11 +723,13 @@ pub fn lp_auto_buy(ctx: &MmArc, input: AutoBuyInput) -> Result<String, String> {
     let mut my_taker_orders = try_s!(ordermatch_ctx.my_taker_orders.lock());
     let uuid = new_uuid();
     let our_public_id = try_s!(ctx.public_id());
+    let mm_volume: BigDecimal = input.volume.clone().into();
+    let mm_price: BigDecimal = input.price.clone().into();
     let request = TakerRequest {
         base: input.base,
         rel: input.rel,
-        rel_amount: &input.volume * input.price,
-        base_amount: input.volume,
+        rel_amount: &mm_volume * &mm_price,
+        base_amount: input.volume.into(),
         method: "request".into(),
         uuid,
         dest_pub_key: input.dest_pub_key,
@@ -894,14 +898,14 @@ fn get_true() -> bool { true }
 struct SetPriceReq {
     base: String,
     rel: String,
-    price: BigDecimal,
+    price: MmNumber,
     #[serde(default)]
     max: bool,
     #[allow(dead_code)]
     #[serde(default = "one")]
     broadcast: u8,
     #[serde(default)]
-    volume: BigDecimal,
+    volume: MmNumber,
     #[serde(default = "get_true")]
     cancel_previous: bool,
 }
@@ -925,11 +929,11 @@ pub fn set_price(ctx: MmArc, req: Json) -> HyRes {
     let balance_f = base_coin.my_balance();
     let volume_f = if req.max {
         // use entire balance deducting the locked amount and skipping "check_i_have_enough"
-        Either::A(balance_f.map(move |my_balance| (my_balance - get_locked_amount(&ctx, base_coin.ticker()), req, ctx)))
+        Either::A(balance_f.map(move |my_balance| (MmNumber::from(my_balance - get_locked_amount(&ctx, base_coin.ticker())), req, ctx)))
     } else {
         Either::B(balance_f.and_then(move |my_balance|
-            check_locked_coins(&ctx, &req.volume, &my_balance, base_coin.ticker()).and_then(move |_|
-                base_coin.check_i_have_enough_to_trade(&req.volume, &my_balance, TradeInfo::Maker).map(move |_|
+            check_locked_coins(&ctx, &req.volume.clone().into(), &my_balance, base_coin.ticker()).and_then(move |_|
+                base_coin.check_i_have_enough_to_trade(&req.volume, &my_balance.clone().into(), TradeInfo::Maker).map(move |_|
                     (req.volume.clone(), req, ctx)
                 )
             )
@@ -957,9 +961,9 @@ pub fn set_price(ctx: MmArc, req: Json) -> HyRes {
 
                 let uuid = new_uuid();
                 let order = MakerOrder {
-                    max_base_vol: volume,
+                    max_base_vol: volume.into(),
                     min_base_vol: 0.into(),
-                    price: req.price,
+                    price: req.price.into(),
                     created_at: now_ms(),
                     base: req.base,
                     rel: req.rel,

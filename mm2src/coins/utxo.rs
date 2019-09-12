@@ -28,7 +28,7 @@ use bigdecimal::BigDecimal;
 pub use bitcrypto::{dhash160, ChecksumType, sha256};
 use chain::{TransactionOutput, TransactionInput, OutPoint};
 use chain::constants::{SEQUENCE_FINAL};
-use common::{first_char_to_upper, HyRes, rpc_response};
+use common::{first_char_to_upper, HyRes, MmNumber, rpc_response};
 use common::custom_futures::join_all_sequential;
 use common::jsonrpc_client::{JsonRpcError, JsonRpcErrorType};
 use common::mm_ctx::MmArc;
@@ -1365,7 +1365,7 @@ pub struct UtxoFeeDetails {
 impl MmCoin for UtxoCoin {
     fn is_asset_chain(&self) -> bool { self.asset_chain }
 
-    fn check_i_have_enough_to_trade(&self, amount: &BigDecimal, balance: &BigDecimal, trade_info: TradeInfo) -> Box<dyn Future<Item=(), Error=String> + Send> {
+    fn check_i_have_enough_to_trade(&self, amount: &MmNumber, balance: &MmNumber, trade_info: TradeInfo) -> Box<dyn Future<Item=(), Error=String> + Send> {
         let fee_fut = self.get_tx_fee().map_err(|e| ERRL!("{}", e));
         let arc = self.clone();
         let amount = amount.clone();
@@ -1376,16 +1376,16 @@ impl MmCoin for UtxoCoin {
                     ActualTxFee::Fixed(f) => f,
                     ActualTxFee::Dynamic(f) => f,
                 };
-                let fee_decimal = BigDecimal::from(fee) / BigDecimal::from(10u64.pow(arc.decimals as u32));
+                let fee_decimal = MmNumber::from(fee) / MmNumber::from(10u64.pow(arc.decimals as u32));
                 if &amount < &fee_decimal {
-                    return ERR!("Amount {} is too low, it'll result to dust error, at least {} is required", amount, fee_decimal);
+                    return ERR!("Amount {:?} is too low, it'll result to dust error, at least {:?} is required", amount, fee_decimal);
                 }
                 let required = match trade_info {
                     TradeInfo::Maker => amount + fee_decimal,
-                    TradeInfo::Taker(dex_fee) => &amount + dex_fee + BigDecimal::from(2) * fee_decimal,
+                    TradeInfo::Taker(dex_fee) => &amount + &MmNumber::from(dex_fee.clone()) + MmNumber::from(2) * fee_decimal,
                 };
                 if balance < required {
-                    return ERR!("{} balance {} is too low, required {:.8}", arc.ticker(), balance, required);
+                    return ERR!("{} balance {:?} is too low, required {:?}", arc.ticker(), balance, required);
                 }
                 Ok(())
             })

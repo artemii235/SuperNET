@@ -20,7 +20,7 @@
 //
 use bigdecimal::BigDecimal;
 use bitcrypto::sha256;
-use common::{rpc_response, slurp_url, HyRes};
+use common::{HyRes, MmNumber, rpc_response, slurp_url};
 use common::custom_futures::TimedAsyncMutex;
 use common::executor::Timer;
 use common::mm_ctx::{MmArc, MmWeak};
@@ -1747,24 +1747,24 @@ impl EthTxFeeDetails {
 impl MmCoin for EthCoin {
     fn is_asset_chain(&self) -> bool { false }
 
-    fn check_i_have_enough_to_trade(&self, amount: &BigDecimal, balance: &BigDecimal, trade_info: TradeInfo) -> Box<dyn Future<Item=(), Error=String> + Send> {
+    fn check_i_have_enough_to_trade(&self, amount: &MmNumber, balance: &MmNumber, trade_info: TradeInfo) -> Box<dyn Future<Item=(), Error=String> + Send> {
         let ticker = self.ticker.clone();
         let required = match trade_info {
             TradeInfo::Maker => amount.clone(),
-            TradeInfo::Taker(dex_fee) => amount + dex_fee,
+            TradeInfo::Taker(dex_fee) => amount + &MmNumber::from(dex_fee.clone()),
         };
         match self.coin_type {
             EthCoinType::Eth => {
-                let required = required + BigDecimal::from_str("0.0002").unwrap();
+                let required = required + BigDecimal::from_str("0.0002").unwrap().into();
                 if balance < &required {
-                    Box::new(futures01::future::err(ERRL!("{} balance {} too low, required {}", ticker, balance, required)))
+                    Box::new(futures01::future::err(ERRL!("{} balance {:?} too low, required {:?}", ticker, balance, required)))
                 } else {
                     Box::new(futures01::future::ok(()))
                 }
             },
             EthCoinType::Erc20(_) => {
                 if balance < &required {
-                    Box::new(futures01::future::err(ERRL!("{} balance {} too low, required {}", ticker, balance, required)))
+                    Box::new(futures01::future::err(ERRL!("{} balance {:?} too low, required {:?}", ticker, balance, required)))
                 } else {
                     // need to check ETH balance too, address should have some to cover gas fees
                     Box::new(self.eth_balance().and_then(move |eth_balance| {
