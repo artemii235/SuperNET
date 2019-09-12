@@ -78,4 +78,4 @@ unwrap = "1.2.1"
 winapi = "0.3"
 
 [patch.crates-io]
-num-rational = { path =  "/home/artem/dev/num-rational" }
+num-rational = { git =  "https://github.com/artemii235/num-rational.git" }
