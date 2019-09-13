@@ -1301,7 +1301,7 @@ fn test_first_char_to_upper() {
     assert_eq!(".komodo", first_char_to_upper(".komodo"));
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum MmNumber {
     BigDecimal(BigDecimal),
@@ -1324,7 +1324,7 @@ impl From<MmNumber> for BigDecimal {
     fn from(n: MmNumber) -> BigDecimal {
         match n {
             MmNumber::BigDecimal(d) => d,
-            MmNumber::BigRational(r) => from_ratio_to_dec(r),
+            MmNumber::BigRational(r) => from_ratio_to_dec(&r),
         }
     }
 }
@@ -1344,12 +1344,12 @@ impl From<u64> for MmNumber {
     }
 }
 
-fn from_ratio_to_dec(r: BigRational) -> BigDecimal {
+fn from_ratio_to_dec(r: &BigRational) -> BigDecimal {
     BigDecimal::from(r.numer().clone()) / BigDecimal::from(r.denom().clone())
 }
 
-fn from_dec_to_ratio(r: BigDecimal) -> BigRational {
-    let (num, scale) = r.as_bigint_and_exponent();
+fn from_dec_to_ratio(d: BigDecimal) -> BigRational {
+    let (num, scale) = d.as_bigint_and_exponent();
     let ten = BigInt::from(10);
     if scale >= 0 {
         BigRational::new_raw(num, ten.pow(scale as u64))
@@ -1398,11 +1398,41 @@ impl Add for &MmNumber {
     }
 }
 
-impl PartialOrd for MmNumber {
+impl PartialOrd<BigDecimal> for MmNumber {
+    fn partial_cmp(&self, other: &BigDecimal) -> Option<std::cmp::Ordering> {
+        match self {
+            MmNumber::BigDecimal(d) => Some(d.cmp(other)),
+            MmNumber::BigRational(r) => Some(from_ratio_to_dec(&r).cmp(other)),
+        }
+    }
+}
+
+impl PartialOrd<MmNumber> for MmNumber {
     fn partial_cmp(&self, other: &MmNumber) -> Option<std::cmp::Ordering> {
-        let lhs: BigRational = self.clone().into();
-        let rhs: BigRational = other.clone().into();
-        Some(lhs.cmp(&rhs))
+        match self {
+            MmNumber::BigDecimal(lhs) => match other {
+                MmNumber::BigDecimal(rhs) => Some(lhs.cmp(rhs)),
+                MmNumber::BigRational(rhs) => Some(lhs.cmp(&from_ratio_to_dec(rhs))),
+            }
+            MmNumber::BigRational(lhs) => match other {
+                MmNumber::BigDecimal(rhs) => Some(from_ratio_to_dec(lhs).cmp(rhs)),
+                MmNumber::BigRational(rhs) => Some(lhs.cmp(rhs)),
+            },
+        }
+    }
+}
+
+impl PartialEq<BigDecimal> for MmNumber {
+    fn eq(&self, rhs: &BigDecimal) -> bool {
+        match self {
+            MmNumber::BigDecimal(d) => d == rhs,
+            MmNumber::BigRational(r) => {
+                let dec = from_ratio_to_dec(&r);
+                log!((dec));
+                log!((rhs));
+                &dec == rhs
+            },
+        }
     }
 }
 
@@ -1419,5 +1449,23 @@ impl Div for MmNumber {
         let lhs: BigRational = self.into();
         let rhs: BigRational = rhs.into();
         (lhs / rhs).into()
+    }
+}
+
+impl Div for &MmNumber {
+    type Output = MmNumber;
+
+    fn div(self, rhs: &MmNumber) -> MmNumber {
+        let lhs: BigRational = self.clone().into();
+        let rhs: BigRational = rhs.clone().into();
+        (lhs / rhs).into()
+    }
+}
+
+impl PartialEq for MmNumber {
+    fn eq(&self, rhs: &MmNumber) -> bool {
+        let lhs: BigDecimal = self.clone().into();
+        let rhs: BigDecimal = rhs.clone().into();
+        lhs == rhs
     }
 }
