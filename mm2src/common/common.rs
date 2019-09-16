@@ -77,6 +77,7 @@ pub mod lift_body {
     pub struct LiftBody<T> {inner: T}
 }
 
+use atomic::Atomic;
 use bigdecimal::BigDecimal;
 use core::ops::{Add, Div, Mul};
 use crossbeam::{channel};
@@ -376,7 +377,6 @@ pub fn stack_trace (format: &mut dyn FnMut (&mut dyn Write, &backtrace::Symbol),
 /// NB: https://github.com/rust-lang/backtrace-rs/issues/227
 #[cfg(feature = "native")]
 pub fn set_panic_hook() {
-    use atomic::Atomic;
     use std::panic::{set_hook, PanicInfo};
 
     thread_local! {static ENTERED: Atomic<bool> = Atomic::new (false);}
@@ -1052,6 +1052,15 @@ pub fn writeln (line: &str) {
         println! ("{}", line);
     });
 }
+
+#[cfg(not(feature = "native"))]
+const fn make_tail() -> [u8; 0x10000] {[0; 0x10000]}
+
+#[cfg(not(feature = "native"))]
+static mut PROCESS_LOG_TAIL: [u8; 0x10000] = make_tail();
+#[cfg(not(feature = "native"))]
+static TAIL_CUR: Atomic<usize> = Atomic::new (0);
+
 #[cfg(not(feature = "native"))]
 pub fn writeln (line: &str) {
     use std::ffi::CString;
@@ -1059,7 +1068,16 @@ pub fn writeln (line: &str) {
     extern "C" {pub fn console_log (ptr: *const c_char, len: i32);}
     let lineᶜ = unwrap! (CString::new (line));
     unsafe {console_log (lineᶜ.as_ptr(), line.len() as i32)}
-}
+
+    // Keep a tail of the log in RAM for the integration tests.
+    unsafe {
+        if line.len() < PROCESS_LOG_TAIL.len() {
+            let posⁱ = TAIL_CUR.load (Ordering::Relaxed);
+            let posⱼ = posⁱ + line.len();
+            let (posˢ, posⱼ) = if posⱼ > PROCESS_LOG_TAIL.len() {(0, line.len())} else {(posⁱ, posⱼ)};
+            if TAIL_CUR.compare_exchange (posⁱ, posⱼ, Ordering::Relaxed, Ordering::Relaxed) .is_ok() {
+                for (cur, ix) in (posˢ..posⱼ) .zip (0..line.len()) {PROCESS_LOG_TAIL[cur] = line.as_bytes()[ix]}
+}   }   }   }
 
 /// Set up a panic hook that prints the panic location and the message.  
 /// (The default Rust handler doesn't have the means to print the message.

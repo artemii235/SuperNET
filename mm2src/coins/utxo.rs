@@ -1705,7 +1705,7 @@ pub fn coin_daemon_data_dir(name: &str, is_asset_chain: bool) -> PathBuf {
 }
 
 #[cfg(not(feature = "native"))]
-pub fn coin_daemon_data_dir(name: &str, is_asset_chain: bool) -> PathBuf {
+pub fn coin_daemon_data_dir(_name: &str, _is_asset_chain: bool) -> PathBuf {
     unimplemented!()
 }
 

@@ -758,8 +758,8 @@ async fn trade_base_rel_electrum (pairs: Vec<(&'static str, &'static str)>) {
     #[cfg(feature = "native")] {log! ({"Alice log path: {}", mm_alice.log_path.display()})}
 
     // wait until both nodes RPC API is active
-    unwrap! (mm_bob.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats ")) .await);
-    unwrap! (mm_alice.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats ")) .await);
+    wait_log_re! (mm_bob, 22., ">>>>>>>>> DEX stats ");
+    wait_log_re! (mm_alice, 22., ">>>>>>>>> DEX stats ");
 
     // Enable coins on Bob side. Print the replies in case we need the address.
     log! ({"enable_coins (bob): {:?}", enable_coins_eth_electrum (&mm_bob, vec!["http://195.201.0.6:8565"])});
