@@ -1362,11 +1362,11 @@ impl From<u64> for MmNumber {
     }
 }
 
-fn from_ratio_to_dec(r: &BigRational) -> BigDecimal {
+pub fn from_ratio_to_dec(r: &BigRational) -> BigDecimal {
     BigDecimal::from(r.numer().clone()) / BigDecimal::from(r.denom().clone())
 }
 
-fn from_dec_to_ratio(d: BigDecimal) -> BigRational {
+pub fn from_dec_to_ratio(d: BigDecimal) -> BigRational {
     let (num, scale) = d.as_bigint_and_exponent();
     let ten = BigInt::from(10);
     if scale >= 0 {

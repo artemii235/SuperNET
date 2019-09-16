@@ -13,6 +13,7 @@ use futures::executor::block_on;
 use hyper::StatusCode;
 #[cfg(feature = "native")]
 use hyper::header::ACCESS_CONTROL_ALLOW_ORIGIN;
+use num_rational::BigRational;
 use peers;
 use serde_json::{self as json, Value as Json};
 use std::collections::HashMap;
@@ -1809,4 +1810,67 @@ fn test_all_orders_per_pair_per_node_must_be_displayed_in_orderbook() {
     log!("orderbook " [orderbook]);
     let asks = orderbook["asks"].as_array().unwrap();
     assert_eq!(asks.len(), 2, "RICK/MORTY orderbook must have exactly 2 asks");
+}
+
+#[test]
+fn orderbook_should_display_rational_amounts() {
+    let coins = json!([
+        {"coin":"RICK","asset":"RICK"},
+        {"coin":"MORTY","asset":"MORTY"},
+    ]);
+
+    let mut mm = unwrap! (MarketMakerIt::start (
+        json! ({
+            "gui": "nogui",
+            "netid": 9998,
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| unwrap! (s.parse::<i64>())),
+            "passphrase": "bob passphrase",
+            "coins": coins,
+            "rpc_password": "pass",
+            "i_am_seed": true,
+        }),
+        "pass".into(),
+        match var ("LOCAL_THREAD_MM") {Ok (ref e) if e == "bob" => Some (local_start()), _ => None}
+    ));
+    let (_dump_log, _dump_dashboard) = mm_dump (&mm.log_path);
+    log!({"Log path: {}", mm.log_path.display()});
+    unwrap! (block_on (mm.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
+    enable_electrum(&mm, "RICK", vec!["electrum3.cipig.net:10017", "electrum2.cipig.net:10017", "electrum1.cipig.net:10017"]);
+    enable_electrum(&mm, "MORTY", vec!["electrum3.cipig.net:10018", "electrum2.cipig.net:10018", "electrum1.cipig.net:10018"]);
+
+    let price = BigRational::new(9.into(), 10.into());
+    let volume = BigRational::new(9.into(), 10.into());
+
+    // create order with rational amount and price
+    let rc = unwrap! (mm.rpc (json! ({
+        "userpass": mm.userpass,
+        "method": "setprice",
+        "base": "RICK",
+        "rel": "MORTY",
+        "price": price,
+        "volume": volume,
+        "cancel_previous": false,
+    })));
+    assert! (rc.0.is_success(), "!setprice: {}", rc.1);
+
+    thread::sleep(Duration::from_secs(12));
+    log!("Get RICK/MORTY orderbook");
+    let rc = unwrap!(mm.rpc (json! ({
+            "userpass": mm.userpass,
+            "method": "orderbook",
+            "base": "RICK",
+            "rel": "MORTY",
+        })));
+    assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
+
+    let orderbook: Json = unwrap!(json::from_str(&rc.1));
+    log!("orderbook " [orderbook]);
+    let asks = orderbook["asks"].as_array().unwrap();
+    assert_eq!(asks.len(), 1, "RICK/MORTY orderbook must have exactly 1 ask");
+    let price_in_orderbook: BigRational = unwrap!(json::from_value(asks[0]["price_rat"].clone()));
+    let volume_in_orderbook: BigRational = unwrap!(json::from_value(asks[0]["max_volume_rat"].clone()));
+    assert_eq!(price, price_in_orderbook);
+    assert_eq!(volume, volume_in_orderbook);
 }

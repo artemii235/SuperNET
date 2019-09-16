@@ -23,7 +23,7 @@
 
 use bigdecimal::BigDecimal;
 use bitcrypto::sha256;
-use common::{bits256, MmNumber, new_uuid, round_to, rpc_response, rpc_err_response, HyRes, SMALLVAL};
+use common::{bits256, from_dec_to_ratio, from_ratio_to_dec, MmNumber, new_uuid, round_to, rpc_response, rpc_err_response, HyRes, SMALLVAL};
 use common::mm_ctx::{from_ctx, MmArc, MmWeak};
 use coins::{lp_coinfind, MmCoinEnum, TradeInfo};
 use coins::utxo::{compressed_pub_key_from_priv_raw, ChecksumType};
@@ -794,6 +794,7 @@ struct PricePingRequest {
     base: String,
     rel: String,
     price: BigDecimal,
+    price_rat: Option<BigRational>,
     price64: String,
     timestamp: u64,
     pubsecp: String,
@@ -801,6 +802,7 @@ struct PricePingRequest {
     // TODO rename, it's called "balance", but it's actual meaning is max available volume to trade
     #[serde(rename="bal")]
     balance: BigDecimal,
+    balance_rat: Option<BigRational>,
     uuid: Option<Uuid>,
 }
 
@@ -831,16 +833,17 @@ impl PricePingRequest {
 
         let sig = try_s!(ctx.secp256k1_key_pair().private().sign(&sig_hash));
 
-        let available_amount: BigDecimal = order.available_amount().into();
-        let max_volume = if available_amount > "0.00777".parse().unwrap() {
-            let my_balance = try_s!(base_coin.my_balance().wait());
-            if available_amount <= my_balance && available_amount > 0.into() {
+        let available_amount: BigRational = order.available_amount().into();
+        let min_amount = BigRational::new(777.into(), 100000.into());
+        let max_volume = if available_amount > min_amount {
+            let my_balance = from_dec_to_ratio(try_s!(base_coin.my_balance().wait()));
+            if available_amount <= my_balance && available_amount > BigRational::from_integer(0.into()) {
                 available_amount
             } else {
                 my_balance
             }
         } else {
-            0.into()
+            BigRational::from_integer(0.into())
         };
 
         Ok(PricePingRequest {
@@ -850,10 +853,12 @@ impl PricePingRequest {
             rel: order.rel.clone(),
             price64: price64.to_string(),
             price: order.price.clone(),
+            price_rat: Some(order.price_rat.clone()),
             timestamp,
             pubsecp: hex::encode(&**ctx.secp256k1_key_pair().public()),
             sig: hex::encode(&*sig),
-            balance: max_volume,
+            balance: from_ratio_to_dec(&max_volume),
+            balance_rat: Some(max_volume),
             uuid: Some(order.uuid),
         })
     }
@@ -1418,6 +1423,7 @@ pub struct OrderbookEntry {
     coin: String,
     address: String,
     price: String,
+    price_rat: BigRational,
     /// Original `ask.price` printed for bids in order to sidestep the decimal rounding (#495).
     #[serde(skip_serializing_if = "Option::is_none")]
     askprice: Option<String>,
@@ -1427,6 +1433,7 @@ pub struct OrderbookEntry {
     ave_volume: f64,
     #[serde(rename="maxvolume")]
     max_volume: f64,
+    max_volume_rat: BigRational,
     depth: f64,
     pubkey: String,
     age: i64,
@@ -1482,10 +1489,12 @@ pub fn orderbook(ctx: MmArc, req: Json) -> HyRes {
                     coin: req.base.clone(),
                     address: try_h!(base_coin.address_from_pubkey_str(&ask.pubsecp)),
                     price: round_to (&ask.price, base_coin.decimals()),
+                    price_rat: ask.price_rat.as_ref().map(|p| p.clone()).unwrap_or(from_dec_to_ratio(ask.price.clone())),
                     askprice: None,
                     num_utxos: 0,
                     ave_volume: 0.,
                     max_volume: unwrap!(ask.balance.to_f64()),
+                    max_volume_rat: ask.balance_rat.as_ref().map(|p| p.clone()).unwrap_or(from_dec_to_ratio(ask.balance.clone())),
                     depth: 0.,
                     pubkey: ask.pubkey.clone(),
                     age: (now_ms() as i64 / 1000) - ask.timestamp as i64,
@@ -1506,10 +1515,12 @@ pub fn orderbook(ctx: MmArc, req: Json) -> HyRes {
                     // NB: 1/x can not be represented as a decimal and introduces a rounding error
                     // cf. https://github.com/KomodoPlatform/atomicDEX-API/issues/495#issuecomment-516365682
                     price: round_to (&(BigDecimal::from (1.) / &ask.price), rel_coin.decimals()),
+                    price_rat: BigRational::from_integer(1.into()) / ask.price_rat.as_ref().map(|p| p.clone()).unwrap_or(from_dec_to_ratio(ask.price.clone())),
                     askprice: Some (round_to (&ask.price, base_coin.decimals())),
                     num_utxos: 0,
                     ave_volume: 0.,
                     max_volume: unwrap!(ask.balance.to_f64()),
+                    max_volume_rat: ask.balance_rat.as_ref().map(|p| p.clone()).unwrap_or(from_dec_to_ratio(ask.balance.clone())),
                     depth: 0.,
                     pubkey: ask.pubkey.clone(),
                     age: (now_ms() as i64 / 1000) - ask.timestamp as i64,
