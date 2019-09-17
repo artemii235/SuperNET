@@ -67,6 +67,7 @@ pub mod custom_futures;
 pub mod iguana_utils;
 pub mod privkey;
 pub mod mm_ctx;
+pub mod mm_number;
 pub mod seri;
 
 #[cfg(feature = "native")]
@@ -79,7 +80,6 @@ pub mod lift_body {
 
 use atomic::Atomic;
 use bigdecimal::BigDecimal;
-use core::ops::{Add, Div, Mul};
 use crossbeam::{channel};
 use futures01::{future, task::Task, Future};
 #[cfg(not(feature = "native"))]
@@ -93,9 +93,6 @@ use http::{Request, Response, StatusCode, HeaderMap};
 use http::header::{HeaderValue, CONTENT_TYPE};
 #[cfg(feature = "native")]
 use libc::{malloc, free};
-use num_bigint::BigInt;
-use num_rational::BigRational;
-use num_traits::Pow;
 use rand::{SeedableRng, rngs::SmallRng};
 use serde::{ser, de};
 #[cfg(not(feature = "native"))]
@@ -106,7 +103,8 @@ use std::collections::HashMap;
 use std::env::{self, args, var, VarError};
 use std::fmt::{self, Write as FmtWrite};
 use std::fs;
-use std::ffi::{CStr};
+use std::fs::DirEntry;
+use std::ffi::{CStr, OsStr};
 use std::intrinsics::copy;
 use std::io::{Write};
 use std::mem::{forget, size_of, uninitialized, zeroed};
@@ -1319,171 +1317,20 @@ fn test_first_char_to_upper() {
     assert_eq!(".komodo", first_char_to_upper(".komodo"));
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(untagged)]
-pub enum MmNumber {
-    BigDecimal(BigDecimal),
-    BigRational(BigRational),
-}
-
-impl From<BigDecimal> for MmNumber {
-    fn from(n: BigDecimal) -> MmNumber {
-        MmNumber::BigDecimal(n)
-    }
-}
-
-impl From<BigRational> for MmNumber {
-    fn from(r: BigRational) -> MmNumber {
-        MmNumber::BigRational(r)
-    }
-}
-
-impl From<MmNumber> for BigDecimal {
-    fn from(n: MmNumber) -> BigDecimal {
-        match n {
-            MmNumber::BigDecimal(d) => d,
-            MmNumber::BigRational(r) => from_ratio_to_dec(&r),
-        }
-    }
-}
-
-impl From<MmNumber> for BigRational {
-    fn from(n: MmNumber) -> BigRational {
-        match n {
-            MmNumber::BigDecimal(d) => from_dec_to_ratio(d),
-            MmNumber::BigRational(r) => r,
-        }
-    }
-}
-
-impl From<u64> for MmNumber {
-    fn from(n: u64) -> MmNumber {
-        BigRational::from_integer(n.into()).into()
-    }
-}
-
-pub fn from_ratio_to_dec(r: &BigRational) -> BigDecimal {
-    BigDecimal::from(r.numer().clone()) / BigDecimal::from(r.denom().clone())
-}
-
-pub fn from_dec_to_ratio(d: BigDecimal) -> BigRational {
-    let (num, scale) = d.as_bigint_and_exponent();
-    let ten = BigInt::from(10);
-    if scale >= 0 {
-        BigRational::new_raw(num, ten.pow(scale as u64))
-    } else {
-        BigRational::new_raw(num * ten.pow((-scale) as u64), 1.into())
-    }
-}
-
-impl Mul for MmNumber {
-    type Output = MmNumber;
-
-    fn mul(self, rhs: Self) -> Self::Output {
-        let lhs: BigRational = self.into();
-        let rhs: BigRational = rhs.into();
-        MmNumber::from(lhs * rhs)
-    }
-}
-
-impl Mul for &MmNumber {
-    type Output = MmNumber;
-
-    fn mul(self, rhs: Self) -> Self::Output {
-        let lhs: BigRational = self.clone().into();
-        let rhs: BigRational = rhs.clone().into();
-        MmNumber::from(lhs * rhs)
-    }
-}
-
-impl Add for MmNumber {
-    type Output = MmNumber;
-
-    fn add(self, rhs: Self) -> Self::Output {
-        let lhs: BigRational = self.into();
-        let rhs: BigRational = rhs.into();
-        (lhs + rhs).into()
-    }
-}
-
-impl Add for &MmNumber {
-    type Output = MmNumber;
-
-    fn add(self, rhs: Self) -> Self::Output {
-        let lhs: BigRational = self.clone().into();
-        let rhs: BigRational = rhs.clone().into();
-        (lhs + rhs).into()
-    }
-}
-
-impl PartialOrd<BigDecimal> for MmNumber {
-    fn partial_cmp(&self, other: &BigDecimal) -> Option<std::cmp::Ordering> {
-        match self {
-            MmNumber::BigDecimal(d) => Some(d.cmp(other)),
-            MmNumber::BigRational(r) => Some(from_ratio_to_dec(&r).cmp(other)),
-        }
-    }
-}
-
-impl PartialOrd<MmNumber> for MmNumber {
-    fn partial_cmp(&self, other: &MmNumber) -> Option<std::cmp::Ordering> {
-        match self {
-            MmNumber::BigDecimal(lhs) => match other {
-                MmNumber::BigDecimal(rhs) => Some(lhs.cmp(rhs)),
-                MmNumber::BigRational(rhs) => Some(lhs.cmp(&from_ratio_to_dec(rhs))),
+pub fn json_dir_entries(path: &dyn AsRef<Path>) -> Result<Vec<DirEntry>, String> {
+    Ok(try_s!(path.as_ref().read_dir()).filter_map(|dir_entry| {
+        let entry = match dir_entry {
+            Ok(ent) => ent,
+            Err(e) => {
+                log!("Error " (e) " reading from dir " (path.as_ref().display()));
+                return None;
             }
-            MmNumber::BigRational(lhs) => match other {
-                MmNumber::BigDecimal(rhs) => Some(from_ratio_to_dec(lhs).cmp(rhs)),
-                MmNumber::BigRational(rhs) => Some(lhs.cmp(rhs)),
-            },
+        };
+
+        if entry.path().extension() == Some(OsStr::new("json")) {
+            Some(entry)
+        } else {
+            None
         }
-    }
-}
-
-impl PartialEq<BigDecimal> for MmNumber {
-    fn eq(&self, rhs: &BigDecimal) -> bool {
-        match self {
-            MmNumber::BigDecimal(d) => d == rhs,
-            MmNumber::BigRational(r) => {
-                let dec = from_ratio_to_dec(&r);
-                log!((dec));
-                log!((rhs));
-                &dec == rhs
-            },
-        }
-    }
-}
-
-impl Default for MmNumber {
-    fn default() -> MmNumber {
-        BigRational::from_integer(0.into()).into()
-    }
-}
-
-impl Div for MmNumber {
-    type Output = MmNumber;
-
-    fn div(self, rhs: MmNumber) -> MmNumber {
-        let lhs: BigRational = self.into();
-        let rhs: BigRational = rhs.into();
-        (lhs / rhs).into()
-    }
-}
-
-impl Div for &MmNumber {
-    type Output = MmNumber;
-
-    fn div(self, rhs: &MmNumber) -> MmNumber {
-        let lhs: BigRational = self.clone().into();
-        let rhs: BigRational = rhs.clone().into();
-        (lhs / rhs).into()
-    }
-}
-
-impl PartialEq for MmNumber {
-    fn eq(&self, rhs: &MmNumber) -> bool {
-        let lhs: BigDecimal = self.clone().into();
-        let rhs: BigDecimal = rhs.clone().into();
-        lhs == rhs
-    }
+    }).collect())
 }

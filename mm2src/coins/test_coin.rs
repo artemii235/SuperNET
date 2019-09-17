@@ -1,6 +1,7 @@
 use bigdecimal::BigDecimal;
-use common::{HyRes, MmNumber};
+use common::{HyRes};
 use common::mm_ctx::MmArc;
+use common::mm_number::MmNumber;
 use crate::{TradeInfo, FoundSwapTxSpend, WithdrawRequest};
 use futures01::Future;
 use mocktopus::macros::*;

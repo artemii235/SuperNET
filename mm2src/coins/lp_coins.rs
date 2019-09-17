@@ -32,8 +32,9 @@
 #[macro_use] extern crate unwrap;
 
 use bigdecimal::BigDecimal;
-use common::{HyRes, MmNumber, rpc_response, rpc_err_response};
+use common::{HyRes, rpc_response, rpc_err_response};
 use common::mm_ctx::{from_ctx, MmArc};
+use common::mm_number::MmNumber;
 use futures01::{Future};
 use gstuff::{slurp};
 use http::Response;

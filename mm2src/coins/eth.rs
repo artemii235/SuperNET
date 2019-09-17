@@ -20,10 +20,11 @@
 //
 use bigdecimal::BigDecimal;
 use bitcrypto::sha256;
-use common::{HyRes, MmNumber, rpc_response, slurp_url};
+use common::{HyRes, rpc_response, slurp_url};
 use common::custom_futures::TimedAsyncMutex;
 use common::executor::Timer;
 use common::mm_ctx::{MmArc, MmWeak};
+use common::mm_number::MmNumber;
 use secp256k1::PublicKey;
 use ethabi::{Contract, Token};
 use ethcore_transaction::{ Action, Transaction as UnSignedEthTx, UnverifiedTransaction};

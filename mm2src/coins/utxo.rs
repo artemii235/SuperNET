@@ -28,10 +28,11 @@ use bigdecimal::BigDecimal;
 pub use bitcrypto::{dhash160, ChecksumType, sha256};
 use chain::{TransactionOutput, TransactionInput, OutPoint};
 use chain::constants::{SEQUENCE_FINAL};
-use common::{first_char_to_upper, HyRes, MmNumber, rpc_response};
+use common::{first_char_to_upper, HyRes, rpc_response};
 use common::custom_futures::join_all_sequential;
 use common::jsonrpc_client::{JsonRpcError, JsonRpcErrorType};
 use common::mm_ctx::MmArc;
+use common::mm_number::MmNumber;
 #[cfg(feature = "native")]
 use dirs::home_dir;
 use futures01::{Future};
