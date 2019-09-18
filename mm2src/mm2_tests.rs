@@ -1839,14 +1839,14 @@ fn orderbook_should_display_rational_amounts() {
     let (_dump_log, _dump_dashboard) = mm_dump (&mm.log_path);
     log!({"Log path: {}", mm.log_path.display()});
     unwrap! (block_on (mm.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
-    enable_electrum(&mm, "RICK", vec!["electrum3.cipig.net:10017", "electrum2.cipig.net:10017", "electrum1.cipig.net:10017"]);
-    enable_electrum(&mm, "MORTY", vec!["electrum3.cipig.net:10018", "electrum2.cipig.net:10018", "electrum1.cipig.net:10018"]);
+    block_on(enable_electrum(&mm, "RICK", vec!["electrum3.cipig.net:10017", "electrum2.cipig.net:10017", "electrum1.cipig.net:10017"]));
+    block_on(enable_electrum(&mm, "MORTY", vec!["electrum3.cipig.net:10018", "electrum2.cipig.net:10018", "electrum1.cipig.net:10018"]));
 
     let price = BigRational::new(9.into(), 10.into());
     let volume = BigRational::new(9.into(), 10.into());
 
     // create order with rational amount and price
-    let rc = unwrap! (mm.rpc (json! ({
+    let rc = unwrap! (block_on (mm.rpc (json! ({
         "userpass": mm.userpass,
         "method": "setprice",
         "base": "RICK",
@@ -1854,17 +1854,17 @@ fn orderbook_should_display_rational_amounts() {
         "price": price,
         "volume": volume,
         "cancel_previous": false,
-    })));
+    }))));
     assert! (rc.0.is_success(), "!setprice: {}", rc.1);
 
     thread::sleep(Duration::from_secs(12));
     log!("Get RICK/MORTY orderbook");
-    let rc = unwrap!(mm.rpc (json! ({
+    let rc = unwrap! (block_on (mm.rpc (json! ({
             "userpass": mm.userpass,
             "method": "orderbook",
             "base": "RICK",
             "rel": "MORTY",
-        })));
+        }))));
     assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
 
     let orderbook: Json = unwrap!(json::from_str(&rc.1));
