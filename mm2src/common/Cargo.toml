@@ -40,6 +40,7 @@ libc = { version = "0.2", optional = true }
 num-bigint = { version = "0.2", features = ["serde", "std"] }
 num-rational = { version = "0.2", features = ["serde", "bigint", "bigint-std"] }
 num-traits = "0.2"
+parking_lot = { version = "0.7", features = ["nightly"] }
 primitives = { git = "https://github.com/artemii235/parity-bitcoin.git" }
 rand = { version = "0.7", features = ["std", "small_rng"] }
 regex = "1"

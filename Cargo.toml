@@ -36,6 +36,10 @@ bench = false
 # Can override this with "set CARGO_BUILD_RUSTFLAGS=-C opt-level=0".
 opt-level = 1
 
+# Uncomment on Raspberry Pi
+# cf. https://github.com/rust-lang/rust/issues/62896
+#codegen-units = 1
+
 [profile.test]
 # Should probably match "profile.dev", given that we're reusing the libraries.
 opt-level = 1

@@ -1293,9 +1293,7 @@ pub async fn lp_init (mypubport: u16, ctx: MmArc) -> Result<(), String> {
         }
     };
 
-    #[cfg(not(feature = "native"))] {
-        try_s! (ctx.send_to_helpers().await);
-    }
+    #[cfg(not(feature = "native"))] try_s! (ctx.send_to_helpers().await);
 
     let seednode_thread = if i_am_seed && cfg! (feature = "native") {
         log! ("i_am_seed at " (myipaddr) ":" (mypubport));
