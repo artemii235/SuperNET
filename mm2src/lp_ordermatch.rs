@@ -190,8 +190,8 @@ impl Into<MakerOrder> for TakerOrder {
             TakerAction::Sell => MakerOrder {
                 price: &self.request.rel_amount / &self.request.base_amount,
                 price_rat: (self.request.get_rel_amount() / self.request.get_base_amount()).into(),
-                max_base_vol: self.request.base_amount,
                 max_base_vol_rat: self.request.get_base_amount().into(),
+                max_base_vol: self.request.base_amount,
                 min_base_vol_rat: BigRational::from_integer(0.into()),
                 min_base_vol: 0.into(),
                 created_at: now_ms(),
@@ -205,8 +205,8 @@ impl Into<MakerOrder> for TakerOrder {
             TakerAction::Buy => MakerOrder {
                 price: &self.request.base_amount / &self.request.rel_amount,
                 price_rat: (self.request.get_base_amount() / self.request.get_rel_amount()).into(),
-                max_base_vol: self.request.rel_amount,
                 max_base_vol_rat: self.request.get_rel_amount().into(),
+                max_base_vol: self.request.rel_amount,
                 min_base_vol: 0.into(),
                 min_base_vol_rat: BigRational::from_integer(0.into()),
                 created_at: now_ms(),
