@@ -475,8 +475,10 @@ use std::os::raw::c_char;
 /// Obtains the environment variable `name` from the host, copying it into `rbuf`.  
 /// Returns the length of the value copied to `rbuf` or -1 if there was an error.
 #[cfg(not(feature = "native"))]
-extern "C" {pub fn host_env (name: *const c_char, nameˡ: i32, rbuf: *mut c_char, rcap: i32) -> i32;}
-
+// extern "C" {pub fn host_env (name: *const c_char, nameˡ: i32, rbuf: *mut c_char, rcap: i32) -> i32;}
+pub fn host_env (name: *const c_char, nameˡ: i32, rbuf: *mut c_char, rcap: i32) -> i32 {
+    unimplemented!()
+}
 /// Reads passphrase from file or environment.
 pub fn get_passphrase (path: &dyn AsRef<Path>, env: &str) -> Result<String, String> {
     if let (Some (file_passphrase), _file_userpass) = from_env_file (slurp (path)) {

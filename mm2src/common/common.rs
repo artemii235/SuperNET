@@ -1117,8 +1117,8 @@ pub fn lp_queue_command (msg: String) -> () {
 pub use gstuff::{now_ms, now_float};
 #[cfg(not(feature = "native"))]
 pub fn now_ms() -> u64 {
-    extern "C" {pub fn date_now() -> f64;}
-    unsafe {date_now() as u64}
+    use js_sys::Date;
+    Date::now() as u64
 }
 #[cfg(not(feature = "native"))]
 pub fn now_float() -> f64 {
@@ -1138,12 +1138,15 @@ pub fn temp_dir() -> PathBuf {env::temp_dir()}
 
 #[cfg(not(feature = "native"))]
 pub fn temp_dir() -> PathBuf {
+    /*
     extern "C" {pub fn temp_dir (rbuf: *mut c_char, rcap: i32) -> i32;}
     let mut buf: [u8; 4096] = unsafe {zeroed()};
     let rc = unsafe {temp_dir (buf.as_mut_ptr() as *mut c_char, buf.len() as i32)};
     if rc <= 0 {panic! ("!temp_dir")}
     let path = unwrap! (std::str::from_utf8 (&buf[0 .. rc as usize]));
     Path::new (path) .into()
+    */
+    unimplemented!()
 }
 
 #[cfg(feature = "native")]
@@ -1156,8 +1159,10 @@ pub fn write (path: &dyn AsRef<Path>, contents: &dyn AsRef<[u8]>) -> Result<(), 
 pub fn write (path: &dyn AsRef<Path>, contents: &dyn AsRef<[u8]>) -> Result<(), String> {
     use std::os::raw::c_char;
 
-    extern "C" {pub fn host_write(path_p: *const c_char, path_l: i32, ptr: *const c_char, len: i32) -> i32;}
-
+    // extern "C" {pub fn host_write(path_p: *const c_char, path_l: i32, ptr: *const c_char, len: i32) -> i32;}
+    pub fn host_write(path_p: *const c_char, path_l: i32, ptr: *const c_char, len: i32) -> i32 {
+        1
+    }
     let path = try_s! (path.as_ref().to_str().ok_or("Non-unicode path"));
     let content = contents.as_ref();
     let rc = unsafe {host_write (
@@ -1219,21 +1224,9 @@ static TAIL_CUR: Atomic<usize> = Atomic::new (0);
 
 #[cfg(not(feature = "native"))]
 pub fn writeln (line: &str) {
-    use std::ffi::CString;
-
-    extern "C" {pub fn console_log (ptr: *const c_char, len: i32);}
-    let lineᶜ = unwrap! (CString::new (line));
-    unsafe {console_log (lineᶜ.as_ptr(), line.len() as i32)}
-
-    // Keep a tail of the log in RAM for the integration tests.
-    unsafe {
-        if line.len() < PROCESS_LOG_TAIL.len() {
-            let posⁱ = TAIL_CUR.load (Ordering::Relaxed);
-            let posⱼ = posⁱ + line.len();
-            let (posˢ, posⱼ) = if posⱼ > PROCESS_LOG_TAIL.len() {(0, line.len())} else {(posⁱ, posⱼ)};
-            if TAIL_CUR.compare_exchange (posⁱ, posⱼ, Ordering::Relaxed, Ordering::Relaxed) .is_ok() {
-                for (cur, ix) in (posˢ..posⱼ) .zip (0..line.len()) {PROCESS_LOG_TAIL[cur] = line.as_bytes()[ix]}
-}   }   }   }
+    use web_sys::console;
+    console::log_1(&line.into());
+}
 
 /// Set up a panic hook that prints the panic location and the message.  
 /// (The default Rust handler doesn't have the means to print the message.
@@ -1255,6 +1248,7 @@ pub fn small_rng() -> SmallRng {
     SmallRng::seed_from_u64 (now_ms())
 }
 
+/*
 /// Ask the WASM host to send HTTP request to the native helpers.  
 /// Returns request ID used to wait for the reply.
 #[cfg(not(feature = "native"))]
@@ -1279,6 +1273,18 @@ extern "C" {
     /// * `rbuf` - The buffer to copy the response payload into if the request is finished.
     /// * `rcap` - The size of the `rbuf` buffer.
     pub fn http_helper_check (helper_request_id: i32, rbuf: *mut u8, rcap: i32) -> i32;
+}
+*/
+
+fn http_helper_if (
+    helper: *const u8, helper_len: i32,
+    payload: *const u8, payload_len: i32,
+    timeout_ms: i32) -> i32 {
+    unimplemented!()
+}
+
+pub fn http_helper_check (helper_request_id: i32, rbuf: *mut u8, rcap: i32) -> i32 {
+    unimplemented!()
 }
 
 lazy_static! {
@@ -1352,8 +1358,10 @@ pub async fn helperᶜ (helper: &'static str, args: Vec<u8>) -> Result<Vec<u8>, 
 
 /// Invokes callback `cb_id` in the WASM host, passing a `(ptr,len)` string to it.
 #[cfg(not(feature = "native"))]
-extern "C" {pub fn call_back (cb_id: i32, ptr: *const c_char, len: i32);}
-
+// extern "C" {pub fn call_back (cb_id: i32, ptr: *const c_char, len: i32);}
+pub fn call_back (cb_id: i32, ptr: *const c_char, len: i32) {
+    unimplemented!()
+}
 pub mod for_tests;
 
 fn without_trailing_zeroes (decimal: &str, dot: usize) -> &str {

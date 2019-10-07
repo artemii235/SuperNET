@@ -55,6 +55,7 @@ use uuid::Uuid;
 use crate::mm2::lp_swap::{dex_fee_amount, get_locked_amount, MakerSwap, run_maker_swap, run_taker_swap, TakerSwap};
 
 #[cfg(test)]
+#[cfg(feature = "native")]
 #[path = "ordermatch_tests.rs"]
 mod ordermatch_tests;
 
@@ -348,7 +349,7 @@ fn lp_connect_start_bob(ctx: &MmArc, maker_match: &MakerMatch) -> i32 {
                 my_persistent_pub,
                 uuid,
             );
-            run_maker_swap(maker_swap, None);
+            block_on(run_maker_swap(maker_swap, None));
         }
     });
     match loop_thread {
@@ -408,7 +409,7 @@ fn lp_connected_alice(ctx: &MmArc, taker_match: &TakerMatch) { // alice
                 my_persistent_pub,
                 uuid,
             );
-            run_taker_swap(taker_swap, None);
+            block_on(run_taker_swap(taker_swap, None));
         }
     });
     match alice_loop_thread {

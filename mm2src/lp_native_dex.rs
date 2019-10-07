@@ -784,7 +784,13 @@ const P2P_SEED_NODES: [&'static str; 5] = [
 ];
 
 /// Default seed nodes for netid 9999 that is used for MM2 testing
-const P2P_SEED_NODES_9999: [&'static str; 3] = [
+const P2P_SEED_NODES_9999: [&'static str; 9] = [
+    "195.201.116.176",
+    "46.4.87.18",
+    "46.4.78.11",
+    "195.201.116.176",
+    "46.4.87.18",
+    "46.4.78.11",
     "195.201.116.176",
     "46.4.87.18",
     "46.4.78.11",
@@ -1044,7 +1050,10 @@ fn fix_directories(ctx: &MmCtx) -> Result<(), String> {
 
 #[cfg(not(feature = "native"))]
 fn fix_directories(ctx: &MmCtx) -> Result<(), String> {
-    extern "C" {pub fn host_ensure_dir_is_writable(ptr: *const c_char, len: i32) -> i32;}
+    // extern "C" {pub fn host_ensure_dir_is_writable(ptr: *const c_char, len: i32) -> i32;}
+    pub fn host_ensure_dir_is_writable(ptr: *const c_char, len: i32) -> i32 {
+        0
+    }
     macro_rules! writeable_dir {
         ($path: expr) => {
             let path = $path;

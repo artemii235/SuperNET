@@ -1503,7 +1503,8 @@ pub async fn peers_drop_send_handlerʰ (req: Bytes) -> Result<Vec<u8>, String> {
     Ok (Vec::new())}
 
 #[cfg(not(feature = "native"))]
-extern "C" {pub fn peers_drop_send_handler (shp1: i32, shp2: i32);}
+// extern "C" {pub fn peers_drop_send_handler (shp1: i32, shp2: i32);}
+pub fn peers_drop_send_handler (shp1: i32, shp2: i32) {}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SendHandlerRef (u64);
@@ -1600,14 +1601,9 @@ pub async fn peers_send (req: bytes::Bytes) -> Result<Vec<u8>, String> {
 #[cfg(not(feature = "native"))]
 pub async fn send (ctx: MmArc, peer: bits256, subject: Vec<u8>, fallback: u8, payload: Vec<u8>)
 -> Result<SendHandlerRef, String> {
-    let rv = try_s! (helperᶜ ("peers_send", try_s! (bencode (&ToPeersSend {
-        ctx: try_s! (ctx.ffi_handle()),
-        peer,
-        subject: ByteBuf::from (subject),
-        fallback,
-        payload: ByteBuf::from (payload)
-    }))) .await);
-    Ok (try_s! (json::from_slice (&rv)))
+    let mut msgs = SWAP_MESSAGES.lock().await;
+    msgs.insert(subject, payload);
+    Ok ( SendHandlerRef(0) )
 }
 
 struct RecvFuture {
@@ -1747,15 +1743,25 @@ pub extern fn start_helpers() -> i32 {
             return port as i32
 }   }   }
 
+use futures::lock::Mutex as FutMutex;
+use common::executor::Timer;
+
+lazy_static! {
+    pub static ref SWAP_MESSAGES: FutMutex<HashMap<Vec<u8>, Vec<u8>>> = FutMutex::new(HashMap::new());
+}
+
 #[cfg(not(feature = "native"))]
 pub async fn recv (ctx: MmArc, subject: Vec<u8>, fallback: u8, validator: FixedValidator)
 -> Result<Vec<u8>, String> {
-    Ok (try_s! (helperᶜ ("peers_recv", try_s! (bencode (&ToPeersRecv {
-        ctx: try_s! (ctx.ffi_handle()),
-        subject: ByteBuf::from (subject),
-        fallback,
-        validator
-    }))) .await))
+    loop {
+        let msgs = SWAP_MESSAGES.lock().await;
+        match msgs.get(&subject) {
+            Some(msg) => return Ok(msg.clone()),
+            None => ()
+        }
+        drop(msgs);
+        Timer::sleep(1.).await
+    }
 }
 
 #[cfg(not(feature = "native"))]

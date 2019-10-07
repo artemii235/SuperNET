@@ -9,8 +9,8 @@ use futures01::stream::{Stream, Fuse};
 use futures::future::{select, Either};
 use futures::lock::{Mutex as AsyncMutex};
 
+#[cfg(feature = "native")]
 use gstuff::now_float;
-
 /// The analogue of join_all combinator running futures `sequentially`.
 /// `join_all` runs futures `concurrently` which cause issues with native coins daemons RPC.
 /// We need to get raw transactions containing unspent outputs when we build new one in order
@@ -184,6 +184,12 @@ impl<T, U> Future for SendAll<T, U>
 pub struct TimedMutexGuard<'a, T> (futures::lock::MutexGuard<'a, T>);
 //impl<'a, T> Drop for TimedMutexGuard<'a, T> {fn drop (&mut self) {}}
 
+#[cfg(not(feature = "native"))]
+fn now_float() -> f64 {
+    use js_sys;
+    js_sys::Date::now() / 1000.
+}
+
 /// Like `AsyncMutex` but periodically invokes a callback,
 /// allowing the application to implement timeouts, status updates and shutdowns.
 pub struct TimedAsyncMutex<T> (AsyncMutex<T>);
@@ -194,7 +200,7 @@ impl<T> TimedAsyncMutex<T> {
     /// `tick` returns a time till the next tick, or an error to abort the locking attempt.  
     /// `tick` parameters are the time when the locking attempt has started and the current time
     /// (they are equal on the first invocation of `tick`).
-    pub async fn lock<F> (&self, mut tick: F) -> Result<TimedMutexGuard<T>, String>
+    pub async fn lock<F> (&self, mut tick: F) -> Result<TimedMutexGuard<'_, T>, String>
     where F: FnMut (f64, f64) -> Result<f64, String> {
         let start = now_float();
         let mut now = start;

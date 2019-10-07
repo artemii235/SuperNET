@@ -3,9 +3,9 @@ use crate::WithdrawFee;
 use crate::utxo::rpc_clients::{ElectrumProtocol};
 use futures::executor::block_on;
 use futures::future::join_all;
-use mocktopus::mocking::*;
+// use mocktopus::mocking::*;
 use super::*;
-
+/*
 fn electrum_client_for_test(servers: &[&str]) -> UtxoRpcClientEnum {
     let mut client = ElectrumClientImpl::new();
     for server in servers {
@@ -526,3 +526,4 @@ fn test_utxo_lock() {
         unwrap!(result);
     }
 }
+*/

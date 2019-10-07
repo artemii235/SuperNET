@@ -182,7 +182,7 @@ mod docker_tests {
             unwrap!(client.import_address(&coin.my_address(), &coin.my_address(), false).wait());
             let hash = client.send_to_address(&coin.my_address(), &1000.into()).wait().unwrap();
             let tx_bytes = client.get_transaction_bytes(hash).wait().unwrap();
-            unwrap!(coin.wait_for_confirmations(&tx_bytes, 1, timeout, 1));
+            unwrap!(coin.wait_for_confirmations(&tx_bytes, 1, timeout, 1).wait());
             log!({ "{:02x}", tx_bytes });
             loop {
                 let unspents = client.list_unspent(0, std::i32::MAX, vec![coin.my_address().into()]).wait().unwrap();
@@ -210,7 +210,7 @@ mod docker_tests {
             1.into(),
         ).wait().unwrap();
 
-        unwrap!(coin.wait_for_confirmations(&tx.tx_hex(), 1, timeout, 1));
+        unwrap!(coin.wait_for_confirmations(&tx.tx_hex(), 1, timeout, 1).wait());
 
         let refund_tx = coin.send_taker_refunds_payment(
             &tx.tx_hex(),
@@ -219,7 +219,7 @@ mod docker_tests {
             &[0; 20],
         ).wait().unwrap();
 
-        unwrap!(coin.wait_for_confirmations(&refund_tx.tx_hex(), 1, timeout, 1));
+        unwrap!(coin.wait_for_confirmations(&refund_tx.tx_hex(), 1, timeout, 1).wait());
 
         let found = unwrap!(unwrap!(coin.search_for_swap_tx_spend_my(
             time_lock,
@@ -245,7 +245,7 @@ mod docker_tests {
             1.into(),
         ).wait().unwrap();
 
-        unwrap!(coin.wait_for_confirmations(&tx.tx_hex(), 1, timeout, 1));
+        unwrap!(coin.wait_for_confirmations(&tx.tx_hex(), 1, timeout, 1).wait());
 
         let spend_tx = coin.send_maker_spends_taker_payment(
             &tx.tx_hex(),
@@ -254,7 +254,7 @@ mod docker_tests {
             &secret,
         ).wait().unwrap();
 
-        unwrap!(coin.wait_for_confirmations(&spend_tx.tx_hex(), 1, timeout, 1));
+        unwrap!(coin.wait_for_confirmations(&spend_tx.tx_hex(), 1, timeout, 1).wait());
 
         let found = unwrap!(unwrap!(coin.search_for_swap_tx_spend_my(
             time_lock,
