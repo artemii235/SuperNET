@@ -18,7 +18,7 @@ native = [
   "hyper", "tokio-core", "dirs", "docker_tests",
   "common/native", "peers/native", "coins/native", # "portfolio/native"
 ]
-w-bindgen = ["js-sys", "wasm-bindgen", "wasm-bindgen-futures", "wasm-bindgen-test", "web-sys"]
+w-bindgen = ["coins/w-bindgen", "common/w-bindgen", "js-sys", "wasm-bindgen", "wasm-bindgen-futures", "wasm-bindgen-test", "web-sys"]
 
 [[bin]]
 name = "mm2"
@@ -144,3 +144,4 @@ members = [
 backtrace = { git = "https://github.com/artemii235/backtrace-rs.git" }
 backtrace-sys = { git = "https://github.com/artemii235/backtrace-rs.git" }
 num-rational = { git =  "https://github.com/artemii235/num-rational.git" }
+mocktopus_macros = { path = "/home/artem/dev/Mocktopus/macros" }

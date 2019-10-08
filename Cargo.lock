@@ -364,6 +364,7 @@ dependencies = [
  "gstuff 0.6.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "hex 0.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "http 0.1.17 (registry+https://github.com/rust-lang/crates.io-index)",
+ "js-sys 0.3.28 (registry+https://github.com/rust-lang/crates.io-index)",
  "jsonrpc-core 8.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "keys 0.1.0 (git+https://github.com/artemii235/parity-bitcoin.git)",
  "lazy_static 1.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -389,6 +390,10 @@ dependencies = [
  "tokio-rustls 0.9.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "tokio-tcp 0.1.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "unwrap 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "wasm-bindgen 0.2.51 (registry+https://github.com/rust-lang/crates.io-index)",
+ "wasm-bindgen-futures 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "wasm-bindgen-test 0.3.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "web-sys 0.3.28 (registry+https://github.com/rust-lang/crates.io-index)",
  "web3 0.6.0 (git+https://github.com/artemii235/rust-web3)",
  "webpki-roots 0.16.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "winapi 0.3.6 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -1505,13 +1510,12 @@ name = "mocktopus"
 version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
- "mocktopus_macros 0.7.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "mocktopus_macros 0.7.3",
 ]
 
 [[package]]
 name = "mocktopus_macros"
 version = "0.7.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "proc-macro2 0.4.30 (registry+https://github.com/rust-lang/crates.io-index)",
  "quote 0.6.13 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -3254,7 +3258,6 @@ dependencies = [
 "checksum mio-uds 0.6.7 (registry+https://github.com/rust-lang/crates.io-index)" = "966257a94e196b11bb43aca423754d87429960a768de9414f3691d6957abf125"
 "checksum miow 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)" = "8c1f2f3b1cf331de6896aabf6e9d55dca90356cc9960cca7eaaf408a355ae919"
 "checksum mocktopus 0.7.3 (registry+https://github.com/rust-lang/crates.io-index)" = "c3ddc2275f8c1c95c016bd7fa23b2debcc6e2f24f05cbbfa250e67ea32428ad5"
-"checksum mocktopus_macros 0.7.3 (registry+https://github.com/rust-lang/crates.io-index)" = "d9be31cccc790eef5b59040292fed7487beb999e8ab373cebdd31dea20adc3e3"
 "checksum net2 0.2.33 (registry+https://github.com/rust-lang/crates.io-index)" = "42550d9fb7b6684a6d404d9fa7250c2eb2646df731d1c06afc06dcee9e1bcf88"
 "checksum nodrop 0.1.13 (registry+https://github.com/rust-lang/crates.io-index)" = "2f9667ddcc6cc8a43afc9b7917599d7216aa09c463919ea32c59ed6cac8bc945"
 "checksum nom 4.1.1 (registry+https://github.com/rust-lang/crates.io-index)" = "9c349f68f25f596b9f44cf0e7c69752a5c633b0550c3ff849518bfba0233774a"

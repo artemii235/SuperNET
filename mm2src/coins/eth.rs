@@ -154,7 +154,7 @@ pub struct Web3Instance {
     is_parity: bool,
 }
 
-// #[cfg_attr(test, mockable)]
+#[cfg_attr(test, mockable)]
 impl EthCoinImpl {
     /// Gets Transfer events from ERC20 smart contract `addr` between `from_block` and `to_block`
     fn erc20_transfer_events(
@@ -911,7 +911,7 @@ async fn sign_and_send_transaction_impl(
     Ok(signed)
 }
 
-// #[cfg_attr(test, mockable)]
+#[cfg_attr(test, mockable)]
 impl EthCoin {
     fn sign_and_send_transaction(
         &self,

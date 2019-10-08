@@ -25,8 +25,8 @@ use http::{Request, StatusCode};
 use http::header::AUTHORIZATION;
 use http::Uri;
 use keys::Address;
-// #[cfg(test)]
-// use mocktopus::macros::*;
+#[cfg(test)]
+use mocktopus::macros::*;
 use rpc::v1::types::{Bytes as BytesJson, H256 as H256Json, Transaction as RpcTransaction, VerboseBlockClient};
 #[cfg(feature = "native")]
 use rustls::{self, ClientConfig, Session};
@@ -286,7 +286,7 @@ impl JsonRpcClient for NativeClientImpl {
     }
 }
 
-// #[cfg_attr(test, mockable)]
+#[cfg_attr(test, mockable)]
 impl UtxoRpcClientOps for NativeClient {
     fn list_unspent_ordered(&self, address: &Address) -> UtxoRpcRes<Vec<UnspentInfo>> {
         let clone = self.0.clone();
@@ -393,7 +393,7 @@ impl UtxoRpcClientOps for NativeClient {
     }
 }
 
-// #[cfg_attr(test, mockable)]
+#[cfg_attr(test, mockable)]
 impl NativeClientImpl {
     /// https://bitcoin.org/en/developer-reference#listunspent
     pub fn list_unspent(&self, min_conf: i32, max_conf: i32, addresses: Vec<String>) -> RpcRes<Vec<NativeUnspent>> {
@@ -944,7 +944,7 @@ impl ElectrumClient {
     }
 }
 
-// #[cfg_attr(test, mockable)]
+#[cfg_attr(test, mockable)]
 impl UtxoRpcClientOps for ElectrumClient {
     fn list_unspent_ordered(&self, address: &Address) -> UtxoRpcRes<Vec<UnspentInfo>> {
         let script = Builder::build_p2pkh(&address.hash);
@@ -1075,7 +1075,7 @@ impl UtxoRpcClientOps for ElectrumClient {
     }
 }
 
-// #[cfg_attr(test, mockable)]
+#[cfg_attr(test, mockable)]
 impl ElectrumClientImpl {
     pub fn new() -> ElectrumClientImpl {
         ElectrumClientImpl {

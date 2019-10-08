@@ -4,7 +4,7 @@ use common::mm_ctx::MmArc;
 use common::mm_number::MmNumber;
 use crate::{TradeInfo, FoundSwapTxSpend, WithdrawRequest};
 use futures01::Future;
-// use mocktopus::macros::*;
+use mocktopus::macros::*;
 use std::borrow::Cow;
 use super::{HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TransactionDetails, TransactionEnum, TransactionFut};
 
@@ -13,7 +13,7 @@ use super::{HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TransactionDetails
 #[derive(Clone, Debug)]
 pub struct TestCoin {}
 
-// #[mockable]
+#[mockable]
 impl MarketCoinOps for TestCoin {
     fn ticker (&self) -> &str {
         unimplemented!()
@@ -59,7 +59,7 @@ impl MarketCoinOps for TestCoin {
     }
 }
 
-// #[mockable]
+#[mockable]
 impl SwapOps for TestCoin {
     fn send_taker_fee(&self, fee_addr: &[u8], amount: BigDecimal) -> TransactionFut {
         unimplemented!()
@@ -189,7 +189,7 @@ impl SwapOps for TestCoin {
     }
 }
 
-// #[mockable]
+#[mockable]
 impl MmCoin for TestCoin {
     fn is_asset_chain(&self) -> bool {
         unimplemented!()

@@ -3,7 +3,7 @@ use common::for_tests::wait_for_log;
 use futures::executor::block_on;
 use futures::future::join_all;
 use super::*;
-// use mocktopus::mocking::*;
+use mocktopus::mocking::*;
 
 use common::privkey::key_pair_from_seed;
 use crate::lp_coininit;
@@ -257,7 +257,6 @@ fn test_nonce_several_urls() {
     log!([new_nonce]);
 }
 
-/*
 #[test]
 fn test_wait_for_payment_spend_timeout() {
     EthCoinImpl::spend_events.mock_safe(|_, _| MockResult::Return(Box::new(futures01::future::ok(vec![]))));
@@ -290,7 +289,7 @@ fn test_wait_for_payment_spend_timeout() {
 
     assert!(coin.wait_for_tx_spend(&tx_bytes, wait_until, from_block).wait().is_err());
 }
-*/
+
 #[test]
 fn test_search_for_swap_tx_spend_was_spent() {
     let key_pair = KeyPair::from_secret_slice(&hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap()).unwrap();
@@ -361,16 +360,16 @@ fn test_search_for_swap_tx_spend_was_refunded() {
     assert_eq!(refund_tx, found_tx);
 }
 
-/*
 #[test]
 fn test_withdraw_impl_manual_fee() {
+    let (ctx, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://dummy.dummy".into()]);
+
     EthCoin::my_balance.mock_safe(|_| {
         let balance = wei_from_big_decimal(&1000000000.into(), 18).unwrap();
         MockResult::Return(Box::new(futures01::future::ok(balance)))
     });
     get_addr_nonce.mock_safe(|_, _| MockResult::Return(Box::new(futures01::future::ok(0.into()))));
 
-    let (ctx, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://dummy.dummy".into()]);
     let withdraw_req = WithdrawRequest {
         amount: 1.into(),
         to: "0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94".to_string(),
@@ -378,6 +377,8 @@ fn test_withdraw_impl_manual_fee() {
         max: false,
         fee: Some(WithdrawFee::EthGas { gas: 150000, gas_price: 1.into() }),
     };
+    coin.my_balance().wait().unwrap();
+    /*
     let tx_details = unwrap!(block_on(withdraw_impl(ctx, coin.clone(), withdraw_req)));
     let expected = Some(EthTxFeeDetails {
         coin: "ETH".into(),
@@ -386,8 +387,9 @@ fn test_withdraw_impl_manual_fee() {
         total_fee: "0.00015".parse().unwrap(),
     }.into());
     assert_eq!(expected, tx_details.fee_details);
+    */
 }
-*/
+
 #[test]
 fn test_nonce_lock() {
     // send several transactions concurrently to check that they are not using same nonce

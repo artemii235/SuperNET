@@ -9,6 +9,8 @@ native = [
   "hyper", "hyper-rustls", "libc", "ring", "tokio", "tokio-core"
 ]
 
+w-bindgen = ["js-sys", "wasm-bindgen", "wasm-bindgen-futures", "wasm-bindgen-test", "web-sys"]
+
 [lib]
 name = "common"
 path = "common.rs"

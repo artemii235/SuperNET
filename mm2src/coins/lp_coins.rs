@@ -22,6 +22,7 @@
 #![feature(non_ascii_idents)]
 #![feature(async_await, async_closure)]
 #![feature(hash_raw_entry)]
+#![feature(fmt_internals)]
 
 #[macro_use] extern crate common;
 #[macro_use] extern crate fomat_macros;
