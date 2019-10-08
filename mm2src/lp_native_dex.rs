@@ -19,6 +19,7 @@
 
 #![cfg_attr(not(feature = "native"), allow(dead_code))]
 #![cfg_attr(not(feature = "native"), allow(unused_imports))]
+#![cfg_attr(not(feature = "native"), allow(unused_variables))]
 
 use futures01::{Future};
 use futures01::sync::oneshot::Sender;
@@ -32,7 +33,7 @@ use std::borrow::Cow;
 use std::fs;
 use std::ffi::{CString};
 use std::io::{Read, Write};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::os::raw::c_char;
 use std::path::Path;
 use std::str;
@@ -46,7 +47,7 @@ use crate::common::executor::spawn;
 use crate::common::{slurp_url, MM_VERSION};
 use crate::common::mm_ctx::{MmCtx, MmArc};
 use crate::common::privkey::key_pair_from_seed;
-use crate::mm2::lp_network::{lp_command_q_loop, seednode_loop, start_client_p2p_loop};
+use crate::mm2::lp_network::{lp_command_q_loop, start_seednode_loop, start_client_p2p_loop};
 use crate::mm2::lp_ordermatch::{lp_ordermatch_loop, lp_trade_command, migrate_saved_orders, orders_kick_start};
 use crate::mm2::lp_swap::swap_kick_starts;
 use crate::mm2::rpc::{spawn_rpc};
@@ -1321,14 +1322,8 @@ pub async fn lp_init (mypubport: u16, ctx: MmArc) -> Result<(), String> {
 
     #[cfg(not(feature = "native"))] try_s! (ctx.send_to_helpers().await);
 
-    let seednode_thread = if i_am_seed && cfg! (feature = "native") {
-        log! ("i_am_seed at " (myipaddr) ":" (mypubport));
-        let listener: TcpListener = try_s!(TcpListener::bind(&fomat!((myipaddr) ":" (mypubport))));
-        try_s!(listener.set_nonblocking(true));
-        Some(try_s!(thread::Builder::new().name ("seednode_loop".into()) .spawn ({
-            let ctx = ctx.clone();
-            move || seednode_loop(ctx, listener)
-        })))
+    let seednode_thread = if i_am_seed {
+        try_s! (start_seednode_loop (&ctx, myipaddr, mypubport) .await)
     } else {
         None
     };
@@ -1337,22 +1332,28 @@ pub async fn lp_init (mypubport: u16, ctx: MmArc) -> Result<(), String> {
     try_s! (lp_initpeers (&ctx, netid, seednodes) .await);
 
     try_s! (ctx.initialized.pin (true));
+
+    #[cfg(feature = "native")] {
+        // launch kickstart threads before RPC is available, this will prevent the API user to place
+        // an order and start new swap that might get started 2 times because of kick-start
+        let mut coins_needed_for_kick_start = swap_kick_starts (ctx.clone());
+        coins_needed_for_kick_start.extend(try_s!(orders_kick_start(&ctx)));
+        *(try_s!(ctx.coins_needed_for_kick_start.lock())) = coins_needed_for_kick_start;
+    }
+
+    let trades: thread::JoinHandle<()>;
+    #[cfg(feature = "native")] {
+        trades = try_s! (thread::Builder::new().name ("trades".into()) .spawn ({
+            let ctx = ctx.clone();
+            move || lp_ordermatch_loop (ctx)
+        }));
+    }
+
+    let ctxʹ = ctx.clone();
+    spawn (async move {lp_command_q_loop (ctxʹ) .await});
+
     #[cfg(not(feature = "native"))] {if 1==1 {return Ok(())}}  // TODO: Gradually move this point further down.
-    // launch kickstart threads before RPC is available, this will prevent the API user to place
-    // an order and start new swap that might get started 2 times because of kick-start
-    let mut coins_needed_for_kick_start = swap_kick_starts (ctx.clone());
-    coins_needed_for_kick_start.extend(try_s!(orders_kick_start(&ctx)));
-    *(try_s!(ctx.coins_needed_for_kick_start.lock())) = coins_needed_for_kick_start;
 
-    let trades = try_s! (thread::Builder::new().name ("trades".into()) .spawn ({
-        let ctx = ctx.clone();
-        move || lp_ordermatch_loop (ctx)
-    }));
-
-    let command_queue = try_s! (thread::Builder::new().name ("command_queue".into()) .spawn ({
-        let ctx = ctx.clone();
-        move || unsafe { lp_command_q_loop (ctx) }
-    }));
     let ctx_id = try_s! (ctx.ffi_handle());
 
     // `LPinit` currently fails to stop in a timely manner, so we're dropping the `lp_init` context early
@@ -1362,8 +1363,7 @@ pub async fn lp_init (mypubport: u16, ctx: MmArc) -> Result<(), String> {
 
     spawn_rpc(ctx_id);
     // unwrap! (prices.join());
-    unwrap! (trades.join());
-    unwrap! (command_queue.join());
+    #[cfg(feature = "native")] unwrap! (trades.join());
     if let Some(seednode) = seednode_thread {
         unwrap! (seednode.join());
     }

@@ -687,15 +687,14 @@ fn build_libtorrent(boost: &Path, target: &Target) -> (PathBuf, PathBuf) {
 
     // When building on something like Raspberry Pi the RAM is limited.
     let sys = System::new();
-    let totalᵐ = sys.get_total_memory();
-    let freeᵐ = sys.get_free_memory();
+    let totalᵐ = sys.get_total_memory() as usize;
+    let freeᵐ = sys.get_free_memory() as usize;
     epintln! ([=totalᵐ] ", " [=freeᵐ]);
-    let processes = if freeᵐ < 512 * 1024 {
-        1
-    } else {
-        // NB: Under QEMU the logical is lower than the physical.
-        4.min(num_cpus::get_physical()).min(num_cpus::get())
-    };
+    // NB: Under QEMU the logical is lower than the physical.
+    let processes = 4
+        .min(freeᵐ / 333 * 1024)
+        .min(num_cpus::get_physical())
+        .min(num_cpus::get());
 
     // This version of the build doesn't compile Boost separately
     // but rather allows the libtorrent to compile it

@@ -690,33 +690,22 @@ pub struct AutoBuyInput {
     dest_pub_key: H256Json
 }
 
-pub fn buy(ctx: MmArc, json: Json) -> HyRes {
-    let input: AutoBuyInput = try_h!(json::from_value(json.clone()));
-    if input.base == input.rel {
-        return rpc_err_response(500, "Base and rel must be different coins");
-    }
-    let rel_coin = try_h!(block_on(lp_coinfind(&ctx, &input.rel)));
-    let rel_coin = match rel_coin {
-        Some(c) => c,
-        None => return rpc_err_response(500, "Rel coin is not found or inactive")
-    };
-    let base_coin = try_h!(block_on(lp_coinfind(&ctx, &input.base)));
-    let base_coin: MmCoinEnum = match base_coin {
-        Some(c) => c,
-        None => return rpc_err_response(500, "Base coin is not found or inactive")
-    };
+pub async fn buy(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
+    let input: AutoBuyInput = try_s!(json::from_value(req));
+    if input.base == input.rel {return ERR!("Base and rel must be different coins")}
+    let rel_coin = try_s!(lp_coinfind(&ctx, &input.rel).await);
+    let rel_coin = try_s!(rel_coin.ok_or("Rel coin is not found or inactive"));
+    let base_coin = try_s!(lp_coinfind(&ctx, &input.base).await);
+    let base_coin: MmCoinEnum = try_s!(base_coin.ok_or("Base coin is not found or inactive"));
     let my_amount = &input.volume * &input.price;
-    Box::new(rel_coin.my_balance().and_then(move |my_balance| {
-        check_locked_coins(&ctx, &my_amount, &my_balance, rel_coin.ticker()).and_then(move |_| {
-            let dex_fee = dex_fee_amount(base_coin.ticker(), rel_coin.ticker(), &my_amount.clone().into());
-            let trade_info = TradeInfo::Taker(dex_fee);
-            rel_coin.check_i_have_enough_to_trade(&my_amount.clone().into(), &my_balance.clone().into(), trade_info).and_then(move |_|
-                base_coin.can_i_spend_other_payment().and_then(move |_|
-                    rpc_response(200, try_h!(lp_auto_buy(&ctx, input)))
-                )
-            )
-        })
-    }))
+    let my_balance = try_s!(rel_coin.my_balance().compat().await);
+    try_s!(check_locked_coins(&ctx, &my_amount, &my_balance, rel_coin.ticker()).compat().await);
+    let dex_fee = dex_fee_amount(base_coin.ticker(), rel_coin.ticker(), &my_amount.clone().into());
+    let trade_info = TradeInfo::Taker(dex_fee);
+    try_s!(rel_coin.check_i_have_enough_to_trade(&my_amount.clone().into(), &my_balance.clone().into(), trade_info).compat().await);
+    try_s!(base_coin.can_i_spend_other_payment().compat().await);
+    let res = try_s!(lp_auto_buy(&ctx, input)).into_bytes();
+    Ok(try_s!(Response::builder().body(res)))
 }
 
 pub async fn sell(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {

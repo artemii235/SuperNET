@@ -60,7 +60,7 @@
 use bigdecimal::BigDecimal;
 use rpc::v1::types::{Bytes as BytesJson, H160 as H160Json, H256 as H256Json, H264 as H264Json};
 use coins::{lp_coinfind, MmCoinEnum, TradeInfo, TransactionDetails, TransactionEnum};
-use common::{bits256, HyRes, now_ms, now_float, rpc_response};
+use common::{bits256, HyRes, MM_VERSION, now_ms, now_float, rpc_response};
 use common::executor::Timer;
 use common::log::{TagParam};
 use common::mm_ctx::{from_ctx, MmArc};

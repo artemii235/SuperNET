@@ -81,7 +81,6 @@ pub mod lift_body {
 
 use atomic::Atomic;
 use bigdecimal::BigDecimal;
-use crossbeam::{channel};
 use futures01::{future, task::Task, Future};
 #[cfg(not(feature = "native"))]
 use futures::task::{Context, Poll as Poll03};
@@ -1078,11 +1077,6 @@ pub struct QueuedCommand {
     // retstrp: *mut *mut c_char,
 }
 
-lazy_static! {
-    // TODO: Move to `MmCtx`.
-    pub static ref COMMAND_QUEUE: (channel::Sender<QueuedCommand>, channel::Receiver<QueuedCommand>) = channel::unbounded();
-}
-
 /// Register an RPC command that came internally or from the peer-to-peer bus.
 #[no_mangle]
 #[cfg(feature = "native")]
@@ -1094,23 +1088,32 @@ pub extern "C" fn lp_queue_command_for_c (retstrp: *mut *mut c_char, buf: *mut c
 
     if buf == null_mut() {panic! ("!buf")}
     let msg = String::from (unwrap! (unsafe {CStr::from_ptr (buf)} .to_str()));
-    let cmd = QueuedCommand {
+    let _cmd = QueuedCommand {
         msg,
         queue_id,
         response_sock,
         stats_json_only
     };
-    unwrap! ((*COMMAND_QUEUE).0.send (cmd))
+    panic! ("We need a context ID");
+    //unwrap! ((*COMMAND_QUEUE).0.send (cmd))
 }
 
-pub fn lp_queue_command (msg: String) -> () {
+pub fn lp_queue_command (ctx: &mm_ctx::MmArc, msg: String) -> Result<(), String> {
+    // If we're helping a WASM then leave a copy of the broadcast for them.
+    if let Some (ref mut cq) = *try_s! (ctx.command_queueʰ.lock()) {
+        // Monotonic increment.
+        let now = if let Some (last) = cq.last() {(last.0 + 1) .max (now_ms())} else {now_ms()};
+        cq.push ((now, msg.clone()))
+    }
+
     let cmd = QueuedCommand {
         msg,
         queue_id: 0,
         response_sock: -1,
         stats_json_only: 0,
     };
-    unwrap! ((*COMMAND_QUEUE).0.send (cmd))
+    try_s! (ctx.command_queue.unbounded_send (cmd));
+    Ok(())
 }
 
 #[cfg(feature = "native")]
@@ -1354,6 +1357,12 @@ pub async fn helperᶜ (helper: &'static str, args: Vec<u8>) -> Result<Vec<u8>, 
     if rv.status != 200 {return ERR! ("!{}: {}", helper, rv)}
     // TODO: Check `rv.checksum` if present.
     Ok (rv.body.into_vec())
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct BroadcastP2pMessageArgs {
+    pub ctx: u32,
+    pub msg: String
 }
 
 /// Invokes callback `cb_id` in the WASM host, passing a `(ptr,len)` string to it.
