@@ -1,6 +1,7 @@
 /// Custom future combinators/implementations - some of standard do not match our requirements.
 
 use crate::executor::Timer;
+use crate::now_float;
 
 use futures01::{Async, AsyncSink, Future, Poll, Sink};
 use futures01::future::{self, Either as Either01, IntoFuture, Loop, loop_fn};
@@ -9,8 +10,6 @@ use futures01::stream::{Stream, Fuse};
 use futures::future::{select, Either};
 use futures::lock::{Mutex as AsyncMutex};
 
-#[cfg(feature = "native")]
-use gstuff::now_float;
 /// The analogue of join_all combinator running futures `sequentially`.
 /// `join_all` runs futures `concurrently` which cause issues with native coins daemons RPC.
 /// We need to get raw transactions containing unspent outputs when we build new one in order
@@ -183,12 +182,6 @@ impl<T, U> Future for SendAll<T, U>
 
 pub struct TimedMutexGuard<'a, T> (futures::lock::MutexGuard<'a, T>);
 //impl<'a, T> Drop for TimedMutexGuard<'a, T> {fn drop (&mut self) {}}
-
-#[cfg(not(feature = "native"))]
-fn now_float() -> f64 {
-    use js_sys;
-    js_sys::Date::now() / 1000.
-}
 
 /// Like `AsyncMutex` but periodically invokes a callback,
 /// allowing the application to implement timeouts, status updates and shutdowns.

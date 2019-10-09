@@ -1281,7 +1281,25 @@ static mut PROCESS_LOG_TAIL: [u8; 0x10000] = make_tail();
 #[cfg(not(feature = "native"))]
 static TAIL_CUR: Atomic<usize> = Atomic::new (0);
 
-#[cfg(not(feature = "native"))]
+#[cfg(all(not(feature = "native"), not(feature = "w-bindgen")))]
+pub fn writeln (line: &str) {
+    use std::ffi::CString;
+
+    extern "C" {pub fn console_log (ptr: *const c_char, len: i32);}
+    let lineᶜ = unwrap! (CString::new (line));
+    unsafe {console_log (lineᶜ.as_ptr(), line.len() as i32)}
+
+    // Keep a tail of the log in RAM for the integration tests.
+    unsafe {
+        if line.len() < PROCESS_LOG_TAIL.len() {
+            let posⁱ = TAIL_CUR.load (Ordering::Relaxed);
+            let posⱼ = posⁱ + line.len();
+            let (posˢ, posⱼ) = if posⱼ > PROCESS_LOG_TAIL.len() {(0, line.len())} else {(posⁱ, posⱼ)};
+            if TAIL_CUR.compare_exchange (posⁱ, posⱼ, Ordering::Relaxed, Ordering::Relaxed) .is_ok() {
+                for (cur, ix) in (posˢ..posⱼ) .zip (0..line.len()) {PROCESS_LOG_TAIL[cur] = line.as_bytes()[ix]}
+}   }   }   }
+
+#[cfg(all(not(feature = "native"), feature = "w-bindgen"))]
 pub fn writeln (line: &str) {
     use web_sys::console;
     console::log_1(&line.into());
