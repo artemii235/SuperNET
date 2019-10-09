@@ -1979,7 +1979,7 @@ mod wasm_bindgen_tests {
                 "coin": "JST",
                 "name": "jst",
                 "fname": "jst",
-                "etomic": "0xc0eb7AeD740E1796992A08962c15661bDEB58003",
+                "etomic": "0x2b294F029Fde858b2c62184e8390591755521d8E",
                 "rpcport": 80,
                 "mm2": 1
             }]
@@ -1988,8 +1988,8 @@ mod wasm_bindgen_tests {
         let ctx_maker = MmCtxBuilder::new().with_conf(conf).with_secp256k1_key_pair(key_pair_maker).into_mm_arc();
 
         let req = json!({
-            "urls":["http://195.201.0.6:8545"],
-            "swap_contract_address":"0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94"
+            "urls":["http://195.201.0.6:8565"],
+            "swap_contract_address":"0xa09ad3cd7e96586ebd05a2607ee56b56fb2db8fd"
         });
         let eth_taker = lp_coininit(&ctx_taker, "ETH", &req).await.unwrap();
         let jst_taker = lp_coininit(&ctx_taker, "JST", &req).await.unwrap();
@@ -2016,7 +2016,6 @@ mod wasm_bindgen_tests {
             (**ctx_maker.secp256k1_key_pair().public()).into(),
             "7c9319b2-866d-412f-bb82-a311b675fc52".to_owned(),
         );
-        JsFuture::from(sleep(10000)).await;
-        // join(run_taker_swap(taker_swap, None), run_maker_swap(maker_swap, None)).await;
+        join(run_taker_swap(taker_swap, None), run_maker_swap(maker_swap, None)).await;
     }
 }

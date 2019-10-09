@@ -163,16 +163,20 @@ impl TakerSavedSwap {
 /// Panics in case of command or event apply fails, not sure yet how to handle such situations
 /// because it's usually means that swap is in invalid state which is possible only if there's developer error
 /// Every produced event is saved to local DB. Swap status is broadcasted to P2P network after completion.
-pub async fn run_taker_swap(mut swap: TakerSwap, initial_command: Option<TakerSwapCommand>) {
+pub async fn run_taker_swap(swap: TakerSwap, initial_command: Option<TakerSwapCommand>) {
     let mut command = initial_command.unwrap_or(TakerSwapCommand::Start);
     let mut events;
     let ctx = swap.ctx.clone();
     let mut status = ctx.log.status_handle();
     let uuid = swap.uuid.clone();
     let swap_tags: &[&dyn TagParam] = &[&"swap", &("uuid", &uuid[..])];
+    let running_swap = Arc::new(RwLock::new(swap));
+    let weak_ref = Arc::downgrade(&running_swap);
+    let swap_ctx = unwrap!(SwapsContext::from_ctx(&ctx));
+    unwrap!(swap_ctx.running_swaps.lock()).push(weak_ref);
 
     loop {
-        let res = unwrap!(swap.handle_command(command).await);
+        let res = unwrap!(unwrap!(running_swap.read()).handle_command(command).await);
         events = res.1;
         for event in events {
             let to_save = TakerSavedEvent {
@@ -181,7 +185,7 @@ pub async fn run_taker_swap(mut swap: TakerSwap, initial_command: Option<TakerSw
             };
             #[cfg(feature = "native")] unwrap!(save_my_taker_swap_event(&ctx, &unwrap!(running_swap.read()), to_save));
             status.status(swap_tags, &event.status_str());
-            unwrap!(swap.apply_event(event));
+            unwrap!(unwrap!(running_swap.write()).apply_event(event));
         }
         match res.0 {
             Some(c) => { command = c; },

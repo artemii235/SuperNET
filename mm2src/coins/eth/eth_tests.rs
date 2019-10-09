@@ -378,7 +378,7 @@ fn test_withdraw_impl_manual_fee() {
         fee: Some(WithdrawFee::EthGas { gas: 150000, gas_price: 1.into() }),
     };
     coin.my_balance().wait().unwrap();
-    /*
+
     let tx_details = unwrap!(block_on(withdraw_impl(ctx, coin.clone(), withdraw_req)));
     let expected = Some(EthTxFeeDetails {
         coin: "ETH".into(),
@@ -387,7 +387,6 @@ fn test_withdraw_impl_manual_fee() {
         total_fee: "0.00015".parse().unwrap(),
     }.into());
     assert_eq!(expected, tx_details.fee_details);
-    */
 }
 
 #[test]
@@ -464,7 +463,7 @@ mod wasm_bindgen_tests {
         setInterval(&EXECUTOR_INTERVAL.closure, 200);
         Box::pin(async move {
             let key_pair = KeyPair::from_secret_slice(&hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap()).unwrap();
-            let transport = Web3Transport::new(vec!["http://195.201.0.6:8545".into()]).unwrap();
+            let transport = Web3Transport::new(vec!["http://195.201.0.6:8565".into()]).unwrap();
             let web3 = Web3::new(transport);
             let ctx = MmCtxBuilder::new().into_mm_arc();
             let coin = EthCoin(Arc::new(EthCoinImpl {
@@ -513,9 +512,9 @@ mod wasm_bindgen_tests {
             let ctx = MmCtxBuilder::new().with_conf(conf).with_secp256k1_key_pair(key_pair).into_mm_arc();
 
             let req = json!({
-            "urls":["http://195.201.0.6:8565"],
-            "swap_contract_address":"0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
-        });
+                "urls":["http://195.201.0.6:8565"],
+                "swap_contract_address":"0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+            });
             let coin = lp_coininit(&ctx, "ETH", &req).await.unwrap();
             Ok(())
         }).compat()

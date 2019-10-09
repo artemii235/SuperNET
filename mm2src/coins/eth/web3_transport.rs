@@ -93,7 +93,7 @@ impl Transport for Web3Transport {
         opts.body(Some(&JsValue::from_str(&to_string(&request))));
 
         let request = Request::new_with_str_and_init(
-            "http://195.201.0.6:8545",
+            "http://195.201.0.6:8565",
             &opts,
         ).unwrap();
 
