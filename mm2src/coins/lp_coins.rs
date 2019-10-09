@@ -33,12 +33,11 @@
 #[macro_use] extern crate unwrap;
 
 use bigdecimal::BigDecimal;
-use common::{HyRes, rpc_response, rpc_err_response};
+use common::{block_on, rpc_response, rpc_err_response, HyRes};
 use common::mm_ctx::{from_ctx, MmArc};
 use common::mm_number::MmNumber;
 use futures01::Future;
 use futures::compat::Future01CompatExt;
-use futures::executor::block_on;
 use futures::lock::Mutex as FutMutex;
 use gstuff::{slurp};
 use http::Response;

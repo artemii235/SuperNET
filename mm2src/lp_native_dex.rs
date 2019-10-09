@@ -39,11 +39,10 @@ use std::path::Path;
 use std::str;
 use std::str::from_utf8;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread::{self};
 
 #[cfg(feature = "native")]
 use crate::common::lp;
-use crate::common::executor::spawn;
+use crate::common::executor::{spawn, Timer};
 use crate::common::{slurp_url, MM_VERSION};
 use crate::common::mm_ctx::{MmCtx, MmArc};
 use crate::common::privkey::key_pair_from_seed;
@@ -1322,11 +1321,7 @@ pub async fn lp_init (mypubport: u16, ctx: MmArc) -> Result<(), String> {
 
     #[cfg(not(feature = "native"))] try_s! (ctx.send_to_helpers().await);
 
-    let seednode_thread = if i_am_seed {
-        try_s! (start_seednode_loop (&ctx, myipaddr, mypubport) .await)
-    } else {
-        None
-    };
+    if i_am_seed {try_s! (start_seednode_loop (&ctx, myipaddr, mypubport) .await)}
 
     let seednodes: Option<Vec<String>> = try_s!(json::from_value(ctx.conf["seednodes"].clone()));
     try_s! (lp_initpeers (&ctx, netid, seednodes) .await);
@@ -1341,13 +1336,8 @@ pub async fn lp_init (mypubport: u16, ctx: MmArc) -> Result<(), String> {
         *(try_s!(ctx.coins_needed_for_kick_start.lock())) = coins_needed_for_kick_start;
     }
 
-    let trades: thread::JoinHandle<()>;
-    #[cfg(feature = "native")] {
-        trades = try_s! (thread::Builder::new().name ("trades".into()) .spawn ({
-            let ctx = ctx.clone();
-            move || lp_ordermatch_loop (ctx)
-        }));
-    }
+    let ctxʹ = ctx.clone();
+    spawn (async move {lp_ordermatch_loop (ctxʹ) .await});
 
     let ctxʹ = ctx.clone();
     spawn (async move {lp_command_q_loop (ctxʹ) .await});
@@ -1356,16 +1346,10 @@ pub async fn lp_init (mypubport: u16, ctx: MmArc) -> Result<(), String> {
 
     let ctx_id = try_s! (ctx.ffi_handle());
 
-    // `LPinit` currently fails to stop in a timely manner, so we're dropping the `lp_init` context early
-    // in order to be able to use and test the `Drop` implementations withing the context.
-    // In the future, when `LPinit` stops in a timely manner, we might relinquish the early `drop`.
-    drop (ctx);
-
     spawn_rpc(ctx_id);
-    // unwrap! (prices.join());
-    #[cfg(feature = "native")] unwrap! (trades.join());
-    if let Some(seednode) = seednode_thread {
-        unwrap! (seednode.join());
-    }
+
+    // In the mobile version we might depend on `lp_init` staying around until the context stops.
+    loop {if ctx.is_stopping() {break}; Timer::sleep (0.2) .await}
+
     Ok(())
 }

@@ -20,7 +20,7 @@
 //
 use bigdecimal::BigDecimal;
 use bitcrypto::sha256;
-use common::{rpc_response, slurp_url, small_rng, HyRes};
+use common::{block_on, rpc_response, slurp_url, small_rng, HyRes};
 use common::custom_futures::TimedAsyncMutex;
 use common::executor::Timer;
 use common::mm_ctx::{MmArc, MmWeak};
@@ -33,7 +33,6 @@ use ethkey::{ KeyPair, Public, public_to_address };
 use futures01::Future;
 use futures01::future::{Either, join_all, loop_fn, Loop};
 use futures::compat::Future01CompatExt;
-use futures::executor::block_on;
 use futures::future::{FutureExt, TryFutureExt};
 use futures::try_join;
 use futures_timer::Delay;

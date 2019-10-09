@@ -1,7 +1,7 @@
+use common::block_on;
 use common::privkey::key_pair_from_seed;
 use crate::WithdrawFee;
 use crate::utxo::rpc_clients::{ElectrumProtocol};
-use futures::executor::block_on;
 use futures::future::join_all;
 use mocktopus::mocking::*;
 use super::*;

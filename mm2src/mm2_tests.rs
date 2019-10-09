@@ -1,7 +1,7 @@
 #![cfg_attr(not(feature = "native"), allow(unused_variables))]
 
 use bigdecimal::BigDecimal;
-use common::slurp;
+use common::{block_on, slurp};
 #[cfg(not(feature = "native"))]
 use common::call_back;
 use common::executor::Timer;
@@ -11,7 +11,6 @@ use common::for_tests::mm_dump;
 use common::privkey::key_pair_from_seed;
 #[cfg(not(feature = "native"))]
 use common::mm_ctx::MmArc;
-use futures::executor::block_on;
 use http::StatusCode;
 #[cfg(feature = "native")]
 use hyper::header::ACCESS_CONTROL_ALLOW_ORIGIN;
@@ -1516,8 +1515,8 @@ fn test_cancel_order() {
     unwrap! (block_on (mm_bob.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
     // Enable coins on Bob side. Print the replies in case we need the "address".
     log! ({"enable_coins (bob): {:?}", block_on (enable_coins_eth_electrum (&mm_bob, vec!["http://195.201.0.6:8545"]))});
-    // issue sell request on Bob side by setting base/rel price
-    log!("Issue bob sell request");
+
+    log!("Issue sell request on Bob side by setting base/rel price…");
     let rc = unwrap! (block_on (mm_bob.rpc (json! ({
         "userpass": mm_bob.userpass,
         "method": "setprice",
@@ -1554,7 +1553,7 @@ fn test_cancel_order() {
     // Enable coins on Alice side. Print the replies in case we need the "address".
     log! ({"enable_coins (alice): {:?}", block_on (enable_coins_eth_electrum (&mm_alice, vec!["http://195.201.0.6:8545"]))});
 
-    // give Alice 15 seconds to import the order
+    log!("Give Alice 15 seconds to import the order…");
     thread::sleep(Duration::from_secs(15));
 
     log!("Get BEER/PIZZA orderbook on Alice side");
@@ -1578,7 +1577,9 @@ fn test_cancel_order() {
     }))));
     assert!(cancel_rc.0.is_success(), "!cancel_order: {}", rc.1);
 
-    thread::sleep(Duration::from_secs(11));
+    let pause = 11;
+    log!("Waiting (" (pause) " seconds) for Bob to cancel the order…");
+    thread::sleep(Duration::from_secs(pause));
 
     // Bob orderbook must show no orders
     log!("Get BEER/PIZZA orderbook on Bob side");

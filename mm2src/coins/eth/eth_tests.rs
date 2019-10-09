@@ -1,6 +1,6 @@
+use common::block_on;
 use common::mm_ctx::{MmArc, MmCtxBuilder};
 use common::for_tests::wait_for_log;
-use futures::executor::block_on;
 use futures::future::join_all;
 use super::*;
 use mocktopus::mocking::*;

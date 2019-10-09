@@ -165,9 +165,12 @@ async function runWasm() {
         // https://nodejs.org/docs/latest/api/fs.html#fs_fs_mkdirsync_path_options
         fs.mkdirSync (path, {recursive: true})}
       return 0},
+    host_rm: function (ptr, len) {
+      const path = from_utf8 (wasmShared.memory, ptr, len);
+      fs.unlinkSync (path);
+      return 0},
     host_write: function (path_p, path_l, ptr, len) {
       const path = from_utf8 (wasmShared.memory, path_p, path_l);
-      //const content = from_utf8 (wasmShared.memory, ptr, len);
       const content = new Uint8Array (wasmShared.memory.buffer, ptr, len);
       // https://nodejs.org/docs/latest/api/fs.html#fs_fs_writefilesync_file_data_options
       fs.writeFileSync (path, content);

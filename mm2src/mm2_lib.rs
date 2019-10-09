@@ -18,11 +18,11 @@
 #[path = "mm2.rs"]
 mod mm2;
 
+use crate::common::block_on;
 use crate::common::mm_ctx::MmArc;
 #[cfg(feature = "native")]
 use crate::common::log::LOG_OUTPUT;
 use futures01::Future;
-use futures::executor::block_on;
 use gstuff::{any_to_str, now_float};
 #[cfg(feature = "native")]
 use libc::c_char;
