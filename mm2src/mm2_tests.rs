@@ -1952,7 +1952,7 @@ mod wasm_bindgen_tests {
         static ref EXECUTOR_INTERVAL: Interval = Interval::new();
     }
 
-    #[wasm_bindgen(module = "/defined-in-js.js")]
+    #[wasm_bindgen(raw_module = "./js/defined-in-js.js")]
     extern "C" {
         fn sleep(ms: u32) -> Promise;
     }

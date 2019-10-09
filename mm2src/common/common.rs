@@ -1121,7 +1121,7 @@ pub fn var (name: &str) -> Result<String, String> {
     /// Obtains the environment variable `name` from the host, copying it into `rbuf`.
     /// Returns the length of the value copied to `rbuf` or -1 if there was an error.
     #[cfg(not(feature = "native"))]
-    #[cfg_attr(feature = "w-bindgen", wasm_bindgen(raw_module = "../../../defined-in-js.js"))]
+    #[cfg_attr(feature = "w-bindgen", wasm_bindgen(raw_module = "../../../js/defined-in-js.js"))]
     extern "C" {pub fn host_env (name: *const c_char, nameˡ: i32, rbuf: *mut c_char, rcap: i32) -> i32;}
 
     #[cfg(feature = "native")] {
@@ -1159,8 +1159,9 @@ pub fn block_on<F> (f: F) -> F::Output where F: Future03 {
 pub use gstuff::{now_ms, now_float};
 #[cfg(not(feature = "native"))]
 pub fn now_ms() -> u64 {
-    use js_sys::Date;
-    Date::now() as u64
+    #[cfg_attr(feature = "w-bindgen", wasm_bindgen(raw_module = "../../../js/defined-in-js.js"))]
+    extern "C" {pub fn date_now() -> f64;}
+    unsafe {date_now() as u64}
 }
 #[cfg(not(feature = "native"))]
 pub fn now_float() -> f64 {
@@ -1180,15 +1181,13 @@ pub fn temp_dir() -> PathBuf {env::temp_dir()}
 
 #[cfg(not(feature = "native"))]
 pub fn temp_dir() -> PathBuf {
-    /*
+    #[cfg_attr(feature = "w-bindgen", wasm_bindgen(raw_module = "../../../js/defined-in-js.js"))]
     extern "C" {pub fn temp_dir (rbuf: *mut c_char, rcap: i32) -> i32;}
     let mut buf: [u8; 4096] = unsafe {zeroed()};
     let rc = unsafe {temp_dir (buf.as_mut_ptr() as *mut c_char, buf.len() as i32)};
     if rc <= 0 {panic! ("!temp_dir")}
     let path = unwrap! (std::str::from_utf8 (&buf[0 .. rc as usize]));
     Path::new (path) .into()
-    */
-    unimplemented!()
 }
 
 #[cfg(feature = "native")]
@@ -1201,7 +1200,7 @@ pub fn remove_file (path: &dyn AsRef<Path>) -> Result<(), String> {
 pub fn remove_file (path: &dyn AsRef<Path>) -> Result<(), String> {
     use std::os::raw::c_char;
 
-    #[cfg_attr(feature = "w-bindgen", wasm_bindgen(raw_module = "../../../defined-in-js.js"))]
+    #[cfg_attr(feature = "w-bindgen", wasm_bindgen(raw_module = "../../../js/defined-in-js.js"))]
     extern "C" {pub fn host_rm (ptr: *const c_char, len: i32) -> i32;}
 
     let path = try_s! (path.as_ref().to_str().ok_or ("Non-unicode path"));
@@ -1220,7 +1219,7 @@ pub fn write (path: &dyn AsRef<Path>, contents: &dyn AsRef<[u8]>) -> Result<(), 
 pub fn write (path: &dyn AsRef<Path>, contents: &dyn AsRef<[u8]>) -> Result<(), String> {
     use std::os::raw::c_char;
 
-    #[cfg_attr(feature = "w-bindgen", wasm_bindgen(raw_module = "../../../defined-in-js.js"))]
+    #[cfg_attr(feature = "w-bindgen", wasm_bindgen(raw_module = "../../../js/defined-in-js.js"))]
     extern "C" {pub fn host_write (path_p: *const c_char, path_l: i32, ptr: *const c_char, len: i32) -> i32;}
 
     let path = try_s! (path.as_ref().to_str().ok_or ("Non-unicode path"));
@@ -1328,14 +1327,14 @@ pub fn small_rng() -> SmallRng {
 /// Ask the WASM host to send HTTP request to the native helpers.
 /// Returns request ID used to wait for the reply.
 #[cfg(not(feature = "native"))]
-#[cfg_attr(feature = "w-bindgen", wasm_bindgen(raw_module = "../../../defined-in-js.js"))]
+#[cfg_attr(feature = "w-bindgen", wasm_bindgen(raw_module = "../../../js/defined-in-js.js"))]
 extern "C" {fn http_helper_if (
     helper: *const u8, helper_len: i32,
     payload: *const u8, payload_len: i32,
     timeout_ms: i32) -> i32;}
 
 #[cfg(not(feature = "native"))]
-#[cfg_attr(feature = "w-bindgen", wasm_bindgen(raw_module = "../../../defined-in-js.js"))]
+#[cfg_attr(feature = "w-bindgen", wasm_bindgen(raw_module = "../../../js/defined-in-js.js"))]
 extern "C" {
     /// Check with the WASM host to see if the given HTTP request is ready.
     /// 
@@ -1430,7 +1429,7 @@ pub struct BroadcastP2pMessageArgs {
 
 /// Invokes callback `cb_id` in the WASM host, passing a `(ptr,len)` string to it.
 #[cfg(not(feature = "native"))]
-#[cfg_attr(feature = "w-bindgen", wasm_bindgen(raw_module = "../../../defined-in-js.js"))]
+#[cfg_attr(feature = "w-bindgen", wasm_bindgen(raw_module = "../../../js/defined-in-js.js"))]
 extern "C" {pub fn call_back (cb_id: i32, ptr: *const c_char, len: i32);}
 pub mod for_tests;
 

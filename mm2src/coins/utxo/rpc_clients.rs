@@ -661,7 +661,7 @@ pub fn spawn_electrum(
 }
 
 #[cfg(not(feature = "native"))]
-#[cfg_attr(feature = "w-bindgen", wasm_bindgen(raw_module = "../../../defined-in-js.js"))]
+#[cfg_attr(feature = "w-bindgen", wasm_bindgen(raw_module = "../../../js/defined-in-js.js"))]
 extern "C" {
     fn host_electrum_connect (ptr: *const c_char, len: i32) -> i32;
     fn host_electrum_is_connected (ri: i32) -> i32;

@@ -20,7 +20,7 @@
 //
 use bigdecimal::BigDecimal;
 use bitcrypto::sha256;
-use common::{block_on, rpc_response, slurp_url, small_rng, HyRes};
+use common::{block_on,  HyRes, now_ms, rpc_response, slurp_url, small_rng};
 use common::custom_futures::TimedAsyncMutex;
 use common::executor::Timer;
 use common::mm_ctx::{MmArc, MmWeak};
@@ -36,8 +36,6 @@ use futures::compat::Future01CompatExt;
 use futures::future::{FutureExt, TryFutureExt};
 use futures::try_join;
 use futures_timer::Delay;
-#[cfg(feature = "native")]
-use gstuff::{now_ms};
 use gstuff::slurp;
 use http::{Response, StatusCode};
 // #[cfg(test)]
@@ -70,14 +68,6 @@ use self::web3_transport::Web3Transport;
 
 #[cfg(test)]
 mod eth_tests;
-
-#[cfg(feature = "w-bindgen")]
-use js_sys::Date;
-
-#[cfg(not(feature = "native"))]
-pub fn now_ms() -> u64 {
-    Date::now() as u64
-}
 
 /// https://github.com/artemii235/etomic-swap/blob/master/contracts/EtomicSwap.sol
 /// Dev chain (195.201.0.6:8565) contract address: 0xa09ad3cd7e96586ebd05a2607ee56b56fb2db8fd

@@ -210,7 +210,14 @@ impl MakerSwap {
         };
 
         let lock_duration = lp_atomic_locktime(self.maker_coin.ticker(), self.taker_coin.ticker());
-        let secret: [u8; 32] = [0; 32];
+        #[cfg(feature = "native")]
+        let mut rng = rand::thread_rng();
+        // TODO small rng uses now_ms() as seed which is completely insecure to generate the secret
+        // for swap, we must consider refactoring
+        #[cfg(not(feature = "native"))]
+        let mut rng = common::small_rng();
+
+        let secret: [u8; 32] = rng.gen();
         let started_at = now_ms() / 1000;
 
         let maker_coin_start_block = match self.maker_coin.current_block().compat().await {

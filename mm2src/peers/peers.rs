@@ -1505,7 +1505,7 @@ pub async fn peers_drop_send_handlerʰ (req: Bytes) -> Result<Vec<u8>, String> {
     Ok (Vec::new())}
 
 #[cfg(not(feature = "native"))]
-#[cfg_attr(feature = "w-bindgen", wasm_bindgen(raw_module = "../../../defined-in-js.js"))]
+#[cfg_attr(feature = "w-bindgen", wasm_bindgen(raw_module = "../../../js/defined-in-js.js"))]
 extern "C" {pub fn peers_drop_send_handler (shp1: i32, shp2: i32);}
 
 #[derive(Serialize, Deserialize, Debug)]

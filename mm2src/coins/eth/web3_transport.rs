@@ -73,12 +73,12 @@ impl Transport for Web3Transport {
         (id, request)
     }
 
-    #[cfg(feature="native")]
+    #[cfg(not(feature="w-bindgen"))]
     fn send(&self, _id: RequestId, request: Call) -> Self::Out {
         Box::new(Compat::new(Box::pin(sendʹ(request, self.uris.clone()))))
     }
 
-    #[cfg(not(feature="native"))]
+    #[cfg(feature="w-bindgen")]
     fn send(&self, _id: RequestId, request: Call) -> Self::Out {
         use js_sys;
         use js_sys::Promise;
