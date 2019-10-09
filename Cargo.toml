@@ -18,7 +18,10 @@ native = [
   "hyper", "tokio-core", "dirs", "docker_tests",
   "common/native", "peers/native", "coins/native", # "portfolio/native"
 ]
-w-bindgen = ["coins/w-bindgen", "common/w-bindgen", "js-sys", "wasm-bindgen", "wasm-bindgen-futures", "wasm-bindgen-test", "web-sys"]
+w-bindgen = [
+  "js-sys", "wasm-bindgen", "wasm-bindgen-futures", "wasm-bindgen-test", "web-sys",
+  "coins/w-bindgen", "common/w-bindgen", "peers/w-bindgen"
+]
 
 [[bin]]
 name = "mm2"

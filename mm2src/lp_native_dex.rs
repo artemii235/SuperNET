@@ -1050,10 +1050,8 @@ fn fix_directories(ctx: &MmCtx) -> Result<(), String> {
 
 #[cfg(not(feature = "native"))]
 fn fix_directories(ctx: &MmCtx) -> Result<(), String> {
-    // extern "C" {pub fn host_ensure_dir_is_writable(ptr: *const c_char, len: i32) -> i32;}
-    pub fn host_ensure_dir_is_writable(ptr: *const c_char, len: i32) -> i32 {
-        0
-    }
+    #[cfg_attr(feature = "w-bindgen", wasm_bindgen(raw_module = "../../../defined-in-js.js"))]
+    extern "C" {pub fn host_ensure_dir_is_writable(ptr: *const c_char, len: i32) -> i32;}
     macro_rules! writeable_dir {
         ($path: expr) => {
             let path = $path;

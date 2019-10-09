@@ -72,8 +72,6 @@ async function runWasm() {
   const memory = new WebAssembly.Memory ({initial: 1, shared: true});
   const wasmEnv = {
     //memory: memory,
-    bitcoin_ctx: function() {console.log ('env/bitcoin_ctx')},
-    bitcoin_ctx_destroy: function() {console.log ('env/bitcoin_ctx_destroy')},
     call_back: function (cb_id, ptr, len) {
       //console.log ('call_back', cb_id, 'invoked, ptr', ptr, 'len', len);
       const cb_id_s = '' + cb_id;

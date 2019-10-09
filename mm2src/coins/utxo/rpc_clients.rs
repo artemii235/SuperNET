@@ -661,33 +661,16 @@ pub fn spawn_electrum(
 }
 
 #[cfg(not(feature = "native"))]
-/*
+#[cfg_attr(feature = "w-bindgen", wasm_bindgen(raw_module = "../../../defined-in-js.js"))]
 extern "C" {
     fn host_electrum_connect (ptr: *const c_char, len: i32) -> i32;
     fn host_electrum_is_connected (ri: i32) -> i32;
     fn host_electrum_request (ri: i32, ptr: *const c_char, len: i32) -> i32;
     fn host_electrum_reply (ri: i32, id: i32, rbuf: *mut c_char, rcap: i32) -> i32;
 }
-*/
+
 use std::os::raw::c_char;
 use futures::task::SpawnExt;
-
-#[cfg(not(feature = "native"))]
-fn host_electrum_connect (ptr: *const c_char, len: i32) -> i32 {
-    unimplemented!()
-}
-#[cfg(not(feature = "native"))]
-fn host_electrum_is_connected (ri: i32) -> i32 {
-    unimplemented!()
-}
-#[cfg(not(feature = "native"))]
-fn host_electrum_request (ri: i32, ptr: *const c_char, len: i32) -> i32 {
-    unimplemented!()
-}
-#[cfg(not(feature = "native"))]
-fn host_electrum_reply (ri: i32, id: i32, rbuf: *mut c_char, rcap: i32) -> i32 {
-    unimplemented!()
-}
 
 #[cfg(not(feature = "native"))]
 pub fn spawn_electrum (req: &ElectrumRpcRequest) -> Result<ElectrumConnection, String> {

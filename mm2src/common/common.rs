@@ -118,6 +118,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::str;
 use uuid::Uuid;
+#[cfg(feature = "w-bindgen")]
+use wasm_bindgen::prelude::*;
 
 #[cfg(feature = "native")]
 #[allow(dead_code,non_upper_case_globals,non_camel_case_types,non_snake_case)]
@@ -1119,6 +1121,7 @@ pub fn var (name: &str) -> Result<String, String> {
     /// Obtains the environment variable `name` from the host, copying it into `rbuf`.
     /// Returns the length of the value copied to `rbuf` or -1 if there was an error.
     #[cfg(not(feature = "native"))]
+    #[cfg_attr(feature = "w-bindgen", wasm_bindgen(raw_module = "../../../defined-in-js.js"))]
     extern "C" {pub fn host_env (name: *const c_char, nameˡ: i32, rbuf: *mut c_char, rcap: i32) -> i32;}
 
     #[cfg(feature = "native")] {
@@ -1198,6 +1201,7 @@ pub fn remove_file (path: &dyn AsRef<Path>) -> Result<(), String> {
 pub fn remove_file (path: &dyn AsRef<Path>) -> Result<(), String> {
     use std::os::raw::c_char;
 
+    #[cfg_attr(feature = "w-bindgen", wasm_bindgen(raw_module = "../../../defined-in-js.js"))]
     extern "C" {pub fn host_rm (ptr: *const c_char, len: i32) -> i32;}
 
     let path = try_s! (path.as_ref().to_str().ok_or ("Non-unicode path"));
@@ -1216,6 +1220,7 @@ pub fn write (path: &dyn AsRef<Path>, contents: &dyn AsRef<[u8]>) -> Result<(), 
 pub fn write (path: &dyn AsRef<Path>, contents: &dyn AsRef<[u8]>) -> Result<(), String> {
     use std::os::raw::c_char;
 
+    #[cfg_attr(feature = "w-bindgen", wasm_bindgen(raw_module = "../../../defined-in-js.js"))]
     extern "C" {pub fn host_write (path_p: *const c_char, path_l: i32, ptr: *const c_char, len: i32) -> i32;}
 
     let path = try_s! (path.as_ref().to_str().ok_or ("Non-unicode path"));
@@ -1302,16 +1307,17 @@ pub fn small_rng() -> SmallRng {
     SmallRng::seed_from_u64 (now_ms())
 }
 
-/*
 /// Ask the WASM host to send HTTP request to the native helpers.
 /// Returns request ID used to wait for the reply.
 #[cfg(not(feature = "native"))]
+#[cfg_attr(feature = "w-bindgen", wasm_bindgen(raw_module = "../../../defined-in-js.js"))]
 extern "C" {fn http_helper_if (
     helper: *const u8, helper_len: i32,
     payload: *const u8, payload_len: i32,
     timeout_ms: i32) -> i32;}
 
 #[cfg(not(feature = "native"))]
+#[cfg_attr(feature = "w-bindgen", wasm_bindgen(raw_module = "../../../defined-in-js.js"))]
 extern "C" {
     /// Check with the WASM host to see if the given HTTP request is ready.
     /// 
@@ -1327,18 +1333,6 @@ extern "C" {
     /// * `rbuf` - The buffer to copy the response payload into if the request is finished.
     /// * `rcap` - The size of the `rbuf` buffer.
     pub fn http_helper_check (helper_request_id: i32, rbuf: *mut u8, rcap: i32) -> i32;
-}
-*/
-
-fn http_helper_if (
-    helper: *const u8, helper_len: i32,
-    payload: *const u8, payload_len: i32,
-    timeout_ms: i32) -> i32 {
-    unimplemented!()
-}
-
-pub fn http_helper_check (helper_request_id: i32, rbuf: *mut u8, rcap: i32) -> i32 {
-    unimplemented!()
 }
 
 lazy_static! {
@@ -1418,10 +1412,8 @@ pub struct BroadcastP2pMessageArgs {
 
 /// Invokes callback `cb_id` in the WASM host, passing a `(ptr,len)` string to it.
 #[cfg(not(feature = "native"))]
-// extern "C" {pub fn call_back (cb_id: i32, ptr: *const c_char, len: i32);}
-pub fn call_back (cb_id: i32, ptr: *const c_char, len: i32) {
-    unimplemented!()
-}
+#[cfg_attr(feature = "w-bindgen", wasm_bindgen(raw_module = "../../../defined-in-js.js"))]
+extern "C" {pub fn call_back (cb_id: i32, ptr: *const c_char, len: i32);}
 pub mod for_tests;
 
 fn without_trailing_zeroes (decimal: &str, dot: usize) -> &str {

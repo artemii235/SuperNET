@@ -86,6 +86,8 @@ use std::sync::{Arc, Mutex, Weak};
 use std::sync::atomic::{Ordering as AtomicOrdering};
 use std::thread;
 use std::time::Duration;
+#[cfg(feature = "w-bindgen")]
+use wasm_bindgen::prelude::*;
 
 lazy_static! {
     /// Any unprocessed libtorrent alers are logged if this knob is set to "true".
@@ -1503,8 +1505,8 @@ pub async fn peers_drop_send_handlerʰ (req: Bytes) -> Result<Vec<u8>, String> {
     Ok (Vec::new())}
 
 #[cfg(not(feature = "native"))]
-// extern "C" {pub fn peers_drop_send_handler (shp1: i32, shp2: i32);}
-pub fn peers_drop_send_handler (shp1: i32, shp2: i32) {}
+#[cfg_attr(feature = "w-bindgen", wasm_bindgen(raw_module = "../../../defined-in-js.js"))]
+extern "C" {pub fn peers_drop_send_handler (shp1: i32, shp2: i32);}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SendHandlerRef (u64);
