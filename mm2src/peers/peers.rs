@@ -1602,7 +1602,7 @@ pub async fn peers_send (req: bytes::Bytes) -> Result<Vec<u8>, String> {
 /// Returns the `Arc` address of the `SendHandler`.
 #[cfg(all(not(feature = "native"), not(feature = "w-bindgen")))]
 pub async fn send (ctx: MmArc, peer: bits256, subject: Vec<u8>, fallback: u8, payload: Vec<u8>)
-                   -> Result<SendHandlerRef, String> {
+-> Result<SendHandlerRef, String> {
     let rv = try_s! (helperᶜ ("peers_send", try_s! (bencode (&ToPeersSend {
         ctx: try_s! (ctx.ffi_handle()),
         peer,
@@ -1764,7 +1764,7 @@ use common::executor::Timer;
 
 #[cfg(all(not(feature = "native"), not(feature = "w-bindgen")))]
 pub async fn recv (ctx: MmArc, subject: Vec<u8>, fallback: u8, validator: FixedValidator)
-                   -> Result<Vec<u8>, String> {
+-> Result<Vec<u8>, String> {
     Ok (try_s! (helperᶜ ("peers_recv", try_s! (bencode (&ToPeersRecv {
         ctx: try_s! (ctx.ffi_handle()),
         subject: ByteBuf::from (subject),
