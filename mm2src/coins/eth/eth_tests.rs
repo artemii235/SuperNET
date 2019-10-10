@@ -6,7 +6,6 @@ use super::*;
 use mocktopus::mocking::*;
 
 use common::privkey::key_pair_from_seed;
-use crate::lp_coininit;
 
 fn check_sum(addr: &str, expected: &str) {
     let actual = checksum_address(addr);
@@ -417,6 +416,7 @@ fn test_nonce_lock() {
 
 #[cfg(feature = "w-bindgen")]
 mod wasm_bindgen_tests {
+    use crate::lp_coininit;
     use super::*;
     use wasm_bindgen_test::*;
     use wasm_bindgen::prelude::*;

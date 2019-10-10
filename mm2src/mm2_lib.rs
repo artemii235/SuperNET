@@ -1,7 +1,6 @@
 #![feature(non_ascii_idents)]
 #![feature(drain_filter)]
 #![feature(integer_atomics)]
-#![feature(async_await)]
 
 #![cfg_attr(not(feature = "native"), allow(unused_imports))]
 

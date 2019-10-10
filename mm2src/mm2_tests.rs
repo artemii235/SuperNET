@@ -1914,23 +1914,29 @@ fn orderbook_should_display_rational_amounts() {
     assert_eq!(volume, volume_in_orderbook);
 }
 
+// HOWTO
+// 1. Install Firefox.
+// 2. Install forked version of wasm-bindgen-cli: cargo install wasm-bindgen-cli --git https://github.com/artemii235/wasm-bindgen.git
+// 3. Download Gecko driver for your OS: https://github.com/mozilla/geckodriver/releases
+// 4. Run HEADLESS_TIMEOUT=120 GECKODRIVER=PATH_TO_GECKO_DRIVER_BIN cargo test --target wasm32-unknown-unknown --features w-bindgen
 #[cfg(feature = "w-bindgen")]
 mod wasm_bindgen_tests {
     use futures01::Future;
+    use js_sys::Promise;
+    use lazy_static::lazy_static;
     use wasm_bindgen_test::*;
     use wasm_bindgen::prelude::*;
     use web_sys::console;
-    use js_sys::Promise;
     use wasm_bindgen_futures::JsFuture;
     use super::*;
+
+    wasm_bindgen_test_configure!(run_in_browser);
 
     #[wasm_bindgen]
     extern "C" {
         fn setInterval(closure: &Closure<FnMut()>, millis: u32) -> f64;
         fn cancelInterval(token: f64);
     }
-
-    wasm_bindgen_test_configure!(run_in_browser);
 
     pub struct Interval {
         closure: Closure<FnMut()>,

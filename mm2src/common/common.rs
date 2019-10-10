@@ -11,8 +11,7 @@
 //!                   binary
 
 #![feature(non_ascii_idents, integer_atomics, panic_info_message)]
-#![feature(async_await, async_closure)]
-#![feature(duration_float)]
+#![feature(async_closure)]
 #![feature(weak_counts)]
 #![feature(hash_raw_entry)]
 

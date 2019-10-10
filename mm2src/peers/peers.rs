@@ -7,7 +7,7 @@
 // NB: We're using `bits256` to denote the official public ID (in the future - the public key) of a peer.
 // In contrast, derived keys are stored as `[u8; 32]`.
 
-#![feature(non_ascii_idents, vec_resize_default, ip, weak_counts, async_await, async_closure)]
+#![feature(non_ascii_idents, vec_resize_default, ip, weak_counts, async_closure)]
 #![feature(hash_raw_entry)]
 
 #![cfg_attr(not(feature = "native"), allow(dead_code))]
@@ -1600,7 +1600,21 @@ pub async fn peers_send (req: bytes::Bytes) -> Result<Vec<u8>, String> {
 }
 
 /// Returns the `Arc` address of the `SendHandler`.
-#[cfg(not(feature = "native"))]
+#[cfg(all(not(feature = "native"), not(feature = "w-bindgen")))]
+pub async fn send (ctx: MmArc, peer: bits256, subject: Vec<u8>, fallback: u8, payload: Vec<u8>)
+                   -> Result<SendHandlerRef, String> {
+    let rv = try_s! (helperᶜ ("peers_send", try_s! (bencode (&ToPeersSend {
+        ctx: try_s! (ctx.ffi_handle()),
+        peer,
+        subject: ByteBuf::from (subject),
+        fallback,
+        payload: ByteBuf::from (payload)
+    }))) .await);
+    Ok (try_s! (json::from_slice (&rv)))
+}
+
+/// Returns the `Arc` address of the `SendHandler`.
+#[cfg(feature = "w-bindgen")]
 pub async fn send (ctx: MmArc, peer: bits256, subject: Vec<u8>, fallback: u8, payload: Vec<u8>)
 -> Result<SendHandlerRef, String> {
     let mut msgs = SWAP_MESSAGES.lock().await;
@@ -1748,11 +1762,23 @@ pub extern fn start_helpers() -> i32 {
 use futures::lock::Mutex as FutMutex;
 use common::executor::Timer;
 
+#[cfg(all(not(feature = "native"), not(feature = "w-bindgen")))]
+pub async fn recv (ctx: MmArc, subject: Vec<u8>, fallback: u8, validator: FixedValidator)
+                   -> Result<Vec<u8>, String> {
+    Ok (try_s! (helperᶜ ("peers_recv", try_s! (bencode (&ToPeersRecv {
+        ctx: try_s! (ctx.ffi_handle()),
+        subject: ByteBuf::from (subject),
+        fallback,
+        validator
+    }))) .await))
+}
+
+#[cfg(feature = "w-bindgen")]
 lazy_static! {
     pub static ref SWAP_MESSAGES: FutMutex<HashMap<Vec<u8>, Vec<u8>>> = FutMutex::new(HashMap::new());
 }
 
-#[cfg(not(feature = "native"))]
+#[cfg(feature = "w-bindgen")]
 pub async fn recv (ctx: MmArc, subject: Vec<u8>, fallback: u8, validator: FixedValidator)
 -> Result<Vec<u8>, String> {
     loop {
