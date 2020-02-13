@@ -51,7 +51,7 @@ stages:
   - stage: Release
     displayName: Release
     jobs:
-      - job: Test Release stage
+      - job: release
         pool:
           name: Default
           demands: agent.os -equals Linux
