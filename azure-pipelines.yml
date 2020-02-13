@@ -62,3 +62,14 @@ stages:
             displayName: Pwd
             failOnStderr: false
             continueOnError: true
+          # do not release same commit multiple times
+          # upload both debug and release builds
+          - task: GitHubRelease@0
+            inputs:
+              action: edit
+              gitHubConnection: artemii235
+              isPreRelease: true
+              assets: 'upload/*'
+              assetUploadMode: replace
+              tagSource: manual
+              tag: 2.0.$(Build.BuildId)

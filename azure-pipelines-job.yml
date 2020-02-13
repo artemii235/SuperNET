@@ -68,31 +68,3 @@ jobs:
           7z a .\upload\mm2-latest-$(Agent.OS).zip .\target\debug\mm2.exe .\target\debug\*.dll "$Env:windir\system32\msvcr100.dll" "$Env:windir\system32\msvcp140.dll" "$Env:windir\system32\vcruntime140.dll"
         displayName: 'Prepare upload Windows'
         condition: eq( variables['Agent.OS'], 'Windows_NT' )
-      # https://docs.microsoft.com/en-us/azure/devops/pipelines/tasks/deploy/copy-files-over-ssh?view=vsts
-      - task: CopyFilesOverSSH@0
-        inputs:
-          sshEndpoint: nightly_build_server
-          sourceFolder: 'upload' # Optional
-          contents: "**"
-          targetFolder: "uploads/$(Build.SourceBranchName)" # Optional
-          overwrite: true
-        displayName: 'Upload nightly'
-        enabled: false
-      # https://docs.microsoft.com/en-us/azure/devops/pipelines/artifacts/pipeline-artifacts?view=azure-devops&tabs=yaml
-      - task: PublishPipelineArtifact@0
-        inputs:
-          artifactName: "MM2-$(Agent.OS)"
-          targetPath: 'upload'
-        enabled: false
-      # do not release same commit multiple times
-      # upload both debug and release builds
-      - task: GitHubRelease@0
-        enabled: false
-        inputs:
-          action: edit
-          gitHubConnection: artemii235
-          isPreRelease: true
-          assets: 'upload/*'
-          assetUploadMode: replace
-          tagSource: manual
-          tag: 2.0.$(Build.BuildId)
