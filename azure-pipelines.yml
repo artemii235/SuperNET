@@ -47,3 +47,16 @@ stages:
           bob_userpass: 'BOB_USERPASS_WIN'
           alice_passphrase: 'ALICE_PASSPHRASE_WIN'
           alice_userpass: 'ALICE_USERPASS_WIN'
+
+  - stage: Release
+    displayName: Release
+    jobs:
+      - job: Test Release stage
+        pool:
+          name: Default
+          demands: agent.os -equals Linux
+        steps:
+          - bash: echo 1
+            displayName: Echo
+            failOnStderr: false
+            continueOnError: true

@@ -83,6 +83,7 @@ jobs:
       # do not upload on scheduled builds
       # do not create release if at least 1 platform build failed
       - task: GitHubRelease@0
+        enabled: false
         inputs:
           action: edit
           gitHubConnection: artemii235
