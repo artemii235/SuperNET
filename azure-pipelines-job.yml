@@ -77,3 +77,7 @@ jobs:
         inputs:
           artifactName: "MM2-$(Agent.OS)"
           targetPath: 'upload'
+      - task: GitHubRelease@0
+        inputs:
+          gitHubConnection: artemii235
+          isPreRelease: true
