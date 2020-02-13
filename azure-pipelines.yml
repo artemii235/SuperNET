@@ -56,9 +56,7 @@ stages:
           name: Default
           demands: agent.os -equals Linux
         steps:
-          - checkout: self  # self represents the repo where the initial Pipelines YAML file was found
-            enabled: false
-          - bash: echo 1
-            displayName: Echo
+          - bash: pwd
+            displayName: Pwd
             failOnStderr: false
             continueOnError: true
