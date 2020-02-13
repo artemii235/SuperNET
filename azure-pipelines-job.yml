@@ -82,3 +82,5 @@ jobs:
           gitHubConnection: artemii235
           isPreRelease: true
           assets: 'upload/*'
+          tagSource: manual
+          tag: 2.0.$(Build.BuildId)
