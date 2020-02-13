@@ -48,6 +48,7 @@ jobs:
           cargo test --features native --all -- --test-threads=8
         displayName: 'Test MM2'
         timeoutInMinutes: 22
+        enabled: false
         env:
           BOB_PASSPHRASE: $(${{ parameters.bob_passphrase }})
           BOB_USERPASS: $(${{ parameters.bob_userpass }})
@@ -72,13 +73,16 @@ jobs:
           targetFolder: "uploads/$(Build.SourceBranchName)" # Optional
           overwrite: true
         displayName: 'Upload nightly'
+        enabled: false
       # https://docs.microsoft.com/en-us/azure/devops/pipelines/artifacts/pipeline-artifacts?view=azure-devops&tabs=yaml
       - task: PublishPipelineArtifact@0
         inputs:
           artifactName: "MM2-$(Agent.OS)"
           targetPath: 'upload'
+        enabled: false
       - task: GitHubRelease@0
         inputs:
+          action: edit
           gitHubConnection: artemii235
           isPreRelease: true
           assets: 'upload/*'
