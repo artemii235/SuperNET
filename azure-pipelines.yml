@@ -56,7 +56,9 @@ stages:
           name: Default
           demands: agent.os -equals Linux
         steps:
-          - bash: pwd
+          - bash: |
+              pwd
+              ls upload/
             displayName: Pwd
             failOnStderr: false
             continueOnError: true
