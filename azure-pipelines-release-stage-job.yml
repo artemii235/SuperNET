@@ -31,7 +31,7 @@ jobs:
           cat MM_VERSION
           touch mm2src/common/build.rs
           cargo build --features native --release -vv
-          displayName: 'Build MM2 Release'
+        displayName: 'Build MM2 Release'
       - bash: |
           zip upload/mm2-$(COMMIT_HASH)-$(Agent.OS)-Release target/release/mm2 -j
         displayName: 'Prepare release build upload Linux/MacOS'
