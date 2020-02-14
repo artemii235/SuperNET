@@ -1,4 +1,4 @@
-# Job template for MM2 build
+# Job template for MM2 Build
 
 parameters:
   name: ''  # defaults for any parameters that aren't specified

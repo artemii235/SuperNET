@@ -19,29 +19,29 @@ trigger:
 
 stages:
   - stage: Build
-    displayName: Build
+    displayName: Build and test Debug
     jobs:
-      - template: azure-pipelines-job.yml  # Template reference
+      - template: azure-pipelines-build-stage-job.yml  # Template reference
         parameters:
-          name: 'MM2_Linux'
+          name: 'MM2_Build_Linux'
           os: 'Linux'
           bob_passphrase: 'BOB_PASSPHRASE_LINUX'
           bob_userpass: 'BOB_USERPASS_LINUX'
           alice_passphrase: 'ALICE_PASSPHRASE_LINUX'
           alice_userpass: 'ALICE_USERPASS_LINUX'
 
-      - template: azure-pipelines-job.yml  # Template reference
+      - template: azure-pipelines-build-stage-job.yml  # Template reference
         parameters:
-          name: 'MM2_MacOS'
+          name: 'MM2_Build_MacOS'
           os: 'Darwin'
           bob_passphrase: 'BOB_PASSPHRASE_MAC'
           bob_userpass: 'BOB_USERPASS_MAC'
           alice_passphrase: 'ALICE_PASSPHRASE_MAC'
           alice_userpass: 'ALICE_USERPASS_MAC'
 
-      - template: azure-pipelines-job.yml  # Template reference
+      - template: azure-pipelines-build-stage-job.yml  # Template reference
         parameters:
-          name: 'MM2_Windows'
+          name: 'MM2_Build_Windows'
           os: 'Windows_NT'
           bob_passphrase: 'BOB_PASSPHRASE_WIN'
           bob_userpass: 'BOB_USERPASS_WIN'
@@ -51,42 +51,17 @@ stages:
   - stage: Release
     displayName: Release
     jobs:
-      - job: release
-        pool:
-          name: Default
-          demands: agent.os -equals Darwin
-        # release only mm2 branch
-        steps:
-          # https://docs.microsoft.com/en-us/azure/devops/pipelines/process/variables?view=azure-devops&tabs=yaml%2Cbatch#set-a-job-scoped-variable-from-a-script
-          - bash: |
-              export SHORT_HASH="$(git rev-parse --short=9 HEAD)"
-              echo "##vso[task.setvariable variable=COMMIT_HASH]${SHORT_HASH}"
-              export TAG="$(git tag -l --points-at HEAD)"
-              echo "##vso[task.setvariable variable=COMMIT_TAG]${TAG}"
-            displayName: Setup ENV
-          - powershell: |
-              .\marketmaker_build_depends.cmd
-            displayName: Build Windows deps
-            condition: eq( variables['Agent.OS'], 'Windows_NT' )
-          - bash: |
-              echo 2.0.$(Build.BuildId)_$(Build.SourceBranchName)_$(COMMIT_HASH)_$(Agent.OS)_Release > MM_VERSION
-              cat MM_VERSION
-              touch mm2src/common/build.rs
-              cargo build --features native --release -vv
-          - bash: |
-              zip upload/mm2-$(COMMIT_HASH)-$(Agent.OS)-Release target/release/mm2 -j
-            displayName: 'Prepare debug build upload Linux/MacOS'
-            condition: ne( variables['Agent.OS'], 'Windows_NT' )
-          - powershell: |
-              7z a .\upload\mm2-$(COMMIT_HASH)-$(Agent.OS)-Release.zip .\target\release\mm2.exe .\target\debug\*.dll "$Env:windir\system32\msvcr100.dll" "$Env:windir\system32\msvcp140.dll" "$Env:windir\system32\vcruntime140.dll"
-            displayName: 'Prepare debug build upload Windows'
-          - task: GitHubRelease@0
-            inputs:
-              action: edit
-              gitHubConnection: artemii235
-              isPreRelease: true
-              assets: 'upload/*'
-              assetUploadMode: replace
-              tagSource: manual
-              tag: 2.0.$(Build.BuildId)
-            condition: eq( variables['COMMIT_TAG'], '' )
+      - template: azure-pipelines-release-stage-job.yml  # Template reference
+        parameters:
+          name: 'MM2_Release_Linux'
+          os: 'Linux'
+
+      - template: azure-pipelines-release-stage-job.yml  # Template reference
+        parameters:
+          name: 'MM2_Release_MacOS'
+          os: 'Darwin'
+
+      - template: azure-pipelines-release-stage-job.yml  # Template reference
+        parameters:
+          name: 'MM2_Release_Windows'
+          os: 'Windows_NT'
