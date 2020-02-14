@@ -30,10 +30,6 @@ jobs:
           export TAG="$(git rev-parse --short=9 HEAD)"
           echo "##vso[task.setvariable variable=COMMIT_HASH]${TAG}"
         displayName: Setup ENV
-      - bash: pwd
-        displayName: Pwd
-        failOnStderr: false
-        continueOnError: true
       - powershell: |
           .\marketmaker_build_depends.cmd
         displayName: Build Windows deps
@@ -41,11 +37,11 @@ jobs:
       - bash: |
           rm -rf upload
           mkdir upload
-          echo 2.0.$(Build.BuildId)_$(Build.SourceBranchName)_$(COMMIT_HASH)_$(Agent.OS) > MM_VERSION
+          echo 2.0.$(Build.BuildId)_$(Build.SourceBranchName)_$(COMMIT_HASH)_$(Agent.OS)_Debug > MM_VERSION
           cat MM_VERSION
           touch mm2src/common/build.rs
           cargo build --features native -vv
-        displayName: 'Build MM2'
+        displayName: 'Build MM2 Debug'
       # Cargo uses CPU threads count by default running only 2 concurrent tests on Linux.
       # Explicit --test-threads=8 makes the process faster
       - bash: |
@@ -59,12 +55,10 @@ jobs:
           ALICE_PASSPHRASE: $(${{ parameters.alice_passphrase }})
           ALICE_USERPASS: $(${{ parameters.alice_userpass }})
       - bash: |
-          zip upload/mm2-$(COMMIT_HASH)-$(Agent.OS) target/debug/mm2 -j
-          zip upload/mm2-latest-$(Agent.OS) target/debug/mm2 -j
-        displayName: 'Prepare upload Linux/MacOS'
+          zip upload/mm2-$(COMMIT_HASH)-$(Agent.OS)-Debug target/debug/mm2 -j
+        displayName: 'Prepare debug build upload Linux/MacOS'
         condition: ne( variables['Agent.OS'], 'Windows_NT' )
       - powershell: |
-          7z a .\upload\mm2-$(COMMIT_HASH)-$(Agent.OS).zip .\target\debug\mm2.exe .\target\debug\*.dll "$Env:windir\system32\msvcr100.dll" "$Env:windir\system32\msvcp140.dll" "$Env:windir\system32\vcruntime140.dll"
-          7z a .\upload\mm2-latest-$(Agent.OS).zip .\target\debug\mm2.exe .\target\debug\*.dll "$Env:windir\system32\msvcr100.dll" "$Env:windir\system32\msvcp140.dll" "$Env:windir\system32\vcruntime140.dll"
-        displayName: 'Prepare upload Windows'
+          7z a .\upload\mm2-$(COMMIT_HASH)-$(Agent.OS)-Debug.zip .\target\debug\mm2.exe .\target\debug\*.dll "$Env:windir\system32\msvcr100.dll" "$Env:windir\system32\msvcp140.dll" "$Env:windir\system32\vcruntime140.dll"
+        displayName: 'Prepare debug build upload Windows'
         condition: eq( variables['Agent.OS'], 'Windows_NT' )
