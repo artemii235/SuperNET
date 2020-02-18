@@ -381,9 +381,8 @@ pub fn stack_trace (format: &mut dyn FnMut (*mut c_void, &mut dyn Write, &backtr
         true
     });
 
-    if cfg!(all(feature = "native", not(windows))) {
-        output_pc_mem_addr(output)
-    }
+    #[cfg(all(feature = "native", not(windows)))]
+    output_pc_mem_addr(output)
 }
 
 #[cfg(all(feature = "native", not(windows)))]
