@@ -48,5 +48,5 @@ jobs:
           assets: 'upload/*'
           assetUploadMode: replace
           tagSource: manual
-          tag: 2.0.$(Build.BuildId)
+          tag: beta-2.0.$(Build.BuildId)
         condition: eq( variables['COMMIT_TAG'], '' )
