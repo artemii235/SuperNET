@@ -50,6 +50,7 @@ stages:
 
   - stage: Release
     displayName: Release
+    condition: eq(variables['build.sourceBranch'], 'refs/heads/mm2')
     jobs:
       - template: azure-pipelines-release-stage-job.yml  # Template reference
         parameters:
