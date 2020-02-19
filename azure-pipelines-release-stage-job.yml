@@ -33,9 +33,17 @@ jobs:
           cargo build --features native --release -vv
         displayName: 'Build MM2 Release'
       - bash: |
+          objcopy --only-keep-debug target/release/mm2 target/release/mm2.debug
+          strip -g target/release/mm2
           zip upload/mm2-$(COMMIT_HASH)-$(Agent.OS)-Release target/release/mm2 -j
-        displayName: 'Prepare release build upload Linux/MacOS'
-        condition: ne( variables['Agent.OS'], 'Windows_NT' )
+          zip upload/mm2-$(COMMIT_HASH)-$(Agent.OS)-Release.debug target/release/mm2.debug -j
+        displayName: 'Prepare release build upload Linux'
+        condition: eq( variables['Agent.OS'], 'Linux' )
+      - bash: |
+          zip upload/mm2-$(COMMIT_HASH)-$(Agent.OS)-Release target/release/mm2 -j
+          zip upload/mm2-$(COMMIT_HASH)-$(Agent.OS)-Release.dSYM target/release/mm2.dSYM -j -r
+        displayName: 'Prepare release build upload MacOS'
+        condition: eq( variables['Agent.OS'], 'Darwin' )
       - powershell: |
           7z a .\upload\mm2-$(COMMIT_HASH)-$(Agent.OS)-Release.zip .\target\release\mm2.exe .\target\release\*.dll "$Env:windir\system32\msvcr100.dll" "$Env:windir\system32\msvcp140.dll" "$Env:windir\system32\vcruntime140.dll"
         displayName: 'Prepare release build upload Windows'
