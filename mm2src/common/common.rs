@@ -584,6 +584,7 @@ pub mod wio {
     lazy_static! {
         /// Shared asynchronous reactor.
         pub static ref CORE: Mutex<Runtime> = Mutex::new (start_core_thread());
+        pub static ref ELECTRUM_CORE: Mutex<Runtime> = Mutex::new (start_core_thread());
         /// Shared CPU pool to run intensive/sleeping requests on a separate thread.
         /// 
         /// Deprecated, prefer the futures 0.3 `POOL` instead.
@@ -794,6 +795,11 @@ pub mod executor {
     pub fn spawn (future: impl Future03<Output = ()> + Send + 'static) {
         let f = future.unit_error().boxed().compat();
         unwrap! (crate::wio::CORE.lock()) .spawn (f);
+    }
+
+    pub fn spawn_electrum (future: impl Future03<Output = ()> + Send + 'static) {
+        let f = future.unit_error().boxed().compat();
+        unwrap! (crate::wio::ELECTRUM_CORE.lock()) .spawn (f);
     }
 
     /// Schedule the given `future` to be executed shortly after the given `utc` time is reached.
