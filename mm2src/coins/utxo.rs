@@ -73,6 +73,9 @@ use crate::utxo::rpc_clients::{NativeClientImpl, UtxoRpcClientOps, ElectrumRpcRe
 #[cfg(test)]
 pub mod utxo_tests;
 
+const SWAP_TX_SPEND_SIZE: u64 = 305;
+const KILO_BYTE: u64 = 1000;
+
 #[cfg(windows)]
 #[cfg(feature = "native")]
 fn get_special_folder_path() -> PathBuf {
@@ -693,7 +696,7 @@ impl UtxoCoin {
                         let transaction = UtxoTx::from(tx.clone());
                         let transaction_bytes = serialize(&transaction);
                         let tx_size = transaction_bytes.len() + transaction.inputs().len() * 107;
-                        (f * tx_size as u64) / 1024
+                        (f * tx_size as u64) / KILO_BYTE
                     },
                 };
                 match fee_policy {
@@ -702,8 +705,8 @@ impl UtxoCoin {
                         if value_to_spend >= target_value {
                             if value_to_spend - target_value > DUST {
                                 if let ActualTxFee::Dynamic(ref f) = coin_tx_fee {
-                                    tx_fee += (f * 34) / 1024;
-                                    target_value += (f * 34) / 1024;
+                                    tx_fee += (f * 34) / KILO_BYTE;
+                                    target_value += (f * 34) / KILO_BYTE;
                                 }
                             }
                             if value_to_spend >= target_value {
@@ -716,7 +719,7 @@ impl UtxoCoin {
                         if value_to_spend >= sum_outputs_value {
                             if value_to_spend - sum_outputs_value > DUST {
                                 if let ActualTxFee::Dynamic(ref f) = coin_tx_fee {
-                                    tx_fee += (f * 34) / 1024;
+                                    tx_fee += (f * 34) / KILO_BYTE;
                                 }
                             }
                             break;
@@ -932,7 +935,7 @@ impl SwapOps for UtxoCoin {
             let fee = match coin_fee {
                 ActualTxFee::Fixed(fee) => fee,
                 // atomic swap payment spend transaction is slightly more than 300 bytes in average as of now
-                ActualTxFee::Dynamic(fee_per_kb) => (fee_per_kb * 305) / 1024,
+                ActualTxFee::Dynamic(fee_per_kb) => (fee_per_kb * SWAP_TX_SPEND_SIZE) / KILO_BYTE,
             };
 
             let output = TransactionOutput {
@@ -981,7 +984,7 @@ impl SwapOps for UtxoCoin {
             let fee = match coin_fee {
                 ActualTxFee::Fixed(fee) => fee,
                 // atomic swap payment spend transaction is slightly more than 300 bytes in average as of now
-                ActualTxFee::Dynamic(fee_per_kb) => (fee_per_kb * 305) / 1024,
+                ActualTxFee::Dynamic(fee_per_kb) => (fee_per_kb * SWAP_TX_SPEND_SIZE) / KILO_BYTE,
             };
 
             let output = TransactionOutput {
@@ -1029,7 +1032,7 @@ impl SwapOps for UtxoCoin {
             let fee = match coin_fee {
                 ActualTxFee::Fixed(fee) => fee,
                 // atomic swap payment spend transaction is slightly more than 300 bytes in average as of now
-                ActualTxFee::Dynamic(fee_per_kb) => (fee_per_kb * 305) / 1024,
+                ActualTxFee::Dynamic(fee_per_kb) => (fee_per_kb * SWAP_TX_SPEND_SIZE) / KILO_BYTE,
             };
 
             let output = TransactionOutput {
@@ -1082,7 +1085,7 @@ impl SwapOps for UtxoCoin {
             let fee = match coin_fee {
                 ActualTxFee::Fixed(fee) => fee,
                 // atomic swap payment spend transaction is slightly more than 300 bytes in average as of now
-                ActualTxFee::Dynamic(fee_per_kb) => (fee_per_kb * 305) / 1024,
+                ActualTxFee::Dynamic(fee_per_kb) => (fee_per_kb * SWAP_TX_SPEND_SIZE) / KILO_BYTE,
             };
 
             let output = TransactionOutput {
