@@ -21,15 +21,14 @@ jobs:
           echo "##vso[task.setvariable variable=COMMIT_HASH]${SHORT_HASH}"
           export TAG="$(git tag -l --points-at HEAD)"
           echo "##vso[task.setvariable variable=COMMIT_TAG]${TAG}"
-          if [ -n $TAG ]; then
+          if [ -z $TAG ]; then
+            echo "Commit tag is empty"
+            export RELEASE_TAG=beta-2.0.$(Build.BuildId)
+          else
             export DEBUG_UPLOADED="$(curl -s https://api.github.com/repos/KomodoPlatform/atomicDEX-API/releases/tags/$TAG | grep $(Agent.OS)-Debug)"
             export RELEASE_UPLOADED="$(curl -s https://api.github.com/repos/KomodoPlatform/atomicDEX-API/releases/tags/$TAG | grep $(Agent.OS)-Release)"
             export RELEASE_TAG=$TAG
-          else
-            echo "Commit tag is empty"
-            export RELEASE_TAG=beta-2.0.$(Build.BuildId)
           fi
-          echo beta-2.0.$(Build.BuildId)
           echo DEBUG_UPLOADED:$DEBUG_UPLOADED
           echo RELEASE_UPLOADED:$RELEASE_UPLOADED
           echo RELEASE_TAG:$RELEASE_TAG
