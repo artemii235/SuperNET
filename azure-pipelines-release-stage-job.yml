@@ -28,6 +28,7 @@ jobs:
           else
             export RELEASE_TAG="$(echo $(Build.BuildId))"
           fi
+          echo $(Build.BuildId)
           echo DEBUG_UPLOADED:$DEBUG_UPLOADED
           echo RELEASE_UPLOADED:$RELEASE_UPLOADED
           echo RELEASE_TAG:$RELEASE_TAG
