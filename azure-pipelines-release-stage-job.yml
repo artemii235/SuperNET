@@ -19,8 +19,15 @@ jobs:
       - bash: |
           export SHORT_HASH="$(git rev-parse --short=9 HEAD)"
           echo "##vso[task.setvariable variable=COMMIT_HASH]${SHORT_HASH}"
-          export TAG="$(git tag -l --points-at HEAD)"
+      #   export TAG="$(git tag -l --points-at HEAD)"
+          export TAG = "2"
           echo "##vso[task.setvariable variable=COMMIT_TAG]${TAG}"
+          if [[ $TAG == "1" ]]; then
+            export NEED_RELEASE = "true"
+            echo "##vso[task.setvariable variable=NEED_RELEASE]${NEED_RELEASE}"
+          else
+            curl -s https://api.github.com/repos/KomodoPlatform/atomicDEX-API/releases/tags/beta-2.0.1704 | grep $(Agent.OS)-Debug
+          fi
         displayName: Setup ENV
       - powershell: |
           .\marketmaker_build_depends.cmd
