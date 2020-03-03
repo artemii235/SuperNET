@@ -20,7 +20,6 @@ trigger:
 stages:
   - stage: Build
     displayName: Build and test Debug
-    condition: false
     jobs:
       - template: azure-pipelines-build-stage-job.yml  # Template reference
         parameters:
