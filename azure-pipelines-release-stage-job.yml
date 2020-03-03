@@ -23,12 +23,16 @@ jobs:
           echo "##vso[task.setvariable variable=COMMIT_TAG]${TAG}"
           if [ -n $TAG ]; then
             export DEBUG_UPLOADED="$(curl -s https://api.github.com/repos/KomodoPlatform/atomicDEX-API/releases/tags/$TAG | grep $(Agent.OS)-Debug)"
-            echo $DEBUG_UPLOADED
+            echo DEBUG_UPLOADED:$DEBUG_UPLOADED
             export RELEASE_UPLOADED="$(curl -s https://api.github.com/repos/KomodoPlatform/atomicDEX-API/releases/tags/$TAG | grep $(Agent.OS)-Release)"
-            echo $RELEASE_UPLOADED
+            echo RELEASE_UPLOADED:$RELEASE_UPLOADED
+            export RELEASE_TAG=$TAG
+          else
+            export RELEASE_TAG=$(Build.BuildId)
           fi
           echo "##vso[task.setvariable variable=DEBUG_UPLOADED]${DEBUG_UPLOADED}"
           echo "##vso[task.setvariable variable=RELEASE_UPLOADED]${RELEASE_UPLOADED}"
+          echo "##vso[task.setvariable variable=RELEASE_TAG]${RELEASE_TAG}"
         displayName: Setup ENV
       - powershell: |
           .\marketmaker_build_depends.cmd
@@ -91,5 +95,5 @@ jobs:
           assets: 'upload/*'
           assetUploadMode: replace
           tagSource: manual
-          tag: beta-2.0.$(Build.BuildId)
+          tag: beta-2.0.$(RELEASE_TAG)
         condition: or( eq( variables['RELEASE_UPLOADED'], '' ), eq( variables['DEBUG_UPLOADED'], '' ) )
