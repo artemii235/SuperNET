@@ -26,9 +26,10 @@ jobs:
             export RELEASE_UPLOADED="$(curl -s https://api.github.com/repos/KomodoPlatform/atomicDEX-API/releases/tags/$TAG | grep $(Agent.OS)-Release)"
             export RELEASE_TAG=$TAG
           else
-            export RELEASE_TAG="$(echo $(Build.BuildId))"
+            echo "Commit tag is empty"
+            export RELEASE_TAG=beta-2.0.$(Build.BuildId)
           fi
-          echo $(Build.BuildId)
+          echo beta-2.0.$(Build.BuildId)
           echo DEBUG_UPLOADED:$DEBUG_UPLOADED
           echo RELEASE_UPLOADED:$RELEASE_UPLOADED
           echo RELEASE_TAG:$RELEASE_TAG
@@ -97,5 +98,5 @@ jobs:
           assets: 'upload/*'
           assetUploadMode: replace
           tagSource: manual
-          tag: beta-2.0.$(RELEASE_TAG)
+          tag: $(RELEASE_TAG)
         condition: or( eq( variables['RELEASE_UPLOADED'], '' ), eq( variables['DEBUG_UPLOADED'], '' ) )
