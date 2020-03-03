@@ -26,7 +26,7 @@ jobs:
             export RELEASE_UPLOADED="$(curl -s https://api.github.com/repos/KomodoPlatform/atomicDEX-API/releases/tags/$TAG | grep $(Agent.OS)-Release)"
             export RELEASE_TAG=$TAG
           else
-            export RELEASE_TAG=$(Build.BuildId)
+            export RELEASE_TAG="$(echo $(Build.BuildId))"
           fi
           echo DEBUG_UPLOADED:$DEBUG_UPLOADED
           echo RELEASE_UPLOADED:$RELEASE_UPLOADED
