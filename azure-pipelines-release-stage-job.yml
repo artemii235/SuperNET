@@ -25,9 +25,9 @@ jobs:
             export NEED_RELEASE = "true"
             echo "##vso[task.setvariable variable=NEED_RELEASE]${NEED_RELEASE}"
           else
-            export DEBUG_UPLOADED="$(curl -s https://api.github.com/repos/KomodoPlatform/atomicDEX-API/releases/tags/$(COMMIT_TAG) | grep $(Agent.OS)-Debug)"
+            export DEBUG_UPLOADED="$(curl -s https://api.github.com/repos/KomodoPlatform/atomicDEX-API/releases/tags/$TAG | grep $(Agent.OS)-Debug)"
             echo $DEBUG_UPLOADED
-            export RELEASE_UPLOADED="$(curl -s https://api.github.com/repos/KomodoPlatform/atomicDEX-API/releases/tags/$(COMMIT_TAG) | grep $(Agent.OS)-Release)"
+            export RELEASE_UPLOADED="$(curl -s https://api.github.com/repos/KomodoPlatform/atomicDEX-API/releases/tags/$TAG | grep $(Agent.OS)-Release)"
             echo $RELEASE_UPLOADED
           fi
         displayName: Setup ENV
