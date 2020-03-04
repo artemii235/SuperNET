@@ -7,7 +7,7 @@ use bytes::{BytesMut};
 use chain::{OutPoint, Transaction as UtxoTx};
 use common::{StringError};
 use common::wio::{slurp_req};
-use common::executor::{spawn_electrum as spawn_electrum_fut, Timer};
+use common::executor::{spawn, Timer};
 use common::custom_futures::{join_all_sequential, select_ok_sequential};
 use common::jsonrpc_client::{JsonRpcClient, JsonRpcResponseFut, JsonRpcRequest, JsonRpcResponse, RpcRes};
 use futures01::{Future, Poll, Sink, Stream};
@@ -1328,7 +1328,7 @@ fn electrum_connect(
     );
 
     let connect_loop = select_func(connect_loop.boxed(), shutdown_rx.compat());
-    spawn_electrum_fut(connect_loop.map(|_| ()));
+    spawn(connect_loop.map(|_| ()));
     ElectrumConnection {
         addr,
         config,
