@@ -59,7 +59,7 @@ use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicU64, Ordering as AtomicOrderding};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrderding};
 use std::thread;
 use std::time::Duration;
 
@@ -193,7 +193,7 @@ pub struct UtxoCoinImpl {  // pImpl idiom.
     decimals: u8,
     /// Does coin require transactions to be notarized to be considered as confirmed?
     /// https://komodoplatform.com/security-delayed-proof-of-work-dpow/
-    requires_notarization: bool,
+    requires_notarization: AtomicBool,
     /// RPC client
     rpc_client: UtxoRpcClientEnum,
     /// ECDSA key pair
@@ -1302,6 +1302,7 @@ impl MarketCoinOps for UtxoCoin {
         &self,
         tx: &[u8],
         confirmations: u64,
+        requires_nota: bool,
         wait_until: u64,
         check_every: u64,
     ) -> Box<dyn Future<Item=(), Error=String> + Send> {
@@ -1309,7 +1310,7 @@ impl MarketCoinOps for UtxoCoin {
         self.rpc_client.wait_for_confirmations(
             &tx,
             confirmations as u32,
-            self.requires_notarization,
+            requires_nota,
             wait_until,
             check_every,
         )
@@ -1708,8 +1709,14 @@ impl MmCoin for UtxoCoin {
         self.required_confirmations.load(AtomicOrderding::Relaxed)
     }
 
+    fn requires_notarization(&self) -> bool { self.requires_notarization.load(AtomicOrderding::Relaxed) }
+
     fn set_required_confirmations(&self, confirmations: u64) {
         self.required_confirmations.store(confirmations, AtomicOrderding::Relaxed);
+    }
+
+    fn set_requires_notarization(&self, requires_nota: bool) {
+        self.requires_notarization.store(requires_nota, AtomicOrderding::Relaxed);
     }
 }
 
@@ -1992,13 +1999,21 @@ pub async fn utxo_coin_from_conf_and_request(
         HistorySyncState::NotEnabled
     };
 
+    // param from request should override the config
+    let required_confirmations = req["required_confirmations"].as_u64().unwrap_or(
+        conf["required_confirmations"].as_u64().unwrap_or(1)
+    );
+    let requires_notarization = req["requires_notarization"].as_bool().unwrap_or(
+        conf["requires_notarization"].as_bool().unwrap_or(false)
+    ).into();
+
     let coin = UtxoCoinImpl {
         ticker: ticker.into(),
         decimals,
         rpc_client,
         key_pair,
         is_pos: conf["isPoS"].as_u64() == Some(1),
-        requires_notarization: conf["requires_notarization"].as_bool().unwrap_or (false),
+        requires_notarization,
         overwintered,
         pub_addr_prefix,
         p2sh_addr_prefix: conf["p2shtype"].as_u64().unwrap_or (if ticker == "BTC" {5} else {85}) as u8,
@@ -2017,7 +2032,7 @@ pub async fn utxo_coin_from_conf_and_request(
         signature_version,
         fork_id,
         history_sync_state: Mutex::new(initial_history_state),
-        required_confirmations: conf["required_confirmations"].as_u64().unwrap_or(1).into(),
+        required_confirmations: required_confirmations.into(),
     };
     Ok(UtxoCoin(Arc::new(coin)))
 }

@@ -80,6 +80,7 @@ pub async fn electrum (ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
         "locked_by_swaps": get_locked_amount (&ctx, &ticker),
         "coin": coin.ticker(),
         "required_confirmations": coin.required_confirmations(),
+        "requires_notarization": coin.requires_notarization(),
     });
     let res = try_s! (json::to_vec (&res));
     Ok (try_s! (Response::builder().body (res)))
@@ -97,6 +98,7 @@ pub async fn enable (ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String>
         "locked_by_swaps": get_locked_amount (&ctx, &ticker),
         "coin": coin.ticker(),
         "required_confirmations": coin.required_confirmations(),
+        "requires_notarization": coin.requires_notarization(),
     });
     let res = try_s! (json::to_vec (&res));
     Ok (try_s! (Response::builder().body (res)))
