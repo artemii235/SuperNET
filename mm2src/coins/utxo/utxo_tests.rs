@@ -591,7 +591,7 @@ fn get_tx_details_coinbase_transaction() {
     let coin = utxo_coin_for_test(client, Some("spice describe gravity federal blast come thank unfair canal monkey style afraid"));
 
     let fut = async move {
-        // hash of coinbase transaction
+        // hash of coinbase transaction https://vrsc.explorer.dexstats.info/tx/0d95a7b11802621a65f9e7ca9da0bca6ee4956fd2328e5116a777285179dbd08
         let hash = hex::decode("0d95a7b11802621a65f9e7ca9da0bca6ee4956fd2328e5116a777285179dbd08").unwrap();
 
         let tx_details = coin.tx_details_by_hash(&hash).compat().await.unwrap();
