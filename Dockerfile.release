@@ -1,0 +1,5 @@
+FROM ubuntu:bionic
+WORKDIR /mm2
+COPY target/release/mm2 /app/mm2
+ENV PATH="/app:${PATH}"
+CMD mm2
