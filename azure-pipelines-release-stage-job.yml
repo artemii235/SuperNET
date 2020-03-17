@@ -86,7 +86,7 @@ jobs:
         displayName: 'Prepare release build upload MacOS'
         condition: and( eq( variables['Agent.OS'], 'Darwin' ), eq( variables['RELEASE_UPLOADED'], '' ) )
       - bash: |
-          docker build -f Dockerfile.release -t komodooficial/atomicdexapi:$(RELEASE_TAG)
+          docker build -f Dockerfile.release -t komodooficial/atomicdexapi:$(RELEASE_TAG) .
           docker images | grep komodo
         displayName: 'Build Docker release image'
         condition: and( eq( variables['Agent.OS'], 'Linux' ), eq( variables['RELEASE_UPLOADED'], '' ) )
