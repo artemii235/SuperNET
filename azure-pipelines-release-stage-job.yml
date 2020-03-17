@@ -87,7 +87,7 @@ jobs:
         condition: and( eq( variables['Agent.OS'], 'Darwin' ), eq( variables['RELEASE_UPLOADED'], '' ) )
       - bash: |
           docker build -f Dockerfile.release -t komodooficial/atomicdexapi:$(RELEASE_TAG) .
-          docker images | grep komodo
+          docker push komodooficial/atomicdexapi:$(RELEASE_TAG)
         displayName: 'Build Docker release image'
         condition: and( eq( variables['Agent.OS'], 'Linux' ), eq( variables['RELEASE_UPLOADED'], '' ) )
       - powershell: |
