@@ -21,6 +21,7 @@ trigger:
 stages:
   - stage: Build
     displayName: Build and test Debug
+    condition: false
     jobs:
       - template: azure-pipelines-build-stage-job.yml  # Template reference
         parameters:
@@ -51,7 +52,7 @@ stages:
 
   - stage: Release
     displayName: Release
-    condition: and(eq(variables['build.sourceBranch'], 'refs/heads/mm2-publish-official-docker-image'), succeeded('Build'))
+    condition: eq(variables['build.sourceBranch'], 'refs/heads/mm2-publish-official-docker-image')
     jobs:
       - template: azure-pipelines-release-stage-job.yml  # Template reference
         parameters:
