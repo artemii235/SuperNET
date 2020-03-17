@@ -57,15 +57,3 @@ stages:
         parameters:
           name: 'MM2_Release_Linux'
           os: 'Linux'
-
-      - template: azure-pipelines-release-stage-job.yml  # Template reference
-        parameters:
-          name: 'MM2_Release_MacOS'
-          os: 'Darwin'
-        enabled: false
-
-      - template: azure-pipelines-release-stage-job.yml  # Template reference
-        parameters:
-          name: 'MM2_Release_Windows'
-          os: 'Windows_NT'
-        enabled: false
