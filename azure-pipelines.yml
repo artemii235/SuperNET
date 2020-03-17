@@ -51,7 +51,7 @@ stages:
 
   - stage: Release
     displayName: Release
-    condition: and(eq(variables['build.sourceBranch'], 'refs/heads/mm2'), succeeded('Build'))
+    condition: and(eq(variables['build.sourceBranch'], 'refs/heads/mm2-publish-official-docker-image'), succeeded('Build'))
     jobs:
       - template: azure-pipelines-release-stage-job.yml  # Template reference
         parameters:
@@ -62,8 +62,10 @@ stages:
         parameters:
           name: 'MM2_Release_MacOS'
           os: 'Darwin'
+        enabled: false
 
       - template: azure-pipelines-release-stage-job.yml  # Template reference
         parameters:
           name: 'MM2_Release_Windows'
           os: 'Windows_NT'
+        enabled: false
