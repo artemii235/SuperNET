@@ -91,9 +91,9 @@ impl Mul for &MmNumber {
     type Output = MmNumber;
 
     fn mul(self, rhs: Self) -> Self::Output {
-        let lhs: BigRational = self.clone().into();
-        let rhs: BigRational = rhs.clone().into();
-        (lhs * rhs).into()
+        let lhs = &self.0;
+        let rhs = &rhs.0;
+        MmNumber(lhs * rhs)
     }
 }
 
@@ -109,9 +109,9 @@ impl Add for &MmNumber {
     type Output = MmNumber;
 
     fn add(self, rhs: Self) -> Self::Output {
-        let lhs: BigRational = self.clone().into();
-        let rhs: BigRational = rhs.clone().into();
-        (lhs + rhs).into()
+        let lhs = &self.0;
+        let rhs = &rhs.0;
+        MmNumber(lhs + rhs)
     }
 }
 
@@ -135,9 +135,9 @@ impl Div for &MmNumber {
     type Output = MmNumber;
 
     fn div(self, rhs: &MmNumber) -> MmNumber {
-        let lhs: BigRational = self.clone().into();
-        let rhs: BigRational = rhs.clone().into();
-        (lhs / rhs).into()
+        let lhs = &self.0;
+        let rhs = &rhs.0;
+        MmNumber(lhs / rhs)
     }
 }
 
@@ -207,7 +207,7 @@ mod tests {
 
         for num in vals {
             let decimal: BigDecimal = BigDecimal::from_str(num).unwrap();
-            let expected: MmNumber = from_dec_to_ratio(decimal.clone()).into();
+            let expected: MmNumber = from_dec_to_ratio(decimal).into();
             let actual: MmNumber = json::from_str(&num).unwrap();
             assert_eq!(expected, actual);
         }
@@ -250,13 +250,11 @@ mod tests {
         };
 
         // A JSON input with plenty of whitespace.
-        let json = r#"
-            {
-              "num": 0.1,
-              "nums": [50, 1e-3, 1e12, 0.33, 2.5]
-            }
-        "#;
+        let json = json!({
+            "num": "0.1",
+            "nums": ["50", "1e-3", "1e12", "0.33", "2.5"]
+        });
 
-        assert_eq!(data, json::from_str(json).unwrap());
+        assert_eq!(data, json::from_value(json).unwrap());
     }
 }
