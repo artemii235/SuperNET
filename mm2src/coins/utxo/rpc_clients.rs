@@ -9,7 +9,7 @@ use common::{StringError};
 use common::wio::{slurp_req};
 use common::executor::{spawn, Timer};
 use common::custom_futures::{join_all_sequential, select_ok_sequential};
-use common::jsonrpc_client::{JsonRpcClient, JsonRpcResponseFut, JsonRpcRequest, JsonRpcResponse, RpcRes};
+use common::jsonrpc_client::{JsonRpcResponseFut, RpcRes, JsonRpcClient, JsonRpcRequest, JsonRpcResponse, JsonRpcRemoteAddr};
 use futures01::{Future, Poll, Sink, Stream};
 use futures01::future::{Either, loop_fn, Loop, select_ok};
 use futures01::sync::{mpsc, oneshot};
@@ -271,6 +271,7 @@ impl JsonRpcClient for NativeClientImpl {
 
     fn transport(&self, request: JsonRpcRequest) -> JsonRpcResponseFut {
         let request_body = try_fus!(json::to_string(&request));
+        let uri = self.uri.clone();
 
         let http_request = try_fus!(
             Request::builder()
@@ -279,17 +280,19 @@ impl JsonRpcClient for NativeClientImpl {
                         AUTHORIZATION,
                         self.auth.clone()
                     )
-                    .uri(self.uri.clone())
+                    .uri(uri.clone())
                     .body(Vec::from(request_body))
         );
-        Box::new(slurp_req(http_request).then(move |result| -> Result<JsonRpcResponse, String> {
+        Box::new(slurp_req(http_request).then(move |result| -> Result<(JsonRpcRemoteAddr, JsonRpcResponse), String> {
             let res = try_s!(result);
             let body = try_s!(std::str::from_utf8(&res.2));
             if res.0 != StatusCode::OK {
                 return ERR!("Rpc request {:?} failed with HTTP status code {}, response body: {}",
                         request, res.0, body);
             }
-            Ok(try_s!(json::from_str(body)))
+
+            let response = try_s!(json::from_str(body));
+            Ok((uri.into(), response))
         }))
     }
 }
@@ -761,11 +764,16 @@ pub struct ElectrumClientImpl {
 async fn electrum_request_multi(
     client: ElectrumClient,
     request: JsonRpcRequest,
-) -> Result<JsonRpcResponse, String> {
+) -> Result<(JsonRpcRemoteAddr, JsonRpcResponse), String> {
     let mut futures = vec![];
     for connection in client.connections.iter() {
+        let connection_addr = connection.addr.clone();
         match &*connection.tx.lock().await {
-            Some(tx) => futures.push(electrum_request(request.clone(), tx.clone(), connection.responses.clone())),
+            Some(tx) => {
+                let fut = electrum_request(request.clone(), tx.clone(), connection.responses.clone())
+                    .map(|response| (JsonRpcRemoteAddr(connection_addr), response));
+                futures.push(fut)
+            },
             None => (),
         }
     }
@@ -797,7 +805,7 @@ pub extern fn electrum_replied (ri: i32, id: i32) {
 ///     I haven't looked into this because we'll probably use a websocket or Java implementation instead.
 #[cfg(not(feature = "native"))]
 async fn electrum_request_multi (client: ElectrumClient, request: JsonRpcRequest)
--> Result<JsonRpcResponse, String> {
+-> Result<(JsonRpcRemoteAddr, JsonRpcResponse), String> {
     use futures::future::{select, Either};
     use std::mem::MaybeUninit;
     use std::os::raw::c_char;
@@ -806,6 +814,8 @@ async fn electrum_request_multi (client: ElectrumClient, request: JsonRpcRequest
     let req = try_s! (json::to_string (&request));
     let id: i32 = try_s! (request.id.parse());
     let mut jres: Option<JsonRpcResponse> = None;
+    // address of server from which an Rpc response was received
+    let mut remote_address = JsonRpcRemoteAddr::default();
 
     for connection in client.connections.iter() {
         let (tx, rx) = futures::channel::oneshot::channel();
@@ -834,11 +844,12 @@ async fn electrum_request_multi (client: ElectrumClient, request: JsonRpcRequest
             result: res,
             error: Json::Null
         });
+        remote_address = JsonRpcRemoteAddr(connection.addr.clone());
         // server.ping must be sent to all servers to keep all connections alive
         if request.method != "server.ping" {break}
     }
     let jres = try_s! (jres.ok_or ("!jres"));
-    Ok (jres)
+    Ok ((remote_address, jres))
 }
 
 impl ElectrumClientImpl {
@@ -1378,7 +1389,7 @@ fn electrum_request(
     request: JsonRpcRequest,
     tx: mpsc::Sender<Vec<u8>>,
     responses: Arc<AsyncMutex<HashMap<String, async_oneshot::Sender<JsonRpcResponse>>>>
-) -> JsonRpcResponseFut {
+) -> Box<dyn Future<Item=JsonRpcResponse, Error=String> + Send + 'static> {
     let send_fut = async move {
         let mut json = try_s!(json::to_string(&request));
         // Electrum request and responses must end with \n

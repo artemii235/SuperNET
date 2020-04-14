@@ -1516,12 +1516,12 @@ impl MmCoin for UtxoCoin {
                         Ok(value) => value,
                         Err(e) => {
                             match &e.error {
-                                JsonRpcErrorType::Transport(e) | JsonRpcErrorType::Parse(e) => {
+                                JsonRpcErrorType::Transport(e) | JsonRpcErrorType::Parse(_, e) => {
                                     ctx.log.log("", &[&"tx_history", &self.ticker], &ERRL!("Error {} on scripthash_get_history, retrying", e));
                                     thread::sleep(Duration::from_secs(10));
                                     continue;
                                 },
-                                JsonRpcErrorType::Response(err) => {
+                                JsonRpcErrorType::Response(_addr, err) => {
                                     if *err == history_too_large {
                                         ctx.log.log("", &[&"tx_history", &self.ticker], &ERRL!("Got `history too large`, stopping further attempts to retrieve it"));
                                         *unwrap!(self.history_sync_state.lock()) = HistorySyncState::Error(json!({

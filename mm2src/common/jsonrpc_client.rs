@@ -23,6 +23,28 @@ macro_rules! rpc_func {
     }}
 }
 
+/// Address of server from which an Rpc response was received
+#[derive(Default)]
+pub struct JsonRpcRemoteAddr(pub String);
+
+impl fmt::Debug for JsonRpcRemoteAddr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<JsonRpcRemoteAddr> for String {
+    fn from(addr: JsonRpcRemoteAddr) -> Self {
+        addr.0
+    }
+}
+
+impl From<String> for JsonRpcRemoteAddr {
+    fn from(addr: String) -> Self {
+        JsonRpcRemoteAddr(addr)
+    }
+}
+
 /// Serializable RPC request
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct JsonRpcRequest {
@@ -62,9 +84,9 @@ pub enum JsonRpcErrorType {
     /// Error from transport layer
     Transport(String),
     /// Response parse error
-    Parse(String),
+    Parse(JsonRpcRemoteAddr, String),
     /// The JSON-RPC error returned from server
-    Response(Json)
+    Response(JsonRpcRemoteAddr, Json)
 }
 
 impl fmt::Display for JsonRpcError {
@@ -73,7 +95,7 @@ impl fmt::Display for JsonRpcError {
     }
 }
 
-pub type JsonRpcResponseFut = Box<dyn Future<Item=JsonRpcResponse, Error=String> + Send + 'static>;
+pub type JsonRpcResponseFut = Box<dyn Future<Item=(JsonRpcRemoteAddr, JsonRpcResponse), Error=String> + Send + 'static>;
 pub type RpcRes<T> = Box<dyn Future<Item=T, Error=JsonRpcError> + Send + 'static>;
 
 pub trait JsonRpcClient {
@@ -91,11 +113,11 @@ pub trait JsonRpcClient {
                 error: JsonRpcErrorType::Transport(e)
             }
         });
-        Box::new(request_f.and_then(move |response| -> Result<T, JsonRpcError> {
+        Box::new(request_f.and_then(move |(addr, response)| -> Result<T, JsonRpcError> {
             if !response.error.is_null() {
                 return Err(JsonRpcError {
                     request,
-                    error: JsonRpcErrorType::Response(response.error),
+                    error: JsonRpcErrorType::Response(addr, response.error),
                 });
             }
 
@@ -103,7 +125,7 @@ pub trait JsonRpcClient {
                 Ok(res) => Ok(res),
                 Err(e) => Err(JsonRpcError {
                     request,
-                    error: JsonRpcErrorType::Parse(ERRL!("error {:?} parsing result from response {:?}", e, response)),
+                    error: JsonRpcErrorType::Parse(addr, ERRL!("error {:?} parsing result from response {:?}", e, response)),
                 }),
             }
         }))
