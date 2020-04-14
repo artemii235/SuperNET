@@ -75,7 +75,12 @@ pub struct JsonRpcResponse {
 
 #[derive(Debug)]
 pub struct  JsonRpcError {
+    /// Additional member contains an instance info that implements the JsonRpcClient trait.
+    /// The info is used in particular to supplement the error info.
+    client_info: String,
+    /// Source Rpc request.
     request: JsonRpcRequest,
+    /// Error type.
     pub error: JsonRpcErrorType,
 }
 
@@ -103,12 +108,18 @@ pub trait JsonRpcClient {
 
     fn next_id(&self) -> String;
 
+    /// Get info that is used in particular to supplement the error info
+    fn client_info(&self) -> String;
+
     fn transport(&self, request: JsonRpcRequest) -> JsonRpcResponseFut;
 
     fn send_request<T: DeserializeOwned + Send + 'static>(&self, request: JsonRpcRequest) -> RpcRes<T> {
+        let client_info = self.client_info();
         let request_f = self.transport(request.clone()).map_err({
+            let client_info = client_info.clone();
             let request = request.clone();
             move |e| JsonRpcError {
+                client_info,
                 request,
                 error: JsonRpcErrorType::Transport(e)
             }
@@ -116,6 +127,7 @@ pub trait JsonRpcClient {
         Box::new(request_f.and_then(move |(addr, response)| -> Result<T, JsonRpcError> {
             if !response.error.is_null() {
                 return Err(JsonRpcError {
+                    client_info,
                     request,
                     error: JsonRpcErrorType::Response(addr, response.error),
                 });
@@ -124,6 +136,7 @@ pub trait JsonRpcClient {
             match json::from_value(response.result.clone()) {
                 Ok(res) => Ok(res),
                 Err(e) => Err(JsonRpcError {
+                    client_info,
                     request,
                     error: JsonRpcErrorType::Parse(addr, ERRL!("error {:?} parsing result from response {:?}", e, response)),
                 }),

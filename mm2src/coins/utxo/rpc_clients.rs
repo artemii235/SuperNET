@@ -254,6 +254,8 @@ pub enum EstimateFeeMethod {
 /// This description will be updated with more info
 #[derive(Clone, Debug)]
 pub struct NativeClientImpl {
+    /// Name of coin the rpc client is intended to work with
+    pub coin_ticker: String,
     /// The uri to send requests to
     pub uri: String,
     /// Value of Authorization header, e.g. "Basic base64(user:password)"
@@ -264,10 +266,29 @@ pub struct NativeClientImpl {
 pub struct NativeClient(pub Arc<NativeClientImpl>);
 impl Deref for NativeClient {type Target = NativeClientImpl; fn deref (&self) -> &NativeClientImpl {&*self.0}}
 
+/// The trait provides methods to generate the JsonRpcClient instance info such as name of coin.
+pub trait UtxoJsonRpcClientInfo: JsonRpcClient {
+    /// Name of coin the rpc client is intended to work with
+    fn coin_name(&self) -> &str;
+
+    /// Generate client info from coin name
+    fn client_info(&self) -> String {
+        format!("coin: {}", self.coin_name())
+    }
+}
+
+impl UtxoJsonRpcClientInfo for NativeClientImpl {
+    fn coin_name(&self) -> &str {
+        self.coin_ticker.as_str()
+    }
+}
+
 impl JsonRpcClient for NativeClientImpl {
     fn version(&self) -> &'static str { "1.0" }
 
     fn next_id(&self) -> String { "0".into() }
+
+    fn client_info(&self) -> String { UtxoJsonRpcClientInfo::client_info(self) }
 
     fn transport(&self, request: JsonRpcRequest) -> JsonRpcResponseFut {
         let request_body = try_fus!(json::to_string(&request));
@@ -756,6 +777,7 @@ impl Drop for ElectrumConnection {
 
 #[derive(Debug)]
 pub struct ElectrumClientImpl {
+    coin_ticker: String,
     connections: Vec<ElectrumConnection>,
     next_id: AtomicU64,
 }
@@ -876,12 +898,20 @@ impl Deref for ElectrumClient {type Target = ElectrumClientImpl; fn deref (&self
 
 const BLOCKCHAIN_HEADERS_SUB_ID: &'static str = "blockchain.headers.subscribe";
 
+impl UtxoJsonRpcClientInfo for ElectrumClient {
+    fn coin_name(&self) -> &str {
+        self.coin_ticker.as_str()
+    }
+}
+
 impl JsonRpcClient for ElectrumClient {
     fn version(&self) -> &'static str { "2.0" }
 
     fn next_id(&self) -> String {
         self.next_id.fetch_add(1, AtomicOrdering::Relaxed).to_string()
     }
+
+    fn client_info(&self) -> String { UtxoJsonRpcClientInfo::client_info(self) }
 
     fn transport(&self, request: JsonRpcRequest) -> JsonRpcResponseFut {
         Box::new(electrum_request_multi(self.clone(), request).boxed().compat())
@@ -1074,8 +1104,9 @@ impl UtxoRpcClientOps for ElectrumClient {
 
 #[cfg_attr(test, mockable)]
 impl ElectrumClientImpl {
-    pub fn new() -> ElectrumClientImpl {
+    pub fn new(coin_ticker: String) -> ElectrumClientImpl {
         ElectrumClientImpl {
+            coin_ticker,
             connections: vec![],
             next_id: 0.into(),
         }

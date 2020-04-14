@@ -5,9 +5,12 @@ use crate::utxo::rpc_clients::{ElectrumProtocol, ListSinceBlockRes};
 use futures::future::join_all;
 use mocktopus::mocking::*;
 use super::*;
+use rpc::v1::types::H256 as H256Json;
+
+const TEST_COIN_NAME: &'static str = "ETOMIC";
 
 fn electrum_client_for_test(servers: &[&str]) -> UtxoRpcClientEnum {
-    let mut client = ElectrumClientImpl::new();
+    let mut client = ElectrumClientImpl::new(TEST_COIN_NAME.into());
     for server in servers {
         client.add_server(&ElectrumRpcRequest {
             url: server.to_string(),
@@ -66,7 +69,7 @@ fn utxo_coin_for_test(rpc_client: UtxoRpcClientEnum, force_seed: Option<&str>) -
         p2sh_t_addr_prefix: 0,
         pub_addr_prefix: 60,
         pub_t_addr_prefix: 0,
-        ticker: "ETOMIC".into(),
+        ticker: TEST_COIN_NAME.into(),
         wif_prefix: 0,
         tx_fee: TxFee::Fixed(1000),
         version_group_id: 0x892f2085,
@@ -246,6 +249,7 @@ fn test_sat_from_big_decimal() {
 #[test]
 fn test_wait_for_payment_spend_timeout_native() {
     let client = NativeClientImpl {
+        coin_ticker: "RICK".into(),
         uri: "http://127.0.0.1:10271".to_owned(),
         auth: fomat!("Basic " (base64_encode("user481805103:pass97a61c8d048bcf468c6c39a314970e557f57afd1d8a5edee917fb29bafb3a43371", URL_SAFE))),
     };
@@ -273,7 +277,7 @@ fn test_wait_for_payment_spend_timeout_electrum() {
         MockResult::Return(Box::new(futures01::future::ok(None)))
     });
 
-    let client = ElectrumClientImpl::new();
+    let client = ElectrumClientImpl::new(TEST_COIN_NAME.into());
     let client = UtxoRpcClientEnum::Electrum(ElectrumClient(Arc::new(client)));
     let coin = utxo_coin_for_test(client, None);
     let transaction = unwrap!(hex::decode("01000000000102fff7f7881a8099afa6940d42d1e7f6362bec38171ea3edf433541db4e4ad969f00000000494830450221008b9d1dc26ba6a9cb62127b02742fa9d754cd3bebf337f7a55d114c8e5cdd30be022040529b194ba3f9281a99f2b1c0a19c0489bc22ede944ccf4ecbab4cc618ef3ed01eeffffffef51e1b804cc89d182d279655c3aa89e815b1b309fe287d9b2b55d57b90ec68a0100000000ffffffff02202cb206000000001976a9148280b37df378db99f66f85c95a783a76ac7a6d5988ac9093510d000000001976a9143bde42dbee7e4dbe6a21b2d50ce2f0167faa815988ac000247304402203609e17b84f6a7d30c80bfa610b5b4542f32a8a0d5447a12fb1366d7f01cc44a0220573a954c4518331561406f90300e8f3358f51928d43c212a8caed02de67eebee0121025476c2e83188368da1ff3e292e7acafcdb3566bb0ad253f62fc70f07aeee635711000000"));
@@ -337,6 +341,7 @@ fn test_withdraw_impl_set_fixed_fee() {
     });
 
     let client = NativeClient(Arc::new(NativeClientImpl {
+        coin_ticker: TEST_COIN_NAME.into(),
         uri: "http://127.0.0.1".to_owned(),
         auth: fomat!("Basic " (base64_encode("user481805103:pass97a61c8d048bcf468c6c39a314970e557f57afd1d8a5edee917fb29bafb3a43371", URL_SAFE))),
     }));
@@ -346,7 +351,7 @@ fn test_withdraw_impl_set_fixed_fee() {
     let withdraw_req = WithdrawRequest {
         amount: 1.into(),
         to: "RQq6fWoy8aGGMLjvRfMY5mBNVm2RQxJyLa".to_string(),
-        coin: "ETOMIC".to_string(),
+        coin: TEST_COIN_NAME.into(),
         max: false,
         fee: Some(WithdrawFee::UtxoFixed { amount: "0.1".parse().unwrap() }),
     };
@@ -365,6 +370,7 @@ fn test_withdraw_impl_sat_per_kb_fee() {
     });
 
     let client = NativeClient(Arc::new(NativeClientImpl {
+        coin_ticker: TEST_COIN_NAME.into(),
         uri: "http://127.0.0.1".to_owned(),
         auth: fomat!("Basic " (base64_encode("user481805103:pass97a61c8d048bcf468c6c39a314970e557f57afd1d8a5edee917fb29bafb3a43371", URL_SAFE))),
     }));
@@ -374,7 +380,7 @@ fn test_withdraw_impl_sat_per_kb_fee() {
     let withdraw_req = WithdrawRequest {
         amount: 1.into(),
         to: "RQq6fWoy8aGGMLjvRfMY5mBNVm2RQxJyLa".to_string(),
-        coin: "ETOMIC".to_string(),
+        coin: TEST_COIN_NAME.into(),
         max: false,
         fee: Some(WithdrawFee::UtxoPerKbyte { amount: "0.1".parse().unwrap() }),
     };
@@ -396,6 +402,7 @@ fn test_withdraw_impl_sat_per_kb_fee_amount_equal_to_max() {
     });
 
     let client = NativeClient(Arc::new(NativeClientImpl {
+        coin_ticker: TEST_COIN_NAME.into(),
         uri: "http://127.0.0.1".to_owned(),
         auth: fomat!("Basic " (base64_encode("user481805103:pass97a61c8d048bcf468c6c39a314970e557f57afd1d8a5edee917fb29bafb3a43371", URL_SAFE))),
     }));
@@ -405,7 +412,7 @@ fn test_withdraw_impl_sat_per_kb_fee_amount_equal_to_max() {
     let withdraw_req = WithdrawRequest {
         amount: "9.9789".parse().unwrap(),
         to: "RQq6fWoy8aGGMLjvRfMY5mBNVm2RQxJyLa".to_string(),
-        coin: "ETOMIC".to_string(),
+        coin: TEST_COIN_NAME.into(),
         max: false,
         fee: Some(WithdrawFee::UtxoPerKbyte { amount: "0.1".parse().unwrap() }),
     };
@@ -429,6 +436,7 @@ fn test_withdraw_impl_sat_per_kb_fee_amount_equal_to_max_dust_included_to_fee() 
     });
 
     let client = NativeClient(Arc::new(NativeClientImpl {
+        coin_ticker: TEST_COIN_NAME.into(),
         uri: "http://127.0.0.1".to_owned(),
         auth: fomat!("Basic " (base64_encode("user481805103:pass97a61c8d048bcf468c6c39a314970e557f57afd1d8a5edee917fb29bafb3a43371", URL_SAFE))),
     }));
@@ -438,7 +446,7 @@ fn test_withdraw_impl_sat_per_kb_fee_amount_equal_to_max_dust_included_to_fee() 
     let withdraw_req = WithdrawRequest {
         amount: "9.9789".parse().unwrap(),
         to: "RQq6fWoy8aGGMLjvRfMY5mBNVm2RQxJyLa".to_string(),
-        coin: "ETOMIC".to_string(),
+        coin: TEST_COIN_NAME.into(),
         max: false,
         fee: Some(WithdrawFee::UtxoPerKbyte { amount: "0.09999999".parse().unwrap() }),
     };
@@ -462,6 +470,7 @@ fn test_withdraw_impl_sat_per_kb_fee_amount_over_max() {
     });
 
     let client = NativeClient(Arc::new(NativeClientImpl {
+        coin_ticker: TEST_COIN_NAME.into(),
         uri: "http://127.0.0.1".to_owned(),
         auth: fomat!("Basic " (base64_encode("user481805103:pass97a61c8d048bcf468c6c39a314970e557f57afd1d8a5edee917fb29bafb3a43371", URL_SAFE))),
     }));
@@ -471,7 +480,7 @@ fn test_withdraw_impl_sat_per_kb_fee_amount_over_max() {
     let withdraw_req = WithdrawRequest {
         amount: "9.97939455".parse().unwrap(),
         to: "RQq6fWoy8aGGMLjvRfMY5mBNVm2RQxJyLa".to_string(),
-        coin: "ETOMIC".to_string(),
+        coin: TEST_COIN_NAME.into(),
         max: false,
         fee: Some(WithdrawFee::UtxoPerKbyte { amount: "0.1".parse().unwrap() }),
     };
@@ -486,6 +495,7 @@ fn test_withdraw_impl_sat_per_kb_fee_max() {
     });
 
     let client = NativeClient(Arc::new(NativeClientImpl {
+        coin_ticker: TEST_COIN_NAME.into(),
         uri: "http://127.0.0.1".to_owned(),
         auth: fomat!("Basic " (base64_encode("user481805103:pass97a61c8d048bcf468c6c39a314970e557f57afd1d8a5edee917fb29bafb3a43371", URL_SAFE))),
     }));
@@ -495,7 +505,7 @@ fn test_withdraw_impl_sat_per_kb_fee_max() {
     let withdraw_req = WithdrawRequest {
         amount: 0.into(),
         to: "RQq6fWoy8aGGMLjvRfMY5mBNVm2RQxJyLa".to_string(),
-        coin: "ETOMIC".to_string(),
+        coin: TEST_COIN_NAME.into(),
         max: true,
         fee: Some(WithdrawFee::UtxoPerKbyte { amount: "0.1".parse().unwrap() }),
     };
@@ -600,4 +610,14 @@ fn get_tx_details_coinbase_transaction() {
     };
 
     block_on(fut);
+}
+
+#[test]
+#[ignore]
+fn test_electrum_rpc_client_error() {
+    let client = electrum_client_for_test(&["electrum1.cipig.net:10060", "electrum2.cipig.net:10060"]);
+
+    let empty_hash = H256Json::default();
+    let err = unwrap_err!(client.get_verbose_transaction(empty_hash).wait());
+    log!((err));
 }
