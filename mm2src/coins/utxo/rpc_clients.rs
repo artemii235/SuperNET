@@ -9,7 +9,7 @@ use common::{StringError};
 use common::wio::{slurp_req};
 use common::executor::{spawn, Timer};
 use common::custom_futures::{join_all_sequential, select_ok_sequential};
-use common::jsonrpc_client::{JsonRpcResponseFut, RpcRes, JsonRpcClient, JsonRpcRequest, JsonRpcResponse, JsonRpcRemoteAddr};
+use common::jsonrpc_client::{JsonRpcClient, JsonRpcRemoteAddr, JsonRpcResponseFut, JsonRpcRequest, JsonRpcResponse, RpcRes};
 use futures01::{Future, Poll, Sink, Stream};
 use futures01::future::{Either, loop_fn, Loop, select_ok};
 use futures01::sync::{mpsc, oneshot};
