@@ -1,11 +1,13 @@
 use common::block_on;
 use common::privkey::key_pair_from_seed;
-use crate::WithdrawFee;
-use crate::utxo::rpc_clients::{ElectrumProtocol, ListSinceBlockRes};
+use crate::{
+    WithdrawFee,
+    utxo::rpc_clients::{ElectrumProtocol, ListSinceBlockRes, NetworkInfo}
+};
 use futures::future::join_all;
 use mocktopus::mocking::*;
-use super::*;
 use rpc::v1::types::H256 as H256Json;
+use super::*;
 
 const TEST_COIN_NAME: &'static str = "ETOMIC";
 
@@ -80,6 +82,7 @@ fn utxo_coin_for_test(rpc_client: UtxoRpcClientEnum, force_seed: Option<&str>) -
         signature_version: SignatureVersion::Base,
         history_sync_state: Mutex::new(HistorySyncState::NotEnabled),
         required_confirmations: 1.into(),
+        force_min_relay_fee: false,
     };
 
     UtxoCoin(Arc::new(coin))
@@ -107,7 +110,7 @@ fn test_generate_transaction() {
         value: 999,
     }];
 
-    let generated = coin.generate_transaction(unspents, outputs, FeePolicy::SendExact, None).wait();
+    let generated = block_on(coin.generate_transaction(unspents, outputs, FeePolicy::SendExact, None));
     // must not allow to use output with value < dust
     unwrap_err!(generated);
 
@@ -121,7 +124,7 @@ fn test_generate_transaction() {
         value: 98001,
     }];
 
-    let generated = unwrap!(coin.generate_transaction(unspents, outputs, FeePolicy::SendExact, None).wait());
+    let generated = unwrap!(block_on(coin.generate_transaction(unspents, outputs, FeePolicy::SendExact, None)));
     // the change that is less than dust must be included to miner fee
     // so no extra outputs should appear in generated transaction
     assert_eq!(generated.0.outputs.len(), 1);
@@ -141,7 +144,7 @@ fn test_generate_transaction() {
     }];
 
     // test that fee is properly deducted from output amount equal to input amount (max withdraw case)
-    let generated = unwrap!(coin.generate_transaction(unspents, outputs, FeePolicy::DeductFromOutput(0), None).wait());
+    let generated = unwrap!(block_on(coin.generate_transaction(unspents, outputs, FeePolicy::DeductFromOutput(0), None)));
     assert_eq!(generated.0.outputs.len(), 1);
 
     assert_eq!(generated.1.fee_amount, 1000);
@@ -160,12 +163,12 @@ fn test_generate_transaction() {
     }];
 
     // test that generate_transaction returns an error when input amount is not sufficient to cover output + fee
-    unwrap_err!(coin.generate_transaction(unspents, outputs, FeePolicy::SendExact, None).wait());
+    unwrap_err!(block_on(coin.generate_transaction(unspents, outputs, FeePolicy::SendExact, None)));
 }
 
 #[test]
 fn test_addresses_from_script() {
-    let client = electrum_client_for_test(&["test1.cipig.net:10025"]);
+    let client = electrum_client_for_test(&["test1.cipig.net:10025", "test2.cipig.net:10025"]);
     let coin = utxo_coin_for_test(client, None);
     // P2PKH
     let script: Script = "76a91405aab5342166f8594baf17a7d9bef5d56744332788ac".into();
@@ -625,4 +628,88 @@ fn test_electrum_rpc_client_error() {
     let actual = format!("{}", err);
 
     assert_eq!(expected, actual);
+}
+
+#[test]
+fn test_network_info_deserialization() {
+    let network_info_kmd = r#"{
+        "connections": 1,
+        "localaddresses": [],
+        "localservices": "0000000070000005",
+        "networks": [
+            {
+                "limited": false,
+                "name": "ipv4",
+                "proxy": "",
+                "proxy_randomize_credentials": false,
+                "reachable": true
+            },
+            {
+                "limited": false,
+                "name": "ipv6",
+                "proxy": "",
+                "proxy_randomize_credentials": false,
+                "reachable": true
+            },
+            {
+                "limited": true,
+                "name": "onion",
+                "proxy": "",
+                "proxy_randomize_credentials": false,
+                "reachable": false
+            }
+        ],
+        "protocolversion": 170007,
+        "relayfee": 1e-06,
+        "subversion": "/MagicBean:2.0.15-rc2/",
+        "timeoffset": 0,
+        "version": 2001526,
+        "warnings": ""
+    }"#;
+    json::from_str::<NetworkInfo>(network_info_kmd).unwrap();
+
+    let network_info_btc = r#"{
+        "version": 180000,
+        "subversion": "\/Satoshi:0.18.0\/",
+        "protocolversion": 70015,
+        "localservices": "000000000000040d",
+        "localrelay": true,
+        "timeoffset": 0,
+        "networkactive": true,
+        "connections": 124,
+        "networks": [
+            {
+                "name": "ipv4",
+                "limited": false,
+                "reachable": true,
+                "proxy": "",
+                "proxy_randomize_credentials": false
+            },
+            {
+                "name": "ipv6",
+                "limited": false,
+                "reachable": true,
+                "proxy": "",
+                "proxy_randomize_credentials": false
+            },
+            {
+                "name": "onion",
+                "limited": true,
+                "reachable": false,
+                "proxy": "",
+                "proxy_randomize_credentials": false
+            }
+        ],
+        "relayfee": 1.0e-5,
+        "incrementalfee": 1.0e-5,
+        "localaddresses": [
+            {
+                "address": "96.57.248.252",
+                "port": 8333,
+                "score": 618294
+            }
+        ],
+        "warnings": ""
+    }"#;
+    json::from_str::<NetworkInfo>(network_info_btc).unwrap();
 }
