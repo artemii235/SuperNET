@@ -74,6 +74,10 @@ pub mod utxo_tests;
 
 const SWAP_TX_SPEND_SIZE: u64 = 305;
 const KILO_BYTE: u64 = 1000;
+/// https://bitcoin.stackexchange.com/a/77192
+const MAX_DER_SIGNATURE_LEN: usize = 72;
+const COMPRESSED_PUBKEY_LEN: usize = 33;
+const P2PKH_OUTPUT_LEN: u64 = 34;
 
 #[cfg(windows)]
 #[cfg(feature = "native")]
@@ -652,7 +656,10 @@ impl UtxoCoin {
                 ActualTxFee::Dynamic(f) => {
                     let transaction = UtxoTx::from(tx.clone());
                     let transaction_bytes = serialize(&transaction);
-                    let tx_size = transaction_bytes.len() + transaction.inputs().len() * 107;
+                    // 2 bytes are used to indicate the length of signature and pubkey
+                    // total is 107
+                    let additional_len = 2 + MAX_DER_SIGNATURE_LEN + COMPRESSED_PUBKEY_LEN;
+                    let tx_size = transaction_bytes.len() + transaction.inputs().len() * additional_len;
                     (f * tx_size as u64) / KILO_BYTE
                 },
             };
@@ -661,9 +668,10 @@ impl UtxoCoin {
                     let mut outputs_plus_fee = sum_outputs_value + tx_fee;
                     if sum_inputs >= outputs_plus_fee {
                         if sum_inputs - outputs_plus_fee > DUST {
+                            // there will be change output if sum_inputs - outputs_plus_fee > DUST
                             if let ActualTxFee::Dynamic(ref f) = coin_tx_fee {
-                                tx_fee += (f * 34) / KILO_BYTE;
-                                outputs_plus_fee += (f * 34) / KILO_BYTE;
+                                tx_fee += (f * P2PKH_OUTPUT_LEN) / KILO_BYTE;
+                                outputs_plus_fee += (f * P2PKH_OUTPUT_LEN) / KILO_BYTE;
                             }
                         }
                         if let Some(min_relay) = min_relay_fee {
@@ -683,7 +691,7 @@ impl UtxoCoin {
                     if sum_inputs >= sum_outputs_value {
                         if sum_inputs - sum_outputs_value > DUST {
                             if let ActualTxFee::Dynamic(ref f) = coin_tx_fee {
-                                tx_fee += (f * 34) / KILO_BYTE;
+                                tx_fee += (f * P2PKH_OUTPUT_LEN) / KILO_BYTE;
                             }
                             if let Some(min_relay) = min_relay_fee {
                                 if tx_fee < min_relay {

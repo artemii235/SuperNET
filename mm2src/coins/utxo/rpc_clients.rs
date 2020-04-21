@@ -133,7 +133,7 @@ impl UtxoRpcClientEnum {
 
 /// Generic unspent info required to build transactions, we need this separate type because native
 /// and Electrum provide different list_unspent format.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct UnspentInfo {
     pub outpoint: OutPoint,
     pub value: u64,

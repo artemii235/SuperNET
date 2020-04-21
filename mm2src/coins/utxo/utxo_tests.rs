@@ -756,3 +756,50 @@ fn test_generate_transaction_relay_fee_is_used_when_dynamic_fee_is_lower() {
     assert_eq!(generated.1.spent_by_me, 1000000000);
     assert!(unsafe { GET_RELAY_FEE_CALLED });
 }
+
+#[test]
+// https://github.com/KomodoPlatform/atomicDEX-API/issues/617
+fn test_generate_tx_fee_is_correct_when_dynamic_fee_is_larger_than_relay() {
+    let client = NativeClientImpl {
+        coin_ticker: "RICK".into(),
+        uri: "http://127.0.0.1:10271".to_owned(),
+        auth: fomat!("Basic " (base64_encode("user481805103:pass97a61c8d048bcf468c6c39a314970e557f57afd1d8a5edee917fb29bafb3a43371", URL_SAFE))),
+    };
+
+    static mut GET_RELAY_FEE_CALLED: bool = false;
+    NativeClient::get_relay_fee.mock_safe(|_| {
+        unsafe { GET_RELAY_FEE_CALLED = true };
+        MockResult::Return(Box::new(futures01::future::ok("0.00001".parse().unwrap())))
+    });
+    let client = UtxoRpcClientEnum::Native(NativeClient(Arc::new(client)));
+    let mut coin = utxo_coin_for_test(client, None);
+    coin.force_min_relay_fee = true;
+    let coin: UtxoCoin = coin.into();
+    let unspents = vec![
+        UnspentInfo {
+            value: 1000000000,
+            outpoint: OutPoint::default(),
+        };
+    20];
+
+    let outputs = vec![TransactionOutput {
+        script_pubkey: vec![].into(),
+        value: 19000000000,
+    }];
+
+    let fut = coin.generate_transaction(
+        unspents,
+        outputs,
+        FeePolicy::SendExact,
+        Some(ActualTxFee::Dynamic(1000))
+    );
+    let generated = unwrap!(block_on(fut));
+    assert_eq!(generated.0.outputs.len(), 2);
+    assert_eq!(generated.0.inputs.len(), 20);
+
+    // resulting signed transaction size would be 3032 bytes so fee is 3032 sat
+    assert_eq!(generated.1.fee_amount, 3032);
+    assert_eq!(generated.1.received_by_me, 999996968);
+    assert_eq!(generated.1.spent_by_me, 20000000000);
+    assert!(unsafe { GET_RELAY_FEE_CALLED });
+}
