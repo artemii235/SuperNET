@@ -546,6 +546,12 @@ fn big_decimal_from_sat(satoshis: i64, decimals: u8) -> BigDecimal {
 pub struct UtxoCoin(Arc<UtxoCoinImpl>);
 impl Deref for UtxoCoin {type Target = UtxoCoinImpl; fn deref (&self) -> &UtxoCoinImpl {&*self.0}}
 
+impl From<UtxoCoinImpl> for UtxoCoin {
+    fn from(coin: UtxoCoinImpl) -> UtxoCoin {
+        UtxoCoin(Arc::new(coin))
+    }
+}
+
 // We can use a shared UTXO lock for all UTXO coins at 1 time.
 // It's highly likely that we won't experience any issues with it as we won't need to send "a lot" of transactions concurrently.
 lazy_static! {static ref UTXO_LOCK: AsyncMutex<()> = AsyncMutex::new(());}
