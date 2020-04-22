@@ -32,6 +32,7 @@ futures01 = { version = "0.1", package = "futures" }
 futures = { version = ">=0.3.0-alpha.16, <0.4", package = "futures-preview", features = ["compat", "async-await", "nightly"] }
 futures-cpupool = "0.1"
 gstuff = { version = "0.6", features = ["nightly"] }
+hdrhistogram = "7.0"
 hex = "0.3.2"
 http = "0.1"
 http-body = "0.1"
@@ -40,6 +41,10 @@ hyper-rustls = { version = "0.16", optional = true }
 keys = { git = "https://github.com/artemii235/parity-bitcoin.git" }
 lazy_static = "1.2"
 libc = { version = "0.2", optional = true }
+metrics = "0.12"
+metrics-runtime = {version = "0.13", default-features = false, features = ["metrics-observer-json"] }
+metrics-core = "0.5"
+metrics-util = "0.3"
 num-bigint = { version = "0.2", features = ["serde", "std"] }
 num-rational = { version = "0.2", features = ["serde", "bigint", "bigint-std"] }
 num-traits = "0.2"

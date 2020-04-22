@@ -68,6 +68,7 @@ pub mod iguana_utils;
 pub mod privkey;
 pub mod mm_ctx;
 pub mod mm_number;
+pub mod metrics;
 pub mod seri;
 pub mod header;
 pub mod duplex_mutex;
