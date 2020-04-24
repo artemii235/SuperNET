@@ -68,6 +68,7 @@ use self::utxo::{utxo_coin_from_conf_and_request, UtxoCoin, UtxoFeeDetails, Utxo
 #[allow(unused_variables)]
 pub mod test_coin;
 pub use self::test_coin::TestCoin;
+use ethereum_types::H160;
 
 pub trait Transaction: Debug + 'static {
     /// Raw transaction bytes of the transaction
@@ -450,6 +451,22 @@ impl CoinsContext {
     }
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "token_type", content = "params")]
+enum TokenType {
+    UTXO,
+    QRC20 { contract_address: H160 },
+    ETH,
+    ERC20 { contract_address: H160 },
+}
+
+#[derive(Serialize, Deserialize)]
+struct CoinProtocol {
+    platform: String,
+    #[serde(flatten)]
+    token: TokenType,
+}
+
 /// Adds a new currency into the list of currencies configured.
 ///
 /// Returns an error if the currency already exists. Initializing the same currency twice is a bad habit
@@ -477,10 +494,16 @@ pub async fn lp_coininit (ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoi
     ))}
     let secret = &*ctx.secp256k1_key_pair().private().secret;
 
-    let coin: MmCoinEnum = if coins_en["etomic"].is_null() {
-        try_s! (utxo_coin_from_conf_and_request (ticker, coins_en, req, secret) .await) .into()
-    } else {
-        try_s! (eth_coin_from_conf_and_request (ctx, ticker, coins_en, req, secret) .await) .into()
+    let foo = CoinProtocol {platform: "a".into(), token: TokenType::QRC20 {contract_address: H160::random()}};
+    log!("foo: " (json::to_string(&foo).unwrap()));
+
+    let token_type: CoinProtocol = try_s!(json::from_value(coins_en["protocol"].clone()));
+
+    let coin: MmCoinEnum = match token_type.token {
+        TokenType::UTXO => try_s! (utxo_coin_from_conf_and_request (ticker, coins_en, req, secret, None) .await) .into(),
+        TokenType::ETH | TokenType::ERC20 { .. } =>
+            try_s! (eth_coin_from_conf_and_request (ctx, ticker, coins_en, req, secret) .await) .into(),
+        TokenType::QRC20 {contract_address} => {log!("QRC20"); try_s! (utxo_coin_from_conf_and_request (ticker, coins_en, req, secret, Some(contract_address)) .await) .into()},
     };
 
     let block_count = try_s! (coin.current_block().compat().await);

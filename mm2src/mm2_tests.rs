@@ -2194,6 +2194,48 @@ fn test_fill_or_kill_taker_order_should_not_transform_to_maker() {
     assert!(my_taker_orders.is_empty(), "taker_orders must be empty");
 }
 
+#[test]
+fn qrc20_activate_electrum() {
+    let passphrase = "cMhHM3PMpMrChygR4bLF7QsTdenhWpFrrmf2UezBG3eeFsz41rtL";
+    let coins = json! ([
+        {"coin":"QRC20","required_confirmations":0,"pubtype": 120,"p2shtype": 50,"wiftype": 128,"segwit": true,"txfee": 0,"mm2": 1,
+         "protocol":{"platform":"QTUM","token_type": "QRC20","params": {"contract_address":"0xd362e096e873eb7907e205fadc6175c6fec7bc44"}}},
+    ]);
+
+    let mut mm = unwrap! (MarketMakerIt::start (
+        json! ({
+            "gui": "nogui",
+            "netid": 8999,
+            "dht": "on",  // Enable DHT without delay.
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| unwrap! (s.parse::<i64>())),
+            "passphrase": passphrase,
+            "coins": coins,
+            "rpc_password": "password",
+            "i_am_seed": true,
+        }),
+        "password".into(),
+        local_start! ("bob")
+    ));
+
+    let (_bob_dump_log, _bob_dump_dashboard) = mm.mm_dump();
+    log! ({"Bob log path: {}", mm.log_path.display()});
+    unwrap! (block_on (mm.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
+
+    let electrum = unwrap! (block_on (mm.rpc (json! ({
+        "userpass": mm.userpass,
+        "method": "electrum",
+        "coin": "QRC20",
+        "servers": [{"url":"95.217.83.126:10001"}],
+        "mm2": 1,
+    }))));
+    assert_eq! (electrum.0, StatusCode::OK, "RPC «electrum» failed with status «{}», response «{}»", electrum.0, electrum.1);
+    let electrum_json: Json = json::from_str(&electrum.1).unwrap();
+    assert_eq!(electrum_json["address"].as_str(), Some("qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG"));
+    assert_eq!(electrum_json["balance"].as_str(), Some("9999989.99999"));
+}
+
 // HOWTO
 // 1. Install Firefox.
 // 2. Install forked version of wasm-bindgen-cli: cargo install wasm-bindgen-cli --git https://github.com/artemii235/wasm-bindgen.git

@@ -21,6 +21,7 @@
 
 #![cfg_attr(not(feature = "native"), allow(unused_imports))]
 
+pub mod qtum;
 pub mod rpc_clients;
 
 use base64::{encode_config as base64_encode, URL_SAFE};
@@ -68,6 +69,10 @@ use self::rpc_clients::{electrum_script_hash, ElectrumClient, ElectrumClientImpl
 use super::{CoinsContext, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeFee, TradeInfo,
             Transaction, TransactionEnum, TransactionFut, TransactionDetails, WithdrawFee, WithdrawRequest};
 use crate::utxo::rpc_clients::{NativeClientImpl, UtxoRpcClientOps, ElectrumRpcRequest};
+use ethereum_types::H160;
+use ethabi::Token;
+use crate::utxo::qtum::{ContractCallResult, QtumRpcOps};
+use crate::eth::{ERC20_CONTRACT, u256_to_big_decimal};
 
 #[cfg(test)]
 pub mod utxo_tests;
@@ -226,6 +231,8 @@ pub struct UtxoCoinImpl {  // pImpl idiom.
     /// relay fee amount instead of calculated
     /// https://github.com/KomodoPlatform/atomicDEX-API/issues/617
     force_min_relay_fee: bool,
+    // TODO
+    qrc20_contract_address: Option<H160>,
 }
 
 impl UtxoCoinImpl {
@@ -1269,7 +1276,30 @@ impl MarketCoinOps for UtxoCoin {
     }
 
     fn my_balance(&self) -> Box<dyn Future<Item=BigDecimal, Error=String> + Send> {
-        Box::new(self.rpc_client.display_balance(self.my_address.clone(), self.decimals).map_err(|e| ERRL!("{}", e)))
+        match self.qrc20_contract_address {
+            Some(contract_address) => {
+                let function = unwrap!(ERC20_CONTRACT.function("balanceOf"));
+                let params = unwrap!(function.encode_input(&[
+                    Token::Address(self.my_address.hash.clone().take().into()),
+                ]));
+                match self.rpc_client {
+                    UtxoRpcClientEnum::Electrum(ref electrum) => {
+                        Box::new(electrum
+                            .blockchain_contract_call(&contract_address.to_vec().as_slice().into(), params.into())
+                            .map_err(|e| ERRL!("{}", e))
+                            .and_then(move |balance: ContractCallResult| function.decode_output(&balance.execution_result.output)
+                                .map_err(|e| ERRL!("{}", e)))
+                            .and_then(|tokens| match tokens[0] {
+                                Token::Uint(bal) => Ok(bal),
+                                _ => Err(ERRL!("Expected Uint, got {:?}", tokens[0])),
+                            })
+                            .and_then(|balance| u256_to_big_decimal(balance, 8)))
+                    },
+                    _ => unimplemented!()
+                }
+            },
+            _ => Box::new(self.rpc_client.display_balance(self.my_address.clone(), self.decimals).map_err(|e| ERRL!("{}", e))),
+        }
     }
 
     fn send_raw_tx(&self, tx: &str) -> Box<dyn Future<Item=String, Error=String> + Send> {
@@ -1828,6 +1858,7 @@ pub async fn utxo_coin_from_conf_and_request(
     conf: &Json,
     req: &Json,
     priv_key: &[u8],
+    qrc20_contract_address: Option<H160>,
 ) -> Result<UtxoCoin, String> {
     let checksum_type = if ticker == "GRS" {
         ChecksumType::DGROESTL512
@@ -2021,6 +2052,7 @@ pub async fn utxo_coin_from_conf_and_request(
         history_sync_state: Mutex::new(initial_history_state),
         required_confirmations: required_confirmations.into(),
         force_min_relay_fee: conf["force_min_relay_fee"].as_bool().unwrap_or (false),
+        qrc20_contract_address,
     };
     Ok(UtxoCoin(Arc::new(coin)))
 }

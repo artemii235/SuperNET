@@ -85,7 +85,7 @@ const _PAYMENT_STATE_REFUNDED: u8 = 3;
 lazy_static! {
     static ref SWAP_CONTRACT: Contract = unwrap!(Contract::load(SWAP_CONTRACT_ABI.as_bytes()));
 
-    static ref ERC20_CONTRACT: Contract = unwrap!(Contract::load(ERC20_ABI.as_bytes()));
+    pub static ref ERC20_CONTRACT: Contract = unwrap!(Contract::load(ERC20_ABI.as_bytes()));
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -1953,7 +1953,7 @@ fn display_u256_with_decimal_point(number: U256, decimals: u8) -> String {
     string.trim_end_matches('0').into()
 }
 
-fn u256_to_big_decimal(number: U256, decimals: u8) -> Result<BigDecimal, String> {
+pub fn u256_to_big_decimal(number: U256, decimals: u8) -> Result<BigDecimal, String> {
     let string = display_u256_with_decimal_point(number, decimals);
     Ok(try_s!(string.parse()))
 }
