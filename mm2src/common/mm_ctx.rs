@@ -24,6 +24,10 @@ use std::sync::{Arc, Mutex, Weak};
 
 use crate::{bits256, small_rng, QueuedCommand};
 use crate::log::{self, LogState};
+use crate::mm_metrics::{self, Metrics};
+
+/// Default interval to export and record metrics to log.
+const EXPORT_METRICS_INTERVAL: f64 = 5. * 60.;
 
 /// MarketMaker state, shared between the various MarketMaker threads.
 ///
@@ -49,6 +53,8 @@ pub struct MmCtx {
     pub conf: Json,
     /// Human-readable log and status dashboard.
     pub log: log::LogState,
+    /// Tools and methods and to collect and export the MM metrics.
+    pub metrics: mm_metrics::Metrics,
     /// Set to true after `lp_passphrase_init`, indicating that we have a usable state.
     /// 
     /// Should be refactored away in the future. State should always be valid.
@@ -107,6 +113,7 @@ impl MmCtx {
         MmCtx {
             conf: Json::Object (json::Map::new()),
             log,
+            metrics: Metrics::default(),
             initialized: Constructible::default(),
             rpc_started: Constructible::default(),
             stop: Constructible::default(),
@@ -382,9 +389,15 @@ impl MmArc {
         MmWeak (Arc::downgrade (&self.0))
     }
 
-    /// Tries to obtain the MM context from the weak link.  
+    /// Tries to obtain the MM context from the weak link.
     pub fn from_weak (weak: &MmWeak) -> Option<MmArc> {
         weak.0.upgrade().map (|arc| MmArc (arc))
+    }
+
+    /// Init metrics with dashboard.
+    pub fn init_metrics(&self) -> Result<(), String> {
+        let interval = self.conf["metrics_interval"].as_f64().unwrap_or(EXPORT_METRICS_INTERVAL);
+        self.metrics.init_with_dashboard(self.weak(), interval)
     }
 }
 

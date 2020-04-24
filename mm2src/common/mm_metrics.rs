@@ -1,11 +1,12 @@
 use crate::executor::{spawn, Timer};
 use crate::log::Tag;
 use crate::mm_ctx::{MmArc, MmWeak};
+use gstuff::Constructible;
 use hdrhistogram::Histogram;
 use metrics::Key;
 use metrics_core::{Drain, Builder, Label, Observe, Observer};
 use metrics_runtime::{observers::JsonBuilder, Receiver};
-pub use metrics_runtime::Sink as MeasureSink;
+pub use metrics_runtime::Sink;
 use metrics_util::{parse_quantiles, Quantile};
 use serde_json::{self as json, Value as Json};
 use std::collections::BTreeMap;
@@ -15,42 +16,55 @@ use std::slice::Iter;
 /// Default quantiles are "min" and "max"
 const QUANTILES: &[f64] = &[0., 1.];
 
-pub fn init_measurement(ctx: MmWeak, config: Config) -> Result<Measurer, String> {
-    let measurer = Measurer::new(ctx, config)?;
-    measurer.spawn();
-    Ok(measurer)
+#[derive(Default)]
+pub struct Metrics {
+    /// `Receiver` receives and collect all the metrics sent through the `sink`.
+    /// The `receiver` can be initialized only once time.
+    receiver: Constructible<Receiver>,
 }
 
-pub struct Config {
-    log_interval: f64
-}
+impl Metrics {
+    /// Create a new Metrics instance
+    pub fn new() -> Metrics {
+        Default::default()
+    }
 
-pub struct Measurer {
-    ctx: MmWeak,
-    receiver: Receiver,
-    config: Config,
-}
+    /// If the instance was not initialized yet, create the `receiver` else return an error.
+    pub fn init(&self) -> Result<(), String> {
+        if self.receiver.is_some() {
+            return ERR!("metrics system is initialized already");
+        }
 
-impl Measurer {
-    pub fn new(ctx: MmWeak, config: Config) -> Result<Self, String> {
         let receiver = try_s!(Receiver::builder().build());
-        Ok(Self { ctx, receiver, config })
+        let _ = try_s!(self.receiver.pin(receiver));
+
+        Ok(())
     }
 
-    pub fn sink(&self) -> MeasureSink {
-        self.receiver.sink()
-    }
+    /// If the instance was not initialized yet, create the `receiver`
+    /// and spawn the metrics recording into the log, else return an error.
+    pub fn init_with_dashboard(&self, ctx: MmWeak, record_interval: f64) -> Result<(), String> {
+        self.init()?;
 
-    pub fn spawn(&self) {
-        let controller = self.receiver.controller();
+        let controller = self.receiver.as_option().unwrap().controller();
+
         let observer = TagObserver::new(QUANTILES);
-        let exporter = TagExporter { ctx: self.ctx.clone(), controller, observer };
+        let exporter = TagExporter { ctx, controller, observer };
 
-        spawn(exporter.run(self.config.log_interval))
+        spawn(exporter.run(record_interval));
+
+        Ok(())
     }
 
+    /// Handle for sending metric samples.
+    pub fn sink(&self) -> Result<Sink, String> {
+        Ok(try_s!(self.try_receiver()).sink())
+    }
+
+    /// Collect the metrics as Json.
     pub fn collect_json(&self) -> Result<Json, String> {
-        let controller = self.receiver.controller();
+        let receiver = try_s!(self.try_receiver());
+        let controller = receiver.controller();
 
         // pretty_json is false by default
         let builder = JsonBuilder::new().set_quantiles(QUANTILES);
@@ -62,20 +76,32 @@ impl Measurer {
 
         Ok(try_s!(json::from_str(&string)))
     }
+
+    fn try_receiver(&self) -> Result<&Receiver, String> {
+        self.receiver.ok_or("metrics system is not initialized yet".into())
+    }
 }
 
 #[derive(Eq, PartialEq)]
 struct OrdKey(Key);
 
+impl std::ops::Deref for OrdKey {
+    type Target = Key;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 impl Ord for OrdKey {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.0.name().cmp(&other.0.name())
+        self.name().cmp(&other.name())
     }
 }
 
 impl PartialOrd for OrdKey {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.0.name().partial_cmp(&other.0.name())
+        self.name().partial_cmp(&other.name())
     }
 }
 
@@ -119,7 +145,7 @@ impl TagObserver {
 
     fn prepare_metrics(&self) -> Vec<PreparedMetric> {
         self.metrics.iter()
-            .map(|(OrdKey(key), val)| {
+            .map(|(key, val)| {
                 let mut tags = labels_to_tags(key.labels());
                 tags.push(Tag { key: key.name().to_string(), val: None });
                 let message = format!("metric={}", val.to_string());
@@ -131,7 +157,7 @@ impl TagObserver {
 
     fn prepare_histograms(&self) -> Vec<PreparedMetric> {
         self.histograms.iter()
-            .map(|(OrdKey(key), hist)| {
+            .map(|(key, hist)| {
                 let mut tags = labels_to_tags(key.labels());
                 tags.push(Tag { key: key.name().to_string(), val: None });
                 let message = hist_to_message(hist, &self.quantiles);
@@ -260,22 +286,36 @@ mod tests {
     use metrics_runtime::Delta;
 
     #[test]
-    #[ignore]
-    fn test_measure() {
+    fn test_initialization() {
         let ctx = MmCtxBuilder::new().into_mm_arc();
-        let config = Config { log_interval: 5. };
+        let metrics = Metrics::new();
 
-        let measurer = init_measurement(ctx.weak(), config).unwrap();
+        // metrics system is not initialized yet
+        assert!(metrics.sink().is_err());
 
-        let mut sink = measurer.sink();
+        unwrap!(metrics.init());
+        assert!(metrics.init().is_err());
+        assert!(metrics.init_with_dashboard(ctx.weak(), 1.).is_err());
 
-        sink.increment_counter_with_labels("rpc.traffic.tx", 62, &[("coin", "BTC")]);
-        sink.increment_counter_with_labels("rpc.traffic.rx", 105, &[("coin", "BTC")]);
+        let _ = unwrap!(metrics.sink());
+    }
 
-        sink.increment_counter_with_labels("rpc.traffic.tx", 54, &[("coin", "KMD")]);
-        sink.increment_counter_with_labels("rpc.traffic.rx", 158, &[("coin", "KMD")]);
+    #[test]
+    #[ignore]
+    fn test_dashboard() {
+        let ctx = MmCtxBuilder::new().into_mm_arc();
 
-        sink.update_gauge_with_labels("rpc.connection.count", 3, &[("coin", "KMD")]);
+        let metrics = Metrics::new();
+        metrics.init_with_dashboard(ctx.weak(), 5.).unwrap();
+        let mut sink = metrics.sink().unwrap();
+
+        sink.increment_counter_with_labels("rpc.traffic.tx", 62, labels!("coin" => "BTC"));
+        sink.increment_counter_with_labels("rpc.traffic.rx", 105, labels!("coin" => "BTC"));
+
+        sink.increment_counter_with_labels("rpc.traffic.tx", 54, labels!("coin" => "KMD"));
+        sink.increment_counter_with_labels("rpc.traffic.rx", 158, labels!("coin" => "KMD"));
+
+        sink.update_gauge_with_labels("rpc.connection.count", 3, labels!("coin" => "KMD"));
 
         sink.record_timing_with_labels("rpc.query.spent_time",
                                        sink.now(),
@@ -284,22 +324,24 @@ mod tests {
 
         block_on(async { Timer::sleep(6.).await });
 
-        sink.increment_counter_with_labels("rpc.traffic.tx", 30, &[("coin", "BTC")]);
-        sink.increment_counter_with_labels("rpc.traffic.rx", 44, &[("coin", "BTC")]);
+        sink.increment_counter_with_labels("rpc.traffic.tx", 30, labels!("coin" => "BTC"));
+        sink.increment_counter_with_labels("rpc.traffic.rx", 44, labels!("coin" => "BTC"));
 
-        sink.update_gauge_with_labels("rpc.connection.count", 5, &[("coin", "KMD")]);
+        sink.update_gauge_with_labels("rpc.connection.count", 5, labels!("coin" => "KMD"));
 
+        let start = sink.now();
+        let end = sink.now();
         sink.record_timing_with_labels("rpc.query.spent_time",
-                                       sink.now(),
-                                       sink.now(),
-                                       &[("coin", "KMD"), ("method", "blockchain.transaction.get")]);
+                                       start,
+                                       end,
+                                       labels!("coin" => "KMD", "method" => "blockchain.transaction.get"));
 
         block_on(async { Timer::sleep(6.).await });
     }
 
     #[test]
     fn test_collect_json() {
-        fn do_query(sink: &MeasureSink, duration: f64) -> (u64, u64) {
+        fn do_query(sink: &Sink, duration: f64) -> (u64, u64) {
             let start = sink.now();
             block_on(async { Timer::sleep(duration).await });
             let end = sink.now();
@@ -311,23 +353,21 @@ mod tests {
             hist.record(delta).unwrap()
         }
 
-        let ctx = MmCtxBuilder::new().into_mm_arc();
-        let config = Config { log_interval: 5. };
+        let metrics = Metrics::new();
+        metrics.init().unwrap();
 
-        let measurer = init_measurement(ctx.weak(), config).unwrap();
+        let mut sink = metrics.sink().unwrap();
+        sink.increment_counter_with_labels("rpc.traffic.tx", 62, labels!("coin" => "BTC"));
+        sink.increment_counter_with_labels("rpc.traffic.rx", 105, labels!("coin" => "BTC"));
 
-        let mut sink = measurer.sink();
-        sink.increment_counter_with_labels("rpc.traffic.tx", 62, &[("coin", "BTC")]);
-        sink.increment_counter_with_labels("rpc.traffic.rx", 105, &[("coin", "BTC")]);
+        sink.increment_counter_with_labels("rpc.traffic.tx", 30, labels!("coin" => "BTC"));
+        sink.increment_counter_with_labels("rpc.traffic.rx", 44, labels!("coin" => "BTC"));
 
-        sink.increment_counter_with_labels("rpc.traffic.tx", 30, &[("coin", "BTC")]);
-        sink.increment_counter_with_labels("rpc.traffic.rx", 44, &[("coin", "BTC")]);
+        sink.increment_counter_with_labels("rpc.traffic.tx", 54, labels!("coin" => "KMD"));
+        sink.increment_counter_with_labels("rpc.traffic.rx", 158, labels!("coin" => "KMD"));
 
-        sink.increment_counter_with_labels("rpc.traffic.tx", 54, &[("coin", "KMD")]);
-        sink.increment_counter_with_labels("rpc.traffic.rx", 158, &[("coin", "KMD")]);
-
-        sink.update_gauge_with_labels("rpc.connection.count", 3, &[("coin", "KMD")]);
-        sink.update_gauge_with_labels("rpc.connection.count", 5, &[("coin", "KMD")]);
+        sink.update_gauge_with_labels("rpc.connection.count", 3, labels!("coin" => "KMD"));
+        sink.update_gauge_with_labels("rpc.connection.count", 5, labels!("coin" => "KMD"));
 
         let mut expected_hist = Histogram::new(3).unwrap();
 
@@ -336,14 +376,14 @@ mod tests {
         sink.record_timing_with_labels("rpc.query.spent_time",
                                        query_time.0,
                                        query_time.1,
-                                       &[("coin", "KMD"), ("method", "blockchain.transaction.get")]);
+                                       labels!("coin" => "KMD", "method" => "blockchain.transaction.get"));
 
         let query_time = do_query(&sink, 0.2);
         record_to_hist(&mut expected_hist, query_time);
         sink.record_timing_with_labels("rpc.query.spent_time",
                                        query_time.0,
                                        query_time.1,
-                                       &[("coin", "KMD"), ("method", "blockchain.transaction.get")]);
+                                       labels!("coin" => "KMD", "method" => "blockchain.transaction.get"));
 
         let expected = json!({
             "rpc": {
@@ -364,7 +404,7 @@ mod tests {
             }
         });
 
-        let actual = measurer.collect_json().unwrap();
+        let actual = metrics.collect_json().unwrap();
         assert_eq!(actual, expected);
     }
 }
