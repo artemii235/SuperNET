@@ -261,6 +261,9 @@ pub struct NativeClientImpl {
     pub uri: String,
     /// Value of Authorization header, e.g. "Basic base64(user:password)"
     pub auth: String,
+    /// Exporter needs access to the context in order to use the logging methods.
+    /// Using a weak reference by default in order to avoid circular references and leaks.
+    ctx: MmWeak,
 }
 
 #[derive(Clone, Debug)]
@@ -292,7 +295,11 @@ impl JsonRpcClient for NativeClientImpl {
     fn client_info(&self) -> String { UtxoJsonRpcClientInfo::client_info(self) }
 
     fn transport(&self, request: JsonRpcRequest) -> JsonRpcResponseFut {
+        let ctx = self.ctx.clone();
+
         let request_body = try_fus!(json::to_string(&request));
+        mm_counter!(self.ctx, "rpc_client.traffic.outgoing", "method" => "enable", "coin" => self.coin_ticker.clone());
+
         let uri = self.uri.clone();
 
         let http_request = try_fus!(
@@ -305,9 +312,16 @@ impl JsonRpcClient for NativeClientImpl {
                     .uri(uri.clone())
                     .body(Vec::from(request_body))
         );
+
+        let coin_ticker = self.coin_ticker.clone();
         Box::new(slurp_req(http_request).then(move |result| -> Result<(JsonRpcRemoteAddr, JsonRpcResponse), String> {
             let res = try_s!(result);
-            let body = try_s!(std::str::from_utf8(&res.2));
+            let body = &res.2;
+
+            mm_counter!(ctx, "rpc_client.traffic.incoming", body.len(), "method" => "enable", "coin" => coin_ticker);
+
+            let body = try_s!(std::str::from_utf8(body));
+
             if res.0 != StatusCode::OK {
                 return ERR!("Rpc request {:?} failed with HTTP status code {}, response body: {}",
                         request, res.0, body);
@@ -1318,14 +1332,14 @@ async fn connect_loop(
         let rx = rx_to_stream(rx)
             .inspect(|data| {
                 // measure the length of each sent packet
-                mm_counter!(ctx, "rpc_client.traffic.tx", data.len() as u64, "method" => "electrum", "coin" => ticker.clone());
+                mm_counter!(ctx, "rpc_client.traffic.outgoing", data.len() as u64, "method" => "electrum", "coin" => ticker.clone());
             });
 
         let (sink, stream) = Bytes.framed(stream).split();
         let mut recv_f = stream
             .for_each(|chunk| {
                 // measure the length of each sent packet
-                mm_counter!(ctx, "rpc_client.traffic.rx", chunk.len() as u64, "method" => "electrum", "coin" => ticker.clone());
+                mm_counter!(ctx, "rpc_client.traffic.incoming", chunk.len() as u64, "method" => "electrum", "coin" => ticker.clone());
 
                 last_chunk.store(now_ms(), AtomicOrdering::Relaxed);
                 electrum_process_chunk(chunk, responses.clone()).unit_error().boxed().compat().then(|_| Ok(()))

@@ -1889,6 +1889,7 @@ pub async fn utxo_coin_from_conf_and_request(
                     coin_ticker: ticker.to_string(),
                     uri: fomat!("http://127.0.0.1:"(rpc_port)),
                     auth: format!("Basic {}", base64_encode(&auth_str, URL_SAFE)),
+                    ctx,
                 });
 
                 UtxoRpcClientEnum::Native(NativeClient(client))
