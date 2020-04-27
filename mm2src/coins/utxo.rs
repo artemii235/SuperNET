@@ -32,7 +32,7 @@ use common::{first_char_to_upper, small_rng};
 use common::custom_futures::join_all_sequential;
 use common::executor::{spawn, Timer};
 use common::jsonrpc_client::{JsonRpcError, JsonRpcErrorType};
-use common::mm_ctx::MmArc;
+use common::mm_ctx::{MmArc, MmWeak};
 use common::mm_number::MmNumber;
 #[cfg(feature = "native")]
 use dirs::home_dir;
@@ -1843,6 +1843,7 @@ fn read_native_mode_conf(_filename: &dyn AsRef<Path>) -> Result<(Option<u16>, St
 }
 
 pub async fn utxo_coin_from_conf_and_request(
+    ctx: MmWeak,
     ticker: &str,
     conf: &Json,
     req: &Json,
@@ -1899,7 +1900,7 @@ pub async fn utxo_coin_from_conf_and_request(
             let mut servers: Vec<ElectrumRpcRequest> = try_s!(json::from_value(req["servers"].clone()));
             let mut rng = small_rng();
             servers.as_mut_slice().shuffle(&mut rng);
-            let mut client = ElectrumClientImpl::new(ticker.to_string());
+            let mut client = ElectrumClientImpl::new(ctx, ticker.to_string());
             for server in servers.iter() {
                 match client.add_server(server) {
                     Ok(_) => (),

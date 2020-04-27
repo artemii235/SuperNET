@@ -6,10 +6,11 @@ use bigdecimal::BigDecimal;
 use bytes::{BytesMut};
 use chain::{OutPoint, Transaction as UtxoTx};
 use common::{StringError};
-use common::wio::{slurp_req};
-use common::executor::{spawn, Timer};
 use common::custom_futures::{join_all_sequential, select_ok_sequential};
+use common::executor::{spawn, Timer};
 use common::jsonrpc_client::{JsonRpcClient, JsonRpcRemoteAddr, JsonRpcResponseFut, JsonRpcRequest, JsonRpcResponse, RpcRes};
+use common::mm_ctx::{MmWeak};
+use common::wio::{slurp_req};
 use futures01::{Future, Poll, Sink, Stream};
 use futures01::future::{Either, loop_fn, Loop, select_ok};
 use futures01::sync::{mpsc, oneshot};
@@ -668,7 +669,9 @@ fn addr_to_socket_addr(input: &str) -> Result<SocketAddr, String> {
 /// Attempts to process the request (parse url, etc), build up the config and create new electrum connection
 #[cfg(feature = "native")]
 pub fn spawn_electrum(
-    req: &ElectrumRpcRequest
+    ctx: MmWeak,
+    req: &ElectrumRpcRequest,
+    ticker: String,
 ) -> Result<ElectrumConnection, String> {
     let config = match req.protocol {
         ElectrumProtocol::TCP => ElectrumConfig::TCP,
@@ -692,7 +695,7 @@ pub fn spawn_electrum(
         }
     };
 
-    Ok(electrum_connect(req.url.clone(), config))
+    Ok(electrum_connect(ctx, req.url.clone(), config, ticker))
 }
 
 #[cfg(not(feature = "native"))]
@@ -705,7 +708,7 @@ extern "C" {
 }
 
 #[cfg(not(feature = "native"))]
-pub fn spawn_electrum (req: &ElectrumRpcRequest) -> Result<ElectrumConnection, String> {
+pub fn spawn_electrum (ctx: MmWeak, req: &ElectrumRpcRequest, _ticker: String) -> Result<ElectrumConnection, String> {
     use std::net::{IpAddr, Ipv4Addr};
 
     let args = unwrap! (json::to_vec (req));
@@ -780,6 +783,9 @@ pub struct ElectrumClientImpl {
     coin_ticker: String,
     connections: Vec<ElectrumConnection>,
     next_id: AtomicU64,
+    /// Coin needs access to the context in order to use the logging methods.
+    /// Using a weak reference by default in order to avoid circular references and leaks.
+    ctx: MmWeak,
 }
 
 #[cfg(feature = "native")]
@@ -877,7 +883,7 @@ async fn electrum_request_multi (client: ElectrumClient, request: JsonRpcRequest
 impl ElectrumClientImpl {
     /// Create an Electrum connection and spawn a green thread actor to handle it.
     pub fn add_server(&mut self, req: &ElectrumRpcRequest) -> Result<(), String> {
-        let connection = try_s!(spawn_electrum(req));
+        let connection = try_s!(spawn_electrum(self.ctx.clone(), req, self.coin_ticker.clone()));
         self.connections.push(connection);
         Ok(())
     }
@@ -1104,11 +1110,12 @@ impl UtxoRpcClientOps for ElectrumClient {
 
 #[cfg_attr(test, mockable)]
 impl ElectrumClientImpl {
-    pub fn new(coin_ticker: String) -> ElectrumClientImpl {
+    pub fn new(ctx: MmWeak, coin_ticker: String) -> ElectrumClientImpl {
         ElectrumClientImpl {
             coin_ticker,
             connections: vec![],
             next_id: 0.into(),
+            ctx,
         }
     }
 }
@@ -1264,8 +1271,10 @@ async fn electrum_last_chunk_loop(last_chunk: Arc<AtomicU64>) -> Result<(), Stri
 
 #[cfg(feature = "native")]
 async fn connect_loop(
+    ctx: MmWeak,
     config: ElectrumConfig,
     addr: String,
+    ticker: String,
     responses: Arc<AsyncMutex<HashMap<String, async_oneshot::Sender<JsonRpcResponse>>>>,
     connection_tx: Arc<AsyncMutex<Option<mpsc::Sender<Vec<u8>>>>>,
 ) -> Result<(), ()> {
@@ -1306,14 +1315,20 @@ async fn connect_loop(
 
         let (tx, rx) = mpsc::channel(0);
         *connection_tx.lock().await = Some(tx);
-        let rx = rx_to_stream(rx);
+        let rx = rx_to_stream(rx)
+            .inspect(|data| {
+                // measure the length of each sent packet
+                mm_counter!(ctx, "rpc_client.traffic.tx", data.len() as u64, "method" => "electrum", "coin" => ticker.clone());
+            });
 
         let (sink, stream) = Bytes.framed(stream).split();
-        let responsesʹ = responses.clone();
         let mut recv_f = stream
-            .for_each(move |chunk| {
+            .for_each(|chunk| {
+                // measure the length of each sent packet
+                mm_counter!(ctx, "rpc_client.traffic.rx", chunk.len() as u64, "method" => "electrum", "coin" => ticker.clone());
+
                 last_chunk.store(now_ms(), AtomicOrdering::Relaxed);
-                electrum_process_chunk(chunk, responsesʹ.clone()).unit_error().boxed().compat().then(|_| Ok(()))
+                electrum_process_chunk(chunk, responses.clone()).unit_error().boxed().compat().then(|_| Ok(()))
             })
             .compat().fuse();
 
@@ -1345,8 +1360,10 @@ async fn connect_loop(
 
 #[cfg(not(feature = "native"))]
 async fn connect_loop(
+    _ctx: MmWeak,
     _config: ElectrumConfig,
     _addr: SocketAddr,
+    _ticker: String,
     _responses: Arc<Mutex<HashMap<String, JsonRpcResponse>>>,
     _connection_tx: Arc<AsyncMutex<Option<mpsc::Sender<Vec<u8>>>>>,
 ) -> Result<(), ()> {unimplemented!()}
@@ -1355,16 +1372,20 @@ async fn connect_loop(
 /// in case of connection errors
 #[cfg(feature = "native")]
 fn electrum_connect(
+    ctx: MmWeak,
     addr: String,
-    config: ElectrumConfig
+    config: ElectrumConfig,
+    ticker: String,
 ) -> ElectrumConnection {
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
     let responses = Arc::new(AsyncMutex::new(HashMap::new()));
     let tx = Arc::new(AsyncMutex::new(None));
 
     let connect_loop = connect_loop(
+        ctx,
         config.clone(),
         addr.clone(),
+        ticker,
         responses.clone(),
         tx.clone(),
     );
@@ -1382,7 +1403,8 @@ fn electrum_connect(
 }
 
 #[cfg(not(feature = "native"))]
-fn electrum_connect (_addr: SocketAddr, _config: ElectrumConfig) -> ElectrumConnection {unimplemented!()}
+fn electrum_connect (_ctx: MmWeak, _addr: SocketAddr, _config: ElectrumConfig, _ticker: String)
+    -> ElectrumConnection {unimplemented!()}
 
 /// A simple `Codec` implementation that reads buffer until \n according to Electrum protocol specification:
 /// https://electrumx.readthedocs.io/en/latest/protocol-basics.html#message-stream

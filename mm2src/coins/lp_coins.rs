@@ -478,9 +478,9 @@ pub async fn lp_coininit (ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoi
     let secret = &*ctx.secp256k1_key_pair().private().secret;
 
     let coin: MmCoinEnum = if coins_en["etomic"].is_null() {
-        try_s! (utxo_coin_from_conf_and_request (ticker, coins_en, req, secret) .await) .into()
+        try_s! (utxo_coin_from_conf_and_request (ctx.weak(), ticker, coins_en, req, secret) .await) .into()
     } else {
-        try_s! (eth_coin_from_conf_and_request (ctx, ticker, coins_en, req, secret) .await) .into()
+        try_s! (eth_coin_from_conf_and_request (ctx.weak(), ticker, coins_en, req, secret) .await) .into()
     };
 
     let block_count = try_s! (coin.current_block().compat().await);

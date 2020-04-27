@@ -27,6 +27,7 @@ fn main() {
 mod docker_tests {
     use common::block_on;
     use common::for_tests::{enable_native, MarketMakerIt, mm_dump};
+    use common::mm_ctx::{MmArc, MmCtxBuilder};
     use coins::{FoundSwapTxSpend, MarketCoinOps, SwapOps};
     use coins::utxo::{coin_daemon_data_dir, dhash160, utxo_coin_from_conf_and_request, zcash_params_path, UtxoCoin};
     use coins::utxo::rpc_clients::{UtxoRpcClientEnum, UtxoRpcClientOps};
@@ -116,10 +117,12 @@ mod docker_tests {
 
     impl<'a> UtxoDockerNode<'a> {
         pub fn wait_ready(&self) {
+            let ctx = MmCtxBuilder::new().into_mm_arc();
             let conf = json!({"asset":self.ticker, "txfee": 1000});
             let req = json!({"method":"enable"});
             let priv_key = unwrap!(hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f"));
-            let coin = unwrap!(block_on(utxo_coin_from_conf_and_request(&self.ticker, &conf, &req, &priv_key)));
+            let coin = unwrap!(block_on(utxo_coin_from_conf_and_request(
+                ctx.weak(), &self.ticker, &conf, &req, &priv_key)));
             let timeout = now_ms() + 30000;
             loop {
                 match coin.rpc_client().get_block_count().wait() {
@@ -175,18 +178,20 @@ mod docker_tests {
     }
 
     // generate random privkey, create a coin and fill it's address with 1000 coins
-    fn generate_coin_with_random_privkey(ticker: &str, balance: u64) -> (UtxoCoin, [u8; 32])  {
+    fn generate_coin_with_random_privkey(ticker: &str, balance: u64) -> (MmArc, UtxoCoin, [u8; 32])  {
         // prevent concurrent initialization since daemon RPC returns errors if send_to_address
         // is called concurrently (insufficient funds) and it also may return other errors
         // if previous transaction is not confirmed yet
+        let ctx = MmCtxBuilder::new().into_mm_arc();
         let _lock = unwrap!(COINS_LOCK.lock());
         let timeout = (now_ms() / 1000) + 120; // timeout if test takes more than 120 seconds to run
         let conf = json!({"asset":ticker,"txversion":4,"overwintered":1,"txfee":1000});
         let req = json!({"method":"enable"});
         let priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
-        let coin = unwrap!(block_on(utxo_coin_from_conf_and_request(ticker, &conf, &req, &priv_key)));
+        let coin = unwrap!(block_on(utxo_coin_from_conf_and_request(
+            ctx.weak(), ticker, &conf, &req, &priv_key)));
         fill_address(&coin, &coin.my_address(), balance, timeout);
-        (coin, priv_key)
+        (ctx, coin, priv_key)
     }
 
     fn fill_address(coin: &UtxoCoin, address: &str, amount: u64, timeout: u64) {
@@ -211,7 +216,7 @@ mod docker_tests {
     #[test]
     fn test_search_for_swap_tx_spend_native_was_refunded() {
         let timeout = (now_ms() / 1000) + 120; // timeout if test takes more than 120 seconds to run
-        let (coin, _) = generate_coin_with_random_privkey("MYCOIN", 1000);
+        let (_arc, coin, _) = generate_coin_with_random_privkey("MYCOIN", 1000);
 
         let time_lock = (now_ms() / 1000) as u32 - 3600;
         let tx = coin.send_taker_payment(
@@ -245,7 +250,7 @@ mod docker_tests {
     #[test]
     fn test_search_for_swap_tx_spend_native_was_spent() {
         let timeout = (now_ms() / 1000) + 120; // timeout if test takes more than 120 seconds to run
-        let (coin, _) = generate_coin_with_random_privkey("MYCOIN", 1000);
+        let (_arc, coin, _) = generate_coin_with_random_privkey("MYCOIN", 1000);
         let secret = [0; 32];
 
         let time_lock = (now_ms() / 1000) as u32 - 3600;
@@ -280,7 +285,7 @@ mod docker_tests {
     // https://github.com/KomodoPlatform/atomicDEX-API/issues/554
     #[test]
     fn order_should_be_cancelled_when_entire_balance_is_withdrawn() {
-        let (_, priv_key) = generate_coin_with_random_privkey("MYCOIN", 1000);
+        let (_arc, _, priv_key) = generate_coin_with_random_privkey("MYCOIN", 1000);
         let coins = json! ([
             {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000},
             {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":1000},
@@ -382,8 +387,8 @@ mod docker_tests {
     // https://github.com/KomodoPlatform/atomicDEX-API/issues/471
     #[test]
     fn match_and_trade_max() {
-        let (_, bob_priv_key) = generate_coin_with_random_privkey("MYCOIN", 1000);
-        let (_, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN1", 2000);
+        let (_arc, _, bob_priv_key) = generate_coin_with_random_privkey("MYCOIN", 1000);
+        let (_arc, _, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN1", 2000);
         let coins = json! ([
             {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000},
             {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":1000},

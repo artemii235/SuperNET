@@ -3,8 +3,7 @@ use crate::log::Tag;
 use crate::mm_ctx::{MmArc, MmWeak};
 use gstuff::Constructible;
 use hdrhistogram::Histogram;
-use metrics::Key;
-use metrics_core::{Drain, Builder, Label, Observe, Observer};
+use metrics_core::{Builder, Drain, Key, Label, Observe, Observer};
 use metrics_runtime::{observers::JsonBuilder, Receiver};
 pub use metrics_runtime::Sink;
 use metrics_util::{parse_quantiles, Quantile};
@@ -12,6 +11,65 @@ use serde_json::{self as json, Value as Json};
 use std::collections::BTreeMap;
 use std::fmt::Write as WriteFmt;
 use std::slice::Iter;
+
+/// Increment counter if an MmArc is not dropped yet and metrics system is initialized already.
+#[macro_export]
+macro_rules! mm_counter {
+    ($ctx_weak:expr, $name:expr, $value:expr) => {{
+        if let Some(mut sink) = $crate::mm_metrics::try_sink_from_ctx(&$ctx_weak) {
+            sink.increment_counter($name, $value);
+        }
+    }};
+
+    ($ctx_weak:expr, $name:expr, $value:expr, $($labels:tt)*) => {{
+        use metrics::labels;
+        if let Some(mut sink) = $crate::mm_metrics::try_sink_from_ctx(&$ctx_weak) {
+            let labels = labels!( $($labels)* );
+            sink.increment_counter_with_labels($name, $value, labels);
+        }
+    }};
+}
+
+/// Update gauge if an MmArc is not dropped yet and metrics system is initialized already.
+#[macro_export]
+macro_rules! mm_gauge {
+    ($ctx_weak:expr, $name:expr, $value:expr) => {{
+        if let Some(mut sink) = $crate::mm_metrics::try_sink_from_ctx(&$ctx_weak) {
+            sink.update_gauge($name, $value);
+        }
+    }};
+
+    ($ctx_weak:expr, $name:expr, $value:expr, $($labels:tt)*) => {{
+        use metrics::labels;
+        if let Some(mut sink) = $crate::mm_metrics::try_sink_from_ctx(&$ctx_weak) {
+            let labels = labels!( $($labels)* );
+            sink.update_gauge_with_labels($name, $value, labels);
+        }
+    }};
+}
+
+/// Pass new timing value if an MmArc is not dropped yet and metrics system is initialized already.
+#[macro_export]
+macro_rules! mm_timing {
+    ($ctx_weak:expr, $name:expr, $start:expr, $end:expr) => {{
+        if let Some(mut sink) = $crate::mm_metrics::try_sink_from_ctx(&$ctx_weak) {
+            sink.record_timing($name, $start, $end);
+        }
+    }};
+
+    ($ctx_weak:expr, $name:expr, $start:expr, $end:expr, $($labels:tt)*) => {{
+        use metrics::labels;
+        if let Some(mut sink) = $crate::mm_metrics::try_sink_from_ctx(&$ctx_weak) {
+            let labels = labels!( $($labels)* );
+            sink.record_timing_with_labels($name, $start, $end, labels);
+        }
+    }};
+}
+
+pub fn try_sink_from_ctx(ctx: &MmWeak) -> Option<Sink> {
+    let ctx = MmArc::from_weak(&ctx)?;
+    ctx.metrics.sink().ok()
+}
 
 /// Default quantiles are "min" and "max"
 const QUANTILES: &[f64] = &[0., 1.];
@@ -85,6 +143,25 @@ impl Metrics {
 #[derive(Eq, PartialEq)]
 struct OrdKey(Key);
 
+#[derive(Eq, PartialEq)]
+struct OrdLabel<'a>(&'a Label);
+
+impl<'a> Ord for OrdLabel<'a> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        let cmp = self.0.key().cmp(other.0.key());
+        if cmp != std::cmp::Ordering::Equal {
+            return cmp;
+        }
+        self.0.value().cmp(other.0.value())
+    }
+}
+
+impl<'a> PartialOrd for OrdLabel<'a> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 impl std::ops::Deref for OrdKey {
     type Target = Key;
 
@@ -95,13 +172,22 @@ impl std::ops::Deref for OrdKey {
 
 impl Ord for OrdKey {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.name().cmp(&other.name())
+        let cmp = self.name().cmp(&other.name());
+        if cmp != std::cmp::Ordering::Equal {
+            return cmp;
+        }
+
+        let self_ord_labels = self.labels().map(|label| OrdLabel(label));
+        let other_ord_labels = other.labels().map(|label| OrdLabel(label));
+
+        // compare the labels of these iterators
+        self_ord_labels.cmp(other_ord_labels)
     }
 }
 
 impl PartialOrd for OrdKey {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.name().partial_cmp(&other.name())
+        Some(self.cmp(other))
     }
 }
 
@@ -233,7 +319,7 @@ impl<C> TagExporter<C>
             _ => return
         };
 
-        log!(">>>>>>>>>> DEX metrics");
+        log!(">>>>>>>>>> DEX metrics <<<<<<<<<");
 
         // Observe means fill the observer's metrics and histograms with actual values
         self.controller.observe(&mut self.observer);
@@ -245,6 +331,8 @@ impl<C> TagExporter<C>
         for PreparedMetric { tags, message } in self.observer.prepare_histograms() {
             ctx.log.log_deref_tags("", tags, &message);
         }
+
+        // don't clear the collected metrics because the keys don't changes often unlike values
     }
 }
 
@@ -304,37 +392,49 @@ mod tests {
     #[ignore]
     fn test_dashboard() {
         let ctx = MmCtxBuilder::new().into_mm_arc();
+        let ctx_weak = ctx.weak();
 
-        let metrics = Metrics::new();
-        metrics.init_with_dashboard(ctx.weak(), 5.).unwrap();
-        let mut sink = metrics.sink().unwrap();
+        ctx.metrics.init_with_dashboard(ctx_weak.clone(), 5.).unwrap();
+        let sink = ctx.metrics.sink().unwrap();
 
-        sink.increment_counter_with_labels("rpc.traffic.tx", 62, labels!("coin" => "BTC"));
-        sink.increment_counter_with_labels("rpc.traffic.rx", 105, labels!("coin" => "BTC"));
+        let start = sink.now();
 
-        sink.increment_counter_with_labels("rpc.traffic.tx", 54, labels!("coin" => "KMD"));
-        sink.increment_counter_with_labels("rpc.traffic.rx", 158, labels!("coin" => "KMD"));
+        mm_counter!(ctx_weak, "rpc.traffic.tx", 62, "coin" => "BTC");
+        mm_counter!(ctx_weak, "rpc.traffic.rx", 105, "coin"=> "BTC");
 
-        sink.update_gauge_with_labels("rpc.connection.count", 3, labels!("coin" => "KMD"));
+        mm_counter!(ctx_weak, "rpc.traffic.tx", 54, "coin" => "KMD");
+        mm_counter!(ctx_weak, "rpc.traffic.rx", 158, "coin" => "KMD");
 
-        sink.record_timing_with_labels("rpc.query.spent_time",
-                                       sink.now(),
-                                       sink.now(),
-                                       &[("coin", "KMD"), ("method", "blockchain.transaction.get")]);
+        mm_gauge!(ctx_weak, "rpc.connection.count", 3, "coin" => "KMD");
+
+        let end = sink.now();
+        mm_timing!(ctx_weak,
+                   "rpc.query.spent_time",
+                   start,
+                   end,
+                   "coin" => "KMD",
+                   "method" => "blockchain.transaction.get");
 
         block_on(async { Timer::sleep(6.).await });
 
-        sink.increment_counter_with_labels("rpc.traffic.tx", 30, labels!("coin" => "BTC"));
-        sink.increment_counter_with_labels("rpc.traffic.rx", 44, labels!("coin" => "BTC"));
+        mm_counter!(ctx_weak, "rpc.traffic.tx", 30, "coin" => "BTC");
+        mm_counter!(ctx_weak, "rpc.traffic.rx", 44, "coin" => "BTC");
 
-        sink.update_gauge_with_labels("rpc.connection.count", 5, labels!("coin" => "KMD"));
+        mm_gauge!(ctx_weak, "rpc.connection.count", 5, "coin" => "KMD");
 
-        let start = sink.now();
         let end = sink.now();
-        sink.record_timing_with_labels("rpc.query.spent_time",
-                                       start,
-                                       end,
-                                       labels!("coin" => "KMD", "method" => "blockchain.transaction.get"));
+        mm_timing!(ctx_weak,
+                   "rpc.query.spent_time",
+                   start,
+                   end,
+                   "coin"=> "KMD",
+                   "method"=>"blockchain.transaction.get");
+
+        // measure without labels
+        mm_counter!(ctx_weak, "test.counter", 0);
+        mm_gauge!(ctx_weak, "test.gauge", 1);
+        let end = sink.now();
+        mm_timing!(ctx_weak, "test.uptime", start, end);
 
         block_on(async { Timer::sleep(6.).await });
     }
@@ -353,37 +453,47 @@ mod tests {
             hist.record(delta).unwrap()
         }
 
-        let metrics = Metrics::new();
-        metrics.init().unwrap();
+        let ctx = MmCtxBuilder::new().into_mm_arc();
+        let ctx_weak = ctx.weak();
 
-        let mut sink = metrics.sink().unwrap();
-        sink.increment_counter_with_labels("rpc.traffic.tx", 62, labels!("coin" => "BTC"));
-        sink.increment_counter_with_labels("rpc.traffic.rx", 105, labels!("coin" => "BTC"));
+        ctx.metrics.init().unwrap();
 
-        sink.increment_counter_with_labels("rpc.traffic.tx", 30, labels!("coin" => "BTC"));
-        sink.increment_counter_with_labels("rpc.traffic.rx", 44, labels!("coin" => "BTC"));
+        let mut sink = ctx.metrics.sink().unwrap();
 
-        sink.increment_counter_with_labels("rpc.traffic.tx", 54, labels!("coin" => "KMD"));
-        sink.increment_counter_with_labels("rpc.traffic.rx", 158, labels!("coin" => "KMD"));
+        mm_counter!(ctx_weak, "rpc.traffic.tx", 62, "coin" => "BTC");
+        mm_counter!(ctx_weak, "rpc.traffic.rx", 105, "coin" => "BTC");
 
-        sink.update_gauge_with_labels("rpc.connection.count", 3, labels!("coin" => "KMD"));
-        sink.update_gauge_with_labels("rpc.connection.count", 5, labels!("coin" => "KMD"));
+        mm_counter!(ctx_weak, "rpc.traffic.tx", 30, "coin" => "BTC");
+        mm_counter!(ctx_weak, "rpc.traffic.rx", 44, "coin" => "BTC");
+
+        mm_counter!(ctx_weak, "rpc.traffic.tx", 54, "coin" => "KMD");
+        mm_counter!(ctx_weak, "rpc.traffic.rx", 158, "coin" => "KMD");
+
+        mm_gauge!(ctx_weak, "rpc.connection.count", 3, "coin" => "KMD");
+
+        // counter, gauge and timing may be collected also by sink API
+        sink.update_gauge_with_labels("rpc.connection.count", 5, &[("coin", "KMD")]);
 
         let mut expected_hist = Histogram::new(3).unwrap();
 
         let query_time = do_query(&sink, 0.1);
         record_to_hist(&mut expected_hist, query_time);
-        sink.record_timing_with_labels("rpc.query.spent_time",
-                                       query_time.0,
-                                       query_time.1,
-                                       labels!("coin" => "KMD", "method" => "blockchain.transaction.get"));
+        mm_timing!(ctx_weak,
+                   "rpc.query.spent_time",
+                   query_time.0, // start
+                   query_time.1, // end
+                   "coin" => "KMD",
+                   "method" => "blockchain.transaction.get");
 
         let query_time = do_query(&sink, 0.2);
         record_to_hist(&mut expected_hist, query_time);
-        sink.record_timing_with_labels("rpc.query.spent_time",
-                                       query_time.0,
-                                       query_time.1,
-                                       labels!("coin" => "KMD", "method" => "blockchain.transaction.get"));
+        mm_timing!(ctx_weak,
+                   "rpc.query.spent_time",
+                   query_time.0, // start
+                   query_time.1, // end
+                   "coin" => "KMD",
+                   "method" => "blockchain.transaction.get");
+
 
         let expected = json!({
             "rpc": {
@@ -404,7 +514,7 @@ mod tests {
             }
         });
 
-        let actual = metrics.collect_json().unwrap();
+        let actual = ctx.metrics.collect_json().unwrap();
         assert_eq!(actual, expected);
     }
 }

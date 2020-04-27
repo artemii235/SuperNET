@@ -2089,7 +2089,7 @@ fn addr_from_str(addr_str: &str) -> Result<Address, String> {
 }
 
 pub async fn eth_coin_from_conf_and_request(
-    ctx: &MmArc,
+    ctx: MmWeak,
     ticker: &str,
     conf: &Json,
     req: &Json,
@@ -2173,7 +2173,7 @@ pub async fn eth_coin_from_conf_and_request(
         web3,
         web3_instances,
         history_sync_state: Mutex::new(initial_history_state),
-        ctx: ctx.weak(),
+        ctx,
         required_confirmations,
     };
     Ok(EthCoin(Arc::new(coin)))

@@ -1,16 +1,20 @@
+use bigdecimal::BigDecimal;
 use common::block_on;
+use common::mm_ctx::{MmArc, MmCtxBuilder};
 use common::privkey::key_pair_from_seed;
-use crate::WithdrawFee;
+use crate::{WithdrawFee, lp_coininit};
 use crate::utxo::rpc_clients::{ElectrumProtocol, ListSinceBlockRes};
 use futures::future::join_all;
 use mocktopus::mocking::*;
 use super::*;
 use rpc::v1::types::H256 as H256Json;
 
-const TEST_COIN_NAME: &'static str = "ETOMIC";
+const TEST_COIN_NAME: &'static str = "RICK";
 
-fn electrum_client_for_test(servers: &[&str]) -> UtxoRpcClientEnum {
-    let mut client = ElectrumClientImpl::new(TEST_COIN_NAME.into());
+fn electrum_client_for_test(servers: &[&str]) -> (MmArc, UtxoRpcClientEnum) {
+    let ctx = MmCtxBuilder::new().into_mm_arc();
+
+    let mut client = ElectrumClientImpl::new(ctx.weak(), TEST_COIN_NAME.into());
     for server in servers {
         client.add_server(&ElectrumRpcRequest {
             url: server.to_string(),
@@ -29,7 +33,7 @@ fn electrum_client_for_test(servers: &[&str]) -> UtxoRpcClientEnum {
         attempts += 1;
     }
 
-    UtxoRpcClientEnum::Electrum(ElectrumClient(Arc::new(client)))
+    (ctx, UtxoRpcClientEnum::Electrum(ElectrumClient(Arc::new(client))))
 }
 
 fn utxo_coin_for_test(rpc_client: UtxoRpcClientEnum, force_seed: Option<&str>) -> UtxoCoin {
@@ -95,7 +99,7 @@ fn test_extract_secret() {
 
 #[test]
 fn test_generate_transaction() {
-    let client = electrum_client_for_test(&["test1.cipig.net:10025"]);
+    let (_ctx, client) = electrum_client_for_test(&["test1.cipig.net:10025"]);
     let coin = utxo_coin_for_test(client, None);
     let unspents = vec![UnspentInfo {
         value: 10000000000,
@@ -165,7 +169,7 @@ fn test_generate_transaction() {
 
 #[test]
 fn test_addresses_from_script() {
-    let client = electrum_client_for_test(&["test1.cipig.net:10025"]);
+    let (_ctx, client) = electrum_client_for_test(&["test1.cipig.net:10025"]);
     let coin = utxo_coin_for_test(client, None);
     // P2PKH
     let script: Script = "76a91405aab5342166f8594baf17a7d9bef5d56744332788ac".into();
@@ -277,7 +281,9 @@ fn test_wait_for_payment_spend_timeout_electrum() {
         MockResult::Return(Box::new(futures01::future::ok(None)))
     });
 
-    let client = ElectrumClientImpl::new(TEST_COIN_NAME.into());
+    let ctx = MmCtxBuilder::new().into_mm_arc();
+
+    let client = ElectrumClientImpl::new(ctx.weak(), TEST_COIN_NAME.into());
     let client = UtxoRpcClientEnum::Electrum(ElectrumClient(Arc::new(client)));
     let coin = utxo_coin_for_test(client, None);
     let transaction = unwrap!(hex::decode("01000000000102fff7f7881a8099afa6940d42d1e7f6362bec38171ea3edf433541db4e4ad969f00000000494830450221008b9d1dc26ba6a9cb62127b02742fa9d754cd3bebf337f7a55d114c8e5cdd30be022040529b194ba3f9281a99f2b1c0a19c0489bc22ede944ccf4ecbab4cc618ef3ed01eeffffffef51e1b804cc89d182d279655c3aa89e815b1b309fe287d9b2b55d57b90ec68a0100000000ffffffff02202cb206000000001976a9148280b37df378db99f66f85c95a783a76ac7a6d5988ac9093510d000000001976a9143bde42dbee7e4dbe6a21b2d50ce2f0167faa815988ac000247304402203609e17b84f6a7d30c80bfa610b5b4542f32a8a0d5447a12fb1366d7f01cc44a0220573a954c4518331561406f90300e8f3358f51928d43c212a8caed02de67eebee0121025476c2e83188368da1ff3e292e7acafcdb3566bb0ad253f62fc70f07aeee635711000000"));
@@ -290,7 +296,7 @@ fn test_wait_for_payment_spend_timeout_electrum() {
 
 #[test]
 fn test_search_for_swap_tx_spend_electrum_was_spent() {
-    let client = electrum_client_for_test(&["test1.cipig.net:10025", "test2.cipig.net:10025"]);
+    let (_ctx, client) = electrum_client_for_test(&["test1.cipig.net:10025", "test2.cipig.net:10025"]);
     let coin = utxo_coin_for_test(client, Some("spice describe gravity federal blast come thank unfair canal monkey style afraid"));
     // raw tx bytes of https://etomic.explorer.dexstats.info/tx/c514b3163d66636ebc3574817cb5853d5ab39886183de71ffedf5c5768570a6b
     let payment_tx_bytes = unwrap!(hex::decode("0400008085202f89013ac014d4926c8b435f7a5c58f38975d14f1aba597b1eef2dfdc093457678eb83010000006a47304402204ddb9b10237a1267a02426d923528213ad1e0b62d45be7d9629e2909f099d90c02205eecadecf6fd09cb8465170eb878c5d54e563f067b64e23c418da0f6519ca354012102031d4256c4bc9f99ac88bf3dba21773132281f65f9bf23a59928bce08961e2f3ffffffff02809698000000000017a914bbd726b74f27b476d5d932e903b5893fd4e8bd2187acdaaa87010000001976a91405aab5342166f8594baf17a7d9bef5d56744332788ac2771515d000000000000000000000000000000"));
@@ -312,7 +318,7 @@ fn test_search_for_swap_tx_spend_electrum_was_spent() {
 
 #[test]
 fn test_search_for_swap_tx_spend_electrum_was_refunded() {
-    let client = electrum_client_for_test(&["test1.cipig.net:10025", "test2.cipig.net:10025"]);
+    let (_ctx, client) = electrum_client_for_test(&["test1.cipig.net:10025", "test2.cipig.net:10025"]);
     let coin = utxo_coin_for_test(client, Some("spice describe gravity federal blast come thank unfair canal monkey style afraid"));
 
     // raw tx bytes of https://etomic.explorer.dexstats.info/tx/c9a47cc6e80a98355cd4e69d436eae6783cbee5991756caa6e64a0743442fa96
@@ -522,7 +528,7 @@ fn test_withdraw_impl_sat_per_kb_fee_max() {
 #[test]
 fn test_utxo_lock() {
     // send several transactions concurrently to check that they are not using same inputs
-    let client = electrum_client_for_test(&["test1.cipig.net:10025", "test2.cipig.net:10025"]);
+    let (_ctx, client) = electrum_client_for_test(&["test1.cipig.net:10025", "test2.cipig.net:10025"]);
     let coin = utxo_coin_for_test(client, None);
     let output = TransactionOutput {
         value: 1000000,
@@ -565,8 +571,11 @@ fn get_tx_details_doge() {
          "servers": [{"url":"electrum1.cipig.net:10060"},{"url":"electrum2.cipig.net:10060"},{"url":"electrum3.cipig.net:10060"}]
     });
 
+    let ctx = MmCtxBuilder::new().into_mm_arc();
+
     use common::executor::spawn;
-    let coin = unwrap!(block_on(utxo_coin_from_conf_and_request("DOGE", &conf, &req, &[1u8; 32])));
+    let coin = unwrap!(block_on(utxo_coin_from_conf_and_request(
+        ctx.weak(), "DOGE", &conf, &req, &[1u8; 32])));
 
     let coin1 = coin.clone();
     let coin2 = coin.clone();
@@ -598,7 +607,7 @@ fn get_tx_details_doge() {
 #[test]
 // https://github.com/KomodoPlatform/atomicDEX-API/issues/587
 fn get_tx_details_coinbase_transaction() {
-    let client = electrum_client_for_test(&["el0.veruscoin.io:17485", "el1.veruscoin.io:17485"]);
+    let (_ctx, client) = electrum_client_for_test(&["el0.veruscoin.io:17485", "el1.veruscoin.io:17485"]);
     let coin = utxo_coin_for_test(client, Some("spice describe gravity federal blast come thank unfair canal monkey style afraid"));
 
     let fut = async move {
@@ -614,14 +623,14 @@ fn get_tx_details_coinbase_transaction() {
 
 #[test]
 fn test_electrum_rpc_client_error() {
-    let client = electrum_client_for_test(&["electrum1.cipig.net:10060"]);
+    let (_ctx, client) = electrum_client_for_test(&["electrum1.cipig.net:10060"]);
 
     let empty_hash = H256Json::default();
     let err = unwrap_err!(client.get_verbose_transaction(empty_hash).wait());
 
     // use the static string instead because the actual error message cannot be obtain
     // by serde_json serialization
-    let expected = r#"JsonRpcError { client_info: "coin: ETOMIC", request: JsonRpcRequest { jsonrpc: "2.0", id: "0", method: "blockchain.transaction.get", params: [String("0000000000000000000000000000000000000000000000000000000000000000"), Bool(true)] }, error: Response(electrum1.cipig.net:10060, Object({"code": Number(2), "message": String("daemon error: DaemonError({\'code\': -5, \'message\': \'No such mempool or blockchain transaction. Use gettransaction for wallet transactions.\'})")})) }"#;
+    let expected = r#"JsonRpcError { client_info: "coin: RICK", request: JsonRpcRequest { jsonrpc: "2.0", id: "0", method: "blockchain.transaction.get", params: [String("0000000000000000000000000000000000000000000000000000000000000000"), Bool(true)] }, error: Response(electrum1.cipig.net:10060, Object({"code": Number(2), "message": String("daemon error: DaemonError({\'code\': -5, \'message\': \'No such mempool or blockchain transaction. Use gettransaction for wallet transactions.\'})")})) }"#;
     let actual = format!("{}", err);
 
     assert_eq!(expected, actual);

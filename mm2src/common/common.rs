@@ -23,7 +23,6 @@
 #[macro_use] extern crate fomat_macros;
 #[macro_use] extern crate gstuff;
 #[macro_use] extern crate lazy_static;
-#[macro_use] extern crate metrics;
 #[macro_use] extern crate serde_derive;
 #[macro_use] extern crate serde_json;
 #[macro_use] extern crate unwrap;
@@ -61,6 +60,8 @@ macro_rules! ifrom {
 pub mod jsonrpc_client;
 #[macro_use]
 pub mod log;
+#[macro_use]
+pub mod mm_metrics;
 
 #[cfg(feature = "native")]
 pub mod for_c;
@@ -69,7 +70,6 @@ pub mod iguana_utils;
 pub mod privkey;
 pub mod mm_ctx;
 pub mod mm_number;
-pub mod mm_metrics;
 pub mod seri;
 pub mod header;
 pub mod duplex_mutex;
