@@ -11,6 +11,7 @@ use common::executor::{spawn, Timer};
 use common::jsonrpc_client::{JsonRpcClient, JsonRpcRemoteAddr, JsonRpcResponseFut, JsonRpcRequest, JsonRpcResponse, RpcRes};
 use common::mm_ctx::{MmWeak};
 use common::wio::{slurp_req};
+use crate::{CoinTransportMetrics, SharedTransportMetrics, TransportMetrics};
 use futures01::{Future, Poll, Sink, Stream};
 use futures01::future::{Either, loop_fn, Loop, select_ok};
 use futures01::sync::{mpsc, oneshot};
@@ -261,9 +262,9 @@ pub struct NativeClientImpl {
     pub uri: String,
     /// Value of Authorization header, e.g. "Basic base64(user:password)"
     pub auth: String,
-    /// Exporter needs access to the context in order to use the logging methods.
+    /// The client needs access to the context in order to use the logging methods.
     /// Using a weak reference by default in order to avoid circular references and leaks.
-    ctx: MmWeak,
+    pub ctx: MmWeak,
 }
 
 #[derive(Clone, Debug)]
@@ -295,10 +296,11 @@ impl JsonRpcClient for NativeClientImpl {
     fn client_info(&self) -> String { UtxoJsonRpcClientInfo::client_info(self) }
 
     fn transport(&self, request: JsonRpcRequest) -> JsonRpcResponseFut {
-        let ctx = self.ctx.clone();
+        let metrics = CoinTransportMetrics::new(self.ctx.clone(), self.coin_ticker.clone());
 
         let request_body = try_fus!(json::to_string(&request));
-        mm_counter!(self.ctx, "rpc_client.traffic.outgoing", "method" => "enable", "coin" => self.coin_ticker.clone());
+        // measure now only body length, because the `hyper` crate doesn't allow to get total HTTP packet length
+        metrics.on_outgoing_request(request_body.len() as u64);
 
         let uri = self.uri.clone();
 
@@ -313,14 +315,12 @@ impl JsonRpcClient for NativeClientImpl {
                     .body(Vec::from(request_body))
         );
 
-        let coin_ticker = self.coin_ticker.clone();
         Box::new(slurp_req(http_request).then(move |result| -> Result<(JsonRpcRemoteAddr, JsonRpcResponse), String> {
             let res = try_s!(result);
-            let body = &res.2;
+            // measure now only body length, because the `hyper` crate doesn't allow to get total HTTP packet length
+            metrics.on_incoming_response(res.2.len() as u64);
 
-            mm_counter!(ctx, "rpc_client.traffic.incoming", body.len(), "method" => "enable", "coin" => coin_ticker);
-
-            let body = try_s!(std::str::from_utf8(body));
+            let body = try_s!(std::str::from_utf8(&res.2));
 
             if res.0 != StatusCode::OK {
                 return ERR!("Rpc request {:?} failed with HTTP status code {}, response body: {}",
@@ -683,9 +683,8 @@ fn addr_to_socket_addr(input: &str) -> Result<SocketAddr, String> {
 /// Attempts to process the request (parse url, etc), build up the config and create new electrum connection
 #[cfg(feature = "native")]
 pub fn spawn_electrum(
-    ctx: MmWeak,
     req: &ElectrumRpcRequest,
-    ticker: String,
+    metrics: SharedTransportMetrics,
 ) -> Result<ElectrumConnection, String> {
     let config = match req.protocol {
         ElectrumProtocol::TCP => ElectrumConfig::TCP,
@@ -709,7 +708,7 @@ pub fn spawn_electrum(
         }
     };
 
-    Ok(electrum_connect(ctx, req.url.clone(), config, ticker))
+    Ok(electrum_connect(req.url.clone(), config, metrics))
 }
 
 #[cfg(not(feature = "native"))]
@@ -722,7 +721,7 @@ extern "C" {
 }
 
 #[cfg(not(feature = "native"))]
-pub fn spawn_electrum (ctx: MmWeak, req: &ElectrumRpcRequest, _ticker: String) -> Result<ElectrumConnection, String> {
+pub fn spawn_electrum (req: &ElectrumRpcRequest, _metrics: SharedTransportMetrics) -> Result<ElectrumConnection, String> {
     use std::net::{IpAddr, Ipv4Addr};
 
     let args = unwrap! (json::to_vec (req));
@@ -797,7 +796,7 @@ pub struct ElectrumClientImpl {
     coin_ticker: String,
     connections: Vec<ElectrumConnection>,
     next_id: AtomicU64,
-    /// Coin needs access to the context in order to use the logging methods.
+    /// The client needs access to the context in order to use the logging methods.
     /// Using a weak reference by default in order to avoid circular references and leaks.
     ctx: MmWeak,
 }
@@ -897,7 +896,8 @@ async fn electrum_request_multi (client: ElectrumClient, request: JsonRpcRequest
 impl ElectrumClientImpl {
     /// Create an Electrum connection and spawn a green thread actor to handle it.
     pub fn add_server(&mut self, req: &ElectrumRpcRequest) -> Result<(), String> {
-        let connection = try_s!(spawn_electrum(self.ctx.clone(), req, self.coin_ticker.clone()));
+        let traffic_metrics = CoinTransportMetrics::new(self.ctx.clone(), self.coin_ticker.clone()).into_shared();
+        let connection = try_s!(spawn_electrum(req, traffic_metrics));
         self.connections.push(connection);
         Ok(())
     }
@@ -1285,12 +1285,11 @@ async fn electrum_last_chunk_loop(last_chunk: Arc<AtomicU64>) -> Result<(), Stri
 
 #[cfg(feature = "native")]
 async fn connect_loop(
-    ctx: MmWeak,
     config: ElectrumConfig,
     addr: String,
-    ticker: String,
     responses: Arc<AsyncMutex<HashMap<String, async_oneshot::Sender<JsonRpcResponse>>>>,
     connection_tx: Arc<AsyncMutex<Option<mpsc::Sender<Vec<u8>>>>>,
+    metrics: SharedTransportMetrics,
 ) -> Result<(), ()> {
     let mut delay: u64 = 0;
 
@@ -1332,14 +1331,14 @@ async fn connect_loop(
         let rx = rx_to_stream(rx)
             .inspect(|data| {
                 // measure the length of each sent packet
-                mm_counter!(ctx, "rpc_client.traffic.outgoing", data.len() as u64, "method" => "electrum", "coin" => ticker.clone());
+                metrics.on_outgoing_request(data.len() as u64);
             });
 
         let (sink, stream) = Bytes.framed(stream).split();
         let mut recv_f = stream
             .for_each(|chunk| {
                 // measure the length of each sent packet
-                mm_counter!(ctx, "rpc_client.traffic.incoming", chunk.len() as u64, "method" => "electrum", "coin" => ticker.clone());
+                metrics.on_incoming_response(chunk.len() as u64);
 
                 last_chunk.store(now_ms(), AtomicOrdering::Relaxed);
                 electrum_process_chunk(chunk, responses.clone()).unit_error().boxed().compat().then(|_| Ok(()))
@@ -1374,10 +1373,8 @@ async fn connect_loop(
 
 #[cfg(not(feature = "native"))]
 async fn connect_loop(
-    _ctx: MmWeak,
     _config: ElectrumConfig,
     _addr: SocketAddr,
-    _ticker: String,
     _responses: Arc<Mutex<HashMap<String, JsonRpcResponse>>>,
     _connection_tx: Arc<AsyncMutex<Option<mpsc::Sender<Vec<u8>>>>>,
 ) -> Result<(), ()> {unimplemented!()}
@@ -1386,22 +1383,20 @@ async fn connect_loop(
 /// in case of connection errors
 #[cfg(feature = "native")]
 fn electrum_connect(
-    ctx: MmWeak,
     addr: String,
     config: ElectrumConfig,
-    ticker: String,
+    metrics: SharedTransportMetrics
 ) -> ElectrumConnection {
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
     let responses = Arc::new(AsyncMutex::new(HashMap::new()));
     let tx = Arc::new(AsyncMutex::new(None));
 
     let connect_loop = connect_loop(
-        ctx,
         config.clone(),
         addr.clone(),
-        ticker,
         responses.clone(),
         tx.clone(),
+        metrics,
     );
 
     let connect_loop = select_func(connect_loop.boxed(), shutdown_rx.compat());
@@ -1417,7 +1412,7 @@ fn electrum_connect(
 }
 
 #[cfg(not(feature = "native"))]
-fn electrum_connect (_ctx: MmWeak, _addr: SocketAddr, _config: ElectrumConfig, _ticker: String)
+fn electrum_connect (_addr: SocketAddr, _config: ElectrumConfig, _metrics: SharedTransportMetrics)
     -> ElectrumConnection {unimplemented!()}
 
 /// A simple `Codec` implementation that reads buffer until \n according to Electrum protocol specification:

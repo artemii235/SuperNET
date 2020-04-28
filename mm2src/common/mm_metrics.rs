@@ -367,6 +367,21 @@ fn hist_to_message(
     }
 }
 
+pub mod transport {
+    use std::sync::Arc;
+
+    /// Common methods to measure the outgoing requests and incoming responses statistics.
+    pub trait TransportMetrics {
+        /// Increase outgoing bytes count by `bytes` and increase the sent requests count by 1.
+        fn on_outgoing_request(&self, bytes: u64);
+
+        /// Increase incoming bytes count by `bytes` and increase the received responses count by 1.
+        fn on_incoming_response(&self, bytes: u64);
+    }
+
+    pub type SharedTransportMetrics = Arc<dyn TransportMetrics + Send + Sync + 'static>;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

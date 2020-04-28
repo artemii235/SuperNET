@@ -1,6 +1,6 @@
 use bigdecimal::BigDecimal;
 use common::block_on;
-use common::mm_ctx::{MmArc, MmCtxBuilder};
+use common::mm_ctx::{MmArc, MmCtxBuilder, MmWeak};
 use common::privkey::key_pair_from_seed;
 use crate::{WithdrawFee, lp_coininit};
 use crate::utxo::rpc_clients::{ElectrumProtocol, ListSinceBlockRes};
@@ -11,10 +11,8 @@ use rpc::v1::types::H256 as H256Json;
 
 const TEST_COIN_NAME: &'static str = "RICK";
 
-fn electrum_client_for_test(servers: &[&str]) -> (MmArc, UtxoRpcClientEnum) {
-    let ctx = MmCtxBuilder::new().into_mm_arc();
-
-    let mut client = ElectrumClientImpl::new(ctx.weak(), TEST_COIN_NAME.into());
+fn electrum_client_for_test(servers: &[&str]) -> UtxoRpcClientEnum {
+    let mut client = ElectrumClientImpl::new(MmWeak::new(), TEST_COIN_NAME.into());
     for server in servers {
         client.add_server(&ElectrumRpcRequest {
             url: server.to_string(),
@@ -33,7 +31,7 @@ fn electrum_client_for_test(servers: &[&str]) -> (MmArc, UtxoRpcClientEnum) {
         attempts += 1;
     }
 
-    (ctx, UtxoRpcClientEnum::Electrum(ElectrumClient(Arc::new(client))))
+    UtxoRpcClientEnum::Electrum(ElectrumClient(Arc::new(client)))
 }
 
 fn utxo_coin_for_test(rpc_client: UtxoRpcClientEnum, force_seed: Option<&str>) -> UtxoCoin {
@@ -99,7 +97,7 @@ fn test_extract_secret() {
 
 #[test]
 fn test_generate_transaction() {
-    let (_ctx, client) = electrum_client_for_test(&["test1.cipig.net:10025"]);
+    let client = electrum_client_for_test(&["test1.cipig.net:10025"]);
     let coin = utxo_coin_for_test(client, None);
     let unspents = vec![UnspentInfo {
         value: 10000000000,
@@ -169,7 +167,7 @@ fn test_generate_transaction() {
 
 #[test]
 fn test_addresses_from_script() {
-    let (_ctx, client) = electrum_client_for_test(&["test1.cipig.net:10025"]);
+    let client = electrum_client_for_test(&["test1.cipig.net:10025"]);
     let coin = utxo_coin_for_test(client, None);
     // P2PKH
     let script: Script = "76a91405aab5342166f8594baf17a7d9bef5d56744332788ac".into();
@@ -256,6 +254,7 @@ fn test_wait_for_payment_spend_timeout_native() {
         coin_ticker: "RICK".into(),
         uri: "http://127.0.0.1:10271".to_owned(),
         auth: fomat!("Basic " (base64_encode("user481805103:pass97a61c8d048bcf468c6c39a314970e557f57afd1d8a5edee917fb29bafb3a43371", URL_SAFE))),
+        ctx: MmWeak::new(),
     };
 
     static mut OUTPUT_SPEND_CALLED: bool = false;
@@ -296,7 +295,7 @@ fn test_wait_for_payment_spend_timeout_electrum() {
 
 #[test]
 fn test_search_for_swap_tx_spend_electrum_was_spent() {
-    let (_ctx, client) = electrum_client_for_test(&["test1.cipig.net:10025", "test2.cipig.net:10025"]);
+    let client = electrum_client_for_test(&["test1.cipig.net:10025", "test2.cipig.net:10025"]);
     let coin = utxo_coin_for_test(client, Some("spice describe gravity federal blast come thank unfair canal monkey style afraid"));
     // raw tx bytes of https://etomic.explorer.dexstats.info/tx/c514b3163d66636ebc3574817cb5853d5ab39886183de71ffedf5c5768570a6b
     let payment_tx_bytes = unwrap!(hex::decode("0400008085202f89013ac014d4926c8b435f7a5c58f38975d14f1aba597b1eef2dfdc093457678eb83010000006a47304402204ddb9b10237a1267a02426d923528213ad1e0b62d45be7d9629e2909f099d90c02205eecadecf6fd09cb8465170eb878c5d54e563f067b64e23c418da0f6519ca354012102031d4256c4bc9f99ac88bf3dba21773132281f65f9bf23a59928bce08961e2f3ffffffff02809698000000000017a914bbd726b74f27b476d5d932e903b5893fd4e8bd2187acdaaa87010000001976a91405aab5342166f8594baf17a7d9bef5d56744332788ac2771515d000000000000000000000000000000"));
@@ -318,7 +317,7 @@ fn test_search_for_swap_tx_spend_electrum_was_spent() {
 
 #[test]
 fn test_search_for_swap_tx_spend_electrum_was_refunded() {
-    let (_ctx, client) = electrum_client_for_test(&["test1.cipig.net:10025", "test2.cipig.net:10025"]);
+    let client = electrum_client_for_test(&["test1.cipig.net:10025", "test2.cipig.net:10025"]);
     let coin = utxo_coin_for_test(client, Some("spice describe gravity federal blast come thank unfair canal monkey style afraid"));
 
     // raw tx bytes of https://etomic.explorer.dexstats.info/tx/c9a47cc6e80a98355cd4e69d436eae6783cbee5991756caa6e64a0743442fa96
@@ -350,6 +349,7 @@ fn test_withdraw_impl_set_fixed_fee() {
         coin_ticker: TEST_COIN_NAME.into(),
         uri: "http://127.0.0.1".to_owned(),
         auth: fomat!("Basic " (base64_encode("user481805103:pass97a61c8d048bcf468c6c39a314970e557f57afd1d8a5edee917fb29bafb3a43371", URL_SAFE))),
+        ctx: MmWeak::new(),
     }));
 
     let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client), None);
@@ -379,6 +379,7 @@ fn test_withdraw_impl_sat_per_kb_fee() {
         coin_ticker: TEST_COIN_NAME.into(),
         uri: "http://127.0.0.1".to_owned(),
         auth: fomat!("Basic " (base64_encode("user481805103:pass97a61c8d048bcf468c6c39a314970e557f57afd1d8a5edee917fb29bafb3a43371", URL_SAFE))),
+        ctx: MmWeak::new(),
     }));
 
     let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client), None);
@@ -411,6 +412,7 @@ fn test_withdraw_impl_sat_per_kb_fee_amount_equal_to_max() {
         coin_ticker: TEST_COIN_NAME.into(),
         uri: "http://127.0.0.1".to_owned(),
         auth: fomat!("Basic " (base64_encode("user481805103:pass97a61c8d048bcf468c6c39a314970e557f57afd1d8a5edee917fb29bafb3a43371", URL_SAFE))),
+        ctx: MmWeak::new(),
     }));
 
     let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client), None);
@@ -445,6 +447,7 @@ fn test_withdraw_impl_sat_per_kb_fee_amount_equal_to_max_dust_included_to_fee() 
         coin_ticker: TEST_COIN_NAME.into(),
         uri: "http://127.0.0.1".to_owned(),
         auth: fomat!("Basic " (base64_encode("user481805103:pass97a61c8d048bcf468c6c39a314970e557f57afd1d8a5edee917fb29bafb3a43371", URL_SAFE))),
+        ctx: MmWeak::new(),
     }));
 
     let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client), None);
@@ -479,6 +482,7 @@ fn test_withdraw_impl_sat_per_kb_fee_amount_over_max() {
         coin_ticker: TEST_COIN_NAME.into(),
         uri: "http://127.0.0.1".to_owned(),
         auth: fomat!("Basic " (base64_encode("user481805103:pass97a61c8d048bcf468c6c39a314970e557f57afd1d8a5edee917fb29bafb3a43371", URL_SAFE))),
+        ctx: MmWeak::new(),
     }));
 
     let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client), None);
@@ -504,6 +508,7 @@ fn test_withdraw_impl_sat_per_kb_fee_max() {
         coin_ticker: TEST_COIN_NAME.into(),
         uri: "http://127.0.0.1".to_owned(),
         auth: fomat!("Basic " (base64_encode("user481805103:pass97a61c8d048bcf468c6c39a314970e557f57afd1d8a5edee917fb29bafb3a43371", URL_SAFE))),
+        ctx: MmWeak::new(),
     }));
 
     let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client), None);
@@ -528,7 +533,7 @@ fn test_withdraw_impl_sat_per_kb_fee_max() {
 #[test]
 fn test_utxo_lock() {
     // send several transactions concurrently to check that they are not using same inputs
-    let (_ctx, client) = electrum_client_for_test(&["test1.cipig.net:10025", "test2.cipig.net:10025"]);
+    let client = electrum_client_for_test(&["test1.cipig.net:10025", "test2.cipig.net:10025"]);
     let coin = utxo_coin_for_test(client, None);
     let output = TransactionOutput {
         value: 1000000,
@@ -607,7 +612,7 @@ fn get_tx_details_doge() {
 #[test]
 // https://github.com/KomodoPlatform/atomicDEX-API/issues/587
 fn get_tx_details_coinbase_transaction() {
-    let (_ctx, client) = electrum_client_for_test(&["el0.veruscoin.io:17485", "el1.veruscoin.io:17485"]);
+    let client = electrum_client_for_test(&["el0.veruscoin.io:17485", "el1.veruscoin.io:17485"]);
     let coin = utxo_coin_for_test(client, Some("spice describe gravity federal blast come thank unfair canal monkey style afraid"));
 
     let fut = async move {
@@ -623,7 +628,7 @@ fn get_tx_details_coinbase_transaction() {
 
 #[test]
 fn test_electrum_rpc_client_error() {
-    let (_ctx, client) = electrum_client_for_test(&["electrum1.cipig.net:10060"]);
+    let client = electrum_client_for_test(&["electrum1.cipig.net:10060"]);
 
     let empty_hash = H256Json::default();
     let err = unwrap_err!(client.get_verbose_transaction(empty_hash).wait());

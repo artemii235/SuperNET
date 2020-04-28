@@ -287,6 +287,11 @@ unsafe impl Send for MmWeak {}
 unsafe impl Sync for MmWeak {}
 
 impl MmWeak {
+    /// Create a default MmWeak without allocating any memory.
+    pub fn new() -> MmWeak {
+        MmWeak(Default::default())
+    }
+
     pub fn dropped (&self) -> bool {
         self.0.strong_count() == 0
 }   }

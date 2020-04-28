@@ -36,7 +36,8 @@
 use bigdecimal::BigDecimal;
 use common::{rpc_response, rpc_err_response, HyRes};
 use common::duplex_mutex::DuplexMutex;
-use common::mm_ctx::{from_ctx, MmArc};
+use common::mm_ctx::{from_ctx, MmArc, MmWeak};
+use common::mm_metrics::transport::{SharedTransportMetrics, TransportMetrics};
 use common::mm_number::MmNumber;
 use futures01::Future;
 use futures::compat::Future01CompatExt;
@@ -447,6 +448,37 @@ impl CoinsContext {
                 coins: DuplexMutex::new (HashMap::new())
             })
         })))
+    }
+}
+
+#[derive(Clone)]
+pub struct CoinTransportMetrics {
+    /// Metrics needs access to the context in order to use the metrics methods.
+    /// Using a weak reference by default in order to avoid circular references and leaks.
+    ctx: MmWeak,
+    /// Name of coin the rpc client is intended to work with.
+    ticker: String,
+}
+
+impl CoinTransportMetrics {
+    fn new(ctx: MmWeak, ticker: String) -> CoinTransportMetrics {
+        CoinTransportMetrics { ctx, ticker }
+    }
+
+    fn into_shared(self) -> SharedTransportMetrics {
+        Arc::new(self)
+    }
+}
+
+impl TransportMetrics for CoinTransportMetrics {
+    fn on_outgoing_request(&self, bytes: u64) {
+        mm_counter!(self.ctx, "rpc_client.traffic.outgoing", bytes, "coin" => self.ticker.clone());
+        mm_counter!(self.ctx, "rpc_client.request.count", 1, "coin" => self.ticker.clone());
+    }
+
+    fn on_incoming_response(&self, bytes: u64) {
+        mm_counter!(self.ctx, "rpc_client.traffic.incoming", bytes, "coin" => self.ticker.clone());
+        mm_counter!(self.ctx, "rpc_client.response.count", 1, "coin" => self.ticker.clone());
     }
 }
 
