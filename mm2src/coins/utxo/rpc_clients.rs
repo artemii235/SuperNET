@@ -11,7 +11,7 @@ use common::executor::{spawn, Timer};
 use common::jsonrpc_client::{JsonRpcClient, JsonRpcRemoteAddr, JsonRpcResponseFut, JsonRpcRequest, JsonRpcResponse, RpcRes};
 use common::mm_ctx::{MmWeak};
 use common::wio::{slurp_req};
-use crate::{CoinTransportMetrics, SharedTransportMetrics, TransportMetrics};
+use crate::{CoinTransportMetrics, TransportMetrics, TransportMetricsBox};
 use futures01::{Future, Poll, Sink, Stream};
 use futures01::future::{Either, loop_fn, Loop, select_ok};
 use futures01::sync::{mpsc, oneshot};
@@ -684,7 +684,7 @@ fn addr_to_socket_addr(input: &str) -> Result<SocketAddr, String> {
 #[cfg(feature = "native")]
 pub fn spawn_electrum(
     req: &ElectrumRpcRequest,
-    metrics: SharedTransportMetrics,
+    metrics: TransportMetricsBox,
 ) -> Result<ElectrumConnection, String> {
     let config = match req.protocol {
         ElectrumProtocol::TCP => ElectrumConfig::TCP,
@@ -721,7 +721,7 @@ extern "C" {
 }
 
 #[cfg(not(feature = "native"))]
-pub fn spawn_electrum (req: &ElectrumRpcRequest, _metrics: SharedTransportMetrics) -> Result<ElectrumConnection, String> {
+pub fn spawn_electrum (req: &ElectrumRpcRequest, _metrics: TransportMetricsBox) -> Result<ElectrumConnection, String> {
     use std::net::{IpAddr, Ipv4Addr};
 
     let args = unwrap! (json::to_vec (req));
@@ -1289,7 +1289,7 @@ async fn connect_loop(
     addr: String,
     responses: Arc<AsyncMutex<HashMap<String, async_oneshot::Sender<JsonRpcResponse>>>>,
     connection_tx: Arc<AsyncMutex<Option<mpsc::Sender<Vec<u8>>>>>,
-    metrics: SharedTransportMetrics,
+    metrics: TransportMetricsBox,
 ) -> Result<(), ()> {
     let mut delay: u64 = 0;
 
@@ -1385,7 +1385,7 @@ async fn connect_loop(
 fn electrum_connect(
     addr: String,
     config: ElectrumConfig,
-    metrics: SharedTransportMetrics
+    metrics: TransportMetricsBox
 ) -> ElectrumConnection {
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
     let responses = Arc::new(AsyncMutex::new(HashMap::new()));
@@ -1412,7 +1412,7 @@ fn electrum_connect(
 }
 
 #[cfg(not(feature = "native"))]
-fn electrum_connect (_addr: SocketAddr, _config: ElectrumConfig, _metrics: SharedTransportMetrics)
+fn electrum_connect (_addr: SocketAddr, _config: ElectrumConfig, _metrics: TransportMetricsBox)
     -> ElectrumConnection {unimplemented!()}
 
 /// A simple `Codec` implementation that reads buffer until \n according to Electrum protocol specification:

@@ -37,7 +37,7 @@ use bigdecimal::BigDecimal;
 use common::{rpc_response, rpc_err_response, HyRes};
 use common::duplex_mutex::DuplexMutex;
 use common::mm_ctx::{from_ctx, MmArc, MmWeak};
-use common::mm_metrics::transport::{SharedTransportMetrics, TransportMetrics};
+use common::mm_metrics::transport::{TransportMetrics, TransportMetricsBox};
 use common::mm_number::MmNumber;
 use futures01::Future;
 use futures::compat::Future01CompatExt;
@@ -465,8 +465,8 @@ impl CoinTransportMetrics {
         CoinTransportMetrics { ctx, ticker }
     }
 
-    fn into_shared(self) -> SharedTransportMetrics {
-        Arc::new(self)
+    fn into_shared(self) -> TransportMetricsBox {
+        Box::new(self)
     }
 }
 
@@ -479,6 +479,13 @@ impl TransportMetrics for CoinTransportMetrics {
     fn on_incoming_response(&self, bytes: u64) {
         mm_counter!(self.ctx, "rpc_client.traffic.incoming", bytes, "coin" => self.ticker.clone());
         mm_counter!(self.ctx, "rpc_client.response.count", 1, "coin" => self.ticker.clone());
+    }
+
+    fn clone_into_box(&self) -> TransportMetricsBox {
+        Box::new(CoinTransportMetrics {
+            ctx: self.ctx.clone(),
+            ticker: self.ticker.clone(),
+        })
     }
 }
 

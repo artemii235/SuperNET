@@ -368,7 +368,7 @@ fn hist_to_message(
 }
 
 pub mod transport {
-    use std::sync::Arc;
+    pub type TransportMetricsBox = Box<dyn TransportMetrics + Send + Sync + 'static>;
 
     /// Common methods to measure the outgoing requests and incoming responses statistics.
     pub trait TransportMetrics {
@@ -377,9 +377,11 @@ pub mod transport {
 
         /// Increase incoming bytes count by `bytes` and increase the received responses count by 1.
         fn on_incoming_response(&self, bytes: u64);
-    }
 
-    pub type SharedTransportMetrics = Arc<dyn TransportMetrics + Send + Sync + 'static>;
+        /// Implement the custom clone method similar to impl<T: Clone> Clone for Box<T>.
+        /// But the `TransportMetrics` can't implement `Clone` trait cause the trait is used by dynamic dispatch.
+        fn clone_into_box(&self) -> TransportMetricsBox;
+    }
 }
 
 #[cfg(test)]
