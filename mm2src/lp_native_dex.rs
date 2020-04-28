@@ -1345,5 +1345,7 @@ pub async fn lp_init (mypubport: u16, ctx: MmArc) -> Result<(), String> {
     // In the mobile version we might depend on `lp_init` staying around until the context stops.
     loop {if ctx.is_stopping() {break}; Timer::sleep (0.2) .await}
 
+    // TODO wait for all swaps to finish instead
+    Timer::sleep (1.0) .await;
     Ok(())
 }

@@ -57,10 +57,14 @@
 #![allow(uncommon_codepoints)]
 #![cfg_attr(not(feature = "native"), allow(dead_code))]
 
+use async_std::{sync as async_std_sync};
 use bigdecimal::BigDecimal;
 use coins::{lp_coinfind, TransactionEnum};
-use common::{block_on, read_dir, rpc_response, slurp, write, HyRes};
-use common::mm_ctx::{from_ctx, MmArc};
+use common::{
+    block_on, read_dir, rpc_response, slurp, write, HyRes,
+    executor::spawn,
+    mm_ctx::{from_ctx, MmArc}
+};
 use http::Response;
 use primitives::hash::{H160, H256, H264};
 use rpc::v1::types::{Bytes as BytesJson, H256 as H256Json};
@@ -204,15 +208,34 @@ struct BanReason {
 struct SwapsContext {
     running_swaps: Mutex<Vec<Weak<dyn AtomicSwap>>>,
     banned_pubkeys: Mutex<HashMap<H256Json, BanReason>>,
+    /// The clonable receiver of multi-consumer async channel awaiting for shutdown_tx.send() to be
+    /// invoked to stop all running swaps.
+    /// MM2 is used as static lib on some platforms e.g. iOS so it doesn't run as separate process.
+    /// So when stop was invoked the swaps could stay running on shared executors causing
+    /// Very unpleasant consequences
+    shutdown_rx: async_std_sync::Receiver<()>,
 }
 
 impl SwapsContext {
     /// Obtains a reference to this crate context, creating it if necessary.
     fn from_ctx (ctx: &MmArc) -> Result<Arc<SwapsContext>, String> {
         Ok (try_s! (from_ctx (&ctx.swaps_ctx, move || {
+            let (shutdown_tx, shutdown_rx) = async_std_sync::channel(1);
+            let mut shutdown_tx = Some(shutdown_tx);
+            ctx.on_stop (Box::new (move || {
+                if let Some (shutdown_tx) = shutdown_tx.take() {
+                    log! ("on_stop] firing shutdown_tx!");
+                    spawn(async move {
+                        shutdown_tx.send(()).await;
+                    });
+                    Ok(())
+                } else {ERR! ("on_stop callback called twice!")}
+            }));
+
             Ok (SwapsContext {
                 running_swaps: Mutex::new(vec![]),
                 banned_pubkeys: Mutex::new(HashMap::new()),
+                shutdown_rx,
             })
         })))
     }

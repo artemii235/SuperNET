@@ -9,7 +9,7 @@ use common::mm_ctx::MmArc;
 use coins::{FoundSwapTxSpend, MmCoinEnum, TradeInfo, TransactionDetails};
 use crc::crc32;
 use futures::compat::Future01CompatExt;
-use futures::future::Either;
+use futures::future::{Either, select};
 use futures01::Future;
 use parking_lot::Mutex as PaMutex;
 use peers::FixedValidator;
@@ -1013,7 +1013,6 @@ impl MakerSavedSwap {
 /// Every produced event is saved to local DB. Swap status is broadcasted to P2P network after completion.
 pub async fn run_maker_swap(swap: MakerSwap, initial_command: Option<MakerSwapCommand>) {
     let mut command = initial_command.unwrap_or(MakerSwapCommand::Start);
-    let mut events;
     let ctx = swap.ctx.clone();
     let mut status = ctx.log.status_handle();
     let uuid = swap.uuid.clone();
@@ -1022,30 +1021,40 @@ pub async fn run_maker_swap(swap: MakerSwap, initial_command: Option<MakerSwapCo
     let weak_ref = Arc::downgrade(&running_swap);
     let swap_ctx = unwrap!(SwapsContext::from_ctx(&ctx));
     unwrap!(swap_ctx.running_swaps.lock()).push(weak_ref);
+    let shutdown_rx = swap_ctx.shutdown_rx.clone();
+    let swap_for_log = running_swap.clone();
 
-    loop {
-        let res = unwrap!(running_swap.handle_command(command).await, "!handle_command");
-        events = res.1;
-        for event in events {
-            let to_save = MakerSavedEvent {
-                timestamp: now_ms(),
-                event: event.clone(),
-            };
-            unwrap!(save_my_maker_swap_event(&ctx, &running_swap, to_save), "!save_my_maker_swap_event");
-            if event.should_ban_taker() { ban_pubkey(&ctx, running_swap.taker.bytes.into(), &running_swap.uuid, event.clone().into()) }
-            status.status(swap_tags!(), &event.status_str());
-            unwrap!(running_swap.apply_event(event), "!apply_event");
+    let swap_fut = async move {
+        let mut events;
+        loop {
+            let res = unwrap!(running_swap.handle_command(command).await, "!handle_command");
+            events = res.1;
+            for event in events {
+                let to_save = MakerSavedEvent {
+                    timestamp: now_ms(),
+                    event: event.clone(),
+                };
+                unwrap!(save_my_maker_swap_event(&ctx, &running_swap, to_save), "!save_my_maker_swap_event");
+                if event.should_ban_taker() { ban_pubkey(&ctx, running_swap.taker.bytes.into(), &running_swap.uuid, event.clone().into()) }
+                status.status(swap_tags!(), &event.status_str());
+                unwrap!(running_swap.apply_event(event), "!apply_event");
+            }
+            match res.0 {
+                Some(c) => { command = c; },
+                None => {
+                    if let Err(e) = broadcast_my_swap_status(&uuid, &ctx) {
+                        log!("!broadcast_my_swap_status(" (uuid) "): " (e));
+                    }
+                    break;
+                },
+            }
         }
-        match res.0 {
-            Some(c) => { command = c; },
-            None => {
-                if let Err(e) = broadcast_my_swap_status(&uuid, &ctx) {
-                    log!("!broadcast_my_swap_status(" (uuid) "): " (e));
-                }
-                break;
-            },
-        }
-    }
+    };
+    let select = select(Box::pin(swap_fut), Box::pin(shutdown_rx.recv()));
+    match select.await {
+        Either::Right(_) => log!("on_stop] swap " (swap_for_log.uuid) " stopped!"),
+        _ => (),
+    };
 }
 
 #[cfg(test)]
