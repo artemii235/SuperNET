@@ -244,6 +244,22 @@ impl MarketMakerIt {
         }
     }
 
+    /// Busy-wait on the log until the `pred` returns `true` or `timeout_sec` expires.
+    /// The difference from standard wait_for_log is this function keeps working
+    /// after process is stopped
+    #[cfg(feature = "native")]
+    pub async fn wait_for_log_after_stop<F> (&mut self, timeout_sec: f64, pred: F) -> Result<(), String>
+    where F: Fn (&str) -> bool {
+        let start = now_float();
+        let ms = 50 .min ((timeout_sec * 1000.) as u64 / 20 + 10);
+        loop {
+            let mm_log = try_s! (self.log_as_utf8());
+            if pred (&mm_log) {return Ok(())}
+            if now_float() - start > timeout_sec {return ERR! ("Timeout expired waiting for a log condition")}
+            Timer::sleep (ms as f64 / 1000.) .await
+        }
+    }
+
     /// Busy-wait on the instance in-memory log until the `pred` returns `true` or `timeout_sec` expires.
     #[cfg(not(feature = "native"))]
     pub async fn wait_for_log<F> (&mut self, timeout_sec: f64, pred: F) -> Result<(), String>

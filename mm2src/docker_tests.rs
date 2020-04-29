@@ -535,4 +535,88 @@ mod docker_tests {
         unwrap!(block_on(mm_bob.stop()));
         unwrap!(block_on(mm_alice.stop()));
     }
+
+    #[test]
+    fn swaps_should_stop_on_stop_rpc() {
+        let (_, bob_priv_key) = generate_coin_with_random_privkey("MYCOIN", 1000);
+        let (_, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN1", 2000);
+        let coins = json! ([
+            {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000},
+            {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":1000},
+        ]);
+        let mut mm_bob = unwrap! (MarketMakerIt::start (
+            json! ({
+                "gui": "nogui",
+                "netid": 9000,
+                "dht": "on",  // Enable DHT without delay.
+                "passphrase": format!("0x{}", hex::encode(bob_priv_key)),
+                "coins": coins,
+                "rpc_password": "pass",
+                "i_am_seed": true,
+            }),
+            "pass".to_string(),
+            None,
+        ));
+        let (_bob_dump_log, _bob_dump_dashboard) = mm_dump (&mm_bob.log_path);
+        unwrap! (block_on (mm_bob.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
+
+        let mut mm_alice = unwrap! (MarketMakerIt::start (
+            json! ({
+                "gui": "nogui",
+                "netid": 9000,
+                "dht": "on",  // Enable DHT without delay.
+                "passphrase": format!("0x{}", hex::encode(alice_priv_key)),
+                "coins": coins,
+                "rpc_password": "pass",
+                "seednodes": vec![format!("{}", mm_bob.ip)],
+            }),
+            "pass".to_string(),
+            None,
+        ));
+        let (_alice_dump_log, _alice_dump_dashboard) = mm_dump (&mm_alice.log_path);
+        unwrap! (block_on (mm_alice.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
+
+        log!([block_on(enable_native(&mm_bob, "MYCOIN", vec![]))]);
+        log!([block_on(enable_native(&mm_bob, "MYCOIN1", vec![]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN", vec![]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN1", vec![]))]);
+        let rc = unwrap! (block_on (mm_bob.rpc (json! ({
+            "userpass": mm_bob.userpass,
+            "method": "setprice",
+            "base": "MYCOIN",
+            "rel": "MYCOIN1",
+            "price": 1,
+            "max": true,
+        }))));
+        assert! (rc.0.is_success(), "!setprice: {}", rc.1);
+        let mut uuids = Vec::with_capacity(3);
+
+        for _ in 0..3 {
+            let rc = unwrap!(block_on (mm_alice.rpc (json! ({
+                "userpass": mm_alice.userpass,
+                "method": "buy",
+                "base": "MYCOIN",
+                "rel": "MYCOIN1",
+                "price": 1,
+                "volume": "1",
+            }))));
+            assert!(rc.0.is_success(), "!buy: {}", rc.1);
+            let buy: Json = json::from_str(&rc.1).unwrap();
+            uuids.push(buy["result"]["uuid"].as_str().unwrap().to_owned());
+        }
+        for uuid in uuids.iter() {
+            unwrap!(block_on (mm_bob.wait_for_log (22.,
+                |log| log.contains (&format!("Entering the maker_swap_loop MYCOIN/MYCOIN1 with uuid: {}", uuid))
+            )));
+            unwrap!(block_on (mm_alice.wait_for_log (22.,
+                |log| log.contains (&format!("Entering the taker_swap_loop MYCOIN/MYCOIN1 with uuid: {}", uuid))
+            )));
+        }
+        unwrap!(block_on(mm_bob.stop()));
+        unwrap!(block_on(mm_alice.stop()));
+        for uuid in uuids {
+            unwrap!(block_on (mm_bob.wait_for_log_after_stop (22., |log| log.contains (&format!("swap {} stopped", uuid)))));
+            unwrap!(block_on (mm_alice.wait_for_log_after_stop (22., |log| log.contains (&format!("swap {} stopped", uuid)))));
+        }
+    }
 }

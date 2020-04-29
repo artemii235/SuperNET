@@ -282,6 +282,21 @@ pub fn get_locked_amount(ctx: &MmArc, coin: &str) -> BigDecimal {
     )
 }
 
+/// Get number of currently running swaps
+pub fn running_swaps_num(ctx: &MmArc) -> u64 {
+    let swap_ctx = unwrap!(SwapsContext::from_ctx(&ctx));
+    let mut swaps = unwrap!(swap_ctx.running_swaps.lock());
+    swaps.iter().fold(
+        0,
+        |total, swap| {
+            match swap.upgrade() {
+                Some(swap) => total + 1,
+                None => total,
+            }
+        }
+    )
+}
+
 /// Get total amount of selected coin locked by all currently ongoing swaps except the one with selected uuid
 fn get_locked_amount_by_other_swaps(ctx: &MmArc, except_uuid: &str, coin: &str) -> BigDecimal {
     let swap_ctx = unwrap!(SwapsContext::from_ctx(&ctx));
