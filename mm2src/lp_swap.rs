@@ -61,7 +61,7 @@ use async_std::{sync as async_std_sync};
 use bigdecimal::BigDecimal;
 use coins::{lp_coinfind, TransactionEnum};
 use common::{
-    block_on, HyRes, now_ms, read_dir, rpc_response, slurp, write,
+    block_on, HyRes, read_dir, rpc_response, slurp, write,
     executor::spawn,
     mm_ctx::{from_ctx, MmArc}
 };
@@ -71,7 +71,7 @@ use rpc::v1::types::{Bytes as BytesJson, H256 as H256Json};
 use serde_json::{self as json, Value as Json};
 use std::collections::{HashSet, HashMap};
 use std::ffi::OsStr;
-use std::path::{Path, PathBuf};
+use std::path::{PathBuf};
 use std::sync::{Arc, Mutex, Weak};
 use std::thread;
 use std::time::Duration;
@@ -841,58 +841,6 @@ pub async fn unban_pubkeys(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, S
         },
     })));
     Ok(try_s!(Response::builder().body(res)))
-}
-
-struct FileLock<'a> {
-    /// Filesystem path of the lock file.
-    pub lock_path: &'a dyn AsRef<Path>,
-    /// The time in seconds after which an outdated lock file can be removed.
-    pub ttl_sec: u64,
-}
-
-/// Records current timestamp to a file contents.
-fn touch(path: &dyn AsRef<Path>) -> Result<(), String> {
-    std::fs::write(path.as_ref(), (now_ms() / 1000).to_string().as_bytes())
-        .map_err(|e| ERRL!("{:?}", e))
-}
-
-/// Attempts to read timestamp recorded to a file
-fn read_timestamp(path: &dyn AsRef<Path>) -> Result<u64, String> {
-    match std::fs::read_to_string(path) {
-        Ok(content) => content.parse().map_err(|e| ERRL!("{:?}", e)),
-        Err(e) => ERR!("{:?}", e)
-    }
-}
-
-impl<'a> FileLock<'a> {
-    pub fn lock(lock_path: &'a dyn AsRef<Path>, ttl_sec: u64) -> Result<Option<FileLock>, String> {
-        match std::fs::OpenOptions::new().write(true).create_new(true).open(lock_path.as_ref()) {
-            Ok(file) => Ok(Some(FileLock { lock_path, ttl_sec })),
-            Err(ref ie) if ie.kind() == std::io::ErrorKind::AlreadyExists => {
-                // See if the existing lock is old enough to be discarded.
-                let lm = match read_timestamp(lock_path) {
-                    Ok(lm) => lm,
-                    Err(ie) => return ERR!("Error checking {:?}: {}", lock_path.as_ref(), ie)
-                };
-                if now_ms() / 1000 - lm > ttl_sec {
-                    try_s!(touch(lock_path));
-                    return Ok(Some(FileLock { lock_path, ttl_sec }));
-                }
-                Ok(None)
-            },
-            Err(ie) => ERR!("Error creating {:?}: {}", lock_path.as_ref(), ie)
-        }
-    }
-
-    pub fn touch(&self) -> Result<(), String> {
-        touch(self.lock_path)
-    }
-}
-
-impl<'a> Drop for FileLock<'a> {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(self.lock_path.as_ref());
-    }
 }
 
 #[cfg(test)]
