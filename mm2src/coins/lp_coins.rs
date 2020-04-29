@@ -465,19 +465,19 @@ impl CoinTransportMetrics {
         CoinTransportMetrics { ctx, ticker }
     }
 
-    fn into_shared(self) -> TransportMetricsBox {
+    fn into_boxed(self) -> TransportMetricsBox {
         Box::new(self)
     }
 }
 
 impl TransportMetrics for CoinTransportMetrics {
-    fn on_outgoing_request(&self, bytes: u64) {
-        mm_counter!(self.ctx, "rpc_client.traffic.outgoing", bytes, "coin" => self.ticker.clone());
+    fn on_outgoing_request(&self, bytes: usize) {
+        mm_counter!(self.ctx, "rpc_client.traffic.outgoing", bytes as u64, "coin" => self.ticker.clone());
         mm_counter!(self.ctx, "rpc_client.request.count", 1, "coin" => self.ticker.clone());
     }
 
-    fn on_incoming_response(&self, bytes: u64) {
-        mm_counter!(self.ctx, "rpc_client.traffic.incoming", bytes, "coin" => self.ticker.clone());
+    fn on_incoming_response(&self, bytes: usize) {
+        mm_counter!(self.ctx, "rpc_client.traffic.incoming", bytes as u64, "coin" => self.ticker.clone());
         mm_counter!(self.ctx, "rpc_client.response.count", 1, "coin" => self.ticker.clone());
     }
 

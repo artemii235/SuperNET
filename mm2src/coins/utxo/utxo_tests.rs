@@ -1,8 +1,8 @@
 use bigdecimal::BigDecimal;
 use common::block_on;
-use common::mm_ctx::{MmArc, MmCtxBuilder, MmWeak};
+use common::mm_ctx::{MmCtxBuilder, MmWeak};
 use common::privkey::key_pair_from_seed;
-use crate::{WithdrawFee, lp_coininit};
+use crate::WithdrawFee;
 use crate::utxo::rpc_clients::{ElectrumProtocol, ListSinceBlockRes};
 use futures::future::join_all;
 use mocktopus::mocking::*;

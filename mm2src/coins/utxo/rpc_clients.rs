@@ -300,7 +300,7 @@ impl JsonRpcClient for NativeClientImpl {
 
         let request_body = try_fus!(json::to_string(&request));
         // measure now only body length, because the `hyper` crate doesn't allow to get total HTTP packet length
-        metrics.on_outgoing_request(request_body.len() as u64);
+        metrics.on_outgoing_request(request_body.len());
 
         let uri = self.uri.clone();
 
@@ -318,7 +318,7 @@ impl JsonRpcClient for NativeClientImpl {
         Box::new(slurp_req(http_request).then(move |result| -> Result<(JsonRpcRemoteAddr, JsonRpcResponse), String> {
             let res = try_s!(result);
             // measure now only body length, because the `hyper` crate doesn't allow to get total HTTP packet length
-            metrics.on_incoming_response(res.2.len() as u64);
+            metrics.on_incoming_response(res.2.len());
 
             let body = try_s!(std::str::from_utf8(&res.2));
 
@@ -896,7 +896,7 @@ async fn electrum_request_multi (client: ElectrumClient, request: JsonRpcRequest
 impl ElectrumClientImpl {
     /// Create an Electrum connection and spawn a green thread actor to handle it.
     pub fn add_server(&mut self, req: &ElectrumRpcRequest) -> Result<(), String> {
-        let traffic_metrics = CoinTransportMetrics::new(self.ctx.clone(), self.coin_ticker.clone()).into_shared();
+        let traffic_metrics = CoinTransportMetrics::new(self.ctx.clone(), self.coin_ticker.clone()).into_boxed();
         let connection = try_s!(spawn_electrum(req, traffic_metrics));
         self.connections.push(connection);
         Ok(())
@@ -1331,14 +1331,14 @@ async fn connect_loop(
         let rx = rx_to_stream(rx)
             .inspect(|data| {
                 // measure the length of each sent packet
-                metrics.on_outgoing_request(data.len() as u64);
+                metrics.on_outgoing_request(data.len());
             });
 
         let (sink, stream) = Bytes.framed(stream).split();
         let mut recv_f = stream
             .for_each(|chunk| {
                 // measure the length of each sent packet
-                metrics.on_incoming_response(chunk.len() as u64);
+                metrics.on_incoming_response(chunk.len());
 
                 last_chunk.store(now_ms(), AtomicOrdering::Relaxed);
                 electrum_process_chunk(chunk, responses.clone()).unit_error().boxed().compat().then(|_| Ok(()))

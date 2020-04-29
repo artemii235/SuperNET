@@ -56,7 +56,7 @@ use std::time::Duration;
 use web3::{ self, Web3 };
 use web3::types::{Action as TraceAction, BlockId, BlockNumber, Bytes, CallRequest, FilterBuilder, Log, Transaction as Web3Transaction, TransactionId, H256, Trace, TraceFilterBuilder};
 
-use super::{CoinsContext, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeFee, TradeInfo,
+use super::{CoinsContext, CoinTransportMetrics, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeFee, TradeInfo,
             TransactionFut, TransactionEnum, Transaction, TransactionDetails, WithdrawFee, WithdrawRequest};
 
 pub use ethcore_transaction::SignedTransaction as SignedEthTx;
@@ -2111,8 +2111,9 @@ pub async fn eth_coin_from_conf_and_request(
     let my_address = key_pair.address();
 
     let mut web3_instances = vec![];
+    let transport_metrics = CoinTransportMetrics::new(ctx.clone(), ticker.to_string()).into_boxed();
     for url in urls.iter() {
-        let transport = try_s!(Web3Transport::new(vec![url.clone()]));
+        let transport = try_s!(Web3Transport::new(vec![url.clone()], transport_metrics.clone_into_box()));
         let web3 = Web3::new(transport);
         let version = match web3.web3().client_version().compat().await {
             Ok(v) => v,
@@ -2133,7 +2134,7 @@ pub async fn eth_coin_from_conf_and_request(
         return ERR!("Failed to get client version for all urls");
     }
 
-    let transport = try_s!(Web3Transport::new(urls));
+    let transport = try_s!(Web3Transport::new(urls, transport_metrics));
     let web3 = Web3::new(transport);
 
     let etomic = try_s!(conf["etomic"].as_str().ok_or(ERRL!("Etomic field is not string")));

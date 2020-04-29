@@ -373,10 +373,10 @@ pub mod transport {
     /// Common methods to measure the outgoing requests and incoming responses statistics.
     pub trait TransportMetrics {
         /// Increase outgoing bytes count by `bytes` and increase the sent requests count by 1.
-        fn on_outgoing_request(&self, bytes: u64);
+        fn on_outgoing_request(&self, bytes: usize);
 
         /// Increase incoming bytes count by `bytes` and increase the received responses count by 1.
-        fn on_incoming_response(&self, bytes: u64);
+        fn on_incoming_response(&self, bytes: usize);
 
         /// Implement the custom clone method similar to impl<T: Clone> Clone for Box<T>.
         /// But the `TransportMetrics` can't implement `Clone` trait cause the trait is used by dynamic dispatch.
