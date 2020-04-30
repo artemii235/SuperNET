@@ -1,29 +1,30 @@
 use crate::executor::{spawn, Timer};
-use crate::log::Tag;
-use crate::mm_ctx::{MmArc, MmWeak};
+use crate::log::{LogState, LogArc, LogWeak, Tag};
 use gstuff::Constructible;
 use hdrhistogram::Histogram;
-use metrics_core::{Builder, Drain, Key, Label, Observe, Observer};
+use metrics_core::{Builder, Drain, Key, Label, Observe, Observer, ScopedString};
 use metrics_runtime::{observers::JsonBuilder, Receiver};
 pub use metrics_runtime::Sink;
 use metrics_util::{parse_quantiles, Quantile};
 use serde_json::{self as json, Value as Json};
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::fmt::Write as WriteFmt;
+use std::ops::Deref;
 use std::slice::Iter;
+use std::sync::{Arc, Weak};
 
 /// Increment counter if an MmArc is not dropped yet and metrics system is initialized already.
 #[macro_export]
 macro_rules! mm_counter {
-    ($ctx_weak:expr, $name:expr, $value:expr) => {{
-        if let Some(mut sink) = $crate::mm_metrics::try_sink_from_ctx(&$ctx_weak) {
+    ($metrics_weak:expr, $name:expr, $value:expr) => {{
+        if let Some(mut sink) = $crate::mm_metrics::try_sink_from_metrics(&$metrics_weak) {
             sink.increment_counter($name, $value);
         }
     }};
 
-    ($ctx_weak:expr, $name:expr, $value:expr, $($labels:tt)*) => {{
+    ($metrics_weak:expr, $name:expr, $value:expr, $($labels:tt)*) => {{
         use metrics::labels;
-        if let Some(mut sink) = $crate::mm_metrics::try_sink_from_ctx(&$ctx_weak) {
+        if let Some(mut sink) = $crate::mm_metrics::try_sink_from_metrics(&$metrics_weak) {
             let labels = labels!( $($labels)* );
             sink.increment_counter_with_labels($name, $value, labels);
         }
@@ -33,15 +34,15 @@ macro_rules! mm_counter {
 /// Update gauge if an MmArc is not dropped yet and metrics system is initialized already.
 #[macro_export]
 macro_rules! mm_gauge {
-    ($ctx_weak:expr, $name:expr, $value:expr) => {{
-        if let Some(mut sink) = $crate::mm_metrics::try_sink_from_ctx(&$ctx_weak) {
+    ($metrics_weak:expr, $name:expr, $value:expr) => {{
+        if let Some(mut sink) = $crate::mm_metrics::try_sink_from_metrics(&$metrics_weak) {
             sink.update_gauge($name, $value);
         }
     }};
 
-    ($ctx_weak:expr, $name:expr, $value:expr, $($labels:tt)*) => {{
+    ($metrics_weak:expr, $name:expr, $value:expr, $($labels:tt)*) => {{
         use metrics::labels;
-        if let Some(mut sink) = $crate::mm_metrics::try_sink_from_ctx(&$ctx_weak) {
+        if let Some(mut sink) = $crate::mm_metrics::try_sink_from_metrics(&$metrics_weak) {
             let labels = labels!( $($labels)* );
             sink.update_gauge_with_labels($name, $value, labels);
         }
@@ -51,28 +52,28 @@ macro_rules! mm_gauge {
 /// Pass new timing value if an MmArc is not dropped yet and metrics system is initialized already.
 #[macro_export]
 macro_rules! mm_timing {
-    ($ctx_weak:expr, $name:expr, $start:expr, $end:expr) => {{
-        if let Some(mut sink) = $crate::mm_metrics::try_sink_from_ctx(&$ctx_weak) {
+    ($metrics_weak:expr, $name:expr, $start:expr, $end:expr) => {{
+        if let Some(mut sink) = $crate::mm_metrics::try_sink_from_metrics(&$metrics_weak) {
             sink.record_timing($name, $start, $end);
         }
     }};
 
-    ($ctx_weak:expr, $name:expr, $start:expr, $end:expr, $($labels:tt)*) => {{
+    ($metrics_weak:expr, $name:expr, $start:expr, $end:expr, $($labels:tt)*) => {{
         use metrics::labels;
-        if let Some(mut sink) = $crate::mm_metrics::try_sink_from_ctx(&$ctx_weak) {
+        if let Some(mut sink) = $crate::mm_metrics::try_sink_from_metrics(&$metrics_weak) {
             let labels = labels!( $($labels)* );
             sink.record_timing_with_labels($name, $start, $end, labels);
         }
     }};
 }
 
-pub fn try_sink_from_ctx(ctx: &MmWeak) -> Option<Sink> {
-    let ctx = MmArc::from_weak(&ctx)?;
-    ctx.metrics.sink().ok()
+pub fn try_sink_from_metrics(weak: &MetricsWeak) -> Option<Sink> {
+    let metrics = MetricsArc::from_weak(&weak)?;
+    metrics.sink().ok()
 }
 
 /// Default quantiles are "min" and "max"
-const QUANTILES: &[f64] = &[0., 1.];
+const QUANTILES: &[f64] = &[0.0, 1.0];
 
 #[derive(Default)]
 pub struct Metrics {
@@ -82,11 +83,6 @@ pub struct Metrics {
 }
 
 impl Metrics {
-    /// Create a new Metrics instance
-    pub fn new() -> Metrics {
-        Default::default()
-    }
-
     /// If the instance was not initialized yet, create the `receiver` else return an error.
     pub fn init(&self) -> Result<(), String> {
         if self.receiver.is_some() {
@@ -99,15 +95,14 @@ impl Metrics {
         Ok(())
     }
 
-    /// If the instance was not initialized yet, create the `receiver`
-    /// and spawn the metrics recording into the log, else return an error.
-    pub fn init_with_dashboard(&self, ctx: MmWeak, record_interval: f64) -> Result<(), String> {
+    /// Create new Metrics instance and spawn the metrics recording into the log, else return an error.
+    pub fn init_with_dashboard(&self, log_state: LogWeak, record_interval: f64) -> Result<(), String> {
         self.init()?;
 
         let controller = self.receiver.as_option().unwrap().controller();
 
         let observer = TagObserver::new(QUANTILES);
-        let exporter = TagExporter { ctx, controller, observer };
+        let exporter = TagExporter { log_state, controller, observer };
 
         spawn(exporter.run(record_interval));
 
@@ -140,57 +135,53 @@ impl Metrics {
     }
 }
 
-#[derive(Eq, PartialEq)]
-struct OrdKey(Key);
+#[derive(Clone)]
+pub struct MetricsArc(pub Arc<Metrics>);
 
-#[derive(Eq, PartialEq)]
-struct OrdLabel<'a>(&'a Label);
-
-impl<'a> Ord for OrdLabel<'a> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        let cmp = self.0.key().cmp(other.0.key());
-        if cmp != std::cmp::Ordering::Equal {
-            return cmp;
-        }
-        self.0.value().cmp(other.0.value())
+impl Deref for MetricsArc {
+    type Target = Metrics;
+    fn deref(&self) -> &Metrics {
+        &*self.0
     }
 }
 
-impl<'a> PartialOrd for OrdLabel<'a> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
+impl MetricsArc {
+    /// Create new `Metrics` instance
+    pub fn new() -> MetricsArc {
+        MetricsArc(Arc::new(Default::default()))
+    }
+
+    /// Try to obtain the `Metrics` from the weak pointer.
+    pub fn from_weak(weak: &MetricsWeak) -> Option<MetricsArc> {
+        weak.0.upgrade().map(|arc| MetricsArc(arc))
+    }
+
+    /// Create a weak pointer from `MetricsWeak`.
+    pub fn weak(&self) -> MetricsWeak {
+        MetricsWeak(Arc::downgrade(&self.0))
     }
 }
 
-impl std::ops::Deref for OrdKey {
-    type Target = Key;
+pub struct MetricsWeak(pub Weak<Metrics>);
 
-    fn deref(&self) -> &Self::Target {
-        &self.0
+impl MetricsWeak {
+    /// Create a default MmWeak without allocating any memory.
+    pub fn new() -> MetricsWeak {
+        MetricsWeak(Default::default())
+    }
+
+    pub fn dropped(&self) -> bool {
+        self.0.strong_count() == 0
     }
 }
 
-impl Ord for OrdKey {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        let cmp = self.name().cmp(&other.name());
-        if cmp != std::cmp::Ordering::Equal {
-            return cmp;
-        }
+type MetricName = ScopedString;
 
-        let self_ord_labels = self.labels().map(|label| OrdLabel(label));
-        let other_ord_labels = other.labels().map(|label| OrdLabel(label));
+type MetricLabels = Vec<Label>;
 
-        // compare the labels of these iterators
-        self_ord_labels.cmp(other_ord_labels)
-    }
-}
+type MetricNameValueMap = HashMap<MetricName, Integer>;
 
-impl PartialOrd for OrdKey {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
+#[derive(Clone)]
 enum Integer {
     Signed(i64),
     Unsigned(u64),
@@ -214,10 +205,10 @@ struct PreparedMetric {
 struct TagObserver {
     /// Supported quantiles like Min, 0.5, 0.8, Max
     quantiles: Vec<Quantile>,
-    /// Key-value container of metrics like counters and gauge
-    metrics: BTreeMap<OrdKey, Integer>,
+    /// Metric:Value pair matching an unique set of labels.
+    metrics: HashMap<MetricLabels, MetricNameValueMap>,
     /// Histograms present set of time measurements and analysis over the measurements
-    histograms: BTreeMap<OrdKey, Histogram<u64>>,
+    histograms: HashMap<Key, Histogram<u64>>,
 }
 
 impl TagObserver {
@@ -231,10 +222,10 @@ impl TagObserver {
 
     fn prepare_metrics(&self) -> Vec<PreparedMetric> {
         self.metrics.iter()
-            .map(|(key, val)| {
-                let mut tags = labels_to_tags(key.labels());
-                tags.push(Tag { key: key.name().to_string(), val: None });
-                let message = format!("metric={}", val.to_string());
+            .map(|(labels, name_value_map)| {
+                let mut tags = labels_to_tags(labels.iter());
+                tags.extend(name_value_map_to_tags(name_value_map));
+                let message = String::default();
 
                 PreparedMetric { tags, message }
             })
@@ -252,20 +243,41 @@ impl TagObserver {
             })
             .collect()
     }
+
+    fn insert_metric(&mut self, key: Key, value: Integer) {
+        let (name, labels) = key.into_parts();
+        self.metrics.entry(labels)
+            .and_modify(|name_value_map| {
+                name_value_map.insert(name.clone(), value.clone());
+            })
+            .or_insert({
+                let mut name_value_map = HashMap::new();
+                name_value_map.insert(name, value);
+                name_value_map
+            });
+    }
+
+    /// Clear metrics or histograms if it's necessary
+    /// after an exporter has turned the observer's metrics and histograms.
+    fn on_turned(&mut self) {
+        // clear histograms because they can be duplicated
+        self.histograms.clear();
+        // don't clear metrics because the keys don't changes often
+    }
 }
 
 impl Observer for TagObserver {
     fn observe_counter(&mut self, key: Key, value: u64) {
-        self.metrics.insert(OrdKey(key), Integer::Unsigned(value));
+        self.insert_metric(key, Integer::Unsigned(value))
     }
 
     fn observe_gauge(&mut self, key: Key, value: i64) {
-        self.metrics.insert(OrdKey(key), Integer::Signed(value));
+        self.insert_metric(key, Integer::Signed(value))
     }
 
     fn observe_histogram(&mut self, key: Key, values: &[u64]) {
         let entry = self.histograms
-            .entry(OrdKey(key))
+            .entry(key)
             .or_insert({
                 // Use default significant figures value.
                 // For more info on `sigfig` see the Historgam::new_with_bounds().
@@ -291,9 +303,8 @@ impl Observer for TagObserver {
 /// Exports metrics by converting them to a Tag format and log them using log::Status.
 struct TagExporter<C>
 {
-    /// Exporter needs access to the context in order to use the logging methods.
     /// Using a weak reference by default in order to avoid circular references and leaks.
-    ctx: MmWeak,
+    log_state: LogWeak,
     /// Handle for acquiring metric snapshots.
     controller: C,
     /// Handle for converting snapshots into log.
@@ -313,7 +324,7 @@ impl<C> TagExporter<C>
 
     /// Observe metrics and histograms and record it into the log in Tag format
     fn turn(&mut self) {
-        let ctx = match MmArc::from_weak(&self.ctx) {
+        let log_state = match LogArc::from_weak(&self.log_state) {
             Some(x) => x,
             // MmCtx is dropped already
             _ => return
@@ -325,14 +336,14 @@ impl<C> TagExporter<C>
         self.controller.observe(&mut self.observer);
 
         for PreparedMetric { tags, message } in self.observer.prepare_metrics() {
-            ctx.log.log_deref_tags("", tags, &message);
+            log_state.log_deref_tags("", tags, &message);
         }
 
         for PreparedMetric { tags, message } in self.observer.prepare_histograms() {
-            ctx.log.log_deref_tags("", tags, &message);
+            log_state.log_deref_tags("", tags, &message);
         }
 
-        // don't clear the collected metrics because the keys don't changes often unlike values
+        self.observer.on_turned();
     }
 }
 
@@ -341,6 +352,14 @@ fn labels_to_tags(labels: Iter<Label>) -> Vec<Tag> {
         .map(|label| Tag {
             key: label.key().to_string(),
             val: Some(label.value().to_string()),
+        })
+        .collect()
+}
+
+fn name_value_map_to_tags(name_value_map: &MetricNameValueMap) -> Vec<Tag> {
+    name_value_map.iter()
+        .map(|(key, value)| {
+            Tag { key: key.to_string(), val: Some(value.to_string()) }
         })
         .collect()
 }
@@ -358,7 +377,11 @@ fn hist_to_message(
             format!("{}={}", key, val)
         });
 
-    match wite!(message, for q in fmt_quantiles { (q) } separated {' '}) {
+    match wite!(message,
+                "count=" (hist.len())
+                if quantiles.is_empty() { "" } else { " " }
+                for q in fmt_quantiles { (q) } separated {' '}
+    ) {
         Ok(_) => message,
         Err(err) => {
             log!("Error " (err) " on format hist to message");
@@ -367,40 +390,23 @@ fn hist_to_message(
     }
 }
 
-pub mod transport {
-    pub type TransportMetricsBox = Box<dyn TransportMetrics + Send + Sync + 'static>;
-
-    /// Common methods to measure the outgoing requests and incoming responses statistics.
-    pub trait TransportMetrics {
-        /// Increase outgoing bytes count by `bytes` and increase the sent requests count by 1.
-        fn on_outgoing_request(&self, bytes: usize);
-
-        /// Increase incoming bytes count by `bytes` and increase the received responses count by 1.
-        fn on_incoming_response(&self, bytes: usize);
-
-        /// Implement the custom clone method similar to impl<T: Clone> Clone for Box<T>.
-        /// But the `TransportMetrics` can't implement `Clone` trait cause the trait is used by dynamic dispatch.
-        fn clone_into_box(&self) -> TransportMetricsBox;
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{block_on, mm_ctx::MmCtxBuilder};
+    use crate::{block_on, log::LogArc};
     use metrics_runtime::Delta;
+    use super::*;
 
     #[test]
     fn test_initialization() {
-        let ctx = MmCtxBuilder::new().into_mm_arc();
-        let metrics = Metrics::new();
+        let log_state = LogArc::new(LogState::in_memory());
+        let metrics = MetricsArc::new();
 
         // metrics system is not initialized yet
         assert!(metrics.sink().is_err());
 
         unwrap!(metrics.init());
         assert!(metrics.init().is_err());
-        assert!(metrics.init_with_dashboard(ctx.weak(), 1.).is_err());
+        assert!(metrics.init_with_dashboard(log_state.weak(), 1.).is_err());
 
         let _ = unwrap!(metrics.sink());
     }
@@ -408,24 +414,25 @@ mod tests {
     #[test]
     #[ignore]
     fn test_dashboard() {
-        let ctx = MmCtxBuilder::new().into_mm_arc();
-        let ctx_weak = ctx.weak();
+        let log_state = LogArc::new(LogState::in_memory());
+        let metrics_shared = MetricsArc::new();
+        let metrics = metrics_shared.weak();
 
-        ctx.metrics.init_with_dashboard(ctx_weak.clone(), 5.).unwrap();
-        let sink = ctx.metrics.sink().unwrap();
+        metrics_shared.init_with_dashboard(log_state.weak(), 5.).unwrap();
+        let sink = metrics_shared.sink().unwrap();
 
         let start = sink.now();
 
-        mm_counter!(ctx_weak, "rpc.traffic.tx", 62, "coin" => "BTC");
-        mm_counter!(ctx_weak, "rpc.traffic.rx", 105, "coin"=> "BTC");
+        mm_counter!(metrics, "rpc.traffic.tx", 62, "coin" => "BTC");
+        mm_counter!(metrics, "rpc.traffic.rx", 105, "coin"=> "BTC");
 
-        mm_counter!(ctx_weak, "rpc.traffic.tx", 54, "coin" => "KMD");
-        mm_counter!(ctx_weak, "rpc.traffic.rx", 158, "coin" => "KMD");
+        mm_counter!(metrics, "rpc.traffic.tx", 54, "coin" => "KMD");
+        mm_counter!(metrics, "rpc.traffic.rx", 158, "coin" => "KMD");
 
-        mm_gauge!(ctx_weak, "rpc.connection.count", 3, "coin" => "KMD");
+        mm_gauge!(metrics, "rpc.connection.count", 3, "coin" => "KMD");
 
         let end = sink.now();
-        mm_timing!(ctx_weak,
+        mm_timing!(metrics,
                    "rpc.query.spent_time",
                    start,
                    end,
@@ -434,13 +441,13 @@ mod tests {
 
         block_on(async { Timer::sleep(6.).await });
 
-        mm_counter!(ctx_weak, "rpc.traffic.tx", 30, "coin" => "BTC");
-        mm_counter!(ctx_weak, "rpc.traffic.rx", 44, "coin" => "BTC");
+        mm_counter!(metrics, "rpc.traffic.tx", 30, "coin" => "BTC");
+        mm_counter!(metrics, "rpc.traffic.rx", 44, "coin" => "BTC");
 
-        mm_gauge!(ctx_weak, "rpc.connection.count", 5, "coin" => "KMD");
+        mm_gauge!(metrics, "rpc.connection.count", 5, "coin" => "KMD");
 
         let end = sink.now();
-        mm_timing!(ctx_weak,
+        mm_timing!(metrics,
                    "rpc.query.spent_time",
                    start,
                    end,
@@ -448,10 +455,10 @@ mod tests {
                    "method"=>"blockchain.transaction.get");
 
         // measure without labels
-        mm_counter!(ctx_weak, "test.counter", 0);
-        mm_gauge!(ctx_weak, "test.gauge", 1);
+        mm_counter!(metrics, "test.counter", 0);
+        mm_gauge!(metrics, "test.gauge", 1);
         let end = sink.now();
-        mm_timing!(ctx_weak, "test.uptime", start, end);
+        mm_timing!(metrics, "test.uptime", start, end);
 
         block_on(async { Timer::sleep(6.).await });
     }
@@ -470,23 +477,22 @@ mod tests {
             hist.record(delta).unwrap()
         }
 
-        let ctx = MmCtxBuilder::new().into_mm_arc();
-        let ctx_weak = ctx.weak();
+        let metrics_shared = MetricsArc::new();
+        let metrics = metrics_shared.weak();
 
-        ctx.metrics.init().unwrap();
+        metrics_shared.init().unwrap();
+        let mut sink = metrics_shared.sink().unwrap();
 
-        let mut sink = ctx.metrics.sink().unwrap();
+        mm_counter!(metrics, "rpc.traffic.tx", 62, "coin" => "BTC");
+        mm_counter!(metrics, "rpc.traffic.rx", 105, "coin" => "BTC");
 
-        mm_counter!(ctx_weak, "rpc.traffic.tx", 62, "coin" => "BTC");
-        mm_counter!(ctx_weak, "rpc.traffic.rx", 105, "coin" => "BTC");
+        mm_counter!(metrics, "rpc.traffic.tx", 30, "coin" => "BTC");
+        mm_counter!(metrics, "rpc.traffic.rx", 44, "coin" => "BTC");
 
-        mm_counter!(ctx_weak, "rpc.traffic.tx", 30, "coin" => "BTC");
-        mm_counter!(ctx_weak, "rpc.traffic.rx", 44, "coin" => "BTC");
+        mm_counter!(metrics, "rpc.traffic.tx", 54, "coin" => "KMD");
+        mm_counter!(metrics, "rpc.traffic.rx", 158, "coin" => "KMD");
 
-        mm_counter!(ctx_weak, "rpc.traffic.tx", 54, "coin" => "KMD");
-        mm_counter!(ctx_weak, "rpc.traffic.rx", 158, "coin" => "KMD");
-
-        mm_gauge!(ctx_weak, "rpc.connection.count", 3, "coin" => "KMD");
+        mm_gauge!(metrics, "rpc.connection.count", 3, "coin" => "KMD");
 
         // counter, gauge and timing may be collected also by sink API
         sink.update_gauge_with_labels("rpc.connection.count", 5, &[("coin", "KMD")]);
@@ -495,7 +501,7 @@ mod tests {
 
         let query_time = do_query(&sink, 0.1);
         record_to_hist(&mut expected_hist, query_time);
-        mm_timing!(ctx_weak,
+        mm_timing!(metrics,
                    "rpc.query.spent_time",
                    query_time.0, // start
                    query_time.1, // end
@@ -504,7 +510,7 @@ mod tests {
 
         let query_time = do_query(&sink, 0.2);
         record_to_hist(&mut expected_hist, query_time);
-        mm_timing!(ctx_weak,
+        mm_timing!(metrics,
                    "rpc.query.spent_time",
                    query_time.0, // start
                    query_time.1, // end
@@ -531,7 +537,7 @@ mod tests {
             }
         });
 
-        let actual = ctx.metrics.collect_json().unwrap();
+        let actual = metrics_shared.collect_json().unwrap();
         assert_eq!(actual, expected);
     }
 }

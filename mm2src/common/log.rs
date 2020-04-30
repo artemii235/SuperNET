@@ -17,6 +17,7 @@ use std::fmt;
 use std::fmt::Write as WriteFmt;
 use std::hash::{Hash, Hasher};
 use std::mem::swap;
+use std::ops::Deref;
 use std::os::raw::c_char;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
@@ -416,6 +417,44 @@ pub struct LogState {
     /// (this thread becomes a center of gravity for the other registered threads).
     /// In the future we might also use `gravity` to log into a file.
     gravity: DuplexMutex<Option<Arc<Gravity>>>
+}
+
+#[derive(Clone)]
+pub struct LogArc(pub Arc<LogState>);
+
+impl Deref for LogArc {
+    type Target = LogState;
+    fn deref(&self) -> &LogState { &*self.0 }
+}
+
+impl LogArc {
+    /// Create LogArc from real `LogState`.
+    pub fn new(state: LogState) -> LogArc {
+        LogArc(Arc::new(state))
+    }
+
+    /// Try to obtain the `LogState` from the weak pointer.
+    pub fn from_weak(weak: &LogWeak) -> Option<LogArc> {
+        weak.0.upgrade().map(|arc| LogArc(arc))
+    }
+
+    /// Create a weak pointer to `LogState`.
+    pub fn weak(&self) -> LogWeak {
+        LogWeak(Arc::downgrade(&self.0))
+    }
+}
+
+pub struct LogWeak(pub Weak<LogState>);
+
+impl LogWeak {
+    /// Create a default MmWeak without allocating any memory.
+    pub fn new() -> LogWeak {
+        LogWeak(Default::default())
+    }
+
+    pub fn dropped(&self) -> bool {
+        self.0.strong_count() == 0
+    }
 }
 
 /// The state used to periodically log the dashboard.
