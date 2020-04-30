@@ -173,15 +173,15 @@ impl MarketMakerIt {
             ip
         };
 
-        // Use a separate (unique) temporary folder for each MM.
-        // (We could also remove the old folders after some time in order not to spam the temporary folder.
-        // Though we don't always want to remove them right away, allowing developers to check the files).
-        let now = super::now_ms();
-        let now = Local.timestamp ((now / 1000) as i64, (now % 1000) as u32 * 1000000);
-        let folder = format! ("mm2_{}_{}", now.format ("%Y-%m-%d_%H-%M-%S-%3f"), ip);
-        let folder = super::temp_dir().join (folder);
-        let db_dir = folder.join ("DB");
-        conf["dbdir"] = unwrap! (db_dir.to_str()) .into();
+        let folder = new_mm2_temp_folder_path(Some(ip));
+        let db_dir = match conf["dbdir"].as_str() {
+            Some(path) => path.into(),
+            None => {
+                let dir = folder.join("DB");
+                conf["dbdir"] = unwrap!(dir.to_str()).into();
+                dir
+            }
+        };
 
         #[cfg(not(feature = "native"))] {
             let ctx = MmCtxBuilder::new().with_conf (conf) .into_mm_arc();
@@ -192,9 +192,19 @@ impl MarketMakerIt {
 
         #[cfg(feature = "native")] {
             try_s! (fs::create_dir (&folder));
-            try_s! (fs::create_dir (db_dir));
-            let log_path = folder.join ("mm2.log");
-            conf["log"] = unwrap! (log_path.to_str()) .into();
+            match fs::create_dir (db_dir) {
+                Ok(_) => (),
+                Err(ref ie) if ie.kind() == std::io::ErrorKind::AlreadyExists => (),
+                Err(e) => return ERR!("{}", e),
+            };
+            let log_path = match conf["log"].as_str() {
+                Some(path) => path.into(),
+                None => {
+                    let path = folder.join("mm2.log");
+                    conf["log"] = unwrap!(path.to_str()).into();
+                    path
+                }
+            };
 
             // If `local` is provided
             // then instead of spawning a process we start the MarketMaker in a local thread,
@@ -515,4 +525,18 @@ pub async fn enable_native(mm: &MarketMakerIt, coin: &str, urls: Vec<&str>) -> J
     })) .await);
     assert_eq! (native.0, StatusCode::OK, "'enable' failed: {}", native.1);
     unwrap!(json::from_str(&native.1))
+}
+
+/// Use a separate (unique) temporary folder for each MM.
+/// We could also remove the old folders after some time in order not to spam the temporary folder.
+/// Though we don't always want to remove them right away, allowing developers to check the files).
+/// Appends IpAddr if it is pre-known
+pub fn new_mm2_temp_folder_path(ip: Option<IpAddr>) -> PathBuf {
+    let now = super::now_ms();
+    let now = Local.timestamp ((now / 1000) as i64, (now % 1000) as u32 * 1000000);
+    let folder = match ip {
+        Some(ip) => format! ("mm2_{}_{}", now.format ("%Y-%m-%d_%H-%M-%S-%3f"), ip),
+        None => format! ("mm2_{}", now.format ("%Y-%m-%d_%H-%M-%S-%3f")),
+    };
+    super::temp_dir().join (folder)
 }

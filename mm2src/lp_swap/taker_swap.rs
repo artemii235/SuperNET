@@ -186,25 +186,71 @@ impl TakerSavedSwap {
     }
 }
 
+pub enum RunTakerSwapInput {
+    StartNew(TakerSwap),
+    KickStart {
+        maker_coin: MmCoinEnum,
+        taker_coin: MmCoinEnum,
+        saved_swap: TakerSavedSwap,
+    },
+}
+
+impl RunTakerSwapInput {
+    fn uuid(&self) -> &str {
+        match self {
+            RunTakerSwapInput::StartNew(swap) => &swap.uuid,
+            RunTakerSwapInput::KickStart { saved_swap, .. } => &saved_swap.uuid
+        }
+    }
+}
+
 /// Starts the taker swap and drives it to completion (until None next command received).
 /// Panics in case of command or event apply fails, not sure yet how to handle such situations
 /// because it's usually means that swap is in invalid state which is possible only if there's developer error
 /// Every produced event is saved to local DB. Swap status is broadcasted to P2P network after completion.
-pub async fn run_taker_swap(swap: TakerSwap, initial_command: Option<TakerSwapCommand>) {
-    let lock_path = my_swaps_dir(&swap.ctx).join(fomat!((swap.uuid) ".lock"));
-    let file_lock = match FileLock::lock(lock_path, 40) {
-        Ok(Some(l)) => l,
-        Ok(None) => {
-            log!("Swap " (swap.uuid) " file lock is acquired by another process/thread, aborting");
-            return;
-        },
-        Err(e) => {
-            log!("Swap " (swap.uuid) " file lock error " (e));
-            return;
+pub async fn run_taker_swap(swap: RunTakerSwapInput, ctx: MmArc) {
+    let uuid = swap.uuid().to_owned();
+    let lock_path = my_swaps_dir(&ctx).join(fomat!((uuid) ".lock"));
+    let mut attempts = 0;
+    let file_lock = loop {
+        match FileLock::lock(&lock_path, 40) {
+            Ok(Some(l)) => break l,
+            Ok(None) => if attempts >= 1 {
+                log!("Swap " (uuid) " file lock is acquired by another process/thread, aborting");
+                return;
+            } else {
+                attempts += 1;
+                Timer::sleep(40.).await;
+            },
+            Err(e) => {
+                log!("Swap " (uuid) " file lock error " (e));
+                return;
+            }
+        };
+    };
+
+    let (swap, mut command) = match swap {
+        RunTakerSwapInput::StartNew(swap) => (swap, TakerSwapCommand::Start),
+        RunTakerSwapInput::KickStart {
+            maker_coin, taker_coin, saved_swap
+        } => match TakerSwap::load_from_saved(ctx, maker_coin, taker_coin, saved_swap) {
+            Ok((swap, command)) => match command {
+                Some(c) => {
+                    log!("Swap " (uuid) " kick started.");
+                    (swap, c)
+                },
+                None => {
+                    log!("Swap " (uuid) " has been finished already, aborting.");
+                    return
+                },
+            },
+            Err(e) => {
+                log!("Error " (e) " loading swap " (uuid));
+                return;
+            }
         }
     };
 
-    let uuid = swap.uuid.clone();
     let mut touch_loop = Box::pin(async move {
         loop {
             match file_lock.touch() {
@@ -215,7 +261,6 @@ pub async fn run_taker_swap(swap: TakerSwap, initial_command: Option<TakerSwapCo
         }
     }.fuse());
 
-    let mut command = initial_command.unwrap_or(TakerSwapCommand::Start);
     let ctx = swap.ctx.clone();
     let mut status = ctx.log.status_handle();
     let uuid = swap.uuid.clone();

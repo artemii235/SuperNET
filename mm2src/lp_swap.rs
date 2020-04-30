@@ -135,8 +135,8 @@ mod taker_swap;
 
 use maker_swap::{MakerSavedSwap, MakerSwapEvent, stats_maker_swap_file_path};
 use taker_swap::{TakerSavedSwap, TakerSwapEvent, stats_taker_swap_file_path};
-pub use maker_swap::{MakerSwap, run_maker_swap};
-pub use taker_swap::{TakerSwap, run_taker_swap};
+pub use maker_swap::{MakerSwap, RunMakerSwapInput, run_maker_swap};
+pub use taker_swap::{RunTakerSwapInput, TakerSwap, run_taker_swap};
 
 /// Includes the grace time we add to the "normal" timeouts
 /// in order to give different and/or heavy communication channels a chance.
@@ -672,7 +672,7 @@ pub fn swap_kick_starts(ctx: MmArc) -> HashSet<String> {
         match json::from_slice::<SavedSwap>(&unwrap!(slurp(&path))) {
             Ok(swap) => {
                 if !swap.is_finished() {
-                    log!("Kick starting the swap " [swap.uuid()]);
+                    log!("Kick starting the swap " (swap.uuid()));
                     let maker_coin_ticker = match swap.maker_coin_ticker() {
                         Ok(t) => t,
                         Err(e) => {
@@ -692,55 +692,47 @@ pub fn swap_kick_starts(ctx: MmArc) -> HashSet<String> {
                     thread::spawn({
                         let ctx = ctx.clone();
                         move || {
-                            let mut taker_coin;
-                            loop {
-                                taker_coin = match lp_coinfind(&ctx, &taker_coin_ticker) {
-                                    Ok(c) => c,
+                            let taker_coin = loop {
+                                match lp_coinfind(&ctx, &taker_coin_ticker) {
+                                    Ok(Some(c)) => break c,
+                                    Ok(None) => {
+                                        log!("Can't kickstart the swap " (swap.uuid()) " until the coin " (taker_coin_ticker) " is activated");
+                                        thread::sleep(Duration::from_secs(5));
+                                    },
                                     Err(e) => {
                                         log!("Error " (e) " on " (taker_coin_ticker) " find attempt");
                                         return;
-                                    }
+                                    },
                                 };
-                                if taker_coin.is_some() {
-                                    break;
-                                }
-                                log!("Can't kickstart the swap " (swap.uuid()) " until the coin " (taker_coin_ticker) " is activated");
-                                thread::sleep(Duration::from_secs(5));
                             };
 
-                            let mut maker_coin;
-                            loop {
-                                maker_coin = match lp_coinfind(&ctx, &maker_coin_ticker) {
-                                    Ok(c) => c,
+                            let maker_coin = loop {
+                                match lp_coinfind(&ctx, &maker_coin_ticker) {
+                                    Ok(Some(c)) => break c,
+                                    Ok(None) => {
+                                        log!("Can't kickstart the swap " (swap.uuid()) " until the coin " (maker_coin_ticker) " is activated");
+                                        thread::sleep(Duration::from_secs(5));
+                                    }
                                     Err(e) => {
                                         log!("Error " (e) " on " (maker_coin_ticker) " find attempt");
                                         return;
                                     }
                                 };
-                                if maker_coin.is_some() {
-                                    break;
-                                }
-                                log!("Can't kickstart the swap " (swap.uuid()) " until the coin " (maker_coin_ticker) " is activated");
-                                thread::sleep(Duration::from_secs(5));
                             };
                             match swap {
-                                SavedSwap::Maker(swap) => match MakerSwap::load_from_saved(
-                                    ctx,
-                                    maker_coin.unwrap(),
-                                    taker_coin.unwrap(),
-                                    swap,
-                                ) {
-                                    Ok((maker, command)) => block_on(run_maker_swap(maker, command)),
-                                    Err(e) => log!([e]),
+                                SavedSwap::Maker(saved_swap) => {
+                                    block_on(run_maker_swap(RunMakerSwapInput::KickStart {
+                                        maker_coin,
+                                        taker_coin,
+                                        saved_swap,
+                                    }, ctx));
                                 },
-                                SavedSwap::Taker(swap) => match TakerSwap::load_from_saved(
-                                    ctx,
-                                    maker_coin.unwrap(),
-                                    taker_coin.unwrap(),
-                                    swap,
-                                ) {
-                                    Ok((taker, command)) => block_on(run_taker_swap(taker, command)),
-                                    Err(e) => log!([e]),
+                                SavedSwap::Taker(saved_swap) => {
+                                    block_on(run_taker_swap(RunTakerSwapInput::KickStart {
+                                        maker_coin,
+                                        taker_coin,
+                                        saved_swap,
+                                    }, ctx));
                                 },
                             }
                         }
