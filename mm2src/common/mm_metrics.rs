@@ -1,5 +1,5 @@
 use crate::executor::{spawn, Timer};
-use crate::log::{LogState, LogArc, LogWeak, Tag};
+use crate::log::{LogArc, LogWeak, Tag};
 use gstuff::Constructible;
 use hdrhistogram::Histogram;
 use metrics_core::{Builder, Drain, Key, Label, Observe, Observer, ScopedString};
@@ -162,6 +162,7 @@ impl MetricsArc {
     }
 }
 
+#[derive(Clone)]
 pub struct MetricsWeak(pub Weak<Metrics>);
 
 impl MetricsWeak {
@@ -393,6 +394,7 @@ fn hist_to_message(
 #[cfg(test)]
 mod tests {
     use crate::{block_on, log::LogArc};
+    use crate::log::LogState;
     use metrics_runtime::Delta;
     use super::*;
 

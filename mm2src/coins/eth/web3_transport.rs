@@ -1,6 +1,5 @@
 use futures01::{Future, Poll};
 use common::executor::Timer;
-use common::mm_metrics::transport::TransportMetricsBox;
 use common::wio::slurp_reqʹ;
 use futures::compat::{Compat};
 use futures::future::{select, Either};
@@ -12,6 +11,7 @@ use std::fmt;
 use std::ops::Deref;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use super::{RpcTransportEventHandler, RpcTransportEventHandlerShared};
 use web3::{RequestId, Transport};
 use web3::error::{Error, ErrorKind};
 use web3::helpers::{build_request, to_result_from_output, to_string};
@@ -27,10 +27,11 @@ fn single_response<T: Deref<Target = [u8]>>(response: T) -> Result<Json, Error> 
     }
 }
 
+#[derive(Clone)]
 pub struct Web3Transport {
     id: Arc<AtomicUsize>,
     uris: Vec<http::Uri>,
-    metrics: TransportMetricsBox,
+    event_handlers: Vec<RpcTransportEventHandlerShared>,
 }
 
 impl fmt::Debug for Web3Transport {
@@ -38,23 +39,14 @@ impl fmt::Debug for Web3Transport {
         f.debug_struct("Web3Transport")
             .field("id", &self.id)
             .field("uris", &self.uris)
-            // skip the metrics
+            // skip the self.event_handlers
             .finish()
     }
 }
 
-impl Clone for Web3Transport {
-    fn clone(&self) -> Self {
-        Web3Transport {
-            id: self.id.clone(),
-            uris: self.uris.clone(),
-            metrics: self.metrics.clone_into_box(),
-        }
-    }
-}
-
 impl Web3Transport {
-    pub fn new(urls: Vec<String>, metrics: TransportMetricsBox) -> Result<Self, String> {
+    #[allow(dead_code)]
+    pub fn new(urls: Vec<String>) -> Result<Self, String> {
         let mut uris = vec![];
         for url in urls.iter() {
             uris.push(try_s!(url.parse()));
@@ -62,7 +54,19 @@ impl Web3Transport {
         Ok(Web3Transport {
             id: Arc::new(AtomicUsize::new(0)),
             uris,
-            metrics,
+            event_handlers: Default::default(),
+        })
+    }
+
+    pub fn with_event_handlers(urls: Vec<String>, event_handlers: Vec<RpcTransportEventHandlerShared>) -> Result<Self, String> {
+        let mut uris = vec![];
+        for url in urls.iter() {
+            uris.push(try_s!(url.parse()));
+        }
+        Ok(Web3Transport {
+            id: Arc::new(AtomicUsize::new(0)),
+            uris,
+            event_handlers,
         })
     }
 }
@@ -94,7 +98,7 @@ impl Transport for Web3Transport {
 
     #[cfg(not(feature="w-bindgen"))]
     fn send(&self, _id: RequestId, request: Call) -> Self::Out {
-        Box::new(Compat::new(Box::pin(sendʹ(request, self.uris.clone(), self.metrics.clone_into_box()))))
+        Box::new(Compat::new(Box::pin(sendʹ(request, self.uris.clone(), self.event_handlers.clone()))))
     }
 
     #[cfg(feature="w-bindgen")]
@@ -107,7 +111,7 @@ impl Transport for Web3Transport {
         use web_sys::{Request, RequestInit, RequestMode, Response as JsResponse};
 
         let body = to_string(&request);
-        self.metrics.on_outgoing_request(body.len());
+        self.event_handlers.on_outgoing_request(body.as_bytes());
 
         let mut opts = RequestInit::new();
         opts.method("POST");
@@ -134,7 +138,7 @@ impl Transport for Web3Transport {
         use web_sys::console;
 
         let future = JsFuture::from(request_promise);
-        let metrics = self.metrics.clone_into_box();
+        let event_handlers = self.event_handlers.clone();
         let res = async move {
             let resp_value = future.await.unwrap();
             assert!(resp_value.is_instance_of::<JsResponse>());
@@ -143,7 +147,7 @@ impl Transport for Web3Transport {
             let response: Json = json_value.into_serde().unwrap();
 
             let response = serde_json::to_vec(&response).unwrap();
-            metrics.on_incoming_response(response.len());
+            event_handlers.on_incoming_response(&response);
 
             single_response(response)
         };
@@ -151,11 +155,11 @@ impl Transport for Web3Transport {
     }
 }
 
-async fn sendʹ(request: Call, uris: Vec<http::Uri>, metrics: TransportMetricsBox) -> Result<Json, Error> {
+async fn sendʹ(request: Call, uris: Vec<http::Uri>, event_handlers: Vec<RpcTransportEventHandlerShared>) -> Result<Json, Error> {
     let mut errors = Vec::new();
     for uri in uris.iter() {
         let request = to_string(&request);
-        metrics.on_outgoing_request(request.len());
+        event_handlers.on_outgoing_request(request.as_bytes());
 
         let mut req = http::Request::new(request.clone().into_bytes());
         *req.method_mut() = http::Method::POST;
@@ -177,7 +181,7 @@ async fn sendʹ(request: Call, uris: Vec<http::Uri>, metrics: TransportMetricsBo
             }
         };
 
-        metrics.on_incoming_response(body.len());
+        event_handlers.on_incoming_response(&body);
 
         if !status.is_success() {
             errors.push(ERRL!("!200: {}, {}", status, binprint(&body, b'.')));

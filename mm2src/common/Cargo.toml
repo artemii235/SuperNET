@@ -38,6 +38,7 @@ http = "0.1"
 http-body = "0.1"
 hyper = { version = "0.12", optional = true }
 hyper-rustls = { version = "0.16", optional = true }
+itertools = "0.8"
 keys = { git = "https://github.com/artemii235/parity-bitcoin.git" }
 lazy_static = "1.2"
 libc = { version = "0.2", optional = true }
@@ -88,7 +89,6 @@ glob = "0.3"
 gstuff = { version = "0.6", features = ["nightly", "term"] }
 hyper = "0.12"
 hyper-rustls = "0.16"
-itertools = "0.8"
 libflate = "0.1"
 num_cpus = "1.10"
 regex = "1"

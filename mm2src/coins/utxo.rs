@@ -32,7 +32,7 @@ use common::{first_char_to_upper, small_rng};
 use common::custom_futures::join_all_sequential;
 use common::executor::{spawn, Timer};
 use common::jsonrpc_client::{JsonRpcError, JsonRpcErrorType};
-use common::mm_ctx::{MmArc, MmWeak};
+use common::mm_ctx::MmArc;
 use common::mm_number::MmNumber;
 #[cfg(feature = "native")]
 use dirs::home_dir;
@@ -65,9 +65,9 @@ use std::time::Duration;
 
 pub use chain::Transaction as UtxoTx;
 
-use self::rpc_clients::{electrum_script_hash, ElectrumClient, ElectrumClientImpl, EstimateFeeMethod, NativeClient, UtxoRpcClientEnum, UnspentInfo };
-use super::{CoinsContext, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeFee, TradeInfo,
-            Transaction, TransactionEnum, TransactionFut, TransactionDetails, WithdrawFee, WithdrawRequest};
+use self::rpc_clients::{electrum_script_hash, ElectrumClient, ElectrumClientImpl, EstimateFeeMethod, NativeClient, UtxoRpcClientEnum, UnspentInfo};
+use super::{CoinsContext, CoinTransportMetrics, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, RpcTransportEventHandlerShared,
+            SwapOps, TradeFee, TradeInfo, Transaction, TransactionEnum, TransactionFut, TransactionDetails, WithdrawFee, WithdrawRequest};
 use crate::utxo::rpc_clients::{NativeClientImpl, UtxoRpcClientOps, ElectrumRpcRequest};
 
 #[cfg(test)]
@@ -1842,8 +1842,18 @@ fn read_native_mode_conf(_filename: &dyn AsRef<Path>) -> Result<(Option<u16>, St
     unimplemented!()
 }
 
+fn rpc_event_handlers_for_client_transport(
+    ctx: &MmArc,
+    ticker: String)
+    -> Vec<RpcTransportEventHandlerShared> {
+    let metrics = ctx.metrics.weak();
+    vec![
+        CoinTransportMetrics::new(metrics, ticker).into_shared(),
+    ]
+}
+
 pub async fn utxo_coin_from_conf_and_request(
-    ctx: MmWeak,
+    ctx: &MmArc,
     ticker: &str,
     conf: &Json,
     req: &Json,
@@ -1875,6 +1885,8 @@ pub async fn utxo_coin_from_conf_and_request(
         checksum_type,
     };
 
+    let event_handlers = rpc_event_handlers_for_client_transport(ctx, ticker.to_string());
+
     let rpc_client = match req["method"].as_str() {
         Some("enable") => {
             if cfg!(feature = "native") {
@@ -1889,7 +1901,7 @@ pub async fn utxo_coin_from_conf_and_request(
                     coin_ticker: ticker.to_string(),
                     uri: fomat!("http://127.0.0.1:"(rpc_port)),
                     auth: format!("Basic {}", base64_encode(&auth_str, URL_SAFE)),
-                    ctx,
+                    event_handlers,
                 });
 
                 UtxoRpcClientEnum::Native(NativeClient(client))
@@ -1901,7 +1913,7 @@ pub async fn utxo_coin_from_conf_and_request(
             let mut servers: Vec<ElectrumRpcRequest> = try_s!(json::from_value(req["servers"].clone()));
             let mut rng = small_rng();
             servers.as_mut_slice().shuffle(&mut rng);
-            let mut client = ElectrumClientImpl::new(ctx, ticker.to_string());
+            let mut client = ElectrumClientImpl::new(ticker.to_string(), event_handlers);
             for server in servers.iter() {
                 match client.add_server(server) {
                     Ok(_) => (),

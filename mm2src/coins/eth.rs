@@ -56,8 +56,8 @@ use std::time::Duration;
 use web3::{ self, Web3 };
 use web3::types::{Action as TraceAction, BlockId, BlockNumber, Bytes, CallRequest, FilterBuilder, Log, Transaction as Web3Transaction, TransactionId, H256, Trace, TraceFilterBuilder};
 
-use super::{CoinsContext, CoinTransportMetrics, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeFee, TradeInfo,
-            TransactionFut, TransactionEnum, Transaction, TransactionDetails, WithdrawFee, WithdrawRequest};
+use super::{CoinsContext, CoinTransportMetrics, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, RpcTransportEventHandler, RpcTransportEventHandlerShared,
+            SwapOps, TradeFee, TradeInfo, TransactionFut, TransactionEnum, Transaction, TransactionDetails, WithdrawFee, WithdrawRequest};
 
 pub use ethcore_transaction::SignedTransaction as SignedEthTx;
 pub use rlp;
@@ -2088,8 +2088,18 @@ fn addr_from_str(addr_str: &str) -> Result<Address, String> {
     Ok(addr)
 }
 
+fn rpc_event_handlers_for_eth_transport(
+    ctx: &MmArc,
+    ticker: String)
+    -> Vec<RpcTransportEventHandlerShared> {
+    let metrics = ctx.metrics.weak();
+    vec![
+        CoinTransportMetrics::new(metrics, ticker).into_shared(),
+    ]
+}
+
 pub async fn eth_coin_from_conf_and_request(
-    ctx: MmWeak,
+    ctx: &MmArc,
     ticker: &str,
     conf: &Json,
     req: &Json,
@@ -2111,9 +2121,9 @@ pub async fn eth_coin_from_conf_and_request(
     let my_address = key_pair.address();
 
     let mut web3_instances = vec![];
-    let transport_metrics = CoinTransportMetrics::new(ctx.clone(), ticker.to_string()).into_boxed();
+    let event_handlers = rpc_event_handlers_for_eth_transport(ctx, ticker.to_string());
     for url in urls.iter() {
-        let transport = try_s!(Web3Transport::new(vec![url.clone()], transport_metrics.clone_into_box()));
+        let transport = try_s!(Web3Transport::with_event_handlers(vec![url.clone()], event_handlers.clone()));
         let web3 = Web3::new(transport);
         let version = match web3.web3().client_version().compat().await {
             Ok(v) => v,
@@ -2134,7 +2144,7 @@ pub async fn eth_coin_from_conf_and_request(
         return ERR!("Failed to get client version for all urls");
     }
 
-    let transport = try_s!(Web3Transport::new(urls, transport_metrics));
+    let transport = try_s!(Web3Transport::with_event_handlers(urls, event_handlers));
     let web3 = Web3::new(transport);
 
     let etomic = try_s!(conf["etomic"].as_str().ok_or(ERRL!("Etomic field is not string")));
@@ -2174,7 +2184,7 @@ pub async fn eth_coin_from_conf_and_request(
         web3,
         web3_instances,
         history_sync_state: Mutex::new(initial_history_state),
-        ctx,
+        ctx: ctx.weak(),
         required_confirmations,
     };
     Ok(EthCoin(Arc::new(coin)))

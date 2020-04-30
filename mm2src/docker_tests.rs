@@ -122,7 +122,7 @@ mod docker_tests {
             let req = json!({"method":"enable"});
             let priv_key = unwrap!(hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f"));
             let coin = unwrap!(block_on(utxo_coin_from_conf_and_request(
-                ctx.weak(), &self.ticker, &conf, &req, &priv_key)));
+                &ctx, &self.ticker, &conf, &req, &priv_key)));
             let timeout = now_ms() + 30000;
             loop {
                 match coin.rpc_client().get_block_count().wait() {
@@ -189,7 +189,7 @@ mod docker_tests {
         let req = json!({"method":"enable"});
         let priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
         let coin = unwrap!(block_on(utxo_coin_from_conf_and_request(
-            ctx.weak(), ticker, &conf, &req, &priv_key)));
+            &ctx, ticker, &conf, &req, &priv_key)));
         fill_address(&coin, &coin.my_address(), balance, timeout);
         (ctx, coin, priv_key)
     }

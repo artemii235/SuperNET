@@ -1,4 +1,3 @@
-
 /******************************************************************************
  * Copyright © 2014-2018 The SuperNET Developers.                             *
  *                                                                            *
@@ -36,8 +35,8 @@
 use bigdecimal::BigDecimal;
 use common::{rpc_response, rpc_err_response, HyRes};
 use common::duplex_mutex::DuplexMutex;
-use common::mm_ctx::{from_ctx, MmArc, MmWeak};
-use common::mm_metrics::transport::{TransportMetrics, TransportMetricsBox};
+use common::mm_ctx::{from_ctx, MmArc};
+use common::mm_metrics::{MetricsWeak};
 use common::mm_number::MmNumber;
 use futures01::Future;
 use futures::compat::Future01CompatExt;
@@ -451,41 +450,68 @@ impl CoinsContext {
     }
 }
 
+pub type RpcTransportEventHandlerShared = Arc<dyn RpcTransportEventHandler + Send + Sync + 'static>;
+
+/// Common methods to measure the outgoing requests and incoming responses statistics.
+pub trait RpcTransportEventHandler {
+    fn on_outgoing_request(&self, data: &[u8]);
+
+    fn on_incoming_response(&self, data: &[u8]);
+}
+
+impl RpcTransportEventHandler for RpcTransportEventHandlerShared {
+    fn on_outgoing_request(&self, data: &[u8]) {
+        self.as_ref().on_outgoing_request(data)
+    }
+
+    fn on_incoming_response(&self, data: &[u8]) {
+        self.as_ref().on_incoming_response(data)
+    }
+}
+
+impl<T: RpcTransportEventHandler> RpcTransportEventHandler for Vec<T> {
+    fn on_outgoing_request(&self, data: &[u8]) {
+        for handler in self {
+            handler.on_outgoing_request(data)
+        }
+    }
+
+    fn on_incoming_response(&self, data: &[u8]) {
+        for handler in self {
+            handler.on_incoming_response(data)
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct CoinTransportMetrics {
-    /// Metrics needs access to the context in order to use the metrics methods.
     /// Using a weak reference by default in order to avoid circular references and leaks.
-    ctx: MmWeak,
+    metrics: MetricsWeak,
     /// Name of coin the rpc client is intended to work with.
     ticker: String,
 }
 
 impl CoinTransportMetrics {
-    fn new(ctx: MmWeak, ticker: String) -> CoinTransportMetrics {
-        CoinTransportMetrics { ctx, ticker }
+    fn new(metrics: MetricsWeak, ticker: String) -> CoinTransportMetrics {
+        CoinTransportMetrics { metrics, ticker }
     }
 
-    fn into_boxed(self) -> TransportMetricsBox {
-        Box::new(self)
+    fn into_shared(self) -> RpcTransportEventHandlerShared {
+        Arc::new(self)
     }
 }
 
-impl TransportMetrics for CoinTransportMetrics {
-    fn on_outgoing_request(&self, bytes: usize) {
-        mm_counter!(self.ctx, "rpc_client.traffic.outgoing", bytes as u64, "coin" => self.ticker.clone());
-        mm_counter!(self.ctx, "rpc_client.request.count", 1, "coin" => self.ticker.clone());
+impl RpcTransportEventHandler for CoinTransportMetrics {
+    fn on_outgoing_request(&self, data: &[u8]) {
+        let data = data.as_ref();
+        mm_counter!(self.metrics, "traffic.out", data.len() as u64, "context" => "network", "coin" => self.ticker.clone());
+        mm_counter!(self.metrics, "request.count", 1, "context" => "network", "coin" => self.ticker.clone());
     }
 
-    fn on_incoming_response(&self, bytes: usize) {
-        mm_counter!(self.ctx, "rpc_client.traffic.incoming", bytes as u64, "coin" => self.ticker.clone());
-        mm_counter!(self.ctx, "rpc_client.response.count", 1, "coin" => self.ticker.clone());
-    }
-
-    fn clone_into_box(&self) -> TransportMetricsBox {
-        Box::new(CoinTransportMetrics {
-            ctx: self.ctx.clone(),
-            ticker: self.ticker.clone(),
-        })
+    fn on_incoming_response(&self, data: &[u8]) {
+        let data = data.as_ref();
+        mm_counter!(self.metrics, "traffic.in", data.len() as u64, "context" => "network", "coin" => self.ticker.clone());
+        mm_counter!(self.metrics, "response.count", 1, "context" => "network", "coin" => self.ticker.clone());
     }
 }
 
@@ -517,9 +543,9 @@ pub async fn lp_coininit (ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoi
     let secret = &*ctx.secp256k1_key_pair().private().secret;
 
     let coin: MmCoinEnum = if coins_en["etomic"].is_null() {
-        try_s! (utxo_coin_from_conf_and_request (ctx.weak(), ticker, coins_en, req, secret) .await) .into()
+        try_s! (utxo_coin_from_conf_and_request (ctx, ticker, coins_en, req, secret) .await) .into()
     } else {
-        try_s! (eth_coin_from_conf_and_request (ctx.weak(), ticker, coins_en, req, secret) .await) .into()
+        try_s! (eth_coin_from_conf_and_request (ctx, ticker, coins_en, req, secret) .await) .into()
     };
 
     let block_count = try_s! (coin.current_block().compat().await);

@@ -1,6 +1,5 @@
 use common::block_on;
-use common::mm_ctx::{MmArc, MmCtxBuilder, MmWeak};
-use common::mm_metrics::transport::TransportMetricsBox;
+use common::mm_ctx::{MmArc, MmCtxBuilder};
 use common::for_tests::wait_for_log;
 use futures::future::join_all;
 use super::*;
@@ -11,13 +10,9 @@ fn check_sum(addr: &str, expected: &str) {
     assert_eq!(expected, actual);
 }
 
-fn idle_transport_metrics_for_test() -> TransportMetricsBox {
-    CoinTransportMetrics::new(MmWeak::new(), Default::default()).into_boxed()
-}
-
 fn eth_coin_for_test(coin_type: EthCoinType, urls: Vec<String>) -> (MmArc, EthCoin) {
     let key_pair = KeyPair::from_secret_slice(&hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap()).unwrap();
-    let transport = Web3Transport::new(urls, idle_transport_metrics_for_test()).unwrap();
+    let transport = Web3Transport::new(urls).unwrap();
     let web3 = Web3::new(transport);
     let ctx = MmCtxBuilder::new().into_mm_arc();
 
@@ -143,10 +138,7 @@ fn test_wei_from_big_decimal() {
 /// temporary ignore, will refactor later to use dev chain and properly check transaction statuses
 fn send_and_refund_erc20_payment() {
     let key_pair = KeyPair::from_secret_slice(&hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap()).unwrap();
-    let transport = Web3Transport::new(
-        vec!["http://195.201.0.6:8545".into()],
-        idle_transport_metrics_for_test())
-        .unwrap();
+    let transport = Web3Transport::new(vec!["http://195.201.0.6:8545".into()]).unwrap();
     let web3 = Web3::new(transport);
     let ctx = MmCtxBuilder::new().into_mm_arc();
     let coin = EthCoin(Arc::new(EthCoinImpl {
@@ -190,10 +182,7 @@ fn send_and_refund_erc20_payment() {
 /// temporary ignore, will refactor later to use dev chain and properly check transaction statuses
 fn send_and_refund_eth_payment() {
     let key_pair = KeyPair::from_secret_slice(&hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap()).unwrap();
-    let transport = Web3Transport::new(
-        vec!["http://195.201.0.6:8545".into()],
-        idle_transport_metrics_for_test())
-        .unwrap();
+    let transport = Web3Transport::new(vec!["http://195.201.0.6:8545".into()]).unwrap();
     let web3 = Web3::new(transport);
     let ctx = MmCtxBuilder::new().into_mm_arc();
     let coin = EthCoin(Arc::new(EthCoinImpl {
@@ -236,19 +225,10 @@ fn send_and_refund_eth_payment() {
 #[ignore]
 fn test_nonce_several_urls() {
     let key_pair = KeyPair::from_secret_slice(&hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap()).unwrap();
-    let infura_transport = Web3Transport::new(
-        vec!["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b".into()],
-        idle_transport_metrics_for_test())
-        .unwrap();
-    let linkpool_transport = Web3Transport::new(
-        vec!["https://ropsten-rpc.linkpool.io".into()],
-        idle_transport_metrics_for_test())
-        .unwrap();
+    let infura_transport = Web3Transport::new(vec!["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b".into()]).unwrap();
+    let linkpool_transport = Web3Transport::new(vec!["https://ropsten-rpc.linkpool.io".into()]).unwrap();
     // get nonce must succeed if some nodes are down at the moment for some reason
-    let failing_transport = Web3Transport::new(
-        vec!["http://195.201.0.6:8989".into()],
-        idle_transport_metrics_for_test())
-        .unwrap();
+    let failing_transport = Web3Transport::new(vec!["http://195.201.0.6:8989".into()]).unwrap();
 
     let web3_infura = Web3::new(infura_transport);
     let web3_linkpool = Web3::new(linkpool_transport);
@@ -288,10 +268,7 @@ fn test_wait_for_payment_spend_timeout() {
     EthCoinImpl::spend_events.mock_safe(|_, _| MockResult::Return(Box::new(futures01::future::ok(vec![]))));
 
     let key_pair = KeyPair::from_secret_slice(&hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap()).unwrap();
-    let transport = Web3Transport::new(
-        vec!["http://195.201.0.6:8555".into()],
-        idle_transport_metrics_for_test())
-        .unwrap();
+    let transport = Web3Transport::new(vec!["http://195.201.0.6:8555".into()]).unwrap();
     let web3 = Web3::new(transport);
     let ctx = MmCtxBuilder::new().into_mm_arc();
 
@@ -322,10 +299,7 @@ fn test_wait_for_payment_spend_timeout() {
 #[test]
 fn test_search_for_swap_tx_spend_was_spent() {
     let key_pair = KeyPair::from_secret_slice(&hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap()).unwrap();
-    let transport = Web3Transport::new(
-        vec!["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b".into()],
-        idle_transport_metrics_for_test())
-        .unwrap();
+    let transport = Web3Transport::new(vec!["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b".into()]).unwrap();
     let web3 = Web3::new(transport);
     let ctx = MmCtxBuilder::new().into_mm_arc();
 
@@ -360,10 +334,7 @@ fn test_search_for_swap_tx_spend_was_spent() {
 #[test]
 fn test_search_for_swap_tx_spend_was_refunded() {
     let key_pair = KeyPair::from_secret_slice(&hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap()).unwrap();
-    let transport = Web3Transport::new(
-        vec!["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b".into()],
-        idle_transport_metrics_for_test())
-        .unwrap();
+    let transport = Web3Transport::new(vec!["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b".into()]).unwrap();
     let web3 = Web3::new(transport);
     let ctx = MmCtxBuilder::new().into_mm_arc();
 
@@ -501,10 +472,7 @@ mod wasm_bindgen_tests {
         setInterval(&EXECUTOR_INTERVAL.closure, 200);
         Box::pin(async move {
             let key_pair = KeyPair::from_secret_slice(&hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap()).unwrap();
-            let transport = Web3Transport::new(
-                vec!["http://195.201.0.6:8565".into()],
-                idle_transport_metrics_for_test())
-                .unwrap();
+            let transport = Web3Transport::new(vec!["http://195.201.0.6:8565".into()]).unwrap();
             let web3 = Web3::new(transport);
             let ctx = MmCtxBuilder::new().into_mm_arc();
             let coin = EthCoin(Arc::new(EthCoinImpl {
