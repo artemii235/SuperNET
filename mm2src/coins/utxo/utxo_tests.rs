@@ -83,6 +83,7 @@ fn utxo_coin_for_test(rpc_client: UtxoRpcClientEnum, force_seed: Option<&str>) -
         history_sync_state: Mutex::new(HistorySyncState::NotEnabled),
         required_confirmations: 1.into(),
         force_min_relay_fee: false,
+        qrc20_contract_address: None,
     };
     coin
 }
@@ -568,7 +569,7 @@ fn get_tx_details_doge() {
     });
 
     use common::executor::spawn;
-    let coin = unwrap!(block_on(utxo_coin_from_conf_and_request("DOGE", &conf, &req, &[1u8; 32])));
+    let coin = unwrap!(block_on(utxo_coin_from_conf_and_request("DOGE", &conf, &req, &[1u8; 32], None)));
 
     let coin1 = coin.clone();
     let coin2 = coin.clone();
