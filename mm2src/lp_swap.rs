@@ -724,14 +724,14 @@ pub fn swap_kick_starts(ctx: MmArc) -> HashSet<String> {
                                     block_on(run_maker_swap(RunMakerSwapInput::KickStart {
                                         maker_coin,
                                         taker_coin,
-                                        saved_swap,
+                                        swap_uuid: saved_swap.uuid,
                                     }, ctx));
                                 },
                                 SavedSwap::Taker(saved_swap) => {
                                     block_on(run_taker_swap(RunTakerSwapInput::KickStart {
                                         maker_coin,
                                         taker_coin,
-                                        saved_swap,
+                                        swap_uuid: saved_swap.uuid,
                                     }, ctx));
                                 },
                             }

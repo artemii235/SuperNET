@@ -705,11 +705,26 @@ impl MakerSwap {
         ))
     }
 
+    pub fn load_from_db_by_uuid(
+        ctx: MmArc,
+        maker_coin: MmCoinEnum,
+        taker_coin: MmCoinEnum,
+        swap_uuid: &str,
+    ) -> Result<(Self, Option<MakerSwapCommand>), String> {
+        let path = my_swap_file_path(&ctx, swap_uuid);
+        let saved: SavedSwap = try_s!(json::from_slice(&try_s!(slurp(&path))));
+        let saved = match saved {
+            SavedSwap::Maker(swap) => swap,
+            SavedSwap::Taker(_) => return ERR!("Can not load MakerSwap from SavedSwap::Taker uuid: {}", swap_uuid),
+        };
+        Self::load_from_saved(ctx, maker_coin, taker_coin, saved)
+    }
+
     pub fn load_from_saved(
         ctx: MmArc,
         maker_coin: MmCoinEnum,
         taker_coin: MmCoinEnum,
-        saved: MakerSavedSwap
+        saved: MakerSavedSwap,
     ) -> Result<(Self, Option<MakerSwapCommand>), String> {
         if saved.events.is_empty() {
             return ERR!("Can't restore swap from empty events set");
@@ -1018,7 +1033,7 @@ pub enum RunMakerSwapInput {
     KickStart {
         maker_coin: MmCoinEnum,
         taker_coin: MmCoinEnum,
-        saved_swap: MakerSavedSwap,
+        swap_uuid: String,
     },
 }
 
@@ -1026,7 +1041,7 @@ impl RunMakerSwapInput {
     fn uuid(&self) -> &str {
         match self {
             RunMakerSwapInput::StartNew(swap) => &swap.uuid,
-            RunMakerSwapInput::KickStart { saved_swap, .. } => &saved_swap.uuid
+            RunMakerSwapInput::KickStart { swap_uuid, .. } => &swap_uuid,
         }
     }
 }
@@ -1059,8 +1074,8 @@ pub async fn run_maker_swap(swap: RunMakerSwapInput, ctx: MmArc) {
     let (swap, mut command) = match swap {
         RunMakerSwapInput::StartNew(swap) => (swap, MakerSwapCommand::Start),
         RunMakerSwapInput::KickStart {
-            maker_coin, taker_coin, saved_swap
-        } => match MakerSwap::load_from_saved(ctx, maker_coin, taker_coin, saved_swap) {
+            maker_coin, taker_coin, swap_uuid
+        } => match MakerSwap::load_from_db_by_uuid(ctx, maker_coin, taker_coin, &swap_uuid) {
             Ok((swap, command)) => match command {
                 Some(c) => {
                     log!("Swap " (uuid) " kick started.");

@@ -191,7 +191,7 @@ pub enum RunTakerSwapInput {
     KickStart {
         maker_coin: MmCoinEnum,
         taker_coin: MmCoinEnum,
-        saved_swap: TakerSavedSwap,
+        swap_uuid: String,
     },
 }
 
@@ -199,7 +199,7 @@ impl RunTakerSwapInput {
     fn uuid(&self) -> &str {
         match self {
             RunTakerSwapInput::StartNew(swap) => &swap.uuid,
-            RunTakerSwapInput::KickStart { saved_swap, .. } => &saved_swap.uuid
+            RunTakerSwapInput::KickStart { swap_uuid, .. } => &swap_uuid,
         }
     }
 }
@@ -232,8 +232,8 @@ pub async fn run_taker_swap(swap: RunTakerSwapInput, ctx: MmArc) {
     let (swap, mut command) = match swap {
         RunTakerSwapInput::StartNew(swap) => (swap, TakerSwapCommand::Start),
         RunTakerSwapInput::KickStart {
-            maker_coin, taker_coin, saved_swap
-        } => match TakerSwap::load_from_saved(ctx, maker_coin, taker_coin, saved_swap) {
+            maker_coin, taker_coin, swap_uuid
+        } => match TakerSwap::load_from_db_by_uuid(ctx, maker_coin, taker_coin, &swap_uuid) {
             Ok((swap, command)) => match command {
                 Some(c) => {
                     log!("Swap " (uuid) " kick started.");
@@ -1055,11 +1055,26 @@ impl TakerSwap {
         ))
     }
 
+    pub fn load_from_db_by_uuid(
+        ctx: MmArc,
+        maker_coin: MmCoinEnum,
+        taker_coin: MmCoinEnum,
+        swap_uuid: &str,
+    ) -> Result<(Self, Option<TakerSwapCommand>), String> {
+        let path = my_swap_file_path(&ctx, swap_uuid);
+        let saved: SavedSwap = try_s!(json::from_slice(&try_s!(slurp(&path))));
+        let saved = match saved {
+            SavedSwap::Taker(swap) => swap,
+            SavedSwap::Maker(_) => return ERR!("Can not load TakerSwap from SavedSwap::Maker uuid: {}", swap_uuid),
+        };
+        Self::load_from_saved(ctx, maker_coin, taker_coin, saved)
+    }
+
     pub fn load_from_saved(
         ctx: MmArc,
         maker_coin: MmCoinEnum,
         taker_coin: MmCoinEnum,
-        saved: TakerSavedSwap
+        saved: TakerSavedSwap,
     ) -> Result<(Self, Option<TakerSwapCommand>), String> {
         if saved.events.is_empty() {
             return ERR!("Can't restore swap from empty events set");
