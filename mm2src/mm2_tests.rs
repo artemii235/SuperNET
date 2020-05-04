@@ -12,6 +12,7 @@ use common::for_tests::mm_dump;
 use common::privkey::key_pair_from_seed;
 #[cfg(not(feature = "native"))]
 use common::mm_ctx::MmArc;
+use common::mm_metrics::{MetricsJson, MetricType};
 use http::StatusCode;
 #[cfg(feature = "native")]
 use hyper::header::ACCESS_CONTROL_ALLOW_ORIGIN;
@@ -2192,6 +2193,56 @@ fn test_fill_or_kill_taker_order_should_not_transform_to_maker() {
     let my_taker_orders: HashMap<String, Json> = unwrap!(json::from_value(my_orders["result"]["taker_orders"].clone()));
     assert!(my_maker_orders.is_empty(), "maker_orders must be empty");
     assert!(my_taker_orders.is_empty(), "taker_orders must be empty");
+}
+
+#[test]
+#[cfg(feature = "native")]
+fn test_metrics_method() {
+    let coins = json!([
+        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1},
+    ]);
+
+    let mut mm = unwrap! (MarketMakerIt::start (
+        json! ({
+            "gui": "nogui",
+            "netid": 9998,
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "passphrase": "face pin block number add byte put seek mime test note password sin tab multiple",
+            "coins": coins,
+            "i_am_seed": true,
+            "rpc_password": "pass",
+        }),
+        "pass".into(),
+        local_start! ("bob")
+    ));
+    let (_dump_log, _dump_dashboard) = mm_dump(&mm.log_path);
+    log!({ "log path: {}", mm.log_path.display() });
+    unwrap!(block_on (mm.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
+
+    let _electrum = block_on(enable_electrum(&mm, "RICK", vec!["electrum1.cipig.net:10017", "electrum2.cipig.net:10017", "electrum3.cipig.net:10017"]));
+
+    let (status, metrics, _headers) = unwrap!(block_on(mm.rpc(json!({ "method": "metrics"}))));
+    assert_eq! (status, StatusCode::OK, "RPC «metrics» failed with status «{}»", status);
+    let metrics: MetricsJson = unwrap!(json::from_str(&metrics));
+
+    assert!(!metrics.metrics.is_empty());
+
+    // there should be a metrics with key = "traffic.out" and label: coin = "RICK" in received json
+    metrics.metrics.iter()
+        .find(|metric| match metric {
+            MetricType::Counter { key, labels, .. } => {
+                if let Some(coin) = labels.get("coin") {
+                    return key == "traffic.out" && coin == "RICK";
+                }
+                false
+            },
+            _ => false,
+        })
+        .expect(r#"Couldn't find a metric with key = "traffic.out" and label: coin = "RICK" in received json"#);
+
+    log!("Received metrics:");
+    log!([metrics]);
 }
 
 // HOWTO

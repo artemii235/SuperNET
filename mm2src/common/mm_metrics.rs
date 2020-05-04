@@ -2,8 +2,8 @@ use crate::executor::{spawn, Timer};
 use crate::log::{LogArc, LogWeak, Tag};
 use gstuff::Constructible;
 use hdrhistogram::Histogram;
-use metrics_core::{Builder, Drain, Key, Label, Observe, Observer, ScopedString};
-use metrics_runtime::{observers::JsonBuilder, Receiver};
+use metrics_core::{Key, Label, Observe, Observer, ScopedString};
+use metrics_runtime::Receiver;
 pub use metrics_runtime::Sink;
 use metrics_util::{parse_quantiles, Quantile};
 use serde_json::{self as json, Value as Json};
@@ -119,20 +119,43 @@ impl Metrics {
         let receiver = try_s!(self.try_receiver());
         let controller = receiver.controller();
 
-        // pretty_json is false by default
-        let builder = JsonBuilder::new().set_quantiles(QUANTILES);
-        let mut observer = builder.build();
+        let mut observer = JsonObserver::new(QUANTILES);
 
         controller.observe(&mut observer);
 
-        let string = observer.drain();
-
-        Ok(try_s!(json::from_str(&string)))
+        observer.into_json()
     }
 
     fn try_receiver(&self) -> Result<&Receiver, String> {
         self.receiver.ok_or("metrics system is not initialized yet".into())
     }
+}
+
+#[derive(Serialize, Debug, Default, Deserialize)]
+pub struct MetricsJson {
+    pub metrics: Vec<MetricType>,
+}
+
+#[derive(Eq, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+#[serde(tag = "type")]
+pub enum MetricType {
+    Counter {
+        key: String,
+        labels: HashMap<String, String>,
+        value: u64,
+    },
+    Gauge {
+        key: String,
+        labels: HashMap<String, String>,
+        value: i64,
+    },
+    Histogram {
+        key: String,
+        labels: HashMap<String, String>,
+        #[serde(flatten)]
+        quantiles: HashMap<String, u64>,
+    },
 }
 
 #[derive(Clone)]
@@ -286,7 +309,7 @@ impl Observer for TagObserver {
                 match Histogram::new(sigfig) {
                     Ok(x) => x,
                     Err(err) => {
-                        ERRL!("failed to create histogram: {}", err);
+                        log!("failed to create histogram: "(err));
                         // do nothing on error
                         return;
                     }
@@ -295,9 +318,91 @@ impl Observer for TagObserver {
 
         for value in values {
             if let Err(err) = entry.record(*value) {
-                ERRL!("failed to observe histogram value: {}", err);
+                log!("failed to observe histogram value: "(err));
             }
         }
+    }
+}
+
+/// Observes metrics and histograms in Tag format.
+struct JsonObserver {
+    /// Supported quantiles like Min, 0.5, 0.8, Max.
+    quantiles: Vec<Quantile>,
+    /// Collected metrics and histograms as serializable and deserializable structure.
+    metrics: MetricsJson,
+}
+
+impl Observer for JsonObserver {
+    fn observe_counter(&mut self, key: Key, value: u64) {
+        let (key, labels) = key.into_parts();
+
+        let metric = MetricType::Counter {
+            key: key.to_string(),
+            labels: labels_into_parts(labels.iter()),
+            value,
+        };
+
+        self.metrics.metrics.push(metric);
+    }
+
+    fn observe_gauge(&mut self, key: Key, value: i64) {
+        let (key, labels) = key.into_parts();
+
+        let metric = MetricType::Gauge {
+            key: key.to_string(),
+            labels: labels_into_parts(labels.iter()),
+            value,
+        };
+
+        self.metrics.metrics.push(metric);
+    }
+
+    fn observe_histogram(&mut self, key: Key, values: &[u64]) {
+        let (key, labels) = key.into_parts();
+
+        // Use default significant figures value.
+        // For more info on `sigfig` see the Historgam::new_with_bounds().
+        let sigfig = 3;
+        let mut histogram = match Histogram::new(sigfig) {
+            Ok(x) => x,
+            Err(err) => {
+                log!("failed to create histogram: "(err));
+                // do nothing on error
+                return;
+            }
+        };
+
+        for value in values {
+            if let Err(err) = histogram.record(*value) {
+                log!("failed to observe histogram value: "(err));
+            }
+        }
+
+        let count = histogram.len() as u64;
+        let mut quantiles = hist_at_quantiles(histogram, &self.quantiles);
+        // add total quantiles number
+        quantiles.insert("count".into(), count);
+
+        let metric = MetricType::Histogram {
+            key: key.to_string(),
+            labels: labels_into_parts(labels.iter()),
+            quantiles,
+        };
+
+        self.metrics.metrics.push(metric);
+    }
+}
+
+impl JsonObserver {
+    fn new(quantiles: &[f64]) -> Self {
+        JsonObserver {
+            quantiles: parse_quantiles(quantiles),
+            metrics: Default::default(),
+        }
+    }
+
+    fn into_json(self) -> Result<Json, String> {
+        json::to_value(self.metrics).map_err(|err| ERRL!("{}", err))
     }
 }
 
@@ -357,6 +462,12 @@ fn labels_to_tags(labels: Iter<Label>) -> Vec<Tag> {
         .collect()
 }
 
+fn labels_into_parts(labels: Iter<Label>) -> HashMap<String, String> {
+    labels
+        .map(|label| (label.key().to_string(), label.value().to_string()))
+        .collect()
+}
+
 fn name_value_map_to_tags(name_value_map: &MetricNameValueMap) -> Vec<Tag> {
     name_value_map.iter()
         .map(|(key, value)| {
@@ -365,10 +476,18 @@ fn name_value_map_to_tags(name_value_map: &MetricNameValueMap) -> Vec<Tag> {
         .collect()
 }
 
-fn hist_to_message(
-    hist: &Histogram<u64>,
-    quantiles: &[Quantile],
-) -> String {
+fn hist_at_quantiles(hist: Histogram<u64>, quantiles: &[Quantile]) -> HashMap<String, u64> {
+    quantiles
+        .into_iter()
+        .map(|quantile| {
+            let key = quantile.label().to_string();
+            let val = hist.value_at_quantile(quantile.value());
+            (key, val)
+        })
+        .collect()
+}
+
+fn hist_to_message(hist: &Histogram<u64>, quantiles: &[Quantile]) -> String {
     let mut message = String::with_capacity(256);
     let fmt_quantiles = quantiles
         .iter()
@@ -395,7 +514,6 @@ fn hist_to_message(
 mod tests {
     use crate::{block_on, log::LogArc};
     use crate::log::LogState;
-    use metrics_runtime::Delta;
     use super::*;
 
     #[test]
@@ -467,18 +585,6 @@ mod tests {
 
     #[test]
     fn test_collect_json() {
-        fn do_query(sink: &Sink, duration: f64) -> (u64, u64) {
-            let start = sink.now();
-            block_on(async { Timer::sleep(duration).await });
-            let end = sink.now();
-            (start, end)
-        }
-
-        fn record_to_hist(hist: &mut Histogram<u64>, start_end: (u64, u64)) {
-            let delta = start_end.1.delta(start_end.0);
-            hist.record(delta).unwrap()
-        }
-
         let metrics_shared = MetricsArc::new();
         let metrics = metrics_shared.weak();
 
@@ -499,47 +605,75 @@ mod tests {
         // counter, gauge and timing may be collected also by sink API
         sink.update_gauge_with_labels("rpc.connection.count", 5, &[("coin", "KMD")]);
 
-        let mut expected_hist = Histogram::new(3).unwrap();
-
-        let query_time = do_query(&sink, 0.1);
-        record_to_hist(&mut expected_hist, query_time);
         mm_timing!(metrics,
                    "rpc.query.spent_time",
-                   query_time.0, // start
-                   query_time.1, // end
+                   // ~ 1 second
+                   34381019796149, // start
+                   34382022725155, // end
                    "coin" => "KMD",
                    "method" => "blockchain.transaction.get");
 
-        let query_time = do_query(&sink, 0.2);
-        record_to_hist(&mut expected_hist, query_time);
         mm_timing!(metrics,
                    "rpc.query.spent_time",
-                   query_time.0, // start
-                   query_time.1, // end
+                   // ~ 2 second
+                   34382022774105, // start
+                   34384023173373, // end
                    "coin" => "KMD",
                    "method" => "blockchain.transaction.get");
-
 
         let expected = json!({
-            "rpc": {
-                "traffic": {
-                    "tx{coin=\"BTC\"}": 92,
-                    "rx{coin=\"BTC\"}": 149,
-                    "tx{coin=\"KMD\"}": 54,
-                    "rx{coin=\"KMD\"}": 158
+            "metrics": [
+                {
+                    "key": "rpc.traffic.tx",
+			        "labels": { "coin": "BTC" },
+			        "type": "counter",
+			        "value": 92
                 },
-                "connection": {
-                    "count{coin=\"KMD\"}": 5
+                {
+                    "key": "rpc.traffic.rx",
+			        "labels": { "coin": "BTC" },
+			        "type": "counter",
+			        "value": 149
                 },
-                "query": {
-                    "spent_time{coin=\"KMD\",method=\"blockchain.transaction.get\"} count": 2,
-                    "spent_time{coin=\"KMD\",method=\"blockchain.transaction.get\"} max": expected_hist.value_at_quantile(1.),
-                    "spent_time{coin=\"KMD\",method=\"blockchain.transaction.get\"} min": expected_hist.value_at_quantile(0.)
+                {
+                    "key": "rpc.traffic.tx",
+			        "labels": { "coin": "KMD" },
+			        "type": "counter",
+			        "value": 54
+                },
+                {
+                    "key": "rpc.traffic.rx",
+			        "labels": { "coin": "KMD" },
+			        "type": "counter",
+			        "value": 158
+                },
+                {
+                    "count": 2,
+                    "key": "rpc.query.spent_time",
+			        "labels": { "coin": "KMD", "method": "blockchain.transaction.get" },
+			        "max": 2000683007,
+			        "min": 1002438656,
+			        "type": "histogram"
+                },
+                {
+                    "key": "rpc.connection.count",
+			        "labels": { "coin": "KMD" },
+			        "type": "gauge",
+			        "value": 5
                 }
-            }
+            ]
         });
 
-        let actual = metrics_shared.collect_json().unwrap();
-        assert_eq!(actual, expected);
+        let mut actual = metrics_shared.collect_json().unwrap();
+
+        let actual = actual["metrics"].as_array_mut().unwrap();
+        for expected in expected["metrics"].as_array().unwrap() {
+            let index = actual.iter()
+                .position(|metric| metric == expected)
+                .expect(&format!("Couldn't find expected metric: {:?}", expected));
+            actual.remove(index);
+        }
+
+        assert!(actual.is_empty(), "More metrics collected than expected. Excess metrics: {:?}", actual);
     }
 }

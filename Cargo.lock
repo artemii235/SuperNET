@@ -1163,15 +1163,6 @@ dependencies = [
 
 [[package]]
 name = "hdrhistogram"
-version = "6.3.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-dependencies = [
- "byteorder 1.3.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "num-traits 0.2.8 (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
-name = "hdrhistogram"
 version = "7.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
@@ -1560,17 +1551,6 @@ version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
-name = "metrics-observer-json"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-dependencies = [
- "hdrhistogram 6.3.4 (registry+https://github.com/rust-lang/crates.io-index)",
- "metrics-core 0.5.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "metrics-util 0.3.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "serde_json 1.0.33 (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
 name = "metrics-runtime"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1580,7 +1560,6 @@ dependencies = [
  "im 12.3.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "metrics 0.12.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "metrics-core 0.5.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "metrics-observer-json 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "metrics-util 0.3.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "parking_lot 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "quanta 0.3.1 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -3509,7 +3488,6 @@ dependencies = [
 "checksum gstuff 0.6.1 (registry+https://github.com/rust-lang/crates.io-index)" = "eee441975a61a5b8313c2a7846dfcaacf34e2656d5a837bf2c360fcf838e636e"
 "checksum h2 0.1.24 (registry+https://github.com/rust-lang/crates.io-index)" = "69b2a5a3092cbebbc951fe55408402e696ee2ed09019137d1800fc2c411265d2"
 "checksum hashbrown 0.1.8 (registry+https://github.com/rust-lang/crates.io-index)" = "3bae29b6653b3412c2e71e9d486db9f9df5d701941d86683005efb9f2d28e3da"
-"checksum hdrhistogram 6.3.4 (registry+https://github.com/rust-lang/crates.io-index)" = "08d331ebcdbca4acbefe5da8c3299b2e246f198a8294cc5163354e743398b89d"
 "checksum hdrhistogram 7.0.0 (registry+https://github.com/rust-lang/crates.io-index)" = "30473369d16f9df5aefc9708bd165e0dbaca7405179257678b549774d2af9f41"
 "checksum heck 0.3.1 (registry+https://github.com/rust-lang/crates.io-index)" = "20564e78d53d2bb135c343b3f47714a56af2061f1c928fdb541dc7b9fdd94205"
 "checksum hermit-abi 0.1.8 (registry+https://github.com/rust-lang/crates.io-index)" = "1010591b26bbfe835e9faeabeb11866061cc7dcebffd56ad7d0942d0e61aefd8"
@@ -3554,7 +3532,6 @@ dependencies = [
 "checksum memoffset 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)" = "ce6075db033bbbb7ee5a0bbd3a3186bbae616f57fb001c485c7ff77955f8177f"
 "checksum metrics 0.12.1 (registry+https://github.com/rust-lang/crates.io-index)" = "51b70227ece8711a1aa2f99655efd795d0cff297a5b9fe39645a93aacf6ad39d"
 "checksum metrics-core 0.5.2 (registry+https://github.com/rust-lang/crates.io-index)" = "7c064b3a1ff41f4bf6c91185c8a0caeccf8a8a27e9d0f92cc54cf3dbec812f48"
-"checksum metrics-observer-json 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)" = "bbe930460a6c336b8f873dcfb28da3f805fd0dbadbea7beaf3042c7fb1d9fcd3"
 "checksum metrics-runtime 0.13.0 (registry+https://github.com/rust-lang/crates.io-index)" = "beb3035626782c533953bcc1a349467543b7f0e9d7b0c92edc61ee2bda7033d6"
 "checksum metrics-util 0.3.1 (registry+https://github.com/rust-lang/crates.io-index)" = "d11f8090a8886339f9468a04eeea0711e4cf27538b134014664308041307a1c5"
 "checksum miniz_oxide 0.3.6 (registry+https://github.com/rust-lang/crates.io-index)" = "aa679ff6578b1cddee93d7e82e263b94a575e0bfced07284eb0c037c1d2416a5"
