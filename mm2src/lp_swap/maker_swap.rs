@@ -1055,7 +1055,7 @@ pub async fn run_maker_swap(swap: RunMakerSwapInput, ctx: MmArc) {
     let lock_path = my_swaps_dir(&ctx).join(fomat!((uuid) ".lock"));
     let mut attempts = 0;
     let file_lock = loop {
-        match FileLock::lock(&lock_path, 40) {
+        match FileLock::lock(&lock_path, 40.) {
             Ok(Some(l)) => break l,
             Ok(None) => if attempts >= 1 {
                 log!("Swap " (uuid) " file lock is acquired by another process/thread, aborting");
