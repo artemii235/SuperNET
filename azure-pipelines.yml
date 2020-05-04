@@ -10,7 +10,7 @@ trigger:
   branches:
     include:
       - refs/heads/*
-    exclude
+    exclude:
       - refs/heads/qrc20
   paths:
     exclude:

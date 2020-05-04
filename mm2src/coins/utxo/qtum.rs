@@ -84,6 +84,13 @@ fn generate_token_transfer_script_pubkey(
     gas_price: u64,
     token_addr: &[u8],
 ) -> Result<Script, String> {
+    // AP
+    // TODO we should recheck whether Qtum allows to set gas price to zero
+    // it is actually valid situation for ETH, such transactions even get mined
+    // sometimes: https://etherscan.io/tx/0x4f719da4e138bd8ab929f4110e84d773b57376b37d1c635d26cd263d65da99cb
+    // https://medium.com/chainsecurity/zero-gas-price-transactions-what-they-do-who-creates-them-and-why-they-might-impact-scalability-aeb6487b8bb0
+    // I suspect that there might be an implementation error in contract_encode_number function in
+    // qtum electrum wallet.
     if gas_limit == 0 || gas_price == 0 {
         // this is because the `contract_encode_number` will return an empty bytes
         return ERR!("gas_limit and gas_price cannot be zero");
