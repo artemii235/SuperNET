@@ -207,8 +207,9 @@ pub fn seednode_loop(ctx: MmArc, listener: TcpListener) {
                 loop {
                     select! {
                         res = reader.read_line(&mut buffer).fuse() => match res {
-                            Ok(_) => {
-                                unwrap!(lp_queue_command(&ctx2, buffer.clone()));
+                            Ok(_) => if buffer.len() > 0 {
+                                log!("Got msg " (buffer) " from peer " (addr));
+                                // unwrap!(lp_queue_command(&ctx2, buffer.clone()));
                                 buffer.clear();
                             },
                             Err(e) => {
