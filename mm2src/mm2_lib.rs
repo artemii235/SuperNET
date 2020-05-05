@@ -1,6 +1,7 @@
 #![feature(non_ascii_idents)]
 #![feature(drain_filter)]
 #![feature(integer_atomics)]
+#![recursion_limit="256"]
 
 #![cfg_attr(not(feature = "native"), allow(unused_imports))]
 

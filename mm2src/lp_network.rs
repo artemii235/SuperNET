@@ -19,6 +19,8 @@
 //
 #![allow(uncommon_codepoints)]
 
+use async_std::net::{TcpListener as AsyncTcpListener};
+use async_std::prelude::*;
 use bytes::Bytes;
 use bitcrypto::ripemd160;
 use common::{lp_queue_command, now_float, now_ms, HyRes, QueuedCommand};
@@ -28,6 +30,7 @@ use common::executor::{spawn, Timer};
 use common::mm_ctx::MmArc;
 use crossbeam::channel;
 use futures01::{future, Future};
+use futures::select;
 use futures::compat::Future01CompatExt;
 use futures::future::FutureExt;
 use primitives::hash::H160;
@@ -188,6 +191,51 @@ pub async fn lp_command_q_loop(ctx: MmArc) {
 /// The loop processing seednode activity as message relayer/rebroadcaster
 /// Non-blocking mode should be enabled on listener for this to work
 pub fn seednode_loop(ctx: MmArc, listener: TcpListener) {
+    let fut = async move {
+        let listener: AsyncTcpListener = listener.into();
+        let mut incoming = listener.incoming();
+        while let Some(stream) = incoming.next().await {
+            let stream = stream.unwrap();
+            let addr = stream.peer_addr().unwrap();
+            ctx.log.log("😀", &[&"incoming_connection", &addr.to_string().as_str()], "New connection...");
+            let ctx2 = ctx.clone();
+            let rx = ctx.seednode_p2p_channel.1.clone();
+            spawn(async move {
+                let (reader, mut writer) = (&stream, &stream);
+                let mut reader = async_std::io::BufReader::new(reader);
+                let mut buffer = String::with_capacity(1024);
+                loop {
+                    select! {
+                        res = reader.read_line(&mut buffer).fuse() => match res {
+                            Ok(_) => {
+                                unwrap!(lp_queue_command(&ctx2, buffer.clone()));
+                                buffer.clear();
+                            },
+                            Err(e) => {
+                                ctx2.log.log("😟", &[&"incoming_connection", &addr.to_string().as_str()], &format!("Error {} reading from socket, dropping connection", e));
+                                break;
+                            }
+                        },
+                        line = Box::pin(rx.recv()).fuse() => match line {
+                            Some(mut line) => {
+                                line.push('\n' as u8);
+                                match writer.write_all(&line).await {
+                                    Ok(_) => (),
+                                    Err(e) => {
+                                        ctx2.log.log("😟", &[&"incoming_connection", &addr.to_string().as_str()], &format!("Error {} writing to socket, dropping connection", e));
+                                        break;
+                                    }
+                                };
+                            }
+                            None => break,
+                        }
+                    }
+                }
+            });
+        }
+    };
+    spawn(fut);
+    /*
     let mut clients = vec![];
     let mut sent_msgs_counter = 0u64;
     let mut total_msgs_size_counter = 0u64;
@@ -267,6 +315,7 @@ pub fn seednode_loop(ctx: MmArc, listener: TcpListener) {
             Err(channel::RecvTimeoutError::Disconnected) => panic!("seednode_p2p_channel is disconnected"),
         };
     }
+    */
 }
 
 #[cfg(feature = "native")]

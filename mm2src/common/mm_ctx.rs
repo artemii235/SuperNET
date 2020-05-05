@@ -1,3 +1,4 @@
+use async_std::sync as async_std_sync;
 use bytes::Bytes;
 use crossbeam::{channel, Sender, Receiver};
 use futures::channel::mpsc;
@@ -22,7 +23,7 @@ use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, Weak};
 
-use crate::{bits256, small_rng, QueuedCommand};
+use crate::{bits256, block_on, small_rng, QueuedCommand};
 use crate::log::{self, LogState};
 
 /// MarketMaker state, shared between the various MarketMaker threads.
@@ -77,7 +78,7 @@ pub struct MmCtx {
     /// The context belonging to the `prices` mod: `PricesContext`.
     pub prices_ctx: Mutex<Option<Arc<dyn Any + 'static + Send + Sync>>>,
     /// Seednode P2P message bus channel.
-    pub seednode_p2p_channel: (Sender<Vec<u8>>, Receiver<Vec<u8>>),
+    pub seednode_p2p_channel: (async_std_sync::Sender<Vec<u8>>, async_std_sync::Receiver<Vec<u8>>),
     /// Standard node P2P message bus channel.
     pub client_p2p_channel: (Sender<Vec<u8>>, Receiver<Vec<u8>>),
     /// `lp_queue_command` shares messages with `lp_command_q_loop` via this channel.  
@@ -118,7 +119,7 @@ impl MmCtx {
             http_fallback_ctx: Mutex::new (None),
             coins_ctx: Mutex::new (None),
             prices_ctx: Mutex::new (None),
-            seednode_p2p_channel: channel::unbounded(),
+            seednode_p2p_channel: async_std_sync::channel(10),
             client_p2p_channel: channel::unbounded(),
             command_queue,
             command_queueʳ: Mutex::new (Some (command_queueʳ)),
@@ -212,7 +213,7 @@ impl MmCtx {
     pub fn broadcast_p2p_msg(&self, msg: &str) {
         let i_am_seed = self.conf["i_am_seed"].as_bool().unwrap_or(false);
         if i_am_seed {
-            unwrap!(self.seednode_p2p_channel.0.send(msg.to_owned().into_bytes()));
+            block_on(self.seednode_p2p_channel.0.send(msg.to_owned().into_bytes()));
         } else {
             unwrap!(self.client_p2p_channel.0.send(msg.to_owned().into_bytes()));
     }   }
