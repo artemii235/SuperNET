@@ -119,7 +119,7 @@ impl MmCtx {
             http_fallback_ctx: Mutex::new (None),
             coins_ctx: Mutex::new (None),
             prices_ctx: Mutex::new (None),
-            seednode_p2p_channel: async_std_sync::channel(10),
+            seednode_p2p_channel: async_std_sync::channel(10000),
             client_p2p_channel: channel::unbounded(),
             command_queue,
             command_queueʳ: Mutex::new (Some (command_queueʳ)),
