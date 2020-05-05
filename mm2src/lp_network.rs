@@ -188,6 +188,9 @@ pub async fn lp_command_q_loop(ctx: MmArc) {
 /// Non-blocking mode should be enabled on listener for this to work
 pub fn seednode_loop(ctx: MmArc, listener: TcpListener) {
     let mut clients = vec![];
+    let mut sent_msgs_counter = 0u64;
+    let mut total_msgs_size_counter = 0u64;
+    let mut status_h = ctx.log.status(&[&"seednode_loop_metrics"], "Started");
     loop {
         if ctx.is_stopping() { break }
 
@@ -226,16 +229,21 @@ pub fn seednode_loop(ctx: MmArc, listener: TcpListener) {
         }
 
         clients = match ctx.seednode_p2p_channel.1.recv_timeout(Duration::from_millis(1)) {
-            Ok(mut msg) => clients.drain_filter(|(client, addr, _)| {
-                msg.push('\n' as u8);
-                match client.get_mut().write(&msg) {
-                    Ok(_) => true,
-                    Err(e) => {
-                        ctx.log.log("😟", &[&"incoming_connection", &addr.to_string().as_str()], &format!("Error {} writing to socket, dropping connection", e));
-                        false
+            Ok(mut msg) => {
+                sent_msgs_counter += 1;
+                total_msgs_size_counter += msg.len() as u64;
+                status_h.status(&[&"seednode_loop_metrics"], &fomat!("sent_msgs_counter " (sent_msgs_counter) ", total_msgs_size_counter " (total_msgs_size_counter)));
+                clients.drain_filter(|(client, addr, _)| {
+                    msg.push('\n' as u8);
+                    match client.get_mut().write(&msg) {
+                        Ok(_) => true,
+                        Err(e) => {
+                            ctx.log.log("😟", &[&"incoming_connection", &addr.to_string().as_str()], &format!("Error {} writing to socket, dropping connection", e));
+                            false
+                        }
                     }
-                }
-            }).collect(),
+                }).collect()
+            },
             Err(channel::RecvTimeoutError::Timeout) => clients,
             Err(channel::RecvTimeoutError::Disconnected) => panic!("seednode_p2p_channel is disconnected"),
         };
