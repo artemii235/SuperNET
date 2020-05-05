@@ -190,6 +190,7 @@ pub fn seednode_loop(ctx: MmArc, listener: TcpListener) {
     let mut clients = vec![];
     let mut sent_msgs_counter = 0u64;
     let mut total_msgs_size_counter = 0u64;
+    let mut max_msg_size = 0u64;
     let mut status_h = ctx.log.status(&[&"seednode_loop_metrics"], "Started");
     loop {
         if ctx.is_stopping() { break }
@@ -232,7 +233,12 @@ pub fn seednode_loop(ctx: MmArc, listener: TcpListener) {
             Ok(mut msg) => {
                 sent_msgs_counter += 1;
                 total_msgs_size_counter += msg.len() as u64;
-                status_h.status(&[&"seednode_loop_metrics"], &fomat!("sent_msgs_counter " (sent_msgs_counter) ", total_msgs_size_counter " (total_msgs_size_counter)));
+                max_msg_size = max_msg_size.max(msg.len() as u64);
+                status_h.status(&[&"seednode_loop_metrics"], &fomat!(
+                    "sent_msgs_counter " (sent_msgs_counter)
+                    ", total_msgs_size_counter " (total_msgs_size_counter)
+                    ", max_msg_size " (max_msg_size)
+                ));
                 clients.drain_filter(|(client, addr, _)| {
                     msg.push('\n' as u8);
                     match client.get_mut().write(&msg) {
