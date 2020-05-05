@@ -223,6 +223,9 @@ pub fn seednode_loop(ctx: MmArc, listener: TcpListener) {
                         line = Box::pin(rx.recv()).fuse() => match line {
                             Some(mut line) => {
                                 line.push('\n' as u8);
+                                if let Ok(msg) = std::str::from_utf8(&line) {
+                                    log!("Sending msg " (msg) "to peer " (addr));
+                                }
                                 match writer.write_all(&line).await {
                                     Ok(_) => (),
                                     Err(e) => {
