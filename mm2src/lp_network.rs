@@ -194,9 +194,10 @@ pub fn seednode_loop(ctx: MmArc, listener: TcpListener) {
     let mut max_msg_size = 0u64;
     let mut status_h = ctx.log.status(&[&"seednode_loop_metrics"], "Started");
     let socket2 = Socket::from(listener);
-    log!("TcpListener send buffer size " [socket2.send_buffer_size()]);
     socket2.set_nodelay(true).unwrap();
+    socket2.set_send_buffer_size(200000).unwrap();
     log!("TcpListener no delay " [socket2.nodelay()]);
+    log!("TcpListener send buffer size " [socket2.send_buffer_size()]);
     let listener = TcpListener::from(socket2);
     loop {
         if ctx.is_stopping() { break }
@@ -205,6 +206,7 @@ pub fn seednode_loop(ctx: MmArc, listener: TcpListener) {
             Ok((stream, addr)) => {
                 ctx.log.log("😀", &[&"incoming_connection", &addr.to_string().as_str()], "New connection...");
                 let socket2 = Socket::from(stream);
+                socket2.set_send_buffer_size(200000).unwrap();
                 log!("TcpStream send buffer size " [socket2.send_buffer_size()]);
                 socket2.set_nodelay(true).unwrap();
                 log!("TcpStream no delay " [socket2.nodelay()]);
