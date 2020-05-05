@@ -1350,7 +1350,7 @@ async fn connect_loop(
         try_loop!(stream.as_ref().set_nodelay(true), addr, delay);
         // reset the delay if we've connected successfully
         delay = 0;
-        log!("Electrum client connected to " (addr));
+        log!("Electrum client connected to " (addr) ", send buffer size is " [stream.as_ref().send_buffer_size()]);
         let last_chunk = Arc::new(AtomicU64::new(now_ms()));
         let mut last_chunk_f = electrum_last_chunk_loop(last_chunk.clone()).boxed().fuse();
 
