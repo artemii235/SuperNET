@@ -34,6 +34,7 @@ use primitives::hash::H160;
 use serde_json::{self as json, Value as Json};
 use serde_bencode::ser::to_bytes as bencode;
 use serde_bencode::de::from_bytes as bdecode;
+use socket2::Socket;
 use std::collections::hash_map::{HashMap, Entry};
 use std::io::{BufRead, BufReader, Write};
 use std::net::{IpAddr, TcpListener, TcpStream};
@@ -192,12 +193,18 @@ pub fn seednode_loop(ctx: MmArc, listener: TcpListener) {
     let mut total_msgs_size_counter = 0u64;
     let mut max_msg_size = 0u64;
     let mut status_h = ctx.log.status(&[&"seednode_loop_metrics"], "Started");
+    let socket2 = Socket::from(listener);
+    log!("TcpListener send buffer size " [socket2.send_buffer_size()]);
+    let listener = TcpListener::from(socket2);
     loop {
         if ctx.is_stopping() { break }
 
         match listener.accept() {
             Ok((stream, addr)) => {
                 ctx.log.log("😀", &[&"incoming_connection", &addr.to_string().as_str()], "New connection...");
+                let socket2 = Socket::from(stream);
+                log!("TcpStream send buffer size " [socket2.send_buffer_size()]);
+                let stream: TcpStream = socket2.into();
                 match stream.set_nonblocking(true) {
                     Ok(_) => clients.push((BufReader::new(stream), addr, String::new())),
                     Err(e) => ctx.log.log("😟", &[&"incoming_connection", &addr.to_string().as_str()], &format!("Error {} setting nonblocking mode", e)),
