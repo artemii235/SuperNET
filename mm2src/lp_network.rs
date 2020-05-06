@@ -19,8 +19,6 @@
 //
 #![allow(uncommon_codepoints)]
 
-use async_std::net::{TcpListener as AsyncTcpListener};
-use async_std::prelude::*;
 use bytes::Bytes;
 use bitcrypto::ripemd160;
 use common::{lp_queue_command, now_float, now_ms, HyRes, QueuedCommand};
@@ -44,6 +42,8 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::{IpAddr, TcpListener, TcpStream};
 use std::thread;
 use std::time::Duration;
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt};
+use tokio::net::{TcpListener as AsyncTcpListener};
 
 use crate::mm2::lp_native_dex::lp_command_process;
 use crate::mm2::lp_ordermatch::lp_post_price_recv;
@@ -191,11 +191,11 @@ pub async fn lp_command_q_loop(ctx: MmArc) {
 
 /// The loop processing seednode activity as message relayer/rebroadcaster
 /// Non-blocking mode should be enabled on listener for this to work
-pub fn seednode_loop(ctx: MmArc, listener: TcpListener) {
+pub fn seednode_loop(ctx: MmArc, to_bind: std::net::SocketAddr) {
     let fut = async move {
-        let listener: AsyncTcpListener = listener.into();
+        let mut listener = AsyncTcpListener::bind(to_bind).await.unwrap();
         let mut incoming = listener.incoming();
-        while let Some(stream) = async_std::prelude::StreamExt::next(&mut incoming).await {
+        while let Some(stream) = futures_util::StreamExt::next(&mut incoming).await {
             let stream = stream.unwrap();
             let addr = stream.peer_addr().unwrap();
             ctx.log.log("😀", &[&"incoming_connection", &addr.to_string().as_str()], "New connection...");
@@ -203,12 +203,11 @@ pub fn seednode_loop(ctx: MmArc, listener: TcpListener) {
             let (tx, mut rx) = mpsc::unbounded();
             ctx.seednode_p2p_channel.lock().unwrap().push(tx);
             spawn(async move {
-                let (reader, mut writer) = (&stream, &stream);
-                let mut reader = async_std::io::BufReader::new(reader);
+                let mut stream = tokio::io::BufReader::new(stream);
                 let mut buffer = String::with_capacity(1024);
                 loop {
                     select! {
-                        res = reader.read_line(&mut buffer).fuse() => match res {
+                        res = stream.read_line(&mut buffer).fuse() => match res {
                             Ok(read) => if read > 0 && buffer.len() > 0 {
                                 match json::from_str::<Json>(&buffer) {
                                     Ok(_) => unwrap!(lp_queue_command(&ctx2, buffer.clone())),
@@ -230,7 +229,7 @@ pub fn seednode_loop(ctx: MmArc, listener: TcpListener) {
                         line = Box::pin(rx.next()).fuse() => match line {
                             Some(mut line) => {
                                 line.push('\n' as u8);
-                                match writer.write_all(&line).await {
+                                match stream.write_all(&line).await {
                                     Ok(_) => (),
                                     Err(e) => {
                                         ctx2.log.log("😟", &[&"incoming_connection", &addr.to_string().as_str()], &format!("Error {} writing to socket, dropping connection", e));
@@ -245,7 +244,8 @@ pub fn seednode_loop(ctx: MmArc, listener: TcpListener) {
             });
         }
     };
-    spawn(fut);
+    let mut runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.block_on(fut);
     /*
     let mut clients = vec![];
     let mut sent_msgs_counter = 0u64;
@@ -332,11 +332,10 @@ pub fn seednode_loop(ctx: MmArc, listener: TcpListener) {
 #[cfg(feature = "native")]
 pub async fn start_seednode_loop (ctx: &MmArc, myipaddr: IpAddr, mypubport: u16) -> Result<(), String> {
     log! ("i_am_seed at " (myipaddr) ":" (mypubport));
-    let listener: TcpListener = try_s!(TcpListener::bind(&fomat!((myipaddr) ":" (mypubport))));
-    try_s!(listener.set_nonblocking(true));
+    let to_bind = std::net::SocketAddr::new(myipaddr, mypubport);
     try_s!(thread::Builder::new().name ("seednode_loop".into()) .spawn ({
         let ctx = ctx.clone();
-        move || seednode_loop(ctx, listener)
+        move || seednode_loop(ctx, to_bind)
     }));
     Ok(())
 }
