@@ -228,6 +228,11 @@ pub fn seednode_loop(ctx: MmArc, to_bind: std::net::SocketAddr) {
                         },
                         line = Box::pin(rx.next()).fuse() => match line {
                             Some(mut line) => {
+                                if buffer.len() > 0 {
+                                    log!("There's something in read buffer and it will be probably lost");
+                                    log!((buffer));
+                                    log!((addr));
+                                }
                                 line.push('\n' as u8);
                                 match stream.write_all(&line).await {
                                     Ok(_) => (),
