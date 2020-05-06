@@ -483,17 +483,35 @@ impl<T: RpcTransportEventHandler> RpcTransportEventHandler for Vec<T> {
     }
 }
 
+pub enum RpcClientType {
+    Native,
+    Electrum,
+    Ethereum,
+}
+
+impl ToString for RpcClientType {
+    fn to_string(&self) -> String {
+        match self {
+            RpcClientType::Native => "native".into(),
+            RpcClientType::Electrum => "electrum".into(),
+            RpcClientType::Ethereum => "ethereum".into(),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct CoinTransportMetrics {
     /// Using a weak reference by default in order to avoid circular references and leaks.
     metrics: MetricsWeak,
     /// Name of coin the rpc client is intended to work with.
     ticker: String,
+    /// RPC client type.
+    client: String,
 }
 
 impl CoinTransportMetrics {
-    fn new(metrics: MetricsWeak, ticker: String) -> CoinTransportMetrics {
-        CoinTransportMetrics { metrics, ticker }
+    fn new(metrics: MetricsWeak, ticker: String, client: RpcClientType) -> CoinTransportMetrics {
+        CoinTransportMetrics { metrics, ticker, client: client.to_string() }
     }
 
     fn into_shared(self) -> RpcTransportEventHandlerShared {
@@ -503,15 +521,17 @@ impl CoinTransportMetrics {
 
 impl RpcTransportEventHandler for CoinTransportMetrics {
     fn on_outgoing_request(&self, data: &[u8]) {
-        let data = data.as_ref();
-        mm_counter!(self.metrics, "traffic.out", data.len() as u64, "context" => "network", "coin" => self.ticker.clone());
-        mm_counter!(self.metrics, "request.count", 1, "context" => "network", "coin" => self.ticker.clone());
+        mm_counter!(self.metrics, "rpc_client.traffic.out", data.len() as u64,
+            "coin" => self.ticker.clone(), "client" => self.client.clone());
+        mm_counter!(self.metrics, "rpc_client.request.count", 1,
+            "coin" => self.ticker.clone(), "client" => self.client.clone());
     }
 
     fn on_incoming_response(&self, data: &[u8]) {
-        let data = data.as_ref();
-        mm_counter!(self.metrics, "traffic.in", data.len() as u64, "context" => "network", "coin" => self.ticker.clone());
-        mm_counter!(self.metrics, "response.count", 1, "context" => "network", "coin" => self.ticker.clone());
+        mm_counter!(self.metrics, "rpc_client.traffic.in", data.len() as u64,
+            "coin" => self.ticker.clone(), "client" => self.client.clone());
+        mm_counter!(self.metrics, "rpc_client.response.count", 1,
+            "coin" => self.ticker.clone(), "client" => self.client.clone());
     }
 }
 

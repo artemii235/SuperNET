@@ -16,15 +16,15 @@ use std::sync::{Arc, Weak};
 /// Increment counter if an MmArc is not dropped yet and metrics system is initialized already.
 #[macro_export]
 macro_rules! mm_counter {
-    ($metrics_weak:expr, $name:expr, $value:expr) => {{
-        if let Some(mut sink) = $crate::mm_metrics::try_sink_from_metrics(&$metrics_weak) {
+    ($metrics:expr, $name:expr, $value:expr) => {{
+        if let Some(mut sink) = $crate::mm_metrics::TrySink::try_sink(&$metrics) {
             sink.increment_counter($name, $value);
         }
     }};
 
-    ($metrics_weak:expr, $name:expr, $value:expr, $($labels:tt)*) => {{
+    ($metrics:expr, $name:expr, $value:expr, $($labels:tt)*) => {{
         use metrics::labels;
-        if let Some(mut sink) = $crate::mm_metrics::try_sink_from_metrics(&$metrics_weak) {
+        if let Some(mut sink) = $crate::mm_metrics::TrySink::try_sink(&$metrics) {
             let labels = labels!( $($labels)* );
             sink.increment_counter_with_labels($name, $value, labels);
         }
@@ -34,15 +34,15 @@ macro_rules! mm_counter {
 /// Update gauge if an MmArc is not dropped yet and metrics system is initialized already.
 #[macro_export]
 macro_rules! mm_gauge {
-    ($metrics_weak:expr, $name:expr, $value:expr) => {{
-        if let Some(mut sink) = $crate::mm_metrics::try_sink_from_metrics(&$metrics_weak) {
+    ($metrics:expr, $name:expr, $value:expr) => {{
+        if let Some(mut sink) = $crate::mm_metrics::TrySink::try_sink(&$metrics) {
             sink.update_gauge($name, $value);
         }
     }};
 
-    ($metrics_weak:expr, $name:expr, $value:expr, $($labels:tt)*) => {{
+    ($metrics:expr, $name:expr, $value:expr, $($labels:tt)*) => {{
         use metrics::labels;
-        if let Some(mut sink) = $crate::mm_metrics::try_sink_from_metrics(&$metrics_weak) {
+        if let Some(mut sink) = $crate::mm_metrics::TrySink::try_sink(&$metrics) {
             let labels = labels!( $($labels)* );
             sink.update_gauge_with_labels($name, $value, labels);
         }
@@ -52,24 +52,23 @@ macro_rules! mm_gauge {
 /// Pass new timing value if an MmArc is not dropped yet and metrics system is initialized already.
 #[macro_export]
 macro_rules! mm_timing {
-    ($metrics_weak:expr, $name:expr, $start:expr, $end:expr) => {{
-        if let Some(mut sink) = $crate::mm_metrics::try_sink_from_metrics(&$metrics_weak) {
+    ($metrics:expr, $name:expr, $start:expr, $end:expr) => {{
+        if let Some(mut sink) = $crate::mm_metrics::TrySink::try_sink(&$metrics) {
             sink.record_timing($name, $start, $end);
         }
     }};
 
-    ($metrics_weak:expr, $name:expr, $start:expr, $end:expr, $($labels:tt)*) => {{
+    ($metrics:expr, $name:expr, $start:expr, $end:expr, $($labels:tt)*) => {{
         use metrics::labels;
-        if let Some(mut sink) = $crate::mm_metrics::try_sink_from_metrics(&$metrics_weak) {
+        if let Some(mut sink) = $crate::mm_metrics::TrySink::try_sink(&$metrics) {
             let labels = labels!( $($labels)* );
             sink.record_timing_with_labels($name, $start, $end, labels);
         }
     }};
 }
 
-pub fn try_sink_from_metrics(weak: &MetricsWeak) -> Option<Sink> {
-    let metrics = MetricsArc::from_weak(&weak)?;
-    metrics.sink().ok()
+pub trait TrySink {
+    fn try_sink(&self) -> Option<Sink>;
 }
 
 /// Default quantiles are "min" and "max"
@@ -168,6 +167,12 @@ impl Deref for MetricsArc {
     }
 }
 
+impl TrySink for MetricsArc {
+    fn try_sink(&self) -> Option<Sink> {
+        self.sink().ok()
+    }
+}
+
 impl MetricsArc {
     /// Create new `Metrics` instance
     pub fn new() -> MetricsArc {
@@ -187,6 +192,13 @@ impl MetricsArc {
 
 #[derive(Clone)]
 pub struct MetricsWeak(pub Weak<Metrics>);
+
+impl TrySink for MetricsWeak {
+    fn try_sink(&self) -> Option<Sink> {
+        let metrics = MetricsArc::from_weak(&self)?;
+        metrics.sink().ok()
+    }
+}
 
 impl MetricsWeak {
     /// Create a default MmWeak without allocating any memory.
@@ -535,11 +547,10 @@ mod tests {
     #[ignore]
     fn test_dashboard() {
         let log_state = LogArc::new(LogState::in_memory());
-        let metrics_shared = MetricsArc::new();
-        let metrics = metrics_shared.weak();
+        let metrics = MetricsArc::new();
 
-        metrics_shared.init_with_dashboard(log_state.weak(), 5.).unwrap();
-        let sink = metrics_shared.sink().unwrap();
+        metrics.init_with_dashboard(log_state.weak(), 5.).unwrap();
+        let sink = metrics.sink().unwrap();
 
         let start = sink.now();
 
@@ -585,11 +596,10 @@ mod tests {
 
     #[test]
     fn test_collect_json() {
-        let metrics_shared = MetricsArc::new();
-        let metrics = metrics_shared.weak();
+        let metrics = MetricsArc::new();
 
-        metrics_shared.init().unwrap();
-        let mut sink = metrics_shared.sink().unwrap();
+        metrics.init().unwrap();
+        let mut sink = metrics.sink().unwrap();
 
         mm_counter!(metrics, "rpc.traffic.tx", 62, "coin" => "BTC");
         mm_counter!(metrics, "rpc.traffic.rx", 105, "coin" => "BTC");
@@ -664,7 +674,7 @@ mod tests {
             ]
         });
 
-        let mut actual = metrics_shared.collect_json().unwrap();
+        let mut actual = metrics.collect_json().unwrap();
 
         let actual = actual["metrics"].as_array_mut().unwrap();
         for expected in expected["metrics"].as_array().unwrap() {

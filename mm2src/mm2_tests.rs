@@ -2195,6 +2195,39 @@ fn test_fill_or_kill_taker_order_should_not_transform_to_maker() {
     assert!(my_taker_orders.is_empty(), "taker_orders must be empty");
 }
 
+fn request_metrics(mm: &MarketMakerIt) -> MetricsJson {
+    let (status, metrics, _headers) = unwrap!(block_on(mm.rpc(json!({ "method": "metrics"}))));
+    assert_eq!(status, StatusCode::OK, "RPC «metrics» failed with status «{}»", status);
+    unwrap!(json::from_str(&metrics))
+}
+
+fn find_metric(metrics: MetricsJson, search_key: &str, search_labels: &Vec<(&str, &str)>) -> Option<MetricType> {
+    metrics.metrics.into_iter()
+        .find(|metric| {
+            let (key, labels) = match metric {
+                MetricType::Counter { key, labels, .. } => (key, labels),
+                _ => return false,
+            };
+
+            if key != search_key {
+                return false;
+            }
+
+            for (s_label_key, s_label_value) in search_labels.iter() {
+                let label_value = match labels.get(&s_label_key.to_string()) {
+                    Some(x) => x,
+                    _ => return false,
+                };
+
+                if s_label_value != label_value {
+                    return false;
+                }
+            }
+
+            true
+        })
+}
+
 #[test]
 #[cfg(feature = "native")]
 fn test_metrics_method() {
@@ -2222,27 +2255,88 @@ fn test_metrics_method() {
 
     let _electrum = block_on(enable_electrum(&mm, "RICK", vec!["electrum1.cipig.net:10017", "electrum2.cipig.net:10017", "electrum3.cipig.net:10017"]));
 
-    let (status, metrics, _headers) = unwrap!(block_on(mm.rpc(json!({ "method": "metrics"}))));
-    assert_eq! (status, StatusCode::OK, "RPC «metrics» failed with status «{}»", status);
-    let metrics: MetricsJson = unwrap!(json::from_str(&metrics));
-
+    let metrics = request_metrics(&mm);
     assert!(!metrics.metrics.is_empty());
-
-    // there should be a metrics with key = "traffic.out" and label: coin = "RICK" in received json
-    metrics.metrics.iter()
-        .find(|metric| match metric {
-            MetricType::Counter { key, labels, .. } => {
-                if let Some(coin) = labels.get("coin") {
-                    return key == "traffic.out" && coin == "RICK";
-                }
-                false
-            },
-            _ => false,
-        })
-        .expect(r#"Couldn't find a metric with key = "traffic.out" and label: coin = "RICK" in received json"#);
 
     log!("Received metrics:");
     log!([metrics]);
+
+    find_metric(metrics, "rpc_client.traffic.out", &vec![("coin", "RICK")])
+        .expect(r#"Couldn't find a metric with key = "traffic.out" and label: coin = "RICK" in received json"#);
+}
+
+#[test]
+#[ignore]
+#[cfg(feature = "native")]
+fn test_electrum_tx_history() {
+    fn get_tx_history_request_count(mm: &MarketMakerIt) -> u64 {
+        let metrics = request_metrics(&mm);
+        match find_metric(metrics,
+                          "tx.history.request.count",
+                          &vec![("coin", "RICK"), ("method", "blockchain.scripthash.get_history")])
+            .unwrap() {
+            MetricType::Counter { value, .. } => value,
+            _ => panic!("tx.history.request.count should be a counter")
+        }
+    }
+
+    let coins = json!([
+        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1},
+    ]);
+
+    let mut mm = unwrap! (MarketMakerIt::start (
+        json! ({
+            "gui": "nogui",
+            "netid": 9998,
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "passphrase": "face pin block number add byte put seek mime test note password sin tab multiple",
+            "coins": coins,
+            "i_am_seed": true,
+            "rpc_password": "pass",
+            "metrics_interval": 30.
+        }),
+        "pass".into(),
+        local_start! ("bob")
+    ));
+    let (_dump_log, _dump_dashboard) = mm_dump(&mm.log_path);
+    log!({ "log path: {}", mm.log_path.display() });
+    unwrap!(block_on (mm.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
+
+    // Enable RICK electrum client with tx_history loop.
+    let electrum = unwrap!(block_on(mm.rpc (json! ({
+        "userpass": mm.userpass,
+        "method": "electrum",
+        "coin": "RICK",
+        "servers": [{"url":"electrum1.cipig.net:10017"},{"url":"electrum2.cipig.net:10017"},{"url":"electrum3.cipig.net:10017"}],
+        "mm2": 1,
+        "tx_history": true
+    }))));
+
+    assert_eq!(electrum.0, StatusCode::OK, "RPC «electrum» failed with {} {}", electrum.0, electrum.1);
+    let electrum: Json = unwrap!(json::from_str(&electrum.1));
+
+    // Wait till tx_history will not be loaded
+    unwrap!(block_on (mm.wait_for_log (500., |log| log.contains ("history has been loaded successfully"))));
+
+    // tx_history is requested every 30 seconds, wait another iteration
+    thread::sleep(Duration::from_secs(31));
+
+    // Balance is not changed, therefore tx_history shouldn't be reloaded.
+    // Request metrics and check if the MarketMaker has requested tx_history only once
+    assert_eq!(get_tx_history_request_count(&mm), 1);
+
+    // make a transaction to change balance
+    let mut enable_res: HashMap<&str, Json> = HashMap::new();
+    enable_res.insert("RICK", electrum);
+    log! ("enable_coins: " [enable_res]);
+    withdraw_and_send(&mm, "RICK", "RRYmiZSDo3UdHHqj1rLKf8cbJroyv9NxXw", &enable_res, "-0.00001");
+
+    // Wait another iteration
+    thread::sleep(Duration::from_secs(31));
+
+    // tx_history should be reloaded on next loop iteration
+    assert_eq!(get_tx_history_request_count(&mm), 2);
 }
 
 // HOWTO

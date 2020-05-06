@@ -56,7 +56,7 @@ use std::time::Duration;
 use web3::{ self, Web3 };
 use web3::types::{Action as TraceAction, BlockId, BlockNumber, Bytes, CallRequest, FilterBuilder, Log, Transaction as Web3Transaction, TransactionId, H256, Trace, TraceFilterBuilder};
 
-use super::{CoinsContext, CoinTransportMetrics, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, RpcTransportEventHandler, RpcTransportEventHandlerShared,
+use super::{CoinsContext, CoinTransportMetrics, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, RpcClientType, RpcTransportEventHandler, RpcTransportEventHandlerShared,
             SwapOps, TradeFee, TradeInfo, TransactionFut, TransactionEnum, Transaction, TransactionDetails, WithdrawFee, WithdrawRequest};
 
 pub use ethcore_transaction::SignedTransaction as SignedEthTx;
@@ -1290,6 +1290,7 @@ impl EthCoin {
     fn process_erc20_history(&self, token_addr: H160, ctx: &MmArc) {
         let delta = U256::from(10000);
 
+        let mut success_iteration = 0i32;
         loop {
             if ctx.is_stopping() { break };
             {
@@ -1364,6 +1365,10 @@ impl EthCoin {
                     }
                 };
 
+                let total_length = from_events_before_earliest.len() + to_events_before_earliest.len();
+                mm_counter!(ctx.metrics, "tx.history.response.total_length", total_length as u64,
+                    "coin" => self.ticker.clone(), "client" => "ethereum", "method" => "erc20_transfer_events");
+
                 saved_events.events.extend(from_events_before_earliest);
                 saved_events.events.extend(to_events_before_earliest);
                 saved_events.earliest_block = if before_earliest > 0.into() {
@@ -1407,6 +1412,10 @@ impl EthCoin {
                     }
                 };
 
+                let total_length = from_events_after_latest.len() + to_events_after_latest.len();
+                mm_counter!(ctx.metrics, "tx.history.response.total_length", total_length as u64,
+                    "coin" => self.ticker.clone(), "client" => "ethereum", "method" => "erc20_transfer_events");
+
                 saved_events.events.extend(from_events_after_latest);
                 saved_events.events.extend(to_events_after_latest);
                 saved_events.latest_block = current_block;
@@ -1443,6 +1452,9 @@ impl EthCoin {
                     received_by_me = total_amount.clone();
                 }
 
+                mm_counter!(ctx.metrics, "tx.history.request.count", 1,
+                    "coin" => self.ticker.clone(), "client" => "ethereum", "method" => "tx_detail_by_hash");
+
                 let web3_tx = match self.web3.eth().transaction(TransactionId::Hash(event.transaction_hash.unwrap())).wait() {
                     Ok(tx) => tx,
                     Err(e) => {
@@ -1450,6 +1462,10 @@ impl EthCoin {
                         continue;
                     }
                 };
+
+                mm_counter!(ctx.metrics, "tx.history.response.count", 1,
+                    "coin" => self.ticker.clone(), "client" => "ethereum", "method" => "tx_detail_by_hash");
+
                 let web3_tx = match web3_tx {
                     Some(t) => t,
                     None => {
@@ -1510,6 +1526,11 @@ impl EthCoin {
                 self.save_history_to_file(&unwrap!(json::to_vec(&existing_history)), &ctx);
             }
             if saved_events.earliest_block == 0.into() {
+                if success_iteration == 0 {
+                    ctx.log.log("😅", &[&"tx_history", &("coin", self.ticker.clone().as_str())], "history has been loaded successfully");
+                }
+
+                success_iteration += 1;
                 *unwrap!(self.history_sync_state.lock()) = HistorySyncState::Finished;
                 thread::sleep(Duration::from_secs(15));
             } else {
@@ -1527,6 +1548,7 @@ impl EthCoin {
         // Also the Parity RPC server seem to get stuck while request in running (other requests performance is also lowered).
         let delta = U256::from(1000);
 
+        let mut success_iteration = 0i32;
         loop {
             if ctx.is_stopping() { break };
             {
@@ -1599,6 +1621,11 @@ impl EthCoin {
                         continue;
                     }
                 };
+
+                let total_length = from_traces_before_earliest.len() + to_traces_before_earliest.len();
+                mm_counter!(ctx.metrics, "tx.history.response.total_length", total_length as u64,
+                    "coin" => self.ticker.clone(), "client" => "ethereum", "method" => "eth_traces");
+
                 saved_traces.traces.extend(from_traces_before_earliest);
                 saved_traces.traces.extend(to_traces_before_earliest);
                 saved_traces.earliest_block = if before_earliest > 0.into() {
@@ -1640,6 +1667,11 @@ impl EthCoin {
                         continue;
                     }
                 };
+
+                let total_length = from_traces_after_latest.len() + to_traces_after_latest.len();
+                mm_counter!(ctx.metrics, "tx.history.response.total_length", total_length as u64,
+                    "coin" => self.ticker.clone(), "client" => "ethereum", "method" => "eth_traces");
+
                 saved_traces.traces.extend(from_traces_after_latest);
                 saved_traces.traces.extend(to_traces_after_latest);
                 saved_traces.latest_block = current_block;
@@ -1661,6 +1693,8 @@ impl EthCoin {
                     _ => continue,
                 };
 
+                mm_counter!(ctx.metrics, "tx.history.request.count", 1, "coin" => self.ticker.clone(), "method" => "tx_detail_by_hash");
+
                 let web3_tx = match self.web3.eth().transaction(TransactionId::Hash(trace.transaction_hash.unwrap())).wait() {
                     Ok(tx) => tx,
                     Err(e) => {
@@ -1675,6 +1709,8 @@ impl EthCoin {
                         continue;
                     }
                 };
+
+                mm_counter!(ctx.metrics, "tx.history.response.count", 1, "coin" => self.ticker.clone(), "method" => "tx_detail_by_hash");
 
                 let receipt = match self.web3.eth().transaction_receipt(trace.transaction_hash.unwrap()).wait() {
                     Ok(r) => r,
@@ -1745,6 +1781,11 @@ impl EthCoin {
                 self.save_history_to_file(&unwrap!(json::to_vec(&existing_history)), &ctx);
             }
             if saved_traces.earliest_block == 0.into() {
+                if success_iteration == 0 {
+                    ctx.log.log("😅", &[&"tx_history", &("coin", self.ticker.clone().as_str())], "history has been loaded successfully");
+                }
+
+                success_iteration += 1;
                 *unwrap!(self.history_sync_state.lock()) = HistorySyncState::Finished;
                 thread::sleep(Duration::from_secs(15));
             } else {
@@ -2094,7 +2135,7 @@ fn rpc_event_handlers_for_eth_transport(
     -> Vec<RpcTransportEventHandlerShared> {
     let metrics = ctx.metrics.weak();
     vec![
-        CoinTransportMetrics::new(metrics, ticker).into_shared(),
+        CoinTransportMetrics::new(metrics, ticker, RpcClientType::Ethereum).into_shared(),
     ]
 }
 

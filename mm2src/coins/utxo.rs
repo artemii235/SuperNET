@@ -66,7 +66,7 @@ use std::time::Duration;
 pub use chain::Transaction as UtxoTx;
 
 use self::rpc_clients::{electrum_script_hash, ElectrumClient, ElectrumClientImpl, EstimateFeeMethod, NativeClient, UtxoRpcClientEnum, UnspentInfo};
-use super::{CoinsContext, CoinTransportMetrics, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, RpcTransportEventHandlerShared,
+use super::{CoinsContext, CoinTransportMetrics, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, RpcClientType, RpcTransportEventHandlerShared,
             SwapOps, TradeFee, TradeInfo, Transaction, TransactionEnum, TransactionFut, TransactionDetails, WithdrawFee, WithdrawRequest};
 use crate::utxo::rpc_clients::{NativeClientImpl, UtxoRpcClientOps, ElectrumRpcRequest};
 
@@ -1466,6 +1466,8 @@ impl MmCoin for UtxoCoin {
             "code": 1,
             "message": "history too large"
         });
+
+        let mut success_iteration = 0i32;
         let history = self.load_history_from_file(&ctx);
         let mut history_map: HashMap<H256Json, TransactionDetails> = history.into_iter().map(|tx| (H256Json::from(tx.tx_hash.as_slice()), tx)).collect();
         loop {
@@ -1487,6 +1489,9 @@ impl MmCoin for UtxoCoin {
                     let mut from = 0;
                     let mut all_transactions = vec![];
                     loop {
+                        mm_counter!(ctx.metrics, "tx.history.request.count", 1,
+                            "coin" => self.ticker.clone(), "client" => "native", "method" => "listtransactions");
+
                         let transactions = match client.list_transactions(100, from).wait() {
                             Ok(value) => value,
                             Err(e) => {
@@ -1495,12 +1500,20 @@ impl MmCoin for UtxoCoin {
                                 continue;
                             }
                         };
+
+                        mm_counter!(ctx.metrics, "tx.history.response.count", 1,
+                            "coin" => self.ticker.clone(), "client" => "native", "method" => "listtransactions");
+
                         if transactions.is_empty() {
                             break;
                         }
                         from += 100;
                         all_transactions.extend(transactions);
                     }
+
+                    mm_counter!(ctx.metrics, "tx.history.response.total_length", all_transactions.len() as u64,
+                        "coin" => self.ticker.clone(), "client" => "native", "method" => "listtransactions");
+
                     all_transactions.into_iter().filter_map(|item| {
                         if item.address == self.my_address() {
                             Some((item.txid, item.blockindex))
@@ -1512,6 +1525,10 @@ impl MmCoin for UtxoCoin {
                 UtxoRpcClientEnum::Electrum(client) => {
                     let script = Builder::build_p2pkh(&self.my_address.hash);
                     let script_hash = electrum_script_hash(&script);
+
+                    mm_counter!(ctx.metrics, "tx.history.request.count", 1,
+                        "coin" => self.ticker.clone(), "client" => "electrum", "method" => "blockchain.scripthash.get_history");
+
                     let electrum_history = match client.scripthash_get_history(&hex::encode(script_hash)).wait() {
                         Ok(value) => value,
                         Err(e) => {
@@ -1538,6 +1555,12 @@ impl MmCoin for UtxoCoin {
                             }
                         }
                     };
+                    mm_counter!(ctx.metrics, "tx.history.response.count", 1,
+                        "coin" => self.ticker.clone(), "client" => "electrum", "method" => "blockchain.scripthash.get_history");
+
+                    mm_counter!(ctx.metrics, "tx.history.response.total_length", electrum_history.len() as u64,
+                        "coin" => self.ticker.clone(), "client" => "electrum", "method" => "blockchain.scripthash.get_history");
+
                     // electrum returns the most recent transactions in the end but we need to
                     // process them first so rev is required
                     electrum_history.into_iter().rev().map(|item| {
@@ -1566,8 +1589,12 @@ impl MmCoin for UtxoCoin {
                 let mut updated = false;
                 match history_map.entry(txid.clone()) {
                     Entry::Vacant(e) => {
+                        mm_counter!(ctx.metrics, "tx.history.request.count", 1, "coin" => self.ticker.clone(), "method" => "tx_detail_by_hash");
+
                         match self.tx_details_by_hash(&txid.0).wait() {
                             Ok(mut tx_details) => {
+                                mm_counter!(ctx.metrics, "tx.history.response.count", 1, "coin" => self.ticker.clone(), "method" => "tx_detail_by_hash");
+
                                 if tx_details.block_height == 0 && height > 0 {
                                     tx_details.block_height = height;
                                 }
@@ -1591,7 +1618,11 @@ impl MmCoin for UtxoCoin {
                             updated = true;
                         }
                         if e.get().timestamp == 0 {
+                            mm_counter!(ctx.metrics, "tx.history.request.count", 1, "coin" => self.ticker.clone(), "method" => "tx_detail_by_hash");
+
                             if let Ok(tx_details) = self.tx_details_by_hash(&txid.0).wait() {
+                                mm_counter!(ctx.metrics, "tx.history.response.count", 1, "coin" => self.ticker.clone(), "method" => "tx_detail_by_hash");
+
                                 e.get_mut().timestamp = tx_details.timestamp;
                                 updated = true;
                             }
@@ -1612,6 +1643,12 @@ impl MmCoin for UtxoCoin {
                 }
             }
             *unwrap!(self.history_sync_state.lock()) = HistorySyncState::Finished;
+
+            if success_iteration == 0 {
+                ctx.log.log("😅", &[&"tx_history", &("coin", self.ticker.clone().as_str())], "history has been loaded successfully");
+            }
+
+            success_iteration += 1;
             thread::sleep(Duration::from_secs(30));
         }
     }
@@ -1844,11 +1881,13 @@ fn read_native_mode_conf(_filename: &dyn AsRef<Path>) -> Result<(Option<u16>, St
 
 fn rpc_event_handlers_for_client_transport(
     ctx: &MmArc,
-    ticker: String)
+    ticker: String,
+    client: RpcClientType,
+)
     -> Vec<RpcTransportEventHandlerShared> {
     let metrics = ctx.metrics.weak();
     vec![
-        CoinTransportMetrics::new(metrics, ticker).into_shared(),
+        CoinTransportMetrics::new(metrics, ticker, client).into_shared(),
     ]
 }
 
@@ -1885,8 +1924,6 @@ pub async fn utxo_coin_from_conf_and_request(
         checksum_type,
     };
 
-    let event_handlers = rpc_event_handlers_for_client_transport(ctx, ticker.to_string());
-
     let rpc_client = match req["method"].as_str() {
         Some("enable") => {
             if cfg!(feature = "native") {
@@ -1897,6 +1934,7 @@ pub async fn utxo_coin_from_conf_and_request(
                     Some(p) => p,
                     None => try_s!(conf["rpcport"].as_u64().ok_or(ERRL!("Rpc port is not set neither in `coins` file nor in native daemon config"))) as u16,
                 };
+                let event_handlers = rpc_event_handlers_for_client_transport(ctx, ticker.to_string(), RpcClientType::Native);
                 let client = Arc::new(NativeClientImpl {
                     coin_ticker: ticker.to_string(),
                     uri: fomat!("http://127.0.0.1:"(rpc_port)),
@@ -1913,6 +1951,7 @@ pub async fn utxo_coin_from_conf_and_request(
             let mut servers: Vec<ElectrumRpcRequest> = try_s!(json::from_value(req["servers"].clone()));
             let mut rng = small_rng();
             servers.as_mut_slice().shuffle(&mut rng);
+            let event_handlers = rpc_event_handlers_for_client_transport(ctx, ticker.to_string(), RpcClientType::Electrum);
             let mut client = ElectrumClientImpl::new(ticker.to_string(), event_handlers);
             for server in servers.iter() {
                 match client.add_server(server) {

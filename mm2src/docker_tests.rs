@@ -106,12 +106,14 @@ mod docker_tests {
             })
             .collect();
         let args: Vec<String> = std::env::args().collect();
-        let exit_code = test_main(&args, owned_tests, None);
+        let _exit_code = test_main(&args, owned_tests, None);
     }
 
     struct UtxoDockerNode<'a> {
+        #[allow(dead_code)]
         container: Container<'a, Cli, GenericImage>,
         ticker: String,
+        #[allow(dead_code)]
         port: u16,
     }
 
