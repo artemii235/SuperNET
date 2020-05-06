@@ -30,7 +30,8 @@ use common::executor::{spawn, Timer};
 use common::mm_ctx::MmArc;
 use crossbeam::channel;
 use futures01::{future, Future};
-use futures::select;
+use futures::{select, StreamExt};
+use futures::channel::mpsc;
 use futures::compat::Future01CompatExt;
 use futures::future::FutureExt;
 use primitives::hash::H160;
@@ -194,12 +195,13 @@ pub fn seednode_loop(ctx: MmArc, listener: TcpListener) {
     let fut = async move {
         let listener: AsyncTcpListener = listener.into();
         let mut incoming = listener.incoming();
-        while let Some(stream) = incoming.next().await {
+        while let Some(stream) = async_std::prelude::StreamExt::next(&mut incoming).await {
             let stream = stream.unwrap();
             let addr = stream.peer_addr().unwrap();
             ctx.log.log("😀", &[&"incoming_connection", &addr.to_string().as_str()], "New connection...");
             let ctx2 = ctx.clone();
-            let rx = ctx.seednode_p2p_channel.1.clone();
+            let (tx, mut rx) = mpsc::unbounded();
+            ctx.seednode_p2p_channel.lock().unwrap().push(tx);
             spawn(async move {
                 let (reader, mut writer) = (&stream, &stream);
                 let mut reader = async_std::io::BufReader::new(reader);
@@ -220,7 +222,7 @@ pub fn seednode_loop(ctx: MmArc, listener: TcpListener) {
                                 break;
                             }
                         },
-                        line = Box::pin(rx.recv()).fuse() => match line {
+                        line = Box::pin(rx.next()).fuse() => match line {
                             Some(mut line) => {
                                 line.push('\n' as u8);
                                 if let Ok(msg) = std::str::from_utf8(&line) {
