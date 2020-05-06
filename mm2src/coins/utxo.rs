@@ -1467,9 +1467,11 @@ impl MmCoin for UtxoCoin {
             "message": "history too large"
         });
 
-        let mut success_iteration = 0i32;
+        let mut my_balance: Option<BigDecimal> = None;
         let history = self.load_history_from_file(&ctx);
         let mut history_map: HashMap<H256Json, TransactionDetails> = history.into_iter().map(|tx| (H256Json::from(tx.tx_hash.as_slice()), tx)).collect();
+
+        let mut success_iteration = 0i32;
         loop {
             if ctx.is_stopping() { break };
             {
@@ -1482,6 +1484,24 @@ impl MmCoin for UtxoCoin {
                     ctx.log.log("", &[&"tx_history", &self.ticker], "Loop stopped");
                     break
                 };
+            }
+
+            let actual_balance = match self.my_balance().wait() {
+                Ok(actual_balance) => Some(actual_balance),
+                Err(err) => {
+                    ctx.log.log("", &[&"tx_history", &self.ticker], &ERRL!("Error {:?} on getting balance", err));
+                    None
+                },
+            };
+
+            match (&my_balance, &actual_balance) {
+                (Some(prev_balance), Some(actual_balance))
+                if prev_balance == actual_balance => {
+                    // my balance hasn't been changed, there is no need to reload tx_history
+                    thread::sleep(Duration::from_secs(30));
+                    continue;
+                },
+                _ => ()
             }
 
             let tx_ids: Vec<(H256Json, u64)> = match &self.rpc_client {
@@ -1648,6 +1668,7 @@ impl MmCoin for UtxoCoin {
                 ctx.log.log("😅", &[&"tx_history", &("coin", self.ticker.clone().as_str())], "history has been loaded successfully");
             }
 
+            my_balance = actual_balance;
             success_iteration += 1;
             thread::sleep(Duration::from_secs(30));
         }
