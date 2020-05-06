@@ -2,6 +2,7 @@ use crate::executor::{spawn, Timer};
 use crate::log::{LogArc, LogWeak, Tag};
 use gstuff::Constructible;
 use hdrhistogram::Histogram;
+use itertools::Itertools;
 use metrics_core::{Key, Label, Observe, Observer, ScopedString};
 use metrics_runtime::Receiver;
 pub use metrics_runtime::Sink;
@@ -217,7 +218,7 @@ type MetricLabels = Vec<Label>;
 
 type MetricNameValueMap = HashMap<MetricName, Integer>;
 
-#[derive(Clone)]
+#[derive(Clone, Eq, PartialEq, PartialOrd, Ord)]
 enum Integer {
     Signed(i64),
     Unsigned(u64),
@@ -259,9 +260,8 @@ impl TagObserver {
     fn prepare_metrics(&self) -> Vec<PreparedMetric> {
         self.metrics.iter()
             .map(|(labels, name_value_map)| {
-                let mut tags = labels_to_tags(labels.iter());
-                tags.extend(name_value_map_to_tags(name_value_map));
-                let message = String::default();
+                let tags = labels_to_tags(labels.iter());
+                let message = name_value_map_to_message(name_value_map);
 
                 PreparedMetric { tags, message }
             })
@@ -271,9 +271,8 @@ impl TagObserver {
     fn prepare_histograms(&self) -> Vec<PreparedMetric> {
         self.histograms.iter()
             .map(|(key, hist)| {
-                let mut tags = labels_to_tags(key.labels());
-                tags.push(Tag { key: key.name().to_string(), val: None });
-                let message = hist_to_message(hist, &self.quantiles);
+                let tags = labels_to_tags(key.labels());
+                let message = format!("{}: {}", key.name(), hist_to_message(hist, &self.quantiles));
 
                 PreparedMetric { tags, message }
             })
@@ -480,12 +479,15 @@ fn labels_into_parts(labels: Iter<Label>) -> HashMap<String, String> {
         .collect()
 }
 
-fn name_value_map_to_tags(name_value_map: &MetricNameValueMap) -> Vec<Tag> {
-    name_value_map.iter()
-        .map(|(key, value)| {
-            Tag { key: key.to_string(), val: Some(value.to_string()) }
-        })
-        .collect()
+fn name_value_map_to_message(name_value_map: &MetricNameValueMap) -> String {
+    let mut message = String::with_capacity(256);
+    match wite!(message, for (key, value) in name_value_map.iter().sorted() { (key) "=" (value.to_string()) } separated {' '}) {
+        Ok(_) => message,
+        Err(err) => {
+            log!("Error " (err) " on format hist to message");
+            String::new()
+        }
+    }
 }
 
 fn hist_at_quantiles(hist: Histogram<u64>, quantiles: &[Quantile]) -> HashMap<String, u64> {

@@ -5,7 +5,6 @@ use chrono::{Local, TimeZone, Utc};
 use chrono::format::DelayedFormat;
 use chrono::format::strftime::StrftimeItems;
 use crossbeam::queue::SegQueue;
-use itertools::Itertools;
 use parking_lot::Mutex;
 use serde_json::{Value as Json};
 use std::cell::RefCell;
@@ -184,7 +183,7 @@ impl<'a> TagParam<'a> for (&'a str, i32) {
     fn val (&self) -> Option<String> {Some (fomat! ((self.1)))}
 }
 
-#[derive(Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Eq, Hash, PartialEq)]
 pub struct Tag {
     pub key: String,
     pub val: Option<String>
@@ -618,7 +617,7 @@ impl LogState {
         let entry = LogEntry {
             time: now_ms(),
             emotion: emotion.into(),
-            tags: tags.iter().map(|t| Tag { key: t.key(), val: t.val() }).sorted().collect(),
+            tags: tags.iter().map(|t| Tag { key: t.key(), val: t.val() }).collect(),
             line: line.into(),
         };
 
@@ -645,8 +644,7 @@ impl LogState {
     ///   GUI might use it to get some useful information from the log.
     /// * `line` - The human-readable description of the event,
     ///   we have no intention to make it parsable.
-    pub fn log_deref_tags(&self, emotion: &str, mut tags: Vec<Tag>, line: &str) {
-        tags.sort();
+    pub fn log_deref_tags(&self, emotion: &str, tags: Vec<Tag>, line: &str) {
         let entry = LogEntry {
             time: now_ms(),
             emotion: emotion.into(),
