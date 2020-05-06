@@ -212,7 +212,7 @@ pub fn seednode_loop(ctx: MmArc, listener: TcpListener) {
                             Ok(read) => if read > 0 && buffer.len() > 0 {
                                 match json::from_str::<Json>(&buffer) {
                                     Ok(_) => unwrap!(lp_queue_command(&ctx2, buffer.clone())),
-                                    Err(e) => log!("Invalid JSON " (buffer) " from " (addr)),
+                                    Err(_) => (), // skip strings that are not valid JSON
                                 };
                                 buffer.clear();
                             } else if read == 0 {
