@@ -237,7 +237,6 @@ pub fn seednode_loop(ctx: MmArc, listener: std::net::TcpListener) {
                     match rx.next().await {
                         Some(msg) => if msg.from != peer_addr {
                             let mut line = msg.msg.to_string();
-                            log!("Sending msg " (line) " to peer " (peer_addr));
                             if !line.ends_with('\n') {
                                 line.push('\n');
                             }
