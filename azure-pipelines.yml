@@ -10,8 +10,6 @@ trigger:
   branches:
     include:
       - refs/heads/*
-    exclude:
-      - refs/heads/mm2-seednodes-optimisation
   paths:
     exclude:
       - README.md
