@@ -115,11 +115,12 @@ use std::future::Future as Future03;
 use std::intrinsics::copy;
 use std::io::{Write};
 use std::mem::{forget, size_of, zeroed};
+use std::net::SocketAddr;
 use std::os::raw::{c_char, c_void};
 use std::path::{Path, PathBuf};
 #[cfg(not(feature = "native"))]
 use std::pin::Pin;
-use std::ptr::{null_mut, read_volatile};
+use std::ptr::{read_volatile};
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::UNIX_EPOCH;
@@ -1104,37 +1105,39 @@ impl From<std::io::Error> for StringError {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct P2PMessage {
+    pub from: SocketAddr,
+    pub msg: Json,
+}
+
+impl P2PMessage {
+    pub fn from_json_with_default_addr(msg: Json) -> P2PMessage {
+        P2PMessage {
+            from: SocketAddr::new([0; 4].into(), 0),
+            msg,
+        }
+    }
+
+    pub fn from_serialize_with_default_addr<T: serde::Serialize>(msg: T) -> P2PMessage {
+        P2PMessage {
+            from: SocketAddr::new([0; 4].into(), 0),
+            msg: serde_json::to_value(msg).unwrap(),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct QueuedCommand {
     pub response_sock: i32,
     pub stats_json_only: i32,
     pub queue_id: u32,
-    pub msg: String,
+    pub msg: P2PMessage,
     // retstrp: *mut *mut c_char,
 }
 
 /// Register an RPC command that came internally or from the peer-to-peer bus.
-#[no_mangle]
-#[cfg(feature = "native")]
-pub extern "C" fn lp_queue_command_for_c (retstrp: *mut *mut c_char, buf: *mut c_char, response_sock: i32,
-                                          stats_json_only: i32, queue_id: u32) -> () {
-    if retstrp != null_mut() {
-        unsafe { *retstrp = null_mut() }
-    }
-
-    if buf == null_mut() {panic! ("!buf")}
-    let msg = String::from (unwrap! (unsafe {CStr::from_ptr (buf)} .to_str()));
-    let _cmd = QueuedCommand {
-        msg,
-        queue_id,
-        response_sock,
-        stats_json_only
-    };
-    panic! ("We need a context ID");
-    //unwrap! ((*COMMAND_QUEUE).0.send (cmd))
-}
-
-pub fn lp_queue_command (ctx: &mm_ctx::MmArc, msg: String) -> Result<(), String> {
+pub fn lp_queue_command (ctx: &mm_ctx::MmArc, msg: P2PMessage) -> Result<(), String> {
     // If we're helping a WASM then leave a copy of the broadcast for them.
     if let Some (ref mut cq) = *try_s! (ctx.command_queueʰ.lock()) {
         // Monotonic increment.

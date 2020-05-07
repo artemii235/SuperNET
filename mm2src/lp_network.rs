@@ -21,7 +21,7 @@
 
 use bytes::Bytes;
 use bitcrypto::ripemd160;
-use common::{lp_queue_command, now_float, now_ms, HyRes, QueuedCommand};
+use common::{lp_queue_command, now_ms, HyRes, QueuedCommand, P2PMessage};
 #[cfg(not(feature = "native"))]
 use common::helperᶜ;
 use common::executor::{spawn, Timer};
@@ -34,15 +34,13 @@ use futures::compat::Future01CompatExt;
 use futures::future::FutureExt;
 use primitives::hash::H160;
 use serde_json::{self as json, Value as Json};
-use serde_bencode::ser::to_bytes as bencode;
 use serde_bencode::de::from_bytes as bdecode;
-use socket2::Socket;
 use std::collections::hash_map::{HashMap, Entry};
 use std::io::{BufRead, BufReader, Write};
-use std::net::{IpAddr, TcpListener, TcpStream};
+use std::net::{IpAddr, TcpStream};
 use std::thread;
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener as AsyncTcpListener};
 
 use crate::mm2::lp_native_dex::lp_command_process;
@@ -123,7 +121,6 @@ fn rpc_reply_to_peer (handler: HyRes, cmd: QueuedCommand) {
 
 /// The thread processing the peer-to-peer messaging bus.
 pub async fn lp_command_q_loop(ctx: MmArc) {
-    use futures::StreamExt;
     use futures::future::{select, Either};
 
     let mut command_queueʳ = unwrap!(unwrap!(ctx.command_queueʳ.lock()).take().ok_or("!command_queueʳ"));
@@ -143,24 +140,16 @@ pub async fn lp_command_q_loop(ctx: MmArc) {
         // clean up messages older than 60 seconds
         processed_messages = processed_messages.drain().filter(|(_, timestamp)| timestamp + 60000 > now).collect();
 
-        let msg_hash = ripemd160(cmd.msg.as_bytes());
+        let msg_hash = ripemd160(cmd.msg.msg.to_string().as_bytes());
         match processed_messages.entry(msg_hash) {
             Entry::Vacant(e) => e.insert(now),
             Entry::Occupied(_) => continue, // skip the messages that we processed previously
         };
 
-        let json: Json = match json::from_str(&cmd.msg) {
-            Ok(j) => j,
-            Err(e) => {
-                log!("Error " (e) " parsing JSON from msg " (cmd.msg));
-                continue;
-            }
-        };
-
-        let method = json["method"].as_str();
+        let method = cmd.msg.msg["method"].as_str();
         if let Some(m) = method {
             if m == "swapstatus" {
-                let handler = save_stats_swap_status(&ctx, json["data"].clone());
+                let handler = save_stats_swap_status(&ctx, cmd.msg.msg["data"].clone());
                 rpc_reply_to_peer(handler, cmd);
                 continue;
             }
@@ -170,10 +159,10 @@ pub async fn lp_command_q_loop(ctx: MmArc) {
         // swapstatus is excluded from rebroadcast as the message is big and other nodes might just not need it
         let i_am_seed = ctx.conf["i_am_seed"].as_bool().unwrap_or(false);
         if i_am_seed {
-            ctx.broadcast_p2p_msg(&cmd.msg);
+            ctx.broadcast_p2p_msg(cmd.msg.clone());
         }
 
-        let json = match dispatcher(json, ctx.clone()) {
+        let json = match dispatcher(cmd.msg.msg.clone(), ctx.clone()) {
             DispatcherRes::Match(handler) => {
                 rpc_reply_to_peer(handler, cmd);
                 continue
@@ -190,15 +179,26 @@ pub async fn lp_command_q_loop(ctx: MmArc) {
 }
 
 /// The loop processing seednode activity as message relayer/rebroadcaster
-/// Non-blocking mode should be enabled on listener for this to work
-pub fn seednode_loop(ctx: MmArc, to_bind: std::net::SocketAddr) {
+pub fn seednode_loop(ctx: MmArc, listener: std::net::TcpListener) {
     let fut = async move {
-        let mut listener = AsyncTcpListener::bind(to_bind).await.unwrap();
+        let mut listener = AsyncTcpListener::from_std(listener).unwrap();
         let mut incoming = listener.incoming();
         while let Some(stream) = futures_util::StreamExt::next(&mut incoming).await {
-            let stream = stream.unwrap();
-            let addr = stream.peer_addr().unwrap();
-            ctx.log.log("😀", &[&"incoming_connection", &addr.to_string().as_str()], "New connection...");
+            let stream = match stream {
+                Ok(s) => s,
+                Err(e) => {
+                    log!("Error " (e) " on connection accept");
+                    continue;
+                },
+            };
+            let peer_addr = match stream.peer_addr() {
+                Ok(a) => a,
+                Err(e) => {
+                    log!("Could not get peer addr from stream " [stream] ", error " (e));
+                    continue;
+                },
+            };
+            ctx.log.log("😀", &[&"incoming_connection", &peer_addr.to_string().as_str()], "New connection...");
             let ctx_read = ctx.clone();
             let ctx_write = ctx.clone();
             let (tx, mut rx) = mpsc::unbounded();
@@ -211,19 +211,22 @@ pub fn seednode_loop(ctx: MmArc, to_bind: std::net::SocketAddr) {
                     match read.read_line(&mut buffer).await {
                         Ok(read) => if read > 0 && buffer.len() > 0 {
                             match json::from_str::<Json>(&buffer) {
-                                Ok(_) => unwrap!(lp_queue_command(&ctx_read, buffer.clone())),
+                                Ok(j) => unwrap!(lp_queue_command(&ctx_read, P2PMessage {
+                                    from: peer_addr,
+                                    msg: j,
+                                })),
                                 Err(_) => if buffer.len() > 1 {
                                     // minimum valid json length is 2
-                                    log!("Invalid JSON " (buffer) " from " (addr));
+                                    log!("Invalid JSON " (buffer) " from " (peer_addr));
                                 },
                             };
                             buffer.clear();
                         } else if read == 0 {
-                            ctx_read.log.log("😟", &[&"incoming_connection", &addr.to_string().as_str()], &format!("Reached EOF, dropping connection"));
+                            ctx_read.log.log("😟", &[&"incoming_connection", &peer_addr.to_string().as_str()], &format!("Reached EOF, dropping connection"));
                             break;
                         },
                         Err(e) => {
-                            ctx_read.log.log("😟", &[&"incoming_connection", &addr.to_string().as_str()], &format!("Error {} reading from socket, dropping connection", e));
+                            ctx_read.log.log("😟", &[&"incoming_connection", &peer_addr.to_string().as_str()], &format!("Error {} reading from socket, dropping connection", e));
                             break;
                         }
                     }
@@ -232,12 +235,16 @@ pub fn seednode_loop(ctx: MmArc, to_bind: std::net::SocketAddr) {
             let write_loop = async move {
                 loop {
                     match rx.next().await {
-                        Some(mut line) => {
-                            line.push('\n' as u8);
-                            match write.write_all(&line).await {
+                        Some(msg) => if msg.from != peer_addr {
+                            let mut line = msg.msg.to_string();
+                            log!("Sending msg " (line) " to peer " (peer_addr));
+                            if !line.ends_with('\n') {
+                                line.push('\n');
+                            }
+                            match write.write_all(line.as_bytes()).await {
                                 Ok(_) => (),
                                 Err(e) => {
-                                    ctx_write.log.log("😟", &[&"incoming_connection", &addr.to_string().as_str()], &format!("Error {} writing to socket, dropping connection", e));
+                                    ctx_write.log.log("😟", &[&"incoming_connection", &peer_addr.to_string().as_str()], &format!("Error {} writing to socket, dropping connection", e));
                                     break;
                                 }
                             };
@@ -247,6 +254,8 @@ pub fn seednode_loop(ctx: MmArc, to_bind: std::net::SocketAddr) {
                 }
             };
             spawn(async move {
+                // selecting over the read and write parts processing loops in order to
+                // drop both parts and close connection in case of errors
                 select! {
                     read = Box::pin(read_loop).fuse() => (),
                     write = Box::pin(write_loop).fuse() => (),
@@ -254,98 +263,20 @@ pub fn seednode_loop(ctx: MmArc, to_bind: std::net::SocketAddr) {
             });
         }
     };
+    // creating separate tokio 0.2 runtime as TcpListener requires it and doesn't work with
+    // shared tokio 0.1 core
     let mut runtime = tokio::runtime::Runtime::new().unwrap();
     runtime.block_on(fut);
-    /*
-    let mut clients = vec![];
-    let mut sent_msgs_counter = 0u64;
-    let mut total_msgs_size_counter = 0u64;
-    let mut max_msg_size = 0u64;
-    let mut status_h = ctx.log.status(&[&"seednode_loop_metrics"], "Started");
-    let socket2 = Socket::from(listener);
-    socket2.set_nodelay(true).unwrap();
-    socket2.set_send_buffer_size(200000).unwrap();
-    log!("TcpListener no delay " [socket2.nodelay()]);
-    log!("TcpListener send buffer size " [socket2.send_buffer_size()]);
-    let listener = TcpListener::from(socket2);
-    loop {
-        if ctx.is_stopping() { break }
-
-        match listener.accept() {
-            Ok((stream, addr)) => {
-                ctx.log.log("😀", &[&"incoming_connection", &addr.to_string().as_str()], "New connection...");
-                let socket2 = Socket::from(stream);
-                socket2.set_send_buffer_size(200000).unwrap();
-                log!("TcpStream send buffer size " [socket2.send_buffer_size()]);
-                socket2.set_nodelay(true).unwrap();
-                log!("TcpStream no delay " [socket2.nodelay()]);
-                let stream: TcpStream = socket2.into();
-                match stream.set_nonblocking(true) {
-                    Ok(_) => clients.push((BufReader::new(stream), addr, String::new())),
-                    Err(e) => ctx.log.log("😟", &[&"incoming_connection", &addr.to_string().as_str()], &format!("Error {} setting nonblocking mode", e)),
-                }
-            },
-            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => (),
-            Err(e) => panic!("encountered IO error: {}", e),
-        }
-
-        let mut commands = Vec::new();
-        clients = clients.drain_filter(|(client, addr, buf)| {
-            match client.read_line(buf) {
-                Ok(_) => {
-                    if buf.len() > 0 {
-                        let msgs = buf.split('\n');
-                        for msg in msgs {if !msg.is_empty() {commands.push(msg.to_string())}}
-                        buf.clear();
-                    }
-                    true
-                },
-                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => true,
-                Err(e) => {
-                    ctx.log.log("😟", &[&"incoming_connection", &addr.to_string().as_str()], &format!("Error {} reading from socket, dropping connection", e));
-                    false
-                },
-            }
-        }).collect();
-        for msg in commands {
-            unwrap!(lp_queue_command(&ctx, msg));
-        }
-
-        clients = match ctx.seednode_p2p_channel.1.recv_timeout(Duration::from_millis(1)) {
-            Ok(mut msg) => {
-                sent_msgs_counter += 1;
-                total_msgs_size_counter += msg.len() as u64;
-                max_msg_size = max_msg_size.max(msg.len() as u64);
-                status_h.status(&[&"seednode_loop_metrics"], &fomat!(
-                    "sent_msgs_counter " (sent_msgs_counter)
-                    ", total_msgs_size_counter " (total_msgs_size_counter)
-                    ", max_msg_size " (max_msg_size)
-                ));
-                clients.drain_filter(|(client, addr, _)| {
-                    msg.push('\n' as u8);
-                    match client.get_mut().write(&msg) {
-                        Ok(_) => true,
-                        Err(e) => {
-                            ctx.log.log("😟", &[&"incoming_connection", &addr.to_string().as_str()], &format!("Error {} writing to socket, dropping connection", e));
-                            false
-                        }
-                    }
-                }).collect()
-            },
-            Err(channel::RecvTimeoutError::Timeout) => clients,
-            Err(channel::RecvTimeoutError::Disconnected) => panic!("seednode_p2p_channel is disconnected"),
-        };
-    }
-    */
 }
 
 #[cfg(feature = "native")]
 pub async fn start_seednode_loop (ctx: &MmArc, myipaddr: IpAddr, mypubport: u16) -> Result<(), String> {
     log! ("i_am_seed at " (myipaddr) ":" (mypubport));
     let to_bind = std::net::SocketAddr::new(myipaddr, mypubport);
+    let listener = try_s!(std::net::TcpListener::bind(to_bind));
     try_s!(thread::Builder::new().name ("seednode_loop".into()) .spawn ({
         let ctx = ctx.clone();
-        move || seednode_loop(ctx, to_bind)
+        move || seednode_loop(ctx, listener)
     }));
     Ok(())
 }
@@ -466,6 +397,7 @@ fn start_queue_tap (ctx: MmArc) -> Result<(), String> {
     Ok(())
 }
 
+/*
 /// Poll the native helpers for messages coming from the seed nodes.
 #[cfg(feature = "native")]
 pub async fn p2p_tapʰ (req: Bytes) -> Result<Vec<u8>, String> {
@@ -499,7 +431,7 @@ pub async fn broadcast_p2p_msgʰ (req: Bytes) -> Result<Vec<u8>, String> {
     ctx.broadcast_p2p_msg (&args.msg);
     Ok (Vec::new())
 }
-
+*/
 /// Tells the native helpers to start the client_p2p_loop, collecting messages from the seed nodes.
 #[cfg(feature = "native")]
 pub async fn start_client_p2p_loopʰ (req: Bytes) -> Result<Vec<u8>, String> {
@@ -557,7 +489,14 @@ fn client_p2p_loop(ctx: MmArc, addrs: Vec<String>) {
                 Ok(_) => {
                     if conn.buf.len() > 0 {
                         let msgs = conn.buf.split('\n');
-                        for msg in msgs { if !msg.is_empty() { commands.push(msg.to_string()) } }
+                        for msg in msgs {
+                            if msg.len() > 1 {
+                                match json::from_str::<Json>(msg) {
+                                    Ok(j) => commands.push(P2PMessage::from_json_with_default_addr(j)),
+                                    Err(e) => ctx.log.log("😟", &[&"seed_connection", &conn.addr], &format!("Invalid JSON {}, error {}", msg, e)),
+                                }
+                            }
+                        }
                         conn.buf.clear();
                         conn.last_msg = now_ms();
                     }

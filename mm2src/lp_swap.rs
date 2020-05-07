@@ -61,7 +61,7 @@ use async_std::{sync as async_std_sync};
 use bigdecimal::BigDecimal;
 use coins::{lp_coinfind, TransactionEnum};
 use common::{
-    block_on, HyRes, read_dir, rpc_response, slurp, write,
+    block_on, HyRes, P2PMessage, read_dir, rpc_response, slurp, write,
     executor::spawn,
     mm_ctx::{from_ctx, MmArc}
 };
@@ -600,11 +600,11 @@ fn broadcast_my_swap_status(uuid: &str, ctx: &MmArc) -> Result<(), String> {
         SavedSwap::Maker(ref mut swap) => swap.hide_secret(),
     };
     try_s!(save_stats_swap(ctx, &status));
-    let status_string = json!({
+    let status = json!({
         "method": "swapstatus",
         "data": status,
-    }).to_string();
-    ctx.broadcast_p2p_msg(&status_string);
+    });
+    ctx.broadcast_p2p_msg(P2PMessage::from_serialize_with_default_addr(status));
     Ok(())
 }
 

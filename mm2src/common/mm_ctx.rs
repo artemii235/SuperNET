@@ -1,4 +1,3 @@
-use async_std::sync as async_std_sync;
 use bytes::Bytes;
 use crossbeam::{channel, Sender, Receiver};
 use futures::channel::mpsc;
@@ -23,7 +22,7 @@ use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, Weak};
 
-use crate::{bits256, block_on, small_rng, QueuedCommand};
+use crate::{bits256, block_on, P2PMessage, QueuedCommand, small_rng};
 use crate::log::{self, LogState};
 use futures::SinkExt;
 
@@ -79,7 +78,7 @@ pub struct MmCtx {
     /// The context belonging to the `prices` mod: `PricesContext`.
     pub prices_ctx: Mutex<Option<Arc<dyn Any + 'static + Send + Sync>>>,
     /// Seednode P2P message bus channel.
-    pub seednode_p2p_channel: Mutex<Vec<mpsc::UnboundedSender<Vec<u8>>>>,
+    pub seednode_p2p_channel: Mutex<Vec<mpsc::UnboundedSender<P2PMessage>>>,
     /// Standard node P2P message bus channel.
     pub client_p2p_channel: (Sender<Vec<u8>>, Receiver<Vec<u8>>),
     /// `lp_queue_command` shares messages with `lp_command_q_loop` via this channel.  
@@ -88,7 +87,7 @@ pub struct MmCtx {
     /// The end of the `command_queue` channel taken by `lp_command_q_loop`.
     pub command_queueʳ: Mutex<Option<mpsc::UnboundedReceiver<QueuedCommand>>>,
     /// Broadcast `lp_queue_command` messages saved for WASM.
-    pub command_queueʰ: Mutex<Option<Vec<(u64, String)>>>,
+    pub command_queueʰ: Mutex<Option<Vec<(u64, P2PMessage)>>>,
     /// RIPEMD160(SHA256(x)) where x is secp256k1 pubkey derived from passphrase.
     /// Replacement of `lp::G.LP_myrmd160`.
     pub rmd160: Constructible<H160>,
@@ -211,10 +210,9 @@ impl MmCtx {
 
     /// Sends the P2P message to a processing thread
     #[cfg(feature = "native")]
-    pub fn broadcast_p2p_msg(&self, msg: &str) {
+    pub fn broadcast_p2p_msg(&self, msg: P2PMessage) {
         let i_am_seed = self.conf["i_am_seed"].as_bool().unwrap_or(false);
         if i_am_seed {
-            let msg = msg.to_owned().into_bytes();
             let mut txs = self.seednode_p2p_channel.lock().unwrap();
             *txs = txs.drain_filter(|sender| {
                 match block_on(sender.send(msg.clone())) {
@@ -223,7 +221,7 @@ impl MmCtx {
                 }
             }).collect();
         } else {
-            unwrap!(self.client_p2p_channel.0.send(msg.to_owned().into_bytes()));
+            unwrap!(self.client_p2p_channel.0.send(msg.msg.to_string().into_bytes()));
     }   }
 
     #[cfg(not(feature = "native"))]
