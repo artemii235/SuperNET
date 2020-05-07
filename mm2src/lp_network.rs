@@ -199,53 +199,58 @@ pub fn seednode_loop(ctx: MmArc, to_bind: std::net::SocketAddr) {
             let stream = stream.unwrap();
             let addr = stream.peer_addr().unwrap();
             ctx.log.log("😀", &[&"incoming_connection", &addr.to_string().as_str()], "New connection...");
-            let ctx2 = ctx.clone();
+            let ctx_read = ctx.clone();
+            let ctx_write = ctx.clone();
             let (tx, mut rx) = mpsc::unbounded();
             ctx.seednode_p2p_channel.lock().unwrap().push(tx);
-            spawn(async move {
-                let mut stream = tokio::io::BufReader::new(stream);
+            let (read, mut write) = stream.into_split();
+            let read_loop = async move {
+                let mut read = tokio::io::BufReader::new(read);
                 let mut buffer = String::with_capacity(1024);
                 loop {
-                    select! {
-                        res = stream.read_line(&mut buffer).fuse() => match res {
-                            Ok(read) => if read > 0 && buffer.len() > 0 {
-                                match json::from_str::<Json>(&buffer) {
-                                    Ok(_) => unwrap!(lp_queue_command(&ctx2, buffer.clone())),
-                                    Err(_) => if buffer.len() > 1 {
-                                        // minimum valid json length is 2
-                                        log!("Invalid JSON " (buffer) " from " (addr));
-                                    },
-                                };
-                                buffer.clear();
-                            } else if read == 0 {
-                                ctx2.log.log("😟", &[&"incoming_connection", &addr.to_string().as_str()], &format!("Reached EOF, dropping connection"));
-                                break;
-                            },
-                            Err(e) => {
-                                ctx2.log.log("😟", &[&"incoming_connection", &addr.to_string().as_str()], &format!("Error {} reading from socket, dropping connection", e));
-                                break;
-                            }
+                    match read.read_line(&mut buffer).await {
+                        Ok(read) => if read > 0 && buffer.len() > 0 {
+                            match json::from_str::<Json>(&buffer) {
+                                Ok(_) => unwrap!(lp_queue_command(&ctx_read, buffer.clone())),
+                                Err(_) => if buffer.len() > 1 {
+                                    // minimum valid json length is 2
+                                    log!("Invalid JSON " (buffer) " from " (addr));
+                                },
+                            };
+                            buffer.clear();
+                        } else if read == 0 {
+                            ctx_read.log.log("😟", &[&"incoming_connection", &addr.to_string().as_str()], &format!("Reached EOF, dropping connection"));
+                            break;
                         },
-                        line = Box::pin(rx.next()).fuse() => match line {
-                            Some(mut line) => {
-                                if buffer.len() > 0 {
-                                    log!("There's something in read buffer and it will be probably lost");
-                                    log!((buffer));
-                                    log!((addr));
-                                }
-                                line.push('\n' as u8);
-                                match stream.write_all(&line).await {
-                                    Ok(_) => (),
-                                    Err(e) => {
-                                        ctx2.log.log("😟", &[&"incoming_connection", &addr.to_string().as_str()], &format!("Error {} writing to socket, dropping connection", e));
-                                        break;
-                                    }
-                                };
-                            }
-                            None => break,
+                        Err(e) => {
+                            ctx_read.log.log("😟", &[&"incoming_connection", &addr.to_string().as_str()], &format!("Error {} reading from socket, dropping connection", e));
+                            break;
                         }
                     }
                 }
+            };
+            let write_loop = async move {
+                loop {
+                    match rx.next().await {
+                        Some(mut line) => {
+                            line.push('\n' as u8);
+                            match write.write_all(&line).await {
+                                Ok(_) => (),
+                                Err(e) => {
+                                    ctx_write.log.log("😟", &[&"incoming_connection", &addr.to_string().as_str()], &format!("Error {} writing to socket, dropping connection", e));
+                                    break;
+                                }
+                            };
+                        }
+                        None => break,
+                    }
+                }
+            };
+            spawn(async move {
+                select! {
+                    read = Box::pin(read_loop).fuse() => (),
+                    write = Box::pin(write_loop).fuse() => (),
+                };
             });
         }
     };
