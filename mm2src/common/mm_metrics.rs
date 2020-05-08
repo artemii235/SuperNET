@@ -3,8 +3,8 @@ use crate::log::{LogArc, LogWeak, Tag};
 use gstuff::Constructible;
 use hdrhistogram::Histogram;
 use itertools::Itertools;
-use metrics_core::{Key, Label, Observe, Observer, ScopedString};
-use metrics_runtime::Receiver;
+use metrics_core::{Key, Label, Drain, Observe, Observer, ScopedString, Builder};
+use metrics_runtime::{Receiver, observers::PrometheusBuilder};
 pub use metrics_runtime::Sink;
 use metrics_util::{parse_quantiles, Quantile};
 use serde_json::{self as json, Value as Json};
@@ -68,6 +68,118 @@ macro_rules! mm_timing {
     }};
 }
 
+#[cfg(feature = "native")]
+pub mod prometheus {
+    use crate::wio::CORE;
+    use futures01::{future, self, Future};
+    use futures::compat::Future01CompatExt;
+    use futures::future::FutureExt;
+    use hyper::http::{self, header, Request, Response, StatusCode};
+    use hyper::{Body, Server};
+    use hyper::service::{make_service_fn, service_fn};
+    use std::convert::Infallible;
+    use std::net::SocketAddr;
+    use super::*;
+
+    #[derive(Clone)]
+    pub struct PrometheusCredentials {
+        pub username: String,
+        pub password: String,
+    }
+
+    pub fn spawn_prometheus_exporter(metrics: MetricsWeak,
+                                     address: SocketAddr,
+                                     credentials: Option<PrometheusCredentials>)
+                                     -> Result<(), String> {
+        let make_svc = make_service_fn(move |_conn| {
+            let metrics = metrics.clone();
+            let credentials = credentials.clone();
+            Ok::<_, Infallible>(
+                service_fn(move |req| {
+                    future::result(scrape_handle(req, metrics.clone(), credentials.clone()))
+                })
+            )
+        });
+
+        let server = try_s!(Server::try_bind(&address))
+            .http1_half_close(false) // https://github.com/hyperium/hyper/issues/1764
+            .executor(try_s!(CORE.lock()).executor())
+            .serve(make_svc);
+
+        let server = server.then(|r| -> Result<_, ()> {
+            if let Err(err) = r {
+                log!((err));
+            };
+            Ok(())
+        });
+
+        spawn(server.compat().map(|_| ()));
+        Ok(())
+    }
+
+    fn scrape_handle(req: Request<Body>,
+                     metrics: MetricsWeak,
+                     credentials: Option<PrometheusCredentials>)
+                     -> Result<Response<Body>, http::Error> {
+        fn on_error(status: StatusCode, error: String) -> Result<Response<Body>, http::Error> {
+            log!((error));
+            Response::builder()
+                .status(status)
+                .body(Body::empty())
+                .map_err(|err| {
+                    log!((err));
+                    err
+                })
+        }
+
+        if req.uri() != "/metrics" {
+            return on_error(StatusCode::BAD_REQUEST, ERRL!("Unexpected URI {}", req.uri()));
+        }
+
+        if let Some(credentials) = credentials {
+            if let Err(err) = check_auth_credentials(&req, credentials) {
+                return on_error(StatusCode::UNAUTHORIZED, err);
+            }
+        }
+
+        let metrics = match MetricsArc::from_weak(&metrics) {
+            Some(m) => m,
+            _ => return on_error(StatusCode::BAD_REQUEST, ERRL!("Metrics system unavailable")),
+        };
+
+        let body = match metrics.collect_prometheus_format() {
+            Ok(body) => Body::from(body),
+            _ => return on_error(StatusCode::BAD_REQUEST, ERRL!("Metrics system is not initialized yet")),
+        };
+
+        Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/plain")
+            .body(body)
+            .map_err(|err| {
+                log!((err));
+                err
+            })
+    }
+
+    fn check_auth_credentials(req: &Request<Body>, expected: PrometheusCredentials) -> Result<(), String> {
+        let header_value = req.headers()
+            .get(header::AUTHORIZATION)
+            .ok_or(ERRL!("Expect AUTHORIZATION header"))
+            .and_then(|header| Ok(try_s!(header.to_str())))
+            ?;
+
+        let username_password = format!("{}:{}", expected.username, expected.password);
+        let expected = format!("Basic {}", base64::encode_config(&username_password, base64::URL_SAFE));
+
+        if header_value != expected {
+            return Err(format!("Invalid credentials: {}", header_value));
+        }
+
+        Ok(())
+    }
+}
+
 pub trait TrySink {
     fn try_sink(&self) -> Option<Sink>;
 }
@@ -126,6 +238,18 @@ impl Metrics {
         observer.into_json()
     }
 
+    /// Collect the metrics in Prometheus format.
+    pub fn collect_prometheus_format(&self) -> Result<String, String> {
+        let receiver = try_s!(self.try_receiver());
+        let controller = receiver.controller();
+
+        let mut observer = PrometheusBuilder::new().set_quantiles(QUANTILES).build();
+        controller.observe(&mut observer);
+
+        Ok(observer.drain())
+    }
+
+    /// Try get receiver.
     fn try_receiver(&self) -> Result<&Receiver, String> {
         self.receiver.ok_or("metrics system is not initialized yet".into())
     }
@@ -429,8 +553,7 @@ struct TagExporter<C>
 }
 
 impl<C> TagExporter<C>
-    where
-        C: Observe {
+    where C: Observe {
     /// Run endless async loop
     async fn run(mut self, interval: f64) {
         loop {
@@ -529,6 +652,7 @@ mod tests {
     use crate::{block_on, log::LogArc};
     use crate::log::LogState;
     use super::*;
+    use super::prometheus::*;
 
     #[test]
     fn test_initialization() {

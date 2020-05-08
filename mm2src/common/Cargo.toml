@@ -20,6 +20,7 @@ doctest = false
 arrayref = "0.3"
 atomic = "0.4"
 backtrace = "0.3"
+base64 = "0.10.0"
 bigdecimal = { version = "0.1", features = ["serde"] }
 bitcrypto = { git = "https://github.com/artemii235/parity-bitcoin.git" }
 bytes = "0.4"
@@ -43,7 +44,7 @@ keys = { git = "https://github.com/artemii235/parity-bitcoin.git" }
 lazy_static = "1.2"
 libc = { version = "0.2", optional = true }
 metrics = "0.12"
-metrics-runtime = {version = "0.13", default-features = false }
+metrics-runtime = {version = "0.13", default-features = false, features = ["metrics-observer-prometheus"] }
 metrics-core = "0.5"
 metrics-util = "0.3"
 num-bigint = { version = "0.2", features = ["serde", "std"] }
