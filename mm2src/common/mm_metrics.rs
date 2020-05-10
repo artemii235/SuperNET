@@ -71,7 +71,7 @@ macro_rules! mm_timing {
 #[cfg(feature = "native")]
 pub mod prometheus {
     use crate::wio::CORE;
-    use futures01::{future, self, Future};
+    use futures01::{self, future, Future};
     use futures::compat::Future01CompatExt;
     use futures::future::FutureExt;
     use hyper::http::{self, header, Request, Response, StatusCode};
@@ -83,12 +83,12 @@ pub mod prometheus {
 
     #[derive(Clone)]
     pub struct PrometheusCredentials {
-        pub username: String,
-        pub password: String,
+        pub userpass: String,
     }
 
     pub fn spawn_prometheus_exporter(metrics: MetricsWeak,
                                      address: SocketAddr,
+                                     shutdown_detector: impl Future<Item=(), Error=()> + 'static + Send,
                                      credentials: Option<PrometheusCredentials>)
                                      -> Result<(), String> {
         let make_svc = make_service_fn(move |_conn| {
@@ -104,7 +104,8 @@ pub mod prometheus {
         let server = try_s!(Server::try_bind(&address))
             .http1_half_close(false) // https://github.com/hyperium/hyper/issues/1764
             .executor(try_s!(CORE.lock()).executor())
-            .serve(make_svc);
+            .serve(make_svc)
+            .with_graceful_shutdown(shutdown_detector);
 
         let server = server.then(|r| -> Result<_, ()> {
             if let Err(err) = r {
@@ -133,7 +134,7 @@ pub mod prometheus {
         }
 
         if req.uri() != "/metrics" {
-            return on_error(StatusCode::BAD_REQUEST, ERRL!("Unexpected URI {}", req.uri()));
+            return on_error(StatusCode::BAD_REQUEST, ERRL!("Warning Prometheus: unexpected URI {}", req.uri()));
         }
 
         if let Some(credentials) = credentials {
@@ -144,12 +145,12 @@ pub mod prometheus {
 
         let metrics = match MetricsArc::from_weak(&metrics) {
             Some(m) => m,
-            _ => return on_error(StatusCode::BAD_REQUEST, ERRL!("Metrics system unavailable")),
+            _ => return on_error(StatusCode::BAD_REQUEST, ERRL!("Warning Prometheus: metrics system unavailable")),
         };
 
         let body = match metrics.collect_prometheus_format() {
             Ok(body) => Body::from(body),
-            _ => return on_error(StatusCode::BAD_REQUEST, ERRL!("Metrics system is not initialized yet")),
+            _ => return on_error(StatusCode::BAD_REQUEST, ERRL!("Warning Prometheus: metrics system is not initialized yet")),
         };
 
         Response::builder()
@@ -165,15 +166,14 @@ pub mod prometheus {
     fn check_auth_credentials(req: &Request<Body>, expected: PrometheusCredentials) -> Result<(), String> {
         let header_value = req.headers()
             .get(header::AUTHORIZATION)
-            .ok_or(ERRL!("Expect AUTHORIZATION header"))
+            .ok_or(ERRL!("Warning Prometheus: authorization required"))
             .and_then(|header| Ok(try_s!(header.to_str())))
             ?;
 
-        let username_password = format!("{}:{}", expected.username, expected.password);
-        let expected = format!("Basic {}", base64::encode_config(&username_password, base64::URL_SAFE));
+        let expected = format!("Basic {}", base64::encode_config(&expected.userpass, base64::URL_SAFE));
 
         if header_value != expected {
-            return Err(format!("Invalid credentials: {}", header_value));
+            return Err(format!("Warning Prometheus: invalid credentials: {}", header_value));
         }
 
         Ok(())
