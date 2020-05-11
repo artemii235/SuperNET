@@ -252,7 +252,7 @@ pub fn seednode_loop(ctx: MmArc, listener: std::net::TcpListener) {
                     }
                 }
             };
-            spawn(async move {
+            tokio::spawn(async move {
                 // selecting over the read and write parts processing loops in order to
                 // drop both parts and close connection in case of errors
                 select! {
