@@ -221,7 +221,7 @@ impl MmCtx {
                 }
             }).collect();
         } else {
-            unwrap!(self.client_p2p_channel.0.send(msg.msg.to_string().into_bytes()));
+            unwrap!(self.client_p2p_channel.0.send(msg.content.into_bytes()));
     }   }
 
     #[cfg(not(feature = "native"))]

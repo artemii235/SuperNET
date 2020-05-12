@@ -1108,21 +1108,21 @@ impl From<std::io::Error> for StringError {
 #[derive(Clone, Debug)]
 pub struct P2PMessage {
     pub from: SocketAddr,
-    pub msg: Json,
+    pub content: String,
 }
 
 impl P2PMessage {
-    pub fn from_json_with_default_addr(msg: Json) -> P2PMessage {
+    pub fn from_string_with_default_addr(content: String) -> P2PMessage {
         P2PMessage {
             from: SocketAddr::new([0; 4].into(), 0),
-            msg,
+            content,
         }
     }
 
-    pub fn from_serialize_with_default_addr<T: serde::Serialize>(msg: T) -> P2PMessage {
+    pub fn from_serialize_with_default_addr<T: serde::Serialize>(msg: &T) -> P2PMessage {
         P2PMessage {
             from: SocketAddr::new([0; 4].into(), 0),
-            msg: serde_json::to_value(msg).unwrap(),
+            content: serde_json::to_string(msg).unwrap(),
         }
     }
 }

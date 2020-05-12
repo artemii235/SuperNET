@@ -604,7 +604,7 @@ fn broadcast_my_swap_status(uuid: &str, ctx: &MmArc) -> Result<(), String> {
         "method": "swapstatus",
         "data": status,
     });
-    ctx.broadcast_p2p_msg(P2PMessage::from_serialize_with_default_addr(status));
+    ctx.broadcast_p2p_msg(P2PMessage::from_serialize_with_default_addr(&status));
     Ok(())
 }
 

@@ -140,16 +140,25 @@ pub async fn lp_command_q_loop(ctx: MmArc) {
         // clean up messages older than 60 seconds
         processed_messages = processed_messages.drain().filter(|(_, timestamp)| timestamp + 60000 > now).collect();
 
-        let msg_hash = ripemd160(cmd.msg.msg.to_string().as_bytes());
+        let msg_hash = ripemd160(cmd.msg.content.as_bytes());
         match processed_messages.entry(msg_hash) {
             Entry::Vacant(e) => e.insert(now),
             Entry::Occupied(_) => continue, // skip the messages that we processed previously
         };
 
-        let method = cmd.msg.msg["method"].as_str();
+        let json: Json = match json::from_str(&cmd.msg.content) {
+            Ok(j) => j,
+            Err(e) => {
+                if cmd.msg.content.len() > 1 {
+                    log!("Invalid JSON " (cmd.msg.content) " from " (cmd.msg.from));
+                }
+                continue;
+            },
+        };
+        let method = json["method"].as_str();
         if let Some(m) = method {
             if m == "swapstatus" {
-                let handler = save_stats_swap_status(&ctx, cmd.msg.msg["data"].clone());
+                let handler = save_stats_swap_status(&ctx, json["data"].clone());
                 rpc_reply_to_peer(handler, cmd);
                 continue;
             }
@@ -162,7 +171,7 @@ pub async fn lp_command_q_loop(ctx: MmArc) {
             ctx.broadcast_p2p_msg(cmd.msg.clone());
         }
 
-        let json = match dispatcher(cmd.msg.msg.clone(), ctx.clone()) {
+        let json = match dispatcher(json, ctx.clone()) {
             DispatcherRes::Match(handler) => {
                 rpc_reply_to_peer(handler, cmd);
                 continue
@@ -210,16 +219,10 @@ pub fn seednode_loop(ctx: MmArc, listener: std::net::TcpListener) {
                 loop {
                     match read.read_line(&mut buffer).await {
                         Ok(read) => if read > 0 && buffer.len() > 0 {
-                            match json::from_str::<Json>(&buffer) {
-                                Ok(j) => unwrap!(lp_queue_command(&ctx_read, P2PMessage {
-                                    from: peer_addr,
-                                    msg: j,
-                                })),
-                                Err(_) => if buffer.len() > 1 {
-                                    // minimum valid json length is 2
-                                    log!("Invalid JSON " (buffer) " from " (peer_addr));
-                                },
-                            };
+                            unwrap!(lp_queue_command(&ctx_read, P2PMessage {
+                                from: peer_addr,
+                                content: buffer.clone(),
+                            }));
                             buffer.clear();
                         } else if read == 0 {
                             ctx_read.log.log("😟", &[&"incoming_connection", &peer_addr.to_string().as_str()], &format!("Reached EOF, dropping connection"));
@@ -235,12 +238,11 @@ pub fn seednode_loop(ctx: MmArc, listener: std::net::TcpListener) {
             let write_loop = async move {
                 loop {
                     match rx.next().await {
-                        Some(msg) => if msg.from != peer_addr {
-                            let mut line = msg.msg.to_string();
-                            if !line.ends_with('\n') {
-                                line.push('\n');
+                        Some(mut msg) => if msg.from != peer_addr {
+                            if !msg.content.ends_with('\n') {
+                                msg.content.push('\n');
                             }
-                            match write.write_all(line.as_bytes()).await {
+                            match write.write_all(msg.content.as_bytes()).await {
                                 Ok(_) => (),
                                 Err(e) => {
                                     ctx_write.log.log("😟", &[&"incoming_connection", &peer_addr.to_string().as_str()], &format!("Error {} writing to socket, dropping connection", e));
@@ -490,10 +492,7 @@ fn client_p2p_loop(ctx: MmArc, addrs: Vec<String>) {
                         let msgs = conn.buf.split('\n');
                         for msg in msgs {
                             if msg.len() > 1 {
-                                match json::from_str::<Json>(msg) {
-                                    Ok(j) => commands.push(P2PMessage::from_json_with_default_addr(j)),
-                                    Err(e) => ctx.log.log("😟", &[&"seed_connection", &conn.addr], &format!("Invalid JSON {}, error {}", msg, e)),
-                                }
+                                commands.push(P2PMessage::from_string_with_default_addr(msg.to_owned()));
                             }
                         }
                         conn.buf.clear();

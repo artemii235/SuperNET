@@ -542,7 +542,7 @@ pub fn lp_trade_command(
                 taker_order_uuid: reserved_msg.taker_order_uuid,
                 maker_order_uuid: reserved_msg.maker_order_uuid,
             };
-            ctx.broadcast_p2p_msg(P2PMessage::from_serialize_with_default_addr(connect.clone()));
+            ctx.broadcast_p2p_msg(P2PMessage::from_serialize_with_default_addr(&connect));
             let taker_match = TakerMatch {
                 reserved: reserved_msg,
                 connect,
@@ -617,7 +617,7 @@ pub fn lp_trade_command(
                     taker_order_uuid: taker_request.uuid,
                     maker_order_uuid: *uuid,
                 };
-                ctx.broadcast_p2p_msg(P2PMessage::from_serialize_with_default_addr(reserved.clone()));
+                ctx.broadcast_p2p_msg(P2PMessage::from_serialize_with_default_addr(&reserved));
                 let maker_match = MakerMatch {
                     request: taker_request,
                     reserved,
@@ -662,7 +662,7 @@ pub fn lp_trade_command(
                 maker_order_uuid: connect_msg.maker_order_uuid,
                 method: "connected".into(),
             };
-            ctx.broadcast_p2p_msg(P2PMessage::from_serialize_with_default_addr(connected.clone()));
+            ctx.broadcast_p2p_msg(P2PMessage::from_serialize_with_default_addr(&connected));
             order_match.connect = Some(connect_msg);
             order_match.connected = Some(connected);
             my_order.started_swaps.push(order_match.request.uuid);
@@ -801,7 +801,7 @@ pub fn lp_auto_buy(ctx: &MmArc, input: AutoBuyInput) -> Result<String, String> {
         action,
         match_by: input.match_by,
     };
-    ctx.broadcast_p2p_msg(P2PMessage::from_serialize_with_default_addr(request.clone()));
+    ctx.broadcast_p2p_msg(P2PMessage::from_serialize_with_default_addr(&request));
     let result = json!({
         "result": request
     }).to_string();
@@ -950,12 +950,12 @@ pub fn lp_post_price_recv(ctx: &MmArc, req: Json) -> HyRes {
 }
 
 fn lp_send_price_ping(req: &PricePingRequest, ctx: &MmArc) -> Result<(), String> {
-    // TODO this is required to process the set price message on our own node, it's the easiest way now
-    //      there might be a better way of doing this so we should consider refactoring
+    let msg = P2PMessage::from_serialize_with_default_addr(&req);
     let req_value = try_s!(json::to_value(req));
     let ctxʹ = ctx.clone();
-    let msg = P2PMessage::from_json_with_default_addr(req_value.clone());
 
+    // TODO this is required to process the set price message on our own node, it's the easiest way now
+    //      there might be a better way of doing this so we should consider refactoring
     spawn(async move {
         let rc = lp_post_price_recv(&ctxʹ, req_value).compat().await;
         if let Err(err) = rc {log!("!lp_post_price_recv: "(err))}
