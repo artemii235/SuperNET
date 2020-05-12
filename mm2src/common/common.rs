@@ -63,6 +63,7 @@ pub mod log;
 #[macro_use]
 pub mod mm_metrics;
 
+pub mod file_lock;
 #[cfg(feature = "native")]
 pub mod for_c;
 pub mod custom_futures;

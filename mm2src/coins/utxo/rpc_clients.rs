@@ -134,7 +134,7 @@ impl UtxoRpcClientEnum {
 
 /// Generic unspent info required to build transactions, we need this separate type because native
 /// and Electrum provide different list_unspent format.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct UnspentInfo {
     pub outpoint: OutPoint,
     pub value: u64,
@@ -160,6 +160,8 @@ pub trait UtxoRpcClientOps: fmt::Debug + Send + Sync + 'static {
 
     /// returns fee estimation per KByte in satoshis
     fn estimate_fee_sat(&self, decimals: u8, fee_method: &EstimateFeeMethod) -> RpcRes<u64>;
+
+    fn get_relay_fee(&self) -> RpcRes<BigDecimal>;
 
     fn find_output_spend(&self, tx: &UtxoTx, vout: usize, from_block: u64) -> Box<dyn Future<Item=Option<UtxoTx>, Error=String> + Send>;
 }
@@ -239,6 +241,41 @@ pub struct ListSinceBlockRes {
     transactions: Vec<ListTransactionsItem>,
     #[serde(rename = "lastblock")]
     last_block: H256Json,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct NetworkInfoLocalAddress {
+    address: String,
+    port: u16,
+    score: u64,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct NetworkInfoNetwork {
+    name: String,
+    limited: bool,
+    reachable: bool,
+    proxy: String,
+    proxy_randomize_credentials: bool,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct NetworkInfo {
+    connections: u64,
+    #[serde(rename = "localaddresses")]
+    local_addresses: Vec<NetworkInfoLocalAddress>,
+    #[serde(rename = "localservices")]
+    local_services: String,
+    networks: Vec<NetworkInfoNetwork>,
+    #[serde(rename = "protocolversion")]
+    protocol_version: u64,
+    #[serde(rename = "relayfee")]
+    relay_fee: BigDecimal,
+    subversion: String,
+    #[serde(rename = "timeoffset")]
+    time_offset: u64,
+    version: u64,
+    warnings: String,
 }
 
 #[derive(Debug)]
@@ -426,6 +463,10 @@ impl UtxoRpcClientOps for NativeClient {
         }
     }
 
+    fn get_relay_fee(&self) -> RpcRes<BigDecimal> {
+        Box::new(self.get_network_info().map(|info| info.relay_fee))
+    }
+
     fn find_output_spend(&self, tx: &UtxoTx, vout: usize, from_block: u64) -> Box<dyn Future<Item=Option<UtxoTx>, Error=String> + Send> {
         let selfi = self.clone();
         let tx = tx.clone();
@@ -567,6 +608,11 @@ impl NativeClientImpl {
     /// https://bitcoin.org/en/developer-reference#sendtoaddress
     pub fn send_to_address(&self, addr: &str, amount: &BigDecimal) -> RpcRes<H256Json> {
         rpc_func!(self, "sendtoaddress", addr, amount)
+    }
+
+    /// https://bitcoin.org/en/developer-reference#getnetworkinfo
+    pub fn get_network_info(&self) -> RpcRes<NetworkInfo> {
+        rpc_func!(self, "getnetworkinfo")
     }
 }
 
@@ -1108,6 +1154,10 @@ impl UtxoRpcClientOps for ElectrumClient {
 
     fn send_raw_transaction(&self, tx: BytesJson) -> RpcRes<H256Json> {
         self.blockchain_transaction_broadcast(tx)
+    }
+
+    fn get_relay_fee(&self) -> RpcRes<BigDecimal> {
+        rpc_func!(self, "blockchain.relayfee")
     }
 
     fn find_output_spend(&self, tx: &UtxoTx, vout: usize, _from_block: u64) -> Box<dyn Future<Item=Option<UtxoTx>, Error=String> + Send> {
