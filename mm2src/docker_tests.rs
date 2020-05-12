@@ -225,7 +225,7 @@ mod docker_tests {
     #[test]
     fn test_search_for_swap_tx_spend_native_was_refunded_taker() {
         let timeout = (now_ms() / 1000) + 120; // timeout if test takes more than 120 seconds to run
-        let (_arc, coin, _) = generate_coin_with_random_privkey("MYCOIN", 1000);
+        let (_ctx, coin, _) = generate_coin_with_random_privkey("MYCOIN", 1000);
 
         let time_lock = (now_ms() / 1000) as u32 - 3600;
         let tx = coin.send_taker_payment(
@@ -259,7 +259,7 @@ mod docker_tests {
     #[test]
     fn test_search_for_swap_tx_spend_native_was_refunded_maker() {
         let timeout = (now_ms() / 1000) + 120; // timeout if test takes more than 120 seconds to run
-        let (coin, _) = generate_coin_with_random_privkey("MYCOIN", 1000);
+        let (_ctx, coin, _) = generate_coin_with_random_privkey("MYCOIN", 1000);
 
         let time_lock = (now_ms() / 1000) as u32 - 3600;
         let tx = coin.send_maker_payment(
@@ -293,7 +293,7 @@ mod docker_tests {
     #[test]
     fn test_search_for_taker_swap_tx_spend_native_was_spent_by_maker() {
         let timeout = (now_ms() / 1000) + 120; // timeout if test takes more than 120 seconds to run
-        let (_arc, coin, _) = generate_coin_with_random_privkey("MYCOIN", 1000);
+        let (_ctx, coin, _) = generate_coin_with_random_privkey("MYCOIN", 1000);
         let secret = [0; 32];
 
         let time_lock = (now_ms() / 1000) as u32 - 3600;
@@ -328,7 +328,7 @@ mod docker_tests {
     #[test]
     fn test_search_for_maker_swap_tx_spend_native_was_spent_by_taker() {
         let timeout = (now_ms() / 1000) + 120; // timeout if test takes more than 120 seconds to run
-        let (coin, _) = generate_coin_with_random_privkey("MYCOIN", 1000);
+        let (_ctx, coin, _) = generate_coin_with_random_privkey("MYCOIN", 1000);
         let secret = [0; 32];
 
         let time_lock = (now_ms() / 1000) as u32 - 3600;
@@ -363,7 +363,7 @@ mod docker_tests {
     // https://github.com/KomodoPlatform/atomicDEX-API/issues/554
     #[test]
     fn order_should_be_cancelled_when_entire_balance_is_withdrawn() {
-        let (_arc, _, priv_key) = generate_coin_with_random_privkey("MYCOIN", 1000);
+        let (_ctx, _, priv_key) = generate_coin_with_random_privkey("MYCOIN", 1000);
         let coins = json! ([
             {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000},
             {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":1000},
@@ -465,8 +465,8 @@ mod docker_tests {
     // https://github.com/KomodoPlatform/atomicDEX-API/issues/471
     #[test]
     fn match_and_trade_max() {
-        let (_arc, _, bob_priv_key) = generate_coin_with_random_privkey("MYCOIN", 1000);
-        let (_arc, _, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN1", 2000);
+        let (_ctx, _, bob_priv_key) = generate_coin_with_random_privkey("MYCOIN", 1000);
+        let (_ctx, _, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN1", 2000);
         let coins = json! ([
             {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000},
             {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":1000},
@@ -552,8 +552,8 @@ mod docker_tests {
 
     #[test]
     fn swaps_should_stop_on_stop_rpc() {
-        let (_, bob_priv_key) = generate_coin_with_random_privkey("MYCOIN", 1000);
-        let (_, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN1", 2000);
+        let (_ctx, _, bob_priv_key) = generate_coin_with_random_privkey("MYCOIN", 1000);
+        let (_ctx, _, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN1", 2000);
         let coins = json! ([
             {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000},
             {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":1000},

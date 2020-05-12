@@ -732,6 +732,7 @@ fn test_generate_transaction_relay_fee_is_used_when_dynamic_fee_is_lower() {
         coin_ticker: "RICK".into(),
         uri: "http://127.0.0.1:10271".to_owned(),
         auth: fomat!("Basic " (base64_encode("user481805103:pass97a61c8d048bcf468c6c39a314970e557f57afd1d8a5edee917fb29bafb3a43371", URL_SAFE))),
+        event_handlers: Default::default(),
     };
 
     static mut GET_RELAY_FEE_CALLED: bool = false;
@@ -776,6 +777,7 @@ fn test_generate_tx_fee_is_correct_when_dynamic_fee_is_larger_than_relay() {
         coin_ticker: "RICK".into(),
         uri: "http://127.0.0.1:10271".to_owned(),
         auth: fomat!("Basic " (base64_encode("user481805103:pass97a61c8d048bcf468c6c39a314970e557f57afd1d8a5edee917fb29bafb3a43371", URL_SAFE))),
+        event_handlers: Default::default(),
     };
 
     static mut GET_RELAY_FEE_CALLED: bool = false;

@@ -652,7 +652,6 @@ mod tests {
     use crate::{block_on, log::LogArc};
     use crate::log::LogState;
     use super::*;
-    use super::prometheus::*;
 
     #[test]
     fn test_initialization() {
