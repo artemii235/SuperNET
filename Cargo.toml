@@ -55,6 +55,7 @@ opt-level = 1
 [profile.release]
 # Due to the "overrides" only affects our workspace crates, as intended.
 debug = true
+debug-assertions = false
 # For better or worse, might affect the stack traces in our portion of the code.
 #opt-level = 1
 
