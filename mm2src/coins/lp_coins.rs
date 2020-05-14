@@ -62,13 +62,18 @@ macro_rules! try_fus {
 pub mod coins_tests;
 pub mod eth;
 use self::eth::{eth_coin_from_conf_and_request, EthCoin, EthTxFeeDetails, SignedEthTx};
+pub mod qtum;
 pub mod utxo;
-use self::utxo::{utxo_coin_from_conf_and_request, UtxoCoin, UtxoFeeDetails, UtxoTx};
+pub mod utxo_standard;
+use self::utxo::{UtxoFeeDetails, UtxoTx};
+use self::qtum::{qrc20_coin_from_conf_and_request};
 #[doc(hidden)]
 #[allow(unused_variables)]
 pub mod test_coin;
 pub use self::test_coin::TestCoin;
 use ethereum_types::H160;
+use crate::qtum::Qrc20Coin;
+use crate::utxo_standard::{UtxoStandardCoin, utxo_standard_coin_from_conf_and_request};
 
 pub trait Transaction: Debug + 'static {
     /// Raw transaction bytes of the transaction
@@ -405,25 +410,35 @@ pub trait MmCoin: SwapOps + MarketCoinOps + Debug + Send + Sync + 'static {
 
 #[derive(Clone, Debug)]
 pub enum MmCoinEnum {
-    UtxoCoin (UtxoCoin),
-    EthCoin (EthCoin),
-    Test (TestCoin)
+    UtxoCoin(UtxoStandardCoin),
+    Qrc20Coin(Qrc20Coin),
+    EthCoin(EthCoin),
+    Test(TestCoin),
 }
 
-impl From<UtxoCoin> for MmCoinEnum {
-    fn from (c: UtxoCoin) -> MmCoinEnum {
-        MmCoinEnum::UtxoCoin (c)
-}   }
+impl From<UtxoStandardCoin> for MmCoinEnum {
+    fn from(c: UtxoStandardCoin) -> MmCoinEnum {
+        MmCoinEnum::UtxoCoin(c)
+    }
+}
 
 impl From<EthCoin> for MmCoinEnum {
-    fn from (c: EthCoin) -> MmCoinEnum {
-        MmCoinEnum::EthCoin (c)
-}   }
+    fn from(c: EthCoin) -> MmCoinEnum {
+        MmCoinEnum::EthCoin(c)
+    }
+}
 
 impl From<TestCoin> for MmCoinEnum {
-    fn from (c: TestCoin) -> MmCoinEnum {
-        MmCoinEnum::Test (c)
-}   }
+    fn from(c: TestCoin) -> MmCoinEnum {
+        MmCoinEnum::Test(c)
+    }
+}
+
+impl From<Qrc20Coin> for MmCoinEnum {
+    fn from(c: Qrc20Coin) -> MmCoinEnum {
+        MmCoinEnum::Qrc20Coin(c)
+    }
+}
 
 // NB: When stable and groked by IDEs, `enum_dispatch` can be used instead of `Deref` to speed things up.
 impl Deref for MmCoinEnum {
@@ -431,6 +446,7 @@ impl Deref for MmCoinEnum {
     fn deref (&self) -> &dyn MmCoin {
         match self {
             &MmCoinEnum::UtxoCoin (ref c) => c,
+            &MmCoinEnum::Qrc20Coin(ref c) => c,
             &MmCoinEnum::EthCoin (ref c) => c,
             &MmCoinEnum::Test (ref c) => c,
 }   }   }
@@ -494,16 +510,14 @@ pub async fn lp_coininit (ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoi
     ))}
     let secret = &*ctx.secp256k1_key_pair().private().secret;
 
-    let foo = CoinProtocol {platform: "a".into(), token: TokenType::QRC20 {contract_address: H160::random()}};
-    log!("foo: " (json::to_string(&foo).unwrap()));
-
     let token_type: CoinProtocol = try_s!(json::from_value(coins_en["protocol"].clone()));
 
     let coin: MmCoinEnum = match token_type.token {
-        TokenType::UTXO => try_s! (utxo_coin_from_conf_and_request (ticker, coins_en, req, secret, None) .await) .into(),
+        TokenType::UTXO => try_s! (utxo_standard_coin_from_conf_and_request(ticker, coins_en, req, secret).await).into(),
         TokenType::ETH | TokenType::ERC20 { .. } =>
-            try_s! (eth_coin_from_conf_and_request (ctx, ticker, coins_en, req, secret) .await) .into(),
-        TokenType::QRC20 {contract_address} => {log!("QRC20"); try_s! (utxo_coin_from_conf_and_request (ticker, coins_en, req, secret, Some(contract_address)) .await) .into()},
+            try_s! (eth_coin_from_conf_and_request (ctx, ticker, coins_en, req, secret).await).into(),
+        TokenType::QRC20 {contract_address} =>
+            try_s!(qrc20_coin_from_conf_and_request(ticker, coins_en, req, secret, contract_address).await).into(),
     };
 
     let block_count = try_s! (coin.current_block().compat().await);

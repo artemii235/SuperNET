@@ -1958,7 +1958,7 @@ pub fn u256_to_big_decimal(number: U256, decimals: u8) -> Result<BigDecimal, Str
     Ok(try_s!(string.parse()))
 }
 
-fn wei_from_big_decimal(amount: &BigDecimal, decimals: u8) -> Result<U256, String> {
+pub fn wei_from_big_decimal(amount: &BigDecimal, decimals: u8) -> Result<U256, String> {
     let mut amount = amount.to_string();
     let dot = amount.find(|c| c == '.');
     let decimals = decimals as usize;
