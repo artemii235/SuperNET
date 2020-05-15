@@ -340,6 +340,7 @@ impl OrdermatchContext {
     }
 }
 
+#[cfg_attr(test, mockable)]
 fn lp_connect_start_bob(ctx: MmArc, maker_match: MakerMatch) {
     spawn(async move {  // aka "maker_loop"
         let taker_coin = match lp_coinfindᵃ(&ctx, &maker_match.reserved.rel).await {
@@ -604,29 +605,31 @@ pub fn lp_trade_command(
 
         for (uuid, order) in my_orders.iter_mut() {
             if let OrderMatchResult::Matched((base_amount, rel_amount)) = match_order_and_request(order, &taker_request) {
-                let reserved = MakerReserved {
-                    dest_pub_key: taker_request.sender_pubkey.clone(),
-                    sender_pubkey: our_public_id.bytes.into(),
-                    base: order.base.clone(),
-                    base_amount: base_amount.clone().into(),
-                    base_amount_rat: Some(base_amount.into()),
-                    rel_amount: rel_amount.clone().into(),
-                    rel_amount_rat: Some(rel_amount.into()),
-                    rel: order.rel.clone(),
-                    method: "reserved".into(),
-                    taker_order_uuid: taker_request.uuid,
-                    maker_order_uuid: *uuid,
-                };
-                ctx.broadcast_p2p_msg(&unwrap!(json::to_string(&reserved)));
-                let maker_match = MakerMatch {
-                    request: taker_request,
-                    reserved,
-                    connect: None,
-                    connected: None,
-                    last_updated: now_ms(),
-                };
-                order.matches.insert(maker_match.request.uuid, maker_match);
-                save_my_maker_order(&ctx, &order);
+                if !order.matches.contains_key(&taker_request.uuid) {
+                    let reserved = MakerReserved {
+                        dest_pub_key: taker_request.sender_pubkey.clone(),
+                        sender_pubkey: our_public_id.bytes.into(),
+                        base: order.base.clone(),
+                        base_amount: base_amount.clone().into(),
+                        base_amount_rat: Some(base_amount.into()),
+                        rel_amount: rel_amount.clone().into(),
+                        rel_amount_rat: Some(rel_amount.into()),
+                        rel: order.rel.clone(),
+                        method: "reserved".into(),
+                        taker_order_uuid: taker_request.uuid,
+                        maker_order_uuid: *uuid,
+                    };
+                    ctx.broadcast_p2p_msg(&unwrap!(json::to_string(&reserved)));
+                    let maker_match = MakerMatch {
+                        request: taker_request,
+                        reserved,
+                        connect: None,
+                        connected: None,
+                        last_updated: now_ms(),
+                    };
+                    order.matches.insert(maker_match.request.uuid, maker_match);
+                    save_my_maker_order(&ctx, &order);
+                }
                 return 1;
             }
         }
@@ -655,19 +658,21 @@ pub fn lp_trade_command(
                 },
             };
 
-            let connected = MakerConnected {
-                sender_pubkey: our_public_id.bytes.into(),
-                dest_pub_key: connect_msg.sender_pubkey.clone(),
-                taker_order_uuid: connect_msg.taker_order_uuid,
-                maker_order_uuid: connect_msg.maker_order_uuid,
-                method: "connected".into(),
-            };
-            ctx.broadcast_p2p_msg(&unwrap!(json::to_string(&connected)));
-            order_match.connect = Some(connect_msg);
-            order_match.connected = Some(connected);
-            my_order.started_swaps.push(order_match.request.uuid);
-            lp_connect_start_bob(ctx.clone(), order_match.clone());
-            save_my_maker_order(&ctx, &my_order);
+            if order_match.connected.is_none() && order_match.connect.is_none() {
+                let connected = MakerConnected {
+                    sender_pubkey: our_public_id.bytes.into(),
+                    dest_pub_key: connect_msg.sender_pubkey.clone(),
+                    taker_order_uuid: connect_msg.taker_order_uuid,
+                    maker_order_uuid: connect_msg.maker_order_uuid,
+                    method: "connected".into(),
+                };
+                ctx.broadcast_p2p_msg(&unwrap!(json::to_string(&connected)));
+                order_match.connect = Some(connect_msg);
+                order_match.connected = Some(connected);
+                my_order.started_swaps.push(order_match.request.uuid);
+                lp_connect_start_bob(ctx.clone(), order_match.clone());
+                save_my_maker_order(&ctx, &my_order);
+            }
         }
         return 1;
     }
@@ -1031,16 +1036,20 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
     let ordermatch_ctx = try_s!(OrdermatchContext::from_ctx(&ctx));
     let mut my_orders = try_s!(ordermatch_ctx.my_maker_orders.lock());
     if req.cancel_previous {
+        let mut cancelled_orders = try_s!(ordermatch_ctx.my_cancelled_orders.lock());
         // remove the previous orders if there're some to allow multiple setprice call per pair
         // it's common use case now as `autoprice` doesn't work with new ordermatching and
         // MM2 users request the coins price from aggregators by their own scripts issuing
         // repetitive setprice calls with new price
-        *my_orders = my_orders.drain().filter(|(_, order)| {
+        *my_orders = my_orders.drain().filter_map(|(uuid, order)| {
             let to_delete = order.base == req.base && order.rel == req.rel;
             if to_delete {
                 delete_my_maker_order(&ctx, &order);
+                cancelled_orders.insert(uuid, order);
+                None
+            } else {
+                Some((uuid, order))
             }
-            !to_delete
         }).collect();
     }
 
