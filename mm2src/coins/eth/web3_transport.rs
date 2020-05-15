@@ -7,7 +7,6 @@ use gstuff::binprint;
 use http::header::HeaderValue;
 use jsonrpc_core::{Call, Response};
 use serde_json::{Value as Json};
-use std::fmt;
 use std::ops::Deref;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -27,21 +26,11 @@ fn single_response<T: Deref<Target = [u8]>>(response: T) -> Result<Json, Error> 
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Web3Transport {
     id: Arc<AtomicUsize>,
     uris: Vec<http::Uri>,
     event_handlers: Vec<RpcTransportEventHandlerShared>,
-}
-
-impl fmt::Debug for Web3Transport {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Web3Transport")
-            .field("id", &self.id)
-            .field("uris", &self.uris)
-            // skip the self.event_handlers
-            .finish()
-    }
 }
 
 impl Web3Transport {

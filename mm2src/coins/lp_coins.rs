@@ -46,7 +46,7 @@ use rpc::v1::types::{Bytes as BytesJson};
 use serde_json::{self as json, Value as Json};
 use std::borrow::Cow;
 use std::collections::hash_map::{HashMap, RawEntryMut};
-use std::fmt::Debug;
+use std::fmt;
 use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -69,7 +69,7 @@ use self::utxo::{utxo_coin_from_conf_and_request, UtxoCoin, UtxoFeeDetails, Utxo
 pub mod test_coin;
 pub use self::test_coin::TestCoin;
 
-pub trait Transaction: Debug + 'static {
+pub trait Transaction: fmt::Debug + 'static {
     /// Raw transaction bytes of the transaction
     fn tx_hex(&self) -> Vec<u8>;
     fn extract_secret(&self) -> Result<Vec<u8>, String>;
@@ -328,7 +328,7 @@ pub struct TradeFee {
 }
 
 /// NB: Implementations are expected to follow the pImpl idiom, providing cheap reference-counted cloning and garbage collection.
-pub trait MmCoin: SwapOps + MarketCoinOps + Debug + Send + Sync + 'static {
+pub trait MmCoin: SwapOps + MarketCoinOps + fmt::Debug + Send + Sync + 'static {
     // `MmCoin` is an extension fulcrum for something that doesn't fit the `MarketCoinOps`. Practical examples:
     // name (might be required for some APIs, CoinMarketCap for instance);
     // coin statistics that we might want to share with UI;
@@ -454,12 +454,24 @@ pub type RpcTransportEventHandlerShared = Arc<dyn RpcTransportEventHandler + Sen
 
 /// Common methods to measure the outgoing requests and incoming responses statistics.
 pub trait RpcTransportEventHandler {
+    fn debug_info(&self) -> String;
+
     fn on_outgoing_request(&self, data: &[u8]);
 
     fn on_incoming_response(&self, data: &[u8]);
 }
 
+impl fmt::Debug for dyn RpcTransportEventHandler + Send + Sync {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.debug_info())
+    }
+}
+
 impl RpcTransportEventHandler for RpcTransportEventHandlerShared {
+    fn debug_info(&self) -> String {
+        self.deref().debug_info()
+    }
+
     fn on_outgoing_request(&self, data: &[u8]) {
         self.as_ref().on_outgoing_request(data)
     }
@@ -470,6 +482,11 @@ impl RpcTransportEventHandler for RpcTransportEventHandlerShared {
 }
 
 impl<T: RpcTransportEventHandler> RpcTransportEventHandler for Vec<T> {
+    fn debug_info(&self) -> String {
+        let selfi: Vec<String> = self.iter().map(|x| x.debug_info()).collect();
+        format!("{:?}", selfi)
+    }
+
     fn on_outgoing_request(&self, data: &[u8]) {
         for handler in self {
             handler.on_outgoing_request(data)
@@ -520,6 +537,10 @@ impl CoinTransportMetrics {
 }
 
 impl RpcTransportEventHandler for CoinTransportMetrics {
+    fn debug_info(&self) -> String {
+        "CoinTransportMetrics".into()
+    }
+
     fn on_outgoing_request(&self, data: &[u8]) {
         mm_counter!(self.metrics, "rpc_client.traffic.out", data.len() as u64,
             "coin" => self.ticker.clone(), "client" => self.client.clone());

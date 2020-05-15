@@ -290,7 +290,7 @@ pub enum EstimateFeeMethod {
 /// https://bitcoin.org/en/developer-reference#rpc-quick-reference - Bitcoin RPC API reference
 /// Other coins have additional methods or miss some of these
 /// This description will be updated with more info
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct NativeClientImpl {
     /// Name of coin the rpc client is intended to work with
     pub coin_ticker: String,
@@ -300,17 +300,6 @@ pub struct NativeClientImpl {
     pub auth: String,
     /// Transport event handlers
     pub event_handlers: Vec<RpcTransportEventHandlerShared>,
-}
-
-impl fmt::Debug for NativeClientImpl {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("NativeClientImpl")
-            .field("coin_ticker", &self.coin_ticker)
-            .field("uri", &self.uri)
-            .field("auth", &self.auth)
-            // skip the self.event_handlers
-            .finish()
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -846,6 +835,7 @@ impl Drop for ElectrumConnection {
                 log! ("electrum_connection_drop] Warning, shutdown_tx already closed");
 }   }   }   }
 
+#[derive(Debug)]
 pub struct ElectrumClientImpl {
     coin_ticker: String,
     connections: Vec<ElectrumConnection>,
@@ -960,17 +950,6 @@ impl ElectrumClientImpl {
             }
         }
         false
-    }
-}
-
-impl fmt::Debug for ElectrumClientImpl {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ElectrumClientImpl")
-            .field("coin_ticker", &self.coin_ticker)
-            .field("connections", &self.connections)
-            .field("next_id", &self.next_id)
-            // skip the self.event_handlers
-            .finish()
     }
 }
 
