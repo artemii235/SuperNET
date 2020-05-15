@@ -1,13 +1,19 @@
+use chain::OutPoint;
 use common::block_on;
 use common::privkey::key_pair_from_seed;
 use crate::{
     WithdrawFee,
-    utxo::rpc_clients::{ElectrumProtocol, ListSinceBlockRes, NetworkInfo},
+    utxo::rpc_clients::{ElectrumProtocol, ListSinceBlockRes, NetworkInfo, UtxoRpcClientOps},
     utxo_standard::{UtxoStandardCoin, utxo_standard_coin_from_conf_and_request},
 };
 use futures::future::join_all;
+use gstuff::now_ms;
 use mocktopus::mocking::*;
 use rpc::v1::types::H256 as H256Json;
+use script::Builder;
+use serialization::deserialize;
+use std::thread;
+use std::time::Duration;
 use super::*;
 
 const TEST_COIN_NAME: &'static str = "ETOMIC";
