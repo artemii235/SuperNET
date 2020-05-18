@@ -404,7 +404,12 @@ impl MmArc {
     /// Init metrics with dashboard.
     pub fn init_metrics(&self) -> Result<(), String> {
         let interval = self.conf["metrics_interval"].as_f64().unwrap_or(EXPORT_METRICS_INTERVAL);
-        try_s!(self.metrics.init_with_dashboard(self.log.weak(), interval));
+
+        if interval == 0.0 {
+            try_s!(self.metrics.init());
+        } else {
+            try_s!(self.metrics.init_with_dashboard(self.log.weak(), interval));
+        }
 
         let prometheusport = match self.conf["prometheusport"].as_u64() {
             Some(port) => port,
