@@ -255,6 +255,10 @@ impl From<UtxoCoinFields> for UtxoArc {
 // It's highly likely that we won't experience any issues with it as we won't need to send "a lot" of transactions concurrently.
 lazy_static! {static ref UTXO_LOCK: AsyncMutex<()> = AsyncMutex::new(());}
 
+pub trait UtxoArcGetter {
+    fn arc(&self) -> &UtxoArc;
+}
+
 #[async_trait]
 pub trait UtxoArcCommonOps {
     fn send_outputs_from_my_address(&self, outputs: Vec<TransactionOutput>) -> TransactionFut;
@@ -713,13 +717,13 @@ fn sign_tx(
 
 async fn send_outputs_from_my_address_impl<T>(coin: T, outputs: Vec<TransactionOutput>)
                                               -> Result<UtxoTx, String>
-    where T: Deref<Target=UtxoArc> + UtxoArcCommonOps {
+    where T: UtxoArcGetter + UtxoArcCommonOps {
     let _utxo_lock = UTXO_LOCK.lock().await;
-    let unspents = try_s!(coin.rpc_client.list_unspent_ordered(&coin.my_address).map_err(|e| ERRL!("{}", e)).compat().await);
+    let unspents = try_s!(coin.arc().rpc_client.list_unspent_ordered(&coin.arc().my_address).map_err(|e| ERRL!("{}", e)).compat().await);
     let (unsigned, _) = try_s!(coin.generate_transaction(unspents, outputs, FeePolicy::SendExact, None).await);
-    let prev_script = Builder::build_p2pkh(&coin.my_address.hash);
-    let signed = try_s!(sign_tx(unsigned, &coin.key_pair, prev_script, coin.signature_version, coin.fork_id));
-    try_s!(coin.rpc_client.send_transaction(&signed, coin.my_address.clone()).map_err(|e| ERRL!("{}", e)).compat().await);
+    let prev_script = Builder::build_p2pkh(&coin.arc().my_address.hash);
+    let signed = try_s!(sign_tx(unsigned, &coin.arc().key_pair, prev_script, coin.arc().signature_version, coin.arc().fork_id));
+    try_s!(coin.arc().rpc_client.send_transaction(&signed, coin.arc().my_address.clone()).map_err(|e| ERRL!("{}", e)).compat().await);
     Ok(signed)
 }
 

@@ -28,7 +28,7 @@ mod docker_tests {
     use common::block_on;
     use common::for_tests::{enable_native, MarketMakerIt, mm_dump};
     use coins::{FoundSwapTxSpend, MarketCoinOps, SwapOps};
-    use coins::utxo::{coin_daemon_data_dir, dhash160, UtxoCoinCommonOps, zcash_params_path};
+    use coins::utxo::{coin_daemon_data_dir, dhash160, UtxoCoinCommonOps, zcash_params_path, UtxoArcGetter};
     use coins::utxo_standard::{UtxoStandardCoin, utxo_standard_coin_from_conf_and_request};
     use coins::utxo::rpc_clients::{UtxoRpcClientEnum, UtxoRpcClientOps};
     use futures01::Future;
@@ -123,7 +123,7 @@ mod docker_tests {
             let coin = unwrap!(block_on(utxo_standard_coin_from_conf_and_request(&self.ticker, &conf, &req, &priv_key)));
             let timeout = now_ms() + 30000;
             loop {
-                match coin.rpc_client.get_block_count().wait() {
+                match coin.arc().rpc_client.get_block_count().wait() {
                     Ok(n) => if n > 1 { break },
                     Err(e) => log!([e]),
                 }
@@ -191,7 +191,7 @@ mod docker_tests {
     }
 
     fn fill_address(coin: &UtxoStandardCoin, address: &str, amount: u64, timeout: u64) {
-        if let UtxoRpcClientEnum::Native(client) = &coin.rpc_client {
+        if let UtxoRpcClientEnum::Native(client) = &coin.arc().rpc_client {
             unwrap!(client.import_address(&coin.my_address(), &coin.my_address(), false).wait());
             let hash = client.send_to_address(address, &amount.into()).wait().unwrap();
             let tx_bytes = client.get_transaction_bytes(hash).wait().unwrap();

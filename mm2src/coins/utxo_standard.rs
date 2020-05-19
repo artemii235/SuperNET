@@ -6,8 +6,7 @@ use common::mm_ctx::MmArc;
 use common::mm_number::MmNumber;
 use crate::{HistorySyncState, FoundSwapTxSpend, MarketCoinOps, MmCoin, SwapOps, TradeFee, TradeInfo,
             TransactionDetails, TransactionEnum, TransactionFut, WithdrawRequest};
-use crate::utxo::{ActualTxFee, AdditionalTxData, FeePolicy, UtxoArc, UtxoArcCommonOps,
-                  utxo_arc_from_conf_and_request, UtxoCoinCommonOps};
+use crate::utxo::{ActualTxFee, AdditionalTxData, FeePolicy, UtxoArc, UtxoArcCommonOps, utxo_arc_from_conf_and_request, UtxoCoinCommonOps, UtxoArcGetter};
 use crate::utxo::utxo_common;
 use crate::utxo::rpc_clients::UnspentInfo;
 use futures01::Future;
@@ -16,25 +15,27 @@ use primitives::bytes::Bytes;
 use script::{Script, TransactionInputSigner};
 use serde_json::Value as Json;
 use std::borrow::Cow;
-use std::ops::Deref;
 
 #[derive(Clone, Debug)]
-pub struct UtxoStandardCoin(UtxoArc);
+pub struct UtxoStandardCoin {
+    utxo_arc: UtxoArc,
+}
 
-impl Deref for UtxoStandardCoin {
-    type Target = UtxoArc;
-    fn deref(&self) -> &UtxoArc { &self.0 }
+impl UtxoArcGetter for UtxoStandardCoin {
+    fn arc(&self) -> &UtxoArc {
+        &self.utxo_arc
+    }
 }
 
 impl From<UtxoArc> for UtxoStandardCoin {
     fn from(coin: UtxoArc) -> UtxoStandardCoin {
-        UtxoStandardCoin(coin)
+        UtxoStandardCoin { utxo_arc: coin }
     }
 }
 
 impl From<UtxoStandardCoin> for UtxoArc {
     fn from(coin: UtxoStandardCoin) -> Self {
-        coin.0
+        coin.utxo_arc
     }
 }
 
@@ -45,13 +46,13 @@ pub async fn utxo_standard_coin_from_conf_and_request(
     priv_key: &[u8],
 ) -> Result<UtxoStandardCoin, String> {
     let inner = try_s!(utxo_arc_from_conf_and_request(ticker, conf, req, priv_key).await);
-    Ok(UtxoStandardCoin(inner))
+    Ok(inner.into())
 }
 
 #[async_trait]
 impl UtxoCoinCommonOps for UtxoStandardCoin {
     async fn get_tx_fee(&self) -> Result<ActualTxFee, JsonRpcError> {
-        utxo_common::get_tx_fee(&self).await
+        utxo_common::get_tx_fee(&self.utxo_arc).await
     }
 
     async fn get_htlc_spend_fee(&self) -> Result<u64, String> {
@@ -59,11 +60,11 @@ impl UtxoCoinCommonOps for UtxoStandardCoin {
     }
 
     fn addresses_from_script(&self, script: &Script) -> Result<Vec<Address>, String> {
-        utxo_common::addresses_from_script(&self, script)
+        utxo_common::addresses_from_script(&self.utxo_arc, script)
     }
 
     fn denominate_satoshis(&self, satoshi: i64) -> f64 {
-        utxo_common::denominate_satoshis(&self, satoshi)
+        utxo_common::denominate_satoshis(&self.utxo_arc, satoshi)
     }
 
     fn search_for_swap_tx_spend(
@@ -76,7 +77,7 @@ impl UtxoCoinCommonOps for UtxoStandardCoin {
         search_from_block: u64)
         -> Result<Option<FoundSwapTxSpend>, String> {
         utxo_common::search_for_swap_tx_spend(
-            &self,
+            &self.utxo_arc,
             time_lock,
             first_pub,
             second_pub,
@@ -86,7 +87,7 @@ impl UtxoCoinCommonOps for UtxoStandardCoin {
     }
 
     fn my_public_key(&self) -> &Public {
-        self.key_pair.public()
+        self.utxo_arc.key_pair.public()
     }
 }
 
@@ -106,7 +107,7 @@ impl UtxoArcCommonOps for UtxoStandardCoin {
         amount: BigDecimal)
         -> Box<dyn Future<Item=(), Error=String> + Send> {
         utxo_common::validate_payment(
-            self.0.clone(),
+            self.utxo_arc.clone(),
             payment_tx,
             time_lock,
             first_pub0,
@@ -137,7 +138,7 @@ impl UtxoArcCommonOps for UtxoStandardCoin {
         my_script_pub: Bytes)
         -> Result<(TransactionInputSigner, AdditionalTxData), String> {
         utxo_common::calc_interest_if_required(
-            &self,
+            &self.utxo_arc,
             unsigned,
             data,
             my_script_pub).await
@@ -152,7 +153,7 @@ impl UtxoArcCommonOps for UtxoStandardCoin {
         sequence: u32)
         -> Result<Transaction, String> {
         utxo_common::p2sh_spending_tx(
-            &self,
+            &self.utxo_arc,
             prev_transaction,
             redeem_script,
             outputs,
@@ -204,7 +205,7 @@ impl SwapOps for UtxoStandardCoin {
 
     fn validate_fee(&self, fee_tx: &TransactionEnum, fee_addr: &[u8], amount: &BigDecimal)
                     -> Box<dyn Future<Item=(), Error=String> + Send> {
-        utxo_common::validate_fee(self.0.clone(), fee_tx, fee_addr, amount)
+        utxo_common::validate_fee(self.utxo_arc.clone(), fee_tx, fee_addr, amount)
     }
 
     fn validate_maker_payment(
@@ -224,7 +225,7 @@ impl SwapOps for UtxoStandardCoin {
         &self, time_lock: u32, other_pub: &[u8], secret_hash: &[u8], search_from_block: u64)
         -> Box<dyn Future<Item=Option<TransactionEnum>, Error=String> + Send> {
         utxo_common::check_if_my_payment_sent(
-            self.0.clone(), time_lock, other_pub, secret_hash, search_from_block)
+            self.clone(), time_lock, other_pub, secret_hash, search_from_block)
     }
 
     fn search_for_swap_tx_spend_my(
@@ -244,28 +245,28 @@ impl SwapOps for UtxoStandardCoin {
 
 impl MarketCoinOps for UtxoStandardCoin {
     fn ticker(&self) -> &str {
-        &self.ticker
+        &self.utxo_arc.ticker
     }
 
     fn my_address(&self) -> Cow<str> {
-        utxo_common::my_address(&self)
+        utxo_common::my_address(&self.utxo_arc)
     }
 
     fn my_balance(&self) -> Box<dyn Future<Item=BigDecimal, Error=String> + Send> {
-        utxo_common::my_balance(&self)
+        utxo_common::my_balance(&self.utxo_arc)
     }
 
     fn send_raw_tx(&self, tx: &str) -> Box<dyn Future<Item=String, Error=String> + Send> {
-        utxo_common::send_raw_tx(&self, tx)
+        utxo_common::send_raw_tx(&self.utxo_arc, tx)
     }
 
     fn wait_for_confirmations(&self, tx: &[u8], confirmations: u64, requires_nota: bool, wait_until: u64, check_every: u64)
                               -> Box<dyn Future<Item=(), Error=String> + Send> {
-        utxo_common::wait_for_confirmations(&self, tx, confirmations, requires_nota, wait_until, check_every)
+        utxo_common::wait_for_confirmations(&self.utxo_arc, tx, confirmations, requires_nota, wait_until, check_every)
     }
 
     fn wait_for_tx_spend(&self, transaction: &[u8], wait_until: u64, from_block: u64) -> TransactionFut {
-        utxo_common::wait_for_tx_spend(&self, transaction, wait_until, from_block)
+        utxo_common::wait_for_tx_spend(&self.utxo_arc, transaction, wait_until, from_block)
     }
 
     fn tx_enum_from_bytes(&self, bytes: &[u8]) -> Result<TransactionEnum, String> {
@@ -273,21 +274,21 @@ impl MarketCoinOps for UtxoStandardCoin {
     }
 
     fn current_block(&self) -> Box<dyn Future<Item=u64, Error=String> + Send> {
-        utxo_common::current_block(&self)
+        utxo_common::current_block(&self.utxo_arc)
     }
 
     fn address_from_pubkey_str(&self, pubkey: &str) -> Result<String, String> {
-        utxo_common::address_from_pubkey_str(&self, pubkey)
+        utxo_common::address_from_pubkey_str(&self.utxo_arc, pubkey)
     }
 
     fn display_priv_key(&self) -> String {
-        utxo_common::display_priv_key(&self)
+        utxo_common::display_priv_key(&self.utxo_arc)
     }
 }
 
 impl MmCoin for UtxoStandardCoin {
     fn is_asset_chain(&self) -> bool {
-        utxo_common::is_asset_chain(&self)
+        utxo_common::is_asset_chain(&self.utxo_arc)
     }
 
     fn check_i_have_enough_to_trade(&self, amount: &MmNumber, balance: &MmNumber, trade_info: TradeInfo)
@@ -304,7 +305,7 @@ impl MmCoin for UtxoStandardCoin {
     }
 
     fn decimals(&self) -> u8 {
-        utxo_common::decimals(&self)
+        utxo_common::decimals(&self.utxo_arc)
     }
 
     fn process_history_loop(&self, ctx: MmArc) {
@@ -316,7 +317,7 @@ impl MmCoin for UtxoStandardCoin {
     }
 
     fn history_sync_status(&self) -> HistorySyncState {
-        utxo_common::history_sync_status(&self)
+        utxo_common::history_sync_status(&self.utxo_arc)
     }
 
     fn get_trade_fee(&self) -> Box<dyn Future<Item=TradeFee, Error=String> + Send> {
@@ -324,18 +325,18 @@ impl MmCoin for UtxoStandardCoin {
     }
 
     fn required_confirmations(&self) -> u64 {
-        utxo_common::required_confirmations(&self)
+        utxo_common::required_confirmations(&self.utxo_arc)
     }
 
     fn requires_notarization(&self) -> bool {
-        utxo_common::requires_notarization(&self)
+        utxo_common::requires_notarization(&self.utxo_arc)
     }
 
     fn set_required_confirmations(&self, confirmations: u64) {
-        utxo_common::set_required_confirmations(&self, confirmations)
+        utxo_common::set_required_confirmations(&self.utxo_arc, confirmations)
     }
 
     fn set_requires_notarization(&self, requires_nota: bool) {
-        utxo_common::set_requires_notarization(&self, requires_nota)
+        utxo_common::set_requires_notarization(&self.utxo_arc, requires_nota)
     }
 }
