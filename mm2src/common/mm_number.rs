@@ -1,12 +1,50 @@
 use bigdecimal::BigDecimal;
+use core::ops::{Add, Div, Mul, Sub};
 use num_bigint::BigInt;
 use num_rational::BigRational;
 use num_traits::Pow;
-use core::ops::{Add, Div, Mul, Sub};
-use serde::{Deserialize, Deserializer};
+use serde::{de, Deserialize, Deserializer};
+use std::str::FromStr;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct MmNumber(BigRational);
+
+/// Rational number representation in human readable form
+/// Should simplify the visual perception and parsing in code
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Fraction {
+    /// Numerator
+    numer: String,
+    /// Denominator
+    denom: String,
+}
+
+impl Fraction {
+    /// Numerator
+    pub fn numer(&self) -> &str {
+        &self.numer
+    }
+
+    /// Denominator
+    pub fn denom(&self) -> &str {
+        &self.denom
+    }
+}
+
+impl From<BigRational> for Fraction {
+    fn from(ratio: BigRational) -> Fraction {
+        Fraction {
+            numer: ratio.numer().to_string(),
+            denom: ratio.denom().to_string(),
+        }
+    }
+}
+
+impl From<BigDecimal> for Fraction {
+    fn from(dec: BigDecimal) -> Fraction {
+        from_dec_to_ratio(dec).into()
+    }
+}
 
 pub fn from_ratio_to_dec(r: &BigRational) -> BigDecimal {
     BigDecimal::from(r.numer().clone()) / BigDecimal::from(r.denom().clone())
@@ -22,8 +60,10 @@ pub fn from_dec_to_ratio(d: BigDecimal) -> BigRational {
     }
 }
 
-/// Handwritten deserialization method allows the MmNumber to be deserialized
-/// not only from big rational representation, but from decimal string "0.1" too
+/// Handwritten deserialization method allows the MmNumber to be deserialized from:
+/// 1. big rational representation,
+/// 2. decimal string e.g. "0.1"
+/// 3. fraction object e.g. { "numer":"2", "denom":"3" }
 impl<'de> Deserialize<'de> for MmNumber {
     fn deserialize<D>(deserializer: D) -> Result<Self, <D as Deserializer<'de>>::Error> where
         D: Deserializer<'de> {
@@ -32,11 +72,24 @@ impl<'de> Deserialize<'de> for MmNumber {
         enum MmNumberHelper {
             BigDecimal(BigDecimal),
             BigRational(BigRational),
+            Fraction(Fraction),
         }
 
         let ratio = match Deserialize::deserialize(deserializer)? {
             MmNumberHelper::BigDecimal(x) => from_dec_to_ratio(x),
-            MmNumberHelper::BigRational(x) => x
+            MmNumberHelper::BigRational(x) => x,
+            MmNumberHelper::Fraction(fraction) => {
+                let numer = BigInt::from_str(&fraction.numer).map_err(|e| {
+                    let err = format!("Could not parse BigInt from numer {}, err {}", fraction.numer, e);
+                    de::Error::custom(err)
+                })?;
+                let denom = BigInt::from_str(&fraction.denom).map_err(|e| {
+                    let err = format!("Could not parse BigInt from denom {}, err {}", fraction.denom, e);
+                    de::Error::custom(err)
+                })?;
+                if denom == 0.into() { return Err(de::Error::custom("denom can not be 0")) };
+                BigRational::new(numer, denom)
+            },
         };
 
         Ok(MmNumber(ratio))
@@ -176,6 +229,27 @@ impl Default for MmNumber {
     }
 }
 
+impl MmNumber {
+    /// Returns Fraction representation of the number
+    pub fn to_fraction(&self) -> Fraction {
+        Fraction {
+            numer: self.0.numer().to_string(),
+            denom: self.0.denom().to_string(),
+        }
+    }
+
+    /// Clones the internal BigRational
+    pub fn to_ratio(&self) -> BigRational {
+        self.0.clone()
+    }
+}
+
+impl From<i32> for MmNumber {
+    fn from(num: i32) -> MmNumber {
+        MmNumber(BigRational::from_integer(num.into()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
@@ -256,5 +330,28 @@ mod tests {
         });
 
         assert_eq!(data, json::from_value(json).unwrap());
+    }
+
+    #[test]
+    fn test_mm_number_deserialize_from_fraction() {
+        let num_str = r#"{"numer":"2000","denom":"3"}"#;
+        let expected: MmNumber = BigRational::new(2000.into(), 3.into()).into();
+        let actual: MmNumber = json::from_str(num_str).unwrap();
+        assert_eq!(expected, actual);
+
+        let num_str = r#"{"numer":"2000","denom":"0"}"#;
+        let err = json::from_str::<MmNumber>(num_str).unwrap_err();
+        let expected_msg = "denom can not be 0";
+        assert_eq!(expected_msg, err.to_string());
+    }
+
+    #[test]
+    fn test_mm_number_to_fraction() {
+        let num: MmNumber = MmNumber(BigRational::new(2000.into(), 3.into()));
+        let expected_numer = "2000";
+        let expected_denom = "3";
+        let actual = num.to_fraction();
+        assert_eq!(expected_numer, actual.numer);
+        assert_eq!(expected_denom, actual.denom);
     }
 }
