@@ -2,6 +2,7 @@
 #![cfg_attr(not(feature = "native"), allow(unused_variables))]
 
 use bigdecimal::BigDecimal;
+use common::BigInt;
 use common::{block_on, slurp};
 #[cfg(not(feature = "native"))]
 use common::call_back;
@@ -1927,14 +1928,16 @@ fn orderbook_should_display_rational_amounts() {
     assert_eq!(price, price_in_orderbook);
     assert_eq!(volume, volume_in_orderbook);
 
+    let nine = BigInt::from(9);
+    let ten = BigInt::from(10);
     // should also display fraction
     let price_in_orderbook: Fraction = unwrap!(json::from_value(asks[0]["price_fraction"].clone()));
     let volume_in_orderbook: Fraction = unwrap!(json::from_value(asks[0]["max_volume_fraction"].clone()));
-    assert_eq!("9", price_in_orderbook.numer());
-    assert_eq!("10", price_in_orderbook.denom());
+    assert_eq!(nine, *price_in_orderbook.numer());
+    assert_eq!(ten, *price_in_orderbook.denom());
 
-    assert_eq!("9", volume_in_orderbook.numer());
-    assert_eq!("10", volume_in_orderbook.denom());
+    assert_eq!(nine, *volume_in_orderbook.numer());
+    assert_eq!(ten, *volume_in_orderbook.denom());
 
     log!("Get MORTY/RICK orderbook");
     let rc = unwrap! (block_on (mm.rpc (json! ({
@@ -1959,11 +1962,11 @@ fn orderbook_should_display_rational_amounts() {
     // should also display fraction
     let price_in_orderbook: Fraction = unwrap!(json::from_value(bids[0]["price_fraction"].clone()));
     let volume_in_orderbook: Fraction = unwrap!(json::from_value(bids[0]["max_volume_fraction"].clone()));
-    assert_eq!("10", price_in_orderbook.numer());
-    assert_eq!("9", price_in_orderbook.denom());
+    assert_eq!(ten, *price_in_orderbook.numer());
+    assert_eq!(nine, *price_in_orderbook.denom());
 
-    assert_eq!("9", volume_in_orderbook.numer());
-    assert_eq!("10", volume_in_orderbook.denom());
+    assert_eq!(nine, *volume_in_orderbook.numer());
+    assert_eq!(ten, *volume_in_orderbook.denom());
 }
 
 fn check_priv_key(mm: &MarketMakerIt, coin: &str, expected_priv_key: &str) {
