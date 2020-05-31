@@ -1,20 +1,21 @@
 use chain::OutPoint;
 use common::block_on;
+use common::mm_ctx::MmCtxBuilder;
 use common::privkey::key_pair_from_seed;
 use crate::{
+    utxo::rpc_clients::{ElectrumProtocol, UtxoRpcClientOps},
+    utxo_standard::{utxo_standard_coin_from_conf_and_request, UtxoStandardCoin, UTXO_STANDARD_DUST},
     WithdrawFee,
-    utxo::rpc_clients::{ElectrumProtocol, ListSinceBlockRes, NetworkInfo, UtxoRpcClientOps},
-    utxo_standard::{UtxoStandardCoin, utxo_standard_coin_from_conf_and_request},
 };
 use futures::future::join_all;
 use gstuff::now_ms;
 use mocktopus::mocking::*;
-use rpc::v1::types::H256 as H256Json;
 use script::Builder;
 use serialization::deserialize;
 use std::thread;
 use std::time::Duration;
 use super::*;
+use crate::utxo::rpc_clients::{ListSinceBlockRes, NetworkInfo};
 
 const TEST_COIN_NAME: &'static str = "ETOMIC";
 
@@ -90,6 +91,7 @@ fn utxo_coin_fields_for_test(rpc_client: UtxoRpcClientEnum, force_seed: Option<&
         history_sync_state: Mutex::new(HistorySyncState::NotEnabled),
         required_confirmations: 1.into(),
         force_min_relay_fee: false,
+        dust_amount: UTXO_STANDARD_DUST,
     }
 }
 
@@ -117,6 +119,7 @@ fn test_generate_transaction() {
     let unspents = vec![UnspentInfo {
         value: 10000000000,
         outpoint: OutPoint::default(),
+        height: Default::default(),
     }];
 
     let outputs = vec![TransactionOutput {
@@ -124,13 +127,14 @@ fn test_generate_transaction() {
         value: 999,
     }];
 
-    let generated = block_on(coin.generate_transaction(unspents, outputs, FeePolicy::SendExact, None));
+    let generated = block_on(coin.generate_transaction(unspents, outputs, FeePolicy::SendExact, None, None));
     // must not allow to use output with value < dust
     unwrap_err!(generated);
 
     let unspents = vec![UnspentInfo {
         value: 100000,
         outpoint: OutPoint::default(),
+        height: Default::default(),
     }];
 
     let outputs = vec![TransactionOutput {
@@ -138,7 +142,7 @@ fn test_generate_transaction() {
         value: 98001,
     }];
 
-    let generated = unwrap!(block_on(coin.generate_transaction(unspents, outputs, FeePolicy::SendExact, None)));
+    let generated = unwrap!(block_on(coin.generate_transaction(unspents, outputs, FeePolicy::SendExact, None, None)));
     // the change that is less than dust must be included to miner fee
     // so no extra outputs should appear in generated transaction
     assert_eq!(generated.0.outputs.len(), 1);
@@ -150,6 +154,7 @@ fn test_generate_transaction() {
     let unspents = vec![UnspentInfo {
         value: 100000,
         outpoint: OutPoint::default(),
+        height: Default::default(),
     }];
 
     let outputs = vec![TransactionOutput {
@@ -158,7 +163,7 @@ fn test_generate_transaction() {
     }];
 
     // test that fee is properly deducted from output amount equal to input amount (max withdraw case)
-    let generated = unwrap!(block_on(coin.generate_transaction(unspents, outputs, FeePolicy::DeductFromOutput(0), None)));
+    let generated = unwrap!(block_on(coin.generate_transaction(unspents, outputs, FeePolicy::DeductFromOutput(0), None, None)));
     assert_eq!(generated.0.outputs.len(), 1);
 
     assert_eq!(generated.1.fee_amount, 1000);
@@ -169,6 +174,7 @@ fn test_generate_transaction() {
     let unspents = vec![UnspentInfo {
         value: 100000,
         outpoint: OutPoint::default(),
+        height: Default::default(),
     }];
 
     let outputs = vec![TransactionOutput {
@@ -177,7 +183,7 @@ fn test_generate_transaction() {
     }];
 
     // test that generate_transaction returns an error when input amount is not sufficient to cover output + fee
-    unwrap_err!(block_on(coin.generate_transaction(unspents, outputs, FeePolicy::SendExact, None)));
+    unwrap_err!(block_on(coin.generate_transaction(unspents, outputs, FeePolicy::SendExact, None, None)));
 }
 
 #[test]
@@ -353,9 +359,11 @@ fn test_search_for_swap_tx_spend_electrum_was_refunded() {
 #[test]
 fn test_withdraw_impl_set_fixed_fee() {
     NativeClient::list_unspent_ordered.mock_safe(|_,_| {
-        let unspents = vec![UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 1000000000 }];
+        let unspents = vec![UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 1000000000, height: Default::default() }];
         MockResult::Return(Box::new(futures01::future::ok(unspents)))
     });
+
+    let ctx = MmCtxBuilder::new().into_mm_arc();
 
     let client = NativeClient(Arc::new(NativeClientImpl {
         coin_ticker: TEST_COIN_NAME.into(),
@@ -375,16 +383,18 @@ fn test_withdraw_impl_set_fixed_fee() {
     let expected = Some(UtxoFeeDetails {
         amount: "0.1".parse().unwrap()
     }.into());
-    let tx_details = unwrap!(coin.withdraw(withdraw_req).wait());
+    let tx_details = unwrap!(coin.withdraw(&ctx, withdraw_req).wait());
     assert_eq!(expected, tx_details.fee_details);
 }
 
 #[test]
 fn test_withdraw_impl_sat_per_kb_fee() {
     NativeClient::list_unspent_ordered.mock_safe(|_,_| {
-        let unspents = vec![UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 1000000000 }];
+        let unspents = vec![UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 1000000000, height: Default::default() }];
         MockResult::Return(Box::new(futures01::future::ok(unspents)))
     });
+
+    let ctx = MmCtxBuilder::new().into_mm_arc();
 
     let client = NativeClient(Arc::new(NativeClientImpl {
         coin_ticker: TEST_COIN_NAME.into(),
@@ -407,16 +417,18 @@ fn test_withdraw_impl_sat_per_kb_fee() {
     let expected = Some(UtxoFeeDetails {
         amount: "0.0245".parse().unwrap()
     }.into());
-    let tx_details = unwrap!(coin.withdraw(withdraw_req).wait());
+    let tx_details = unwrap!(coin.withdraw(&ctx, withdraw_req).wait());
     assert_eq!(expected, tx_details.fee_details);
 }
 
 #[test]
 fn test_withdraw_impl_sat_per_kb_fee_amount_equal_to_max() {
     NativeClient::list_unspent_ordered.mock_safe(|_,_| {
-        let unspents = vec![UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 1000000000 }];
+        let unspents = vec![UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 1000000000, height: Default::default() }];
         MockResult::Return(Box::new(futures01::future::ok(unspents)))
     });
+
+    let ctx = MmCtxBuilder::new().into_mm_arc();
 
     let client = NativeClient(Arc::new(NativeClientImpl {
         coin_ticker: TEST_COIN_NAME.into(),
@@ -433,7 +445,7 @@ fn test_withdraw_impl_sat_per_kb_fee_amount_equal_to_max() {
         max: false,
         fee: Some(WithdrawFee::UtxoPerKbyte { amount: "0.1".parse().unwrap() }),
     };
-    let tx_details = unwrap!(coin.withdraw(withdraw_req).wait());
+    let tx_details = unwrap!(coin.withdraw(&ctx, withdraw_req).wait());
     // The resulting transaction size might be 210 or 211 bytes depending on signature size
     // MM2 always expects the worst case during fee calculation
     // 0.1 * 211 / 1000 = 0.0211
@@ -448,9 +460,11 @@ fn test_withdraw_impl_sat_per_kb_fee_amount_equal_to_max() {
 #[test]
 fn test_withdraw_impl_sat_per_kb_fee_amount_equal_to_max_dust_included_to_fee() {
     NativeClient::list_unspent_ordered.mock_safe(|_,_| {
-        let unspents = vec![UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 1000000000 }];
+        let unspents = vec![UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 1000000000, height: Default::default() }];
         MockResult::Return(Box::new(futures01::future::ok(unspents)))
     });
+
+    let ctx = MmCtxBuilder::new().into_mm_arc();
 
     let client = NativeClient(Arc::new(NativeClientImpl {
         coin_ticker: TEST_COIN_NAME.into(),
@@ -467,7 +481,7 @@ fn test_withdraw_impl_sat_per_kb_fee_amount_equal_to_max_dust_included_to_fee() 
         max: false,
         fee: Some(WithdrawFee::UtxoPerKbyte { amount: "0.09999999".parse().unwrap() }),
     };
-    let tx_details = unwrap!(coin.withdraw(withdraw_req).wait());
+    let tx_details = unwrap!(coin.withdraw(&ctx, withdraw_req).wait());
     // The resulting transaction size might be 210 or 211 bytes depending on signature size
     // MM2 always expects the worst case during fee calculation
     // 0.1 * 211 / 1000 = 0.0211
@@ -482,9 +496,11 @@ fn test_withdraw_impl_sat_per_kb_fee_amount_equal_to_max_dust_included_to_fee() 
 #[test]
 fn test_withdraw_impl_sat_per_kb_fee_amount_over_max() {
     NativeClient::list_unspent_ordered.mock_safe(|_,_| {
-        let unspents = vec![UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 1000000000 }];
+        let unspents = vec![UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 1000000000, height: Default::default() }];
         MockResult::Return(Box::new(futures01::future::ok(unspents)))
     });
+
+    let ctx = MmCtxBuilder::new().into_mm_arc();
 
     let client = NativeClient(Arc::new(NativeClientImpl {
         coin_ticker: TEST_COIN_NAME.into(),
@@ -501,15 +517,17 @@ fn test_withdraw_impl_sat_per_kb_fee_amount_over_max() {
         max: false,
         fee: Some(WithdrawFee::UtxoPerKbyte { amount: "0.1".parse().unwrap() }),
     };
-    unwrap_err!(coin.withdraw(withdraw_req).wait());
+    unwrap_err!(coin.withdraw(&ctx, withdraw_req).wait());
 }
 
 #[test]
 fn test_withdraw_impl_sat_per_kb_fee_max() {
     NativeClient::list_unspent_ordered.mock_safe(|_,_| {
-        let unspents = vec![UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 1000000000 }];
+        let unspents = vec![UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 1000000000, height: Default::default() }];
         MockResult::Return(Box::new(futures01::future::ok(unspents)))
     });
+
+    let ctx = MmCtxBuilder::new().into_mm_arc();
 
     let client = NativeClient(Arc::new(NativeClientImpl {
         coin_ticker: TEST_COIN_NAME.into(),
@@ -532,7 +550,7 @@ fn test_withdraw_impl_sat_per_kb_fee_max() {
     let expected = Some(UtxoFeeDetails {
         amount: "0.0211".parse().unwrap()
     }.into());
-    let tx_details = unwrap!(coin.withdraw(withdraw_req).wait());
+    let tx_details = unwrap!(coin.withdraw(&ctx, withdraw_req).wait());
     assert_eq!(expected, tx_details.fee_details);
 }
 
@@ -749,6 +767,7 @@ fn test_generate_transaction_relay_fee_is_used_when_dynamic_fee_is_lower() {
     let unspents = vec![UnspentInfo {
         value: 1000000000,
         outpoint: OutPoint::default(),
+        height: Default::default(),
     }];
 
     let outputs = vec![TransactionOutput {
@@ -760,7 +779,8 @@ fn test_generate_transaction_relay_fee_is_used_when_dynamic_fee_is_lower() {
         unspents,
         outputs,
         FeePolicy::SendExact,
-        Some(ActualTxFee::Dynamic(100))
+        Some(ActualTxFee::Dynamic(100)),
+        None,
     );
     let generated = unwrap!(block_on(fut));
     assert_eq!(generated.0.outputs.len(), 1);
@@ -794,8 +814,9 @@ fn test_generate_tx_fee_is_correct_when_dynamic_fee_is_larger_than_relay() {
         UnspentInfo {
             value: 1000000000,
             outpoint: OutPoint::default(),
+            height: Default::default(),
         };
-    20];
+        20];
 
     let outputs = vec![TransactionOutput {
         script_pubkey: vec![].into(),
@@ -806,7 +827,8 @@ fn test_generate_tx_fee_is_correct_when_dynamic_fee_is_larger_than_relay() {
         unspents,
         outputs,
         FeePolicy::SendExact,
-        Some(ActualTxFee::Dynamic(1000))
+        Some(ActualTxFee::Dynamic(1000)),
+        None,
     );
     let generated = unwrap!(block_on(fut));
     assert_eq!(generated.0.outputs.len(), 2);

@@ -42,7 +42,7 @@ use futures01::Future;
 use futures::compat::Future01CompatExt;
 use gstuff::{slurp};
 use http::Response;
-use rpc::v1::types::{Bytes as BytesJson};
+use rpc::v1::types::Bytes as BytesJson;
 use serde_json::{self as json, Value as Json};
 use std::borrow::Cow;
 use std::collections::hash_map::{HashMap, RawEntryMut};
@@ -254,6 +254,11 @@ pub enum WithdrawFee {
         gas_price: BigDecimal,
         gas: u64,
     },
+    Qrc20Gas {
+        // in satoshi
+        gas_limit: u64,
+        gas_price: u64,
+    }
 }
 
 #[allow(dead_code)]
@@ -347,7 +352,8 @@ pub trait MmCoin: SwapOps + MarketCoinOps + Debug + Send + Sync + 'static {
 
     fn can_i_spend_other_payment(&self) -> Box<dyn Future<Item=(), Error=String> + Send>;
 
-    fn withdraw(&self, req: WithdrawRequest) -> Box<dyn Future<Item=TransactionDetails, Error=String> + Send>;
+    /// Withdraw uses MmArc in particular to cache unspent output transactions.
+    fn withdraw(&self, ctx: &MmArc, req: WithdrawRequest) -> Box<dyn Future<Item=TransactionDetails, Error=String> + Send>;
 
     /// Maximum number of digits after decimal point used to denominate integer coin units (satoshis, wei, etc.)
     fn decimals(&self) -> u8;
@@ -571,7 +577,7 @@ pub async fn withdraw (ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
         Err (err) => return ERR! ("!lp_coinfind({}): {}", ticker, err)
     };
     let withdraw_req: WithdrawRequest = try_s! (json::from_value (req));
-    let res = try_s! (coin.withdraw (withdraw_req) .compat().await);
+    let res = try_s! (coin.withdraw (&ctx, withdraw_req) .compat().await);
     let body = try_s! (json::to_vec (&res));
     Ok (try_s! (Response::builder().body (body)))
 }

@@ -137,6 +137,9 @@ impl UtxoRpcClientEnum {
 pub struct UnspentInfo {
     pub outpoint: OutPoint,
     pub value: u64,
+    /// The block height transaction mined in.
+    /// Note None if the transaction is not mined yet.
+    pub height: Option<u64>,
 }
 
 pub type UtxoRpcRes<T> = Box<dyn Future<Item=T, Error=String> + Send + 'static>;
@@ -358,40 +361,60 @@ impl JsonRpcClient for NativeClientImpl {
 #[cfg_attr(test, mockable)]
 impl UtxoRpcClientOps for NativeClient {
     fn list_unspent_ordered(&self, address: &Address) -> UtxoRpcRes<Vec<UnspentInfo>> {
-        let clone = self.0.clone();
-        Box::new(self.list_unspent(0, std::i32::MAX, vec![address.to_string()]).map_err(|e| ERRL!("{}", e)).and_then(move |unspents| {
-            let mut futures = vec![];
-            for unspent in unspents.iter() {
-                let delay_f = Delay::new(Duration::from_millis(10)).map_err(|e| ERRL!("{}", e));
-                let tx_id = unspent.txid.clone();
-                let vout = unspent.vout as usize;
-                let arc = clone.clone();
-                // The delay here is required to mitigate "Work queue depth exceeded" error from coin daemon.
-                // It happens even when we run requests sequentially.
-                // Seems like daemon need some time to clean up it's queue after response is sent.
-                futures.push(delay_f.and_then(move |_| arc.output_amount(tx_id, vout).map_err(|e| ERRL!("{}", e))));
-            }
-
-            join_all_sequential(futures).map(move |amounts| {
-                let zip_iter = amounts.iter().zip(unspents.iter());
-                let mut result: Vec<UnspentInfo> = zip_iter.map(|(value, unspent)| UnspentInfo {
-                    outpoint: OutPoint {
-                        hash: unspent.txid.reversed().into(),
-                        index: unspent.vout,
-                    },
-                    value: *value,
-                }).collect();
-
-                result.sort_unstable_by(|a, b| {
-                    if a.value < b.value {
-                        Ordering::Less
-                    } else {
-                        Ordering::Greater
-                    }
-                });
-                result
+        let address = address.to_string();
+        let selfi_on_block_count = self.0.clone();
+        let selfi_on_unspent = self.0.clone();
+        let fut = self.get_block_count()
+            .and_then(move |block_count| {
+                selfi_on_block_count.list_unspent(0, std::i32::MAX, vec![address])
+                    .map(move |unspents| (block_count, unspents))
             })
-        }))
+            .map_err(|e| ERRL!("{}", e))
+            .and_then(move |(block_count, unspents)| {
+                let mut futures = vec![];
+                for unspent in unspents.iter() {
+                    let delay_f = Delay::new(Duration::from_millis(10)).map_err(|e| ERRL!("{}", e));
+                    let tx_id = unspent.txid.clone();
+                    let vout = unspent.vout as usize;
+                    let selfi = selfi_on_unspent.clone();
+                    // The delay here is required to mitigate "Work queue depth exceeded" error from coin daemon.
+                    // It happens even when we run requests sequentially.
+                    // Seems like daemon need some time to clean up it's queue after response is sent.
+                    futures.push(delay_f.and_then(move |_| selfi.output_amount(tx_id, vout).map_err(|e| ERRL!("{}", e))));
+                }
+
+                join_all_sequential(futures).map(move |amounts| {
+                    let zip_iter = amounts.iter().zip(unspents.iter());
+                    let mut result: Vec<UnspentInfo> = zip_iter.map(|(value, unspent)| {
+                        // calculate the block height from current block count and number of the transaction confirmations
+                        let height = if unspent.confirmations > 0 {
+                            Some(block_count - unspent.confirmations + 1)
+                        } else {
+                            None
+                        };
+
+                        UnspentInfo {
+                            outpoint: OutPoint {
+                                hash: unspent.txid.reversed().into(),
+                                index: unspent.vout,
+                            },
+                            value: *value,
+                            height,
+                        }
+                    }).collect();
+
+                    result.sort_unstable_by(|a, b| {
+                        if a.value < b.value {
+                            Ordering::Less
+                        } else {
+                            Ordering::Greater
+                        }
+                    });
+                    result
+                })
+            });
+
+        Box::new(fut)
     }
 
     fn send_transaction(&self, tx: &UtxoTx, _addr: Address) -> UtxoRpcRes<H256Json> {
@@ -1028,7 +1051,8 @@ impl UtxoRpcClientOps for ElectrumClient {
                     hash: unspent.tx_hash.reversed().into(),
                     index: unspent.tx_pos,
                 },
-                value: unspent.value
+                value: unspent.value,
+                height: unspent.height,
             }).collect();
 
             result.sort_unstable_by(|a, b| {

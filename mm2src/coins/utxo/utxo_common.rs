@@ -32,7 +32,7 @@ pub use chain::Transaction as UtxoTx;
 
 use self::rpc_clients::{electrum_script_hash, UtxoRpcClientEnum, UnspentInfo};
 use super::{CoinsContext, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, TradeFee, TradeInfo,
-            Transaction, TransactionEnum, TransactionFut, TransactionDetails, WithdrawFee, WithdrawRequest};
+            Transaction, TransactionEnum, TransactionFut, TransactionDetails, UtxoMmCoin, WithdrawFee, WithdrawRequest};
 use crate::utxo::rpc_clients::UtxoRpcClientOps;
 
 macro_rules! true_or_err {
@@ -206,9 +206,10 @@ pub async fn generate_transaction<T>(
     outputs: Vec<TransactionOutput>,
     fee_policy: FeePolicy,
     fee: Option<ActualTxFee>,
+    gas_fee: Option<u64>,
 ) -> Result<(TransactionInputSigner, AdditionalTxData), String>
     where T: UtxoArcGetter + UtxoCoinCommonOps + UtxoArcCommonOps {
-    const DUST: u64 = 1000;
+    let dust: u64 = coin.arc().dust_amount;
     let lock_time = (now_ms() / 1000) as u32;
     let change_script_pubkey = Builder::build_p2pkh(&coin.arc().my_address.hash).to_bytes();
     let coin_tx_fee = match fee {
@@ -221,7 +222,7 @@ pub async fn generate_transaction<T>(
     let mut sum_outputs_value = 0;
     let mut received_by_me = 0;
     for output in outputs.iter() {
-        true_or_err!(output.value >= DUST, "Output value {} is less than dust amount {}", output.value, DUST);
+        true_or_err!(output.value >= dust, "Output value {} is less than dust amount {}", output.value, dust);
         sum_outputs_value += output.value;
         if output.script_pubkey == change_script_pubkey {
             received_by_me += output.value;
@@ -277,12 +278,17 @@ pub async fn generate_transaction<T>(
                 (f * tx_size as u64) / KILO_BYTE
             }
         };
+
+        if let Some(gas_fee) = gas_fee {
+            tx_fee += gas_fee;
+        }
+
         match fee_policy {
             FeePolicy::SendExact => {
                 let mut outputs_plus_fee = sum_outputs_value + tx_fee;
                 if sum_inputs >= outputs_plus_fee {
-                    if sum_inputs - outputs_plus_fee > DUST {
-                        // there will be change output if sum_inputs - outputs_plus_fee > DUST
+                    if sum_inputs - outputs_plus_fee > dust {
+                        // there will be change output if sum_inputs - outputs_plus_fee > dust
                         if let ActualTxFee::Dynamic(ref f) = coin_tx_fee {
                             tx_fee += (f * P2PKH_OUTPUT_LEN) / KILO_BYTE;
                             outputs_plus_fee += (f * P2PKH_OUTPUT_LEN) / KILO_BYTE;
@@ -303,7 +309,7 @@ pub async fn generate_transaction<T>(
             }
             FeePolicy::DeductFromOutput(_) => {
                 if sum_inputs >= sum_outputs_value {
-                    if sum_inputs - sum_outputs_value > DUST {
+                    if sum_inputs - sum_outputs_value > dust {
                         if let ActualTxFee::Dynamic(ref f) = coin_tx_fee {
                             tx_fee += (f * P2PKH_OUTPUT_LEN) / KILO_BYTE;
                         }
@@ -321,7 +327,7 @@ pub async fn generate_transaction<T>(
     match fee_policy {
         FeePolicy::SendExact => sum_outputs_value += tx_fee,
         FeePolicy::DeductFromOutput(i) => {
-            let min_output = tx_fee + DUST;
+            let min_output = tx_fee + dust;
             let val = tx.outputs[i].value;
             true_or_err!(val >= min_output, "Output {} value {} is too small, required no less than {}", i, val, min_output);
             tx.outputs[i].value -= tx_fee;
@@ -333,7 +339,7 @@ pub async fn generate_transaction<T>(
     true_or_err!(sum_inputs >= sum_outputs_value, "Not sufficient balance. Couldn't collect enough value from utxos {:?} to create tx with outputs {:?}", utxos, tx.outputs);
 
     let change = sum_inputs - sum_outputs_value;
-    if change >= DUST {
+    if change >= dust {
         tx.outputs.push({
             TransactionOutput {
                 value: change,
@@ -371,7 +377,7 @@ pub async fn calc_interest_if_required(
     for input in unsigned.inputs.iter() {
         let prev_hash = input.previous_output.hash.reversed().into();
         let tx = try_s!(coin.rpc_client.get_verbose_transaction(prev_hash).compat().await);
-        interest += kmd_interest(tx.height, input.amount, tx.locktime as u64, unsigned.lock_time as u64);
+        interest += kmd_interest(tx.height.unwrap_or(0), input.amount, tx.locktime as u64, unsigned.lock_time as u64);
     }
     if interest > 0 {
         data.received_by_me += interest;
@@ -964,32 +970,21 @@ pub fn can_i_spend_other_payment() -> Box<dyn Future<Item=(), Error=String> + Se
     Box::new(futures01::future::ok(()))
 }
 
-pub fn withdraw<T>(coin: T, req: WithdrawRequest) -> Box<dyn Future<Item=TransactionDetails, Error=String> + Send>
-    where T: UtxoArcGetter + UtxoArcCommonOps + Send + Sync + 'static {
-    let to_addr = match Address::from_str(&req.to) {
-        Ok(a) => a,
-        Err(err) => return Box::new(futures01::future::err(ERRL!("{}", err))),
-    };
+pub async fn withdraw<T>(coin: T, ctx: MmArc, req: WithdrawRequest) -> Result<TransactionDetails, String>
+    where T: UtxoArcGetter + UtxoArcCommonOps + UtxoMmCoin {
+    let to = try_s!(Address::from_str(&req.to));
 
-    let is_p2pkh = to_addr.prefix == coin.arc().pub_addr_prefix && to_addr.t_addr_prefix == coin.arc().pub_t_addr_prefix;
-    let is_p2sh = to_addr.prefix == coin.arc().p2sh_addr_prefix && to_addr.t_addr_prefix == coin.arc().p2sh_t_addr_prefix && coin.arc().segwit;
+    let is_p2pkh = to.prefix == coin.arc().pub_addr_prefix && to.t_addr_prefix == coin.arc().pub_t_addr_prefix;
+    let is_p2sh = to.prefix == coin.arc().p2sh_addr_prefix && to.t_addr_prefix == coin.arc().p2sh_t_addr_prefix && coin.arc().segwit;
 
     let script_pubkey = if is_p2pkh {
-        Builder::build_p2pkh(&to_addr.hash)
+        Builder::build_p2pkh(&to.hash)
     } else if is_p2sh {
-        Builder::build_p2sh(&to_addr.hash)
+        Builder::build_p2sh(&to.hash)
     } else {
-        return Box::new(futures01::future::err(ERRL!("Address {} has invalid format", to_addr)));
+        return ERR!("Address {} has invalid format", to);
     };
 
-    let fut = withdraw_impl(coin, req, script_pubkey);
-    Box::new(fut.boxed().compat())
-}
-
-pub async fn withdraw_impl<T>(coin: T, req: WithdrawRequest, script_pubkey: Script)
-                              -> Result<TransactionDetails, String>
-    where T: UtxoArcGetter + UtxoArcCommonOps {
-    let to = try_s!(Address::from_str(&req.to));
     if to.checksum_type != coin.arc().checksum_type {
         return ERR!("Address {} has invalid checksum type, it must be {:?}", to, coin.arc().checksum_type);
     }
@@ -997,8 +992,8 @@ pub async fn withdraw_impl<T>(coin: T, req: WithdrawRequest, script_pubkey: Scri
     let script_pubkey = script_pubkey.to_bytes();
 
     let _utxo_lock = UTXO_LOCK.lock().await;
-    let unspents = try_s!(coin.arc().rpc_client.list_unspent_ordered(&coin.arc().my_address).map_err(|e| ERRL!("{}", e)).compat().await);
-    let (_value, fee_policy) = if req.max {
+    let unspents = try_s!(coin.ordered_mature_unspents(&ctx, &coin.arc().my_address).await.map_err(|e| ERRL!("{}", e)));
+    let (value, fee_policy) = if req.max {
         (unspents.iter().fold(0, |sum, unspent| sum + unspent.value), FeePolicy::DeductFromOutput(0))
     } else {
         (try_s!(sat_from_big_decimal(&req.amount, coin.arc().decimals)), FeePolicy::SendExact)
@@ -1013,7 +1008,8 @@ pub async fn withdraw_impl<T>(coin: T, req: WithdrawRequest, script_pubkey: Scri
         Some(_) => return ERR!("Unsupported input fee type"),
         None => None,
     };
-    let (unsigned, data) = try_s!(coin.generate_transaction(unspents, outputs, fee_policy, fee).await);
+    let gas_fee = None;
+    let (unsigned, data) = try_s!(coin.generate_transaction(unspents, outputs, fee_policy, fee, gas_fee).await);
     let prev_script = Builder::build_p2pkh(&coin.arc().my_address.hash);
     let signed = try_s!(sign_tx(unsigned, &coin.arc().key_pair, prev_script, coin.arc().signature_version, coin.arc().fork_id));
     let fee_details = UtxoFeeDetails {
@@ -1266,7 +1262,7 @@ pub fn tx_details_by_hash<T>(coin: T, hash: &[u8]) -> Box<dyn Future<Item=Transa
             fee_details: Some(UtxoFeeDetails {
                 amount: fee,
             }.into()),
-            block_height: verbose_tx.height,
+            block_height: verbose_tx.height.unwrap_or(0),
             coin: coin.arc().ticker.clone(),
             internal_id: tx.hash().reversed().to_vec().into(),
             timestamp: verbose_tx.time.into(),
@@ -1309,6 +1305,30 @@ pub fn set_required_confirmations(coin: &UtxoCoinFields, confirmations: u64) {
 
 pub fn set_requires_notarization(coin: &UtxoCoinFields, requires_nota: bool) {
     coin.requires_notarization.store(requires_nota, AtomicOrderding::Relaxed);
+}
+
+pub async fn ordered_mature_unspents(coin: &UtxoArc, address: &Address) -> Result<Vec<UnspentInfo>, String> {
+    // any returned unspent output is mature for the standard UTXO coin
+    coin.rpc_client.list_unspent_ordered(address).compat().await
+}
+
+pub async fn get_verbose_transaction_from_cache_or_rpc<T>(coin: &T, ctx: &MmArc, txid: H256Json) -> Result<VerboseTransactionFrom, String>
+    where T: UtxoArcGetter + UtxoMmCoin {
+    match tx_cache::load_transaction_from_cache(coin, ctx, txid.clone()).await {
+        Ok(Some(tx)) => return Ok(VerboseTransactionFrom::Cache(tx)),
+        Err(err) => log!("Error " [err] " loading the " [txid] " transaction. Try request tx using Rpc client"),
+        // txid just not found
+        _ => (),
+    }
+
+    request_and_cache_transaction(coin, ctx, txid)
+        .await
+        .map(|tx| VerboseTransactionFrom::Rpc(tx))
+}
+
+/// Convert satoshis to BigDecimal amount of coin units
+pub fn big_decimal_from_sat(satoshis: i64, decimals: u8) -> BigDecimal {
+    BigDecimal::from(satoshis) / BigDecimal::from(10u64.pow(decimals as u32))
 }
 
 fn payment_script(
@@ -1377,7 +1397,11 @@ fn address_from_raw_pubkey(pub_key: &[u8], prefix: u8, t_addr_prefix: u8, checks
     })
 }
 
-/// Convert satoshis to BigDecimal amount of coin units
-fn big_decimal_from_sat(satoshis: i64, decimals: u8) -> BigDecimal {
-    BigDecimal::from(satoshis) / BigDecimal::from(10u64.pow(decimals as u32))
+async fn request_and_cache_transaction<T>(coin: &T, ctx: &MmArc, txid: H256Json) -> Result<RpcTransaction, String>
+    where T: UtxoArcGetter + UtxoMmCoin {
+    let tx = try_s!(coin.arc().rpc_client.get_verbose_transaction(txid.clone()).compat().await);
+    if let Err(e) = tx_cache::cache_transaction(coin, ctx, &tx).await {
+        log!("Error " (e) " on caching transaction " [txid]);
+    };
+    Ok(tx)
 }

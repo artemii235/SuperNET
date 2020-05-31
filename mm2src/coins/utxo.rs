@@ -22,6 +22,7 @@
 #![cfg_attr(not(feature = "native"), allow(unused_imports))]
 
 pub mod rpc_clients;
+pub mod tx_cache;
 pub mod utxo_common;
 
 use async_trait::async_trait;
@@ -32,6 +33,7 @@ use chain::{TransactionOutput, TransactionInput};
 use common::{first_char_to_upper, small_rng};
 use common::executor::{spawn, Timer};
 use common::jsonrpc_client::JsonRpcError;
+use common::mm_ctx::MmArc;
 #[cfg(feature = "native")]
 use dirs::home_dir;
 use futures01::{Future};
@@ -42,7 +44,7 @@ use keys::bytes::Bytes;
 use num_traits::ToPrimitive;
 use primitives::hash::{H256, H264, H512};
 use rand::seq::SliceRandom;
-use rpc::v1::types::{Bytes as BytesJson};
+use rpc::v1::types::{Bytes as BytesJson, H256 as H256Json, Transaction as RpcTransaction};
 use script::{Builder, Opcode, Script, SignatureVersion, TransactionInputSigner};
 use serde_json::{self as json, Value as Json};
 use serialization::serialize;
@@ -117,9 +119,9 @@ impl Transaction for UtxoTx {
 /// and check output values
 #[derive(Debug)]
 pub struct AdditionalTxData {
-    received_by_me: u64,
-    spent_by_me: u64,
-    fee_amount: u64,
+    pub received_by_me: u64,
+    pub spent_by_me: u64,
+    pub fee_amount: u64,
 }
 
 /// The fee set from coins config
@@ -207,15 +209,17 @@ pub struct UtxoCoinFields {
     /// Address and privkey checksum type
     checksum_type: ChecksumType,
     /// Fork id used in sighash
-    fork_id: u32,
+    pub fork_id: u32,
     /// Signature version
-    signature_version: SignatureVersion,
+    pub signature_version: SignatureVersion,
     history_sync_state: Mutex<HistorySyncState>,
     required_confirmations: AtomicU64,
     /// if set to true MM2 will check whether calculated fee is lower than relay fee and use
     /// relay fee amount instead of calculated
     /// https://github.com/KomodoPlatform/atomicDEX-API/issues/617
     force_min_relay_fee: bool,
+    // Minimum transaction value at which the value is not less than fee
+    dust_amount: u64,
 }
 
 #[async_trait]
@@ -253,7 +257,7 @@ impl From<UtxoCoinFields> for UtxoArc {
 
 // We can use a shared UTXO lock for all UTXO coins at 1 time.
 // It's highly likely that we won't experience any issues with it as we won't need to send "a lot" of transactions concurrently.
-lazy_static! {static ref UTXO_LOCK: AsyncMutex<()> = AsyncMutex::new(());}
+lazy_static! {pub static ref UTXO_LOCK: AsyncMutex<()> = AsyncMutex::new(());}
 
 pub trait UtxoArcGetter {
     fn arc(&self) -> &UtxoArc;
@@ -284,6 +288,7 @@ pub trait UtxoArcCommonOps {
         outputs: Vec<TransactionOutput>,
         fee_policy: FeePolicy,
         fee: Option<ActualTxFee>,
+        gas_fee: Option<u64>,
     ) -> Result<(TransactionInputSigner, AdditionalTxData), String>;
 
     /// Calculates interest if the coin is KMD
@@ -304,6 +309,26 @@ pub trait UtxoArcCommonOps {
         script_data: Script,
         sequence: u32,
     ) -> Result<UtxoTx, String>;
+}
+
+pub enum VerboseTransactionFrom {
+    Cache(RpcTransaction),
+    Rpc(RpcTransaction),
+}
+
+/// The additional operations on UTXO coin that need to use MarketMaker context.
+#[async_trait]
+pub trait UtxoMmCoin {
+    /// Path to the transaction cache file.
+    fn cached_transaction_path(&self, ctx: &MmArc, txid: &H256Json) -> PathBuf {
+        ctx.dbdir().join("TX_CACHE").join(format!("{:?}", txid))
+    }
+
+    /// Get transaction outputs available to spend.
+    async fn ordered_mature_unspents(&self, ctx: &MmArc, address: &Address) -> Result<Vec<UnspentInfo>, String>;
+
+    /// Try load verbose transaction from cache or try to request it from Rpc client.
+    async fn get_verbose_transaction_from_cache_or_rpc(&self, ctx: &MmArc, txid: H256Json) -> Result<VerboseTransactionFrom, String>;
 }
 
 pub fn compressed_key_pair_from_bytes(raw: &[u8], prefix: u8, checksum_type: ChecksumType) -> Result<KeyPair, String> {
@@ -327,7 +352,7 @@ pub fn compressed_pub_key_from_priv_raw(raw_priv: &[u8], sum_type: ChecksumType)
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct UtxoFeeDetails {
-    amount: BigDecimal,
+    pub amount: BigDecimal,
 }
 
 #[cfg(feature = "native")]
@@ -452,6 +477,7 @@ pub async fn utxo_arc_from_conf_and_request(
     conf: &Json,
     req: &Json,
     priv_key: &[u8],
+    dust_amount: u64,
 ) -> Result<UtxoArc, String> {
     let checksum_type = if ticker == "GRS" {
         ChecksumType::DGROESTL512
@@ -645,6 +671,7 @@ pub async fn utxo_arc_from_conf_and_request(
         history_sync_state: Mutex::new(initial_history_state),
         required_confirmations: required_confirmations.into(),
         force_min_relay_fee: conf["force_min_relay_fee"].as_bool().unwrap_or (false),
+        dust_amount,
     };
     Ok(UtxoArc(Arc::new(coin)))
 }
@@ -677,11 +704,11 @@ fn kmd_interest(height: u64, value: u64, lock_time: u64, current_time: u64) -> u
 }
 
 /// Denominate BigDecimal amount of coin units to satoshis
-fn sat_from_big_decimal(amount: &BigDecimal, decimals: u8) -> Result<u64, String> {
+pub fn sat_from_big_decimal(amount: &BigDecimal, decimals: u8) -> Result<u64, String> {
     (amount * BigDecimal::from(10u64.pow(decimals as u32))).to_u64().ok_or(ERRL!("Could not get sat from amount {} with decimals {}", amount, decimals))
 }
 
-fn sign_tx(
+pub(crate) fn sign_tx(
     unsigned: TransactionInputSigner,
     key_pair: &KeyPair,
     prev_script: Script,
@@ -719,8 +746,10 @@ async fn send_outputs_from_my_address_impl<T>(coin: T, outputs: Vec<TransactionO
                                               -> Result<UtxoTx, String>
     where T: UtxoArcGetter + UtxoArcCommonOps {
     let _utxo_lock = UTXO_LOCK.lock().await;
+    // TODO replace list_unspent_ordered with ordered_mature_unspents
     let unspents = try_s!(coin.arc().rpc_client.list_unspent_ordered(&coin.arc().my_address).map_err(|e| ERRL!("{}", e)).compat().await);
-    let (unsigned, _) = try_s!(coin.generate_transaction(unspents, outputs, FeePolicy::SendExact, None).await);
+    // TODO check for QRC20
+    let (unsigned, _) = try_s!(coin.generate_transaction(unspents, outputs, FeePolicy::SendExact, None, None).await);
     let prev_script = Builder::build_p2pkh(&coin.arc().my_address.hash);
     let signed = try_s!(sign_tx(unsigned, &coin.arc().key_pair, prev_script, coin.arc().signature_version, coin.arc().fork_id));
     try_s!(coin.arc().rpc_client.send_transaction(&signed, coin.arc().my_address.clone()).map_err(|e| ERRL!("{}", e)).compat().await);

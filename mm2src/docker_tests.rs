@@ -28,7 +28,7 @@ mod docker_tests {
     use common::block_on;
     use common::for_tests::{enable_native, MarketMakerIt, mm_dump};
     use coins::{FoundSwapTxSpend, MarketCoinOps, SwapOps};
-    use coins::utxo::{coin_daemon_data_dir, dhash160, UtxoCoinCommonOps, zcash_params_path, UtxoArcGetter};
+    use coins::utxo::{coin_daemon_data_dir, dhash160, UtxoArcGetter, UtxoCoinCommonOps, zcash_params_path};
     use coins::utxo_standard::{UtxoStandardCoin, utxo_standard_coin_from_conf_and_request};
     use coins::utxo::rpc_clients::{UtxoRpcClientEnum, UtxoRpcClientOps};
     use futures01::Future;

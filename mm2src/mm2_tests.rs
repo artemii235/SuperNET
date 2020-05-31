@@ -2196,7 +2196,7 @@ fn test_fill_or_kill_taker_order_should_not_transform_to_maker() {
 
 #[test]
 fn qrc20_activate_electrum() {
-    let passphrase = "cMhHM3PMpMrChygR4bLF7QsTdenhWpFrrmf2UezBG3eeFsz41rtL";
+    let passphrase = "cV463HpebE2djP9ugJry5wZ9st5cc6AbkHXGryZVPXMH1XJK8cVU";
     let coins = json! ([
         {"coin":"QRC20","required_confirmations":0,"pubtype": 120,"p2shtype": 50,"wiftype": 128,"segwit": true,"txfee": 0,"mm2": 1,
          "protocol":{"platform":"QTUM","token_type": "QRC20","params": {"contract_address":"0xd362e096e873eb7907e205fadc6175c6fec7bc44"}}},
@@ -2232,8 +2232,8 @@ fn qrc20_activate_electrum() {
     }))));
     assert_eq! (electrum.0, StatusCode::OK, "RPC «electrum» failed with status «{}», response «{}»", electrum.0, electrum.1);
     let electrum_json: Json = json::from_str(&electrum.1).unwrap();
-    assert_eq!(electrum_json["address"].as_str(), Some("qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG"));
-    assert_eq!(electrum_json["balance"].as_str(), Some("9999989.99999"));
+    assert_eq!(electrum_json["address"].as_str(), Some("qKEDGuogDhtH9zBnc71QtqT1KDamaR1KJ3"));
+    assert_eq!(electrum_json["balance"].as_str(), Some("139"));
 }
 
 #[test]
@@ -2275,14 +2275,23 @@ fn test_qrc20_withdraw() {
     assert_eq!(electrum.0, StatusCode::OK, "RPC «electrum» failed with status «{}», response «{}»", electrum.0, electrum.1);
     let electrum_json: Json = json::from_str(&electrum.1).unwrap();
     assert_eq!(electrum_json["address"].as_str(), Some("qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG"));
-    assert_eq!(electrum_json["balance"].as_str(), Some("9999989.99999"));
+    log!("electrum_json: " [electrum_json]);
+    let balance: f64 = electrum_json["balance"].as_str().unwrap().parse().unwrap();
+    log!("Balance " (balance));
+
+    let amount = 10;
 
     let withdraw = unwrap!(block_on (mm.rpc (json! ({
         "userpass": mm.userpass,
         "method": "withdraw",
         "coin": "QRC20",
         "to": "qHmJ3KA6ZAjR9wGjpFASn4gtUSeFAqdZgs",
-        "amount": "10"
+        "amount": amount,
+        "fee": {
+            "type": "Qrc20Gas",
+            "gas_limit": 2_500_000,
+            "gas_price": 40,
+        }
     }))));
 
     let withdraw_json: Json = unwrap!(json::from_str(&withdraw.1));
@@ -2290,6 +2299,15 @@ fn test_qrc20_withdraw() {
 
     log!((withdraw_json));
     assert!(withdraw_json["tx_hex"].as_str().unwrap().contains("5403a02526012844a9059cbb0000000000000000000000000240b898276ad2cc0d2fe6f527e8e31104e7fde3000000000000000000000000000000000000000000000000000000003b9aca0014d362e096e873eb7907e205fadc6175c6fec7bc44c2"));
+
+    let send_tx = unwrap!(block_on (mm.rpc (json! ({
+        "userpass": mm.userpass,
+        "method": "send_raw_transaction",
+        "coin": "QRC20",
+        "tx_hex": withdraw_json["tx_hex"],
+    }))));
+    assert!(send_tx.0.is_success(), "QRC20 send_raw_transaction: {}", send_tx.1);
+    log!((send_tx.1));
 }
 
 // HOWTO

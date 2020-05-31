@@ -6,15 +6,19 @@ use common::mm_ctx::MmArc;
 use common::mm_number::MmNumber;
 use crate::{HistorySyncState, FoundSwapTxSpend, MarketCoinOps, MmCoin, SwapOps, TradeFee, TradeInfo,
             TransactionDetails, TransactionEnum, TransactionFut, WithdrawRequest};
-use crate::utxo::{ActualTxFee, AdditionalTxData, FeePolicy, UtxoArc, UtxoArcCommonOps, utxo_arc_from_conf_and_request, UtxoCoinCommonOps, UtxoArcGetter};
+use crate::utxo::{ActualTxFee, AdditionalTxData, FeePolicy, UtxoArc, UtxoArcCommonOps, UtxoArcGetter, utxo_arc_from_conf_and_request, UtxoCoinCommonOps, UtxoMmCoin, VerboseTransactionFrom};
 use crate::utxo::utxo_common;
 use crate::utxo::rpc_clients::UnspentInfo;
 use futures01::Future;
+use futures::{TryFutureExt, FutureExt};
 use keys::{Address, Public};
 use primitives::bytes::Bytes;
+use rpc::v1::types::H256 as H256Json;
 use script::{Script, TransactionInputSigner};
 use serde_json::Value as Json;
 use std::borrow::Cow;
+
+pub const UTXO_STANDARD_DUST: u64 = 1000;
 
 #[derive(Clone, Debug)]
 pub struct UtxoStandardCoin {
@@ -45,7 +49,7 @@ pub async fn utxo_standard_coin_from_conf_and_request(
     req: &Json,
     priv_key: &[u8],
 ) -> Result<UtxoStandardCoin, String> {
-    let inner = try_s!(utxo_arc_from_conf_and_request(ticker, conf, req, priv_key).await);
+    let inner = try_s!(utxo_arc_from_conf_and_request(ticker, conf, req, priv_key, UTXO_STANDARD_DUST).await);
     Ok(inner.into())
 }
 
@@ -121,14 +125,16 @@ impl UtxoArcCommonOps for UtxoStandardCoin {
         utxos: Vec<UnspentInfo>,
         outputs: Vec<TransactionOutput>,
         fee_policy: FeePolicy,
-        fee: Option<ActualTxFee>)
+        fee: Option<ActualTxFee>,
+        gas_fee: Option<u64>)
         -> Result<(TransactionInputSigner, AdditionalTxData), String> {
         utxo_common::generate_transaction(
             self,
             utxos,
             outputs,
             fee_policy,
-            fee).await
+            fee,
+            gas_fee).await
     }
 
     async fn calc_interest_if_required(
@@ -300,8 +306,8 @@ impl MmCoin for UtxoStandardCoin {
         utxo_common::can_i_spend_other_payment()
     }
 
-    fn withdraw(&self, req: WithdrawRequest) -> Box<dyn Future<Item=TransactionDetails, Error=String> + Send> {
-        utxo_common::withdraw(self.clone(), req)
+    fn withdraw(&self, ctx: &MmArc, req: WithdrawRequest) -> Box<dyn Future<Item=TransactionDetails, Error=String> + Send> {
+        Box::new(utxo_common::withdraw(self.clone(), ctx.clone(), req).boxed().compat())
     }
 
     fn decimals(&self) -> u8 {
@@ -338,5 +344,16 @@ impl MmCoin for UtxoStandardCoin {
 
     fn set_requires_notarization(&self, requires_nota: bool) {
         utxo_common::set_requires_notarization(&self.utxo_arc, requires_nota)
+    }
+}
+
+#[async_trait]
+impl UtxoMmCoin for UtxoStandardCoin {
+    async fn ordered_mature_unspents(&self, _ctx: &MmArc, address: &Address) -> Result<Vec<UnspentInfo>, String> {
+        utxo_common::ordered_mature_unspents(&self.utxo_arc, address).await
+    }
+
+    async fn get_verbose_transaction_from_cache_or_rpc(&self, ctx: &MmArc, txid: H256Json) -> Result<VerboseTransactionFrom, String> {
+        utxo_common::get_verbose_transaction_from_cache_or_rpc(self, ctx, txid).await
     }
 }

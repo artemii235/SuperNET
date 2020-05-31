@@ -5,22 +5,30 @@ use common::mm_ctx::MmArc;
 use common::mm_number::MmNumber;
 use common::jsonrpc_client::{JsonRpcClient, JsonRpcRequest, JsonRpcError, RpcRes};
 use crate::{HistorySyncState, FoundSwapTxSpend, MarketCoinOps, MmCoin, SwapOps, TradeFee, TradeInfo,
-            TransactionDetails, TransactionEnum, TransactionFut, WithdrawRequest};
+            TransactionDetails, TransactionEnum, TransactionFut, WithdrawFee, WithdrawRequest};
 use crate::eth::{ERC20_CONTRACT, u256_to_big_decimal, wei_from_big_decimal};
-use crate::utxo::{ActualTxFee, AdditionalTxData, FeePolicy, UtxoArc, UtxoArcCommonOps, utxo_arc_from_conf_and_request, UtxoCoinCommonOps, UtxoArcGetter};
+use crate::utxo::{sign_tx, utxo_arc_from_conf_and_request, ActualTxFee, AdditionalTxData, FeePolicy, UtxoArc, UtxoArcCommonOps, UtxoArcGetter, UtxoCoinCommonOps, UtxoMmCoin, VerboseTransactionFrom, UtxoFeeDetails, UTXO_LOCK};
 use crate::utxo::utxo_common;
 use crate::utxo::rpc_clients::{ElectrumClient, UnspentInfo, UtxoRpcClientEnum};
 use ethabi::Token;
 use ethereum_types::{H160, U256};
 use futures::{TryFutureExt, FutureExt};
 use futures01::future::Future;
+use futures::compat::Future01CompatExt;
+use gstuff::now_ms;
 use keys::{Address, Public};
 use primitives::bytes::Bytes;
-use rpc::v1::types::{Bytes as BytesJson, H160 as H160Json};
+use rpc::v1::types::{Bytes as BytesJson, H160 as H160Json, H256 as H256Json, Transaction as RpcTransaction};
 use script::{Builder, Opcode, Script, TransactionInputSigner};
 use serde_json::{self as json, Value as Json};
+use serialization::serialize;
 use std::borrow::Cow;
 use std::str::FromStr;
+
+const QTUM_MATURE_CONFIRMATIONS: u32 = 500;
+const QRC20_GAS_LIMIT_DEFAULT: u64 = 250_000;
+const QRC20_GAS_PRICE_DEFAULT: u64 = 40;
+const QRC20_DUST: u64 = 0;
 
 #[derive(Debug, Deserialize, Eq, PartialEq)]
 pub struct TokenInfo {
@@ -68,14 +76,14 @@ pub async fn qrc20_coin_from_conf_and_request(
     priv_key: &[u8],
     contract_address: H160,
 ) -> Result<Qrc20Coin, String> {
-    let inner = try_s!(utxo_arc_from_conf_and_request(ticker, conf, req, priv_key).await);
+    let inner = try_s!(utxo_arc_from_conf_and_request(ticker, conf, req, priv_key, QRC20_DUST).await);
     Ok(Qrc20Coin { utxo_arc: inner, contract_address })
 }
 
 #[derive(Clone, Debug)]
 pub struct Qrc20Coin {
-    utxo_arc: UtxoArc,
-    contract_address: H160,
+    pub utxo_arc: UtxoArc,
+    pub contract_address: H160,
 }
 
 impl UtxoArcGetter for Qrc20Coin {
@@ -151,13 +159,21 @@ impl UtxoArcCommonOps for Qrc20Coin {
             amount)
     }
 
-    async fn generate_transaction(&self, utxos: Vec<UnspentInfo>, outputs: Vec<TransactionOutput>, fee_policy: FeePolicy, fee: Option<ActualTxFee>) -> Result<(TransactionInputSigner, AdditionalTxData), String> {
+    async fn generate_transaction(
+        &self,
+        utxos: Vec<UnspentInfo>,
+        outputs: Vec<TransactionOutput>,
+        fee_policy: FeePolicy,
+        fee: Option<ActualTxFee>,
+        gas_fee: Option<u64>)
+        -> Result<(TransactionInputSigner, AdditionalTxData), String> {
         utxo_common::generate_transaction(
             self,
             utxos,
             outputs,
             fee_policy,
-            fee).await
+            fee,
+            gas_fee).await
     }
 
     async fn calc_interest_if_required(
@@ -347,25 +363,8 @@ impl MmCoin for Qrc20Coin {
         utxo_common::can_i_spend_other_payment()
     }
 
-    fn withdraw(&self, req: WithdrawRequest) -> Box<dyn Future<Item=TransactionDetails, Error=String> + Send> {
-        async fn withdraw_(coin: Qrc20Coin, req: WithdrawRequest) -> Result<TransactionDetails, String> {
-            let to_addr = try_s!(Address::from_str(&req.to));
-
-            let is_p2pkh = to_addr.prefix == coin.utxo_arc.pub_addr_prefix && to_addr.t_addr_prefix == coin.utxo_arc.pub_t_addr_prefix;
-            let is_p2sh = to_addr.prefix == coin.utxo_arc.p2sh_addr_prefix && to_addr.t_addr_prefix == coin.utxo_arc.p2sh_t_addr_prefix && coin.utxo_arc.segwit;
-            if !is_p2pkh && !is_p2sh {
-                return ERR!("Address {} has invalid format", to_addr);
-            }
-
-            let amount = try_s!(wei_from_big_decimal(&req.amount, coin.utxo_arc.decimals));
-            // TODO replace hardcode
-            let script_pubkey = try_s!(generate_token_transfer_script_pubkey(
-                to_addr, amount, 2_500_000, 40, &coin.contract_address));
-
-            utxo_common::withdraw_impl(coin, req, script_pubkey).await
-        }
-
-        Box::new(withdraw_(self.clone(), req).boxed().compat())
+    fn withdraw(&self, ctx: &MmArc, req: WithdrawRequest) -> Box<dyn Future<Item=TransactionDetails, Error=String> + Send> {
+        Box::new(qrc20_withdraw(self.clone(), ctx.clone(), req).boxed().compat())
     }
 
     fn decimals(&self) -> u8 {
@@ -405,8 +404,84 @@ impl MmCoin for Qrc20Coin {
     }
 }
 
+#[async_trait]
+impl UtxoMmCoin for Qrc20Coin {
+    async fn ordered_mature_unspents(&self, ctx: &MmArc, address: &Address) -> Result<Vec<UnspentInfo>, String> {
+        qtum_ordered_mature_unspents(self, ctx, address).await
+    }
+
+    async fn get_verbose_transaction_from_cache_or_rpc(&self, ctx: &MmArc, txid: H256Json) -> Result<VerboseTransactionFrom, String> {
+        utxo_common::get_verbose_transaction_from_cache_or_rpc(self, ctx, txid).await
+    }
+}
+
+async fn qrc20_withdraw(coin: Qrc20Coin, ctx: MmArc, req: WithdrawRequest) -> Result<TransactionDetails, String> {
+    let to_addr = try_s!(Address::from_str(&req.to));
+
+    let is_p2pkh = to_addr.prefix == coin.arc().pub_addr_prefix && to_addr.t_addr_prefix == coin.arc().pub_t_addr_prefix;
+    let is_p2sh = to_addr.prefix == coin.arc().p2sh_addr_prefix && to_addr.t_addr_prefix == coin.arc().p2sh_t_addr_prefix && coin.arc().segwit;
+    if !is_p2pkh && !is_p2sh {
+        return ERR!("Address {} has invalid format", to_addr);
+    }
+
+    let _utxo_lock = UTXO_LOCK.lock().await;
+
+    // the qrc20_amount is used only within smart contract calls
+    let qrc20_amount = if req.max {
+        let balance = try_s!(coin.my_balance().compat().await);
+        try_s!(wei_from_big_decimal(&balance, coin.arc().decimals))
+    } else {
+        try_s!(wei_from_big_decimal(&req.amount, coin.arc().decimals))
+    };
+
+    let (gas_limit, gas_price) = match req.fee {
+        Some(WithdrawFee::Qrc20Gas { gas_limit, gas_price }) => (gas_limit, gas_price),
+        Some(_) => return ERR!("Unsupported input fee type"),
+        None => (QRC20_GAS_LIMIT_DEFAULT, QRC20_GAS_PRICE_DEFAULT),
+    };
+
+    let script_pubkey = try_s!(generate_token_transfer_script_pubkey(
+        to_addr.clone(), qrc20_amount, gas_limit, gas_price, &coin.contract_address)).to_bytes();
+
+    // qtum_amount is always 0 for the QRC20, because we should pay only a fee in Qtum to send the QRC20 transaction
+    let qtum_amount = 0u64;
+    let outputs = vec![TransactionOutput {
+        value: qtum_amount,
+        script_pubkey,
+    }];
+
+    let unspents = try_s!(coin.ordered_mature_unspents(&ctx, &coin.arc().my_address).await.map_err(|e| ERRL!("{}", e)));
+
+    // None seems that the generate_transaction() should request estimated fee for Kbyte
+    let actual_tx_fee = None;
+    let gas_fee = Some(gas_limit * gas_price);
+    let fee_policy = FeePolicy::SendExact;
+
+    let (unsigned, data) = try_s!(coin.generate_transaction(unspents, outputs, fee_policy, actual_tx_fee, gas_fee).await);
+    let prev_script = Builder::build_p2pkh(&coin.arc().my_address.hash);
+    let signed = try_s!(sign_tx(unsigned, &coin.arc().key_pair, prev_script, coin.arc().signature_version, coin.arc().fork_id));
+    let fee_details = UtxoFeeDetails {
+        amount: utxo_common::big_decimal_from_sat(data.fee_amount as i64, coin.arc().decimals),
+    };
+    Ok(TransactionDetails {
+        from: vec![coin.arc().my_address.to_string()],
+        to: vec![format!("{}", to_addr)],
+        total_amount: utxo_common::big_decimal_from_sat(data.spent_by_me as i64, coin.arc().decimals),
+        spent_by_me: utxo_common::big_decimal_from_sat(data.spent_by_me as i64, coin.arc().decimals),
+        received_by_me: utxo_common::big_decimal_from_sat(data.received_by_me as i64, coin.arc().decimals),
+        my_balance_change: utxo_common::big_decimal_from_sat(data.received_by_me as i64 - data.spent_by_me as i64, coin.arc().decimals),
+        tx_hash: signed.hash().reversed().to_vec().into(),
+        tx_hex: serialize(&signed).into(),
+        fee_details: Some(fee_details.into()),
+        block_height: 0,
+        coin: coin.arc().ticker.clone(),
+        internal_id: vec![].into(),
+        timestamp: now_ms() / 1000,
+    })
+}
+
 /// Serialize the `number` similar to BigEndian but in QRC20 specific format.
-pub fn contract_encode_number(number: i64) -> Vec<u8> {
+fn contract_encode_number(number: i64) -> Vec<u8> {
     // | encoded number (0 - 8 bytes) |
     // therefore the max result vector length is 8
     let capacity = 8;
@@ -477,6 +552,62 @@ fn generate_token_transfer_script_pubkey(
         .into_script())
 }
 
+fn can_spend_output(output: &RpcTransaction) -> bool {
+    let is_qrc20_coinbase = output.vout.iter().find(|x| x.is_empty()).is_some();
+    !is_qrc20_coinbase || output.confirmations >= QTUM_MATURE_CONFIRMATIONS
+}
+
+async fn qtum_ordered_mature_unspents<T>(coin: &T, ctx: &MmArc, address: &Address) -> Result<Vec<UnspentInfo>, String>
+    where T: UtxoArcGetter + UtxoMmCoin {
+    let unspents = try_s!(coin.arc().rpc_client.list_unspent_ordered(address).compat().await);
+    let block_count = try_s!(coin.arc().rpc_client.get_block_count().compat().await);
+
+    let mut result = Vec::with_capacity(unspents.len());
+    for unspent in unspents {
+        let tx_hash: H256Json = unspent.outpoint.hash.reversed().into();
+        let tx_info = match coin.get_verbose_transaction_from_cache_or_rpc(ctx, tx_hash.clone()).await {
+            Ok(x) => x,
+            Err(err) => {
+                log!("Error " [err] " getting the transaction " [tx_hash] ", skip the unspent output");
+                continue;
+            }
+        };
+
+        let tx_info = match tx_info {
+            VerboseTransactionFrom::Cache(mut tx) => {
+                if tx.height.is_none() {
+                    tx.height = unspent.height;
+                }
+                if let Some(tx_height) = tx.height {
+                    // refresh confirmations for the cached transaction:
+                    // use the up-to-date block_count and tx_height.
+                    tx.confirmations = (block_count - tx_height + 1) as u32;
+                    assert_ne!(tx.confirmations, 0);
+                } else {
+                    // else do not skip the transaction with unknown height,
+                    // because the transaction may be old enough (tx.confirmations > QTUM_MATURE_CONFIRMATIONS)
+                    log!("Warning, unknown transaction (" [tx_hash] ") height");
+                }
+
+                tx
+            }
+            VerboseTransactionFrom::Rpc(tx) => {
+                if tx.confirmations == 0 {
+                    log!("Skip not mined transaction "[tx_hash]);
+                    continue;
+                }
+                tx
+            }
+        };
+
+        if can_spend_output(&tx_info) {
+            result.push(unspent);
+        }
+    }
+
+    Ok(result)
+}
+
 #[cfg(test)]
 mod qtum_tests {
     use crate::{
@@ -485,6 +616,7 @@ mod qtum_tests {
     };
     use ethabi::Token;
     use keys::Address;
+    use rpc::v1::types::{ScriptType, SignedTransactionOutput, TransactionOutputScript};
     use super::*;
 
     #[test]
@@ -506,7 +638,7 @@ mod qtum_tests {
     fn get_token_balance_using_contract_call() {
         let client = electrum_client_for_test(&["95.217.83.126:10001"]);
         let token_addr = hex::decode("d362e096e873eb7907e205fadc6175c6fec7bc44").unwrap();
-        let our_addr: Address = "qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG".parse().unwrap();
+        let our_addr: Address = "qKEDGuogDhtH9zBnc71QtqT1KDamaR1KJ3".parse().unwrap();
         log!((our_addr.prefix));
         let function = unwrap!(ERC20_CONTRACT.function("balanceOf"));
         let data = unwrap!(function.encode_input(&[
@@ -519,7 +651,7 @@ mod qtum_tests {
             _ => panic!("Expected Uint, got {:?}", tokens[0]),
         };
         let balance = u256_to_big_decimal(balance, 8).unwrap();
-        assert_eq!(balance, "9999989.99999".parse().unwrap());
+        assert_eq!(balance, "139.00000".parse().unwrap());
     }
 
     #[test]
@@ -603,5 +735,63 @@ mod qtum_tests {
         for (actual, expected) in numbers {
             assert_eq!(contract_encode_number(actual), expected);
         }
+    }
+
+    #[test]
+    fn test_can_spend_output() {
+        let mut tx = RpcTransaction {
+            hex: Default::default(),
+            txid: "47d983175720ba2a67f36d0e1115a129351a2f340bdde6ecb6d6029e138fe920".into(),
+            hash: None,
+            size: Default::default(),
+            vsize: Default::default(),
+            version: 2,
+            locktime: 0,
+            vin: vec![],
+            vout: vec![
+                // empty output
+                SignedTransactionOutput {
+                    value: 0.,
+                    n: 0,
+                    script: TransactionOutputScript {
+                        asm: "".into(),
+                        hex: "".into(),
+                        req_sigs: 0,
+                        script_type: ScriptType::NonStandard,
+                        addresses: vec![],
+                    },
+                },
+                SignedTransactionOutput {
+                    value: 117.02430015,
+                    n: 1,
+                    script: TransactionOutputScript {
+                        asm: "03e71b9c152bb233ddfe58f20056715c51b054a1823e0aba108e6f1cea0ceb89c8 OP_CHECKSIG".into(),
+                        hex: "2103e71b9c152bb233ddfe58f20056715c51b054a1823e0aba108e6f1cea0ceb89c8ac".into(),
+                        req_sigs: 0,
+                        script_type: ScriptType::PubKey,
+                        addresses: vec![],
+                    },
+                },
+            ],
+            blockhash: "c23882939ff695be36546ea998eb585e962b043396e4d91959477b9796ceb9e1".into(),
+            confirmations: 421,
+            rawconfirmations: None,
+            time: 1590671504,
+            blocktime: 1590671504,
+            height: None,
+        };
+
+        // output is coinbase and has confirmations < QTUM_MATURE_CONFIRMATIONS
+        assert_eq!(can_spend_output(&tx), false);
+
+        tx.confirmations = 501;
+        // output is coinbase but has confirmations > QTUM_MATURE_CONFIRMATIONS
+        assert!(can_spend_output(&tx));
+
+        tx.confirmations = 421;
+        // remove empty output
+        tx.vout.remove(0);
+        // output is not coinbase
+        assert!(can_spend_output(&tx));
     }
 }
