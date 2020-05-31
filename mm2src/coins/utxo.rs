@@ -22,8 +22,10 @@
 #![cfg_attr(not(feature = "native"), allow(unused_imports))]
 
 pub mod rpc_clients;
+pub mod qtum;
 pub mod tx_cache;
 pub mod utxo_common;
+pub mod utxo_standard;
 
 use async_trait::async_trait;
 use base64::{encode_config as base64_encode, URL_SAFE};
@@ -119,9 +121,9 @@ impl Transaction for UtxoTx {
 /// and check output values
 #[derive(Debug)]
 pub struct AdditionalTxData {
-    pub received_by_me: u64,
-    pub spent_by_me: u64,
-    pub fee_amount: u64,
+    received_by_me: u64,
+    spent_by_me: u64,
+    fee_amount: u64,
 }
 
 /// The fee set from coins config
@@ -152,14 +154,14 @@ pub enum FeePolicy {
 
 #[derive(Debug)]
 pub struct UtxoCoinFields {
-    pub ticker: String,
+    ticker: String,
     /// https://en.bitcoin.it/wiki/List_of_address_prefixes
     /// https://github.com/jl777/coins/blob/master/coins
-    pub pub_addr_prefix: u8,
-    pub p2sh_addr_prefix: u8,
+    pub_addr_prefix: u8,
+    p2sh_addr_prefix: u8,
     wif_prefix: u8,
-    pub pub_t_addr_prefix: u8,
-    pub p2sh_t_addr_prefix: u8,
+    pub_t_addr_prefix: u8,
+    p2sh_t_addr_prefix: u8,
     /// True if coins uses Proof of Stake consensus algo
     /// Proof of Work is expected by default
     /// https://en.bitcoin.it/wiki/Proof_of_Stake
@@ -179,22 +181,22 @@ pub struct UtxoCoinFields {
     /// the flag will also affect the address that MM2 generates by default in the future
     /// will be the Segwit (starting from 3 for BTC case) instead of legacy
     /// https://en.bitcoin.it/wiki/Segregated_Witness
-    pub segwit: bool,
+    segwit: bool,
     /// Default decimals amount is 8 (BTC and almost all other UTXO coins)
     /// But there are forks which have different decimals:
     /// Peercoin has 6
     /// Emercoin has 6
     /// Bitcoin Diamond has 7
-    pub decimals: u8,
+    decimals: u8,
     /// Does coin require transactions to be notarized to be considered as confirmed?
     /// https://komodoplatform.com/security-delayed-proof-of-work-dpow/
     requires_notarization: AtomicBool,
     /// RPC client
     pub rpc_client: UtxoRpcClientEnum,
     /// ECDSA key pair
-    pub key_pair: KeyPair,
+    key_pair: KeyPair,
     /// Lock the mutex when we deal with address utxos
-    pub my_address: Address,
+    my_address: Address,
     /// Is current coin KMD asset chain?
     /// https://komodoplatform.atlassian.net/wiki/spaces/KPSD/pages/71729160/What+is+a+Parallel+Chain+Asset+Chain
     asset_chain: bool,
@@ -209,9 +211,9 @@ pub struct UtxoCoinFields {
     /// Address and privkey checksum type
     checksum_type: ChecksumType,
     /// Fork id used in sighash
-    pub fork_id: u32,
+    fork_id: u32,
     /// Signature version
-    pub signature_version: SignatureVersion,
+    signature_version: SignatureVersion,
     history_sync_state: Mutex<HistorySyncState>,
     required_confirmations: AtomicU64,
     /// if set to true MM2 will check whether calculated fee is lower than relay fee and use
@@ -352,7 +354,7 @@ pub fn compressed_pub_key_from_priv_raw(raw_priv: &[u8], sum_type: ChecksumType)
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct UtxoFeeDetails {
-    pub amount: BigDecimal,
+    amount: BigDecimal,
 }
 
 #[cfg(feature = "native")]

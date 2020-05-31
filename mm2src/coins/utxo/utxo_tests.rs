@@ -2,11 +2,6 @@ use chain::OutPoint;
 use common::block_on;
 use common::mm_ctx::MmCtxBuilder;
 use common::privkey::key_pair_from_seed;
-use crate::{
-    utxo::rpc_clients::{ElectrumProtocol, UtxoRpcClientOps},
-    utxo_standard::{utxo_standard_coin_from_conf_and_request, UtxoStandardCoin, UTXO_STANDARD_DUST},
-    WithdrawFee,
-};
 use futures::future::join_all;
 use gstuff::now_ms;
 use mocktopus::mocking::*;
@@ -15,7 +10,8 @@ use serialization::deserialize;
 use std::thread;
 use std::time::Duration;
 use super::*;
-use crate::utxo::rpc_clients::{ListSinceBlockRes, NetworkInfo};
+use super::utxo_standard::{utxo_standard_coin_from_conf_and_request, UtxoStandardCoin, UTXO_STANDARD_DUST};
+use super::rpc_clients::{ElectrumProtocol, ListSinceBlockRes, NetworkInfo, UtxoRpcClientOps};
 
 const TEST_COIN_NAME: &'static str = "ETOMIC";
 

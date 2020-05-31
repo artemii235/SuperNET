@@ -1,29 +1,15 @@
-use async_trait::async_trait;
-use bigdecimal::BigDecimal;
-use chain::{Transaction, TransactionOutput};
-use common::mm_ctx::MmArc;
+use common::jsonrpc_client::{JsonRpcClient, JsonRpcRequest, RpcRes};
 use common::mm_number::MmNumber;
-use common::jsonrpc_client::{JsonRpcClient, JsonRpcRequest, JsonRpcError, RpcRes};
-use crate::{HistorySyncState, FoundSwapTxSpend, MarketCoinOps, MmCoin, SwapOps, TradeFee, TradeInfo,
-            TransactionDetails, TransactionEnum, TransactionFut, WithdrawFee, WithdrawRequest};
 use crate::eth::{ERC20_CONTRACT, u256_to_big_decimal, wei_from_big_decimal};
-use crate::utxo::{sign_tx, utxo_arc_from_conf_and_request, ActualTxFee, AdditionalTxData, FeePolicy, UtxoArc, UtxoArcCommonOps, UtxoArcGetter, UtxoCoinCommonOps, UtxoMmCoin, VerboseTransactionFrom, UtxoFeeDetails, UTXO_LOCK};
-use crate::utxo::utxo_common;
-use crate::utxo::rpc_clients::{ElectrumClient, UnspentInfo, UtxoRpcClientEnum};
+use crate::SwapOps;
 use ethabi::Token;
 use ethereum_types::{H160, U256};
 use futures::{TryFutureExt, FutureExt};
-use futures01::future::Future;
-use futures::compat::Future01CompatExt;
 use gstuff::now_ms;
-use keys::{Address, Public};
-use primitives::bytes::Bytes;
-use rpc::v1::types::{Bytes as BytesJson, H160 as H160Json, H256 as H256Json, Transaction as RpcTransaction};
-use script::{Builder, Opcode, Script, TransactionInputSigner};
-use serde_json::{self as json, Value as Json};
-use serialization::serialize;
+use rpc::v1::types::H160 as H160Json;
 use std::borrow::Cow;
 use std::str::FromStr;
+use super::*;
 
 const QTUM_MATURE_CONFIRMATIONS: u32 = 500;
 const QRC20_GAS_LIMIT_DEFAULT: u64 = 250_000;
@@ -191,12 +177,12 @@ impl UtxoArcCommonOps for Qrc20Coin {
 
     fn p2sh_spending_tx(
         &self,
-        prev_transaction: Transaction,
+        prev_transaction: UtxoTx,
         redeem_script: Bytes,
         outputs: Vec<TransactionOutput>,
         script_data: Script,
         sequence: u32)
-        -> Result<Transaction, String> {
+        -> Result<UtxoTx, String> {
         utxo_common::p2sh_spending_tx(
             &self.utxo_arc,
             prev_transaction,

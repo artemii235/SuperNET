@@ -1,22 +1,8 @@
-use async_trait::async_trait;
-use bigdecimal::BigDecimal;
-use chain::{TransactionOutput, Transaction};
-use common::jsonrpc_client::JsonRpcError;
-use common::mm_ctx::MmArc;
 use common::mm_number::MmNumber;
-use crate::{HistorySyncState, FoundSwapTxSpend, MarketCoinOps, MmCoin, SwapOps, TradeFee, TradeInfo,
-            TransactionDetails, TransactionEnum, TransactionFut, WithdrawRequest};
-use crate::utxo::{ActualTxFee, AdditionalTxData, FeePolicy, UtxoArc, UtxoArcCommonOps, UtxoArcGetter, utxo_arc_from_conf_and_request, UtxoCoinCommonOps, UtxoMmCoin, VerboseTransactionFrom};
-use crate::utxo::utxo_common;
-use crate::utxo::rpc_clients::UnspentInfo;
-use futures01::Future;
+use crate::SwapOps;
 use futures::{TryFutureExt, FutureExt};
-use keys::{Address, Public};
-use primitives::bytes::Bytes;
-use rpc::v1::types::H256 as H256Json;
-use script::{Script, TransactionInputSigner};
-use serde_json::Value as Json;
 use std::borrow::Cow;
+use super::*;
 
 pub const UTXO_STANDARD_DUST: u64 = 1000;
 
@@ -152,12 +138,12 @@ impl UtxoArcCommonOps for UtxoStandardCoin {
 
     fn p2sh_spending_tx(
         &self,
-        prev_transaction: Transaction,
+        prev_transaction: UtxoTx,
         redeem_script: Bytes,
         outputs: Vec<TransactionOutput>,
         script_data: Script,
         sequence: u32)
-        -> Result<Transaction, String> {
+        -> Result<UtxoTx, String> {
         utxo_common::p2sh_spending_tx(
             &self.utxo_arc,
             prev_transaction,

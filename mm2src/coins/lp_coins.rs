@@ -62,18 +62,15 @@ macro_rules! try_fus {
 pub mod coins_tests;
 pub mod eth;
 use self::eth::{eth_coin_from_conf_and_request, EthCoin, EthTxFeeDetails, SignedEthTx};
-pub mod qtum;
 pub mod utxo;
-pub mod utxo_standard;
 use self::utxo::{UtxoFeeDetails, UtxoTx};
-use self::qtum::{qrc20_coin_from_conf_and_request};
+use self::utxo::utxo_standard::{UtxoStandardCoin, utxo_standard_coin_from_conf_and_request};
+use self::utxo::qtum::{qrc20_coin_from_conf_and_request, Qrc20Coin};
 #[doc(hidden)]
 #[allow(unused_variables)]
 pub mod test_coin;
 pub use self::test_coin::TestCoin;
 use ethereum_types::H160;
-use crate::qtum::Qrc20Coin;
-use crate::utxo_standard::{UtxoStandardCoin, utxo_standard_coin_from_conf_and_request};
 
 pub trait Transaction: Debug + 'static {
     /// Raw transaction bytes of the transaction
