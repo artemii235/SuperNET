@@ -1,5 +1,5 @@
 use bigdecimal::BigDecimal;
-use common::block_on;
+use common::{block_on, slurp_url};
 use common::mm_ctx::MmCtxBuilder;
 use common::privkey::key_pair_from_seed;
 use crate::{
@@ -13,7 +13,7 @@ use super::*;
 
 const TEST_COIN_NAME: &'static str = "RICK";
 
-fn electrum_client_for_test(servers: &[&str]) -> UtxoRpcClientEnum {
+fn electrum_client_for_test(servers: &[&str]) -> ElectrumClient {
     let mut client = ElectrumClientImpl::new(TEST_COIN_NAME.into(), Default::default());
     for server in servers {
         client.add_server(&ElectrumRpcRequest {
@@ -33,7 +33,7 @@ fn electrum_client_for_test(servers: &[&str]) -> UtxoRpcClientEnum {
         attempts += 1;
     }
 
-    UtxoRpcClientEnum::Electrum(ElectrumClient(Arc::new(client)))
+    ElectrumClient(Arc::new(client))
 }
 
 fn utxo_coin_for_test(rpc_client: UtxoRpcClientEnum, force_seed: Option<&str>) -> UtxoCoinImpl {
@@ -100,7 +100,7 @@ fn test_extract_secret() {
 #[test]
 fn test_generate_transaction() {
     let client = electrum_client_for_test(&["test1.cipig.net:10025"]);
-    let coin: UtxoCoin = utxo_coin_for_test(client, None).into();
+    let coin: UtxoCoin = utxo_coin_for_test(client.into(), None).into();
     let unspents = vec![UnspentInfo {
         value: 10000000000,
         outpoint: OutPoint::default(),
@@ -170,7 +170,7 @@ fn test_generate_transaction() {
 #[test]
 fn test_addresses_from_script() {
     let client = electrum_client_for_test(&["test1.cipig.net:10025", "test2.cipig.net:10025"]);
-    let coin = utxo_coin_for_test(client, None);
+    let coin = utxo_coin_for_test(client.into(), None);
     // P2PKH
     let script: Script = "76a91405aab5342166f8594baf17a7d9bef5d56744332788ac".into();
     let expected_addr: Vec<Address> = vec!["R9o9xTocqr6CeEDGDH6mEYpwLoMz6jNjMW".into()];
@@ -296,7 +296,7 @@ fn test_wait_for_payment_spend_timeout_electrum() {
 #[test]
 fn test_search_for_swap_tx_spend_electrum_was_spent() {
     let client = electrum_client_for_test(&["test1.cipig.net:10025", "test2.cipig.net:10025"]);
-    let coin = utxo_coin_for_test(client, Some("spice describe gravity federal blast come thank unfair canal monkey style afraid"));
+    let coin = utxo_coin_for_test(client.into(), Some("spice describe gravity federal blast come thank unfair canal monkey style afraid"));
     // raw tx bytes of https://etomic.explorer.dexstats.info/tx/c514b3163d66636ebc3574817cb5853d5ab39886183de71ffedf5c5768570a6b
     let payment_tx_bytes = unwrap!(hex::decode("0400008085202f89013ac014d4926c8b435f7a5c58f38975d14f1aba597b1eef2dfdc093457678eb83010000006a47304402204ddb9b10237a1267a02426d923528213ad1e0b62d45be7d9629e2909f099d90c02205eecadecf6fd09cb8465170eb878c5d54e563f067b64e23c418da0f6519ca354012102031d4256c4bc9f99ac88bf3dba21773132281f65f9bf23a59928bce08961e2f3ffffffff02809698000000000017a914bbd726b74f27b476d5d932e903b5893fd4e8bd2187acdaaa87010000001976a91405aab5342166f8594baf17a7d9bef5d56744332788ac2771515d000000000000000000000000000000"));
 
@@ -318,7 +318,7 @@ fn test_search_for_swap_tx_spend_electrum_was_spent() {
 #[test]
 fn test_search_for_swap_tx_spend_electrum_was_refunded() {
     let client = electrum_client_for_test(&["test1.cipig.net:10025", "test2.cipig.net:10025"]);
-    let coin = utxo_coin_for_test(client, Some("spice describe gravity federal blast come thank unfair canal monkey style afraid"));
+    let coin = utxo_coin_for_test(client.into(), Some("spice describe gravity federal blast come thank unfair canal monkey style afraid"));
 
     // raw tx bytes of https://etomic.explorer.dexstats.info/tx/c9a47cc6e80a98355cd4e69d436eae6783cbee5991756caa6e64a0743442fa96
     let payment_tx_bytes = unwrap!(hex::decode("0400008085202f8901887e809b10738b1625b7f47fd5d2201f32e8a4c6c0aaefc3b9ab6c07dc6a5925010000006a47304402203966f49ba8acc9fcc0e53e7b917ca5599ce6054a0c2d22752c57a3dc1b0fc83502206fde12c869da20a21cedd5bbc4bcd12977d25ff4b00e0999de5ac4254668e891012102031d4256c4bc9f99ac88bf3dba21773132281f65f9bf23a59928bce08961e2f3ffffffff02809698000000000017a9147e9456f37fa53cf9053e192ea4951d2c8b58647c8784631684010000001976a91405aab5342166f8594baf17a7d9bef5d56744332788ac0fb3525d000000000000000000000000000000"));
@@ -534,7 +534,7 @@ fn test_withdraw_impl_sat_per_kb_fee_max() {
 fn test_utxo_lock() {
     // send several transactions concurrently to check that they are not using same inputs
     let client = electrum_client_for_test(&["test1.cipig.net:10025", "test2.cipig.net:10025"]);
-    let coin: UtxoCoin = utxo_coin_for_test(client, None).into();
+    let coin: UtxoCoin = utxo_coin_for_test(client.into(), None).into();
     let output = TransactionOutput {
         value: 1000000,
         script_pubkey: Builder::build_p2pkh(&coin.my_address.hash).to_bytes(),
@@ -613,7 +613,7 @@ fn get_tx_details_doge() {
 // https://github.com/KomodoPlatform/atomicDEX-API/issues/587
 fn get_tx_details_coinbase_transaction() {
     let client = electrum_client_for_test(&["el0.veruscoin.io:17485", "el1.veruscoin.io:17485"]);
-    let coin: UtxoCoin = utxo_coin_for_test(client, Some("spice describe gravity federal blast come thank unfair canal monkey style afraid")).into();
+    let coin: UtxoCoin = utxo_coin_for_test(client.into(), Some("spice describe gravity federal blast come thank unfair canal monkey style afraid")).into();
 
     let fut = async move {
         // hash of coinbase transaction https://vrsc.explorer.dexstats.info/tx/0d95a7b11802621a65f9e7ca9da0bca6ee4956fd2328e5116a777285179dbd08
@@ -816,4 +816,42 @@ fn test_generate_tx_fee_is_correct_when_dynamic_fee_is_larger_than_relay() {
     assert_eq!(generated.1.received_by_me, 999996968);
     assert_eq!(generated.1.spent_by_me, 20000000000);
     assert!(unsafe { GET_RELAY_FEE_CALLED });
+}
+
+#[test]
+fn check_mtp() {
+    fn block_hash(num: u64) -> String {
+        let url = format!("https://www.kmdexplorer.io/insight-api-komodo/block-index/{}", num);
+        let res = slurp_url(&url).wait().unwrap();
+        let json: Json = json::from_slice(&res.2).unwrap();
+        json["blockHash"].as_str().unwrap().to_owned()
+    }
+
+    fn block_timestamp(hash: &str) -> u64 {
+        let url = format!("https://www.kmdexplorer.io/insight-api-komodo/block/{}", hash);
+        let res = slurp_url(&url).wait().unwrap();
+        let json: Json = json::from_slice(&res.2).unwrap();
+        json["time"].as_u64().unwrap()
+    }
+
+    let mut sum = 0;
+    for block in 1773380..1773391 {
+        let hash = block_hash(block);
+        let timestamp = block_timestamp(&hash);
+        sum += timestamp;
+        thread::sleep(Duration::from_secs(1));
+    }
+    log!((sum / 11));
+}
+
+#[test]
+fn test_get_median_time_past_from_electrum() {
+    let client = electrum_client_for_test(&[
+        "electrum1.cipig.net:10001",
+        "electrum2.cipig.net:10001",
+        "electrum3.cipig.net:10001"
+    ]);
+
+    let mtp = client.get_median_time_past(1773390, 11).wait().unwrap();
+    assert_eq!(1583159915, mtp);
 }

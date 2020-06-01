@@ -4,7 +4,7 @@
 
 use bigdecimal::BigDecimal;
 use bytes::{BytesMut};
-use chain::{OutPoint, Transaction as UtxoTx};
+use chain::{OutPoint, SaplingBlockHeader, Transaction as UtxoTx};
 use common::{StringError};
 use common::custom_futures::{join_all_sequential, select_ok_sequential};
 use common::executor::{spawn, Timer};
@@ -34,7 +34,7 @@ use rpc::v1::types::{Bytes as BytesJson, H256 as H256Json, Transaction as RpcTra
 use rustls::{self, ClientConfig, Session};
 use script::{Builder};
 use serde_json::{self as json, Value as Json};
-use serialization::{serialize, deserialize};
+use serialization::{serialize, deserialize, CompactInteger, Reader};
 use sha2::{Sha256, Digest};
 use std::collections::hash_map::{HashMap, Entry};
 use std::io;
@@ -78,6 +78,12 @@ impl rustls::ServerCertVerifier for NoCertificateVerification {
 pub enum UtxoRpcClientEnum {
     Native(NativeClient),
     Electrum(ElectrumClient),
+}
+
+impl From<ElectrumClient> for UtxoRpcClientEnum {
+    fn from(client: ElectrumClient) -> UtxoRpcClientEnum {
+        UtxoRpcClientEnum::Electrum(client)
+    }
 }
 
 impl Deref for UtxoRpcClientEnum {
@@ -164,6 +170,8 @@ pub trait UtxoRpcClientOps: fmt::Debug + Send + Sync + 'static {
     fn get_relay_fee(&self) -> RpcRes<BigDecimal>;
 
     fn find_output_spend(&self, tx: &UtxoTx, vout: usize, from_block: u64) -> Box<dyn Future<Item=Option<UtxoTx>, Error=String> + Send>;
+
+    fn get_median_time_past(&self, starting_block: u64, count: u64) -> Box<dyn Future<Item=u64, Error=String> + Send>;
 }
 
 #[derive(Clone, Deserialize, Debug, PartialEq)]
@@ -476,6 +484,10 @@ impl UtxoRpcClientOps for NativeClient {
         };
         Box::new(fut.boxed().compat())
     }
+
+    fn get_median_time_past(&self, starting_block: u64, count: u64) -> Box<dyn Future<Item=u64, Error=String> + Send> {
+        unimplemented!()
+    }
 }
 
 #[cfg_attr(test, mockable)]
@@ -618,6 +630,13 @@ struct ElectrumUnspent {
 pub enum ElectrumNonce {
     Number(u64),
     Hash(H256Json),
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ElectrumBlockHeadersRes {
+    count: u64,
+    pub hex: BytesJson,
+    max: u64,
 }
 
 /// The block header compatible with Electrum 1.2
@@ -1030,6 +1049,12 @@ impl ElectrumClient {
         let n_blocks = 1;
         rpc_func!(self, "blockchain.estimatefee", n_blocks)
     }
+
+    /// https://electrumx.readthedocs.io/en/latest/protocol-methods.html#blockchain-block-headers
+    pub fn blockchain_block_headers(&self, start_height: u64, count: u64, cp_height: u64)
+        -> RpcRes<ElectrumBlockHeadersRes> {
+        rpc_func!(self, "blockchain.block.headers", start_height, count, cp_height)
+    }
 }
 
 #[cfg_attr(test, mockable)]
@@ -1164,6 +1189,21 @@ impl UtxoRpcClientOps for ElectrumClient {
             Ok(None)
         };
         Box::new(fut.boxed().compat())
+    }
+
+    fn get_median_time_past(&self, starting_block: u64, count: u64) -> Box<dyn Future<Item=u64, Error=String> + Send> {
+        Box::new(self.blockchain_block_headers(starting_block - count + 1, count, 0)
+            .map_err(|e| ERRL!("{}", e))
+            .and_then(|res| {
+                let len = CompactInteger::from(res.count);
+                let mut serialized = serialize(&len).take();
+                serialized.extend(res.hex.0.into_iter());
+                let mut reader = Reader::new(serialized.as_slice());
+                let headers = try_s!(reader.read_list::<SaplingBlockHeader>().map_err(|e| ERRL!("{:?}", e)));
+                let timestamp_sum = headers.iter().fold(0u64, |sum, header| sum + header.time as u64);
+                Ok(timestamp_sum / res.count)
+            })
+        )
     }
 }
 

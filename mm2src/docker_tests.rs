@@ -633,4 +633,18 @@ mod docker_tests {
             unwrap!(block_on (mm_alice.wait_for_log_after_stop (22., |log| log.contains (&format!("swap {} stopped", uuid)))));
         }
     }
+
+    #[test]
+    fn check_block_mtp() {
+        let (_, coin, _) = generate_coin_with_random_privkey("MYCOIN", 1000);
+        if let UtxoRpcClientEnum::Native(client) = coin.rpc_client() {
+            let block = loop {
+                let current = client.get_block_count().wait().unwrap();
+                if current >= 2 { break current; }
+            };
+
+            let data = client.get_block(block.to_string()).wait().unwrap();
+            log!([data]);
+        }
+    }
 }
