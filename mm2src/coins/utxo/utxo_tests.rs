@@ -96,6 +96,7 @@ fn utxo_coin_for_test(rpc_client: UtxoRpcClientEnum, force_seed: Option<&str>) -
         required_confirmations: 1.into(),
         force_min_relay_fee: false,
         mtp_block_count: NonZeroU64::new(11).unwrap(),
+        estimate_fee_mode: None,
     };
     coin
 }

@@ -166,7 +166,7 @@ pub trait UtxoRpcClientOps: fmt::Debug + Send + Sync + 'static {
     fn display_balance(&self, address: Address, decimals: u8) -> RpcRes<BigDecimal>;
 
     /// returns fee estimation per KByte in satoshis
-    fn estimate_fee_sat(&self, decimals: u8, fee_method: &EstimateFeeMethod) -> RpcRes<u64>;
+    fn estimate_fee_sat(&self, decimals: u8, fee_method: &EstimateFeeMethod, mode: &Option<EstimateFeeMode>) -> RpcRes<u64>;
 
     fn get_relay_fee(&self) -> RpcRes<BigDecimal>;
 
@@ -443,7 +443,7 @@ impl UtxoRpcClientOps for NativeClient {
         ))
     }
 
-    fn estimate_fee_sat(&self, decimals: u8, fee_method: &EstimateFeeMethod) -> RpcRes<u64> {
+    fn estimate_fee_sat(&self, decimals: u8, fee_method: &EstimateFeeMethod, mode: &Option<EstimateFeeMode>) -> RpcRes<u64> {
         match fee_method {
             EstimateFeeMethod::Standard => Box::new(self.estimate_fee().map(move |fee|
                 if fee > 0.00001 {
@@ -452,7 +452,7 @@ impl UtxoRpcClientOps for NativeClient {
                     1000
                 }
             )),
-            EstimateFeeMethod::SmartFee => Box::new(self.estimate_smart_fee().map(move |res|
+            EstimateFeeMethod::SmartFee => Box::new(self.estimate_smart_fee(mode).map(move |res|
                 if res.fee_rate > 0.00001 {
                     (res.fee_rate * 10.0_f64.powf(decimals as f64)) as u64
                 } else {
@@ -572,9 +572,12 @@ impl NativeClientImpl {
 
     /// https://bitcoincore.org/en/doc/0.18.0/rpc/util/estimatesmartfee/
     /// Always estimate fee for transaction to be confirmed in next block
-    pub fn estimate_smart_fee(&self) -> RpcRes<EstimateSmartFeeRes> {
+    pub fn estimate_smart_fee(&self, mode: &Option<EstimateFeeMode>) -> RpcRes<EstimateSmartFeeRes> {
         let n_blocks = 1;
-        rpc_func!(self, "estimatesmartfee", n_blocks)
+        match mode {
+            Some(m) => rpc_func!(self, "estimatesmartfee", n_blocks, m),
+            None => rpc_func!(self, "estimatesmartfee", n_blocks),
+        }
     }
 
     /// https://bitcoin.org/en/developer-reference#listtransactions
@@ -591,7 +594,7 @@ impl NativeClientImpl {
 
     pub fn detect_fee_method(&self) -> impl Future<Item=EstimateFeeMethod, Error=String> + Send {
         let estimate_fee_fut = self.estimate_fee();
-        self.estimate_smart_fee().then(move |res| -> Box<dyn Future<Item=EstimateFeeMethod, Error=String> + Send> {
+        self.estimate_smart_fee(&None).then(move |res| -> Box<dyn Future<Item=EstimateFeeMethod, Error=String> + Send> {
             match res {
                 Ok(smart_fee) => if smart_fee.fee_rate > 0. {
                     Box::new(futures01::future::ok(EstimateFeeMethod::SmartFee))
@@ -685,6 +688,13 @@ pub struct ElectrumBlockHeaderV14 {
 pub enum ElectrumBlockHeader {
     V12(ElectrumBlockHeaderV12),
     V14(ElectrumBlockHeaderV14),
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub enum EstimateFeeMode {
+    ECONOMICAL,
+    CONSERVATIVE,
+    UNSET,
 }
 
 impl ElectrumBlockHeader {
@@ -1067,9 +1077,12 @@ impl ElectrumClient {
 
     /// https://electrumx.readthedocs.io/en/latest/protocol-methods.html#blockchain-estimatefee
     /// Always estimate fee for transaction to be confirmed in next block
-    fn estimate_fee(&self) -> RpcRes<f64> {
+    fn estimate_fee(&self, mode: &Option<EstimateFeeMode>) -> RpcRes<f64> {
         let n_blocks = 1;
-        rpc_func!(self, "blockchain.estimatefee", n_blocks)
+        match mode {
+            Some(m) => rpc_func!(self, "blockchain.estimatefee", n_blocks, m),
+            None => rpc_func!(self, "blockchain.estimatefee", n_blocks),
+        }
     }
 
     /// https://electrumx.readthedocs.io/en/latest/protocol-methods.html#blockchain-block-headers
@@ -1168,8 +1181,8 @@ impl UtxoRpcClientOps for ElectrumClient {
         }))
     }
 
-    fn estimate_fee_sat(&self, decimals: u8, _fee_method: &EstimateFeeMethod) -> RpcRes<u64> {
-        Box::new(self.estimate_fee().map(move |fee|
+    fn estimate_fee_sat(&self, decimals: u8, _fee_method: &EstimateFeeMethod, mode: &Option<EstimateFeeMode>) -> RpcRes<u64> {
+        Box::new(self.estimate_fee(mode).map(move |fee|
             if fee > 0.00001 {
                 (fee * 10.0_f64.powf(decimals as f64)) as u64
             } else {

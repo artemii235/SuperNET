@@ -314,6 +314,22 @@ pub struct TransactionDetails {
     internal_id: BytesJson,
 }
 
+impl TransactionDetails {
+    /// Whether the transaction details block height should be updated (when tx is confirmed)
+    pub fn should_update_block_height(&self) -> bool {
+        // checking for std::u64::MAX because there was integer overflow
+        // in case of electrum returned -1 so there could be records with MAX confirmations
+        self.block_height == 0 || self.block_height == std::u64::MAX
+    }
+
+    /// Whether the transaction timestamp should be updated (when tx is confirmed)
+    pub fn should_update_timestamp(&self) -> bool {
+        // checking for std::u64::MAX because there was integer overflow
+        // in case of electrum returned -1 so there could be records with MAX confirmations
+        self.timestamp == 0
+    }
+}
+
 pub enum TradeInfo {
     // going to act as maker
     Maker,
