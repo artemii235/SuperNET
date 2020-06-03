@@ -8,7 +8,7 @@ use crate::{
 };
 use futures::future::join_all;
 use mocktopus::mocking::*;
-use rpc::v1::types::H256 as H256Json;
+use rpc::v1::types::{H256 as H256Json, VerboseBlockClient};
 use super::*;
 
 const TEST_COIN_NAME: &'static str = "RICK";
@@ -34,6 +34,16 @@ fn electrum_client_for_test(servers: &[&str]) -> ElectrumClient {
     }
 
     ElectrumClient(Arc::new(client))
+}
+
+/// Returned client won't work by default, requires some mocks to be usable
+fn native_client_for_test() -> NativeClient {
+    NativeClient(Arc::new(NativeClientImpl {
+        coin_ticker: "TEST".into(),
+        uri: "".into(),
+        auth: "".into(),
+        event_handlers: vec![]
+    }))
 }
 
 fn utxo_coin_for_test(rpc_client: UtxoRpcClientEnum, force_seed: Option<&str>) -> UtxoCoinImpl {
@@ -85,6 +95,7 @@ fn utxo_coin_for_test(rpc_client: UtxoRpcClientEnum, force_seed: Option<&str>) -
         history_sync_state: Mutex::new(HistorySyncState::NotEnabled),
         required_confirmations: 1.into(),
         force_min_relay_fee: false,
+        mtp_block_count: NonZeroU64::new(11).unwrap(),
     };
     coin
 }
@@ -190,7 +201,7 @@ fn test_kmd_interest() {
     let lock_time = 1556623906;
     let current_time = 1556623906 + 3600 + 300;
     let expected = 36870;
-    let actual = kmd_interest(1000001, value, lock_time, current_time);
+    let actual = kmd_interest(Some(1000001), value, lock_time, current_time);
     assert_eq!(expected, actual);
 
     // UTXO amount must be at least 10 KMD to be eligible for interest
@@ -198,7 +209,7 @@ fn test_kmd_interest() {
     let lock_time = 1556623906;
     let current_time = 1556623906 + 3600 + 300;
     let expected = 0;
-    let actual = kmd_interest(1000001, value, lock_time, current_time);
+    let actual = kmd_interest(Some(1000001), value, lock_time, current_time);
     assert_eq!(expected, actual);
 }
 
@@ -845,13 +856,74 @@ fn check_mtp() {
 }
 
 #[test]
-fn test_get_median_time_past_from_electrum() {
+fn test_get_median_time_past_from_electrum_kmd() {
     let client = electrum_client_for_test(&[
         "electrum1.cipig.net:10001",
         "electrum2.cipig.net:10001",
         "electrum3.cipig.net:10001"
     ]);
 
-    let mtp = client.get_median_time_past(1773390, 11).wait().unwrap();
+    let mtp = client.get_median_time_past(1773390, KMD_MTP_BLOCK_COUNT).wait().unwrap();
+    // the MTP is block time of 1773385 in this case
     assert_eq!(1583159915, mtp);
+}
+
+#[test]
+fn test_get_median_time_past_from_electrum_btc() {
+    let client = electrum_client_for_test(&[
+        "electrum1.cipig.net:10000",
+        "electrum2.cipig.net:10000",
+        "electrum3.cipig.net:10000"
+    ]);
+
+    let mtp = client.get_median_time_past(632858, KMD_MTP_BLOCK_COUNT).wait().unwrap();
+    assert_eq!(1591173041, mtp);
+}
+
+#[test]
+fn test_get_median_time_past_from_native_has_median_in_get_block() {
+    let client = native_client_for_test();
+    NativeClientImpl::get_block.mock_safe(|_, block_num| {
+        assert_eq!(block_num, "632858".to_string());
+        let block_data_str = r#"{"hash":"00000000000000000002eb7892b8fdfd7b8e0f089e5cdf96436de680b7e695e3","confirmations":1,"strippedsize":833287,"size":1493229,"weight":3993090,"height":632858,"version":549453824,"versionHex":"20c00000","merkleroot":"7e20760d227465d2a84fbb2617b2962f77364daa66f06b48d1010fa27923b940","tx":[],"time":1591174568,"mediantime":1591173041,"nonce":"1594651477","bits":"171297f6","difficulty":15138043247082.88,"chainwork":"00000000000000000000000000000000000000000fff2e35384d3c16f53adda4","nTx":1601,"previousblockhash":"00000000000000000009a54084d9f4eafa3ca07af646ff8fa9031d0ac72a92aa"}"#;
+        let block_data = json::from_str(block_data_str).unwrap();
+        MockResult::Return(
+            Box::new(futures01::future::ok(block_data))
+        )
+    });
+
+    let mtp = client.get_median_time_past(632858, KMD_MTP_BLOCK_COUNT).wait().unwrap();
+    assert_eq!(1591173041, mtp);
+}
+
+#[test]
+fn test_get_median_time_past_from_native_does_not_have_median_in_get_block() {
+    let blocks_json_str = r#"
+    [
+        {"hash":"00000000000000000002eb7892b8fdfd7b8e0f089e5cdf96436de680b7e695e3","confirmations":1,"strippedsize":833287,"size":1493229,"weight":3993090,"height":632858,"version":549453824,"versionHex":"20c00000","merkleroot":"7e20760d227465d2a84fbb2617b2962f77364daa66f06b48d1010fa27923b940","tx":[],"time":1591173090,"nonce":"1594651477","bits":"171297f6","difficulty":15138043247082.88,"chainwork":"00000000000000000000000000000000000000000fff2e35384d3c16f53adda4","nTx":1601,"previousblockhash":"00000000000000000009a54084d9f4eafa3ca07af646ff8fa9031d0ac72a92aa"},
+        {"hash":"00000000000000000002eb7892b8fdfd7b8e0f089e5cdf96436de680b7e695e3","confirmations":1,"strippedsize":833287,"size":1493229,"weight":3993090,"height":632857,"version":549453824,"versionHex":"20c00000","merkleroot":"7e20760d227465d2a84fbb2617b2962f77364daa66f06b48d1010fa27923b940","tx":[],"time":1591173080,"nonce":"1594651477","bits":"171297f6","difficulty":15138043247082.88,"chainwork":"00000000000000000000000000000000000000000fff2e35384d3c16f53adda4","nTx":1601,"previousblockhash":"00000000000000000009a54084d9f4eafa3ca07af646ff8fa9031d0ac72a92aa"},
+        {"hash":"00000000000000000002eb7892b8fdfd7b8e0f089e5cdf96436de680b7e695e3","confirmations":1,"strippedsize":833287,"size":1493229,"weight":3993090,"height":632856,"version":549453824,"versionHex":"20c00000","merkleroot":"7e20760d227465d2a84fbb2617b2962f77364daa66f06b48d1010fa27923b940","tx":[],"time":1591173070,"nonce":"1594651477","bits":"171297f6","difficulty":15138043247082.88,"chainwork":"00000000000000000000000000000000000000000fff2e35384d3c16f53adda4","nTx":1601,"previousblockhash":"00000000000000000009a54084d9f4eafa3ca07af646ff8fa9031d0ac72a92aa"},
+        {"hash":"00000000000000000002eb7892b8fdfd7b8e0f089e5cdf96436de680b7e695e3","confirmations":1,"strippedsize":833287,"size":1493229,"weight":3993090,"height":632855,"version":549453824,"versionHex":"20c00000","merkleroot":"7e20760d227465d2a84fbb2617b2962f77364daa66f06b48d1010fa27923b940","tx":[],"time":1591173058,"nonce":"1594651477","bits":"171297f6","difficulty":15138043247082.88,"chainwork":"00000000000000000000000000000000000000000fff2e35384d3c16f53adda4","nTx":1601,"previousblockhash":"00000000000000000009a54084d9f4eafa3ca07af646ff8fa9031d0ac72a92aa"},
+        {"hash":"00000000000000000002eb7892b8fdfd7b8e0f089e5cdf96436de680b7e695e3","confirmations":1,"strippedsize":833287,"size":1493229,"weight":3993090,"height":632854,"version":549453824,"versionHex":"20c00000","merkleroot":"7e20760d227465d2a84fbb2617b2962f77364daa66f06b48d1010fa27923b940","tx":[],"time":1591173050,"nonce":"1594651477","bits":"171297f6","difficulty":15138043247082.88,"chainwork":"00000000000000000000000000000000000000000fff2e35384d3c16f53adda4","nTx":1601,"previousblockhash":"00000000000000000009a54084d9f4eafa3ca07af646ff8fa9031d0ac72a92aa"},
+        {"hash":"00000000000000000002eb7892b8fdfd7b8e0f089e5cdf96436de680b7e695e3","confirmations":1,"strippedsize":833287,"size":1493229,"weight":3993090,"height":632853,"version":549453824,"versionHex":"20c00000","merkleroot":"7e20760d227465d2a84fbb2617b2962f77364daa66f06b48d1010fa27923b940","tx":[],"time":1591173041,"nonce":"1594651477","bits":"171297f6","difficulty":15138043247082.88,"chainwork":"00000000000000000000000000000000000000000fff2e35384d3c16f53adda4","nTx":1601,"previousblockhash":"00000000000000000009a54084d9f4eafa3ca07af646ff8fa9031d0ac72a92aa"},
+        {"hash":"00000000000000000002eb7892b8fdfd7b8e0f089e5cdf96436de680b7e695e3","confirmations":1,"strippedsize":833287,"size":1493229,"weight":3993090,"height":632852,"version":549453824,"versionHex":"20c00000","merkleroot":"7e20760d227465d2a84fbb2617b2962f77364daa66f06b48d1010fa27923b940","tx":[],"time":1591173040,"nonce":"1594651477","bits":"171297f6","difficulty":15138043247082.88,"chainwork":"00000000000000000000000000000000000000000fff2e35384d3c16f53adda4","nTx":1601,"previousblockhash":"00000000000000000009a54084d9f4eafa3ca07af646ff8fa9031d0ac72a92aa"},
+        {"hash":"00000000000000000002eb7892b8fdfd7b8e0f089e5cdf96436de680b7e695e3","confirmations":1,"strippedsize":833287,"size":1493229,"weight":3993090,"height":632851,"version":549453824,"versionHex":"20c00000","merkleroot":"7e20760d227465d2a84fbb2617b2962f77364daa66f06b48d1010fa27923b940","tx":[],"time":1591173039,"nonce":"1594651477","bits":"171297f6","difficulty":15138043247082.88,"chainwork":"00000000000000000000000000000000000000000fff2e35384d3c16f53adda4","nTx":1601,"previousblockhash":"00000000000000000009a54084d9f4eafa3ca07af646ff8fa9031d0ac72a92aa"},
+        {"hash":"00000000000000000002eb7892b8fdfd7b8e0f089e5cdf96436de680b7e695e3","confirmations":1,"strippedsize":833287,"size":1493229,"weight":3993090,"height":632850,"version":549453824,"versionHex":"20c00000","merkleroot":"7e20760d227465d2a84fbb2617b2962f77364daa66f06b48d1010fa27923b940","tx":[],"time":1591173038,"nonce":"1594651477","bits":"171297f6","difficulty":15138043247082.88,"chainwork":"00000000000000000000000000000000000000000fff2e35384d3c16f53adda4","nTx":1601,"previousblockhash":"00000000000000000009a54084d9f4eafa3ca07af646ff8fa9031d0ac72a92aa"},
+        {"hash":"00000000000000000002eb7892b8fdfd7b8e0f089e5cdf96436de680b7e695e3","confirmations":1,"strippedsize":833287,"size":1493229,"weight":3993090,"height":632849,"version":549453824,"versionHex":"20c00000","merkleroot":"7e20760d227465d2a84fbb2617b2962f77364daa66f06b48d1010fa27923b940","tx":[],"time":1591173037,"nonce":"1594651477","bits":"171297f6","difficulty":15138043247082.88,"chainwork":"00000000000000000000000000000000000000000fff2e35384d3c16f53adda4","nTx":1601,"previousblockhash":"00000000000000000009a54084d9f4eafa3ca07af646ff8fa9031d0ac72a92aa"},
+        {"hash":"00000000000000000002eb7892b8fdfd7b8e0f089e5cdf96436de680b7e695e3","confirmations":1,"strippedsize":833287,"size":1493229,"weight":3993090,"height":632848,"version":549453824,"versionHex":"20c00000","merkleroot":"7e20760d227465d2a84fbb2617b2962f77364daa66f06b48d1010fa27923b940","tx":[],"time":1591173030,"nonce":"1594651477","bits":"171297f6","difficulty":15138043247082.88,"chainwork":"00000000000000000000000000000000000000000fff2e35384d3c16f53adda4","nTx":1601,"previousblockhash":"00000000000000000009a54084d9f4eafa3ca07af646ff8fa9031d0ac72a92aa"}
+    ]
+    "#;
+
+    let blocks: Vec<VerboseBlockClient> = json::from_str(blocks_json_str).unwrap();
+    let mut blocks: HashMap<_, _> = blocks.into_iter().map(|block| (block.height.unwrap().to_string(), block)).collect();
+    let client = native_client_for_test();
+    NativeClientImpl::get_block.mock_safe(move |_, block_num| {
+        let block = blocks.remove(&block_num).unwrap();
+        MockResult::Return(
+            Box::new(futures01::future::ok(block))
+        )
+    });
+
+    let mtp = client.get_median_time_past(632858, KMD_MTP_BLOCK_COUNT).wait().unwrap();
+    assert_eq!(1591173041, mtp);
 }

@@ -4,8 +4,8 @@
 
 use bigdecimal::BigDecimal;
 use bytes::{BytesMut};
-use chain::{OutPoint, SaplingBlockHeader, Transaction as UtxoTx};
-use common::{StringError};
+use chain::{BlockHeader, OutPoint, Transaction as UtxoTx};
+use common::{median, StringError};
 use common::custom_futures::{join_all_sequential, select_ok_sequential};
 use common::executor::{spawn, Timer};
 use common::jsonrpc_client::{JsonRpcClient, JsonRpcRemoteAddr, JsonRpcResponseFut, JsonRpcRequest, JsonRpcResponse, RpcRes};
@@ -41,6 +41,7 @@ use std::io;
 use std::fmt;
 use std::cmp::Ordering;
 use std::net::{ToSocketAddrs, SocketAddr};
+use std::num::NonZeroU64;
 use std::ops::Deref;
 #[cfg(not(feature = "native"))]
 use std::os::raw::c_char;
@@ -171,7 +172,8 @@ pub trait UtxoRpcClientOps: fmt::Debug + Send + Sync + 'static {
 
     fn find_output_spend(&self, tx: &UtxoTx, vout: usize, from_block: u64) -> Box<dyn Future<Item=Option<UtxoTx>, Error=String> + Send>;
 
-    fn get_median_time_past(&self, starting_block: u64, count: u64) -> Box<dyn Future<Item=u64, Error=String> + Send>;
+    /// Get median time past for `count` blocks in the past including `starting_block`
+    fn get_median_time_past(&self, starting_block: u64, count: NonZeroU64) -> Box<dyn Future<Item=u32, Error=String> + Send>;
 }
 
 #[derive(Clone, Deserialize, Debug, PartialEq)]
@@ -485,8 +487,28 @@ impl UtxoRpcClientOps for NativeClient {
         Box::new(fut.boxed().compat())
     }
 
-    fn get_median_time_past(&self, starting_block: u64, count: u64) -> Box<dyn Future<Item=u64, Error=String> + Send> {
-        unimplemented!()
+    fn get_median_time_past(&self, starting_block: u64, count: NonZeroU64) -> Box<dyn Future<Item=u32, Error=String> + Send> {
+        let selfi = self.clone();
+        let fut = async move {
+            let starting_block_data = try_s!(selfi.get_block(starting_block.to_string()).compat().await);
+            if let Some(median) = starting_block_data.mediantime {
+                return Ok(median);
+            }
+
+            let mut block_timestamps = vec![starting_block_data.time];
+            let from = if starting_block <= count.get() {
+                0
+            } else {
+                starting_block - count.get() + 1
+            };
+            for block_n in from..starting_block {
+                let block_data = try_s!(selfi.get_block(block_n.to_string()).compat().await);
+                block_timestamps.push(block_data.time);
+            }
+            // can unwrap because count is non zero
+            Ok(median(block_timestamps.as_mut_slice()).unwrap())
+        };
+        Box::new(fut.boxed().compat())
     }
 }
 
@@ -515,7 +537,7 @@ impl NativeClientImpl {
         }))
     }
 
-    /// https://bitcoin.org/en/developer-reference#getblock
+    /// https://developer.bitcoin.org/reference/rpc/getblock.html
     /// Always returns verbose block
     pub fn get_block(&self, height: String) -> RpcRes<VerboseBlockClient> {
         let verbose = true;
@@ -1051,7 +1073,7 @@ impl ElectrumClient {
     }
 
     /// https://electrumx.readthedocs.io/en/latest/protocol-methods.html#blockchain-block-headers
-    pub fn blockchain_block_headers(&self, start_height: u64, count: u64, cp_height: u64)
+    pub fn blockchain_block_headers(&self, start_height: u64, count: NonZeroU64, cp_height: u64)
         -> RpcRes<ElectrumBlockHeadersRes> {
         rpc_func!(self, "blockchain.block.headers", start_height, count, cp_height)
     }
@@ -1191,17 +1213,26 @@ impl UtxoRpcClientOps for ElectrumClient {
         Box::new(fut.boxed().compat())
     }
 
-    fn get_median_time_past(&self, starting_block: u64, count: u64) -> Box<dyn Future<Item=u64, Error=String> + Send> {
-        Box::new(self.blockchain_block_headers(starting_block - count + 1, count, 0)
+    fn get_median_time_past(&self, starting_block: u64, count: NonZeroU64) -> Box<dyn Future<Item=u32, Error=String> + Send> {
+        let from = if starting_block <= count.get() {
+            0
+        } else {
+            starting_block - count.get() + 1
+        };
+        Box::new(self.blockchain_block_headers(from, count, 0)
             .map_err(|e| ERRL!("{}", e))
             .and_then(|res| {
+                if res.count == 0 {
+                    return ERR!("Server returned zero count");
+                }
                 let len = CompactInteger::from(res.count);
                 let mut serialized = serialize(&len).take();
                 serialized.extend(res.hex.0.into_iter());
                 let mut reader = Reader::new(serialized.as_slice());
-                let headers = try_s!(reader.read_list::<SaplingBlockHeader>().map_err(|e| ERRL!("{:?}", e)));
-                let timestamp_sum = headers.iter().fold(0u64, |sum, header| sum + header.time as u64);
-                Ok(timestamp_sum / res.count)
+                let headers = try_s!(reader.read_list::<BlockHeader>().map_err(|e| ERRL!("{:?}", e)));
+                let mut timestamps: Vec<_> = headers.into_iter().map(|block| block.time).collect();
+                // can unwrap because count is non zero
+                Ok(median(timestamps.as_mut_slice()).unwrap())
             })
         )
     }

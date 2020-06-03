@@ -118,6 +118,7 @@ use std::intrinsics::copy;
 use std::io::{Write};
 use std::mem::{forget, size_of, zeroed};
 use std::os::raw::{c_char, c_void};
+use std::ops::{Add, Div};
 use std::path::{Path, PathBuf};
 #[cfg(not(feature = "native"))]
 use std::pin::Pin;
@@ -1701,4 +1702,35 @@ pub fn json_dir_entries(path: &dyn AsRef<Path>) -> Result<Vec<DirEntry>, String>
             None
         }
     }).collect())
+}
+
+/// Calculates the median of the set represented as slice
+pub fn median<T: Add<Output = T> + Div<Output = T> + Copy + From<u8> + Ord>(input: &mut [T]) -> Option<T> {
+    // median is undefined on empty sets
+    if input.len() == 0 { return None }
+    input.sort();
+    let median_index = input.len() / 2;
+    if input.len() % 2 == 0 {
+        Some((input[median_index - 1] + input[median_index]) / T::from(2u8))
+    } else {
+        Some(input[median_index])
+    }
+}
+
+#[test]
+fn test_median() {
+    let mut input = [3, 2, 1];
+    let expected = Some(2u32);
+    let actual = median(&mut input);
+    assert_eq!(expected, actual);
+
+    let mut input = [3, 1];
+    let expected = Some(2u32);
+    let actual = median(&mut input);
+    assert_eq!(expected, actual);
+
+    let mut input = [1, 3, 2, 8, 10];
+    let expected = Some(3u32);
+    let actual = median(&mut input);
+    assert_eq!(expected, actual);
 }

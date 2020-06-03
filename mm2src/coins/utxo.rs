@@ -54,6 +54,7 @@ use std::borrow::Cow;
 use std::collections::hash_map::{HashMap, Entry};
 use std::convert::TryInto;
 use std::cmp::Ordering;
+use std::num::NonZeroU64;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -78,6 +79,11 @@ const KILO_BYTE: u64 = 1000;
 const MAX_DER_SIGNATURE_LEN: usize = 72;
 const COMPRESSED_PUBKEY_LEN: usize = 33;
 const P2PKH_OUTPUT_LEN: u64 = 34;
+/// Block count for KMD median time past calculation
+///
+/// # Safety
+/// 11 > 0
+const KMD_MTP_BLOCK_COUNT: NonZeroU64 = unsafe { NonZeroU64::new_unchecked(11u64) };
 
 #[cfg(windows)]
 #[cfg(feature = "native")]
@@ -226,6 +232,8 @@ pub struct UtxoCoinImpl {  // pImpl idiom.
     /// relay fee amount instead of calculated
     /// https://github.com/KomodoPlatform/atomicDEX-API/issues/617
     force_min_relay_fee: bool,
+    /// Block count for median time past calculation
+    mtp_block_count: NonZeroU64,
 }
 
 impl UtxoCoinImpl {
@@ -329,6 +337,11 @@ impl UtxoCoinImpl {
 
     pub fn rpc_client(&self) -> &UtxoRpcClientEnum {
         &self.rpc_client
+    }
+
+    async fn get_current_mtp(&self) -> Result<u32, String> {
+        let current_block = try_s!(self.rpc_client.get_block_count().compat().await);
+        self.rpc_client.get_median_time_past(current_block, self.mtp_block_count).compat().await
     }
 }
 
@@ -753,7 +766,7 @@ impl UtxoCoin {
         if self.ticker != "KMD" {
             return Ok((unsigned, data));
         }
-        unsigned.lock_time = (now_ms() / 1000) as u32 - 777;
+        unsigned.lock_time = try_s!(self.get_current_mtp().await);
         let mut interest = 0;
         for input in unsigned.inputs.iter() {
             let prev_hash = input.previous_output.hash.reversed().into();
@@ -1744,7 +1757,7 @@ impl MmCoin for UtxoCoin {
                 fee_details: Some(UtxoFeeDetails {
                     amount: fee,
                 }.into()),
-                block_height: verbose_tx.height,
+                block_height: verbose_tx.height.unwrap_or(0),
                 coin: selfi.ticker.clone(),
                 internal_id: tx.hash().reversed().to_vec().into(),
                 timestamp: verbose_tx.time.into(),
@@ -2121,6 +2134,7 @@ pub async fn utxo_coin_from_conf_and_request(
         history_sync_state: Mutex::new(initial_history_state),
         required_confirmations: required_confirmations.into(),
         force_min_relay_fee: conf["force_min_relay_fee"].as_bool().unwrap_or (false),
+        mtp_block_count: json::from_value(conf["mtp_block_count"].clone()).unwrap_or (KMD_MTP_BLOCK_COUNT),
     };
     Ok(UtxoCoin(Arc::new(coin)))
 }
@@ -2128,7 +2142,11 @@ pub async fn utxo_coin_from_conf_and_request(
 /// Function calculating KMD interest
 /// https://komodoplatform.atlassian.net/wiki/spaces/KPSD/pages/71729215/What+is+the+5+Komodo+Stake+Reward
 /// https://github.com/KomodoPlatform/komodo/blob/master/src/komodo_interest.h
-fn kmd_interest(height: u64, value: u64, lock_time: u64, current_time: u64) -> u64 {
+fn kmd_interest(height: Option<u64>, value: u64, lock_time: u64, current_time: u64) -> u64 {
+    let height = match height {
+        Some(h) => h,
+        None => return 0, // return 0 if height is unknown
+    };
     const KOMODO_ENDOFERA: u64 = 7777777;
     const LOCKTIME_THRESHOLD: u64 = 500000000;
     // value must be at least 10 KMD

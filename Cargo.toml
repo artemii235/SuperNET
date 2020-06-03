@@ -153,12 +153,3 @@ num-rational = { git =  "https://github.com/artemii235/num-rational.git" }
 # Remove when the fix applied to upstream
 # https://github.com/CodeSandwich/Mocktopus/pull/50
 mocktopus_macros = { git = "https://github.com/artemii235/Mocktopus.git" }
-
-[patch.'https://github.com/artemii235/parity-bitcoin.git'.primitives]
-path = "/Users/artem/dev/parity-bitcoin/primitives"
-
-[patch.'https://github.com/artemii235/parity-bitcoin.git'.serialization]
-path = "/Users/artem/dev/parity-bitcoin/serialization"
-
-[patch.'https://github.com/artemii235/parity-bitcoin.git'.chain]
-path = "/Users/artem/dev/parity-bitcoin/chain"
