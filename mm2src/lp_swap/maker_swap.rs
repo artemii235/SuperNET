@@ -9,7 +9,7 @@ use common::{
     file_lock::FileLock,
     mm_ctx::MmArc,
 };
-use coins::{FoundSwapTxSpend, MmCoinEnum, TradeInfo, TransactionDetails};
+use coins::{FoundSwapTxSpend, MmCoinEnum, TransactionDetails};
 use crc::crc32;
 use futures::{
     FutureExt, select,
@@ -227,8 +227,8 @@ impl MakerSwap {
         };
 
         let locked = get_locked_amount_by_other_swaps(&self.ctx, &self.uuid, self.maker_coin.ticker());
-        let available = &my_balance - &locked;
-        if self.maker_amount > available {
+        let available = &my_balance.clone().into() - &locked;
+        if self.maker_amount > available.clone().into() {
             return Ok((
                 Some(MakerSwapCommand::Finish),
                 vec![MakerSwapEvent::StartFailed(ERRL!("maker amount {} is larger than available {}, balance {}, locked by other swaps {}",
@@ -237,7 +237,7 @@ impl MakerSwap {
             ));
         }
 
-        if let Err(e) = self.maker_coin.check_i_have_enough_to_trade(&self.maker_amount.clone().into(), &my_balance.clone().into(), TradeInfo::Maker).compat().await {
+        if let Err(e) = self.maker_coin.check_i_have_enough_to_trade(&self.maker_amount.clone().into(), &my_balance.clone().into(), None).compat().await {
             return Ok((
                 Some(MakerSwapCommand::Finish),
                 vec![MakerSwapEvent::StartFailed(ERRL!("!check_i_have_enough_to_trade {}", e).into())],
@@ -392,11 +392,11 @@ impl MakerSwap {
         log!({ "Taker fee tx {:02x}", hash });
 
         let fee_addr_pub_key = unwrap!(hex::decode("03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc06"));
-        let fee_amount = dex_fee_amount(&self.r().data.maker_coin, &self.r().data.taker_coin, &self.taker_amount);
+        let fee_amount = dex_fee_amount(&self.r().data.maker_coin, &self.r().data.taker_coin, &self.taker_amount.clone().into());
 
         let mut attempts = 0;
         loop {
-            match self.taker_coin.validate_fee(&taker_fee, &fee_addr_pub_key, &fee_amount).compat().await {
+            match self.taker_coin.validate_fee(&taker_fee, &fee_addr_pub_key, &fee_amount.clone().into()).compat().await {
                 Ok(_) => break,
                 Err(err) => if attempts >= 3 {
                     return Ok((
@@ -819,7 +819,7 @@ impl AtomicSwap for MakerSwap {
         // if maker payment is not sent yet the maker amount must be virtually locked
         let amount = match self.r().maker_payment {
             Some(_) => 0.into(),
-            None => self.maker_amount.clone(),
+            None => self.maker_amount.clone().into(),
         };
 
         LockedAmount {

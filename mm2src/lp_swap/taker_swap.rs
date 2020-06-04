@@ -8,7 +8,7 @@ use common::{
     file_lock::FileLock,
     mm_ctx::MmArc,
 };
-use coins::{FoundSwapTxSpend, MmCoinEnum, TradeInfo, TransactionDetails};
+use coins::{FoundSwapTxSpend, MmCoinEnum, TransactionDetails};
 use crc::crc32;
 use futures::{
     FutureExt, select,
@@ -559,8 +559,8 @@ impl TakerSwap {
         };
 
         let locked = get_locked_amount_by_other_swaps(&self.ctx, &self.uuid, self.taker_coin.ticker());
-        let available = &my_balance - &locked;
-        if self.taker_amount > available {
+        let available = &my_balance.clone().into() - &locked;
+        if self.taker_amount > available.clone().into() {
             return Ok((
                 Some(TakerSwapCommand::Finish),
                 vec![TakerSwapEvent::StartFailed(ERRL!("taker amount {} is larger than available {}, balance {}, locked by other swaps {}",
@@ -569,8 +569,8 @@ impl TakerSwap {
             ));
         }
 
-        let dex_fee_amount = dex_fee_amount(self.maker_coin.ticker(), self.taker_coin.ticker(), &self.taker_amount);
-        if let Err(e) = self.taker_coin.check_i_have_enough_to_trade(&self.taker_amount.clone().into(), &my_balance.clone().into(), TradeInfo::Taker(dex_fee_amount)).compat().await {
+        let dex_fee_amount = dex_fee_amount(self.maker_coin.ticker(), self.taker_coin.ticker(), &self.taker_amount.clone().into());
+        if let Err(e) = self.taker_coin.check_i_have_enough_to_trade(&self.taker_amount.clone().into(), &my_balance.clone().into(), Some(dex_fee_amount)).compat().await {
             return Ok((
                 Some(TakerSwapCommand::Finish),
                 vec![TakerSwapEvent::StartFailed(ERRL!("!check_i_have_enough_to_trade {}", e).into())],
@@ -715,8 +715,8 @@ impl TakerSwap {
         }
 
         let fee_addr_pub_key = unwrap!(hex::decode("03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc06"));
-        let fee_amount = dex_fee_amount(&self.r().data.maker_coin, &self.r().data.taker_coin, &self.taker_amount);
-        let fee_tx = self.taker_coin.send_taker_fee(&fee_addr_pub_key, fee_amount).compat().await;
+        let fee_amount = dex_fee_amount(&self.r().data.maker_coin, &self.r().data.taker_coin, &self.taker_amount.clone().into());
+        let fee_tx = self.taker_coin.send_taker_fee(&fee_addr_pub_key, fee_amount.into()).compat().await;
         let transaction = match fee_tx {
             Ok (t) => t,
             Err (err) => return Ok((
@@ -1224,15 +1224,16 @@ impl TakerSwap {
 
 impl AtomicSwap for TakerSwap {
     fn locked_amount(&self) -> LockedAmount {
+        let trade_fee = self.taker_coin.get_trade_fee().wait().unwrap();
         // if taker payment is not sent yet the taker fee amount must be virtually locked
-        let fee_amount = match self.r().taker_fee {
+        let dex_fee_amount = match self.r().taker_fee {
             Some(_) => 0.into(),
-            None => dex_fee_amount(self.maker_coin.ticker(), self.taker_coin.ticker(), &self.taker_amount),
+            None => dex_fee_amount(self.maker_coin.ticker(), self.taker_coin.ticker(), &self.taker_amount.clone().into()) + trade_fee.amount.clone().into(),
         };
 
         let amount = match self.r().taker_payment {
             Some(_) => 0.into(),
-            None => fee_amount + &self.taker_amount,
+            None => dex_fee_amount + self.taker_amount.clone().into() + trade_fee.amount.into(),
         };
 
         LockedAmount {

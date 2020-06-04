@@ -353,7 +353,7 @@ pub trait MmCoin: SwapOps + MarketCoinOps + fmt::Debug + Send + Sync + 'static {
 
     fn is_asset_chain(&self) -> bool;
 
-    fn check_i_have_enough_to_trade(&self, amount: &MmNumber, balance: &MmNumber, trade_info: TradeInfo) -> Box<dyn Future<Item=(), Error=String> + Send>;
+    fn check_i_have_enough_to_trade(&self, amount: &MmNumber, balance: &MmNumber, trade_info: Option<MmNumber>) -> Box<dyn Future<Item=(), Error=String> + Send>;
 
     fn can_i_spend_other_payment(&self) -> Box<dyn Future<Item=(), Error=String> + Send>;
 

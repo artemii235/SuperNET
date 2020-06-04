@@ -67,7 +67,7 @@ pub use chain::Transaction as UtxoTx;
 use self::rpc_clients::{electrum_script_hash, ElectrumClient, ElectrumClientImpl,
                         EstimateFeeMethod, EstimateFeeMode, NativeClient, UtxoRpcClientEnum, UnspentInfo};
 use super::{CoinsContext, CoinTransportMetrics, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, RpcClientType, RpcTransportEventHandlerShared,
-            SwapOps, TradeFee, TradeInfo, Transaction, TransactionEnum, TransactionFut, TransactionDetails, WithdrawFee, WithdrawRequest};
+            SwapOps, TradeFee, Transaction, TransactionEnum, TransactionFut, TransactionDetails, WithdrawFee, WithdrawRequest};
 use crate::utxo::rpc_clients::{NativeClientImpl, UtxoRpcClientOps, ElectrumRpcRequest};
 
 #[cfg(test)]
@@ -1427,7 +1427,7 @@ pub struct UtxoFeeDetails {
 impl MmCoin for UtxoCoin {
     fn is_asset_chain(&self) -> bool { self.asset_chain }
 
-    fn check_i_have_enough_to_trade(&self, amount: &MmNumber, balance: &MmNumber, trade_info: TradeInfo) -> Box<dyn Future<Item=(), Error=String> + Send> {
+    fn check_i_have_enough_to_trade(&self, amount: &MmNumber, balance: &MmNumber, dex_fee: Option<MmNumber>) -> Box<dyn Future<Item=(), Error=String> + Send> {
         let arc = self.clone();
         let amount = amount.clone();
         let balance = balance.clone();
@@ -1441,9 +1441,9 @@ impl MmCoin for UtxoCoin {
             if &amount < &fee_decimal {
                 return ERR!("Amount {} is too low, it'll result to dust error, at least {} is required", amount, fee_decimal);
             }
-            let required = match trade_info {
-                TradeInfo::Maker => amount + fee_decimal,
-                TradeInfo::Taker(dex_fee) => &amount + &MmNumber::from(dex_fee.clone()) + MmNumber::from(2) * fee_decimal,
+            let required = match dex_fee {
+                Some(dex_fee) => &amount + &dex_fee + MmNumber::from(2) * fee_decimal,
+                None => amount + fee_decimal,
             };
             if balance < required {
                 return ERR!("{} balance {} is too low, required {}", arc.ticker(), balance, required);

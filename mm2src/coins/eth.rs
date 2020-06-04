@@ -56,7 +56,7 @@ use web3::{ self, Web3 };
 use web3::types::{Action as TraceAction, BlockId, BlockNumber, Bytes, CallRequest, FilterBuilder, Log, Transaction as Web3Transaction, TransactionId, H256, Trace, TraceFilterBuilder};
 
 use super::{CoinsContext, CoinTransportMetrics, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, RpcClientType, RpcTransportEventHandler, RpcTransportEventHandlerShared,
-            SwapOps, TradeFee, TradeInfo, TransactionFut, TransactionEnum, Transaction, TransactionDetails, WithdrawFee, WithdrawRequest};
+            SwapOps, TradeFee, TransactionFut, TransactionEnum, Transaction, TransactionDetails, WithdrawFee, WithdrawRequest};
 
 pub use ethcore_transaction::SignedTransaction as SignedEthTx;
 pub use rlp;
@@ -1828,11 +1828,11 @@ impl EthTxFeeDetails {
 impl MmCoin for EthCoin {
     fn is_asset_chain(&self) -> bool { false }
 
-    fn check_i_have_enough_to_trade(&self, amount: &MmNumber, balance: &MmNumber, trade_info: TradeInfo) -> Box<dyn Future<Item=(), Error=String> + Send> {
+    fn check_i_have_enough_to_trade(&self, amount: &MmNumber, balance: &MmNumber, dex_fee: Option<MmNumber>) -> Box<dyn Future<Item=(), Error=String> + Send> {
         let ticker = self.ticker.clone();
-        let required = match trade_info {
-            TradeInfo::Maker => amount.clone(),
-            TradeInfo::Taker(dex_fee) => amount + &MmNumber::from(dex_fee.clone()),
+        let required = match dex_fee {
+            Some(dex_fee) => amount + &dex_fee,
+            None => amount.clone(),
         };
         match self.coin_type {
             EthCoinType::Eth => {
