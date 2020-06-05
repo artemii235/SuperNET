@@ -76,7 +76,7 @@ pub async fn electrum (ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
     let balance = try_s! (coin.my_balance().compat().await);
     let res = json! ({
         "result": "success",
-        "address": coin.my_address(),
+        "address": try_s!(coin.my_address()),
         "balance": balance,
         "locked_by_swaps": get_locked_amount (&ctx, &ticker),
         "coin": coin.ticker(),
@@ -94,7 +94,7 @@ pub async fn enable (ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String>
     let balance = try_s! (coin.my_balance().compat().await);
     let res = json! ({
         "result": "success",
-        "address": coin.my_address(),
+        "address": try_s!(coin.my_address()),
         "balance": balance,
         "locked_by_swaps": get_locked_amount (&ctx, &ticker),
         "coin": coin.ticker(),
@@ -144,7 +144,7 @@ pub fn my_balance (ctx: MmArc, req: Json) -> HyRes {
         "coin": ticker,
         "balance": balance,
         "locked_by_swaps": get_locked_amount(&ctx, &ticker),
-        "address": coin.my_address(),
+        "address": try_h!(coin.my_address()),
     }).to_string())))
 }
 

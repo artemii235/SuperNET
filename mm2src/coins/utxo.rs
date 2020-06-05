@@ -50,7 +50,6 @@ use rpc::v1::types::{Bytes as BytesJson, H256 as H256Json};
 use script::{Opcode, Builder, Script, ScriptAddress, TransactionInputSigner, UnsignedTransactionInput, SignatureVersion};
 use serde_json::{self as json, Value as Json};
 use serialization::{serialize, deserialize};
-use std::borrow::Cow;
 use std::collections::hash_map::{HashMap, Entry};
 use std::convert::TryInto;
 use std::cmp::Ordering;
@@ -158,6 +157,25 @@ enum FeePolicy {
     DeductFromOutput(usize),
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "format")]
+enum UtxoAddressFormat {
+    /// Standard UTXO address format.
+    /// In Bitcoin Cash context the standard format also known as 'legacy'.
+    #[serde(rename = "standard")]
+    Standard,
+    /// Bitcoin Cash specific address format.
+    /// https://github.com/bitcoincashorg/bitcoincash.org/blob/master/spec/cashaddr.md
+    #[serde(rename = "cashaddress")]
+    CashAddress { network: String },
+}
+
+impl Default for UtxoAddressFormat {
+    fn default() -> Self {
+        UtxoAddressFormat::Standard
+    }
+}
+
 #[derive(Debug)]
 pub struct UtxoCoinImpl {  // pImpl idiom.
     ticker: String,
@@ -203,6 +221,8 @@ pub struct UtxoCoinImpl {  // pImpl idiom.
     key_pair: KeyPair,
     /// Lock the mutex when we deal with address utxos
     my_address: Address,
+    /// TODO fill the comment
+    address_format: UtxoAddressFormat,
     /// Is current coin KMD asset chain?
     /// https://komodoplatform.atlassian.net/wiki/spaces/KPSD/pages/71729160/What+is+a+Parallel+Chain+Asset+Chain
     asset_chain: bool,
@@ -329,6 +349,15 @@ impl UtxoCoinImpl {
 
     pub fn rpc_client(&self) -> &UtxoRpcClientEnum {
         &self.rpc_client
+    }
+
+    pub fn address_to_string(&self, address: &Address) -> Result<String, String> {
+        match &self.address_format {
+            UtxoAddressFormat::Standard => Ok(address.to_string()),
+            UtxoAddressFormat::CashAddress { network } =>
+                address.to_cashaddress(&network, self.pub_addr_prefix, self.p2sh_addr_prefix)
+                    .and_then(|cashaddress| cashaddress.encode()),
+        }
     }
 }
 
@@ -758,7 +787,7 @@ impl UtxoCoin {
         for input in unsigned.inputs.iter() {
             let prev_hash = input.previous_output.hash.reversed().into();
             let tx = try_s!(self.rpc_client.get_verbose_transaction(prev_hash).compat().await);
-            interest += kmd_interest(tx.height, input.amount, tx.locktime as u64, unsigned.lock_time as u64);
+            interest += kmd_interest(tx.height.unwrap_or(0), input.amount, tx.locktime as u64, unsigned.lock_time as u64);
         }
         if interest > 0 {
             data.received_by_me += interest;
@@ -1290,8 +1319,8 @@ impl SwapOps for UtxoCoin {
 impl MarketCoinOps for UtxoCoin {
     fn ticker (&self) -> &str {&self.ticker[..]}
 
-    fn my_address(&self) -> Cow<str> {
-        self.0.my_address.to_string().into()
+    fn my_address(&self) -> Result<String, String> {
+        self.address_to_string(&self.my_address)
     }
 
     fn my_balance(&self) -> Box<dyn Future<Item=BigDecimal, Error=String> + Send> {
@@ -1366,7 +1395,11 @@ impl MarketCoinOps for UtxoCoin {
 }
 
 async fn withdraw_impl(coin: UtxoCoin, req: WithdrawRequest) -> Result<TransactionDetails, String> {
-    let to = try_s!(Address::from_str(&req.to));
+    let to = match &coin.address_format {
+        UtxoAddressFormat::Standard => try_s!(Address::from_str(&req.to)),
+        UtxoAddressFormat::CashAddress {..} => try_s!(Address::from_cashaddress(
+            &req.to, coin.checksum_type.clone(),coin.pub_addr_prefix, coin.p2sh_addr_prefix))
+    };
     if to.checksum_type != coin.checksum_type {
         return ERR!("Address {} has invalid checksum type, it must be {:?}", to, coin.checksum_type);
     }
@@ -1400,9 +1433,11 @@ async fn withdraw_impl(coin: UtxoCoin, req: WithdrawRequest) -> Result<Transacti
     let fee_details = UtxoFeeDetails {
         amount: big_decimal_from_sat(data.fee_amount as i64, coin.decimals),
     };
+    let my_address = try_s!(coin.my_address());
+    let to_address = try_s!(coin.address_to_string(&to));
     Ok(TransactionDetails {
-        from: vec![coin.my_address().into()],
-        to: vec![format!("{}", to)],
+        from: vec![my_address],
+        to: vec![to_address],
         total_amount: big_decimal_from_sat(data.spent_by_me as i64, coin.decimals),
         spent_by_me: big_decimal_from_sat(data.spent_by_me as i64, coin.decimals),
         received_by_me: big_decimal_from_sat(data.received_by_me as i64, coin.decimals),
@@ -1474,6 +1509,13 @@ impl MmCoin for UtxoCoin {
         let mut my_balance: Option<BigDecimal> = None;
         let history = self.load_history_from_file(&ctx);
         let mut history_map: HashMap<H256Json, TransactionDetails> = history.into_iter().map(|tx| (H256Json::from(tx.tx_hash.as_slice()), tx)).collect();
+        let my_address = match self.my_address() {
+            Ok(addr) => addr,
+            Err(e) => {
+                log!("Error on getting self address: "[e]);
+                return;
+            }
+        };
 
         let mut success_iteration = 0i32;
         loop {
@@ -1539,7 +1581,7 @@ impl MmCoin for UtxoCoin {
                         "coin" => self.ticker.clone(), "client" => "native", "method" => "listtransactions");
 
                     all_transactions.into_iter().filter_map(|item| {
-                        if item.address == self.my_address() {
+                        if item.address == my_address {
                             Some((item.txid, item.blockindex))
                         } else {
                             None
@@ -1744,7 +1786,7 @@ impl MmCoin for UtxoCoin {
                 fee_details: Some(UtxoFeeDetails {
                     amount: fee,
                 }.into()),
-                block_height: verbose_tx.height,
+                block_height: verbose_tx.height.unwrap_or(0),
                 coin: selfi.ticker.clone(),
                 internal_id: tx.hash().reversed().to_vec().into(),
                 timestamp: verbose_tx.time.into(),
@@ -1952,6 +1994,12 @@ pub async fn utxo_coin_from_conf_and_request(
         checksum_type,
     };
 
+    let address_format = if conf["address_format"].is_null() {
+        UtxoAddressFormat::Standard
+    } else {
+        try_s!(json::from_value(conf["address_format"].clone()))
+    };
+
     let rpc_client = match req["method"].as_str() {
         Some("enable") => {
             if cfg!(feature = "native") {
@@ -2110,6 +2158,7 @@ pub async fn utxo_coin_from_conf_and_request(
         wif_prefix,
         tx_version,
         my_address: my_address.clone(),
+        address_format,
         asset_chain,
         tx_fee,
         version_group_id,

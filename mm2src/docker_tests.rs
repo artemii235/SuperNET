@@ -199,19 +199,21 @@ mod docker_tests {
         let priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
         let coin = unwrap!(block_on(utxo_coin_from_conf_and_request(
             &ctx, ticker, &conf, &req, &priv_key)));
-        fill_address(&coin, &coin.my_address(), balance, timeout);
+        // TODO check what is it
+        fill_address(&coin, &coin.my_address().unwrap(), balance, timeout);
         (ctx, coin, priv_key)
     }
 
     fn fill_address(coin: &UtxoCoin, address: &str, amount: u64, timeout: u64) {
         if let UtxoRpcClientEnum::Native(client) = &coin.rpc_client() {
-            unwrap!(client.import_address(&coin.my_address(), &coin.my_address(), false).wait());
+            // TODO check it
+            unwrap!(client.import_address(&coin.my_address().unwrap(), &unwrap!(coin.my_address()), false).wait());
             let hash = client.send_to_address(address, &amount.into()).wait().unwrap();
             let tx_bytes = client.get_transaction_bytes(hash).wait().unwrap();
             unwrap!(coin.wait_for_confirmations(&tx_bytes, 1, false, timeout, 1).wait());
             log!({ "{:02x}", tx_bytes });
             loop {
-                let unspents = client.list_unspent(0, std::i32::MAX, vec![coin.my_address().into()]).wait().unwrap();
+                let unspents = client.list_unspent(0, std::i32::MAX, vec![coin.my_address().unwrap()]).wait().unwrap();
                 log!([unspents]);
                 if !unspents.is_empty() {
                     break;

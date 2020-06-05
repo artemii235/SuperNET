@@ -42,7 +42,6 @@ use rand::seq::SliceRandom;
 use rpc::v1::types::{Bytes as BytesJson};
 use serde_json::{self as json, Value as Json};
 use sha3::{Keccak256, Digest};
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::cmp::Ordering;
 use std::ops::Deref;
@@ -421,7 +420,7 @@ async fn withdraw_impl(ctx: MmArc, coin: EthCoin, req: WithdrawRequest) -> Resul
     }
     Ok(TransactionDetails {
         to: vec![checksum_address(&format!("{:#02x}", to_addr))],
-        from: vec![coin.my_address().into()],
+        from: vec![try_s!(coin.my_address())],
         total_amount: amount_decimal,
         my_balance_change: &received_by_me - &spent_by_me,
         spent_by_me,
@@ -689,8 +688,8 @@ impl SwapOps for EthCoin {
 impl MarketCoinOps for EthCoin {
     fn ticker (&self) -> &str {&self.ticker[..]}
 
-    fn my_address(&self) -> Cow<str> {
-        checksum_address(&format!("{:#02x}", self.my_address)).into()
+    fn my_address(&self) -> Result<String, String> {
+        Ok(checksum_address(&format!("{:#02x}", self.my_address)))
     }
 
     fn my_balance(&self) -> Box<dyn Future<Item=BigDecimal, Error=String> + Send> {

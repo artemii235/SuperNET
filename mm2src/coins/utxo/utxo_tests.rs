@@ -68,6 +68,7 @@ fn utxo_coin_for_test(rpc_client: UtxoRpcClientEnum, force_seed: Option<&str>) -
         segwit: false,
         tx_version: 4,
         my_address,
+        address_format: UtxoAddressFormat::Standard,
         asset_chain: true,
         p2sh_addr_prefix: 85,
         p2sh_t_addr_prefix: 0,
