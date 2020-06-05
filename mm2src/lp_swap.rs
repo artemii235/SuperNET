@@ -136,8 +136,8 @@ mod taker_swap;
 
 use maker_swap::{MakerSavedSwap, MakerSwapEvent, stats_maker_swap_file_path};
 use taker_swap::{TakerSavedSwap, TakerSwapEvent, stats_taker_swap_file_path};
-pub use maker_swap::{MakerSwap, RunMakerSwapInput, run_maker_swap};
-pub use taker_swap::{RunTakerSwapInput, TakerSwap, run_taker_swap};
+pub use maker_swap::{run_maker_swap, MakerSwap, RunMakerSwapInput};
+pub use taker_swap::{check_balance_for_taker_swap, run_taker_swap, RunTakerSwapInput, TakerSwap};
 use num_rational::BigRational;
 
 /// Includes the grace time we add to the "normal" timeouts

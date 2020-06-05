@@ -7,6 +7,7 @@ use common::{
     executor::Timer,
     file_lock::FileLock,
     mm_ctx::MmArc,
+    mm_number::MmNumber,
 };
 use coins::{FoundSwapTxSpend, MmCoinEnum, TransactionDetails};
 use crc::crc32;
@@ -25,11 +26,11 @@ use serialization::{deserialize, serialize};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::sync::atomic::Ordering;
-use super::{ban_pubkey, broadcast_my_swap_status, dex_fee_amount, get_locked_amount_by_other_swaps,
-  lp_atomic_locktime, my_swap_file_path, my_swaps_dir,
-  AtomicSwap, LockedAmount, MySwapInfo, RecoveredSwap, RecoveredSwapAction,
-  SavedSwap, SwapsContext, SwapError, SwapNegotiationData,
-  BASIC_COMM_TIMEOUT, WAIT_CONFIRM_INTERVAL};
+use super::{ban_pubkey, broadcast_my_swap_status, dex_fee_amount, get_locked_amount,
+            get_locked_amount_by_other_swaps, lp_atomic_locktime, my_swap_file_path, my_swaps_dir,
+            AtomicSwap, LockedAmount, MySwapInfo, RecoveredSwap, RecoveredSwapAction,
+            SavedSwap, SwapsContext, SwapError, SwapNegotiationData,
+            BASIC_COMM_TIMEOUT, WAIT_CONFIRM_INTERVAL};
 
 pub fn stats_taker_swap_file_path(ctx: &MmArc, uuid: &str) -> PathBuf {
     ctx.dbdir().join("SWAPS").join("STATS").join("TAKER").join(format!("{}.json", uuid))
@@ -550,31 +551,18 @@ impl TakerSwap {
     }
 
     async fn start(&self) -> Result<(Option<TakerSwapCommand>, Vec<TakerSwapEvent>), String> {
-        let my_balance = match self.taker_coin.my_balance().compat().await {
-            Ok(balance) => balance,
-            Err(e) => return Ok((
-                Some(TakerSwapCommand::Finish),
-                vec![TakerSwapEvent::StartFailed(ERRL!("!my_balance {}", e).into())],
-            ))
-        };
-
-        let locked = get_locked_amount_by_other_swaps(&self.ctx, &self.uuid, self.taker_coin.ticker());
-        let available = &my_balance.clone().into() - &locked;
-        if self.taker_amount > available.clone().into() {
+        let check_balance_f = check_balance_for_taker_swap(
+            &self.ctx,
+            &self.taker_coin,
+            &self.maker_coin,
+            self.taker_amount.clone().into(),
+            Some(&self.uuid)
+        );
+        if let Err(e) = check_balance_f.await {
             return Ok((
                 Some(TakerSwapCommand::Finish),
-                vec![TakerSwapEvent::StartFailed(ERRL!("taker amount {} is larger than available {}, balance {}, locked by other swaps {}",
-                    self.taker_amount, available, my_balance, locked
-                ).into())],
+                vec![TakerSwapEvent::StartFailed(ERRL!("!check_balance_for_taker_swap {}", e).into())],
             ));
-        }
-
-        let dex_fee_amount = dex_fee_amount(self.maker_coin.ticker(), self.taker_coin.ticker(), &self.taker_amount.clone().into());
-        if let Err(e) = self.taker_coin.check_i_have_enough_to_trade(&self.taker_amount.clone().into(), &my_balance.clone().into(), Some(dex_fee_amount)).compat().await {
-            return Ok((
-                Some(TakerSwapCommand::Finish),
-                vec![TakerSwapEvent::StartFailed(ERRL!("!check_i_have_enough_to_trade {}", e).into())],
-            ))
         }
 
         if let Err(e) = self.maker_coin.can_i_spend_other_payment().compat().await {
@@ -1249,6 +1237,35 @@ impl AtomicSwap for TakerSwap {
     fn maker_coin(&self) -> &str { self.maker_coin.ticker() }
 
     fn taker_coin(&self) -> &str { self.taker_coin.ticker() }
+}
+
+pub async fn check_balance_for_taker_swap(
+    ctx: &MmArc,
+    my_coin: &MmCoinEnum,
+    other_coin: &MmCoinEnum,
+    volume: MmNumber,
+    swap_uuid: Option<&str>,
+) -> Result<(), String> {
+    let locked = match swap_uuid {
+        Some(u) => get_locked_amount_by_other_swaps(ctx, u, my_coin.ticker()),
+        None => get_locked_amount(&ctx, my_coin.ticker()),
+    };
+    let miner_fee = try_s!(my_coin.get_trade_fee().compat().await);
+    let my_balance = try_s!(my_coin.my_balance().compat().await).into();
+    let dex_fee = dex_fee_amount(my_coin.ticker(), other_coin.ticker(), &volume);
+    let total = if my_coin.ticker() == miner_fee.coin {
+        &volume + &dex_fee + &MmNumber::from(2) * &(miner_fee.amount.clone().into())
+    } else {
+        // TODO exchanging token here, need to check main coin balance, e.g. ETH
+        &volume + &dex_fee
+    };
+    let available = &my_balance - &locked;
+    if total <= available {
+        Ok(())
+    } else {
+        ERR!("The total required {} amount {} is larger than available {:.8}, balance: {}, locked by swaps: {:.8}",
+        my_coin.ticker(), total, available, my_balance, locked)
+    }
 }
 
 #[cfg(test)]

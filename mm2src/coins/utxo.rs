@@ -1917,8 +1917,7 @@ fn rpc_event_handlers_for_client_transport(
     ctx: &MmArc,
     ticker: String,
     client: RpcClientType,
-)
-    -> Vec<RpcTransportEventHandlerShared> {
+) -> Vec<RpcTransportEventHandlerShared> {
     let metrics = ctx.metrics.weak();
     vec![
         CoinTransportMetrics::new(metrics, ticker, client).into_shared(),

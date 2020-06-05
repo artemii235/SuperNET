@@ -49,8 +49,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
-use crate::mm2::lp_swap::{dex_fee_amount, get_locked_amount, is_pubkey_banned, MakerSwap,
-                          RunMakerSwapInput, RunTakerSwapInput, run_maker_swap, run_taker_swap, TakerSwap};
+use crate::mm2::lp_swap::{
+    check_balance_for_taker_swap, get_locked_amount, is_pubkey_banned, run_maker_swap, run_taker_swap,
+    MakerSwap, RunMakerSwapInput, RunTakerSwapInput, TakerSwap,
+};
 
 #[cfg(test)]
 #[cfg(feature = "native")]
@@ -679,16 +681,6 @@ pub fn lp_trade_command(
     -1
 }
 
-async fn check_locked_coins(ctx: &MmArc, amount: &MmNumber, balance: &MmNumber, ticker: &str) -> Result<(), String> {
-    let locked = get_locked_amount(ctx, ticker);
-    let available = balance - &locked;
-    if amount > &available {
-        ERR!("The {} amount {} is larger than available {:.8}, balance: {}, locked by swaps: {:.8}", ticker, amount, available, balance, locked)
-    } else {
-        Ok(())
-    }
-}
-
 #[derive(Deserialize, Debug)]
 pub struct AutoBuyInput {
     base: String,
@@ -718,11 +710,7 @@ pub async fn buy(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
     let base_coin = try_s!(lp_coinfindᵃ(&ctx, &input.base).await);
     let base_coin: MmCoinEnum = try_s!(base_coin.ok_or("Base coin is not found or inactive"));
     let my_amount = &input.volume * &input.price;
-    let my_balance = try_s!(rel_coin.my_balance().compat().await);
-    let dex_fee = dex_fee_amount(base_coin.ticker(), rel_coin.ticker(), &my_amount.clone().into());
-    let total = &my_amount + &dex_fee + MmNumber::from(2) * try_s!(rel_coin.get_trade_fee().compat().await).amount.into();
-    try_s!(check_locked_coins(&ctx, &total, &my_balance.clone().into(), rel_coin.ticker()).await);
-    try_s!(rel_coin.check_i_have_enough_to_trade(&my_amount.clone().into(), &my_balance.clone().into(), Some(dex_fee)).compat().await);
+    try_s!(check_balance_for_taker_swap(&ctx, &rel_coin, &base_coin, my_amount, None).await);
     try_s!(base_coin.can_i_spend_other_payment().compat().await);
     let res = try_s!(lp_auto_buy(&ctx, input)).into_bytes();
     Ok(try_s!(Response::builder().body(res)))
@@ -735,11 +723,7 @@ pub async fn sell(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
     let base_coin = try_s!(base_coin.ok_or("Base coin is not found or inactive"));
     let rel_coin = try_s!(lp_coinfindᵃ(&ctx, &input.rel).await);
     let rel_coin = try_s!(rel_coin.ok_or("Rel coin is not found or inactive"));
-    let my_balance = try_s!(base_coin.my_balance().compat().await);
-    let dex_fee = dex_fee_amount(base_coin.ticker(), rel_coin.ticker(), &input.volume.clone().into());
-    let total = &input.volume + &dex_fee + MmNumber::from(2) * try_s!(rel_coin.get_trade_fee().compat().await).amount.into();
-    try_s!(check_locked_coins(&ctx, &total, &my_balance.clone().into(), base_coin.ticker()).await);
-    try_s!(base_coin.check_i_have_enough_to_trade(&input.volume.clone().into(), &my_balance.clone().into(), Some(dex_fee)).compat().await);
+    try_s!(check_balance_for_taker_swap(&ctx, &base_coin, &rel_coin, input.volume.clone(), None).await);
     try_s!(rel_coin.can_i_spend_other_payment().compat().await);
     let res = try_s!(lp_auto_buy(&ctx, input)).into_bytes();
     Ok(try_s!(Response::builder().body(res)))
@@ -1020,7 +1004,6 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
         }
         MmNumber::from(vol)
     } else {
-        try_s!(check_locked_coins(&ctx, &req.volume, &my_balance.clone().into(), base_coin.ticker()).await);
         try_s!(base_coin.check_i_have_enough_to_trade(&req.volume, &my_balance.clone().into(), None).compat().await);
         req.volume.clone()
     };
