@@ -351,7 +351,7 @@ impl UtxoCoinImpl {
         &self.rpc_client
     }
 
-    pub fn address_to_string(&self, address: &Address) -> Result<String, String> {
+    pub fn display_address(&self, address: &Address) -> Result<String, String> {
         match &self.address_format {
             UtxoAddressFormat::Standard => Ok(address.to_string()),
             UtxoAddressFormat::CashAddress { network } =>
@@ -1320,7 +1320,7 @@ impl MarketCoinOps for UtxoCoin {
     fn ticker (&self) -> &str {&self.ticker[..]}
 
     fn my_address(&self) -> Result<String, String> {
-        self.address_to_string(&self.my_address)
+        self.display_address(&self.my_address)
     }
 
     fn my_balance(&self) -> Box<dyn Future<Item=BigDecimal, Error=String> + Send> {
@@ -1434,7 +1434,7 @@ async fn withdraw_impl(coin: UtxoCoin, req: WithdrawRequest) -> Result<Transacti
         amount: big_decimal_from_sat(data.fee_amount as i64, coin.decimals),
     };
     let my_address = try_s!(coin.my_address());
-    let to_address = try_s!(coin.address_to_string(&to));
+    let to_address = try_s!(coin.display_address(&to));
     Ok(TransactionDetails {
         from: vec![my_address],
         to: vec![to_address],
@@ -1766,10 +1766,12 @@ impl MmCoin for UtxoCoin {
             }
             // remove address duplicates in case several inputs were spent from same address
             // or several outputs are sent to same address
-            let mut from_addresses: Vec<String> = from_addresses.into_iter().flatten().map(|addr| addr.to_string()).collect();
+            let mut from_addresses: Vec<String> =
+                try_s!(from_addresses.into_iter().flatten().map(|addr| selfi.display_address(&addr)).collect());
             from_addresses.sort();
             from_addresses.dedup();
-            let mut to_addresses: Vec<String> = to_addresses.into_iter().flatten().map(|addr| addr.to_string()).collect();
+            let mut to_addresses: Vec<String> =
+                try_s!(to_addresses.into_iter().flatten().map(|addr| selfi.display_address(&addr)).collect());
             to_addresses.sort();
             to_addresses.dedup();
 
