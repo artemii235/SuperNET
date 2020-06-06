@@ -2607,7 +2607,6 @@ fn test_withdraw_cashaddresses() {
         "coin": "BCH",
         "servers": [{"url":"blackie.c3-soft.com:60001"}, {"url":"bch0.kister.net:51001"}, {"url":"testnet.imaginary.cash:50001"}],
         "mm2": 1,
-        // "tx_history": true
     }))));
 
     assert_eq!(electrum.0, StatusCode::OK, "RPC «electrum» failed with {} {}", electrum.0, electrum.1);
@@ -2681,7 +2680,6 @@ fn test_common_cashaddresses() {
         "coin": "BCH",
         "servers": [{"url":"blackie.c3-soft.com:60001"}, {"url":"bch0.kister.net:51001"}, {"url":"testnet.imaginary.cash:50001"}],
         "mm2": 1,
-        // "tx_history": true
     }))));
 
     assert_eq!(electrum.0, StatusCode::OK, "RPC «electrum» failed with {} {}", electrum.0, electrum.1);

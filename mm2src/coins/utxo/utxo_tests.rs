@@ -818,3 +818,34 @@ fn test_generate_tx_fee_is_correct_when_dynamic_fee_is_larger_than_relay() {
     assert_eq!(generated.1.spent_by_me, 20000000000);
     assert!(unsafe { GET_RELAY_FEE_CALLED });
 }
+
+#[test]
+fn test_cashaddresses_in_tx_details_by_hash() {
+    let conf = json!(  {
+        "coin": "BCH",
+        "pubtype": 0,
+        "p2shtype": 5,
+        "mm2": 1,
+        "address_format":{"format":"cashaddress","network":"bchtest"},
+    });
+    let req = json!({
+         "method": "electrum",
+         "servers": [{"url":"blackie.c3-soft.com:60001"}, {"url":"bch0.kister.net:51001"}, {"url":"testnet.imaginary.cash:50001"}],
+    });
+
+    let ctx = MmCtxBuilder::new().into_mm_arc();
+
+    let coin = unwrap!(block_on(utxo_coin_from_conf_and_request(
+        &ctx, "BCH", &conf, &req, &[1u8; 32])));
+
+    let hash = hex::decode("0f2f6e0c8f440c641895023782783426c3aca1acc78d7c0db7751995e8aa5751").unwrap();
+    let fut = async {
+        let tx_details = coin.tx_details_by_hash(&hash).compat().await.unwrap();
+        log!([tx_details]);
+
+        assert!(tx_details.from.iter().any(|addr| addr == "bchtest:qze8g4gx3z428jjcxzpycpxl7ke7d947gca2a7n2la"));
+        assert!(tx_details.to.iter().any(|addr| addr == "bchtest:qr39na5d25wdeecgw3euh9fkd4ygvd4pnsury96597"));
+    };
+
+    block_on(fut);
+}
