@@ -821,7 +821,7 @@ fn test_generate_tx_fee_is_correct_when_dynamic_fee_is_larger_than_relay() {
 
 #[test]
 fn test_cashaddresses_in_tx_details_by_hash() {
-    let conf = json!(  {
+    let conf = json!({
         "coin": "BCH",
         "pubtype": 0,
         "p2shtype": 5,

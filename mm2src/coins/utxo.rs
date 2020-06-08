@@ -221,7 +221,7 @@ pub struct UtxoCoinImpl {  // pImpl idiom.
     key_pair: KeyPair,
     /// Lock the mutex when we deal with address utxos
     my_address: Address,
-    /// TODO fill the comment
+    /// The address format indicates how to parse and display UTXO addresses over RPC calls
     address_format: UtxoAddressFormat,
     /// Is current coin KMD asset chain?
     /// https://komodoplatform.atlassian.net/wiki/spaces/KPSD/pages/71729160/What+is+a+Parallel+Chain+Asset+Chain
@@ -951,7 +951,7 @@ impl SwapOps for UtxoCoin {
                     t_addr_prefix: self.p2sh_t_addr_prefix,
                 };
                 let arc = self.clone();
-                let addr_string = payment_addr.to_string();
+                let addr_string = try_fus!(self.display_address(&payment_addr));
                 Either::B(client.import_address(&addr_string, &addr_string, false).map_err(|e| ERRL!("{}", e)).and_then(move |_|
                     arc.send_outputs_from_my_address(vec![htlc_out, secret_hash_op_return_out])
                 ))
@@ -1002,7 +1002,7 @@ impl SwapOps for UtxoCoin {
                     t_addr_prefix: self.p2sh_t_addr_prefix,
                 };
                 let arc = self.clone();
-                let addr_string = payment_addr.to_string();
+                let addr_string = try_fus!(self.display_address(&payment_addr));
                 Either::B(client.import_address(&addr_string, &addr_string, false).map_err(|e| ERRL!("{}", e)).and_then(move |_|
                     arc.send_outputs_from_my_address(vec![htlc_out, secret_hash_op_return_out])
                 ))
@@ -1263,7 +1263,8 @@ impl SwapOps for UtxoCoin {
                         prefix: selfi.p2sh_addr_prefix,
                         hash,
                         checksum_type: selfi.checksum_type,
-                    }.to_string();
+                    };
+                    let target_addr = try_s!(selfi.display_address(&target_addr));
                     let received_by_addr = try_s!(client.list_received_by_address(0, true, true).compat().await);
                     for item in received_by_addr {
                         if item.address == target_addr && !item.txids.is_empty() {
@@ -1386,7 +1387,7 @@ impl MarketCoinOps for UtxoCoin {
     fn address_from_pubkey_str(&self, pubkey: &str) -> Result<String, String> {
         let pubkey_bytes = try_s!(hex::decode(pubkey));
         let addr = try_s!(address_from_raw_pubkey(&pubkey_bytes, self.pub_addr_prefix, self.pub_t_addr_prefix, self.checksum_type));
-        Ok(addr.to_string())
+        self.display_address(&addr)
     }
 
     fn display_priv_key(&self) -> String {
@@ -1512,7 +1513,7 @@ impl MmCoin for UtxoCoin {
         let my_address = match self.my_address() {
             Ok(addr) => addr,
             Err(e) => {
-                log!("Error on getting self address: "[e]);
+                log!("Error on getting self address: " [e] ". Stop tx history");
                 return;
             }
         };

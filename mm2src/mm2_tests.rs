@@ -2577,7 +2577,7 @@ fn test_electrum_tx_history() {
 #[test]
 fn test_withdraw_cashaddresses() {
     let coins = json!([
-        {"coin":"BCH","asset":"RICK","pubtype":0,"p2shtype":5,"mm2":1,
+        {"coin":"BCH","pubtype":0,"p2shtype":5,"mm2":1,
          "address_format":{"format":"cashaddress","network":"bchtest"}},
     ]);
 
@@ -2650,7 +2650,7 @@ fn test_withdraw_cashaddresses() {
 #[test]
 fn test_common_cashaddresses() {
     let coins = json!([
-        {"coin":"BCH","asset":"RICK","pubtype":0,"p2shtype":5,"mm2":1,
+        {"coin":"BCH","pubtype":0,"p2shtype":5,"mm2":1,
          "address_format":{"format":"cashaddress","network":"bchtest"}},
     ]);
 

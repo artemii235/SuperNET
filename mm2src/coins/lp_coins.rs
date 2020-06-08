@@ -751,16 +751,13 @@ struct EnabledCoin {
 pub async fn get_enabled_coins(ctx: MmArc) -> Result<Response<Vec<u8>>, String> {
     let coins_ctx: Arc<CoinsContext> = try_s!(CoinsContext::from_ctx(&ctx));
     let coins = try_s!(coins_ctx.coins.sleeplock(77).await);
-    let mut enabled_coins = Vec::with_capacity(coins.len());
-
-    for (ticker, coin) in coins.iter() {
-        let my_address = try_s!(coin.my_address());
-        let enabled = EnabledCoin {
+    let enabled_coins: Vec<_> = try_s!(coins.iter().map(|(ticker, coin)| {
+        let address = try_s!(coin.my_address());
+        Ok(EnabledCoin {
             ticker: ticker.clone(),
-            address: my_address,
-        };
-        enabled_coins.push(enabled);
-    }
+            address,
+        })
+    }).collect());
 
     let res = try_s!(json::to_vec(&json!({
         "result": enabled_coins
