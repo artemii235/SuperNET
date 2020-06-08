@@ -86,6 +86,7 @@ fn utxo_coin_for_test(rpc_client: UtxoRpcClientEnum, force_seed: Option<&str>) -
         history_sync_state: Mutex::new(HistorySyncState::NotEnabled),
         required_confirmations: 1.into(),
         force_min_relay_fee: false,
+        estimate_fee_mode: None,
     };
     coin
 }

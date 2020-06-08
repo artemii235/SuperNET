@@ -63,7 +63,8 @@ use std::time::Duration;
 
 pub use chain::Transaction as UtxoTx;
 
-use self::rpc_clients::{electrum_script_hash, ElectrumClient, ElectrumClientImpl, EstimateFeeMethod, NativeClient, UtxoRpcClientEnum, UnspentInfo};
+use self::rpc_clients::{electrum_script_hash, ElectrumClient, ElectrumClientImpl,
+                        EstimateFeeMethod, EstimateFeeMode, NativeClient, UtxoRpcClientEnum, UnspentInfo};
 use super::{CoinsContext, CoinTransportMetrics, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, RpcClientType, RpcTransportEventHandlerShared,
             SwapOps, TradeFee, TradeInfo, Transaction, TransactionEnum, TransactionFut, TransactionDetails, WithdrawFee, WithdrawRequest};
 use crate::utxo::rpc_clients::{NativeClientImpl, UtxoRpcClientOps, ElectrumRpcRequest};
@@ -246,6 +247,7 @@ pub struct UtxoCoinImpl {  // pImpl idiom.
     /// relay fee amount instead of calculated
     /// https://github.com/KomodoPlatform/atomicDEX-API/issues/617
     force_min_relay_fee: bool,
+    estimate_fee_mode: Option<EstimateFeeMode>,
 }
 
 impl UtxoCoinImpl {
@@ -253,7 +255,7 @@ impl UtxoCoinImpl {
         match &self.tx_fee {
             TxFee::Fixed(fee) => Ok(ActualTxFee::Fixed(*fee)),
             TxFee::Dynamic(method) => {
-                let fee = self.rpc_client.estimate_fee_sat(self.decimals, method).compat().await?;
+                let fee = self.rpc_client.estimate_fee_sat(self.decimals, method, &self.estimate_fee_mode).compat().await?;
                 Ok(ActualTxFee::Dynamic(fee))
             },
         }
@@ -1541,9 +1543,13 @@ impl MmCoin for UtxoCoin {
                 },
             };
 
+            let need_update = history_map
+                .iter()
+                .find(|(_, tx)| tx.should_update_timestamp() || tx.should_update_block_height())
+                .is_some();
             match (&my_balance, &actual_balance) {
                 (Some(prev_balance), Some(actual_balance))
-                if prev_balance == actual_balance => {
+                if prev_balance == actual_balance && !need_update => {
                     // my balance hasn't been changed, there is no need to reload tx_history
                     thread::sleep(Duration::from_secs(30));
                     continue;
@@ -1680,11 +1686,11 @@ impl MmCoin for UtxoCoin {
                     },
                     Entry::Occupied(mut e) => {
                         // update block height for previously unconfirmed transaction
-                        if (e.get().block_height == 0 || e.get().block_height == std::u64::MAX) && height > 0 {
+                        if e.get().should_update_block_height() && height > 0 {
                             e.get_mut().block_height = height;
                             updated = true;
                         }
-                        if e.get().timestamp == 0 {
+                        if e.get().should_update_timestamp() {
                             mm_counter!(ctx.metrics, "tx.history.request.count", 1, "coin" => self.ticker.clone(), "method" => "tx_detail_by_hash");
 
                             if let Ok(tx_details) = self.tx_details_by_hash(&txid.0).wait() {
@@ -2173,6 +2179,7 @@ pub async fn utxo_coin_from_conf_and_request(
         history_sync_state: Mutex::new(initial_history_state),
         required_confirmations: required_confirmations.into(),
         force_min_relay_fee: conf["force_min_relay_fee"].as_bool().unwrap_or (false),
+        estimate_fee_mode: json::from_value(conf["estimate_fee_mode"].clone()).unwrap_or(None),
     };
     Ok(UtxoCoin(Arc::new(coin)))
 }
