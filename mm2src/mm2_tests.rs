@@ -2574,6 +2574,144 @@ fn test_electrum_tx_history() {
     assert_eq!(get_tx_history_request_count(&mm), 2);
 }
 
+#[test]
+fn test_withdraw_cashaddresses() {
+    let coins = json!([
+        {"coin":"BCH","pubtype":0,"p2shtype":5,"mm2":1,
+         "address_format":{"format":"cashaddress","network":"bchtest"}},
+    ]);
+
+    let mut mm = unwrap! (MarketMakerIt::start (
+        json! ({
+            "gui": "nogui",
+            "netid": 9998,
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "passphrase": "face pin block number add byte put seek mime test note password sin tab multiple",
+            "coins": coins,
+            "i_am_seed": true,
+            "rpc_password": "pass",
+        }),
+        "pass".into(),
+        local_start! ("bob")
+    ));
+    let (_dump_log, _dump_dashboard) = mm_dump(&mm.log_path);
+    log!({ "log path: {}", mm.log_path.display() });
+    unwrap!(block_on (mm.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
+
+    // Enable BCH electrum client with tx_history loop.
+    // Enable RICK electrum client with tx_history loop.
+    let electrum = unwrap!(block_on(mm.rpc (json! ({
+        "userpass": mm.userpass,
+        "method": "electrum",
+        "coin": "BCH",
+        "servers": [{"url":"blackie.c3-soft.com:60001"}, {"url":"bch0.kister.net:51001"}, {"url":"testnet.imaginary.cash:50001"}],
+        "mm2": 1,
+    }))));
+
+    assert_eq!(electrum.0, StatusCode::OK, "RPC «electrum» failed with {} {}", electrum.0, electrum.1);
+    let electrum: Json = unwrap!(json::from_str(&electrum.1));
+    log!([electrum]);
+
+    // make withdraw
+    let withdraw = unwrap!(block_on (mm.rpc (json! ({
+        "userpass": mm.userpass,
+        "method": "withdraw",
+        "coin": "BCH",
+        "to": "bchtest:qr39na5d25wdeecgw3euh9fkd4ygvd4pnsury96597",
+        "amount": 0.0001,
+    }))));
+
+    assert!(withdraw.0.is_success(), "BCH withdraw: {}", withdraw.1);
+    let withdraw_json: Json = unwrap!(json::from_str(&withdraw.1));
+    log!((withdraw_json));
+
+    // check "from" addresses
+    let from: Vec<&str> = withdraw_json["from"].as_array().unwrap()
+        .iter().map(|v| v.as_str().unwrap()).collect();
+    assert_eq!(from, vec!["bchtest:qze8g4gx3z428jjcxzpycpxl7ke7d947gca2a7n2la"]);
+
+    // check "to" addresses
+    let to: Vec<&str> = withdraw_json["to"].as_array().unwrap()
+        .iter().map(|v| v.as_str().unwrap()).collect();
+    assert_eq!(to, vec!["bchtest:qr39na5d25wdeecgw3euh9fkd4ygvd4pnsury96597"]);
+
+    // send the transaction
+    let send_tx = unwrap!(block_on (mm.rpc (json! ({
+        "userpass": mm.userpass,
+        "method": "send_raw_transaction",
+        "coin": "BCH",
+        "tx_hex": withdraw_json["tx_hex"],
+    }))));
+    assert!(send_tx.0.is_success(), "QRC20 send_raw_transaction: {}", send_tx.1);
+    log!((send_tx.1));
+}
+
+#[test]
+fn test_common_cashaddresses() {
+    let coins = json!([
+        {"coin":"BCH","pubtype":0,"p2shtype":5,"mm2":1,
+         "address_format":{"format":"cashaddress","network":"bchtest"}},
+    ]);
+
+    let mut mm = unwrap! (MarketMakerIt::start (
+        json! ({
+            "gui": "nogui",
+            "netid": 9998,
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "passphrase": "face pin block number add byte put seek mime test note password sin tab multiple",
+            "coins": coins,
+            "i_am_seed": true,
+            "rpc_password": "pass",
+        }),
+        "pass".into(),
+        local_start! ("bob")
+    ));
+    let (_dump_log, _dump_dashboard) = mm_dump(&mm.log_path);
+    log!({ "log path: {}", mm.log_path.display() });
+    unwrap!(block_on (mm.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
+
+    // Enable BCH electrum client with tx_history loop.
+    // Enable RICK electrum client with tx_history loop.
+    let electrum = unwrap!(block_on(mm.rpc (json! ({
+        "userpass": mm.userpass,
+        "method": "electrum",
+        "coin": "BCH",
+        "servers": [{"url":"blackie.c3-soft.com:60001"}, {"url":"bch0.kister.net:51001"}, {"url":"testnet.imaginary.cash:50001"}],
+        "mm2": 1,
+    }))));
+
+    assert_eq!(electrum.0, StatusCode::OK, "RPC «electrum» failed with {} {}", electrum.0, electrum.1);
+    let electrum: Json = unwrap!(json::from_str(&electrum.1));
+    log!([electrum]);
+
+    assert_eq!(unwrap!(electrum["address"].as_str()), "bchtest:qze8g4gx3z428jjcxzpycpxl7ke7d947gca2a7n2la");
+
+    // check my_balance
+    let rc = unwrap! (block_on (mm.rpc (json! ({
+        "userpass": mm.userpass,
+        "method": "my_balance",
+        "coin": "BCH",
+    }))));
+    assert_eq! (rc.0, StatusCode::OK, "RPC «my_balance» failed with status «{}»", rc.0);
+    let json: Json = unwrap!(json::from_str(&rc.1));
+    let my_balance_address = unwrap!(json["address"].as_str());
+    assert_eq!(my_balance_address, "bchtest:qze8g4gx3z428jjcxzpycpxl7ke7d947gca2a7n2la");
+
+    // check get_enabled_coins
+    let rc = unwrap! (block_on (mm.rpc (json! ({
+        "userpass": mm.userpass,
+        "method": "get_enabled_coins",
+    }))));
+    assert_eq! (rc.0, StatusCode::OK, "RPC «get_enabled_coins» failed with status «{}»", rc.0);
+    let json: Json = unwrap!(json::from_str(&rc.1));
+
+    let obj = &json["result"].as_array().unwrap()[0];
+    assert_eq!(obj["ticker"].as_str().unwrap(), "BCH");
+    assert_eq!(obj["address"].as_str().unwrap(), "bchtest:qze8g4gx3z428jjcxzpycpxl7ke7d947gca2a7n2la");
+}
+
 // HOWTO
 // 1. Install Firefox.
 // 2. Install forked version of wasm-bindgen-cli: cargo install wasm-bindgen-cli --git https://github.com/artemii235/wasm-bindgen.git

@@ -78,6 +78,7 @@ fn utxo_coin_for_test(rpc_client: UtxoRpcClientEnum, force_seed: Option<&str>) -
         segwit: false,
         tx_version: 4,
         my_address,
+        address_format: UtxoAddressFormat::Standard,
         asset_chain: true,
         p2sh_addr_prefix: 85,
         p2sh_t_addr_prefix: 0,
@@ -927,4 +928,35 @@ fn test_get_median_time_past_from_native_does_not_have_median_in_get_block() {
 
     let mtp = client.get_median_time_past(632858, KMD_MTP_BLOCK_COUNT).wait().unwrap();
     assert_eq!(1591173041, mtp);
+}
+
+#[test]
+fn test_cashaddresses_in_tx_details_by_hash() {
+    let conf = json!({
+        "coin": "BCH",
+        "pubtype": 0,
+        "p2shtype": 5,
+        "mm2": 1,
+        "address_format":{"format":"cashaddress","network":"bchtest"},
+    });
+    let req = json!({
+         "method": "electrum",
+         "servers": [{"url":"blackie.c3-soft.com:60001"}, {"url":"bch0.kister.net:51001"}, {"url":"testnet.imaginary.cash:50001"}],
+    });
+
+    let ctx = MmCtxBuilder::new().into_mm_arc();
+
+    let coin = unwrap!(block_on(utxo_coin_from_conf_and_request(
+        &ctx, "BCH", &conf, &req, &[1u8; 32])));
+
+    let hash = hex::decode("0f2f6e0c8f440c641895023782783426c3aca1acc78d7c0db7751995e8aa5751").unwrap();
+    let fut = async {
+        let tx_details = coin.tx_details_by_hash(&hash).compat().await.unwrap();
+        log!([tx_details]);
+
+        assert!(tx_details.from.iter().any(|addr| addr == "bchtest:qze8g4gx3z428jjcxzpycpxl7ke7d947gca2a7n2la"));
+        assert!(tx_details.to.iter().any(|addr| addr == "bchtest:qr39na5d25wdeecgw3euh9fkd4ygvd4pnsury96597"));
+    };
+
+    block_on(fut);
 }

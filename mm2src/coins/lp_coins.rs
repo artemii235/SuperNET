@@ -44,7 +44,6 @@ use gstuff::{slurp};
 use http::Response;
 use rpc::v1::types::{Bytes as BytesJson};
 use serde_json::{self as json, Value as Json};
-use std::borrow::Cow;
 use std::collections::hash_map::{HashMap, RawEntryMut};
 use std::fmt;
 use std::ops::Deref;
@@ -211,7 +210,7 @@ pub trait SwapOps {
 pub trait MarketCoinOps {
     fn ticker (&self) -> &str;
 
-    fn my_address(&self) -> Cow<str>;
+    fn my_address(&self) -> Result<String, String>;
 
     fn my_balance(&self) -> Box<dyn Future<Item=BigDecimal, Error=String> + Send>;
 
@@ -367,7 +366,8 @@ pub trait MmCoin: SwapOps + MarketCoinOps + fmt::Debug + Send + Sync + 'static {
 
     /// Path to tx history file
     fn tx_history_path(&self, ctx: &MmArc) -> PathBuf {
-        ctx.dbdir().join("TRANSACTIONS").join(format!("{}_{}.json", self.ticker(), self.my_address()))
+        let my_address = self.my_address().unwrap_or(Default::default());
+        ctx.dbdir().join("TRANSACTIONS").join(format!("{}_{}.json", self.ticker(), my_address))
     }
 
     /// Loads existing tx history from file, returns empty vector if file is not found
@@ -767,10 +767,14 @@ struct EnabledCoin {
 pub async fn get_enabled_coins(ctx: MmArc) -> Result<Response<Vec<u8>>, String> {
     let coins_ctx: Arc<CoinsContext> = try_s!(CoinsContext::from_ctx(&ctx));
     let coins = try_s!(coins_ctx.coins.sleeplock(77).await);
-    let enabled_coins: Vec<_> = coins.iter().map(|(ticker, coin)| EnabledCoin {
-        ticker: ticker.clone(),
-        address: coin.my_address().to_string(),
-    }).collect();
+    let enabled_coins: Vec<_> = try_s!(coins.iter().map(|(ticker, coin)| {
+        let address = try_s!(coin.my_address());
+        Ok(EnabledCoin {
+            ticker: ticker.clone(),
+            address,
+        })
+    }).collect());
+
     let res = try_s!(json::to_vec(&json!({
         "result": enabled_coins
     })));
