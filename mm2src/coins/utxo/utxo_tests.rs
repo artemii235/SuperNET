@@ -832,32 +832,6 @@ fn test_generate_tx_fee_is_correct_when_dynamic_fee_is_larger_than_relay() {
 }
 
 #[test]
-fn check_mtp() {
-    fn block_hash(num: u64) -> String {
-        let url = format!("https://www.kmdexplorer.io/insight-api-komodo/block-index/{}", num);
-        let res = slurp_url(&url).wait().unwrap();
-        let json: Json = json::from_slice(&res.2).unwrap();
-        json["blockHash"].as_str().unwrap().to_owned()
-    }
-
-    fn block_timestamp(hash: &str) -> u64 {
-        let url = format!("https://www.kmdexplorer.io/insight-api-komodo/block/{}", hash);
-        let res = slurp_url(&url).wait().unwrap();
-        let json: Json = json::from_slice(&res.2).unwrap();
-        json["time"].as_u64().unwrap()
-    }
-
-    let mut sum = 0;
-    for block in 1773380..1773391 {
-        let hash = block_hash(block);
-        let timestamp = block_timestamp(&hash);
-        sum += timestamp;
-        thread::sleep(Duration::from_secs(1));
-    }
-    log!((sum / 11));
-}
-
-#[test]
 fn test_get_median_time_past_from_electrum_kmd() {
     let client = electrum_client_for_test(&[
         "electrum1.cipig.net:10001",
