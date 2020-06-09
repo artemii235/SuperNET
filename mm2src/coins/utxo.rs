@@ -1342,6 +1342,10 @@ impl MarketCoinOps for UtxoCoin {
         Box::new(self.rpc_client.display_balance(self.my_address.clone(), self.decimals).map_err(|e| ERRL!("{}", e)))
     }
 
+    fn base_coin_balance(&self) -> Box<dyn Future<Item=BigDecimal, Error=String> + Send> {
+        self.my_balance()
+    }
+
     fn send_raw_tx(&self, tx: &str) -> Box<dyn Future<Item=String, Error=String> + Send> {
         let bytes = try_fus!(hex::decode(tx));
         Box::new(self.rpc_client.send_raw_transaction(bytes.into()).map_err(|e| ERRL!("{}", e)).map(|hash| format!("{:?}", hash)))
@@ -1806,7 +1810,7 @@ impl MmCoin for UtxoCoin {
             };
             Ok(TradeFee {
                 coin: ticker,
-                amount: big_decimal_from_sat(amount as i64, decimals),
+                amount: big_decimal_from_sat(amount as i64, decimals).into(),
             })
         };
         Box::new(fut.boxed().compat())

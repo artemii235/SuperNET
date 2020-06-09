@@ -998,7 +998,7 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
         // use entire balance deducting the locked amount and trade fee if it's paid with base coin,
         // skipping "check_balance_for_maker_swap"
         let trade_fee = try_s!(base_coin.get_trade_fee().compat().await);
-        let mut vol = MmNumber::from(my_balance) - get_locked_amount(&ctx, base_coin.ticker());
+        let mut vol = MmNumber::from(my_balance) - get_locked_amount(&ctx, base_coin.ticker(), &trade_fee);
         if trade_fee.coin == base_coin.ticker() {
             vol = vol - trade_fee.amount.into();
         }

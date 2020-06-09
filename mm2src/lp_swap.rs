@@ -59,9 +59,9 @@
 
 use async_std::{sync as async_std_sync};
 use bigdecimal::BigDecimal;
-use coins::{lp_coinfind, TransactionEnum};
+use coins::{lp_coinfind, TradeFee, TransactionEnum};
 use common::{
-    block_on, HyRes, read_dir, rpc_response, slurp, write,
+    block_on, read_dir, rpc_response, slurp, write, HyRes,
     executor::spawn,
     mm_ctx::{from_ctx, MmArc},
     mm_number::MmNumber,
@@ -173,7 +173,7 @@ pub struct LockedAmount {
 }
 
 pub trait AtomicSwap: Send + Sync {
-    fn locked_amount(&self) -> LockedAmount;
+    fn locked_amount(&self, trade_fee: &TradeFee) -> LockedAmount;
 
     fn uuid(&self) -> &str;
 
@@ -259,7 +259,7 @@ pub fn is_pubkey_banned(ctx: &MmArc, pubkey: &H256Json) -> bool {
 }
 
 /// Get total amount of selected coin locked by all currently ongoing swaps
-pub fn get_locked_amount(ctx: &MmArc, coin: &str) -> MmNumber {
+pub fn get_locked_amount(ctx: &MmArc, coin: &str, trade_fee: &TradeFee) -> MmNumber {
     let swap_ctx = unwrap!(SwapsContext::from_ctx(&ctx));
     let mut swaps = unwrap!(swap_ctx.running_swaps.lock());
     *swaps = swaps.drain_filter(|swap| match swap.upgrade() {
@@ -271,7 +271,7 @@ pub fn get_locked_amount(ctx: &MmArc, coin: &str) -> MmNumber {
         |total, swap| {
             match swap.upgrade() {
                 Some(swap) => {
-                    let locked = swap.locked_amount();
+                    let locked = swap.locked_amount(trade_fee);
                     if locked.coin == coin {
                         &total + &locked.amount
                     } else {
@@ -300,7 +300,7 @@ pub fn running_swaps_num(ctx: &MmArc) -> u64 {
 }
 
 /// Get total amount of selected coin locked by all currently ongoing swaps except the one with selected uuid
-fn get_locked_amount_by_other_swaps(ctx: &MmArc, except_uuid: &str, coin: &str) -> MmNumber {
+fn get_locked_amount_by_other_swaps(ctx: &MmArc, except_uuid: &str, coin: &str, trade_fee: &TradeFee) -> MmNumber {
     let swap_ctx = unwrap!(SwapsContext::from_ctx(&ctx));
     let mut swaps = unwrap!(swap_ctx.running_swaps.lock());
     *swaps = swaps.drain_filter(|swap| match swap.upgrade() {
@@ -312,7 +312,7 @@ fn get_locked_amount_by_other_swaps(ctx: &MmArc, except_uuid: &str, coin: &str) 
         |total, swap| {
             match swap.upgrade() {
                 Some(swap) => {
-                    let locked = swap.locked_amount();
+                    let locked = swap.locked_amount(trade_fee);
                     if locked.coin == coin && swap.uuid() != except_uuid {
                         &total + &locked.amount
                     } else {

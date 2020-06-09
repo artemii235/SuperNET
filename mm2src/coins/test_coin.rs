@@ -24,6 +24,10 @@ impl MarketCoinOps for TestCoin {
         unimplemented!()
     }
 
+    fn base_coin_balance(&self) -> Box<dyn Future<Item=BigDecimal, Error=String> + Send> {
+        unimplemented!()
+    }
+
     /// Receives raw transaction bytes in hexadecimal format as input and returns tx hash in hexadecimal format
     fn send_raw_tx(&self, tx: &str) -> Box<dyn Future<Item=String, Error=String> + Send> {
         unimplemented!()

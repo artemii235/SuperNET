@@ -220,7 +220,7 @@ pub fn dispatcher (req: Json, ctx: MmArc) -> DispatcherRes {
         // "inventory" => inventory (ctx, req),
         "list_banned_pubkeys" => hyres (list_banned_pubkeys (ctx)),
         "metrics" => metrics(ctx),
-        "my_balance" => my_balance (ctx, req),
+        "my_balance" => hyres (my_balance (ctx, req)),
         "my_orders" => my_orders (ctx),
         "my_recent_swaps" => my_recent_swaps(ctx, req),
         "my_swap_status" => my_swap_status(ctx, req),

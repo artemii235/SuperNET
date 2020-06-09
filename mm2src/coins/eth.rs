@@ -698,6 +698,12 @@ impl MarketCoinOps for EthCoin {
         }))
     }
 
+    fn base_coin_balance(&self) -> Box<dyn Future<Item=BigDecimal, Error=String> + Send> {
+        Box::new(self.eth_balance().and_then(move |result| {
+            Ok(try_s!(u256_to_big_decimal(result, 18)))
+        }))
+    }
+
     fn send_raw_tx(&self, mut tx: &str) -> Box<dyn Future<Item=String, Error=String> + Send> {
         if tx.starts_with("0x") {
             tx = &tx[2..];
@@ -1927,7 +1933,7 @@ impl MmCoin for EthCoin {
             let fee = gas_price * U256::from(150000);
             Ok(TradeFee {
                 coin: "ETH".into(),
-                amount: try_s!(u256_to_big_decimal(fee, 18))
+                amount: try_s!(u256_to_big_decimal(fee, 18)).into()
             })
         }))
     }

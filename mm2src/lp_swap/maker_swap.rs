@@ -10,7 +10,7 @@ use common::{
     mm_ctx::MmArc,
     mm_number::MmNumber,
 };
-use coins::{FoundSwapTxSpend, MmCoinEnum, TransactionDetails};
+use coins::{FoundSwapTxSpend, MmCoinEnum, TradeFee, TransactionDetails};
 use crc::crc32;
 use futures::{
     FutureExt, select,
@@ -798,13 +798,15 @@ impl MakerSwap {
 }
 
 impl AtomicSwap for MakerSwap {
-    fn locked_amount(&self) -> LockedAmount {
+    fn locked_amount(&self, trade_fee: &TradeFee) -> LockedAmount {
         // if maker payment is not sent yet the maker amount must be virtually locked
-        let amount = match self.r().maker_payment {
+        let mut amount = match self.r().maker_payment {
             Some(_) => 0.into(),
             None => self.maker_amount.clone().into(),
         };
-
+        if trade_fee.coin == self.maker_coin.ticker() {
+            amount = &amount + &trade_fee.amount;
+        }
         LockedAmount {
             coin: self.maker_coin.ticker().to_string(),
             amount,
@@ -1140,16 +1142,20 @@ pub async fn check_balance_for_maker_swap(
     volume: MmNumber,
     swap_uuid: Option<&str>,
 ) -> Result<(), String> {
-    let locked = match swap_uuid {
-        Some(u) => get_locked_amount_by_other_swaps(ctx, u, my_coin.ticker()),
-        None => get_locked_amount(&ctx, my_coin.ticker()),
-    };
     let miner_fee = try_s!(my_coin.get_trade_fee().compat().await);
+    let locked = match swap_uuid {
+        Some(u) => get_locked_amount_by_other_swaps(ctx, u, my_coin.ticker(), &miner_fee),
+        None => get_locked_amount(&ctx, my_coin.ticker(), &miner_fee),
+    };
     let my_balance = try_s!(my_coin.my_balance().compat().await).into();
     let total = if my_coin.ticker() == miner_fee.coin {
         volume + miner_fee.amount.into()
     } else {
-        // TODO exchanging token here, need to check main coin balance, e.g. ETH
+        let base_coin_balance = try_s!(my_coin.base_coin_balance().compat().await);
+        if miner_fee.amount > base_coin_balance {
+            return ERR!("Base coin {} balance {} is not sufficient to pay total miner fees {}",
+                        miner_fee.coin, base_coin_balance, miner_fee.amount)
+        }
         volume
     };
     let available = &my_balance - &locked;
@@ -1382,7 +1388,11 @@ mod maker_swap_tests {
         let maker_coin = MmCoinEnum::Test(TestCoin {});
         let taker_coin = MmCoinEnum::Test(TestCoin {});
         let (_maker_swap, _) = unwrap!(MakerSwap::load_from_saved(ctx.clone(), maker_coin, taker_coin, maker_saved_swap));
-        assert_eq!(get_locked_amount(&ctx, "ticker"), BigDecimal::from(0));
+        let trade_fee = TradeFee {
+            amount: 0.into(),
+            coin: "ticker".into(),
+        };
+        assert_eq!(get_locked_amount(&ctx, "ticker", &trade_fee), BigDecimal::from(0));
     }
 
     #[test]

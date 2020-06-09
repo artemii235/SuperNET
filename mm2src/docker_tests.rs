@@ -789,8 +789,8 @@ mod docker_tests {
     }
 
     #[test]
-    fn test_buy_max() {
-        let (_ctx, _, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN1", 1);
+    fn test_set_price_max() {
+        let (_ctx, _, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN", 1);
         let coins = json! ([
             {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000},
             {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":1000},
@@ -815,32 +815,31 @@ mod docker_tests {
         log!([block_on(enable_native(&mm_alice, "MYCOIN1", vec![]))]);
         let rc = unwrap! (block_on (mm_alice.rpc (json! ({
             "userpass": mm_alice.userpass,
-            "method": "buy",
+            "method": "setprice",
             "base": "MYCOIN",
             "rel": "MYCOIN1",
             "price": 1,
-            // the result of equation x + x / 777 + 0.00002 = 1
+            // the result of equation x + 0.00001 = 1
             "volume": {
-                "numer":"77698446",
-                "denom":"77800000"
+                "numer":"99999",
+                "denom":"100000"
             },
         }))));
-        assert! (rc.0.is_success(), "!buy: {}", rc.1);
+        assert! (rc.0.is_success(), "!setprice: {}", rc.1);
 
         let rc = unwrap! (block_on (mm_alice.rpc (json! ({
             "userpass": mm_alice.userpass,
-            "method": "buy",
+            "method": "setprice",
             "base": "MYCOIN",
             "rel": "MYCOIN1",
             "price": 1,
             // it is slightly more than previous volume so it should fail
             "volume": {
-                "numer":"77698447",
-                "denom":"77800000"
+                "numer":"100000",
+                "denom":"100000"
             },
         }))));
-        assert! (!rc.0.is_success(), "buy success, but should fail: {}", rc.1);
-        // assert! (rc.1.contains("MYCOIN1 balance 1 is too low"));
+        assert! (!rc.0.is_success(), "setprice success, but should fail: {}", rc.1);
         unwrap!(block_on(mm_alice.stop()));
     }
 

@@ -9,7 +9,7 @@ use common::{
     mm_ctx::MmArc,
     mm_number::MmNumber,
 };
-use coins::{FoundSwapTxSpend, MmCoinEnum, TransactionDetails};
+use coins::{FoundSwapTxSpend, MmCoinEnum, TradeFee, TransactionDetails};
 use crc::crc32;
 use futures::{
     FutureExt, select,
@@ -1211,17 +1211,29 @@ impl TakerSwap {
 }
 
 impl AtomicSwap for TakerSwap {
-    fn locked_amount(&self) -> LockedAmount {
-        let trade_fee = self.taker_coin.get_trade_fee().wait().unwrap();
+    fn locked_amount(&self, trade_fee: &TradeFee) -> LockedAmount {
         // if taker payment is not sent yet the taker fee amount must be virtually locked
         let dex_fee_amount = match self.r().taker_fee {
             Some(_) => 0.into(),
-            None => dex_fee_amount(self.maker_coin.ticker(), self.taker_coin.ticker(), &self.taker_amount.clone().into()) + trade_fee.amount.clone().into(),
+            None => {
+                let amount = dex_fee_amount(self.maker_coin.ticker(), self.taker_coin.ticker(), &self.taker_amount.clone().into());
+                if self.taker_coin.ticker() == trade_fee.coin {
+                    &amount + &trade_fee.amount
+                } else {
+                    amount
+                }
+            },
         };
-
         let amount = match self.r().taker_payment {
             Some(_) => 0.into(),
-            None => dex_fee_amount + self.taker_amount.clone().into() + trade_fee.amount.into(),
+            None => {
+                let amount = &dex_fee_amount + &MmNumber::from(self.taker_amount.clone());
+                if self.taker_coin.ticker() == trade_fee.coin {
+                    &amount + &trade_fee.amount
+                } else {
+                    amount
+                }
+            },
         };
 
         LockedAmount {
@@ -1246,17 +1258,22 @@ pub async fn check_balance_for_taker_swap(
     volume: MmNumber,
     swap_uuid: Option<&str>,
 ) -> Result<(), String> {
-    let locked = match swap_uuid {
-        Some(u) => get_locked_amount_by_other_swaps(ctx, u, my_coin.ticker()),
-        None => get_locked_amount(&ctx, my_coin.ticker()),
-    };
     let miner_fee = try_s!(my_coin.get_trade_fee().compat().await);
+    let locked = match swap_uuid {
+        Some(u) => get_locked_amount_by_other_swaps(ctx, u, my_coin.ticker(), &miner_fee),
+        None => get_locked_amount(&ctx, my_coin.ticker(), &miner_fee),
+    };
     let my_balance = try_s!(my_coin.my_balance().compat().await).into();
     let dex_fee = dex_fee_amount(my_coin.ticker(), other_coin.ticker(), &volume);
+    let total_miner_fee = &MmNumber::from(2) * &(miner_fee.amount.clone().into());
     let total = if my_coin.ticker() == miner_fee.coin {
-        &volume + &dex_fee + &MmNumber::from(2) * &(miner_fee.amount.clone().into())
+        &volume + &dex_fee + total_miner_fee
     } else {
-        // TODO exchanging token here, need to check main coin balance, e.g. ETH
+        let base_coin_balance: MmNumber = try_s!(my_coin.base_coin_balance().compat().await).into();
+        if total_miner_fee > base_coin_balance {
+            return ERR!("Base coin {} balance {} is not sufficient to pay total miner fees {}",
+                        miner_fee.coin, base_coin_balance, total_miner_fee)
+        }
         &volume + &dex_fee
     };
     let available = &my_balance - &locked;
