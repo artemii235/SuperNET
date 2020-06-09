@@ -50,7 +50,7 @@ use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
 use crate::mm2::lp_swap::{
-    check_balance_for_taker_swap, get_locked_amount, is_pubkey_banned, run_maker_swap, run_taker_swap,
+    check_balance_for_maker_swap, check_balance_for_taker_swap, get_locked_amount, is_pubkey_banned, run_maker_swap, run_taker_swap,
     MakerSwap, RunMakerSwapInput, RunTakerSwapInput, TakerSwap,
 };
 
@@ -996,7 +996,7 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
     let my_balance = try_s!(base_coin.my_balance().compat().await);
     let volume = if req.max {
         // use entire balance deducting the locked amount and trade fee if it's paid with base coin,
-        // skipping "check_i_have_enough"
+        // skipping "check_balance_for_maker_swap"
         let trade_fee = try_s!(base_coin.get_trade_fee().compat().await);
         let mut vol = MmNumber::from(my_balance) - get_locked_amount(&ctx, base_coin.ticker());
         if trade_fee.coin == base_coin.ticker() {
@@ -1004,7 +1004,7 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
         }
         MmNumber::from(vol)
     } else {
-        try_s!(base_coin.check_i_have_enough_to_trade(&req.volume, &my_balance.clone().into(), None).compat().await);
+        try_s!(check_balance_for_maker_swap(&ctx, &base_coin, req.volume.clone(), None).await);
         req.volume.clone()
     };
     if volume < MmNumber::from(unwrap!(MIN_TRADING_VOL.parse::<BigDecimal>())) {

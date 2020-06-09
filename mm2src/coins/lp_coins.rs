@@ -37,7 +37,6 @@ use common::{rpc_response, rpc_err_response, HyRes};
 use common::duplex_mutex::DuplexMutex;
 use common::mm_ctx::{from_ctx, MmArc};
 use common::mm_metrics::{MetricsWeak};
-use common::mm_number::MmNumber;
 use futures01::Future;
 use futures::compat::Future01CompatExt;
 use gstuff::{slurp};
@@ -352,8 +351,6 @@ pub trait MmCoin: SwapOps + MarketCoinOps + fmt::Debug + Send + Sync + 'static {
     // status/availability check: https://github.com/artemii235/SuperNET/issues/156#issuecomment-446501816
 
     fn is_asset_chain(&self) -> bool;
-
-    fn check_i_have_enough_to_trade(&self, amount: &MmNumber, balance: &MmNumber, trade_info: Option<MmNumber>) -> Box<dyn Future<Item=(), Error=String> + Send>;
 
     fn can_i_spend_other_payment(&self) -> Box<dyn Future<Item=(), Error=String> + Send>;
 

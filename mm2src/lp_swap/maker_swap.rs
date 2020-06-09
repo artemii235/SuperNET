@@ -8,6 +8,7 @@ use common::{
     executor::Timer,
     file_lock::FileLock,
     mm_ctx::MmArc,
+    mm_number::MmNumber,
 };
 use coins::{FoundSwapTxSpend, MmCoinEnum, TransactionDetails};
 use crc::crc32;
@@ -27,11 +28,11 @@ use serialization::{deserialize, serialize};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::sync::atomic::Ordering;
-use super::{ban_pubkey, broadcast_my_swap_status, dex_fee_amount, get_locked_amount_by_other_swaps,
-  lp_atomic_locktime, my_swaps_dir, my_swap_file_path,
-  AtomicSwap, LockedAmount, MySwapInfo, RecoveredSwap, RecoveredSwapAction,
-  SavedSwap, SwapsContext, SwapError, SwapNegotiationData,
-  BASIC_COMM_TIMEOUT, WAIT_CONFIRM_INTERVAL};
+use super::{ban_pubkey, broadcast_my_swap_status, dex_fee_amount, get_locked_amount,
+            get_locked_amount_by_other_swaps, lp_atomic_locktime, my_swaps_dir, my_swap_file_path,
+            AtomicSwap, LockedAmount, MySwapInfo, RecoveredSwap, RecoveredSwapAction,
+            SavedSwap, SwapsContext, SwapError, SwapNegotiationData,
+            BASIC_COMM_TIMEOUT, WAIT_CONFIRM_INTERVAL};
 
 pub fn stats_maker_swap_file_path(ctx: &MmArc, uuid: &str) -> PathBuf {
     ctx.dbdir().join("SWAPS").join("STATS").join("MAKER").join(format!("{}.json", uuid))
@@ -218,30 +219,12 @@ impl MakerSwap {
     }
 
     async fn start(&self) -> Result<(Option<MakerSwapCommand>, Vec<MakerSwapEvent>), String> {
-        let my_balance = match self.maker_coin.my_balance().compat().await {
-            Ok(balance) => balance,
+        match check_balance_for_maker_swap(&self.ctx, &self.maker_coin, self.maker_amount.clone().into(), Some(&self.uuid)).await {
+            Ok(_) => (),
             Err(e) => return Ok((
                 Some(MakerSwapCommand::Finish),
-                vec![MakerSwapEvent::StartFailed(ERRL!("!my_balance {}", e).into())],
+                vec![MakerSwapEvent::StartFailed(ERRL!("!check_balance_for_maker_swap {}", e).into())],
             ))
-        };
-
-        let locked = get_locked_amount_by_other_swaps(&self.ctx, &self.uuid, self.maker_coin.ticker());
-        let available = &my_balance.clone().into() - &locked;
-        if self.maker_amount > available.clone().into() {
-            return Ok((
-                Some(MakerSwapCommand::Finish),
-                vec![MakerSwapEvent::StartFailed(ERRL!("maker amount {} is larger than available {}, balance {}, locked by other swaps {}",
-                    self.maker_amount, available, my_balance, locked
-                ).into())],
-            ));
-        }
-
-        if let Err(e) = self.maker_coin.check_i_have_enough_to_trade(&self.maker_amount.clone().into(), &my_balance.clone().into(), None).compat().await {
-            return Ok((
-                Some(MakerSwapCommand::Finish),
-                vec![MakerSwapEvent::StartFailed(ERRL!("!check_i_have_enough_to_trade {}", e).into())],
-            ));
         };
 
         if let Err(e) = self.taker_coin.can_i_spend_other_payment().compat().await {
@@ -1149,6 +1132,33 @@ pub async fn run_maker_swap(swap: RunMakerSwapInput, ctx: MmArc) {
         shutdown = shutdown_fut => log!("on_stop] swap " (swap_for_log.uuid) " stopped!"),
         touch = touch_loop => unreachable!("Touch loop can not stop!"),
     };
+}
+
+pub async fn check_balance_for_maker_swap(
+    ctx: &MmArc,
+    my_coin: &MmCoinEnum,
+    volume: MmNumber,
+    swap_uuid: Option<&str>,
+) -> Result<(), String> {
+    let locked = match swap_uuid {
+        Some(u) => get_locked_amount_by_other_swaps(ctx, u, my_coin.ticker()),
+        None => get_locked_amount(&ctx, my_coin.ticker()),
+    };
+    let miner_fee = try_s!(my_coin.get_trade_fee().compat().await);
+    let my_balance = try_s!(my_coin.my_balance().compat().await).into();
+    let total = if my_coin.ticker() == miner_fee.coin {
+        volume + miner_fee.amount.into()
+    } else {
+        // TODO exchanging token here, need to check main coin balance, e.g. ETH
+        volume
+    };
+    let available = &my_balance - &locked;
+    if total <= available {
+        Ok(())
+    } else {
+        ERR!("The total required {} amount {} is larger than available {:.8}, balance: {}, locked by swaps: {:.8}",
+        my_coin.ticker(), total, available, my_balance, locked)
+    }
 }
 
 #[cfg(test)]

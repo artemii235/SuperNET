@@ -24,7 +24,6 @@ use common::{now_ms, slurp_url, small_rng};
 use common::custom_futures::TimedAsyncMutex;
 use common::executor::Timer;
 use common::mm_ctx::{MmArc, MmWeak};
-use common::mm_number::MmNumber;
 use secp256k1::PublicKey;
 use ethabi::{Contract, Token};
 use ethcore_transaction::{ Action, Transaction as UnSignedEthTx, UnverifiedTransaction};
@@ -1827,39 +1826,6 @@ impl EthTxFeeDetails {
 
 impl MmCoin for EthCoin {
     fn is_asset_chain(&self) -> bool { false }
-
-    fn check_i_have_enough_to_trade(&self, amount: &MmNumber, balance: &MmNumber, dex_fee: Option<MmNumber>) -> Box<dyn Future<Item=(), Error=String> + Send> {
-        let ticker = self.ticker.clone();
-        let required = match dex_fee {
-            Some(dex_fee) => amount + &dex_fee,
-            None => amount.clone(),
-        };
-        match self.coin_type {
-            EthCoinType::Eth => {
-                let required = required + BigDecimal::from_str("0.0002").unwrap().into();
-                if balance < &required {
-                    Box::new(futures01::future::err(ERRL!("{} balance {} too low, required {}", ticker, balance, required)))
-                } else {
-                    Box::new(futures01::future::ok(()))
-                }
-            },
-            EthCoinType::Erc20(_) => {
-                if balance < &required {
-                    Box::new(futures01::future::err(ERRL!("{} balance {} too low, required {}", ticker, balance, required)))
-                } else {
-                    // need to check ETH balance too, address should have some to cover gas fees
-                    Box::new(self.eth_balance().and_then(move |eth_balance| {
-                        let eth_balance_decimal = try_s!(u256_to_big_decimal(eth_balance, 18));
-                        if eth_balance_decimal < "0.0002".parse().unwrap() {
-                            ERR!("{} balance is enough, but base coin balance {} is too low to cover gas fee, required 0.0002", ticker, eth_balance_decimal)
-                        } else {
-                            Ok(())
-                        }
-                    }))
-                }
-            }
-        }
-    }
 
     fn can_i_spend_other_payment(&self) -> Box<dyn Future<Item=(), Error=String> + Send> {
         Box::new(self.eth_balance().and_then(move |eth_balance| {

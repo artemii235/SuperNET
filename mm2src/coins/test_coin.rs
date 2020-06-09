@@ -1,6 +1,5 @@
 use bigdecimal::BigDecimal;
 use common::mm_ctx::MmArc;
-use common::mm_number::MmNumber;
 use crate::{FoundSwapTxSpend, WithdrawRequest};
 use futures01::Future;
 use mocktopus::macros::*;
@@ -196,10 +195,6 @@ impl SwapOps for TestCoin {
 #[mockable]
 impl MmCoin for TestCoin {
     fn is_asset_chain(&self) -> bool {
-        unimplemented!()
-    }
-
-    fn check_i_have_enough_to_trade(&self, amount: &MmNumber, balance: &MmNumber, trade_info: Option<MmNumber>) -> Box<dyn Future<Item=(), Error=String> + Send> {
         unimplemented!()
     }
 

@@ -787,6 +787,62 @@ mod docker_tests {
     }
 
     #[test]
+    fn test_buy_max() {
+        let (_ctx, _, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN1", 1);
+        let coins = json! ([
+            {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000},
+            {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":1000},
+        ]);
+        let mut mm_alice = unwrap! (MarketMakerIt::start (
+            json! ({
+                "gui": "nogui",
+                "netid": 9000,
+                "dht": "on",  // Enable DHT without delay.
+                "passphrase": format!("0x{}", hex::encode(alice_priv_key)),
+                "coins": coins,
+                "rpc_password": "pass",
+                "i_am_see": true,
+            }),
+            "pass".to_string(),
+            None,
+        ));
+        let (_alice_dump_log, _alice_dump_dashboard) = mm_dump (&mm_alice.log_path);
+        unwrap! (block_on (mm_alice.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
+
+        log!([block_on(enable_native(&mm_alice, "MYCOIN", vec![]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN1", vec![]))]);
+        let rc = unwrap! (block_on (mm_alice.rpc (json! ({
+            "userpass": mm_alice.userpass,
+            "method": "buy",
+            "base": "MYCOIN",
+            "rel": "MYCOIN1",
+            "price": 1,
+            // the result of equation x + x / 777 + 0.00002 = 1
+            "volume": {
+                "numer":"77698446",
+                "denom":"77800000"
+            },
+        }))));
+        assert! (rc.0.is_success(), "!buy: {}", rc.1);
+
+        let rc = unwrap! (block_on (mm_alice.rpc (json! ({
+            "userpass": mm_alice.userpass,
+            "method": "buy",
+            "base": "MYCOIN",
+            "rel": "MYCOIN1",
+            "price": 1,
+            // it is slightly more than previous volume so it should fail
+            "volume": {
+                "numer":"77698447",
+                "denom":"77800000"
+            },
+        }))));
+        assert! (!rc.0.is_success(), "buy success, but should fail: {}", rc.1);
+        // assert! (rc.1.contains("MYCOIN1 balance 1 is too low"));
+        unwrap!(block_on(mm_alice.stop()));
+    }
+
+    #[test]
     fn swaps_should_stop_on_stop_rpc() {
         let (_ctx, _, bob_priv_key) = generate_coin_with_random_privkey("MYCOIN", 1000);
         let (_ctx, _, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN1", 2000);

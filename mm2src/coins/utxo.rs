@@ -32,7 +32,6 @@ use common::{first_char_to_upper, small_rng};
 use common::executor::{spawn, Timer};
 use common::jsonrpc_client::{JsonRpcError, JsonRpcErrorType};
 use common::mm_ctx::MmArc;
-use common::mm_number::MmNumber;
 #[cfg(feature = "native")]
 use dirs::home_dir;
 use futures01::{Future};
@@ -1426,32 +1425,6 @@ pub struct UtxoFeeDetails {
 
 impl MmCoin for UtxoCoin {
     fn is_asset_chain(&self) -> bool { self.asset_chain }
-
-    fn check_i_have_enough_to_trade(&self, amount: &MmNumber, balance: &MmNumber, dex_fee: Option<MmNumber>) -> Box<dyn Future<Item=(), Error=String> + Send> {
-        let arc = self.clone();
-        let amount = amount.clone();
-        let balance = balance.clone();
-        let fee_fut = async move {
-            let coin_fee = try_s!(arc.get_tx_fee().await);
-            let fee = match coin_fee {
-                ActualTxFee::Fixed(f) => f,
-                ActualTxFee::Dynamic(f) => f,
-            };
-            let fee_decimal = MmNumber::from(fee) / MmNumber::from(10u64.pow(arc.decimals as u32));
-            if &amount < &fee_decimal {
-                return ERR!("Amount {} is too low, it'll result to dust error, at least {} is required", amount, fee_decimal);
-            }
-            let required = match dex_fee {
-                Some(dex_fee) => &amount + &dex_fee + MmNumber::from(2) * fee_decimal,
-                None => amount + fee_decimal,
-            };
-            if balance < required {
-                return ERR!("{} balance {} is too low, required {}", arc.ticker(), balance, required);
-            }
-            Ok(())
-        };
-        Box::new(fee_fut.boxed().compat())
-    }
 
     fn can_i_spend_other_payment(&self) -> Box<dyn Future<Item=(), Error=String> + Send> {
         Box::new(futures01::future::ok(()))
