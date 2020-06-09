@@ -49,10 +49,10 @@ use rpc::v1::types::{Bytes as BytesJson, H256 as H256Json};
 use script::{Opcode, Builder, Script, ScriptAddress, TransactionInputSigner, UnsignedTransactionInput, SignatureVersion};
 use serde_json::{self as json, Value as Json};
 use serialization::{serialize, deserialize};
-use std::borrow::Cow;
 use std::collections::hash_map::{HashMap, Entry};
 use std::convert::TryInto;
 use std::cmp::Ordering;
+use std::num::NonZeroU64;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -78,6 +78,11 @@ const KILO_BYTE: u64 = 1000;
 const MAX_DER_SIGNATURE_LEN: usize = 72;
 const COMPRESSED_PUBKEY_LEN: usize = 33;
 const P2PKH_OUTPUT_LEN: u64 = 34;
+/// Block count for KMD median time past calculation
+///
+/// # Safety
+/// 11 > 0
+const KMD_MTP_BLOCK_COUNT: NonZeroU64 = unsafe { NonZeroU64::new_unchecked(11u64) };
 
 #[cfg(windows)]
 #[cfg(feature = "native")]
@@ -158,6 +163,25 @@ enum FeePolicy {
     DeductFromOutput(usize),
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "format")]
+enum UtxoAddressFormat {
+    /// Standard UTXO address format.
+    /// In Bitcoin Cash context the standard format also known as 'legacy'.
+    #[serde(rename = "standard")]
+    Standard,
+    /// Bitcoin Cash specific address format.
+    /// https://github.com/bitcoincashorg/bitcoincash.org/blob/master/spec/cashaddr.md
+    #[serde(rename = "cashaddress")]
+    CashAddress { network: String },
+}
+
+impl Default for UtxoAddressFormat {
+    fn default() -> Self {
+        UtxoAddressFormat::Standard
+    }
+}
+
 #[derive(Debug)]
 pub struct UtxoCoinImpl {  // pImpl idiom.
     ticker: String,
@@ -203,6 +227,8 @@ pub struct UtxoCoinImpl {  // pImpl idiom.
     key_pair: KeyPair,
     /// Lock the mutex when we deal with address utxos
     my_address: Address,
+    /// The address format indicates how to parse and display UTXO addresses over RPC calls
+    address_format: UtxoAddressFormat,
     /// Is current coin KMD asset chain?
     /// https://komodoplatform.atlassian.net/wiki/spaces/KPSD/pages/71729160/What+is+a+Parallel+Chain+Asset+Chain
     asset_chain: bool,
@@ -226,6 +252,8 @@ pub struct UtxoCoinImpl {  // pImpl idiom.
     /// relay fee amount instead of calculated
     /// https://github.com/KomodoPlatform/atomicDEX-API/issues/617
     force_min_relay_fee: bool,
+    /// Block count for median time past calculation
+    mtp_block_count: NonZeroU64,
     estimate_fee_mode: Option<EstimateFeeMode>,
 }
 
@@ -330,6 +358,20 @@ impl UtxoCoinImpl {
 
     pub fn rpc_client(&self) -> &UtxoRpcClientEnum {
         &self.rpc_client
+    }
+
+    pub fn display_address(&self, address: &Address) -> Result<String, String> {
+        match &self.address_format {
+            UtxoAddressFormat::Standard => Ok(address.to_string()),
+            UtxoAddressFormat::CashAddress { network } =>
+                address.to_cashaddress(&network, self.pub_addr_prefix, self.p2sh_addr_prefix)
+                    .and_then(|cashaddress| cashaddress.encode()),
+        }
+    }
+
+    async fn get_current_mtp(&self) -> Result<u32, String> {
+        let current_block = try_s!(self.rpc_client.get_block_count().compat().await);
+        self.rpc_client.get_median_time_past(current_block, self.mtp_block_count).compat().await
     }
 }
 
@@ -754,7 +796,7 @@ impl UtxoCoin {
         if self.ticker != "KMD" {
             return Ok((unsigned, data));
         }
-        unsigned.lock_time = (now_ms() / 1000) as u32 - 777;
+        unsigned.lock_time = try_s!(self.get_current_mtp().await);
         let mut interest = 0;
         for input in unsigned.inputs.iter() {
             let prev_hash = input.previous_output.hash.reversed().into();
@@ -923,7 +965,7 @@ impl SwapOps for UtxoCoin {
                     t_addr_prefix: self.p2sh_t_addr_prefix,
                 };
                 let arc = self.clone();
-                let addr_string = payment_addr.to_string();
+                let addr_string = try_fus!(self.display_address(&payment_addr));
                 Either::B(client.import_address(&addr_string, &addr_string, false).map_err(|e| ERRL!("{}", e)).and_then(move |_|
                     arc.send_outputs_from_my_address(vec![htlc_out, secret_hash_op_return_out])
                 ))
@@ -974,7 +1016,7 @@ impl SwapOps for UtxoCoin {
                     t_addr_prefix: self.p2sh_t_addr_prefix,
                 };
                 let arc = self.clone();
-                let addr_string = payment_addr.to_string();
+                let addr_string = try_fus!(self.display_address(&payment_addr));
                 Either::B(client.import_address(&addr_string, &addr_string, false).map_err(|e| ERRL!("{}", e)).and_then(move |_|
                     arc.send_outputs_from_my_address(vec![htlc_out, secret_hash_op_return_out])
                 ))
@@ -1235,7 +1277,8 @@ impl SwapOps for UtxoCoin {
                         prefix: selfi.p2sh_addr_prefix,
                         hash,
                         checksum_type: selfi.checksum_type,
-                    }.to_string();
+                    };
+                    let target_addr = try_s!(selfi.display_address(&target_addr));
                     let received_by_addr = try_s!(client.list_received_by_address(0, true, true).compat().await);
                     for item in received_by_addr {
                         if item.address == target_addr && !item.txids.is_empty() {
@@ -1291,8 +1334,8 @@ impl SwapOps for UtxoCoin {
 impl MarketCoinOps for UtxoCoin {
     fn ticker (&self) -> &str {&self.ticker[..]}
 
-    fn my_address(&self) -> Cow<str> {
-        self.0.my_address.to_string().into()
+    fn my_address(&self) -> Result<String, String> {
+        self.display_address(&self.my_address)
     }
 
     fn my_balance(&self) -> Box<dyn Future<Item=BigDecimal, Error=String> + Send> {
@@ -1358,7 +1401,7 @@ impl MarketCoinOps for UtxoCoin {
     fn address_from_pubkey_str(&self, pubkey: &str) -> Result<String, String> {
         let pubkey_bytes = try_s!(hex::decode(pubkey));
         let addr = try_s!(address_from_raw_pubkey(&pubkey_bytes, self.pub_addr_prefix, self.pub_t_addr_prefix, self.checksum_type));
-        Ok(addr.to_string())
+        self.display_address(&addr)
     }
 
     fn display_priv_key(&self) -> String {
@@ -1367,7 +1410,11 @@ impl MarketCoinOps for UtxoCoin {
 }
 
 async fn withdraw_impl(coin: UtxoCoin, req: WithdrawRequest) -> Result<TransactionDetails, String> {
-    let to = try_s!(Address::from_str(&req.to));
+    let to = match &coin.address_format {
+        UtxoAddressFormat::Standard => try_s!(Address::from_str(&req.to)),
+        UtxoAddressFormat::CashAddress {..} => try_s!(Address::from_cashaddress(
+            &req.to, coin.checksum_type.clone(),coin.pub_addr_prefix, coin.p2sh_addr_prefix))
+    };
     if to.checksum_type != coin.checksum_type {
         return ERR!("Address {} has invalid checksum type, it must be {:?}", to, coin.checksum_type);
     }
@@ -1401,9 +1448,11 @@ async fn withdraw_impl(coin: UtxoCoin, req: WithdrawRequest) -> Result<Transacti
     let fee_details = UtxoFeeDetails {
         amount: big_decimal_from_sat(data.fee_amount as i64, coin.decimals),
     };
+    let my_address = try_s!(coin.my_address());
+    let to_address = try_s!(coin.display_address(&to));
     Ok(TransactionDetails {
-        from: vec![coin.my_address().into()],
-        to: vec![format!("{}", to)],
+        from: vec![my_address],
+        to: vec![to_address],
         total_amount: big_decimal_from_sat(data.spent_by_me as i64, coin.decimals),
         spent_by_me: big_decimal_from_sat(data.spent_by_me as i64, coin.decimals),
         received_by_me: big_decimal_from_sat(data.received_by_me as i64, coin.decimals),
@@ -1449,6 +1498,13 @@ impl MmCoin for UtxoCoin {
         let mut my_balance: Option<BigDecimal> = None;
         let history = self.load_history_from_file(&ctx);
         let mut history_map: HashMap<H256Json, TransactionDetails> = history.into_iter().map(|tx| (H256Json::from(tx.tx_hash.as_slice()), tx)).collect();
+        let my_address = match self.my_address() {
+            Ok(addr) => addr,
+            Err(e) => {
+                log!("Error on getting self address: " [e] ". Stop tx history");
+                return;
+            }
+        };
 
         let mut success_iteration = 0i32;
         loop {
@@ -1518,7 +1574,7 @@ impl MmCoin for UtxoCoin {
                         "coin" => self.ticker.clone(), "client" => "native", "method" => "listtransactions");
 
                     all_transactions.into_iter().filter_map(|item| {
-                        if item.address == self.my_address() {
+                        if item.address == my_address {
                             Some((item.txid, item.blockindex))
                         } else {
                             None
@@ -1703,10 +1759,12 @@ impl MmCoin for UtxoCoin {
             }
             // remove address duplicates in case several inputs were spent from same address
             // or several outputs are sent to same address
-            let mut from_addresses: Vec<String> = from_addresses.into_iter().flatten().map(|addr| addr.to_string()).collect();
+            let mut from_addresses: Vec<String> =
+                try_s!(from_addresses.into_iter().flatten().map(|addr| selfi.display_address(&addr)).collect());
             from_addresses.sort();
             from_addresses.dedup();
-            let mut to_addresses: Vec<String> = to_addresses.into_iter().flatten().map(|addr| addr.to_string()).collect();
+            let mut to_addresses: Vec<String> =
+                try_s!(to_addresses.into_iter().flatten().map(|addr| selfi.display_address(&addr)).collect());
             to_addresses.sort();
             to_addresses.dedup();
 
@@ -1723,7 +1781,7 @@ impl MmCoin for UtxoCoin {
                 fee_details: Some(UtxoFeeDetails {
                     amount: fee,
                 }.into()),
-                block_height: verbose_tx.height,
+                block_height: verbose_tx.height.unwrap_or(0),
                 coin: selfi.ticker.clone(),
                 internal_id: tx.hash().reversed().to_vec().into(),
                 timestamp: verbose_tx.time.into(),
@@ -1930,6 +1988,12 @@ pub async fn utxo_coin_from_conf_and_request(
         checksum_type,
     };
 
+    let address_format = if conf["address_format"].is_null() {
+        UtxoAddressFormat::Standard
+    } else {
+        try_s!(json::from_value(conf["address_format"].clone()))
+    };
+
     let rpc_client = match req["method"].as_str() {
         Some("enable") => {
             if cfg!(feature = "native") {
@@ -2088,6 +2152,7 @@ pub async fn utxo_coin_from_conf_and_request(
         wif_prefix,
         tx_version,
         my_address: my_address.clone(),
+        address_format,
         asset_chain,
         tx_fee,
         version_group_id,
@@ -2099,6 +2164,7 @@ pub async fn utxo_coin_from_conf_and_request(
         history_sync_state: Mutex::new(initial_history_state),
         required_confirmations: required_confirmations.into(),
         force_min_relay_fee: conf["force_min_relay_fee"].as_bool().unwrap_or (false),
+        mtp_block_count: json::from_value(conf["mtp_block_count"].clone()).unwrap_or (KMD_MTP_BLOCK_COUNT),
         estimate_fee_mode: json::from_value(conf["estimate_fee_mode"].clone()).unwrap_or(None),
     };
     Ok(UtxoCoin(Arc::new(coin)))
@@ -2107,7 +2173,11 @@ pub async fn utxo_coin_from_conf_and_request(
 /// Function calculating KMD interest
 /// https://komodoplatform.atlassian.net/wiki/spaces/KPSD/pages/71729215/What+is+the+5+Komodo+Stake+Reward
 /// https://github.com/KomodoPlatform/komodo/blob/master/src/komodo_interest.h
-fn kmd_interest(height: u64, value: u64, lock_time: u64, current_time: u64) -> u64 {
+fn kmd_interest(height: Option<u64>, value: u64, lock_time: u64, current_time: u64) -> u64 {
+    let height = match height {
+        Some(h) => h,
+        None => return 0, // return 0 if height is unknown
+    };
     const KOMODO_ENDOFERA: u64 = 7777777;
     const LOCKTIME_THRESHOLD: u64 = 500000000;
     // value must be at least 10 KMD

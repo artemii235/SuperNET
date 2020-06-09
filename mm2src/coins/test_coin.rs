@@ -3,7 +3,6 @@ use common::mm_ctx::MmArc;
 use crate::{FoundSwapTxSpend, WithdrawRequest};
 use futures01::Future;
 use mocktopus::macros::*;
-use std::borrow::Cow;
 use super::{HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeFee, TransactionDetails, TransactionEnum, TransactionFut};
 
 /// Dummy coin struct used in tests which functions are unimplemented but then mocked
@@ -17,7 +16,7 @@ impl MarketCoinOps for TestCoin {
         unimplemented!()
     }
 
-    fn my_address(&self) -> Cow<str> {
+    fn my_address(&self) -> Result<String, String> {
         unimplemented!()
     }
 
