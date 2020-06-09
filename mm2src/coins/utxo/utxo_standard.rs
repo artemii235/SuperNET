@@ -331,15 +331,23 @@ impl MmCoin for UtxoStandardCoin {
     fn set_requires_notarization(&self, requires_nota: bool) {
         utxo_common::set_requires_notarization(&self.utxo_arc, requires_nota)
     }
+
+    fn my_unspendable_balance(&self, ctx: &MmArc) -> Box<dyn Future<Item=BigDecimal, Error=String> + Send> {
+        Box::new(utxo_common::my_unspendable_balance(self.clone(), ctx.clone()).boxed().compat())
+    }
 }
 
 #[async_trait]
 impl UtxoMmCoin for UtxoStandardCoin {
-    async fn ordered_mature_unspents(&self, _ctx: &MmArc, address: &Address) -> Result<Vec<UnspentInfo>, String> {
-        utxo_common::ordered_mature_unspents(&self.utxo_arc, address).await
+    async fn ordered_mature_unspents(&self, ctx: &MmArc, address: &Address) -> Result<Vec<UnspentInfo>, String> {
+        utxo_common::ordered_mature_unspents(self, ctx, address).await
     }
 
     async fn get_verbose_transaction_from_cache_or_rpc(&self, ctx: &MmArc, txid: H256Json) -> Result<VerboseTransactionFrom, String> {
         utxo_common::get_verbose_transaction_from_cache_or_rpc(self, ctx, txid).await
+    }
+
+    fn is_unspent_mature(&self, output: &RpcTransaction) -> bool {
+        utxo_common::is_unspent_mature(self.arc().mature_confirmations, output)
     }
 }

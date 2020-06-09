@@ -1,4 +1,4 @@
-use bigdecimal::BigDecimal;
+use bigdecimal::{BigDecimal, Zero};
 pub use bitcrypto::{dhash160, ChecksumType, sha256};
 use chain::{TransactionOutput, TransactionInput, OutPoint};
 use chain::constants::{SEQUENCE_FINAL};
@@ -1307,9 +1307,54 @@ pub fn set_requires_notarization(coin: &UtxoCoinFields, requires_nota: bool) {
     coin.requires_notarization.store(requires_nota, AtomicOrderding::Relaxed);
 }
 
-pub async fn ordered_mature_unspents(coin: &UtxoArc, address: &Address) -> Result<Vec<UnspentInfo>, String> {
-    // any returned unspent output is mature for the standard UTXO coin
-    coin.rpc_client.list_unspent_ordered(address).compat().await
+pub async fn ordered_mature_unspents<T>(coin: &T, ctx: &MmArc, address: &Address) -> Result<Vec<UnspentInfo>, String>
+    where T: UtxoArcGetter + UtxoMmCoin {
+    let unspents = try_s!(coin.arc().rpc_client.list_unspent_ordered(address).compat().await);
+    let block_count = try_s!(coin.arc().rpc_client.get_block_count().compat().await);
+
+    let mut result = Vec::with_capacity(unspents.len());
+    for unspent in unspents {
+        let tx_hash: H256Json = unspent.outpoint.hash.reversed().into();
+        let tx_info = match coin.get_verbose_transaction_from_cache_or_rpc(ctx, tx_hash.clone()).await {
+            Ok(x) => x,
+            Err(err) => {
+                log!("Error " [err] " getting the transaction " [tx_hash] ", skip the unspent output");
+                continue;
+            }
+        };
+
+        let tx_info = match tx_info {
+            VerboseTransactionFrom::Cache(mut tx) => {
+                if tx.height.is_none() {
+                    tx.height = unspent.height;
+                }
+                if let Some(tx_height) = tx.height {
+                    // refresh confirmations for the cached transaction:
+                    // use the up-to-date block_count and tx_height.
+                    tx.confirmations = (block_count - tx_height + 1) as u32;
+                    assert_ne!(tx.confirmations, 0);
+                } else {
+                    // else do not skip the transaction with unknown height,
+                    // because the transaction may be old enough.
+                    log!("Warning, unknown transaction (" [tx_hash] ") height");
+                }
+
+                tx
+            }
+            VerboseTransactionFrom::Rpc(tx) => tx,
+        };
+
+        if coin.is_unspent_mature(&tx_info) {
+            result.push(unspent);
+        }
+    }
+
+    Ok(result)
+}
+
+pub fn is_unspent_mature(mature_confirmations: u32, output: &RpcTransaction) -> bool {
+    // don't skip outputs with confirmations == 0, because we can spend them
+    !output.is_coinbase() || output.confirmations >= mature_confirmations
 }
 
 pub async fn get_verbose_transaction_from_cache_or_rpc<T>(coin: &T, ctx: &MmArc, txid: H256Json) -> Result<VerboseTransactionFrom, String>
@@ -1324,6 +1369,20 @@ pub async fn get_verbose_transaction_from_cache_or_rpc<T>(coin: &T, ctx: &MmArc,
     request_and_cache_transaction(coin, ctx, txid)
         .await
         .map(|tx| VerboseTransactionFrom::Rpc(tx))
+}
+
+pub async fn my_unspendable_balance<T>(coin: T, ctx: MmArc) -> Result<BigDecimal, String>
+    where T: UtxoArcGetter + UtxoMmCoin + MarketCoinOps {
+    let balance = try_s!(coin.my_balance().compat().await);
+    let mature_unspents = try_s!(coin.ordered_mature_unspents(&ctx, &coin.arc().my_address).await);
+    let spendable_balance = mature_unspents.iter().fold(BigDecimal::zero(), |acc, x|
+        acc + big_decimal_from_sat(x.value as i64, coin.arc().decimals));
+    if balance < spendable_balance {
+        log!("Warning, spendable balance " [spendable_balance] " more than total balance " [balance]);
+        return ERR!("spendable balance {} more than total balance {}", spendable_balance, balance);
+    }
+
+    Ok(balance - spendable_balance)
 }
 
 /// Convert satoshis to BigDecimal amount of coin units

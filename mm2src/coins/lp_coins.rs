@@ -65,7 +65,7 @@ use self::eth::{eth_coin_from_conf_and_request, EthCoin, EthTxFeeDetails, Signed
 pub mod utxo;
 use self::utxo::{UtxoFeeDetails, UtxoTx};
 use self::utxo::utxo_standard::{UtxoStandardCoin, utxo_standard_coin_from_conf_and_request};
-use self::utxo::qtum::{qrc20_coin_from_conf_and_request, Qrc20Coin};
+use self::utxo::qrc20::{qrc20_coin_from_conf_and_request, Qrc20Coin};
 #[doc(hidden)]
 #[allow(unused_variables)]
 pub mod test_coin;
@@ -409,6 +409,9 @@ pub trait MmCoin: SwapOps + MarketCoinOps + Debug + Send + Sync + 'static {
 
     /// set requires notarization
     fn set_requires_notarization(&self, requires_nota: bool);
+
+    /// Get unspendable balance (sum of non-mature output values).
+    fn my_unspendable_balance(&self, ctx: &MmArc) -> Box<dyn Future<Item=BigDecimal, Error=String> + Send>;
 }
 
 #[derive(Clone, Debug)]

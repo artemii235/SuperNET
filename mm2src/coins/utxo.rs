@@ -22,6 +22,7 @@
 #![cfg_attr(not(feature = "native"), allow(unused_imports))]
 
 pub mod rpc_clients;
+pub mod qrc20;
 pub mod qtum;
 pub mod tx_cache;
 pub mod utxo_common;
@@ -72,6 +73,7 @@ const KILO_BYTE: u64 = 1000;
 const MAX_DER_SIGNATURE_LEN: usize = 72;
 const COMPRESSED_PUBKEY_LEN: usize = 33;
 const P2PKH_OUTPUT_LEN: u64 = 34;
+const MATURE_CONFIRMATIONS_DEFAULT: u32 = 100;
 
 #[cfg(windows)]
 #[cfg(feature = "native")]
@@ -220,8 +222,10 @@ pub struct UtxoCoinFields {
     /// relay fee amount instead of calculated
     /// https://github.com/KomodoPlatform/atomicDEX-API/issues/617
     force_min_relay_fee: bool,
-    // Minimum transaction value at which the value is not less than fee
+    /// Minimum transaction value at which the value is not less than fee
     dust_amount: u64,
+    /// Minimum number of confirmations at which a transaction is considered mature
+    mature_confirmations: u32,
 }
 
 #[async_trait]
@@ -331,6 +335,9 @@ pub trait UtxoMmCoin {
 
     /// Try load verbose transaction from cache or try to request it from Rpc client.
     async fn get_verbose_transaction_from_cache_or_rpc(&self, ctx: &MmArc, txid: H256Json) -> Result<VerboseTransactionFrom, String>;
+
+    /// Check if the output is spendable (is not coinbase or it has enough confirmations).
+    fn is_unspent_mature(&self, output: &RpcTransaction) -> bool;
 }
 
 pub fn compressed_key_pair_from_bytes(raw: &[u8], prefix: u8, checksum_type: ChecksumType) -> Result<KeyPair, String> {
@@ -646,6 +653,10 @@ pub async fn utxo_arc_from_conf_and_request(
         conf["requires_notarization"].as_bool().unwrap_or(false)
     ).into();
 
+    let mature_confirmations = conf["mature_confirmations"].as_u64()
+        .map(|x| x as u32)
+        .unwrap_or(MATURE_CONFIRMATIONS_DEFAULT);
+
     let coin = UtxoCoinFields {
         ticker: ticker.into(),
         decimals,
@@ -674,6 +685,7 @@ pub async fn utxo_arc_from_conf_and_request(
         required_confirmations: required_confirmations.into(),
         force_min_relay_fee: conf["force_min_relay_fee"].as_bool().unwrap_or (false),
         dust_amount,
+        mature_confirmations,
     };
     Ok(UtxoArc(Arc::new(coin)))
 }

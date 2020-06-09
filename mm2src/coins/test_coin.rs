@@ -243,4 +243,8 @@ impl MmCoin for TestCoin {
     }
 
     fn set_requires_notarization(&self, _requires_nota: bool) { unimplemented!() }
+
+    fn my_unspendable_balance(&self, ctx: &MmArc) -> Box<dyn Future<Item=BigDecimal, Error=String> + Send> {
+        unimplemented!()
+    }
 }

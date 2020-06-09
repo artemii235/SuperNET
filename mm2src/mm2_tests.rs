@@ -354,7 +354,7 @@ fn peers_http_fallback_kv() {peers::peers_tests::peers_http_fallback_kv()}
 #[cfg(feature = "native")]
 fn test_my_balance() {
     let coins = json!([
-        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1},
+        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"protocol":{"platform":"RICK","token_type":"UTXO"}},
     ]);
 
     let mut mm = unwrap! (MarketMakerIt::start (
@@ -377,7 +377,9 @@ fn test_my_balance() {
     // Enable BEER.
     let json = block_on(enable_electrum (&mm, "RICK", vec!["electrum1.cipig.net:10017","electrum2.cipig.net:10017","electrum3.cipig.net:10017"]));
     let balance_on_enable = unwrap!(json["balance"].as_str());
+    let unspendable_on_enable = unwrap!(json["unspendable_balance"].as_str());
     assert_eq!(balance_on_enable, "7.777");
+    assert_eq!(unspendable_on_enable, "0.000");
 
     let my_balance = unwrap! (block_on (mm.rpc (json! ({
         "userpass": mm.userpass,
@@ -387,7 +389,9 @@ fn test_my_balance() {
     assert_eq! (my_balance.0, StatusCode::OK, "RPC «my_balance» failed with status «{}»", my_balance.0);
     let json: Json = unwrap!(json::from_str(&my_balance.1));
     let my_balance = unwrap!(json["balance"].as_str());
+    let my_unspendable_balance = unwrap!(json["unspendable_balance"].as_str());
     assert_eq!(my_balance, "7.777");
+    assert_eq!(my_unspendable_balance, "0.000");
     let my_address = unwrap!(json["address"].as_str());
     assert_eq!(my_address, "RRnMcSeKiLrNdbp91qNVQwwXx5azD4S4CD");
 }
@@ -2198,7 +2202,7 @@ fn test_fill_or_kill_taker_order_should_not_transform_to_maker() {
 fn qrc20_activate_electrum() {
     let passphrase = "cV463HpebE2djP9ugJry5wZ9st5cc6AbkHXGryZVPXMH1XJK8cVU";
     let coins = json! ([
-        {"coin":"QRC20","required_confirmations":0,"pubtype": 120,"p2shtype": 50,"wiftype": 128,"segwit": true,"txfee": 0,"mm2": 1,
+        {"coin":"QRC20","required_confirmations":0,"pubtype": 120,"p2shtype": 50,"wiftype": 128,"segwit": true,"txfee": 0,"mm2": 1,"mature_confirmations":500,
          "protocol":{"platform":"QTUM","token_type": "QRC20","params": {"contract_address":"0xd362e096e873eb7907e205fadc6175c6fec7bc44"}}},
     ]);
 
@@ -2234,13 +2238,14 @@ fn qrc20_activate_electrum() {
     let electrum_json: Json = json::from_str(&electrum.1).unwrap();
     assert_eq!(electrum_json["address"].as_str(), Some("qKEDGuogDhtH9zBnc71QtqT1KDamaR1KJ3"));
     assert_eq!(electrum_json["balance"].as_str(), Some("139"));
+    assert_eq!(electrum_json["unspendable_balance"].as_str(), Some("0"));
 }
 
 #[test]
 fn test_qrc20_withdraw() {
     let passphrase = "cMhHM3PMpMrChygR4bLF7QsTdenhWpFrrmf2UezBG3eeFsz41rtL";
     let coins = json!([
-        {"coin":"QRC20","required_confirmations":0,"pubtype": 120,"p2shtype": 50,"wiftype": 128,"segwit": true,"txfee": 0,"mm2": 1,
+        {"coin":"QRC20","required_confirmations":0,"pubtype": 120,"p2shtype": 50,"wiftype": 128,"segwit": true,"txfee": 0,"mm2": 1,"mature_confirmations":500,
          "protocol":{"platform":"QTUM","token_type": "QRC20","params": {"contract_address":"0xd362e096e873eb7907e205fadc6175c6fec7bc44"}}},
     ]);
 

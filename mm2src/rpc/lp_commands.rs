@@ -74,10 +74,12 @@ pub async fn electrum (ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
     let ticker = try_s! (req["coin"].as_str().ok_or ("No 'coin' field")).to_owned();
     let coin: MmCoinEnum = try_s! (lp_coininit (&ctx, &ticker, &req) .await);
     let balance = try_s! (coin.my_balance().compat().await);
+    let unspendable_balance = try_s! (coin.my_unspendable_balance(&ctx).compat().await);
     let res = json! ({
         "result": "success",
         "address": coin.my_address(),
         "balance": balance,
+        "unspendable_balance": unspendable_balance,
         "locked_by_swaps": get_locked_amount (&ctx, &ticker),
         "coin": coin.ticker(),
         "required_confirmations": coin.required_confirmations(),
@@ -92,10 +94,12 @@ pub async fn enable (ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String>
     let ticker = try_s! (req["coin"].as_str().ok_or ("No 'coin' field")).to_owned();
     let coin: MmCoinEnum = try_s! (lp_coininit (&ctx, &ticker, &req) .await);
     let balance = try_s! (coin.my_balance().compat().await);
+    let unspendable_balance = try_s! (coin.my_unspendable_balance(&ctx).compat().await);
     let res = json! ({
         "result": "success",
         "address": coin.my_address(),
         "balance": balance,
+        "unspendable_balance": unspendable_balance,
         "locked_by_swaps": get_locked_amount (&ctx, &ticker),
         "coin": coin.ticker(),
         "required_confirmations": coin.required_confirmations(),
@@ -131,12 +135,22 @@ pub fn my_balance (ctx: MmArc, req: Json) -> HyRes {
         Ok (None) => return rpc_err_response (500, &fomat! ("No such coin: " (ticker))),
         Err (err) => return rpc_err_response (500, &fomat! ("!lp_coinfind(" (ticker) "): " (err)))
     };
-    Box::new(coin.my_balance().and_then(move |balance| rpc_response(200, json!({
-        "coin": ticker,
-        "balance": balance,
-        "locked_by_swaps": get_locked_amount(&ctx, &ticker),
-        "address": coin.my_address(),
-    }).to_string())))
+
+    let fut = coin.my_balance()
+        .and_then(move |balance| {
+            coin.my_unspendable_balance(&ctx)
+                .map(|unspendable_balance| (coin, ctx, balance, unspendable_balance))
+        })
+        .and_then(move |(coin, ctx, balance, unspendable_balance)| {
+            rpc_response(200, json!({
+                "coin": ticker,
+                "balance": balance,
+                "unspendable_balance": unspendable_balance,
+                "locked_by_swaps": get_locked_amount(&ctx, &ticker),
+                "address": coin.my_address(),
+            }).to_string())
+        });
+    Box::new(fut)
 }
 
 /*

@@ -1933,6 +1933,11 @@ impl MmCoin for EthCoin {
     fn set_requires_notarization(&self, _requires_nota: bool) {
        log!("Warning: set_requires_notarization doesn't take any effect on ETH/ERC20 coins");
     }
+
+    fn my_unspendable_balance(&self, _ctx: &MmArc) -> Box<dyn Future<Item=BigDecimal, Error=String> + Send> {
+        // Eth has not unspendable outputs
+        Box::new(futures01::future::ok(0.into()))
+    }
 }
 
 fn addr_from_raw_pubkey(pubkey: &[u8]) -> Result<Address, String> {
