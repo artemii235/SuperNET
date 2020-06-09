@@ -802,7 +802,7 @@ impl UtxoCoin {
         for input in unsigned.inputs.iter() {
             let prev_hash = input.previous_output.hash.reversed().into();
             let tx = try_s!(self.rpc_client.get_verbose_transaction(prev_hash).compat().await);
-            interest += kmd_interest(tx.height.unwrap_or(0), input.amount, tx.locktime as u64, unsigned.lock_time as u64);
+            interest += kmd_interest(tx.height, input.amount, tx.locktime as u64, unsigned.lock_time as u64);
         }
         if interest > 0 {
             data.received_by_me += interest;
