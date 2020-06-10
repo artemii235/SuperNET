@@ -1143,11 +1143,14 @@ pub async fn check_balance_for_maker_swap(
     swap_uuid: Option<&str>,
 ) -> Result<(), String> {
     let miner_fee = try_s!(my_coin.get_trade_fee().compat().await);
+    log!("check_balance_for_maker_swap miner fee " [miner_fee.amount.to_fraction()]);
     let locked = match swap_uuid {
         Some(u) => get_locked_amount_by_other_swaps(ctx, u, my_coin.ticker(), &miner_fee),
         None => get_locked_amount(&ctx, my_coin.ticker(), &miner_fee),
     };
+    log!("check_balance_for_maker_swap locked " [locked.to_fraction()]);
     let my_balance = try_s!(my_coin.my_balance().compat().await).into();
+    log!("check_balance_for_maker_swap my_balance " (my_balance));
     let total = if my_coin.ticker() == miner_fee.coin {
         volume + miner_fee.amount.into()
     } else {

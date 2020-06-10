@@ -146,7 +146,7 @@ pub async fn my_balance (ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Str
     let res = json!({
         "coin": ticker,
         "balance": my_balance,
-        "locked_by_swaps": get_locked_amount(&ctx, &ticker, &trade_fee),
+        "locked_by_swaps": get_locked_amount(&ctx, &ticker, &trade_fee).to_fraction(),
         "address": try_s!(coin.my_address()),
     });
     let res = try_s! (json::to_vec (&res));

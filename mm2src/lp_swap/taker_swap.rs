@@ -1259,12 +1259,16 @@ pub async fn check_balance_for_taker_swap(
     swap_uuid: Option<&str>,
 ) -> Result<(), String> {
     let miner_fee = try_s!(my_coin.get_trade_fee().compat().await);
+    log!("check_balance_for_taker_swap miner fee " [miner_fee.amount.to_fraction()]);
     let locked = match swap_uuid {
         Some(u) => get_locked_amount_by_other_swaps(ctx, u, my_coin.ticker(), &miner_fee),
         None => get_locked_amount(&ctx, my_coin.ticker(), &miner_fee),
     };
+    log!("check_balance_for_taker_swap locked " [locked.to_fraction()]);
     let my_balance = try_s!(my_coin.my_balance().compat().await).into();
+    log!("check_balance_for_taker_swap balance " (my_balance));
     let dex_fee = dex_fee_amount(my_coin.ticker(), other_coin.ticker(), &volume);
+    log!("check_balance_for_taker_swap dex_fee " [dex_fee.to_fraction()]);
     let total_miner_fee = &MmNumber::from(2) * &(miner_fee.amount.clone().into());
     let total = if my_coin.ticker() == miner_fee.coin {
         &volume + &dex_fee + total_miner_fee
