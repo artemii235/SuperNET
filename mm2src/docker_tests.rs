@@ -789,6 +789,43 @@ mod docker_tests {
     }
 
     #[test]
+    fn test_get_max_taker_vol() {
+        let (_ctx, _, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN1", 1);
+        let coins = json! ([
+            {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000},
+            {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":1000},
+        ]);
+        let mut mm_alice = unwrap! (MarketMakerIt::start (
+            json! ({
+                "gui": "nogui",
+                "netid": 9000,
+                "dht": "on",  // Enable DHT without delay.
+                "passphrase": format!("0x{}", hex::encode(alice_priv_key)),
+                "coins": coins,
+                "rpc_password": "pass",
+                "i_am_see": true,
+            }),
+            "pass".to_string(),
+            None,
+        ));
+        let (_alice_dump_log, _alice_dump_dashboard) = mm_dump (&mm_alice.log_path);
+        unwrap! (block_on (mm_alice.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
+
+        log!([block_on(enable_native(&mm_alice, "MYCOIN1", vec![]))]);
+        let rc = unwrap! (block_on (mm_alice.rpc (json! ({
+            "userpass": mm_alice.userpass,
+            "method": "max_taker_vol",
+            "coin": "MYCOIN1",
+        }))));
+        assert! (rc.0.is_success(), "!max_taker_vol: {}", rc.1);
+        let json: Json = json::from_str(&rc.1).unwrap();
+        // the result of equation x + x / 777 + 0.00002 = 1
+        assert_eq!(json["result"]["numer"], Json::from("38849223"));
+        assert_eq!(json["result"]["denom"], Json::from("38900000"));
+        unwrap!(block_on(mm_alice.stop()));
+    }
+
+    #[test]
     fn test_set_price_max() {
         let (_ctx, _, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN", 1);
         let coins = json! ([

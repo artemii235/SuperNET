@@ -9,7 +9,7 @@ use common::{
     mm_ctx::MmArc,
     mm_number::MmNumber,
 };
-use coins::{FoundSwapTxSpend, MmCoinEnum, TradeFee, TransactionDetails};
+use coins::{lp_coinfindᵃ, FoundSwapTxSpend, MmCoinEnum, TradeFee, TransactionDetails};
 use crc::crc32;
 use futures::{
     FutureExt, select,
@@ -17,11 +17,12 @@ use futures::{
     future::Either,
 };
 use futures01::Future;
+use http::Response;
 use parking_lot::Mutex as PaMutex;
 use peers::FixedValidator;
 use primitives::hash::H264;
 use rpc::v1::types::{H160 as H160Json, H256 as H256Json, H264 as H264Json};
-use serde_json::{self as json};
+use serde_json::{self as json, Value as Json};
 use serialization::{deserialize, serialize};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -1287,6 +1288,28 @@ pub async fn check_balance_for_taker_swap(
         ERR!("The total required {} amount {} is larger than available {:.8}, balance: {}, locked by swaps: {:.8}",
         my_coin.ticker(), total, available, my_balance, locked)
     }
+}
+
+pub async fn max_taker_vol(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
+    let ticker = try_s!(req["coin"].as_str().ok_or ("No 'coin' field")).to_owned();
+    let coin = match lp_coinfindᵃ(&ctx, &ticker).await {
+        Ok(Some(t)) => t,
+        Ok(None) => return ERR!("No such coin: {}", ticker),
+        Err(err) => return ERR!("!lp_coinfind({}): {}", ticker, err),
+    };
+    let balance = try_s!(coin.my_balance().compat().await);
+    let fee_info = try_s!(coin.get_trade_fee().compat().await);
+    let locked = get_locked_amount(&ctx, coin.ticker(), &fee_info);
+    let mut available_vol = MmNumber::from(balance) - locked;
+    if fee_info.coin == coin.ticker() {
+        available_vol = available_vol - fee_info.amount * 2.into();
+    }
+    available_vol = available_vol * 777.into() / 778.into();
+
+    let res = try_s!(json::to_vec(&json!({
+        "result": available_vol.to_fraction()
+    })));
+    Ok(try_s!(Response::builder().body(res)))
 }
 
 #[cfg(test)]
