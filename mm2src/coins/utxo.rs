@@ -44,6 +44,7 @@ use futures::compat::Future01CompatExt;
 use futures::lock::{Mutex as AsyncMutex};
 use keys::{KeyPair, Private, Public, Address, Secret};
 use keys::bytes::Bytes;
+use mocktopus::macros::*;
 use num_traits::ToPrimitive;
 use primitives::hash::{H256, H264, H512};
 use rand::seq::SliceRandom;
@@ -52,6 +53,7 @@ use script::{Builder, Opcode, Script, SignatureVersion, TransactionInputSigner};
 use serde_json::{self as json, Value as Json};
 use serialization::serialize;
 use std::convert::TryInto;
+use std::num::NonZeroU64;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -59,9 +61,10 @@ use std::sync::atomic::{AtomicBool, AtomicU64};
 
 pub use chain::Transaction as UtxoTx;
 
-use self::rpc_clients::{ElectrumClient, ElectrumClientImpl, EstimateFeeMethod, NativeClient, UtxoRpcClientEnum, UnspentInfo };
-use super::{CoinsContext, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, TradeFee, TradeInfo,
-            Transaction, TransactionEnum, TransactionFut, TransactionDetails, WithdrawFee, WithdrawRequest};
+use self::rpc_clients::{ElectrumClient, ElectrumClientImpl,
+                        EstimateFeeMethod, EstimateFeeMode, NativeClient, UtxoRpcClientEnum, UnspentInfo};
+use super::{CoinsContext, CoinTransportMetrics, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, RpcClientType, RpcTransportEventHandlerShared,
+            TradeFee, TradeInfo, Transaction, TransactionEnum, TransactionFut, TransactionDetails, WithdrawFee, WithdrawRequest};
 use crate::utxo::rpc_clients::{NativeClientImpl, ElectrumRpcRequest};
 
 #[cfg(test)]
@@ -74,6 +77,11 @@ const MAX_DER_SIGNATURE_LEN: usize = 72;
 const COMPRESSED_PUBKEY_LEN: usize = 33;
 const P2PKH_OUTPUT_LEN: u64 = 34;
 const MATURE_CONFIRMATIONS_DEFAULT: u32 = 100;
+/// Block count for KMD median time past calculation
+///
+/// # Safety
+/// 11 > 0
+const KMD_MTP_BLOCK_COUNT: NonZeroU64 = unsafe { NonZeroU64::new_unchecked(11u64) };
 
 #[cfg(windows)]
 #[cfg(feature = "native")]
@@ -154,6 +162,25 @@ pub enum FeePolicy {
     DeductFromOutput(usize),
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "format")]
+enum UtxoAddressFormat {
+    /// Standard UTXO address format.
+    /// In Bitcoin Cash context the standard format also known as 'legacy'.
+    #[serde(rename = "standard")]
+    Standard,
+    /// Bitcoin Cash specific address format.
+    /// https://github.com/bitcoincashorg/bitcoincash.org/blob/master/spec/cashaddr.md
+    #[serde(rename = "cashaddress")]
+    CashAddress { network: String },
+}
+
+impl Default for UtxoAddressFormat {
+    fn default() -> Self {
+        UtxoAddressFormat::Standard
+    }
+}
+
 #[derive(Debug)]
 pub struct UtxoCoinFields {
     ticker: String,
@@ -199,6 +226,8 @@ pub struct UtxoCoinFields {
     key_pair: KeyPair,
     /// Lock the mutex when we deal with address utxos
     my_address: Address,
+    /// The address format indicates how to parse and display UTXO addresses over RPC calls
+    address_format: UtxoAddressFormat,
     /// Is current coin KMD asset chain?
     /// https://komodoplatform.atlassian.net/wiki/spaces/KPSD/pages/71729160/What+is+a+Parallel+Chain+Asset+Chain
     asset_chain: bool,
@@ -222,6 +251,9 @@ pub struct UtxoCoinFields {
     /// relay fee amount instead of calculated
     /// https://github.com/KomodoPlatform/atomicDEX-API/issues/617
     force_min_relay_fee: bool,
+    /// Block count for median time past calculation
+    mtp_block_count: NonZeroU64,
+    estimate_fee_mode: Option<EstimateFeeMode>,
     /// Minimum transaction value at which the value is not less than fee
     dust_amount: u64,
     /// Minimum number of confirmations at which a transaction is considered mature
@@ -249,6 +281,10 @@ pub trait UtxoCoinCommonOps {
     ) -> Result<Option<FoundSwapTxSpend>, String>;
 
     fn my_public_key(&self) -> &Public;
+
+    fn display_address(&self, address: &Address) -> Result<String, String>;
+
+    async fn get_current_mtp(&self) -> Result<u32, String>;
 }
 
 #[derive(Clone, Debug)]
@@ -331,7 +367,8 @@ pub trait UtxoMmCoin {
     }
 
     /// Get transaction outputs available to spend.
-    async fn ordered_mature_unspents(&self, ctx: &MmArc, address: &Address) -> Result<Vec<UnspentInfo>, String>;
+    /// Note, the method is used in mock tests, therefore it can't be async.
+    fn ordered_mature_unspents(&self, ctx: &MmArc, address: &Address) -> Box<dyn Future<Item=Vec<UnspentInfo>, Error=String> + Send>;
 
     /// Try load verbose transaction from cache or try to request it from Rpc client.
     async fn get_verbose_transaction_from_cache_or_rpc(&self, ctx: &MmArc, txid: H256Json) -> Result<VerboseTransactionFrom, String>;
@@ -481,7 +518,20 @@ fn read_native_mode_conf(_filename: &dyn AsRef<Path>) -> Result<(Option<u16>, St
     unimplemented!()
 }
 
+fn rpc_event_handlers_for_client_transport(
+    ctx: &MmArc,
+    ticker: String,
+    client: RpcClientType,
+)
+    -> Vec<RpcTransportEventHandlerShared> {
+    let metrics = ctx.metrics.weak();
+    vec![
+        CoinTransportMetrics::new(metrics, ticker, client).into_shared(),
+    ]
+}
+
 pub async fn utxo_arc_from_conf_and_request(
+    ctx: &MmArc,
     ticker: &str,
     conf: &Json,
     req: &Json,
@@ -514,6 +564,12 @@ pub async fn utxo_arc_from_conf_and_request(
         checksum_type,
     };
 
+    let address_format = if conf["address_format"].is_null() {
+        UtxoAddressFormat::Standard
+    } else {
+        try_s!(json::from_value(conf["address_format"].clone()))
+    };
+
     let rpc_client = match req["method"].as_str() {
         Some("enable") => {
             if cfg!(feature = "native") {
@@ -524,10 +580,12 @@ pub async fn utxo_arc_from_conf_and_request(
                     Some(p) => p,
                     None => try_s!(conf["rpcport"].as_u64().ok_or(ERRL!("Rpc port is not set neither in `coins` file nor in native daemon config"))) as u16,
                 };
+                let event_handlers = rpc_event_handlers_for_client_transport(ctx, ticker.to_string(), RpcClientType::Native);
                 let client = Arc::new(NativeClientImpl {
                     coin_ticker: ticker.to_string(),
                     uri: fomat!("http://127.0.0.1:"(rpc_port)),
                     auth: format!("Basic {}", base64_encode(&auth_str, URL_SAFE)),
+                    event_handlers,
                 });
 
                 UtxoRpcClientEnum::Native(NativeClient(client))
@@ -539,7 +597,8 @@ pub async fn utxo_arc_from_conf_and_request(
             let mut servers: Vec<ElectrumRpcRequest> = try_s!(json::from_value(req["servers"].clone()));
             let mut rng = small_rng();
             servers.as_mut_slice().shuffle(&mut rng);
-            let mut client = ElectrumClientImpl::new(ticker.to_string());
+            let event_handlers = rpc_event_handlers_for_client_transport(ctx, ticker.to_string(), RpcClientType::Electrum);
+            let mut client = ElectrumClientImpl::new(ticker.to_string(), event_handlers);
             for server in servers.iter() {
                 match client.add_server(server) {
                     Ok(_) => (),
@@ -673,6 +732,7 @@ pub async fn utxo_arc_from_conf_and_request(
         wif_prefix,
         tx_version,
         my_address: my_address.clone(),
+        address_format,
         asset_chain,
         tx_fee,
         version_group_id,
@@ -684,6 +744,8 @@ pub async fn utxo_arc_from_conf_and_request(
         history_sync_state: Mutex::new(initial_history_state),
         required_confirmations: required_confirmations.into(),
         force_min_relay_fee: conf["force_min_relay_fee"].as_bool().unwrap_or (false),
+        mtp_block_count: json::from_value(conf["mtp_block_count"].clone()).unwrap_or (KMD_MTP_BLOCK_COUNT),
+        estimate_fee_mode: json::from_value(conf["estimate_fee_mode"].clone()).unwrap_or(None),
         dust_amount,
         mature_confirmations,
     };
@@ -693,7 +755,11 @@ pub async fn utxo_arc_from_conf_and_request(
 /// Function calculating KMD interest
 /// https://komodoplatform.atlassian.net/wiki/spaces/KPSD/pages/71729215/What+is+the+5+Komodo+Stake+Reward
 /// https://github.com/KomodoPlatform/komodo/blob/master/src/komodo_interest.h
-fn kmd_interest(height: u64, value: u64, lock_time: u64, current_time: u64) -> u64 {
+fn kmd_interest(height: Option<u64>, value: u64, lock_time: u64, current_time: u64) -> u64 {
+    let height = match height {
+        Some(h) => h,
+        None => return 0, // return 0 if height is unknown
+    };
     const KOMODO_ENDOFERA: u64 = 7777777;
     const LOCKTIME_THRESHOLD: u64 = 500000000;
     // value must be at least 10 KMD

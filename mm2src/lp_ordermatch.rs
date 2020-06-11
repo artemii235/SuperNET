@@ -29,7 +29,7 @@ use common::{bits256, json_dir_entries, now_ms, new_uuid,
   remove_file, rpc_response, rpc_err_response, write, HyRes};
 use common::executor::{spawn, Timer};
 use common::mm_ctx::{from_ctx, MmArc, MmWeak};
-use common::mm_number::{from_dec_to_ratio, from_ratio_to_dec, MmNumber};
+use common::mm_number::{from_dec_to_ratio, from_ratio_to_dec, Fraction, MmNumber};
 use futures::compat::Future01CompatExt;
 use gstuff::slurp;
 use http::Response;
@@ -50,7 +50,7 @@ use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
 use crate::mm2::lp_swap::{dex_fee_amount, get_locked_amount, is_pubkey_banned, MakerSwap,
-                          run_maker_swap, run_taker_swap, TakerSwap};
+                          RunMakerSwapInput, RunTakerSwapInput, run_maker_swap, run_taker_swap, TakerSwap};
 
 #[cfg(test)]
 #[cfg(feature = "native")]
@@ -340,6 +340,7 @@ impl OrdermatchContext {
     }
 }
 
+#[cfg_attr(test, mockable)]
 fn lp_connect_start_bob(ctx: MmArc, maker_match: MakerMatch) {
     spawn(async move {  // aka "maker_loop"
         let taker_coin = match lp_coinfindᵃ(&ctx, &maker_match.reserved.rel).await {
@@ -361,7 +362,7 @@ fn lp_connect_start_bob(ctx: MmArc, maker_match: MakerMatch) {
         let my_persistent_pub = unwrap!(compressed_pub_key_from_priv_raw(&privkey[..], ChecksumType::DSHA256));
         let uuid = maker_match.request.uuid.to_string();
 
-        log!("Entering the maker_swap_loop " (maker_coin.ticker()) "/" (taker_coin.ticker()));
+        log!("Entering the maker_swap_loop " (maker_coin.ticker()) "/" (taker_coin.ticker()) " with uuid: " (uuid));
         let maker_swap = MakerSwap::new(
             ctx.clone(),
             alice.into(),
@@ -372,7 +373,7 @@ fn lp_connect_start_bob(ctx: MmArc, maker_match: MakerMatch) {
             my_persistent_pub,
             uuid,
         );
-        run_maker_swap(maker_swap, None).await;
+        run_maker_swap(RunMakerSwapInput::StartNew(maker_swap), ctx).await;
     });
 }
 
@@ -410,9 +411,9 @@ fn lp_connected_alice(ctx: MmArc, taker_match: TakerMatch) {
         let taker_amount = taker_match.reserved.get_rel_amount().into();
         let uuid = taker_match.reserved.taker_order_uuid.to_string();
 
-        log!("Entering the taker_swap_loop " (maker_coin.ticker()) "/" (taker_coin.ticker()));
+        log!("Entering the taker_swap_loop " (maker_coin.ticker()) "/" (taker_coin.ticker())  " with uuid: " (uuid));
         let taker_swap = TakerSwap::new(
-            ctx,
+            ctx.clone(),
             maker.into(),
             maker_coin,
             taker_coin,
@@ -421,7 +422,7 @@ fn lp_connected_alice(ctx: MmArc, taker_match: TakerMatch) {
             my_persistent_pub,
             uuid,
         );
-        run_taker_swap(taker_swap, None).await
+        run_taker_swap(RunTakerSwapInput::StartNew(taker_swap), ctx).await
     });
 }
 
@@ -604,29 +605,31 @@ pub fn lp_trade_command(
 
         for (uuid, order) in my_orders.iter_mut() {
             if let OrderMatchResult::Matched((base_amount, rel_amount)) = match_order_and_request(order, &taker_request) {
-                let reserved = MakerReserved {
-                    dest_pub_key: taker_request.sender_pubkey.clone(),
-                    sender_pubkey: our_public_id.bytes.into(),
-                    base: order.base.clone(),
-                    base_amount: base_amount.clone().into(),
-                    base_amount_rat: Some(base_amount.into()),
-                    rel_amount: rel_amount.clone().into(),
-                    rel_amount_rat: Some(rel_amount.into()),
-                    rel: order.rel.clone(),
-                    method: "reserved".into(),
-                    taker_order_uuid: taker_request.uuid,
-                    maker_order_uuid: *uuid,
-                };
-                ctx.broadcast_p2p_msg(&unwrap!(json::to_string(&reserved)));
-                let maker_match = MakerMatch {
-                    request: taker_request,
-                    reserved,
-                    connect: None,
-                    connected: None,
-                    last_updated: now_ms(),
-                };
-                order.matches.insert(maker_match.request.uuid, maker_match);
-                save_my_maker_order(&ctx, &order);
+                if !order.matches.contains_key(&taker_request.uuid) {
+                    let reserved = MakerReserved {
+                        dest_pub_key: taker_request.sender_pubkey.clone(),
+                        sender_pubkey: our_public_id.bytes.into(),
+                        base: order.base.clone(),
+                        base_amount: base_amount.clone().into(),
+                        base_amount_rat: Some(base_amount.into()),
+                        rel_amount: rel_amount.clone().into(),
+                        rel_amount_rat: Some(rel_amount.into()),
+                        rel: order.rel.clone(),
+                        method: "reserved".into(),
+                        taker_order_uuid: taker_request.uuid,
+                        maker_order_uuid: *uuid,
+                    };
+                    ctx.broadcast_p2p_msg(&unwrap!(json::to_string(&reserved)));
+                    let maker_match = MakerMatch {
+                        request: taker_request,
+                        reserved,
+                        connect: None,
+                        connected: None,
+                        last_updated: now_ms(),
+                    };
+                    order.matches.insert(maker_match.request.uuid, maker_match);
+                    save_my_maker_order(&ctx, &order);
+                }
                 return 1;
             }
         }
@@ -655,19 +658,21 @@ pub fn lp_trade_command(
                 },
             };
 
-            let connected = MakerConnected {
-                sender_pubkey: our_public_id.bytes.into(),
-                dest_pub_key: connect_msg.sender_pubkey.clone(),
-                taker_order_uuid: connect_msg.taker_order_uuid,
-                maker_order_uuid: connect_msg.maker_order_uuid,
-                method: "connected".into(),
-            };
-            ctx.broadcast_p2p_msg(&unwrap!(json::to_string(&connected)));
-            order_match.connect = Some(connect_msg);
-            order_match.connected = Some(connected);
-            my_order.started_swaps.push(order_match.request.uuid);
-            lp_connect_start_bob(ctx.clone(), order_match.clone());
-            save_my_maker_order(&ctx, &my_order);
+            if order_match.connected.is_none() && order_match.connect.is_none() {
+                let connected = MakerConnected {
+                    sender_pubkey: our_public_id.bytes.into(),
+                    dest_pub_key: connect_msg.sender_pubkey.clone(),
+                    taker_order_uuid: connect_msg.taker_order_uuid,
+                    maker_order_uuid: connect_msg.maker_order_uuid,
+                    method: "connected".into(),
+                };
+                ctx.broadcast_p2p_msg(&unwrap!(json::to_string(&connected)));
+                order_match.connect = Some(connect_msg);
+                order_match.connected = Some(connected);
+                my_order.started_swaps.push(order_match.request.uuid);
+                lp_connect_start_bob(ctx.clone(), order_match.clone());
+                save_my_maker_order(&ctx, &my_order);
+            }
         }
         return 1;
     }
@@ -835,7 +840,7 @@ struct PricePingRequest {
     base: String,
     rel: String,
     price: BigDecimal,
-    price_rat: Option<BigRational>,
+    price_rat: Option<MmNumber>,
     price64: String,
     timestamp: u64,
     pubsecp: String,
@@ -843,7 +848,7 @@ struct PricePingRequest {
     // TODO rename, it's called "balance", but it's actual meaning is max available volume to trade
     #[serde(rename="bal")]
     balance: BigDecimal,
-    balance_rat: Option<BigRational>,
+    balance_rat: Option<MmNumber>,
     uuid: Option<Uuid>,
 }
 
@@ -884,12 +889,12 @@ impl PricePingRequest {
             rel: order.rel.clone(),
             price64: price64.to_string(),
             price: order.price.clone(),
-            price_rat: Some(order.price_rat.clone()),
+            price_rat: Some(order.price_rat.clone().into()),
             timestamp,
             pubsecp: hex::encode(&**ctx.secp256k1_key_pair().public()),
             sig: hex::encode(&*sig),
             balance: from_ratio_to_dec(&max_volume),
-            balance_rat: Some(max_volume),
+            balance_rat: Some(max_volume.into()),
             uuid: Some(order.uuid),
         })
     }
@@ -1031,16 +1036,20 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
     let ordermatch_ctx = try_s!(OrdermatchContext::from_ctx(&ctx));
     let mut my_orders = try_s!(ordermatch_ctx.my_maker_orders.lock());
     if req.cancel_previous {
+        let mut cancelled_orders = try_s!(ordermatch_ctx.my_cancelled_orders.lock());
         // remove the previous orders if there're some to allow multiple setprice call per pair
         // it's common use case now as `autoprice` doesn't work with new ordermatching and
         // MM2 users request the coins price from aggregators by their own scripts issuing
         // repetitive setprice calls with new price
-        *my_orders = my_orders.drain().filter(|(_, order)| {
+        *my_orders = my_orders.drain().filter_map(|(uuid, order)| {
             let to_delete = order.base == req.base && order.rel == req.rel;
             if to_delete {
                 delete_my_maker_order(&ctx, &order);
+                cancelled_orders.insert(uuid, order);
+                None
+            } else {
+                Some((uuid, order))
             }
-            !to_delete
         }).collect();
     }
 
@@ -1333,12 +1342,20 @@ fn save_my_taker_order(ctx: &MmArc, order: &TakerOrder) {
 
 #[cfg_attr(test, mockable)]
 fn delete_my_maker_order(ctx: &MmArc, order: &MakerOrder) {
-    unwrap!(remove_file(&my_maker_order_file_path(ctx, &order.uuid)));
+    let path = my_maker_order_file_path(ctx, &order.uuid);
+    match remove_file(&path) {
+        Ok(_) => (),
+        Err(e) => log!("Warning, could not remove order file " (path.display()) ", error " (e)),
+    }
 }
 
 #[cfg_attr(test, mockable)]
 fn delete_my_taker_order(ctx: &MmArc, order: &TakerOrder) {
-    unwrap!(remove_file(&my_taker_order_file_path(ctx, &order.request.uuid)));
+    let path = my_taker_order_file_path(ctx, &order.request.uuid);
+    match remove_file(&path) {
+        Ok(_) => (),
+        Err(e) => log!("Warning, could not remove order file " (path.display()) ", error " (e)),
+    }
 }
 
 pub fn orders_kick_start(ctx: &MmArc) -> Result<HashSet<String>, String> {
@@ -1478,9 +1495,11 @@ pub struct OrderbookEntry {
     address: String,
     price: BigDecimal,
     price_rat: BigRational,
+    price_fraction: Fraction,
     #[serde(rename="maxvolume")]
     max_volume: BigDecimal,
     max_volume_rat: BigRational,
+    max_volume_fraction: Fraction,
     pubkey: String,
     age: i64,
     zcredits: u64,
@@ -1528,9 +1547,11 @@ pub async fn orderbook(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
                     coin: req.base.clone(),
                     address: try_s!(base_coin.address_from_pubkey_str(&ask.pubsecp)),
                     price: ask.price.clone(),
-                    price_rat: ask.price_rat.as_ref().map(|p| p.clone()).unwrap_or(from_dec_to_ratio(ask.price.clone())),
+                    price_rat: ask.price_rat.as_ref().map(|p| p.to_ratio()).unwrap_or(from_dec_to_ratio(ask.price.clone())),
+                    price_fraction: ask.price_rat.as_ref().map(|p| p.to_fraction()).unwrap_or(ask.price.clone().into()),
                     max_volume: ask.balance.clone(),
-                    max_volume_rat: ask.balance_rat.as_ref().map(|p| p.clone()).unwrap_or(from_dec_to_ratio(ask.balance.clone())),
+                    max_volume_rat: ask.balance_rat.as_ref().map(|p| p.to_ratio()).unwrap_or(from_dec_to_ratio(ask.balance.clone())),
+                    max_volume_fraction: ask.balance_rat.as_ref().map(|p| p.to_fraction()).unwrap_or(ask.balance.clone().into()),
                     pubkey: ask.pubkey.clone(),
                     age: (now_ms() as i64 / 1000) - ask.timestamp as i64,
                     zcredits: 0,
@@ -1545,15 +1566,18 @@ pub async fn orderbook(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
         Some(asks) => {
             let mut orderbook_entries = vec![];
             for (uuid, ask) in asks.iter() {
+                let price_mm = MmNumber::from(1i32) / ask.price_rat.as_ref().map(|p| p.clone()).unwrap_or(from_dec_to_ratio(ask.price.clone()).into());
                 orderbook_entries.push(OrderbookEntry {
                     coin: req.rel.clone(),
                     address: try_s!(rel_coin.address_from_pubkey_str(&ask.pubsecp)),
                     // NB: 1/x can not be represented as a decimal and introduces a rounding error
                     // cf. https://github.com/KomodoPlatform/atomicDEX-API/issues/495#issuecomment-516365682
                     price: BigDecimal::from (1) / &ask.price,
-                    price_rat: BigRational::from_integer(1.into()) / ask.price_rat.as_ref().map(|p| p.clone()).unwrap_or(from_dec_to_ratio(ask.price.clone())),
+                    price_rat: price_mm.to_ratio(),
+                    price_fraction: price_mm.to_fraction(),
                     max_volume: ask.balance.clone(),
-                    max_volume_rat: ask.balance_rat.as_ref().map(|p| p.clone()).unwrap_or(from_dec_to_ratio(ask.balance.clone())),
+                    max_volume_rat: ask.balance_rat.as_ref().map(|p| p.to_ratio()).unwrap_or(from_dec_to_ratio(ask.balance.clone())),
+                    max_volume_fraction: ask.balance_rat.as_ref().map(|p| p.to_fraction()).unwrap_or(from_dec_to_ratio(ask.balance.clone()).into()),
                     pubkey: ask.pubkey.clone(),
                     age: (now_ms() as i64 / 1000) - ask.timestamp as i64,
                     zcredits: 0,

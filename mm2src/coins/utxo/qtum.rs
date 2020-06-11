@@ -1,7 +1,6 @@
 use common::mm_number::MmNumber;
 use crate::SwapOps;
 use futures::{TryFutureExt, FutureExt};
-use std::borrow::Cow;
 use super::*;
 
 pub const QTUM_STANDARD_DUST: u64 = 1000;
@@ -30,12 +29,13 @@ impl From<QtumCoin> for UtxoArc {
 }
 
 pub async fn qtum_coin_from_conf_and_request(
+    ctx: &MmArc,
     ticker: &str,
     conf: &Json,
     req: &Json,
     priv_key: &[u8],
 ) -> Result<QtumCoin, String> {
-    let inner = try_s!(utxo_arc_from_conf_and_request(ticker, conf, req, priv_key, QTUM_STANDARD_DUST).await);
+    let inner = try_s!(utxo_arc_from_conf_and_request(ctx, ticker, conf, req, priv_key, QTUM_STANDARD_DUST).await);
     Ok(inner.into())
 }
 
@@ -78,6 +78,14 @@ impl UtxoCoinCommonOps for QtumCoin {
 
     fn my_public_key(&self) -> &Public {
         self.utxo_arc.key_pair.public()
+    }
+
+    fn display_address(&self, address: &Address) -> Result<String, String> {
+        utxo_common::display_address(&self.utxo_arc, address)
+    }
+
+    async fn get_current_mtp(&self) -> Result<u32, String> {
+        utxo_common::get_current_mtp(&self.utxo_arc).await
     }
 }
 
@@ -130,7 +138,7 @@ impl UtxoArcCommonOps for QtumCoin {
         my_script_pub: Bytes)
         -> Result<(TransactionInputSigner, AdditionalTxData), String> {
         utxo_common::calc_interest_if_required(
-            &self.utxo_arc,
+            self,
             unsigned,
             data,
             my_script_pub).await
@@ -240,8 +248,8 @@ impl MarketCoinOps for QtumCoin {
         &self.utxo_arc.ticker
     }
 
-    fn my_address(&self) -> Cow<str> {
-        utxo_common::my_address(&self.utxo_arc)
+    fn my_address(&self) -> Result<String, String> {
+        utxo_common::my_address(self)
     }
 
     fn my_balance(&self) -> Box<dyn Future<Item=BigDecimal, Error=String> + Send> {
@@ -270,7 +278,7 @@ impl MarketCoinOps for QtumCoin {
     }
 
     fn address_from_pubkey_str(&self, pubkey: &str) -> Result<String, String> {
-        utxo_common::address_from_pubkey_str(&self.utxo_arc, pubkey)
+        utxo_common::address_from_pubkey_str(self, pubkey)
     }
 
     fn display_priv_key(&self) -> String {
@@ -339,8 +347,8 @@ impl MmCoin for QtumCoin {
 
 #[async_trait]
 impl UtxoMmCoin for QtumCoin {
-    async fn ordered_mature_unspents(&self, ctx: &MmArc, address: &Address) -> Result<Vec<UnspentInfo>, String> {
-        utxo_common::ordered_mature_unspents(self, ctx, address).await
+    fn ordered_mature_unspents(&self, ctx: &MmArc, address: &Address) -> Box<dyn Future<Item=Vec<UnspentInfo>, Error=String> + Send> {
+        Box::new(utxo_common::ordered_mature_unspents(self.clone(), ctx.clone(), address.clone()).boxed().compat())
     }
 
     async fn get_verbose_transaction_from_cache_or_rpc(&self, ctx: &MmArc, txid: H256Json) -> Result<VerboseTransactionFrom, String> {

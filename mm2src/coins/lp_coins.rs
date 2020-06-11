@@ -1,4 +1,3 @@
-
 /******************************************************************************
  * Copyright © 2014-2018 The SuperNET Developers.                             *
  *                                                                            *
@@ -37,6 +36,7 @@ use bigdecimal::BigDecimal;
 use common::{rpc_response, rpc_err_response, HyRes};
 use common::duplex_mutex::DuplexMutex;
 use common::mm_ctx::{from_ctx, MmArc};
+use common::mm_metrics::{MetricsWeak};
 use common::mm_number::MmNumber;
 use futures01::Future;
 use futures::compat::Future01CompatExt;
@@ -44,9 +44,8 @@ use gstuff::{slurp};
 use http::Response;
 use rpc::v1::types::Bytes as BytesJson;
 use serde_json::{self as json, Value as Json};
-use std::borrow::Cow;
 use std::collections::hash_map::{HashMap, RawEntryMut};
-use std::fmt::Debug;
+use std::fmt;
 use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -61,7 +60,7 @@ macro_rules! try_fus {
 #[doc(hidden)]
 pub mod coins_tests;
 pub mod eth;
-use self::eth::{eth_coin_from_conf_and_request, EthCoin, EthTxFeeDetails, SignedEthTx};
+use self::eth::{eth_coin_from_conf_and_request, ERC20ContractAddress, EthCoin, EthTxFeeDetails, SignedEthTx};
 pub mod utxo;
 use self::utxo::{UtxoFeeDetails, UtxoTx};
 use self::utxo::utxo_standard::{UtxoStandardCoin, utxo_standard_coin_from_conf_and_request};
@@ -72,7 +71,7 @@ pub mod test_coin;
 pub use self::test_coin::TestCoin;
 use ethereum_types::H160;
 
-pub trait Transaction: Debug + 'static {
+pub trait Transaction: fmt::Debug + 'static {
     /// Raw transaction bytes of the transaction
     fn tx_hex(&self) -> Vec<u8>;
     fn extract_secret(&self) -> Result<Vec<u8>, String>;
@@ -214,7 +213,7 @@ pub trait SwapOps {
 pub trait MarketCoinOps {
     fn ticker (&self) -> &str;
 
-    fn my_address(&self) -> Cow<str>;
+    fn my_address(&self) -> Result<String, String>;
 
     fn my_balance(&self) -> Box<dyn Future<Item=BigDecimal, Error=String> + Send>;
 
@@ -322,6 +321,22 @@ pub struct TransactionDetails {
     internal_id: BytesJson,
 }
 
+impl TransactionDetails {
+    /// Whether the transaction details block height should be updated (when tx is confirmed)
+    pub fn should_update_block_height(&self) -> bool {
+        // checking for std::u64::MAX because there was integer overflow
+        // in case of electrum returned -1 so there could be records with MAX confirmations
+        self.block_height == 0 || self.block_height == std::u64::MAX
+    }
+
+    /// Whether the transaction timestamp should be updated (when tx is confirmed)
+    pub fn should_update_timestamp(&self) -> bool {
+        // checking for std::u64::MAX because there was integer overflow
+        // in case of electrum returned -1 so there could be records with MAX confirmations
+        self.timestamp == 0
+    }
+}
+
 pub enum TradeInfo {
     // going to act as maker
     Maker,
@@ -336,7 +351,7 @@ pub struct TradeFee {
 }
 
 /// NB: Implementations are expected to follow the pImpl idiom, providing cheap reference-counted cloning and garbage collection.
-pub trait MmCoin: SwapOps + MarketCoinOps + Debug + Send + Sync + 'static {
+pub trait MmCoin: SwapOps + MarketCoinOps + fmt::Debug + Send + Sync + 'static {
     // `MmCoin` is an extension fulcrum for something that doesn't fit the `MarketCoinOps`. Practical examples:
     // name (might be required for some APIs, CoinMarketCap for instance);
     // coin statistics that we might want to share with UI;
@@ -360,7 +375,8 @@ pub trait MmCoin: SwapOps + MarketCoinOps + Debug + Send + Sync + 'static {
 
     /// Path to tx history file
     fn tx_history_path(&self, ctx: &MmArc) -> PathBuf {
-        ctx.dbdir().join("TRANSACTIONS").join(format!("{}_{}.json", self.ticker(), self.my_address()))
+        let my_address = self.my_address().unwrap_or(Default::default());
+        ctx.dbdir().join("TRANSACTIONS").join(format!("{}_{}.json", self.ticker(), my_address))
     }
 
     /// Loads existing tx history from file, returns empty vector if file is not found
@@ -474,19 +490,117 @@ impl CoinsContext {
 }
 
 #[derive(Serialize, Deserialize)]
-#[serde(tag = "token_type", content = "params")]
-enum TokenType {
+pub enum CoinProtocol {
     UTXO,
-    QRC20 { contract_address: H160 },
+    QRC20 { platform: String, contract_address: H160 },
     ETH,
-    ERC20 { contract_address: H160 },
+    ERC20 { platform: String, contract_address: ERC20ContractAddress },
 }
 
-#[derive(Serialize, Deserialize)]
-struct CoinProtocol {
-    platform: String,
-    #[serde(flatten)]
-    token: TokenType,
+pub type RpcTransportEventHandlerShared = Arc<dyn RpcTransportEventHandler + Send + Sync + 'static>;
+
+/// Common methods to measure the outgoing requests and incoming responses statistics.
+pub trait RpcTransportEventHandler {
+    fn debug_info(&self) -> String;
+
+    fn on_outgoing_request(&self, data: &[u8]);
+
+    fn on_incoming_response(&self, data: &[u8]);
+}
+
+impl fmt::Debug for dyn RpcTransportEventHandler + Send + Sync {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.debug_info())
+    }
+}
+
+impl RpcTransportEventHandler for RpcTransportEventHandlerShared {
+    fn debug_info(&self) -> String {
+        self.deref().debug_info()
+    }
+
+    fn on_outgoing_request(&self, data: &[u8]) {
+        self.as_ref().on_outgoing_request(data)
+    }
+
+    fn on_incoming_response(&self, data: &[u8]) {
+        self.as_ref().on_incoming_response(data)
+    }
+}
+
+impl<T: RpcTransportEventHandler> RpcTransportEventHandler for Vec<T> {
+    fn debug_info(&self) -> String {
+        let selfi: Vec<String> = self.iter().map(|x| x.debug_info()).collect();
+        format!("{:?}", selfi)
+    }
+
+    fn on_outgoing_request(&self, data: &[u8]) {
+        for handler in self {
+            handler.on_outgoing_request(data)
+        }
+    }
+
+    fn on_incoming_response(&self, data: &[u8]) {
+        for handler in self {
+            handler.on_incoming_response(data)
+        }
+    }
+}
+
+pub enum RpcClientType {
+    Native,
+    Electrum,
+    Ethereum,
+}
+
+impl ToString for RpcClientType {
+    fn to_string(&self) -> String {
+        match self {
+            RpcClientType::Native => "native".into(),
+            RpcClientType::Electrum => "electrum".into(),
+            RpcClientType::Ethereum => "ethereum".into(),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct CoinTransportMetrics {
+    /// Using a weak reference by default in order to avoid circular references and leaks.
+    metrics: MetricsWeak,
+    /// Name of coin the rpc client is intended to work with.
+    ticker: String,
+    /// RPC client type.
+    client: String,
+}
+
+impl CoinTransportMetrics {
+    fn new(metrics: MetricsWeak, ticker: String, client: RpcClientType) -> CoinTransportMetrics {
+        CoinTransportMetrics { metrics, ticker, client: client.to_string() }
+    }
+
+    fn into_shared(self) -> RpcTransportEventHandlerShared {
+        Arc::new(self)
+    }
+}
+
+impl RpcTransportEventHandler for CoinTransportMetrics {
+    fn debug_info(&self) -> String {
+        "CoinTransportMetrics".into()
+    }
+
+    fn on_outgoing_request(&self, data: &[u8]) {
+        mm_counter!(self.metrics, "rpc_client.traffic.out", data.len() as u64,
+            "coin" => self.ticker.clone(), "client" => self.client.clone());
+        mm_counter!(self.metrics, "rpc_client.request.count", 1,
+            "coin" => self.ticker.clone(), "client" => self.client.clone());
+    }
+
+    fn on_incoming_response(&self, data: &[u8]) {
+        mm_counter!(self.metrics, "rpc_client.traffic.in", data.len() as u64,
+            "coin" => self.ticker.clone(), "client" => self.client.clone());
+        mm_counter!(self.metrics, "rpc_client.response.count", 1,
+            "coin" => self.ticker.clone(), "client" => self.client.clone());
+    }
 }
 
 /// Adds a new currency into the list of currencies configured.
@@ -516,14 +630,14 @@ pub async fn lp_coininit (ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoi
     ))}
     let secret = &*ctx.secp256k1_key_pair().private().secret;
 
-    let token_type: CoinProtocol = try_s!(json::from_value(coins_en["protocol"].clone()));
+    let protocol: CoinProtocol = try_s!(json::from_value(coins_en["protocol"].clone()));
 
-    let coin: MmCoinEnum = match token_type.token {
-        TokenType::UTXO => try_s! (utxo_standard_coin_from_conf_and_request(ticker, coins_en, req, secret).await).into(),
-        TokenType::ETH | TokenType::ERC20 { .. } =>
-            try_s! (eth_coin_from_conf_and_request (ctx, ticker, coins_en, req, secret).await).into(),
-        TokenType::QRC20 {contract_address} =>
-            try_s!(qrc20_coin_from_conf_and_request(ticker, coins_en, req, secret, contract_address).await).into(),
+    let coin: MmCoinEnum = match &protocol {
+        CoinProtocol::UTXO => try_s!(utxo_standard_coin_from_conf_and_request(ctx, ticker, coins_en, req, secret).await).into(),
+        CoinProtocol::ETH | CoinProtocol::ERC20 { .. } =>
+            try_s!(eth_coin_from_conf_and_request (ctx, ticker, coins_en, req, secret, protocol).await).into(),
+        CoinProtocol::QRC20 { contract_address, .. } =>
+            try_s!(qrc20_coin_from_conf_and_request(ctx, ticker, coins_en, req, secret, contract_address.clone()).await).into(),
     };
 
     let block_count = try_s! (coin.current_block().compat().await);
@@ -688,10 +802,14 @@ struct EnabledCoin {
 pub async fn get_enabled_coins(ctx: MmArc) -> Result<Response<Vec<u8>>, String> {
     let coins_ctx: Arc<CoinsContext> = try_s!(CoinsContext::from_ctx(&ctx));
     let coins = try_s!(coins_ctx.coins.sleeplock(77).await);
-    let enabled_coins: Vec<_> = coins.iter().map(|(ticker, coin)| EnabledCoin {
-        ticker: ticker.clone(),
-        address: coin.my_address().to_string(),
-    }).collect();
+    let enabled_coins: Vec<_> = try_s!(coins.iter().map(|(ticker, coin)| {
+        let address = try_s!(coin.my_address());
+        Ok(EnabledCoin {
+            ticker: ticker.clone(),
+            address,
+        })
+    }).collect());
+
     let res = try_s!(json::to_vec(&json!({
         "result": enabled_coins
     })));

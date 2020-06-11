@@ -2,6 +2,7 @@
 #![cfg_attr(not(feature = "native"), allow(unused_variables))]
 
 use bigdecimal::BigDecimal;
+use common::BigInt;
 use common::{block_on, slurp};
 #[cfg(not(feature = "native"))]
 use common::call_back;
@@ -9,9 +10,11 @@ use common::executor::Timer;
 use common::for_tests::{enable_electrum, enable_native, from_env_file, get_passphrase, mm_spat, LocalStart, MarketMakerIt};
 #[cfg(feature = "native")]
 use common::for_tests::mm_dump;
+use common::mm_number::Fraction;
 use common::privkey::key_pair_from_seed;
 #[cfg(not(feature = "native"))]
 use common::mm_ctx::MmArc;
+use common::mm_metrics::{MetricsJson, MetricType};
 use http::StatusCode;
 #[cfg(feature = "native")]
 use hyper::header::ACCESS_CONTROL_ALLOW_ORIGIN;
@@ -222,10 +225,10 @@ fn test_notify() {
 #[cfg(feature = "native")]
 fn alice_can_see_the_active_order_after_connection() {
     let coins = json!([
-        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1},
-        {"coin":"MORTY","asset":"MORTY","rpcport":11608,"txversion":4,"overwintered":1},
-        {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000","rpcport":80},
-        {"coin":"JST","name":"jst","etomic":"0xc0eb7AeD740E1796992A08962c15661bDEB58003"}
+        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"protocol":"UTXO"},
+        {"coin":"MORTY","asset":"MORTY","rpcport":11608,"txversion":4,"overwintered":1,"protocol":"UTXO"},
+        {"coin":"ETH","name":"ethereum","protocol":"ETH","rpcport":80},
+        {"coin":"JST","name":"jst","protocol":{"ERC20":{"platform":"ETH","contract_address":"0xc0eb7AeD740E1796992A08962c15661bDEB58003"}}}
     ]);
 
     // start bob and immediately place the order
@@ -354,7 +357,7 @@ fn peers_http_fallback_kv() {peers::peers_tests::peers_http_fallback_kv()}
 #[cfg(feature = "native")]
 fn test_my_balance() {
     let coins = json!([
-        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"protocol":{"platform":"RICK","token_type":"UTXO"}},
+        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"protocol":"UTXO"},
     ]);
 
     let mut mm = unwrap! (MarketMakerIt::start (
@@ -436,10 +439,10 @@ fn check_sell_fails(mm: &MarketMakerIt, base: &str, rel: &str, vol: f64) {
 #[cfg(feature = "native")]
 fn test_check_balance_on_order_post() {
     let coins = json!([
-        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1},
-        {"coin":"MORTY","asset":"MORTY","rpcport":11608,"txversion":4,"overwintered":1},
-        {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000","rpcport":80},
-        {"coin":"JST","name":"jst","etomic":"0x2b294F029Fde858b2c62184e8390591755521d8E"}
+        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"protocol":"UTXO"},
+        {"coin":"MORTY","asset":"MORTY","rpcport":11608,"txversion":4,"overwintered":1,"protocol":"UTXO"},
+        {"coin":"ETH","name":"ethereum","protocol":"ETH","rpcport":80},
+        {"coin":"JST","name":"jst","protocol":{"ERC20":{"platform":"ETH","contract_address":"0x2b294F029Fde858b2c62184e8390591755521d8E"}}}
     ]);
 
     // start bob and immediately place the order
@@ -495,8 +498,8 @@ fn test_check_balance_on_order_post() {
 #[cfg(feature = "native")]
 fn test_rpc_password_from_json() {
     let coins = json!([
-        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1},
-        {"coin":"MORTY","asset":"MORTY","rpcport":8923,"txversion":4,"overwintered":1},
+        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"protocol":"UTXO"},
+        {"coin":"MORTY","asset":"MORTY","rpcport":8923,"txversion":4,"overwintered":1,"protocol":"UTXO"},
     ]);
 
     // do not allow empty password
@@ -592,7 +595,7 @@ fn test_rpc_password_from_json() {
 #[cfg(feature = "native")]
 fn test_rpc_password_from_json_no_userpass() {
     let coins = json!([
-        {"coin":"BEER","asset":"BEER","rpcport":8923,"txversion":4},
+        {"coin":"BEER","asset":"BEER","rpcport":8923,"txversion":4,"protocol":"UTXO"},
     ]);
 
     let mut mm = unwrap! (MarketMakerIt::start (
@@ -697,11 +700,11 @@ async fn trade_base_rel_electrum (pairs: Vec<(&'static str, &'static str)>) {
     let alice_passphrase = unwrap! (get_passphrase (&".env.client", "ALICE_PASSPHRASE"));
 
     let coins = json! ([
-        {"coin":"RICK","asset":"RICK","required_confirmations":0,"txversion":4,"overwintered":1},
-        {"coin":"MORTY","asset":"MORTY","required_confirmations":0,"txversion":4,"overwintered":1},
-        {"coin":"ETOMIC","asset":"ETOMIC","required_confirmations":0,"txversion":4,"overwintered":1},
-        {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000"},
-        {"coin":"JST","name":"jst","etomic":"0x2b294F029Fde858b2c62184e8390591755521d8E"}
+        {"coin":"RICK","asset":"RICK","required_confirmations":0,"txversion":4,"overwintered":1,"protocol":"UTXO"},
+        {"coin":"MORTY","asset":"MORTY","required_confirmations":0,"txversion":4,"overwintered":1,"protocol":"UTXO"},
+        {"coin":"ETOMIC","asset":"ETOMIC","required_confirmations":0,"txversion":4,"overwintered":1,"protocol":"UTXO"},
+        {"coin":"ETH","name":"ethereum","protocol":"ETH"},
+        {"coin":"JST","name":"jst","protocol":{"ERC20":{"platform":"ETH","contract_address":"0x2b294F029Fde858b2c62184e8390591755521d8E"}}}
     ]);
 
     let mut mm_bob = unwrap! (MarketMakerIt::start (
@@ -936,10 +939,10 @@ fn trade_base_rel_native(base: &str, rel: &str) {
     let alice_userpass = unwrap! (var ("ALICE_USERPASS") .ok().or (alice_file_userpass), "No ALICE_USERPASS or .env.client/USERPASS");
 
     let coins = json! ([
-        {"coin":"BEER","asset":"BEER"},
-        {"coin":"PIZZA","asset":"PIZZA"},
-        {"coin":"ETOMIC","asset":"ETOMIC"},
-        {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000","rpcport":80}
+        {"coin":"BEER","asset":"BEER","protocol":"UTXO"},
+        {"coin":"PIZZA","asset":"PIZZA","protocol":"UTXO"},
+        {"coin":"ETOMIC","asset":"ETOMIC","protocol":"UTXO"},
+        {"coin":"ETH","name":"ethereum","rpcport":80,"protocol":"ETH"}
     ]);
 
     let mut mm_bob = unwrap! (MarketMakerIt::start (
@@ -1172,12 +1175,12 @@ fn test_withdraw_and_send() {
     let alice_passphrase = unwrap! (var ("ALICE_PASSPHRASE") .ok().or (alice_file_passphrase), "No ALICE_PASSPHRASE or .env.client/PASSPHRASE");
 
     let coins = json! ([
-        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"txfee":1000},
-        {"coin":"MORTY","asset":"MORTY","rpcport":8923,"txversion":4,"overwintered":1,"txfee":1000},
-        {"coin":"MORTY_SEGWIT","asset":"MORTY_SEGWIT","txversion":4,"overwintered":1,"segwit":true,"txfee":1000},
-        {"coin":"ETOMIC","asset":"ETOMIC","txversion":4,"overwintered":1,"txfee":1000},
-        {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000"},
-        {"coin":"JST","name":"jst","etomic":"0x2b294F029Fde858b2c62184e8390591755521d8E"}
+        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"txfee":1000,"protocol":"UTXO"},
+        {"coin":"MORTY","asset":"MORTY","rpcport":8923,"txversion":4,"overwintered":1,"txfee":1000,"protocol":"UTXO"},
+        {"coin":"MORTY_SEGWIT","asset":"MORTY_SEGWIT","txversion":4,"overwintered":1,"segwit":true,"txfee":1000,"protocol":"UTXO"},
+        {"coin":"ETOMIC","asset":"ETOMIC","txversion":4,"overwintered":1,"txfee":1000,"protocol":"UTXO"},
+        {"coin":"ETH","name":"ethereum","protocol":"ETH"},
+        {"coin":"JST","name":"jst","protocol":{"ERC20":{"platform":"ETH","contract_address":"0x2b294F029Fde858b2c62184e8390591755521d8E"}}}
     ]);
 
     let mut mm_alice = unwrap! (MarketMakerIt::start (
@@ -1300,7 +1303,7 @@ fn test_swap_status() {
 #[cfg(feature = "native")]
 fn test_order_errors_when_base_equal_rel() {
     let coins = json!([
-        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1},
+        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"protocol":"UTXO"},
     ]);
 
     let mut mm = unwrap! (MarketMakerIt::start (
@@ -1355,7 +1358,7 @@ fn test_order_errors_when_base_equal_rel() {
 
 fn startup_passphrase(passphrase: &str, expected_address: &str) {
     let coins = json!([
-        {"coin":"KMD","rpcport":8923,"txversion":4},
+        {"coin":"KMD","rpcport":8923,"txversion":4,"protocol":"UTXO"},
     ]);
 
     let mut mm = unwrap! (MarketMakerIt::start (
@@ -1413,9 +1416,9 @@ fn test_startup_passphrase() {
 #[cfg(feature = "native")]
 fn test_multiple_buy_sell_no_delay() {
     let coins = json!([
-        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1},
-        {"coin":"MORTY","asset":"MORTY","rpcport":11608,"txversion":4,"overwintered":1},
-        {"coin":"ETOMIC","asset":"ETOMIC","txversion":4},
+        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"protocol":"UTXO"},
+        {"coin":"MORTY","asset":"MORTY","rpcport":11608,"txversion":4,"overwintered":1,"protocol":"UTXO"},
+        {"coin":"ETOMIC","asset":"ETOMIC","txversion":4,"protocol":"UTXO"},
     ]);
 
     let (bob_file_passphrase, _bob_file_userpass) = from_env_file (unwrap! (slurp (&".env.seed")));
@@ -1503,10 +1506,10 @@ fn test_multiple_buy_sell_no_delay() {
 #[cfg(feature = "native")]
 fn test_cancel_order() {
     let coins = json!([
-        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1},
-        {"coin":"MORTY","asset":"MORTY","rpcport":11608,"txversion":4,"overwintered":1},
-        {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000","rpcport":80},
-        {"coin":"JST","name":"jst","etomic":"0xc0eb7AeD740E1796992A08962c15661bDEB58003"}
+        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"protocol":"UTXO"},
+        {"coin":"MORTY","asset":"MORTY","rpcport":11608,"txversion":4,"overwintered":1,"protocol":"UTXO"},
+        {"coin":"ETH","name":"ethereum","rpcport":80,"protocol":"ETH"},
+        {"coin":"JST","name":"jst","protocol":{"ERC20":{"platform":"ETH","contract_address":"0xc0eb7AeD740E1796992A08962c15661bDEB58003"}}}
     ]);
 
     // start bob and immediately place the order
@@ -1572,7 +1575,7 @@ fn test_cancel_order() {
     log!("Give Alice 15 seconds to import the order…");
     thread::sleep(Duration::from_secs(15));
 
-    log!("Get BEER/PIZZA orderbook on Alice side");
+    log!("Get RICK/MORTY orderbook on Alice side");
     let rc = unwrap! (block_on (mm_alice.rpc (json! ({
         "userpass": mm_alice.userpass,
         "method": "orderbook",
@@ -1635,8 +1638,8 @@ fn test_cancel_order() {
 #[cfg(feature = "native")]
 fn test_electrum_enable_conn_errors() {
     let coins = json!([
-        {"coin":"RICK","asset":"RICK"},
-        {"coin":"MORTY","asset":"MORTY"},
+        {"coin":"RICK","asset":"RICK","protocol":"UTXO"},
+        {"coin":"MORTY","asset":"MORTY","protocol":"UTXO"},
     ]);
 
     let mut mm_bob = unwrap! (MarketMakerIt::start (
@@ -1680,8 +1683,8 @@ fn test_electrum_enable_conn_errors() {
 #[cfg(feature = "native")]
 fn test_order_should_not_be_displayed_when_node_is_down() {
     let coins = json!([
-        {"coin":"RICK","asset":"RICK"},
-        {"coin":"MORTY","asset":"MORTY"},
+        {"coin":"RICK","asset":"RICK","protocol":"UTXO"},
+        {"coin":"MORTY","asset":"MORTY","protocol":"UTXO"},
     ]);
 
     // start bob and immediately place the order
@@ -1778,7 +1781,7 @@ fn test_order_should_not_be_displayed_when_node_is_down() {
     assert_eq!(asks.len(), 1, "Alice RICK/MORTY orderbook must have exactly 1 ask");
 
     unwrap! (block_on (mm_bob.stop()));
-    thread::sleep(Duration::from_secs(30));
+    thread::sleep(Duration::from_secs(40));
 
     let rc = unwrap! (block_on (mm_alice.rpc (json! ({
             "userpass": mm_alice.userpass,
@@ -1801,8 +1804,8 @@ fn test_order_should_not_be_displayed_when_node_is_down() {
 // https://github.com/KomodoPlatform/atomicDEX-API/issues/511
 fn test_all_orders_per_pair_per_node_must_be_displayed_in_orderbook() {
     let coins = json!([
-        {"coin":"RICK","asset":"RICK"},
-        {"coin":"MORTY","asset":"MORTY"},
+        {"coin":"RICK","asset":"RICK","protocol":"UTXO"},
+        {"coin":"MORTY","asset":"MORTY","protocol":"UTXO"},
     ]);
 
     let mut mm = unwrap! (MarketMakerIt::start (
@@ -1870,8 +1873,8 @@ fn test_all_orders_per_pair_per_node_must_be_displayed_in_orderbook() {
 #[cfg(feature = "native")]
 fn orderbook_should_display_rational_amounts() {
     let coins = json!([
-        {"coin":"RICK","asset":"RICK"},
-        {"coin":"MORTY","asset":"MORTY"},
+        {"coin":"RICK","asset":"RICK","protocol":"UTXO"},
+        {"coin":"MORTY","asset":"MORTY","protocol":"UTXO"},
     ]);
 
     let mut mm = unwrap! (MarketMakerIt::start (
@@ -1928,6 +1931,46 @@ fn orderbook_should_display_rational_amounts() {
     let volume_in_orderbook: BigRational = unwrap!(json::from_value(asks[0]["max_volume_rat"].clone()));
     assert_eq!(price, price_in_orderbook);
     assert_eq!(volume, volume_in_orderbook);
+
+    let nine = BigInt::from(9);
+    let ten = BigInt::from(10);
+    // should also display fraction
+    let price_in_orderbook: Fraction = unwrap!(json::from_value(asks[0]["price_fraction"].clone()));
+    let volume_in_orderbook: Fraction = unwrap!(json::from_value(asks[0]["max_volume_fraction"].clone()));
+    assert_eq!(nine, *price_in_orderbook.numer());
+    assert_eq!(ten, *price_in_orderbook.denom());
+
+    assert_eq!(nine, *volume_in_orderbook.numer());
+    assert_eq!(ten, *volume_in_orderbook.denom());
+
+    log!("Get MORTY/RICK orderbook");
+    let rc = unwrap! (block_on (mm.rpc (json! ({
+            "userpass": mm.userpass,
+            "method": "orderbook",
+            "base": "MORTY",
+            "rel": "RICK",
+        }))));
+    assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
+
+    let orderbook: Json = unwrap!(json::from_str(&rc.1));
+    log!("orderbook " [orderbook]);
+    let bids = orderbook["bids"].as_array().unwrap();
+    assert_eq!(bids.len(), 1, "MORTY/RICK orderbook must have exactly 1 bid");
+    let price_in_orderbook: BigRational = unwrap!(json::from_value(bids[0]["price_rat"].clone()));
+    let volume_in_orderbook: BigRational = unwrap!(json::from_value(bids[0]["max_volume_rat"].clone()));
+
+    let price = BigRational::new(10.into(), 9.into());
+    assert_eq!(price, price_in_orderbook);
+    assert_eq!(volume, volume_in_orderbook);
+
+    // should also display fraction
+    let price_in_orderbook: Fraction = unwrap!(json::from_value(bids[0]["price_fraction"].clone()));
+    let volume_in_orderbook: Fraction = unwrap!(json::from_value(bids[0]["max_volume_fraction"].clone()));
+    assert_eq!(ten, *price_in_orderbook.numer());
+    assert_eq!(nine, *price_in_orderbook.denom());
+
+    assert_eq!(nine, *volume_in_orderbook.numer());
+    assert_eq!(ten, *volume_in_orderbook.denom());
 }
 
 fn check_priv_key(mm: &MarketMakerIt, coin: &str, expected_priv_key: &str) {
@@ -1946,10 +1989,10 @@ fn check_priv_key(mm: &MarketMakerIt, coin: &str, expected_priv_key: &str) {
 // https://github.com/KomodoPlatform/atomicDEX-API/issues/519#issuecomment-589149811
 fn test_show_priv_key() {
     let coins = json! ([
-        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1},
-        {"coin":"MORTY","asset":"MORTY","rpcport":11608,"txversion":4,"overwintered":1},
-        {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000"},
-        {"coin":"JST","name":"jst","etomic":"0x2b294F029Fde858b2c62184e8390591755521d8E"}
+        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"protocol":"UTXO"},
+        {"coin":"MORTY","asset":"MORTY","rpcport":11608,"txversion":4,"overwintered":1,"protocol":"UTXO"},
+        {"coin":"ETH","name":"ethereum","protocol":"ETH"},
+        {"coin":"JST","name":"jst","protocol":{"ERC20":{"platform":"ETH","contract_address":"0x2b294F029Fde858b2c62184e8390591755521d8E"}}}
     ]);
 
     let mut mm = unwrap!(MarketMakerIt::start (
@@ -1982,10 +2025,10 @@ fn test_show_priv_key() {
 // https://github.com/KomodoPlatform/atomicDEX-API/issues/586
 fn electrum_and_enable_required_confirmations_and_nota() {
     let coins = json! ([
-        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1},
-        {"coin":"MORTY","asset":"MORTY","rpcport":11608,"txversion":4,"overwintered":1},
-        {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000"},
-        {"coin":"JST","name":"jst","etomic":"0x2b294F029Fde858b2c62184e8390591755521d8E"}
+        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"protocol":"UTXO"},
+        {"coin":"MORTY","asset":"MORTY","rpcport":11608,"txversion":4,"overwintered":1,"protocol":"UTXO"},
+        {"coin":"ETH","name":"ethereum","protocol":"ETH"},
+        {"coin":"JST","name":"jst","protocol":{"ERC20":{"platform":"ETH","contract_address":"0x2b294F029Fde858b2c62184e8390591755521d8E"}}}
     ]);
 
     let mut mm = unwrap!(MarketMakerIt::start (
@@ -2102,10 +2145,10 @@ fn setprice_buy_sell_min_volume() {
     let bob_passphrase = unwrap! (get_passphrase (&".env.seed", "BOB_PASSPHRASE"));
 
     let coins = json! ([
-        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1},
-        {"coin":"MORTY","asset":"MORTY","rpcport":11608,"txversion":4,"overwintered":1},
-        {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000"},
-        {"coin":"JST","name":"jst","etomic":"0x2b294F029Fde858b2c62184e8390591755521d8E"}
+        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"protocol":"UTXO"},
+        {"coin":"MORTY","asset":"MORTY","rpcport":11608,"txversion":4,"overwintered":1,"protocol":"UTXO"},
+        {"coin":"ETH","name":"ethereum","protocol":"ETH"},
+        {"coin":"JST","name":"jst","protocol":{"ERC20":{"platform":"ETH","contract_address":"0x2b294F029Fde858b2c62184e8390591755521d8E"}}}
     ]);
 
     let mut mm = unwrap!(MarketMakerIt::start (
@@ -2141,11 +2184,11 @@ fn test_fill_or_kill_taker_order_should_not_transform_to_maker() {
     let bob_passphrase = unwrap! (get_passphrase (&".env.client", "BOB_PASSPHRASE"));
 
     let coins = json! ([
-        {"coin":"RICK","asset":"RICK","required_confirmations":0,"txversion":4,"overwintered":1},
-        {"coin":"MORTY","asset":"MORTY","required_confirmations":0,"txversion":4,"overwintered":1},
-        {"coin":"ETOMIC","asset":"ETOMIC","required_confirmations":0,"txversion":4,"overwintered":1},
-        {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000"},
-        {"coin":"JST","name":"jst","etomic":"0x2b294F029Fde858b2c62184e8390591755521d8E"}
+        {"coin":"RICK","asset":"RICK","required_confirmations":0,"txversion":4,"overwintered":1,"protocol":"UTXO"},
+        {"coin":"MORTY","asset":"MORTY","required_confirmations":0,"txversion":4,"overwintered":1,"protocol":"UTXO"},
+        {"coin":"ETOMIC","asset":"ETOMIC","required_confirmations":0,"txversion":4,"overwintered":1,"protocol":"UTXO"},
+        {"coin":"ETH","name":"ethereum","protocol":"ETH"},
+        {"coin":"JST","name":"jst","protocol":{"ERC20":{"platform":"ETH","contract_address":"0x2b294F029Fde858b2c62184e8390591755521d8E"}}}
     ]);
 
     let mut mm_bob = unwrap! (MarketMakerIt::start (
@@ -2199,11 +2242,486 @@ fn test_fill_or_kill_taker_order_should_not_transform_to_maker() {
 }
 
 #[test]
+#[cfg(feature = "native")]
+// https://github.com/KomodoPlatform/atomicDEX-API/issues/635
+fn set_price_with_cancel_previous_should_broadcast_cancelled_message() {
+    let coins = json!([
+        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"protocol":"UTXO"},
+        {"coin":"MORTY","asset":"MORTY","rpcport":11608,"txversion":4,"overwintered":1,"protocol":"UTXO"},
+        {"coin":"ETH","name":"ethereum","protocol":"ETH","rpcport":80},
+        {"coin":"JST","name":"jst","protocol":{"ERC20":{"platform":"ETH","contract_address":"0xc0eb7AeD740E1796992A08962c15661bDEB58003"}}}
+    ]);
+
+    // start bob and immediately place the order
+    let mut mm_bob = unwrap! (MarketMakerIt::start (
+        json! ({
+            "gui": "nogui",
+            "netid": 9998,
+            "dht": "on",  // Enable DHT without delay.
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| unwrap! (s.parse::<i64>())),
+            "passphrase": "bob passphrase",
+            "coins": coins,
+            "i_am_seed": true,
+            "rpc_password": "pass",
+        }),
+        "pass".into(),
+        match var ("LOCAL_THREAD_MM") {Ok (ref e) if e == "bob" => Some (local_start()), _ => None}
+    ));
+    let (_bob_dump_log, _bob_dump_dashboard) = mm_dump (&mm_bob.log_path);
+    log!({"Bob log path: {}", mm_bob.log_path.display()});
+    unwrap! (block_on (mm_bob.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
+    // Enable coins on Bob side. Print the replies in case we need the "address".
+    log! ({"enable_coins (bob): {:?}", block_on (enable_coins_eth_electrum (&mm_bob, vec!["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b"]))});
+
+    let set_price_json = json! ({
+        "userpass": mm_bob.userpass,
+        "method": "setprice",
+        "base": "RICK",
+        "rel": "MORTY",
+        "price": 0.9,
+        "volume": "0.9",
+    });
+    log!("Issue sell request on Bob side by setting base/rel price…");
+    let rc = unwrap! (block_on (mm_bob.rpc (set_price_json.clone())));
+    assert! (rc.0.is_success(), "!setprice: {}", rc.1);
+
+    let mut mm_alice = unwrap! (MarketMakerIt::start (
+        json! ({
+            "gui": "nogui",
+            "netid": 9998,
+            "dht": "on",  // Enable DHT without delay.
+            "myipaddr": env::var ("ALICE_TRADE_IP") .ok(),
+            "rpcip": env::var ("ALICE_TRADE_IP") .ok(),
+            "passphrase": "alice passphrase",
+            "coins": coins,
+            "seednodes": [fomat!((mm_bob.ip))],
+            "rpc_password": "pass",
+        }),
+        "pass".into(),
+        match var ("LOCAL_THREAD_MM") {Ok (ref e) if e == "alice" => Some (local_start()), _ => None}
+    ));
+
+    let (_alice_dump_log, _alice_dump_dashboard) = mm_dump (&mm_alice.log_path);
+    log!({"Alice log path: {}", mm_alice.log_path.display()});
+
+    unwrap! (block_on (mm_alice.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
+
+    // Enable coins on Alice side. Print the replies in case we need the "address".
+    log! ({"enable_coins (alice): {:?}", block_on (enable_coins_eth_electrum (&mm_alice, vec!["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b"]))});
+
+    log!("Give Alice 15 seconds to import the order…");
+    thread::sleep(Duration::from_secs(15));
+
+    log!("Get RICK/MORTY orderbook on Alice side");
+    let rc = unwrap! (block_on (mm_alice.rpc (json! ({
+        "userpass": mm_alice.userpass,
+        "method": "orderbook",
+        "base": "RICK",
+        "rel": "MORTY",
+    }))));
+    assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
+
+    let alice_orderbook: Json = unwrap!(json::from_str(&rc.1));
+    log!("Alice orderbook " [alice_orderbook]);
+    let asks = alice_orderbook["asks"].as_array().unwrap();
+    assert_eq!(asks.len(), 1, "Alice RICK/MORTY orderbook must have exactly 1 ask");
+
+    log!("Issue sell request again on Bob side by setting base/rel price…");
+    let rc = unwrap! (block_on (mm_bob.rpc (set_price_json.clone())));
+    assert! (rc.0.is_success(), "!setprice: {}", rc.1);
+
+    let pause = 11;
+    log!("Waiting (" (pause) " seconds) for Bob to broadcast messages…");
+    thread::sleep(Duration::from_secs(pause));
+
+    // Bob orderbook must show 1 order
+    log!("Get RICK/MORTY orderbook on Bob side");
+    let rc = unwrap! (block_on (mm_bob.rpc (json! ({
+        "userpass": mm_bob.userpass,
+        "method": "orderbook",
+        "base": "RICK",
+        "rel": "MORTY",
+    }))));
+    assert! (rc.0.is_success(), "!orderbook: {}", rc.1);
+
+    let bob_orderbook: Json = unwrap!(json::from_str(&rc.1));
+    log!("Bob orderbook " [bob_orderbook]);
+    let asks = bob_orderbook["asks"].as_array().unwrap();
+    assert_eq!(asks.len(), 1, "Bob RICK/MORTY orderbook must have exactly 1 ask");
+
+    // Alice orderbook must have 1 order
+    log!("Get RICK/MORTY orderbook on Alice side");
+    let rc = unwrap! (block_on (mm_alice.rpc (json! ({
+        "userpass": mm_alice.userpass,
+        "method": "orderbook",
+        "base": "RICK",
+        "rel": "MORTY",
+    }))));
+    assert! (rc.0.is_success(), "!orderbook: {}", rc.1);
+
+    let alice_orderbook: Json = unwrap!(json::from_str(&rc.1));
+    log!("Alice orderbook " [alice_orderbook]);
+    let asks = alice_orderbook["asks"].as_array().unwrap();
+    assert_eq!(asks.len(), 1, "Alice RICK/MORTY orderbook must have exactly 1 ask");
+}
+
+#[test]
+fn test_batch_requests() {
+    let coins = json!([
+        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"protocol":"UTXO"},
+        {"coin":"MORTY","asset":"MORTY","rpcport":11608,"txversion":4,"overwintered":1,"protocol":"UTXO"},
+        {"coin":"ETH","name":"ethereum","protocol":"ETH","rpcport":80},
+        {"coin":"JST","name":"jst","protocol":{"ERC20":{"platform":"ETH","contract_address":"0xc0eb7AeD740E1796992A08962c15661bDEB58003"}}}
+    ]);
+
+    // start bob and immediately place the order
+    let mut mm_bob = unwrap! (MarketMakerIt::start (
+        json! ({
+            "gui": "nogui",
+            "netid": 9998,
+            "dht": "on",  // Enable DHT without delay.
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| unwrap! (s.parse::<i64>())),
+            "passphrase": "bob passphrase",
+            "coins": coins,
+            "i_am_seed": true,
+            "rpc_password": "pass",
+        }),
+        "pass".into(),
+        match var ("LOCAL_THREAD_MM") {Ok (ref e) if e == "bob" => Some (local_start()), _ => None}
+    ));
+    let (_bob_dump_log, _bob_dump_dashboard) = mm_dump (&mm_bob.log_path);
+    log!({"Bob log path: {}", mm_bob.log_path.display()});
+    unwrap! (block_on (mm_bob.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
+
+    let batch_json = json!([
+        {
+            "userpass": mm_bob.userpass,
+            "method": "electrum",
+            "coin": "RICK",
+            "servers": [{"url":"electrum1.cipig.net:10017"},{"url":"electrum2.cipig.net:10017"},{"url":"electrum3.cipig.net:10017"}],
+            "mm2": 1,
+        },
+        {
+            "userpass": mm_bob.userpass,
+            "method": "electrum",
+            "coin": "MORTY",
+            "servers": [{"url":"electrum1.cipig.net:10018"},{"url":"electrum2.cipig.net:10018"},{"url":"electrum3.cipig.net:10018"}],
+            "mm2": 1,
+        },
+        {
+            "userpass": "error",
+            "method": "electrum",
+            "coin": "MORTY",
+            "servers": [{"url":"electrum1.cipig.net:10018"},{"url":"electrum2.cipig.net:10018"},{"url":"electrum3.cipig.net:10018"}],
+            "mm2": 1,
+        },
+    ]);
+
+    let rc = unwrap! (block_on (mm_bob.rpc (batch_json)));
+    assert! (rc.0.is_success(), "!batch: {}", rc.1);
+    log!((rc.1));
+    let responses = json::from_str::<Vec<Json>>(&rc.1).unwrap();
+    assert_eq!(responses[0]["coin"], Json::from("RICK"));
+    assert_eq!(responses[0]["address"], Json::from("RRnMcSeKiLrNdbp91qNVQwwXx5azD4S4CD"));
+
+    assert_eq!(responses[1]["coin"], Json::from("MORTY"));
+    assert_eq!(responses[1]["address"], Json::from("RRnMcSeKiLrNdbp91qNVQwwXx5azD4S4CD"));
+
+    assert!(responses[2]["error"].as_str().unwrap().contains("Userpass is invalid!"));
+}
+
+fn request_metrics(mm: &MarketMakerIt) -> MetricsJson {
+    let (status, metrics, _headers) = unwrap!(block_on(mm.rpc(json!({ "method": "metrics"}))));
+    assert_eq!(status, StatusCode::OK, "RPC «metrics» failed with status «{}»", status);
+    unwrap!(json::from_str(&metrics))
+}
+
+fn find_metric(metrics: MetricsJson, search_key: &str, search_labels: &Vec<(&str, &str)>) -> Option<MetricType> {
+    metrics.metrics.into_iter()
+        .find(|metric| {
+            let (key, labels) = match metric {
+                MetricType::Counter { key, labels, .. } => (key, labels),
+                _ => return false,
+            };
+
+            if key != search_key {
+                return false;
+            }
+
+            for (s_label_key, s_label_value) in search_labels.iter() {
+                let label_value = match labels.get(&s_label_key.to_string()) {
+                    Some(x) => x,
+                    _ => return false,
+                };
+
+                if s_label_value != label_value {
+                    return false;
+                }
+            }
+
+            true
+        })
+}
+
+#[test]
+#[cfg(feature = "native")]
+fn test_metrics_method() {
+    let coins = json!([
+        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"protocol":"UTXO"},
+    ]);
+
+    let mut mm = unwrap! (MarketMakerIt::start (
+        json! ({
+            "gui": "nogui",
+            "netid": 9998,
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "passphrase": "face pin block number add byte put seek mime test note password sin tab multiple",
+            "coins": coins,
+            "i_am_seed": true,
+            "rpc_password": "pass",
+        }),
+        "pass".into(),
+        local_start! ("bob")
+    ));
+    let (_dump_log, _dump_dashboard) = mm_dump(&mm.log_path);
+    log!({ "log path: {}", mm.log_path.display() });
+    unwrap!(block_on (mm.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
+
+    let _electrum = block_on(enable_electrum(&mm, "RICK", vec!["electrum1.cipig.net:10017", "electrum2.cipig.net:10017", "electrum3.cipig.net:10017"]));
+
+    let metrics = request_metrics(&mm);
+    assert!(!metrics.metrics.is_empty());
+
+    log!("Received metrics:");
+    log!([metrics]);
+
+    find_metric(metrics, "rpc_client.traffic.out", &vec![("coin", "RICK")])
+        .expect(r#"Couldn't find a metric with key = "traffic.out" and label: coin = "RICK" in received json"#);
+}
+
+#[test]
+#[ignore]
+#[cfg(feature = "native")]
+fn test_electrum_tx_history() {
+    fn get_tx_history_request_count(mm: &MarketMakerIt) -> u64 {
+        let metrics = request_metrics(&mm);
+        match find_metric(metrics,
+                          "tx.history.request.count",
+                          &vec![("coin", "RICK"), ("method", "blockchain.scripthash.get_history")])
+            .unwrap() {
+            MetricType::Counter { value, .. } => value,
+            _ => panic!("tx.history.request.count should be a counter")
+        }
+    }
+
+    let coins = json!([
+        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"protocol":"UTXO"},
+    ]);
+
+    let mut mm = unwrap! (MarketMakerIt::start (
+        json! ({
+            "gui": "nogui",
+            "netid": 9998,
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "passphrase": "face pin block number add byte put seek mime test note password sin tab multiple",
+            "coins": coins,
+            "i_am_seed": true,
+            "rpc_password": "pass",
+            "metrics_interval": 30.
+        }),
+        "pass".into(),
+        local_start! ("bob")
+    ));
+    let (_dump_log, _dump_dashboard) = mm_dump(&mm.log_path);
+    log!({ "log path: {}", mm.log_path.display() });
+    unwrap!(block_on (mm.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
+
+    // Enable RICK electrum client with tx_history loop.
+    let electrum = unwrap!(block_on(mm.rpc (json! ({
+        "userpass": mm.userpass,
+        "method": "electrum",
+        "coin": "RICK",
+        "servers": [{"url":"electrum1.cipig.net:10017"},{"url":"electrum2.cipig.net:10017"},{"url":"electrum3.cipig.net:10017"}],
+        "mm2": 1,
+        "tx_history": true
+    }))));
+
+    assert_eq!(electrum.0, StatusCode::OK, "RPC «electrum» failed with {} {}", electrum.0, electrum.1);
+    let electrum: Json = unwrap!(json::from_str(&electrum.1));
+
+    // Wait till tx_history will not be loaded
+    unwrap!(block_on (mm.wait_for_log (500., |log| log.contains ("history has been loaded successfully"))));
+
+    // tx_history is requested every 30 seconds, wait another iteration
+    thread::sleep(Duration::from_secs(31));
+
+    // Balance is not changed, therefore tx_history shouldn't be reloaded.
+    // Request metrics and check if the MarketMaker has requested tx_history only once
+    assert_eq!(get_tx_history_request_count(&mm), 1);
+
+    // make a transaction to change balance
+    let mut enable_res: HashMap<&str, Json> = HashMap::new();
+    enable_res.insert("RICK", electrum);
+    log! ("enable_coins: " [enable_res]);
+    withdraw_and_send(&mm, "RICK", "RRYmiZSDo3UdHHqj1rLKf8cbJroyv9NxXw", &enable_res, "-0.00001");
+
+    // Wait another iteration
+    thread::sleep(Duration::from_secs(31));
+
+    // tx_history should be reloaded on next loop iteration
+    assert_eq!(get_tx_history_request_count(&mm), 2);
+}
+
+#[test]
+fn test_withdraw_cashaddresses() {
+    let coins = json!([
+        {"coin":"BCH","pubtype":0,"p2shtype":5,"mm2":1,"protocol":"UTXO",
+         "address_format":{"format":"cashaddress","network":"bchtest"}},
+    ]);
+
+    let mut mm = unwrap! (MarketMakerIt::start (
+        json! ({
+            "gui": "nogui",
+            "netid": 9998,
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "passphrase": "face pin block number add byte put seek mime test note password sin tab multiple",
+            "coins": coins,
+            "i_am_seed": true,
+            "rpc_password": "pass",
+        }),
+        "pass".into(),
+        local_start! ("bob")
+    ));
+    let (_dump_log, _dump_dashboard) = mm_dump(&mm.log_path);
+    log!({ "log path: {}", mm.log_path.display() });
+    unwrap!(block_on (mm.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
+
+    // Enable BCH electrum client with tx_history loop.
+    // Enable RICK electrum client with tx_history loop.
+    let electrum = unwrap!(block_on(mm.rpc (json! ({
+        "userpass": mm.userpass,
+        "method": "electrum",
+        "coin": "BCH",
+        "servers": [{"url":"blackie.c3-soft.com:60001"}, {"url":"bch0.kister.net:51001"}, {"url":"testnet.imaginary.cash:50001"}],
+        "mm2": 1,
+    }))));
+
+    assert_eq!(electrum.0, StatusCode::OK, "RPC «electrum» failed with {} {}", electrum.0, electrum.1);
+    let electrum: Json = unwrap!(json::from_str(&electrum.1));
+    log!([electrum]);
+
+    // make withdraw
+    let withdraw = unwrap!(block_on (mm.rpc (json! ({
+        "userpass": mm.userpass,
+        "method": "withdraw",
+        "coin": "BCH",
+        "to": "bchtest:qr39na5d25wdeecgw3euh9fkd4ygvd4pnsury96597",
+        "amount": 0.0001,
+    }))));
+
+    assert!(withdraw.0.is_success(), "BCH withdraw: {}", withdraw.1);
+    let withdraw_json: Json = unwrap!(json::from_str(&withdraw.1));
+    log!((withdraw_json));
+
+    // check "from" addresses
+    let from: Vec<&str> = withdraw_json["from"].as_array().unwrap()
+        .iter().map(|v| v.as_str().unwrap()).collect();
+    assert_eq!(from, vec!["bchtest:qze8g4gx3z428jjcxzpycpxl7ke7d947gca2a7n2la"]);
+
+    // check "to" addresses
+    let to: Vec<&str> = withdraw_json["to"].as_array().unwrap()
+        .iter().map(|v| v.as_str().unwrap()).collect();
+    assert_eq!(to, vec!["bchtest:qr39na5d25wdeecgw3euh9fkd4ygvd4pnsury96597"]);
+
+    // send the transaction
+    let send_tx = unwrap!(block_on (mm.rpc (json! ({
+        "userpass": mm.userpass,
+        "method": "send_raw_transaction",
+        "coin": "BCH",
+        "tx_hex": withdraw_json["tx_hex"],
+    }))));
+    assert!(send_tx.0.is_success(), "QRC20 send_raw_transaction: {}", send_tx.1);
+    log!((send_tx.1));
+}
+
+#[test]
+fn test_common_cashaddresses() {
+    let coins = json!([
+        {"coin":"BCH","pubtype":0,"p2shtype":5,"mm2":1,"protocol":"UTXO",
+         "address_format":{"format":"cashaddress","network":"bchtest"}},
+    ]);
+
+    let mut mm = unwrap! (MarketMakerIt::start (
+        json! ({
+            "gui": "nogui",
+            "netid": 9998,
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "passphrase": "face pin block number add byte put seek mime test note password sin tab multiple",
+            "coins": coins,
+            "i_am_seed": true,
+            "rpc_password": "pass",
+        }),
+        "pass".into(),
+        local_start! ("bob")
+    ));
+    let (_dump_log, _dump_dashboard) = mm_dump(&mm.log_path);
+    log!({ "log path: {}", mm.log_path.display() });
+    unwrap!(block_on (mm.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
+
+    // Enable BCH electrum client with tx_history loop.
+    // Enable RICK electrum client with tx_history loop.
+    let electrum = unwrap!(block_on(mm.rpc (json! ({
+        "userpass": mm.userpass,
+        "method": "electrum",
+        "coin": "BCH",
+        "servers": [{"url":"blackie.c3-soft.com:60001"}, {"url":"bch0.kister.net:51001"}, {"url":"testnet.imaginary.cash:50001"}],
+        "mm2": 1,
+    }))));
+
+    assert_eq!(electrum.0, StatusCode::OK, "RPC «electrum» failed with {} {}", electrum.0, electrum.1);
+    let electrum: Json = unwrap!(json::from_str(&electrum.1));
+    log!([electrum]);
+
+    assert_eq!(unwrap!(electrum["address"].as_str()), "bchtest:qze8g4gx3z428jjcxzpycpxl7ke7d947gca2a7n2la");
+
+    // check my_balance
+    let rc = unwrap! (block_on (mm.rpc (json! ({
+        "userpass": mm.userpass,
+        "method": "my_balance",
+        "coin": "BCH",
+    }))));
+    assert_eq! (rc.0, StatusCode::OK, "RPC «my_balance» failed with status «{}»", rc.0);
+    let json: Json = unwrap!(json::from_str(&rc.1));
+    let my_balance_address = unwrap!(json["address"].as_str());
+    assert_eq!(my_balance_address, "bchtest:qze8g4gx3z428jjcxzpycpxl7ke7d947gca2a7n2la");
+
+    // check get_enabled_coins
+    let rc = unwrap! (block_on (mm.rpc (json! ({
+        "userpass": mm.userpass,
+        "method": "get_enabled_coins",
+    }))));
+    assert_eq! (rc.0, StatusCode::OK, "RPC «get_enabled_coins» failed with status «{}»", rc.0);
+    let json: Json = unwrap!(json::from_str(&rc.1));
+
+    let obj = &json["result"].as_array().unwrap()[0];
+    assert_eq!(obj["ticker"].as_str().unwrap(), "BCH");
+    assert_eq!(obj["address"].as_str().unwrap(), "bchtest:qze8g4gx3z428jjcxzpycpxl7ke7d947gca2a7n2la");
+}
+
+#[test]
 fn qrc20_activate_electrum() {
     let passphrase = "cV463HpebE2djP9ugJry5wZ9st5cc6AbkHXGryZVPXMH1XJK8cVU";
     let coins = json! ([
         {"coin":"QRC20","required_confirmations":0,"pubtype": 120,"p2shtype": 50,"wiftype": 128,"segwit": true,"txfee": 0,"mm2": 1,"mature_confirmations":500,
-         "protocol":{"platform":"QTUM","token_type": "QRC20","params": {"contract_address":"0xd362e096e873eb7907e205fadc6175c6fec7bc44"}}},
+         "protocol":{"QRC20":{"platform":"QTUM","contract_address":"0xd362e096e873eb7907e205fadc6175c6fec7bc44"}}},
     ]);
 
     let mut mm = unwrap! (MarketMakerIt::start (
@@ -2246,7 +2764,7 @@ fn test_qrc20_withdraw() {
     let passphrase = "cMhHM3PMpMrChygR4bLF7QsTdenhWpFrrmf2UezBG3eeFsz41rtL";
     let coins = json!([
         {"coin":"QRC20","required_confirmations":0,"pubtype": 120,"p2shtype": 50,"wiftype": 128,"segwit": true,"txfee": 0,"mm2": 1,"mature_confirmations":500,
-         "protocol":{"platform":"QTUM","token_type": "QRC20","params": {"contract_address":"0xd362e096e873eb7907e205fadc6175c6fec7bc44"}}},
+         "protocol":{"QRC20":{"platform":"QTUM","contract_address":"0xd362e096e873eb7907e205fadc6175c6fec7bc44"}}},
     ]);
 
     let mut mm = unwrap!(MarketMakerIt::start (
@@ -2380,14 +2898,14 @@ mod wasm_bindgen_tests {
                 "coin": "ETH",
                 "name": "ethereum",
                 "fname": "Ethereum",
-                "etomic": "0x0000000000000000000000000000000000000000",
+                "protocol":"ETH",
                 "rpcport": 80,
                 "mm2": 1
             }, {
                 "coin": "JST",
                 "name": "jst",
                 "fname": "jst",
-                "etomic": "0x2b294F029Fde858b2c62184e8390591755521d8E",
+                "protocol":{"ERC20":{"platform":"ETH","contract_address":"0x2b294F029Fde858b2c62184e8390591755521d8E"}},
                 "rpcport": 80,
                 "mm2": 1
             }]

@@ -7,7 +7,6 @@ use ethereum_types::{H160, U256};
 use futures::{TryFutureExt, FutureExt};
 use gstuff::now_ms;
 use rpc::v1::types::H160 as H160Json;
-use std::borrow::Cow;
 use std::str::FromStr;
 use super::*;
 
@@ -55,13 +54,14 @@ impl QtumRpcOps for ElectrumClient {
 }
 
 pub async fn qrc20_coin_from_conf_and_request(
+    ctx: &MmArc,
     ticker: &str,
     conf: &Json,
     req: &Json,
     priv_key: &[u8],
     contract_address: H160,
 ) -> Result<Qrc20Coin, String> {
-    let inner = try_s!(utxo_arc_from_conf_and_request(ticker, conf, req, priv_key, QRC20_DUST).await);
+    let inner = try_s!(utxo_arc_from_conf_and_request(ctx, ticker, conf, req, priv_key, QRC20_DUST).await);
     Ok(Qrc20Coin { utxo_arc: inner, contract_address })
 }
 
@@ -115,7 +115,15 @@ impl UtxoCoinCommonOps for Qrc20Coin {
     }
 
     fn my_public_key(&self) -> &Public {
-        self.utxo_arc.key_pair.public()
+        self.arc().key_pair.public()
+    }
+
+    fn display_address(&self, address: &Address) -> Result<String, String> {
+        utxo_common::display_address(&self.utxo_arc, address)
+    }
+
+    async fn get_current_mtp(&self) -> Result<u32, String> {
+        utxo_common::get_current_mtp(&self.utxo_arc).await
     }
 }
 
@@ -168,7 +176,7 @@ impl UtxoArcCommonOps for Qrc20Coin {
         my_script_pub: Bytes)
         -> Result<(TransactionInputSigner, AdditionalTxData), String> {
         utxo_common::calc_interest_if_required(
-            &self.utxo_arc,
+            self,
             unsigned,
             data,
             my_script_pub).await
@@ -275,19 +283,19 @@ impl SwapOps for Qrc20Coin {
 
 impl MarketCoinOps for Qrc20Coin {
     fn ticker(&self) -> &str {
-        &self.utxo_arc.ticker
+        &self.arc().ticker
     }
 
-    fn my_address(&self) -> Cow<str> {
-        utxo_common::my_address(&self.utxo_arc)
+    fn my_address(&self) -> Result<String, String> {
+        utxo_common::my_address(self)
     }
 
     fn my_balance(&self) -> Box<dyn Future<Item=BigDecimal, Error=String> + Send> {
         let function = unwrap!(ERC20_CONTRACT.function("balanceOf"));
         let params = unwrap!(function.encode_input(&[
-                    Token::Address(self.utxo_arc.my_address.hash.clone().take().into()),
+                    Token::Address(self.arc().my_address.hash.clone().take().into()),
         ]));
-        match self.utxo_arc.rpc_client {
+        match self.arc().rpc_client {
             UtxoRpcClientEnum::Electrum(ref electrum) => {
                 Box::new(electrum
                     .blockchain_contract_call(&self.contract_address.to_vec().as_slice().into(), params.into())
@@ -326,7 +334,7 @@ impl MarketCoinOps for Qrc20Coin {
     }
 
     fn address_from_pubkey_str(&self, pubkey: &str) -> Result<String, String> {
-        utxo_common::address_from_pubkey_str(&self.utxo_arc, pubkey)
+        utxo_common::address_from_pubkey_str(self, pubkey)
     }
 
     fn display_priv_key(&self) -> String {
@@ -396,8 +404,8 @@ impl MmCoin for Qrc20Coin {
 
 #[async_trait]
 impl UtxoMmCoin for Qrc20Coin {
-    async fn ordered_mature_unspents(&self, ctx: &MmArc, address: &Address) -> Result<Vec<UnspentInfo>, String> {
-        utxo_common::ordered_mature_unspents(self, ctx, address).await
+    fn ordered_mature_unspents(&self, ctx: &MmArc, address: &Address) -> Box<dyn Future<Item=Vec<UnspentInfo>, Error=String> + Send> {
+        Box::new(utxo_common::ordered_mature_unspents(self.clone(), ctx.clone(), address.clone()).boxed().compat())
     }
 
     async fn get_verbose_transaction_from_cache_or_rpc(&self, ctx: &MmArc, txid: H256Json) -> Result<VerboseTransactionFrom, String> {
@@ -410,7 +418,11 @@ impl UtxoMmCoin for Qrc20Coin {
 }
 
 async fn qrc20_withdraw(coin: Qrc20Coin, ctx: MmArc, req: WithdrawRequest) -> Result<TransactionDetails, String> {
-    let to_addr = try_s!(Address::from_str(&req.to));
+    let to_addr = match &coin.arc().address_format {
+        UtxoAddressFormat::Standard => try_s!(Address::from_str(&req.to)),
+        UtxoAddressFormat::CashAddress {..} => try_s!(Address::from_cashaddress(
+            &req.to, coin.arc().checksum_type.clone(), coin.arc().pub_addr_prefix, coin.arc().p2sh_addr_prefix))
+    };
 
     let is_p2pkh = to_addr.prefix == coin.arc().pub_addr_prefix && to_addr.t_addr_prefix == coin.arc().pub_t_addr_prefix;
     let is_p2sh = to_addr.prefix == coin.arc().p2sh_addr_prefix && to_addr.t_addr_prefix == coin.arc().p2sh_t_addr_prefix && coin.arc().segwit;
@@ -444,7 +456,7 @@ async fn qrc20_withdraw(coin: Qrc20Coin, ctx: MmArc, req: WithdrawRequest) -> Re
         script_pubkey,
     }];
 
-    let unspents = try_s!(coin.ordered_mature_unspents(&ctx, &coin.arc().my_address).await.map_err(|e| ERRL!("{}", e)));
+    let unspents = try_s!(coin.ordered_mature_unspents(&ctx, &coin.arc().my_address).compat().await.map_err(|e| ERRL!("{}", e)));
 
     // None seems that the generate_transaction() should request estimated fee for Kbyte
     let actual_tx_fee = None;
@@ -457,9 +469,11 @@ async fn qrc20_withdraw(coin: Qrc20Coin, ctx: MmArc, req: WithdrawRequest) -> Re
     let fee_details = UtxoFeeDetails {
         amount: utxo_common::big_decimal_from_sat(data.fee_amount as i64, coin.arc().decimals),
     };
+    let my_address = try_s!(coin.my_address());
+    let to_address = try_s!(coin.display_address(&to_addr));
     Ok(TransactionDetails {
-        from: vec![coin.arc().my_address.to_string()],
-        to: vec![format!("{}", to_addr)],
+        from: vec![my_address],
+        to: vec![to_address],
         total_amount: utxo_common::big_decimal_from_sat(data.spent_by_me as i64, coin.arc().decimals),
         spent_by_me: utxo_common::big_decimal_from_sat(data.spent_by_me as i64, coin.arc().decimals),
         received_by_me: utxo_common::big_decimal_from_sat(data.received_by_me as i64, coin.arc().decimals),

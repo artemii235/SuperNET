@@ -60,7 +60,11 @@ macro_rules! ifrom {
 pub mod jsonrpc_client;
 #[macro_use]
 pub mod log;
+#[macro_use]
+pub mod mm_metrics;
 
+pub mod big_int_str;
+pub mod file_lock;
 #[cfg(feature = "native")]
 pub mod for_c;
 pub mod custom_futures;
@@ -114,6 +118,7 @@ use std::intrinsics::copy;
 use std::io::{Write};
 use std::mem::{forget, size_of, zeroed};
 use std::os::raw::{c_char, c_void};
+use std::ops::{Add, Div};
 use std::path::{Path, PathBuf};
 #[cfg(not(feature = "native"))]
 use std::pin::Pin;
@@ -124,6 +129,8 @@ use std::time::UNIX_EPOCH;
 use uuid::Uuid;
 #[cfg(feature = "w-bindgen")]
 use wasm_bindgen::prelude::*;
+
+pub use num_bigint::BigInt;
 
 #[cfg(feature = "native")]
 #[allow(dead_code,non_upper_case_globals,non_camel_case_types,non_snake_case)]
@@ -946,20 +953,24 @@ pub fn rpc_response<T> (status: u16, body: T) -> HyRes where Vec<u8>: From<T> {
     Box::new (rf)
 }
 
+#[derive(Serialize)]
+struct ErrResponse {
+    error: String,
+}
+
 /// Converts the given `err` message into the `{error: $err}` JSON string.
 pub fn err_to_rpc_json_string(err: &str) -> String {
-    #[derive(Serialize)]
-    struct ErrResponse {
-        error: String,
-    }
-
     let err = ErrResponse {
         error: err.to_owned(),
     };
     json::to_string(&err).unwrap()
 }
 
-/// Returns the `{error: $msg}` JSON response with the given HTTP `status`.  
+pub fn err_tp_rpc_json(error: String) -> Json {
+    json::to_value(ErrResponse { error }).unwrap()
+}
+
+/// Returns the `{error: $msg}` JSON response with the given HTTP `status`.
 /// Also logs the error (if possible).
 pub fn rpc_err_response(status: u16, msg: &str) -> HyRes {
     // TODO: Like in most other places, we should check for a thread-local access to the proper log here.
@@ -1691,4 +1702,35 @@ pub fn json_dir_entries(path: &dyn AsRef<Path>) -> Result<Vec<DirEntry>, String>
             None
         }
     }).collect())
+}
+
+/// Calculates the median of the set represented as slice
+pub fn median<T: Add<Output = T> + Div<Output = T> + Copy + From<u8> + Ord>(input: &mut [T]) -> Option<T> {
+    // median is undefined on empty sets
+    if input.len() == 0 { return None }
+    input.sort();
+    let median_index = input.len() / 2;
+    if input.len() % 2 == 0 {
+        Some((input[median_index - 1] + input[median_index]) / T::from(2u8))
+    } else {
+        Some(input[median_index])
+    }
+}
+
+#[test]
+fn test_median() {
+    let mut input = [3, 2, 1];
+    let expected = Some(2u32);
+    let actual = median(&mut input);
+    assert_eq!(expected, actual);
+
+    let mut input = [3, 1];
+    let expected = Some(2u32);
+    let actual = median(&mut input);
+    assert_eq!(expected, actual);
+
+    let mut input = [1, 3, 2, 8, 10];
+    let expected = Some(3u32);
+    let actual = median(&mut input);
+    assert_eq!(expected, actual);
 }

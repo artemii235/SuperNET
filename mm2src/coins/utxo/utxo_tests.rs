@@ -1,3 +1,4 @@
+use bigdecimal::BigDecimal;
 use chain::OutPoint;
 use common::block_on;
 use common::mm_ctx::MmCtxBuilder;
@@ -5,18 +6,20 @@ use common::privkey::key_pair_from_seed;
 use futures::future::join_all;
 use gstuff::now_ms;
 use mocktopus::mocking::*;
+use rpc::v1::types::{H256 as H256Json, VerboseBlockClient};
 use script::Builder;
 use serialization::deserialize;
+use std::collections::HashMap;
 use std::thread;
 use std::time::Duration;
 use super::*;
 use super::utxo_standard::{utxo_standard_coin_from_conf_and_request, UtxoStandardCoin, UTXO_STANDARD_DUST};
 use super::rpc_clients::{ElectrumProtocol, ListSinceBlockRes, NetworkInfo, UtxoRpcClientOps};
 
-const TEST_COIN_NAME: &'static str = "ETOMIC";
+const TEST_COIN_NAME: &'static str = "RICK";
 
 pub fn electrum_client_for_test(servers: &[&str]) -> ElectrumClient {
-    let mut client = ElectrumClientImpl::new(TEST_COIN_NAME.into());
+    let mut client = ElectrumClientImpl::new(TEST_COIN_NAME.into(), Default::default());
     for server in servers {
         client.add_server(&ElectrumRpcRequest {
             url: server.to_string(),
@@ -36,6 +39,16 @@ pub fn electrum_client_for_test(servers: &[&str]) -> ElectrumClient {
     }
 
     ElectrumClient(Arc::new(client))
+}
+
+/// Returned client won't work by default, requires some mocks to be usable
+fn native_client_for_test() -> NativeClient {
+    NativeClient(Arc::new(NativeClientImpl {
+        coin_ticker: "TEST".into(),
+        uri: "".into(),
+        auth: "".into(),
+        event_handlers: vec![]
+    }))
 }
 
 fn utxo_coin_fields_for_test(rpc_client: UtxoRpcClientEnum, force_seed: Option<&str>) -> UtxoCoinFields {
@@ -70,6 +83,7 @@ fn utxo_coin_fields_for_test(rpc_client: UtxoRpcClientEnum, force_seed: Option<&
         segwit: false,
         tx_version: 4,
         my_address,
+        address_format: UtxoAddressFormat::Standard,
         asset_chain: true,
         p2sh_addr_prefix: 85,
         p2sh_t_addr_prefix: 0,
@@ -87,7 +101,10 @@ fn utxo_coin_fields_for_test(rpc_client: UtxoRpcClientEnum, force_seed: Option<&
         history_sync_state: Mutex::new(HistorySyncState::NotEnabled),
         required_confirmations: 1.into(),
         force_min_relay_fee: false,
+        mtp_block_count: NonZeroU64::new(11).unwrap(),
+        estimate_fee_mode: None,
         dust_amount: UTXO_STANDARD_DUST,
+        mature_confirmations: MATURE_CONFIRMATIONS_DEFAULT,
     }
 }
 
@@ -111,7 +128,7 @@ fn test_extract_secret() {
 #[test]
 fn test_generate_transaction() {
     let client = electrum_client_for_test(&["test1.cipig.net:10025"]);
-    let coin = utxo_coin_for_test(UtxoRpcClientEnum::Electrum(client), None);
+    let coin = utxo_coin_for_test(client.into(), None);
     let unspents = vec![UnspentInfo {
         value: 10000000000,
         outpoint: OutPoint::default(),
@@ -185,7 +202,7 @@ fn test_generate_transaction() {
 #[test]
 fn test_addresses_from_script() {
     let client = electrum_client_for_test(&["test1.cipig.net:10025", "test2.cipig.net:10025"]);
-    let coin = utxo_coin_for_test(UtxoRpcClientEnum::Electrum(client), None);
+    let coin = utxo_coin_for_test(client.into(), None);
     // P2PKH
     let script: Script = "76a91405aab5342166f8594baf17a7d9bef5d56744332788ac".into();
     let expected_addr: Vec<Address> = vec!["R9o9xTocqr6CeEDGDH6mEYpwLoMz6jNjMW".into()];
@@ -205,7 +222,7 @@ fn test_kmd_interest() {
     let lock_time = 1556623906;
     let current_time = 1556623906 + 3600 + 300;
     let expected = 36870;
-    let actual = kmd_interest(1000001, value, lock_time, current_time);
+    let actual = kmd_interest(Some(1000001), value, lock_time, current_time);
     assert_eq!(expected, actual);
 
     // UTXO amount must be at least 10 KMD to be eligible for interest
@@ -213,7 +230,7 @@ fn test_kmd_interest() {
     let lock_time = 1556623906;
     let current_time = 1556623906 + 3600 + 300;
     let expected = 0;
-    let actual = kmd_interest(1000001, value, lock_time, current_time);
+    let actual = kmd_interest(Some(1000001), value, lock_time, current_time);
     assert_eq!(expected, actual);
 }
 
@@ -271,6 +288,7 @@ fn test_wait_for_payment_spend_timeout_native() {
         coin_ticker: "RICK".into(),
         uri: "http://127.0.0.1:10271".to_owned(),
         auth: fomat!("Basic " (base64_encode("user481805103:pass97a61c8d048bcf468c6c39a314970e557f57afd1d8a5edee917fb29bafb3a43371", URL_SAFE))),
+        event_handlers: Default::default(),
     };
 
     static mut OUTPUT_SPEND_CALLED: bool = false;
@@ -296,7 +314,7 @@ fn test_wait_for_payment_spend_timeout_electrum() {
         MockResult::Return(Box::new(futures01::future::ok(None)))
     });
 
-    let client = ElectrumClientImpl::new(TEST_COIN_NAME.into());
+    let client = ElectrumClientImpl::new(TEST_COIN_NAME.into(), Default::default());
     let client = UtxoRpcClientEnum::Electrum(ElectrumClient(Arc::new(client)));
     let coin = utxo_coin_for_test(client, None);
     let transaction = unwrap!(hex::decode("01000000000102fff7f7881a8099afa6940d42d1e7f6362bec38171ea3edf433541db4e4ad969f00000000494830450221008b9d1dc26ba6a9cb62127b02742fa9d754cd3bebf337f7a55d114c8e5cdd30be022040529b194ba3f9281a99f2b1c0a19c0489bc22ede944ccf4ecbab4cc618ef3ed01eeffffffef51e1b804cc89d182d279655c3aa89e815b1b309fe287d9b2b55d57b90ec68a0100000000ffffffff02202cb206000000001976a9148280b37df378db99f66f85c95a783a76ac7a6d5988ac9093510d000000001976a9143bde42dbee7e4dbe6a21b2d50ce2f0167faa815988ac000247304402203609e17b84f6a7d30c80bfa610b5b4542f32a8a0d5447a12fb1366d7f01cc44a0220573a954c4518331561406f90300e8f3358f51928d43c212a8caed02de67eebee0121025476c2e83188368da1ff3e292e7acafcdb3566bb0ad253f62fc70f07aeee635711000000"));
@@ -310,7 +328,7 @@ fn test_wait_for_payment_spend_timeout_electrum() {
 #[test]
 fn test_search_for_swap_tx_spend_electrum_was_spent() {
     let client = electrum_client_for_test(&["test1.cipig.net:10025", "test2.cipig.net:10025"]);
-    let coin = utxo_coin_for_test(UtxoRpcClientEnum::Electrum(client), Some("spice describe gravity federal blast come thank unfair canal monkey style afraid"));
+    let coin = utxo_coin_for_test(client.into(), Some("spice describe gravity federal blast come thank unfair canal monkey style afraid"));
     // raw tx bytes of https://etomic.explorer.dexstats.info/tx/c514b3163d66636ebc3574817cb5853d5ab39886183de71ffedf5c5768570a6b
     let payment_tx_bytes = unwrap!(hex::decode("0400008085202f89013ac014d4926c8b435f7a5c58f38975d14f1aba597b1eef2dfdc093457678eb83010000006a47304402204ddb9b10237a1267a02426d923528213ad1e0b62d45be7d9629e2909f099d90c02205eecadecf6fd09cb8465170eb878c5d54e563f067b64e23c418da0f6519ca354012102031d4256c4bc9f99ac88bf3dba21773132281f65f9bf23a59928bce08961e2f3ffffffff02809698000000000017a914bbd726b74f27b476d5d932e903b5893fd4e8bd2187acdaaa87010000001976a91405aab5342166f8594baf17a7d9bef5d56744332788ac2771515d000000000000000000000000000000"));
 
@@ -332,7 +350,7 @@ fn test_search_for_swap_tx_spend_electrum_was_spent() {
 #[test]
 fn test_search_for_swap_tx_spend_electrum_was_refunded() {
     let client = electrum_client_for_test(&["test1.cipig.net:10025", "test2.cipig.net:10025"]);
-    let coin = utxo_coin_for_test(UtxoRpcClientEnum::Electrum(client), Some("spice describe gravity federal blast come thank unfair canal monkey style afraid"));
+    let coin = utxo_coin_for_test(client.into(), Some("spice describe gravity federal blast come thank unfair canal monkey style afraid"));
 
     // raw tx bytes of https://etomic.explorer.dexstats.info/tx/c9a47cc6e80a98355cd4e69d436eae6783cbee5991756caa6e64a0743442fa96
     let payment_tx_bytes = unwrap!(hex::decode("0400008085202f8901887e809b10738b1625b7f47fd5d2201f32e8a4c6c0aaefc3b9ab6c07dc6a5925010000006a47304402203966f49ba8acc9fcc0e53e7b917ca5599ce6054a0c2d22752c57a3dc1b0fc83502206fde12c869da20a21cedd5bbc4bcd12977d25ff4b00e0999de5ac4254668e891012102031d4256c4bc9f99ac88bf3dba21773132281f65f9bf23a59928bce08961e2f3ffffffff02809698000000000017a9147e9456f37fa53cf9053e192ea4951d2c8b58647c8784631684010000001976a91405aab5342166f8594baf17a7d9bef5d56744332788ac0fb3525d000000000000000000000000000000"));
@@ -354,7 +372,7 @@ fn test_search_for_swap_tx_spend_electrum_was_refunded() {
 
 #[test]
 fn test_withdraw_impl_set_fixed_fee() {
-    NativeClient::list_unspent_ordered.mock_safe(|_,_| {
+    UtxoStandardCoin::ordered_mature_unspents.mock_safe(|_,_,_| {
         let unspents = vec![UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 1000000000, height: Default::default() }];
         MockResult::Return(Box::new(futures01::future::ok(unspents)))
     });
@@ -365,6 +383,7 @@ fn test_withdraw_impl_set_fixed_fee() {
         coin_ticker: TEST_COIN_NAME.into(),
         uri: "http://127.0.0.1".to_owned(),
         auth: fomat!("Basic " (base64_encode("user481805103:pass97a61c8d048bcf468c6c39a314970e557f57afd1d8a5edee917fb29bafb3a43371", URL_SAFE))),
+        event_handlers: Default::default(),
     }));
 
     let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client), None);
@@ -385,7 +404,7 @@ fn test_withdraw_impl_set_fixed_fee() {
 
 #[test]
 fn test_withdraw_impl_sat_per_kb_fee() {
-    NativeClient::list_unspent_ordered.mock_safe(|_,_| {
+    UtxoStandardCoin::ordered_mature_unspents.mock_safe(|_,_,_| {
         let unspents = vec![UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 1000000000, height: Default::default() }];
         MockResult::Return(Box::new(futures01::future::ok(unspents)))
     });
@@ -396,6 +415,7 @@ fn test_withdraw_impl_sat_per_kb_fee() {
         coin_ticker: TEST_COIN_NAME.into(),
         uri: "http://127.0.0.1".to_owned(),
         auth: fomat!("Basic " (base64_encode("user481805103:pass97a61c8d048bcf468c6c39a314970e557f57afd1d8a5edee917fb29bafb3a43371", URL_SAFE))),
+        event_handlers: Default::default(),
     }));
 
     let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client), None);
@@ -419,7 +439,7 @@ fn test_withdraw_impl_sat_per_kb_fee() {
 
 #[test]
 fn test_withdraw_impl_sat_per_kb_fee_amount_equal_to_max() {
-    NativeClient::list_unspent_ordered.mock_safe(|_,_| {
+    UtxoStandardCoin::ordered_mature_unspents.mock_safe(|_,_,_| {
         let unspents = vec![UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 1000000000, height: Default::default() }];
         MockResult::Return(Box::new(futures01::future::ok(unspents)))
     });
@@ -430,6 +450,7 @@ fn test_withdraw_impl_sat_per_kb_fee_amount_equal_to_max() {
         coin_ticker: TEST_COIN_NAME.into(),
         uri: "http://127.0.0.1".to_owned(),
         auth: fomat!("Basic " (base64_encode("user481805103:pass97a61c8d048bcf468c6c39a314970e557f57afd1d8a5edee917fb29bafb3a43371", URL_SAFE))),
+        event_handlers: Default::default(),
     }));
 
     let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client), None);
@@ -455,7 +476,7 @@ fn test_withdraw_impl_sat_per_kb_fee_amount_equal_to_max() {
 
 #[test]
 fn test_withdraw_impl_sat_per_kb_fee_amount_equal_to_max_dust_included_to_fee() {
-    NativeClient::list_unspent_ordered.mock_safe(|_,_| {
+    UtxoStandardCoin::ordered_mature_unspents.mock_safe(|_,_,_| {
         let unspents = vec![UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 1000000000, height: Default::default() }];
         MockResult::Return(Box::new(futures01::future::ok(unspents)))
     });
@@ -466,6 +487,7 @@ fn test_withdraw_impl_sat_per_kb_fee_amount_equal_to_max_dust_included_to_fee() 
         coin_ticker: TEST_COIN_NAME.into(),
         uri: "http://127.0.0.1".to_owned(),
         auth: fomat!("Basic " (base64_encode("user481805103:pass97a61c8d048bcf468c6c39a314970e557f57afd1d8a5edee917fb29bafb3a43371", URL_SAFE))),
+        event_handlers: Default::default(),
     }));
 
     let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client), None);
@@ -491,7 +513,7 @@ fn test_withdraw_impl_sat_per_kb_fee_amount_equal_to_max_dust_included_to_fee() 
 
 #[test]
 fn test_withdraw_impl_sat_per_kb_fee_amount_over_max() {
-    NativeClient::list_unspent_ordered.mock_safe(|_,_| {
+    UtxoStandardCoin::ordered_mature_unspents.mock_safe(|_,_,_| {
         let unspents = vec![UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 1000000000, height: Default::default() }];
         MockResult::Return(Box::new(futures01::future::ok(unspents)))
     });
@@ -502,6 +524,7 @@ fn test_withdraw_impl_sat_per_kb_fee_amount_over_max() {
         coin_ticker: TEST_COIN_NAME.into(),
         uri: "http://127.0.0.1".to_owned(),
         auth: fomat!("Basic " (base64_encode("user481805103:pass97a61c8d048bcf468c6c39a314970e557f57afd1d8a5edee917fb29bafb3a43371", URL_SAFE))),
+        event_handlers: Default::default(),
     }));
 
     let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client), None);
@@ -518,7 +541,7 @@ fn test_withdraw_impl_sat_per_kb_fee_amount_over_max() {
 
 #[test]
 fn test_withdraw_impl_sat_per_kb_fee_max() {
-    NativeClient::list_unspent_ordered.mock_safe(|_,_| {
+    UtxoStandardCoin::ordered_mature_unspents.mock_safe(|_,_,_| {
         let unspents = vec![UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 1000000000, height: Default::default() }];
         MockResult::Return(Box::new(futures01::future::ok(unspents)))
     });
@@ -529,6 +552,7 @@ fn test_withdraw_impl_sat_per_kb_fee_max() {
         coin_ticker: TEST_COIN_NAME.into(),
         uri: "http://127.0.0.1".to_owned(),
         auth: fomat!("Basic " (base64_encode("user481805103:pass97a61c8d048bcf468c6c39a314970e557f57afd1d8a5edee917fb29bafb3a43371", URL_SAFE))),
+        event_handlers: Default::default(),
     }));
 
     let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client), None);
@@ -554,7 +578,7 @@ fn test_withdraw_impl_sat_per_kb_fee_max() {
 fn test_utxo_lock() {
     // send several transactions concurrently to check that they are not using same inputs
     let client = electrum_client_for_test(&["test1.cipig.net:10025", "test2.cipig.net:10025"]);
-    let coin = utxo_coin_for_test(UtxoRpcClientEnum::Electrum(client), None);
+    let coin = utxo_coin_for_test(client.into(), None);
     let output = TransactionOutput {
         value: 1000000,
         script_pubkey: Builder::build_p2pkh(&coin.arc().my_address.hash).to_bytes(),
@@ -596,8 +620,10 @@ fn get_tx_details_doge() {
          "servers": [{"url":"electrum1.cipig.net:10060"},{"url":"electrum2.cipig.net:10060"},{"url":"electrum3.cipig.net:10060"}]
     });
 
+    let ctx = MmCtxBuilder::new().into_mm_arc();
+
     use common::executor::spawn;
-    let coin = unwrap!(block_on(utxo_standard_coin_from_conf_and_request("DOGE", &conf, &req, &[1u8; 32])));
+    let coin = unwrap!(block_on(utxo_standard_coin_from_conf_and_request(&ctx, "DOGE", &conf, &req, &[1u8; 32])));
 
     let coin1 = coin.clone();
     let coin2 = coin.clone();
@@ -630,7 +656,7 @@ fn get_tx_details_doge() {
 // https://github.com/KomodoPlatform/atomicDEX-API/issues/587
 fn get_tx_details_coinbase_transaction() {
     let client = electrum_client_for_test(&["el0.veruscoin.io:17485", "el1.veruscoin.io:17485"]);
-    let coin = utxo_coin_for_test(UtxoRpcClientEnum::Electrum(client), Some("spice describe gravity federal blast come thank unfair canal monkey style afraid"));
+    let coin = utxo_coin_for_test(client.into(), Some("spice describe gravity federal blast come thank unfair canal monkey style afraid"));
 
     let fut = async move {
         // hash of coinbase transaction https://vrsc.explorer.dexstats.info/tx/0d95a7b11802621a65f9e7ca9da0bca6ee4956fd2328e5116a777285179dbd08
@@ -652,7 +678,7 @@ fn test_electrum_rpc_client_error() {
 
     // use the static string instead because the actual error message cannot be obtain
     // by serde_json serialization
-    let expected = r#"JsonRpcError { client_info: "coin: ETOMIC", request: JsonRpcRequest { jsonrpc: "2.0", id: "0", method: "blockchain.transaction.get", params: [String("0000000000000000000000000000000000000000000000000000000000000000"), Bool(true)] }, error: Response(electrum1.cipig.net:10060, Object({"code": Number(2), "message": String("daemon error: DaemonError({\'code\': -5, \'message\': \'No such mempool or blockchain transaction. Use gettransaction for wallet transactions.\'})")})) }"#;
+    let expected = r#"JsonRpcError { client_info: "coin: RICK", request: JsonRpcRequest { jsonrpc: "2.0", id: "0", method: "blockchain.transaction.get", params: [String("0000000000000000000000000000000000000000000000000000000000000000"), Bool(true)] }, error: Response(electrum1.cipig.net:10060, Object({"code": Number(2), "message": String("daemon error: DaemonError({\'code\': -5, \'message\': \'No such mempool or blockchain transaction. Use gettransaction for wallet transactions.\'})")})) }"#;
     let actual = format!("{}", err);
 
     assert_eq!(expected, actual);
@@ -749,6 +775,7 @@ fn test_generate_transaction_relay_fee_is_used_when_dynamic_fee_is_lower() {
         coin_ticker: "RICK".into(),
         uri: "http://127.0.0.1:10271".to_owned(),
         auth: fomat!("Basic " (base64_encode("user481805103:pass97a61c8d048bcf468c6c39a314970e557f57afd1d8a5edee917fb29bafb3a43371", URL_SAFE))),
+        event_handlers: Default::default(),
     };
 
     static mut GET_RELAY_FEE_CALLED: bool = false;
@@ -795,6 +822,7 @@ fn test_generate_tx_fee_is_correct_when_dynamic_fee_is_larger_than_relay() {
         coin_ticker: "RICK".into(),
         uri: "http://127.0.0.1:10271".to_owned(),
         auth: fomat!("Basic " (base64_encode("user481805103:pass97a61c8d048bcf468c6c39a314970e557f57afd1d8a5edee917fb29bafb3a43371", URL_SAFE))),
+        event_handlers: Default::default(),
     };
 
     static mut GET_RELAY_FEE_CALLED: bool = false;
@@ -835,4 +863,108 @@ fn test_generate_tx_fee_is_correct_when_dynamic_fee_is_larger_than_relay() {
     assert_eq!(generated.1.received_by_me, 999996968);
     assert_eq!(generated.1.spent_by_me, 20000000000);
     assert!(unsafe { GET_RELAY_FEE_CALLED });
+}
+
+#[test]
+fn test_get_median_time_past_from_electrum_kmd() {
+    let client = electrum_client_for_test(&[
+        "electrum1.cipig.net:10001",
+        "electrum2.cipig.net:10001",
+        "electrum3.cipig.net:10001"
+    ]);
+
+    let mtp = client.get_median_time_past(1773390, KMD_MTP_BLOCK_COUNT).wait().unwrap();
+    // the MTP is block time of 1773385 in this case
+    assert_eq!(1583159915, mtp);
+}
+
+#[test]
+fn test_get_median_time_past_from_electrum_btc() {
+    let client = electrum_client_for_test(&[
+        "electrum1.cipig.net:10000",
+        "electrum2.cipig.net:10000",
+        "electrum3.cipig.net:10000"
+    ]);
+
+    let mtp = client.get_median_time_past(632858, KMD_MTP_BLOCK_COUNT).wait().unwrap();
+    assert_eq!(1591173041, mtp);
+}
+
+#[test]
+fn test_get_median_time_past_from_native_has_median_in_get_block() {
+    let client = native_client_for_test();
+    NativeClientImpl::get_block.mock_safe(|_, block_num| {
+        assert_eq!(block_num, "632858".to_string());
+        let block_data_str = r#"{"hash":"00000000000000000002eb7892b8fdfd7b8e0f089e5cdf96436de680b7e695e3","confirmations":1,"strippedsize":833287,"size":1493229,"weight":3993090,"height":632858,"version":549453824,"versionHex":"20c00000","merkleroot":"7e20760d227465d2a84fbb2617b2962f77364daa66f06b48d1010fa27923b940","tx":[],"time":1591174568,"mediantime":1591173041,"nonce":"1594651477","bits":"171297f6","difficulty":15138043247082.88,"chainwork":"00000000000000000000000000000000000000000fff2e35384d3c16f53adda4","nTx":1601,"previousblockhash":"00000000000000000009a54084d9f4eafa3ca07af646ff8fa9031d0ac72a92aa"}"#;
+        let block_data = json::from_str(block_data_str).unwrap();
+        MockResult::Return(
+            Box::new(futures01::future::ok(block_data))
+        )
+    });
+
+    let mtp = client.get_median_time_past(632858, KMD_MTP_BLOCK_COUNT).wait().unwrap();
+    assert_eq!(1591173041, mtp);
+}
+
+#[test]
+fn test_get_median_time_past_from_native_does_not_have_median_in_get_block() {
+    let blocks_json_str = r#"
+    [
+        {"hash":"00000000000000000002eb7892b8fdfd7b8e0f089e5cdf96436de680b7e695e3","confirmations":1,"strippedsize":833287,"size":1493229,"weight":3993090,"height":632858,"version":549453824,"versionHex":"20c00000","merkleroot":"7e20760d227465d2a84fbb2617b2962f77364daa66f06b48d1010fa27923b940","tx":[],"time":1591173090,"nonce":"1594651477","bits":"171297f6","difficulty":15138043247082.88,"chainwork":"00000000000000000000000000000000000000000fff2e35384d3c16f53adda4","nTx":1601,"previousblockhash":"00000000000000000009a54084d9f4eafa3ca07af646ff8fa9031d0ac72a92aa"},
+        {"hash":"00000000000000000002eb7892b8fdfd7b8e0f089e5cdf96436de680b7e695e3","confirmations":1,"strippedsize":833287,"size":1493229,"weight":3993090,"height":632857,"version":549453824,"versionHex":"20c00000","merkleroot":"7e20760d227465d2a84fbb2617b2962f77364daa66f06b48d1010fa27923b940","tx":[],"time":1591173080,"nonce":"1594651477","bits":"171297f6","difficulty":15138043247082.88,"chainwork":"00000000000000000000000000000000000000000fff2e35384d3c16f53adda4","nTx":1601,"previousblockhash":"00000000000000000009a54084d9f4eafa3ca07af646ff8fa9031d0ac72a92aa"},
+        {"hash":"00000000000000000002eb7892b8fdfd7b8e0f089e5cdf96436de680b7e695e3","confirmations":1,"strippedsize":833287,"size":1493229,"weight":3993090,"height":632856,"version":549453824,"versionHex":"20c00000","merkleroot":"7e20760d227465d2a84fbb2617b2962f77364daa66f06b48d1010fa27923b940","tx":[],"time":1591173070,"nonce":"1594651477","bits":"171297f6","difficulty":15138043247082.88,"chainwork":"00000000000000000000000000000000000000000fff2e35384d3c16f53adda4","nTx":1601,"previousblockhash":"00000000000000000009a54084d9f4eafa3ca07af646ff8fa9031d0ac72a92aa"},
+        {"hash":"00000000000000000002eb7892b8fdfd7b8e0f089e5cdf96436de680b7e695e3","confirmations":1,"strippedsize":833287,"size":1493229,"weight":3993090,"height":632855,"version":549453824,"versionHex":"20c00000","merkleroot":"7e20760d227465d2a84fbb2617b2962f77364daa66f06b48d1010fa27923b940","tx":[],"time":1591173058,"nonce":"1594651477","bits":"171297f6","difficulty":15138043247082.88,"chainwork":"00000000000000000000000000000000000000000fff2e35384d3c16f53adda4","nTx":1601,"previousblockhash":"00000000000000000009a54084d9f4eafa3ca07af646ff8fa9031d0ac72a92aa"},
+        {"hash":"00000000000000000002eb7892b8fdfd7b8e0f089e5cdf96436de680b7e695e3","confirmations":1,"strippedsize":833287,"size":1493229,"weight":3993090,"height":632854,"version":549453824,"versionHex":"20c00000","merkleroot":"7e20760d227465d2a84fbb2617b2962f77364daa66f06b48d1010fa27923b940","tx":[],"time":1591173050,"nonce":"1594651477","bits":"171297f6","difficulty":15138043247082.88,"chainwork":"00000000000000000000000000000000000000000fff2e35384d3c16f53adda4","nTx":1601,"previousblockhash":"00000000000000000009a54084d9f4eafa3ca07af646ff8fa9031d0ac72a92aa"},
+        {"hash":"00000000000000000002eb7892b8fdfd7b8e0f089e5cdf96436de680b7e695e3","confirmations":1,"strippedsize":833287,"size":1493229,"weight":3993090,"height":632853,"version":549453824,"versionHex":"20c00000","merkleroot":"7e20760d227465d2a84fbb2617b2962f77364daa66f06b48d1010fa27923b940","tx":[],"time":1591173041,"nonce":"1594651477","bits":"171297f6","difficulty":15138043247082.88,"chainwork":"00000000000000000000000000000000000000000fff2e35384d3c16f53adda4","nTx":1601,"previousblockhash":"00000000000000000009a54084d9f4eafa3ca07af646ff8fa9031d0ac72a92aa"},
+        {"hash":"00000000000000000002eb7892b8fdfd7b8e0f089e5cdf96436de680b7e695e3","confirmations":1,"strippedsize":833287,"size":1493229,"weight":3993090,"height":632852,"version":549453824,"versionHex":"20c00000","merkleroot":"7e20760d227465d2a84fbb2617b2962f77364daa66f06b48d1010fa27923b940","tx":[],"time":1591173040,"nonce":"1594651477","bits":"171297f6","difficulty":15138043247082.88,"chainwork":"00000000000000000000000000000000000000000fff2e35384d3c16f53adda4","nTx":1601,"previousblockhash":"00000000000000000009a54084d9f4eafa3ca07af646ff8fa9031d0ac72a92aa"},
+        {"hash":"00000000000000000002eb7892b8fdfd7b8e0f089e5cdf96436de680b7e695e3","confirmations":1,"strippedsize":833287,"size":1493229,"weight":3993090,"height":632851,"version":549453824,"versionHex":"20c00000","merkleroot":"7e20760d227465d2a84fbb2617b2962f77364daa66f06b48d1010fa27923b940","tx":[],"time":1591173039,"nonce":"1594651477","bits":"171297f6","difficulty":15138043247082.88,"chainwork":"00000000000000000000000000000000000000000fff2e35384d3c16f53adda4","nTx":1601,"previousblockhash":"00000000000000000009a54084d9f4eafa3ca07af646ff8fa9031d0ac72a92aa"},
+        {"hash":"00000000000000000002eb7892b8fdfd7b8e0f089e5cdf96436de680b7e695e3","confirmations":1,"strippedsize":833287,"size":1493229,"weight":3993090,"height":632850,"version":549453824,"versionHex":"20c00000","merkleroot":"7e20760d227465d2a84fbb2617b2962f77364daa66f06b48d1010fa27923b940","tx":[],"time":1591173038,"nonce":"1594651477","bits":"171297f6","difficulty":15138043247082.88,"chainwork":"00000000000000000000000000000000000000000fff2e35384d3c16f53adda4","nTx":1601,"previousblockhash":"00000000000000000009a54084d9f4eafa3ca07af646ff8fa9031d0ac72a92aa"},
+        {"hash":"00000000000000000002eb7892b8fdfd7b8e0f089e5cdf96436de680b7e695e3","confirmations":1,"strippedsize":833287,"size":1493229,"weight":3993090,"height":632849,"version":549453824,"versionHex":"20c00000","merkleroot":"7e20760d227465d2a84fbb2617b2962f77364daa66f06b48d1010fa27923b940","tx":[],"time":1591173037,"nonce":"1594651477","bits":"171297f6","difficulty":15138043247082.88,"chainwork":"00000000000000000000000000000000000000000fff2e35384d3c16f53adda4","nTx":1601,"previousblockhash":"00000000000000000009a54084d9f4eafa3ca07af646ff8fa9031d0ac72a92aa"},
+        {"hash":"00000000000000000002eb7892b8fdfd7b8e0f089e5cdf96436de680b7e695e3","confirmations":1,"strippedsize":833287,"size":1493229,"weight":3993090,"height":632848,"version":549453824,"versionHex":"20c00000","merkleroot":"7e20760d227465d2a84fbb2617b2962f77364daa66f06b48d1010fa27923b940","tx":[],"time":1591173030,"nonce":"1594651477","bits":"171297f6","difficulty":15138043247082.88,"chainwork":"00000000000000000000000000000000000000000fff2e35384d3c16f53adda4","nTx":1601,"previousblockhash":"00000000000000000009a54084d9f4eafa3ca07af646ff8fa9031d0ac72a92aa"}
+    ]
+    "#;
+
+    let blocks: Vec<VerboseBlockClient> = json::from_str(blocks_json_str).unwrap();
+    let mut blocks: HashMap<_, _> = blocks.into_iter().map(|block| (block.height.unwrap().to_string(), block)).collect();
+    let client = native_client_for_test();
+    NativeClientImpl::get_block.mock_safe(move |_, block_num| {
+        let block = blocks.remove(&block_num).unwrap();
+        MockResult::Return(
+            Box::new(futures01::future::ok(block))
+        )
+    });
+
+    let mtp = client.get_median_time_past(632858, KMD_MTP_BLOCK_COUNT).wait().unwrap();
+    assert_eq!(1591173041, mtp);
+}
+
+#[test]
+fn test_cashaddresses_in_tx_details_by_hash() {
+    let conf = json!({
+        "coin": "BCH",
+        "pubtype": 0,
+        "p2shtype": 5,
+        "mm2": 1,
+        "address_format":{"format":"cashaddress","network":"bchtest"},
+    });
+    let req = json!({
+         "method": "electrum",
+         "servers": [{"url":"blackie.c3-soft.com:60001"}, {"url":"bch0.kister.net:51001"}, {"url":"testnet.imaginary.cash:50001"}],
+    });
+
+    let ctx = MmCtxBuilder::new().into_mm_arc();
+
+    let coin = unwrap!(block_on(utxo_standard_coin_from_conf_and_request(
+        &ctx, "BCH", &conf, &req, &[1u8; 32])));
+
+    let hash = hex::decode("0f2f6e0c8f440c641895023782783426c3aca1acc78d7c0db7751995e8aa5751").unwrap();
+    let fut = async {
+        let tx_details = coin.tx_details_by_hash(&hash).compat().await.unwrap();
+        log!([tx_details]);
+
+        assert!(tx_details.from.iter().any(|addr| addr == "bchtest:qze8g4gx3z428jjcxzpycpxl7ke7d947gca2a7n2la"));
+        assert!(tx_details.to.iter().any(|addr| addr == "bchtest:qr39na5d25wdeecgw3euh9fkd4ygvd4pnsury96597"));
+    };
+
+    block_on(fut);
 }

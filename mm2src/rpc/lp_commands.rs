@@ -77,7 +77,7 @@ pub async fn electrum (ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
     let unspendable_balance = try_s! (coin.my_unspendable_balance(&ctx).compat().await);
     let res = json! ({
         "result": "success",
-        "address": coin.my_address(),
+        "address": try_s!(coin.my_address()),
         "balance": balance,
         "unspendable_balance": unspendable_balance,
         "locked_by_swaps": get_locked_amount (&ctx, &ticker),
@@ -97,7 +97,7 @@ pub async fn enable (ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String>
     let unspendable_balance = try_s! (coin.my_unspendable_balance(&ctx).compat().await);
     let res = json! ({
         "result": "success",
-        "address": coin.my_address(),
+        "address": try_s!(coin.my_address()),
         "balance": balance,
         "unspendable_balance": unspendable_balance,
         "locked_by_swaps": get_locked_amount (&ctx, &ticker),
@@ -127,6 +127,15 @@ pub fn help() -> HyRes {
     ")
 }
 
+/// Get MarketMaker session metrics
+pub fn metrics(ctx: MmArc) -> HyRes {
+    match ctx.metrics.collect_json()
+        .map(|value| value.to_string()) {
+        Ok(response) => rpc_response(200, response),
+        Err(err) => rpc_err_response(500, &err),
+    }
+}
+
 /// Get my_balance of a coin
 pub fn my_balance (ctx: MmArc, req: Json) -> HyRes {
     let ticker = try_h! (req["coin"].as_str().ok_or ("No 'coin' field")).to_owned();
@@ -147,7 +156,7 @@ pub fn my_balance (ctx: MmArc, req: Json) -> HyRes {
                 "balance": balance,
                 "unspendable_balance": unspendable_balance,
                 "locked_by_swaps": get_locked_amount(&ctx, &ticker),
-                "address": coin.my_address(),
+                "address": try_h!(coin.my_address()),
             }).to_string())
         });
     Box::new(fut)
