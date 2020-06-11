@@ -273,7 +273,7 @@ impl EthCoinImpl {
     /// Get gas price
     fn get_gas_price(&self) -> impl Future<Item=U256, Error=String> {
         if let Some(url) = &self.gas_station_url {
-            Either01::A(GasStationData::get_gas_price(&url))
+            Either01::A(GasStationData::get_gas_price(&url).map(|price| add_ten_pct_one_gwei(price)))
         } else {
             Either01::B(self.web3.eth().gas_price().map_err(|e| ERRL!("{}", e)))
         }
@@ -2104,7 +2104,7 @@ struct GasStationData {
 impl GasStationData {
     fn average_gwei(&self) -> U256 {
         // Ethgasstation API returns response in 10^8 wei units. So 10 from their API mean 1 gwei
-        U256::from(self.average as u64 + 10) * U256::exp10(8)
+        U256::from(self.average as u64) * U256::exp10(8)
     }
 
     fn get_gas_price(uri: &str) -> Box<dyn Future<Item=U256, Error=String> + Send> {
@@ -2337,4 +2337,14 @@ fn get_addr_nonce(addr: Address, web3s: &Vec<Web3Instance>) -> Box<dyn Future<It
         }
     };
     Box::new(Box::pin(fut).compat())
+}
+
+fn add_ten_pct_one_gwei(num: U256) -> U256 {
+    let one_gwei = U256::from(10u64.pow(9));
+    let ten_pct = (num / U256::from(100)) * U256::from(10);
+    if ten_pct < one_gwei {
+        num + one_gwei
+    } else {
+        num + ten_pct
+    }
 }
