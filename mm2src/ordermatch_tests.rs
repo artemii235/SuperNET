@@ -21,6 +21,10 @@ fn test_match_maker_order_and_taker_request() {
         matches: HashMap::new(),
         started_swaps: Vec::new(),
         uuid: Uuid::new_v4(),
+        base_confs: None,
+        base_nota: None,
+        rel_confs: None,
+        rel_nota: None,
     };
 
     let request = TakerRequest {
@@ -36,6 +40,10 @@ fn test_match_maker_order_and_taker_request() {
         rel_amount_rat: Some(BigRational::from_integer(20.into())),
         action: TakerAction::Buy,
         match_by: MatchBy::Any,
+        base_confs: None,
+        base_nota: None,
+        rel_confs: None,
+        rel_nota: None,
     };
 
     let actual = match_order_and_request(&maker, &request);
@@ -55,6 +63,10 @@ fn test_match_maker_order_and_taker_request() {
         matches: HashMap::new(),
         started_swaps: Vec::new(),
         uuid: Uuid::new_v4(),
+        base_confs: None,
+        base_nota: None,
+        rel_confs: None,
+        rel_nota: None,
     };
 
     let request = TakerRequest {
@@ -70,6 +82,10 @@ fn test_match_maker_order_and_taker_request() {
         rel_amount_rat: Some(BigRational::from_integer(20.into())),
         action: TakerAction::Buy,
         match_by: MatchBy::Any,
+        base_confs: None,
+        base_nota: None,
+        rel_confs: None,
+        rel_nota: None,
     };
 
     let actual = match_order_and_request(&maker, &request);
@@ -89,6 +105,10 @@ fn test_match_maker_order_and_taker_request() {
         matches: HashMap::new(),
         started_swaps: Vec::new(),
         uuid: Uuid::new_v4(),
+        base_confs: None,
+        base_nota: None,
+        rel_confs: None,
+        rel_nota: None,
     };
 
     let request = TakerRequest {
@@ -104,6 +124,10 @@ fn test_match_maker_order_and_taker_request() {
         rel_amount_rat: Some(BigRational::from_integer(2.into())),
         action: TakerAction::Buy,
         match_by: MatchBy::Any,
+        base_confs: None,
+        base_nota: None,
+        rel_confs: None,
+        rel_nota: None,
     };
 
     let actual = match_order_and_request(&maker, &request);
@@ -123,6 +147,10 @@ fn test_match_maker_order_and_taker_request() {
         matches: HashMap::new(),
         started_swaps: Vec::new(),
         uuid: Uuid::new_v4(),
+        base_confs: None,
+        base_nota: None,
+        rel_confs: None,
+        rel_nota: None,
     };
 
     let request = TakerRequest {
@@ -138,6 +166,10 @@ fn test_match_maker_order_and_taker_request() {
         rel_amount_rat: Some(BigRational::from_integer(10.into())),
         action: TakerAction::Sell,
         match_by: MatchBy::Any,
+        base_confs: None,
+        base_nota: None,
+        rel_confs: None,
+        rel_nota: None,
     };
 
     let actual = match_order_and_request(&maker, &request);
@@ -157,6 +189,10 @@ fn test_match_maker_order_and_taker_request() {
         matches: HashMap::new(),
         started_swaps: Vec::new(),
         uuid: Uuid::new_v4(),
+        base_confs: None,
+        base_nota: None,
+        rel_confs: None,
+        rel_nota: None,
     };
 
     let request = TakerRequest {
@@ -172,6 +208,10 @@ fn test_match_maker_order_and_taker_request() {
         rel_amount_rat: Some(BigRational::from_integer(10.into())),
         action: TakerAction::Sell,
         match_by: MatchBy::Any,
+        base_confs: None,
+        base_nota: None,
+        rel_confs: None,
+        rel_nota: None,
     };
 
     let actual = match_order_and_request(&maker, &request);
@@ -191,6 +231,10 @@ fn test_match_maker_order_and_taker_request() {
         matches: HashMap::new(),
         started_swaps: Vec::new(),
         uuid: Uuid::new_v4(),
+        base_confs: None,
+        base_nota: None,
+        rel_confs: None,
+        rel_nota: None,
     };
 
     let request = TakerRequest {
@@ -206,6 +250,10 @@ fn test_match_maker_order_and_taker_request() {
         rel_amount_rat: Some(BigRational::new(9.into(), 10.into())),
         action: TakerAction::Sell,
         match_by: MatchBy::Any,
+        base_confs: None,
+        base_nota: None,
+        rel_confs: None,
+        rel_nota: None,
     };
 
     let actual = match_order_and_request(&maker, &request);
@@ -228,6 +276,10 @@ fn test_maker_order_available_amount() {
         matches: HashMap::new(),
         started_swaps: Vec::new(),
         uuid: Uuid::new_v4(),
+        base_confs: None,
+        base_nota: None,
+        rel_confs: None,
+        rel_nota: None,
     };
     maker.matches.insert(Uuid::new_v4(), MakerMatch {
         request: TakerRequest {
@@ -243,6 +295,10 @@ fn test_maker_order_available_amount() {
             method: "request".into(),
             action: TakerAction::Buy,
             match_by: MatchBy::Any,
+            base_confs: None,
+            base_nota: None,
+            rel_confs: None,
+            rel_nota: None,
         },
         reserved: MakerReserved {
             method: "reserved".into(),
@@ -256,6 +312,10 @@ fn test_maker_order_available_amount() {
             dest_pub_key: H256Json::default(),
             maker_order_uuid: Uuid::new_v4(),
             taker_order_uuid: Uuid::new_v4(),
+            base_confs: None,
+            base_nota: None,
+            rel_confs: None,
+            rel_nota: None,
         },
         connect: None,
         connected: None,
@@ -275,6 +335,10 @@ fn test_maker_order_available_amount() {
             method: "request".into(),
             action: TakerAction::Buy,
             match_by: MatchBy::Any,
+            base_confs: None,
+            base_nota: None,
+            rel_confs: None,
+            rel_nota: None,
         },
         reserved: MakerReserved {
             method: "reserved".into(),
@@ -288,6 +352,10 @@ fn test_maker_order_available_amount() {
             dest_pub_key: H256Json::default(),
             maker_order_uuid: Uuid::new_v4(),
             taker_order_uuid: Uuid::new_v4(),
+            base_confs: None,
+            base_nota: None,
+            rel_confs: None,
+            rel_nota: None,
         },
         connect: None,
         connected: None,
@@ -316,6 +384,10 @@ fn test_taker_match_reserved() {
         rel_amount_rat: Some(BigRational::from_integer(10.into())),
         action: TakerAction::Buy,
         match_by: MatchBy::Any,
+        base_confs: None,
+        base_nota: None,
+        rel_confs: None,
+        rel_nota: None,
     };
 
     let order = TakerOrder {
@@ -337,6 +409,10 @@ fn test_taker_match_reserved() {
         dest_pub_key: H256Json::default(),
         maker_order_uuid: Uuid::new_v4(),
         taker_order_uuid: uuid,
+        base_confs: None,
+        base_nota: None,
+        rel_confs: None,
+        rel_nota: None,
     };
 
     assert_eq!(MatchReservedResult::Matched, order.match_reserved(&reserved));
@@ -355,6 +431,10 @@ fn test_taker_match_reserved() {
         rel_amount_rat: Some(BigRational::from_integer(10.into())),
         action: TakerAction::Sell,
         match_by: MatchBy::Any,
+        base_confs: None,
+        base_nota: None,
+        rel_confs: None,
+        rel_nota: None,
     };
 
     let order = TakerOrder {
@@ -376,6 +456,10 @@ fn test_taker_match_reserved() {
         dest_pub_key: H256Json::default(),
         maker_order_uuid: Uuid::new_v4(),
         taker_order_uuid: uuid,
+        base_confs: None,
+        base_nota: None,
+        rel_confs: None,
+        rel_nota: None,
     };
 
     assert_eq!(MatchReservedResult::Matched, order.match_reserved(&reserved));
@@ -393,6 +477,10 @@ fn test_taker_match_reserved() {
         rel_amount_rat: Some(BigRational::new(9.into(), 10.into())),
         action: TakerAction::Sell,
         match_by: MatchBy::Any,
+        base_confs: None,
+        base_nota: None,
+        rel_confs: None,
+        rel_nota: None,
     };
 
     let order = TakerOrder {
@@ -414,6 +502,10 @@ fn test_taker_match_reserved() {
         dest_pub_key: H256Json::default(),
         maker_order_uuid: Uuid::new_v4(),
         taker_order_uuid: uuid,
+        base_confs: None,
+        base_nota: None,
+        rel_confs: None,
+        rel_nota: None,
     };
 
     assert_eq!(MatchReservedResult::Matched, order.match_reserved(&reserved));
@@ -431,6 +523,10 @@ fn test_taker_match_reserved() {
         rel_amount_rat: Some(BigRational::new(9.into(), 10.into())),
         action: TakerAction::Sell,
         match_by: MatchBy::Any,
+        base_confs: None,
+        base_nota: None,
+        rel_confs: None,
+        rel_nota: None,
     };
 
     let order = TakerOrder {
@@ -452,6 +548,10 @@ fn test_taker_match_reserved() {
         dest_pub_key: H256Json::default(),
         maker_order_uuid: Uuid::new_v4(),
         taker_order_uuid: uuid,
+        base_confs: None,
+        base_nota: None,
+        rel_confs: None,
+        rel_nota: None,
     };
 
     assert_eq!(MatchReservedResult::NotMatched, order.match_reserved(&reserved));
@@ -469,6 +569,10 @@ fn test_taker_match_reserved() {
         rel_amount_rat: Some(BigRational::from_integer(2.into())),
         action: TakerAction::Buy,
         match_by: MatchBy::Any,
+        base_confs: None,
+        base_nota: None,
+        rel_confs: None,
+        rel_nota: None,
     };
 
     let order = TakerOrder {
@@ -490,6 +594,10 @@ fn test_taker_match_reserved() {
         dest_pub_key: H256Json::default(),
         maker_order_uuid: Uuid::new_v4(),
         taker_order_uuid: uuid,
+        base_confs: None,
+        base_nota: None,
+        rel_confs: None,
+        rel_nota: None,
     };
 
     assert_eq!(MatchReservedResult::Matched, order.match_reserved(&reserved));
@@ -507,6 +615,10 @@ fn test_taker_match_reserved() {
         rel_amount_rat: None,
         action: TakerAction::Buy,
         match_by: MatchBy::Any,
+        base_confs: None,
+        base_nota: None,
+        rel_confs: None,
+        rel_nota: None,
     };
 
     let order = TakerOrder {
@@ -528,6 +640,10 @@ fn test_taker_match_reserved() {
         dest_pub_key: H256Json::default(),
         maker_order_uuid: Uuid::new_v4(),
         taker_order_uuid: uuid,
+        base_confs: None,
+        base_nota: None,
+        rel_confs: None,
+        rel_nota: None,
     };
 
     assert_eq!(MatchReservedResult::Matched, order.match_reserved(&reserved));
@@ -545,6 +661,10 @@ fn test_taker_match_reserved() {
         rel_amount_rat: Some(BigRational::from_integer(2.into())),
         action: TakerAction::Buy,
         match_by: MatchBy::Any,
+        base_confs: None,
+        base_nota: None,
+        rel_confs: None,
+        rel_nota: None,
     };
 
     let order = TakerOrder {
@@ -566,6 +686,10 @@ fn test_taker_match_reserved() {
         dest_pub_key: H256Json::default(),
         maker_order_uuid: Uuid::new_v4(),
         taker_order_uuid: uuid,
+        base_confs: None,
+        base_nota: None,
+        rel_confs: None,
+        rel_nota: None,
     };
 
     assert_eq!(MatchReservedResult::Matched, order.match_reserved(&reserved));
@@ -583,6 +707,10 @@ fn test_taker_match_reserved() {
         rel_amount_rat: Some(BigRational::from_integer(2.into())),
         action: TakerAction::Buy,
         match_by: MatchBy::Any,
+        base_confs: None,
+        base_nota: None,
+        rel_confs: None,
+        rel_nota: None,
     };
 
     let order = TakerOrder {
@@ -604,6 +732,10 @@ fn test_taker_match_reserved() {
         dest_pub_key: H256Json::default(),
         maker_order_uuid: Uuid::new_v4(),
         taker_order_uuid: uuid,
+        base_confs: None,
+        base_nota: None,
+        rel_confs: None,
+        rel_nota: None,
     };
 
     assert_eq!(MatchReservedResult::NotMatched, order.match_reserved(&reserved));
@@ -623,6 +755,10 @@ fn test_taker_match_reserved() {
             sender_pubkey: H256Json::default(),
             dest_pub_key: H256Json::default(),
             match_by: MatchBy::Any,
+            base_confs: None,
+            base_nota: None,
+            rel_confs: None,
+            rel_nota: None,
         },
         matches: HashMap::new(),
         order_type: OrderType::GoodTillCancelled,
@@ -640,6 +776,10 @@ fn test_taker_match_reserved() {
         method: "reserved".into(),
         sender_pubkey: H256Json::default(),
         dest_pub_key: H256Json::default(),
+        base_confs: None,
+        base_nota: None,
+        rel_confs: None,
+        rel_nota: None,
     };
 
     assert_eq!(MatchReservedResult::Matched, order.match_reserved(&reserved));
@@ -660,6 +800,10 @@ fn test_taker_order_cancellable() {
         rel_amount_rat: Some(BigRational::from_integer(2.into())),
         action: TakerAction::Buy,
         match_by: MatchBy::Any,
+        base_confs: None,
+        base_nota: None,
+        rel_confs: None,
+        rel_nota: None,
     };
 
     let order = TakerOrder {
@@ -684,6 +828,10 @@ fn test_taker_order_cancellable() {
         rel_amount_rat: Some(BigRational::from_integer(2.into())),
         action: TakerAction::Buy,
         match_by: MatchBy::Any,
+        base_confs: None,
+        base_nota: None,
+        rel_confs: None,
+        rel_nota: None,
     };
 
     let mut order = TakerOrder {
@@ -709,6 +857,10 @@ fn test_taker_order_cancellable() {
                 dest_pub_key: H256Json::default(),
                 maker_order_uuid: Uuid::new_v4(),
                 taker_order_uuid: Uuid::new_v4(),
+                base_confs: None,
+                base_nota: None,
+                rel_confs: None,
+                rel_nota: None,
             },
             connect: TakerConnect {
                 method: "connect".into(),
@@ -742,6 +894,10 @@ fn prepare_for_cancel_by(ctx: &MmArc) {
         price: 0.into(),
         price_rat: BigRational::from_integer(0.into()),
         started_swaps: vec![],
+        base_confs: None,
+        base_nota: None,
+        rel_confs: None,
+        rel_nota: None,
     });
     maker_orders.insert(Uuid::from_bytes([1; 16]), MakerOrder {
         uuid: Uuid::from_bytes([1; 16]),
@@ -756,6 +912,10 @@ fn prepare_for_cancel_by(ctx: &MmArc) {
         price: 0.into(),
         price_rat: BigRational::from_integer(0.into()),
         started_swaps: vec![],
+        base_confs: None,
+        base_nota: None,
+        rel_confs: None,
+        rel_nota: None,
     });
     maker_orders.insert(Uuid::from_bytes([2; 16]), MakerOrder {
         uuid: Uuid::from_bytes([2; 16]),
@@ -770,6 +930,10 @@ fn prepare_for_cancel_by(ctx: &MmArc) {
         price: 0.into(),
         price_rat: BigRational::from_integer(0.into()),
         started_swaps: vec![],
+        base_confs: None,
+        base_nota: None,
+        rel_confs: None,
+        rel_nota: None,
     });
     taker_orders.insert(Uuid::from_bytes([3; 16]), TakerOrder {
         matches: HashMap::new(),
@@ -787,6 +951,10 @@ fn prepare_for_cancel_by(ctx: &MmArc) {
             method: "request".into(),
             sender_pubkey: H256Json::default(),
             match_by: MatchBy::Any,
+            base_confs: None,
+            base_nota: None,
+            rel_confs: None,
+            rel_nota: None,
         },
         order_type: OrderType::GoodTillCancelled,
     });
@@ -872,6 +1040,10 @@ fn test_taker_order_match_by() {
         rel_amount_rat: Some(BigRational::from_integer(10.into())),
         action: TakerAction::Buy,
         match_by: MatchBy::Orders(not_matching_uuids),
+        base_confs: None,
+        base_nota: None,
+        rel_confs: None,
+        rel_nota: None,
     };
 
     let mut order = TakerOrder {
@@ -893,6 +1065,10 @@ fn test_taker_order_match_by() {
         dest_pub_key: H256Json::default(),
         maker_order_uuid: Uuid::new_v4(),
         taker_order_uuid: uuid,
+        base_confs: None,
+        base_nota: None,
+        rel_confs: None,
+        rel_nota: None,
     };
 
     assert_eq!(MatchReservedResult::NotMatched, order.match_reserved(&reserved));

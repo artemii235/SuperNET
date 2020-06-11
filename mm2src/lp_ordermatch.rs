@@ -80,6 +80,10 @@ struct TakerRequest {
     dest_pub_key: H256Json,
     #[serde(default)]
     match_by: MatchBy,
+    base_confs: Option<u64>,
+    base_nota: Option<bool>,
+    rel_confs: Option<u64>,
+    rel_nota: Option<bool>,
 }
 
 impl TakerRequest {
@@ -197,6 +201,10 @@ pub struct MakerOrder {
     matches: HashMap<Uuid, MakerMatch>,
     started_swaps: Vec<Uuid>,
     uuid: Uuid,
+    base_confs: Option<u64>,
+    base_nota: Option<bool>,
+    rel_confs: Option<u64>,
+    rel_nota: Option<bool>,
 }
 
 fn zero_rat() -> BigRational { BigRational::zero() }
@@ -241,6 +249,10 @@ impl Into<MakerOrder> for TakerOrder {
                 matches: HashMap::new(),
                 started_swaps: Vec::new(),
                 uuid: self.request.uuid,
+                base_confs: self.request.base_confs,
+                base_nota: self.request.base_nota,
+                rel_confs: self.request.rel_confs,
+                rel_nota: self.request.rel_nota,
             },
             // The "buy" taker order is recreated with reversed pair as Maker order is always considered as "sell"
             TakerAction::Buy => MakerOrder {
@@ -256,6 +268,10 @@ impl Into<MakerOrder> for TakerOrder {
                 matches: HashMap::new(),
                 started_swaps: Vec::new(),
                 uuid: self.request.uuid,
+                base_confs: self.request.rel_confs,
+                base_nota: self.request.rel_nota,
+                rel_confs: self.request.base_confs,
+                rel_nota: self.request.base_nota,
             },
         };
         order
@@ -284,6 +300,10 @@ struct MakerReserved {
     method: String,
     sender_pubkey: H256Json,
     dest_pub_key: H256Json,
+    base_confs: Option<u64>,
+    base_nota: Option<bool>,
+    rel_confs: Option<u64>,
+    rel_nota: Option<bool>,
 }
 
 impl MakerReserved {
@@ -618,6 +638,10 @@ pub fn lp_trade_command(
                         method: "reserved".into(),
                         taker_order_uuid: taker_request.uuid,
                         maker_order_uuid: *uuid,
+                        base_confs: order.base_confs,
+                        base_nota: order.base_nota,
+                        rel_confs: order.rel_confs,
+                        rel_nota: order.rel_nota,
                     };
                     ctx.broadcast_p2p_msg(&unwrap!(json::to_string(&reserved)));
                     let maker_match = MakerMatch {
@@ -708,6 +732,10 @@ pub struct AutoBuyInput {
     match_by: MatchBy,
     #[serde(default)]
     order_type: OrderType,
+    base_confs: Option<u64>,
+    base_nota: Option<bool>,
+    rel_confs: Option<u64>,
+    rel_nota: Option<bool>,
 }
 
 pub async fn buy(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
@@ -724,7 +752,7 @@ pub async fn buy(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
     let trade_info = TradeInfo::Taker(dex_fee);
     try_s!(rel_coin.check_i_have_enough_to_trade(&my_amount.clone().into(), &my_balance.clone().into(), trade_info).compat().await);
     try_s!(base_coin.can_i_spend_other_payment().compat().await);
-    let res = try_s!(lp_auto_buy(&ctx, input)).into_bytes();
+    let res = try_s!(lp_auto_buy(&ctx, &base_coin, &rel_coin, input)).into_bytes();
     Ok(try_s!(Response::builder().body(res)))
 }
 
@@ -741,7 +769,7 @@ pub async fn sell(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
     let trade_info = TradeInfo::Taker(dex_fee);
     try_s!(base_coin.check_i_have_enough_to_trade(&input.volume.clone().into(), &my_balance.clone().into(), trade_info).compat().await);
     try_s!(rel_coin.can_i_spend_other_payment().compat().await);
-    let res = try_s!(lp_auto_buy(&ctx, input)).into_bytes();
+    let res = try_s!(lp_auto_buy(&ctx, &base_coin, &rel_coin, input)).into_bytes();
     Ok(try_s!(Response::builder().body(res)))
 }
 
@@ -764,7 +792,7 @@ struct TakerMatch {
     last_updated: u64,
 }
 
-pub fn lp_auto_buy(ctx: &MmArc, input: AutoBuyInput) -> Result<String, String> {
+pub fn lp_auto_buy(ctx: &MmArc, base_coin: &MmCoinEnum, rel_coin: &MmCoinEnum, input: AutoBuyInput) -> Result<String, String> {
     if input.price < MmNumber::from(BigRational::new(1.into(), 100000000.into())) {
         return ERR!("Price is too low, minimum is 0.00000001");
     }
@@ -805,6 +833,10 @@ pub fn lp_auto_buy(ctx: &MmArc, input: AutoBuyInput) -> Result<String, String> {
         sender_pubkey: H256Json::from(our_public_id.bytes),
         action,
         match_by: input.match_by,
+        base_confs: Some(input.base_confs.unwrap_or(base_coin.required_confirmations())),
+        base_nota: Some(input.base_nota.unwrap_or(base_coin.requires_notarization())),
+        rel_confs: Some(input.rel_confs.unwrap_or(rel_coin.required_confirmations())),
+        rel_nota: Some(input.rel_nota.unwrap_or(rel_coin.requires_notarization())),
     };
     ctx.broadcast_p2p_msg(&unwrap!(json::to_string(&request)));
     let result = json!({
@@ -988,6 +1020,10 @@ struct SetPriceReq {
     volume: MmNumber,
     #[serde(default = "get_true")]
     cancel_previous: bool,
+    base_confs: Option<u64>,
+    base_nota: Option<bool>,
+    rel_confs: Option<u64>,
+    rel_nota: Option<bool>,
 }
 
 pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
@@ -1067,6 +1103,10 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
         matches: HashMap::new(),
         started_swaps: Vec::new(),
         uuid,
+        base_confs: Some(req.base_confs.unwrap_or(base_coin.required_confirmations())),
+        base_nota: Some(req.base_nota.unwrap_or(base_coin.requires_notarization())),
+        rel_confs: Some(req.rel_confs.unwrap_or(rel_coin.required_confirmations())),
+        rel_nota: Some(req.rel_nota.unwrap_or(rel_coin.requires_notarization())),
     };
     save_my_maker_order(&ctx, &order);
     let res = try_s!(json::to_vec(&json!({"result":order})));
