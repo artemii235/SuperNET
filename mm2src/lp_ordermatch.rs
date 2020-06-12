@@ -44,6 +44,7 @@ use rpc::v1::types::{H256 as H256Json};
 use serde_json::{self as json, Value as Json};
 use std::collections::HashSet;
 use std::collections::hash_map::{Entry, HashMap};
+use std::fmt;
 use std::fs::DirEntry;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -205,6 +206,196 @@ pub struct MakerOrder {
     base_nota: Option<bool>,
     rel_confs: Option<u64>,
     rel_nota: Option<bool>,
+}
+
+struct MakerOrderBuilder {
+    max_base_vol: MmNumber,
+    min_base_vol: MmNumber,
+    price: MmNumber,
+    base: String,
+    rel: String,
+    base_confs: Option<u64>,
+    base_nota: Option<bool>,
+    rel_confs: Option<u64>,
+    rel_nota: Option<bool>,
+}
+
+impl Default for MakerOrderBuilder {
+    fn default() -> MakerOrderBuilder {
+        MakerOrderBuilder {
+            base: "".into(),
+            rel: "".into(),
+            max_base_vol: 0.into(),
+            min_base_vol: 0.into(),
+            price: 0.into(),
+            base_confs: None,
+            base_nota: None,
+            rel_confs: None,
+            rel_nota: None,
+        }
+    }
+}
+
+enum MakerOrderBuildError {
+    BaseCoinEmpty,
+    RelCoinEmpty,
+    BaseEqualRel,
+    /// Max base vol too low with threshold
+    MaxBaseVolTooLow { actual: MmNumber, threshold: MmNumber },
+    /// Min base vol too low with threshold
+    MinBaseVolTooLow { actual: MmNumber, threshold: MmNumber },
+    /// Price too low with threshold
+    PriceTooLow { actual: MmNumber, threshold: MmNumber },
+    /// Rel vol too low with threshold
+    RelVolTooLow { actual: MmNumber, threshold: MmNumber },
+    BaseConfsNotSet,
+    BaseNotaNotSet,
+    RelConfsNotSet,
+    RelNotaNotSet,
+}
+
+impl fmt::Display for MakerOrderBuildError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            MakerOrderBuildError::BaseCoinEmpty => write!(f, "Base coin can not be empty"),
+            MakerOrderBuildError::RelCoinEmpty => write!(f, "Rel coin can not be empty"),
+            MakerOrderBuildError::BaseEqualRel => write!(f, "Rel coin can not be same as base"),
+            MakerOrderBuildError::MaxBaseVolTooLow { actual, threshold } =>
+                write!(f, "Max base vol {} is too low, required: {}", actual.to_decimal(), threshold.to_decimal()),
+            MakerOrderBuildError::MinBaseVolTooLow { actual, threshold } =>
+                write!(f, "Min base vol {} is too low, required: {}", actual.to_decimal(), threshold.to_decimal()),
+            MakerOrderBuildError::PriceTooLow { actual, threshold } =>
+                write!(f, "Price {} is too low, required: {}", actual.to_decimal(), threshold.to_decimal()),
+            MakerOrderBuildError::RelVolTooLow { actual, threshold } =>
+                write!(f, "Max rel vol {} is too low, required: {}", actual.to_decimal(), threshold.to_decimal()),
+            MakerOrderBuildError::BaseConfsNotSet => write!(f, "Base coin confs must be set"),
+            MakerOrderBuildError::BaseNotaNotSet => write!(f, "Base coin nota must be set"),
+            MakerOrderBuildError::RelConfsNotSet => write!(f, "Rel coin confs must be set"),
+            MakerOrderBuildError::RelNotaNotSet => write!(f, "Rel coin nota must be set"),
+        }
+    }
+}
+
+impl MakerOrderBuilder {
+    fn with_base_coin(mut self, ticker: String) -> Self {
+        self.base = ticker;
+        self
+    }
+
+    fn with_rel_coin(mut self, ticker: String) -> Self {
+        self.rel = ticker;
+        self
+    }
+
+    fn with_max_base_vol(mut self, vol: MmNumber) -> Self {
+        self.max_base_vol = vol;
+        self
+    }
+
+    fn with_price(mut self, price: MmNumber) -> Self {
+        self.price = price;
+        self
+    }
+
+    fn with_base_confs(mut self, confs: u64) -> Self {
+        self.base_confs = Some(confs);
+        self
+    }
+
+    fn with_base_nota(mut self, nota: bool) -> Self {
+        self.base_nota = Some(nota);
+        self
+    }
+
+    fn with_rel_confs(mut self, confs: u64) -> Self {
+        self.rel_confs = Some(confs);
+        self
+    }
+
+    fn with_rel_nota(mut self, nota: bool) -> Self {
+        self.rel_nota = Some(nota);
+        self
+    }
+
+    /// Validate fields and build
+    fn build(self) -> Result<MakerOrder, MakerOrderBuildError> {
+        let min_price = MmNumber::from(BigRational::new(1.into(), 100000000.into()));
+        let min_vol = MmNumber::from(MIN_TRADING_VOL.parse::<BigDecimal>().unwrap());
+        let zero: MmNumber = 0.into();
+
+        if self.base.is_empty() { return Err(MakerOrderBuildError::BaseCoinEmpty); }
+
+        if self.rel.is_empty() { return Err(MakerOrderBuildError::RelCoinEmpty); }
+
+        if self.base == self.rel { return Err(MakerOrderBuildError::BaseEqualRel); }
+
+        if self.max_base_vol < min_vol {
+            return Err(MakerOrderBuildError::MaxBaseVolTooLow { actual: self.max_base_vol, threshold: min_vol });
+        }
+
+        if self.price < min_price {
+            return Err(MakerOrderBuildError::PriceTooLow { actual: self.price, threshold: min_price });
+        }
+
+        let rel_vol = &self.max_base_vol * &self.price;
+        if rel_vol < min_vol {
+            return Err(MakerOrderBuildError::RelVolTooLow { actual: rel_vol, threshold: min_vol });
+        }
+
+        if self.min_base_vol < zero {
+            return Err(MakerOrderBuildError::MinBaseVolTooLow { actual: self.min_base_vol, threshold: zero });
+        }
+
+        if self.base_confs.is_none() { return Err(MakerOrderBuildError::BaseConfsNotSet); }
+
+        if self.base_nota.is_none() { return Err(MakerOrderBuildError::BaseNotaNotSet); }
+
+        if self.rel_confs.is_none() { return Err(MakerOrderBuildError::RelConfsNotSet); }
+
+        if self.rel_nota.is_none() { return Err(MakerOrderBuildError::RelNotaNotSet); }
+
+        Ok(MakerOrder {
+            base: self.base,
+            rel: self.rel,
+            created_at: now_ms(),
+            max_base_vol: self.max_base_vol.to_decimal(),
+            max_base_vol_rat: self.max_base_vol.into(),
+            min_base_vol: self.min_base_vol.to_decimal(),
+            min_base_vol_rat: self.min_base_vol.into(),
+            price: self.price.to_decimal(),
+            price_rat: self.price.into(),
+            matches: HashMap::new(),
+            started_swaps: Vec::new(),
+            uuid: new_uuid(),
+            base_confs: self.base_confs,
+            base_nota: self.base_nota,
+            rel_confs: self.rel_confs,
+            rel_nota: self.rel_nota,
+        })
+    }
+
+    #[cfg(test)]
+    /// skip validation for tests
+    fn build_unchecked(self) -> MakerOrder {
+        MakerOrder {
+            base: self.base,
+            rel: self.rel,
+            created_at: now_ms(),
+            max_base_vol: self.max_base_vol.to_decimal(),
+            max_base_vol_rat: self.max_base_vol.into(),
+            min_base_vol: 0.into(),
+            min_base_vol_rat: BigRational::from_integer(0.into()),
+            price: self.price.to_decimal(),
+            price_rat: self.price.into(),
+            matches: HashMap::new(),
+            started_swaps: Vec::new(),
+            uuid: Uuid::new_v4(),
+            base_confs: self.base_confs,
+            base_nota: self.base_nota,
+            rel_confs: self.rel_confs,
+            rel_nota: self.rel_nota,
+        }
+    }
 }
 
 fn zero_rat() -> BigRational { BigRational::zero() }
@@ -386,12 +577,16 @@ fn lp_connect_start_bob(ctx: MmArc, maker_match: MakerMatch) {
         let maker_swap = MakerSwap::new(
             ctx.clone(),
             alice.into(),
-            maker_coin,
-            taker_coin,
             maker_amount,
             taker_amount,
             my_persistent_pub,
             uuid,
+            maker_match.reserved.base_confs.unwrap_or(maker_coin.required_confirmations()),
+            maker_match.reserved.base_nota.unwrap_or(maker_coin.requires_notarization()),
+            maker_match.request.rel_confs.unwrap_or(taker_coin.required_confirmations()),
+            maker_match.request.rel_nota.unwrap_or(taker_coin.requires_notarization()),
+            maker_coin,
+            taker_coin,
         );
         run_maker_swap(RunMakerSwapInput::StartNew(maker_swap), ctx).await;
     });
@@ -435,12 +630,16 @@ fn lp_connected_alice(ctx: MmArc, taker_match: TakerMatch) {
         let taker_swap = TakerSwap::new(
             ctx.clone(),
             maker.into(),
-            maker_coin,
-            taker_coin,
             maker_amount,
             taker_amount,
             my_persistent_pub,
             uuid,
+            taker_match.reserved.base_confs.unwrap_or(maker_coin.required_confirmations()),
+            taker_match.reserved.base_nota.unwrap_or(maker_coin.requires_notarization()),
+            taker_match.reserved.rel_confs.unwrap_or(taker_coin.required_confirmations()),
+            taker_match.reserved.rel_nota.unwrap_or(taker_coin.requires_notarization()),
+            maker_coin,
+            taker_coin,
         );
         run_taker_swap(RunTakerSwapInput::StartNew(taker_swap), ctx).await
     });
@@ -1028,12 +1227,6 @@ struct SetPriceReq {
 
 pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
     let req: SetPriceReq = try_s!(json::from_value(req));
-    if req.price < MmNumber::from(BigRational::new(1.into(), 100000000.into())) {
-        return ERR!("Price is too low, minimum is 0.00000001");
-    }
-    if req.base == req.rel {
-        return ERR!("Base and rel must be different coins");
-    }
 
     let base_coin: MmCoinEnum = match try_s!(lp_coinfindᵃ(&ctx, &req.base).await) {
         Some(coin) => coin,
@@ -1060,13 +1253,6 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
         try_s!(base_coin.check_i_have_enough_to_trade(&req.volume, &my_balance.clone().into(), TradeInfo::Maker).compat().await);
         req.volume.clone()
     };
-    if volume < MmNumber::from(unwrap!(MIN_TRADING_VOL.parse::<BigDecimal>())) {
-        return ERR!("Base volume {} is too low, required at least {}", volume, MIN_TRADING_VOL);
-    }
-    let rel_volume = &volume * &req.price;
-    if rel_volume < MmNumber::from(unwrap!(MIN_TRADING_VOL.parse::<BigDecimal>())) {
-        return ERR!("Rel volume {} is too low, required at least {}", rel_volume, MIN_TRADING_VOL);
-    }
     try_s!(rel_coin.can_i_spend_other_payment().compat().await);
 
     let ordermatch_ctx = try_s!(OrdermatchContext::from_ctx(&ctx));
@@ -1089,28 +1275,20 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
         }).collect();
     }
 
-    let uuid = new_uuid();
-    let order = MakerOrder {
-        max_base_vol: volume.clone().into(),
-        max_base_vol_rat: volume.into(),
-        min_base_vol: 0.into(),
-        min_base_vol_rat: BigRational::from_integer(0.into()),
-        price: req.price.clone().into(),
-        price_rat: req.price.clone().into(),
-        created_at: now_ms(),
-        base: req.base,
-        rel: req.rel,
-        matches: HashMap::new(),
-        started_swaps: Vec::new(),
-        uuid,
-        base_confs: Some(req.base_confs.unwrap_or(base_coin.required_confirmations())),
-        base_nota: Some(req.base_nota.unwrap_or(base_coin.requires_notarization())),
-        rel_confs: Some(req.rel_confs.unwrap_or(rel_coin.required_confirmations())),
-        rel_nota: Some(req.rel_nota.unwrap_or(rel_coin.requires_notarization())),
-    };
+    let builder = MakerOrderBuilder::default()
+        .with_base_coin(req.base)
+        .with_rel_coin(req.rel)
+        .with_max_base_vol(volume)
+        .with_price(req.price)
+        .with_base_confs(req.base_confs.unwrap_or(base_coin.required_confirmations()))
+        .with_base_nota(req.base_nota.unwrap_or(base_coin.requires_notarization()))
+        .with_rel_confs(req.rel_confs.unwrap_or(rel_coin.required_confirmations()))
+        .with_rel_nota(req.rel_nota.unwrap_or(rel_coin.requires_notarization()));
+
+    let order = try_s!(builder.build());
     save_my_maker_order(&ctx, &order);
     let res = try_s!(json::to_vec(&json!({"result":order})));
-    my_orders.insert(uuid, order);
+    my_orders.insert(order.uuid, order);
     Ok(try_s!(Response::builder().body(res)))
 }
 
@@ -1680,4 +1858,53 @@ pub fn migrate_saved_orders(ctx: &MmArc) -> Result<(), String> {
         }
     });
     Ok(())
+}
+
+struct SwapConfirmationsSettings {
+    my_coin_confs: u64,
+    my_coin_nota: bool,
+    other_coin_confs: u64,
+    other_coin_nota: bool,
+}
+
+fn choose_maker_confs_and_notas(
+    maker_order: &MakerOrder,
+    maker_match: &MakerMatch,
+    base_coin: &MmCoinEnum,
+    rel_coin: &MmCoinEnum,
+) -> SwapConfirmationsSettings {
+    let req = &maker_match.request;
+    let (taker_base_confs, taker_base_nota) = match req.action {
+        TakerAction::Buy => (req.base_confs, req.base_nota),
+        TakerAction::Sell => (req.rel_confs, req.rel_nota),
+    };
+
+    let my_coin_confs = maker_order.base_confs.unwrap_or(base_coin.required_confirmations());
+    let my_coin_confs = match taker_base_confs {
+        Some(other_confs) => if other_confs < my_coin_confs {
+            other_confs
+        } else {
+            // let taker wait for our payment confirmation longer in this case
+            // this will also not allow taker to force us using ridiculous amount of confirmations
+            my_coin_confs
+        },
+        None => my_coin_confs,
+    };
+
+    let my_coin_nota = maker_order.base_nota.unwrap_or(base_coin.requires_notarization());
+    let my_coin_nota = match taker_base_nota {
+        Some(other_nota) => if other_nota {
+            my_coin_nota
+        } else {
+            other_nota
+        },
+        None => my_coin_nota
+    };
+
+    SwapConfirmationsSettings {
+        my_coin_confs,
+        my_coin_nota,
+        other_coin_confs: maker_order.rel_confs.unwrap_or(rel_coin.required_confirmations()),
+        other_coin_nota: maker_order.rel_nota.unwrap_or(rel_coin.requires_notarization()),
+    }
 }

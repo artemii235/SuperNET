@@ -127,6 +127,10 @@ pub struct MakerSwap {
     errors: PaMutex<Vec<SwapError>>,
     finished_at: Atomic<u64>,
     mutable: RwLock<MakerSwapMut>,
+    maker_payment_confirmations: u64,
+    maker_payment_requires_nota: bool,
+    taker_payment_confirmations: u64,
+    taker_payment_requires_nota: bool,
 }
 
 impl MakerSwap {
@@ -185,12 +189,16 @@ impl MakerSwap {
     pub fn new(
         ctx: MmArc,
         taker: bits256,
-        maker_coin: MmCoinEnum,
-        taker_coin: MmCoinEnum,
         maker_amount: BigDecimal,
         taker_amount: BigDecimal,
         my_persistent_pub: H264,
         uuid: String,
+        maker_payment_confirmations: u64,
+        maker_payment_requires_nota: bool,
+        taker_payment_confirmations: u64,
+        taker_payment_requires_nota: bool,
+        maker_coin: MmCoinEnum,
+        taker_coin: MmCoinEnum,
     ) -> Self {
         MakerSwap {
             ctx,
@@ -205,6 +213,10 @@ impl MakerSwap {
             errors: PaMutex::new(Vec::new()),
             finished_at: Atomic::new(0),
             taker_payment_confirmed: Atomic::new(false),
+            maker_payment_confirmations,
+            maker_payment_requires_nota,
+            taker_payment_confirmations,
+            taker_payment_requires_nota,
             mutable: RwLock::new(MakerSwapMut {
                 data: MakerSwapData::default(),
                 other_persistent_pub: H264::default(),
@@ -739,12 +751,16 @@ impl MakerSwap {
                 let swap = MakerSwap::new(
                     ctx,
                     taker.into(),
-                    maker_coin,
-                    taker_coin,
                     data.maker_amount.clone(),
                     data.taker_amount.clone(),
                     my_persistent_pub,
                     saved.uuid,
+                    data.maker_payment_confirmations,
+                    data.maker_payment_requires_nota.unwrap_or(maker_coin.requires_notarization()),
+                    data.taker_payment_confirmations,
+                    data.taker_payment_requires_nota.unwrap_or(taker_coin.requires_notarization()),
+                    maker_coin,
+                    taker_coin,
                 );
                 let command = saved.events.last().unwrap().get_command();
                 for saved_event in saved.events {

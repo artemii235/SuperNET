@@ -1128,3 +1128,8 @@ fn should_process_request_only_once() {
     assert!(order.matches.get(&"2f9afe84-7a89-4194-8947-45fba563118f".parse().unwrap()).unwrap().connect.is_some());
     assert!(order.matches.get(&"2f9afe84-7a89-4194-8947-45fba563118f".parse().unwrap()).unwrap().connected.is_some());
 }
+
+#[test]
+fn test_select_maker_confs_settings() {
+
+}
