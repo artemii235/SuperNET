@@ -2822,6 +2822,19 @@ fn test_qrc20_withdraw() {
 
     log!((withdraw_json));
     assert!(withdraw_json["tx_hex"].as_str().unwrap().contains("5403a02526012844a9059cbb0000000000000000000000000240b898276ad2cc0d2fe6f527e8e31104e7fde3000000000000000000000000000000000000000000000000000000003b9aca0014d362e096e873eb7907e205fadc6175c6fec7bc44c2"));
+    let actual_fee = &withdraw_json["fee_details"];
+    let expected_fee = json!({
+        "coin": "QRC20",
+        // (447 + total_gas_fee) from satoshi,
+        // where decimals = 8,
+        //       tx_hex = 447 * 2 becasue of the hex decoding
+        "miner_fee": "1.00000447",
+        "gas_limit": 2_500_000,
+        "gas_price": 40,
+        // (gas_limit * gas_price) from satoshi
+        "total_gas_fee": "1",
+    });
+    assert_eq!(actual_fee, &expected_fee);
 
     let send_tx = unwrap!(block_on (mm.rpc (json! ({
         "userpass": mm.userpass,

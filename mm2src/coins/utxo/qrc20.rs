@@ -53,6 +53,18 @@ impl QtumRpcOps for ElectrumClient {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct Qrc20FeeDetails {
+    /// Coin name
+    coin: String,
+    /// Standard UTXO miner fee based on transaction size
+    miner_fee: BigDecimal,
+    /// in satoshi
+    gas_limit: u64,
+    gas_price: u64,
+    total_gas_fee: BigDecimal,
+}
+
 pub async fn qrc20_coin_from_conf_and_request(
     ctx: &MmArc,
     ticker: &str,
@@ -460,14 +472,18 @@ async fn qrc20_withdraw(coin: Qrc20Coin, ctx: MmArc, req: WithdrawRequest) -> Re
 
     // None seems that the generate_transaction() should request estimated fee for Kbyte
     let actual_tx_fee = None;
-    let gas_fee = Some(gas_limit * gas_price);
+    let gas_fee = gas_limit.checked_mul(gas_price).ok_or(ERRL!("too large gas_limit and/or gas_price"))?;
     let fee_policy = FeePolicy::SendExact;
 
-    let (unsigned, data) = try_s!(coin.generate_transaction(unspents, outputs, fee_policy, actual_tx_fee, gas_fee).await);
+    let (unsigned, data) = try_s!(coin.generate_transaction(unspents, outputs, fee_policy, actual_tx_fee, Some(gas_fee)).await);
     let prev_script = Builder::build_p2pkh(&coin.utxo_arc.my_address.hash);
     let signed = try_s!(sign_tx(unsigned, &coin.utxo_arc.key_pair, prev_script, coin.utxo_arc.signature_version, coin.utxo_arc.fork_id));
-    let fee_details = UtxoFeeDetails {
-        amount: utxo_common::big_decimal_from_sat(data.fee_amount as i64, coin.utxo_arc.decimals),
+    let fee_details = Qrc20FeeDetails {
+        coin: coin.ticker().to_owned(),
+        miner_fee: utxo_common::big_decimal_from_sat(data.fee_amount as i64, coin.utxo_arc.decimals),
+        gas_limit,
+        gas_price,
+        total_gas_fee: utxo_common::big_decimal_from_sat(gas_fee as i64, coin.utxo_arc.decimals),
     };
     let my_address = try_s!(coin.my_address());
     let to_address = try_s!(coin.display_address(&to_addr));

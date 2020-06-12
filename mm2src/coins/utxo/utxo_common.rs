@@ -296,7 +296,7 @@ pub async fn generate_transaction<T>(
         };
 
         if let Some(gas_fee) = gas_fee {
-            tx_fee += gas_fee;
+            tx_fee = tx_fee.checked_add(gas_fee).ok_or(ERRL!("too large gas_fee"))?;
         }
 
         match fee_policy {

@@ -64,7 +64,7 @@ use self::eth::{eth_coin_from_conf_and_request, ERC20ContractAddress, EthCoin, E
 pub mod utxo;
 use self::utxo::{UtxoFeeDetails, UtxoTx};
 use self::utxo::utxo_standard::{UtxoStandardCoin, utxo_standard_coin_from_conf_and_request};
-use self::utxo::qrc20::{qrc20_coin_from_conf_and_request, Qrc20Coin};
+use self::utxo::qrc20::{qrc20_coin_from_conf_and_request, Qrc20Coin, Qrc20FeeDetails};
 #[doc(hidden)]
 #[allow(unused_variables)]
 pub mod test_coin;
@@ -246,12 +246,12 @@ pub enum WithdrawFee {
     UtxoFixed { amount: BigDecimal },
     UtxoPerKbyte { amount: BigDecimal },
     EthGas {
-        // in gwei
+        /// in gwei
         gas_price: BigDecimal,
         gas: u64,
     },
     Qrc20Gas {
-        // in satoshi
+        /// in satoshi
         gas_limit: u64,
         gas_price: u64,
     }
@@ -274,6 +274,7 @@ pub struct WithdrawRequest {
 pub enum TxFeeDetails {
     Utxo(UtxoFeeDetails),
     Eth(EthTxFeeDetails),
+    Qrc20(Qrc20FeeDetails),
 }
 
 impl Into<TxFeeDetails> for EthTxFeeDetails {
@@ -285,6 +286,12 @@ impl Into<TxFeeDetails> for EthTxFeeDetails {
 impl Into<TxFeeDetails> for UtxoFeeDetails {
     fn into(self: UtxoFeeDetails) -> TxFeeDetails {
         TxFeeDetails::Utxo(self)
+    }
+}
+
+impl Into<TxFeeDetails> for Qrc20FeeDetails {
+    fn into(self: Qrc20FeeDetails) -> TxFeeDetails {
+        TxFeeDetails::Qrc20(self)
     }
 }
 
