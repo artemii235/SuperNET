@@ -283,7 +283,7 @@ pub struct NetworkInfo {
     relay_fee: BigDecimal,
     subversion: String,
     #[serde(rename = "timeoffset")]
-    time_offset: u64,
+    time_offset: i64,
     version: u64,
     warnings: String,
 }
