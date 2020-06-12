@@ -731,8 +731,8 @@ fn prepare_for_cancel_by(ctx: &MmArc) {
 
     maker_orders.insert(Uuid::from_bytes([0; 16]), MakerOrder {
         uuid: Uuid::from_bytes([0; 16]),
-        base: "ETOMIC".into(),
-        rel: "BEER".into(),
+        base: "RICK".into(),
+        rel: "MORTY".into(),
         created_at: now_ms(),
         matches: HashMap::new(),
         max_base_vol: 0.into(),
@@ -745,8 +745,8 @@ fn prepare_for_cancel_by(ctx: &MmArc) {
     });
     maker_orders.insert(Uuid::from_bytes([1; 16]), MakerOrder {
         uuid: Uuid::from_bytes([1; 16]),
-        base: "BEER".into(),
-        rel: "ETOMIC".into(),
+        base: "MORTY".into(),
+        rel: "RICK".into(),
         created_at: now_ms(),
         matches: HashMap::new(),
         max_base_vol: 0.into(),
@@ -759,8 +759,8 @@ fn prepare_for_cancel_by(ctx: &MmArc) {
     });
     maker_orders.insert(Uuid::from_bytes([2; 16]), MakerOrder {
         uuid: Uuid::from_bytes([2; 16]),
-        base: "BEER".into(),
-        rel: "PIZZA".into(),
+        base: "MORTY".into(),
+        rel: "ETH".into(),
         created_at: now_ms(),
         matches: HashMap::new(),
         max_base_vol: 0.into(),
@@ -775,8 +775,8 @@ fn prepare_for_cancel_by(ctx: &MmArc) {
         matches: HashMap::new(),
         created_at: now_ms(),
         request: TakerRequest {
-            base: "ETOMIC".into(),
-            rel: "BEER".into(),
+            base: "RICK".into(),
+            rel: "MORTY".into(),
             uuid: Uuid::from_bytes([3; 16]),
             action: TakerAction::Buy,
             base_amount: 0.into(),
@@ -804,7 +804,7 @@ fn test_cancel_by_single_coin() {
         MockResult::Return(())
     });
 
-    let (cancelled, _) = unwrap!(cancel_orders_by(&ctx, CancelBy::Coin { ticker: "ETOMIC".into() }));
+    let (cancelled, _) = unwrap!(cancel_orders_by(&ctx, CancelBy::Coin { ticker: "RICK".into() }));
     assert!(cancelled.contains(&Uuid::from_bytes([0; 16])));
     assert!(cancelled.contains(&Uuid::from_bytes([1; 16])));
     assert!(!cancelled.contains(&Uuid::from_bytes([2; 16])));
@@ -824,8 +824,8 @@ fn test_cancel_by_pair() {
     });
 
     let (cancelled, _) = unwrap!(cancel_orders_by(&ctx, CancelBy::Pair{
-        base: "ETOMIC".into(),
-        rel: "BEER".into(),
+        base: "RICK".into(),
+        rel: "MORTY".into(),
     }));
     assert!(cancelled.contains(&Uuid::from_bytes([0; 16])));
     assert!(!cancelled.contains(&Uuid::from_bytes([1; 16])));
