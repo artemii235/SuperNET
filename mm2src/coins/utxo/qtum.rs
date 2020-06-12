@@ -10,8 +10,8 @@ pub struct QtumCoin {
     utxo_arc: UtxoArc,
 }
 
-impl UtxoArcGetter for QtumCoin {
-    fn arc(&self) -> &UtxoArc {
+impl AsRef<UtxoArc> for QtumCoin {
+    fn as_ref(&self) -> &UtxoArc {
         &self.utxo_arc
     }
 }
@@ -356,7 +356,7 @@ impl UtxoMmCoin for QtumCoin {
     }
 
     fn is_unspent_mature(&self, output: &RpcTransaction) -> bool {
-        is_qtum_unspent_mature(self.arc().mature_confirmations, output)
+        is_qtum_unspent_mature(self.utxo_arc.mature_confirmations, output)
     }
 }
 

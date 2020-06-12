@@ -71,8 +71,8 @@ pub struct Qrc20Coin {
     pub contract_address: H160,
 }
 
-impl UtxoArcGetter for Qrc20Coin {
-    fn arc(&self) -> &UtxoArc {
+impl AsRef<UtxoArc> for Qrc20Coin {
+    fn as_ref(&self) -> &UtxoArc {
         &self.utxo_arc
     }
 }
@@ -115,7 +115,7 @@ impl UtxoCoinCommonOps for Qrc20Coin {
     }
 
     fn my_public_key(&self) -> &Public {
-        self.arc().key_pair.public()
+        self.utxo_arc.key_pair.public()
     }
 
     fn display_address(&self, address: &Address) -> Result<String, String> {
@@ -283,7 +283,7 @@ impl SwapOps for Qrc20Coin {
 
 impl MarketCoinOps for Qrc20Coin {
     fn ticker(&self) -> &str {
-        &self.arc().ticker
+        &self.utxo_arc.ticker
     }
 
     fn my_address(&self) -> Result<String, String> {
@@ -293,9 +293,9 @@ impl MarketCoinOps for Qrc20Coin {
     fn my_balance(&self) -> Box<dyn Future<Item=BigDecimal, Error=String> + Send> {
         let function = unwrap!(ERC20_CONTRACT.function("balanceOf"));
         let params = unwrap!(function.encode_input(&[
-                    Token::Address(self.arc().my_address.hash.clone().take().into()),
+                    Token::Address(self.utxo_arc.my_address.hash.clone().take().into()),
         ]));
-        match self.arc().rpc_client {
+        match self.utxo_arc.rpc_client {
             UtxoRpcClientEnum::Electrum(ref electrum) => {
                 Box::new(electrum
                     .blockchain_contract_call(&self.contract_address.to_vec().as_slice().into(), params.into())
@@ -413,19 +413,19 @@ impl UtxoMmCoin for Qrc20Coin {
     }
 
     fn is_unspent_mature(&self, output: &RpcTransaction) -> bool {
-        qtum::is_qtum_unspent_mature(self.arc().mature_confirmations, output)
+        qtum::is_qtum_unspent_mature(self.utxo_arc.mature_confirmations, output)
     }
 }
 
 async fn qrc20_withdraw(coin: Qrc20Coin, ctx: MmArc, req: WithdrawRequest) -> Result<TransactionDetails, String> {
-    let to_addr = match &coin.arc().address_format {
+    let to_addr = match &coin.utxo_arc.address_format {
         UtxoAddressFormat::Standard => try_s!(Address::from_str(&req.to)),
         UtxoAddressFormat::CashAddress {..} => try_s!(Address::from_cashaddress(
-            &req.to, coin.arc().checksum_type.clone(), coin.arc().pub_addr_prefix, coin.arc().p2sh_addr_prefix))
+            &req.to, coin.utxo_arc.checksum_type.clone(), coin.utxo_arc.pub_addr_prefix, coin.utxo_arc.p2sh_addr_prefix))
     };
 
-    let is_p2pkh = to_addr.prefix == coin.arc().pub_addr_prefix && to_addr.t_addr_prefix == coin.arc().pub_t_addr_prefix;
-    let is_p2sh = to_addr.prefix == coin.arc().p2sh_addr_prefix && to_addr.t_addr_prefix == coin.arc().p2sh_t_addr_prefix && coin.arc().segwit;
+    let is_p2pkh = to_addr.prefix == coin.utxo_arc.pub_addr_prefix && to_addr.t_addr_prefix == coin.utxo_arc.pub_t_addr_prefix;
+    let is_p2sh = to_addr.prefix == coin.utxo_arc.p2sh_addr_prefix && to_addr.t_addr_prefix == coin.utxo_arc.p2sh_t_addr_prefix && coin.utxo_arc.segwit;
     if !is_p2pkh && !is_p2sh {
         return ERR!("Address {} has invalid format", to_addr);
     }
@@ -435,9 +435,9 @@ async fn qrc20_withdraw(coin: Qrc20Coin, ctx: MmArc, req: WithdrawRequest) -> Re
     // the qrc20_amount is used only within smart contract calls
     let qrc20_amount = if req.max {
         let balance = try_s!(coin.my_balance().compat().await);
-        try_s!(wei_from_big_decimal(&balance, coin.arc().decimals))
+        try_s!(wei_from_big_decimal(&balance, coin.utxo_arc.decimals))
     } else {
-        try_s!(wei_from_big_decimal(&req.amount, coin.arc().decimals))
+        try_s!(wei_from_big_decimal(&req.amount, coin.utxo_arc.decimals))
     };
 
     let (gas_limit, gas_price) = match req.fee {
@@ -456,7 +456,7 @@ async fn qrc20_withdraw(coin: Qrc20Coin, ctx: MmArc, req: WithdrawRequest) -> Re
         script_pubkey,
     }];
 
-    let unspents = try_s!(coin.ordered_mature_unspents(&ctx, &coin.arc().my_address).compat().await.map_err(|e| ERRL!("{}", e)));
+    let unspents = try_s!(coin.ordered_mature_unspents(&ctx, &coin.utxo_arc.my_address).compat().await.map_err(|e| ERRL!("{}", e)));
 
     // None seems that the generate_transaction() should request estimated fee for Kbyte
     let actual_tx_fee = None;
@@ -464,25 +464,25 @@ async fn qrc20_withdraw(coin: Qrc20Coin, ctx: MmArc, req: WithdrawRequest) -> Re
     let fee_policy = FeePolicy::SendExact;
 
     let (unsigned, data) = try_s!(coin.generate_transaction(unspents, outputs, fee_policy, actual_tx_fee, gas_fee).await);
-    let prev_script = Builder::build_p2pkh(&coin.arc().my_address.hash);
-    let signed = try_s!(sign_tx(unsigned, &coin.arc().key_pair, prev_script, coin.arc().signature_version, coin.arc().fork_id));
+    let prev_script = Builder::build_p2pkh(&coin.utxo_arc.my_address.hash);
+    let signed = try_s!(sign_tx(unsigned, &coin.utxo_arc.key_pair, prev_script, coin.utxo_arc.signature_version, coin.utxo_arc.fork_id));
     let fee_details = UtxoFeeDetails {
-        amount: utxo_common::big_decimal_from_sat(data.fee_amount as i64, coin.arc().decimals),
+        amount: utxo_common::big_decimal_from_sat(data.fee_amount as i64, coin.utxo_arc.decimals),
     };
     let my_address = try_s!(coin.my_address());
     let to_address = try_s!(coin.display_address(&to_addr));
     Ok(TransactionDetails {
         from: vec![my_address],
         to: vec![to_address],
-        total_amount: utxo_common::big_decimal_from_sat(data.spent_by_me as i64, coin.arc().decimals),
-        spent_by_me: utxo_common::big_decimal_from_sat(data.spent_by_me as i64, coin.arc().decimals),
-        received_by_me: utxo_common::big_decimal_from_sat(data.received_by_me as i64, coin.arc().decimals),
-        my_balance_change: utxo_common::big_decimal_from_sat(data.received_by_me as i64 - data.spent_by_me as i64, coin.arc().decimals),
+        total_amount: utxo_common::big_decimal_from_sat(data.spent_by_me as i64, coin.utxo_arc.decimals),
+        spent_by_me: utxo_common::big_decimal_from_sat(data.spent_by_me as i64, coin.utxo_arc.decimals),
+        received_by_me: utxo_common::big_decimal_from_sat(data.received_by_me as i64, coin.utxo_arc.decimals),
+        my_balance_change: utxo_common::big_decimal_from_sat(data.received_by_me as i64 - data.spent_by_me as i64, coin.utxo_arc.decimals),
         tx_hash: signed.hash().reversed().to_vec().into(),
         tx_hex: serialize(&signed).into(),
         fee_details: Some(fee_details.into()),
         block_height: 0,
-        coin: coin.arc().ticker.clone(),
+        coin: coin.utxo_arc.ticker.clone(),
         internal_id: vec![].into(),
         timestamp: now_ms() / 1000,
     })

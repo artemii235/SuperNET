@@ -171,7 +171,7 @@ fn test_generate_transaction() {
     }];
 
     let outputs = vec![TransactionOutput {
-        script_pubkey: Builder::build_p2pkh(&coin.arc().my_address.hash).to_bytes(),
+        script_pubkey: Builder::build_p2pkh(&coin.as_ref().my_address.hash).to_bytes(),
         value: 100000,
     }];
 
@@ -338,7 +338,7 @@ fn test_search_for_swap_tx_spend_electrum_was_spent() {
 
     let found = unwrap!(unwrap!(coin.search_for_swap_tx_spend(
         1565626145,
-        coin.arc().key_pair.public(),
+        coin.as_ref().key_pair.public(),
         &unwrap!(Public::from_slice(&unwrap!(hex::decode("02631dcf1d4b1b693aa8c2751afc68e4794b1e5996566cfc701a663f8b7bbbe640")))),
         &unwrap!(hex::decode("954f5a3f3b5de4410e5e1a82949410de95a4b6ba")),
         &payment_tx_bytes,
@@ -361,7 +361,7 @@ fn test_search_for_swap_tx_spend_electrum_was_refunded() {
 
     let found = unwrap!(unwrap!(coin.search_for_swap_tx_spend(
         1565692879,
-        coin.arc().key_pair.public(),
+        coin.as_ref().key_pair.public(),
         &unwrap!(Public::from_slice(&unwrap!(hex::decode("02031d4256c4bc9f99ac88bf3dba21773132281f65f9bf23a59928bce08961e2f3")))),
         &unwrap!(hex::decode("02031d4256c4bc9f99ac88bf3dba21773132281f65f9bf23a59928bce08961e2f3")),
         &payment_tx_bytes,
@@ -581,7 +581,7 @@ fn test_utxo_lock() {
     let coin = utxo_coin_for_test(client.into(), None);
     let output = TransactionOutput {
         value: 1000000,
-        script_pubkey: Builder::build_p2pkh(&coin.arc().my_address.hash).to_bytes(),
+        script_pubkey: Builder::build_p2pkh(&coin.as_ref().my_address.hash).to_bytes(),
     };
     let mut futures = vec![];
     for _ in 0..5 {

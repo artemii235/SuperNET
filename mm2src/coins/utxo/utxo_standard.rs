@@ -10,8 +10,8 @@ pub struct UtxoStandardCoin {
     utxo_arc: UtxoArc,
 }
 
-impl UtxoArcGetter for UtxoStandardCoin {
-    fn arc(&self) -> &UtxoArc {
+impl AsRef<UtxoArc> for UtxoStandardCoin {
+    fn as_ref(&self) -> &UtxoArc {
         &self.utxo_arc
     }
 }
@@ -357,6 +357,6 @@ impl UtxoMmCoin for UtxoStandardCoin {
     }
 
     fn is_unspent_mature(&self, output: &RpcTransaction) -> bool {
-        utxo_common::is_unspent_mature(self.arc().mature_confirmations, output)
+        utxo_common::is_unspent_mature(self.utxo_arc.mature_confirmations, output)
     }
 }
