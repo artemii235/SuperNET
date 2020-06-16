@@ -725,7 +725,7 @@ impl OrdermatchContext {
 }
 
 #[cfg_attr(test, mockable)]
-fn lp_connect_start_bob(ctx: MmArc, maker_match: MakerMatch) {
+fn lp_connect_start_bob(ctx: MmArc, maker_order: MakerOrder, maker_match: MakerMatch) {
     spawn(async move {  // aka "maker_loop"
         let taker_coin = match lp_coinfindᵃ(&ctx, &maker_match.reserved.rel).await {
             Ok(Some(c)) => c,
@@ -745,7 +745,7 @@ fn lp_connect_start_bob(ctx: MmArc, maker_match: MakerMatch) {
         let privkey = &ctx.secp256k1_key_pair().private().secret;
         let my_persistent_pub = unwrap!(compressed_pub_key_from_priv_raw(&privkey[..], ChecksumType::DSHA256));
         let uuid = maker_match.request.uuid.to_string();
-
+        let conf_settings = choose_maker_confs_and_notas(&maker_order, &maker_match.request, &maker_coin, &taker_coin);
         log!("Entering the maker_swap_loop " (maker_coin.ticker()) "/" (taker_coin.ticker()) " with uuid: " (uuid));
         let maker_swap = MakerSwap::new(
             ctx.clone(),
@@ -754,10 +754,10 @@ fn lp_connect_start_bob(ctx: MmArc, maker_match: MakerMatch) {
             taker_amount,
             my_persistent_pub,
             uuid,
-            maker_match.reserved.base_confs.unwrap_or(maker_coin.required_confirmations()),
-            maker_match.reserved.base_nota.unwrap_or(maker_coin.requires_notarization()),
-            maker_match.request.rel_confs.unwrap_or(taker_coin.required_confirmations()),
-            maker_match.request.rel_nota.unwrap_or(taker_coin.requires_notarization()),
+            conf_settings.maker_coin_confs,
+            conf_settings.maker_coin_nota,
+            conf_settings.taker_coin_confs,
+            conf_settings.taker_coin_nota,
             maker_coin,
             taker_coin,
         );
@@ -765,7 +765,7 @@ fn lp_connect_start_bob(ctx: MmArc, maker_match: MakerMatch) {
     });
 }
 
-fn lp_connected_alice(ctx: MmArc, taker_match: TakerMatch) {
+fn lp_connected_alice(ctx: MmArc, taker_request: TakerRequest, taker_match: TakerMatch) {
     spawn (async move {  // aka "taker_loop"
         let mut maker = bits256::default();
         maker.bytes = taker_match.reserved.sender_pubkey.0;
@@ -799,6 +799,7 @@ fn lp_connected_alice(ctx: MmArc, taker_match: TakerMatch) {
         let taker_amount = taker_match.reserved.get_rel_amount().into();
         let uuid = taker_match.reserved.taker_order_uuid.to_string();
 
+        let conf_settings = choose_taker_confs_and_notas(&taker_request, &taker_match.reserved, &maker_coin, &taker_coin);
         log!("Entering the taker_swap_loop " (maker_coin.ticker()) "/" (taker_coin.ticker())  " with uuid: " (uuid));
         let taker_swap = TakerSwap::new(
             ctx.clone(),
@@ -807,10 +808,10 @@ fn lp_connected_alice(ctx: MmArc, taker_match: TakerMatch) {
             taker_amount,
             my_persistent_pub,
             uuid,
-            taker_match.reserved.base_confs.unwrap_or(maker_coin.required_confirmations()),
-            taker_match.reserved.base_nota.unwrap_or(maker_coin.requires_notarization()),
-            taker_match.reserved.rel_confs.unwrap_or(taker_coin.required_confirmations()),
-            taker_match.reserved.rel_nota.unwrap_or(taker_coin.requires_notarization()),
+            conf_settings.maker_coin_confs,
+            conf_settings.maker_coin_nota,
+            conf_settings.taker_coin_confs,
+            conf_settings.taker_coin_nota,
             maker_coin,
             taker_coin,
         );
@@ -969,7 +970,7 @@ pub fn lp_trade_command(
                 }
             };
             // alice
-            lp_connected_alice(ctx.clone(), order_match.clone());
+            lp_connected_alice(ctx.clone(), my_order_entry.get().request.clone(), order_match.clone());
             // remove the matched order immediately
             delete_my_taker_order(&ctx, &my_order_entry.get());
             my_order_entry.remove();
@@ -1066,7 +1067,7 @@ pub fn lp_trade_command(
                 order_match.connect = Some(connect_msg);
                 order_match.connected = Some(connected);
                 my_order.started_swaps.push(order_match.request.uuid);
-                lp_connect_start_bob(ctx.clone(), order_match.clone());
+                lp_connect_start_bob(ctx.clone(), my_order.clone(), order_match.clone());
                 save_my_maker_order(&ctx, &my_order);
             }
         }
@@ -2034,90 +2035,79 @@ pub fn migrate_saved_orders(ctx: &MmArc) -> Result<(), String> {
 }
 
 struct SwapConfirmationsSettings {
-    my_coin_confs: u64,
-    my_coin_nota: bool,
-    other_coin_confs: u64,
-    other_coin_nota: bool,
+    maker_coin_confs: u64,
+    maker_coin_nota: bool,
+    taker_coin_confs: u64,
+    taker_coin_nota: bool,
 }
 
 fn choose_maker_confs_and_notas(
     maker_order: &MakerOrder,
     taker_req: &TakerRequest,
-    base_coin: &MmCoinEnum,
-    rel_coin: &MmCoinEnum,
+    maker_coin: &MmCoinEnum,
+    taker_coin: &MmCoinEnum,
 ) -> SwapConfirmationsSettings {
-    let (taker_base_confs, taker_base_nota) = match taker_req.action {
+    let (maker_coin_confs_from_taker, maker_coin_nota_from_taker) = match taker_req.action {
         TakerAction::Buy => (taker_req.base_confs, taker_req.base_nota),
         TakerAction::Sell => (taker_req.rel_confs, taker_req.rel_nota),
     };
 
-    let my_coin_confs = maker_order.base_confs.unwrap_or(base_coin.required_confirmations());
-    let my_coin_confs = match taker_base_confs {
-        Some(other_confs) => if other_confs < my_coin_confs {
-            other_confs
-        } else {
-            // let taker wait for our payment confirmation longer in this case
-            // this will also not allow taker to force us using ridiculous amount of confirmations
-            my_coin_confs
-        },
-        None => my_coin_confs,
-    };
+    let mut maker_coin_confs = maker_order.base_confs.unwrap_or(maker_coin.required_confirmations());
+    if let Some(maker_coin_confs_from_taker) = maker_coin_confs_from_taker {
+        if maker_coin_confs_from_taker < maker_coin_confs {
+            maker_coin_confs = maker_coin_confs_from_taker;
+        }
+    }
 
-    let my_coin_nota = maker_order.base_nota.unwrap_or(base_coin.requires_notarization());
-    let my_coin_nota = match taker_base_nota {
-        Some(other_nota) => if other_nota {
-            my_coin_nota
-        } else {
-            // let taker wait for our payment confirmation longer in this case
-            // this will also not allow taker to force us wait for notarization when
-            // our order/coin is not configured to do so
-            other_nota
-        },
-        None => my_coin_nota
-    };
+    let mut maker_coin_nota = maker_order.base_nota.unwrap_or(maker_coin.requires_notarization());
+    if let Some(maker_coin_nota_from_taker) = maker_coin_nota_from_taker {
+        if !maker_coin_nota_from_taker {
+            maker_coin_nota = maker_coin_nota_from_taker;
+        }
+    }
 
     SwapConfirmationsSettings {
-        my_coin_confs,
-        my_coin_nota,
-        other_coin_confs: maker_order.rel_confs.unwrap_or(rel_coin.required_confirmations()),
-        other_coin_nota: maker_order.rel_nota.unwrap_or(rel_coin.requires_notarization()),
+        maker_coin_confs,
+        maker_coin_nota,
+        taker_coin_confs: maker_order.rel_confs.unwrap_or(taker_coin.required_confirmations()),
+        taker_coin_nota: maker_order.rel_nota.unwrap_or(taker_coin.requires_notarization()),
     }
 }
 
 fn choose_taker_confs_and_notas(
     taker_req: &TakerRequest,
     maker_reserved: &MakerReserved,
-    my_coin: &MmCoinEnum,
-    other_coin: &MmCoinEnum,
+    maker_coin: &MmCoinEnum,
+    taker_coin: &MmCoinEnum,
 ) -> SwapConfirmationsSettings {
-    let (mut my_coin_confs, mut my_coin_nota, other_coin_confs, other_coin_nota) = match taker_req.action {
+    let (mut taker_coin_confs, mut taker_coin_nota, maker_coin_confs, maker_coin_nota) = match taker_req.action {
         TakerAction::Buy => (
-            taker_req.rel_confs.unwrap_or(my_coin.required_confirmations()),
-            taker_req.rel_nota.unwrap_or(my_coin.requires_notarization()),
-            taker_req.base_confs.unwrap_or(other_coin.required_confirmations()),
-            taker_req.base_nota.unwrap_or(other_coin.requires_notarization()),
+            taker_req.rel_confs.unwrap_or(taker_coin.required_confirmations()),
+            taker_req.rel_nota.unwrap_or(taker_coin.requires_notarization()),
+            taker_req.base_confs.unwrap_or(maker_coin.required_confirmations()),
+            taker_req.base_nota.unwrap_or(maker_coin.requires_notarization()),
         ),
         TakerAction::Sell => (
-            taker_req.base_confs.unwrap_or(my_coin.required_confirmations()),
-            taker_req.base_nota.unwrap_or(my_coin.requires_notarization()),
-            taker_req.rel_confs.unwrap_or(other_coin.required_confirmations()),
-            taker_req.rel_nota.unwrap_or(other_coin.requires_notarization()),
+            taker_req.base_confs.unwrap_or(taker_coin.required_confirmations()),
+            taker_req.base_nota.unwrap_or(taker_coin.requires_notarization()),
+            taker_req.rel_confs.unwrap_or(maker_coin.required_confirmations()),
+            taker_req.rel_nota.unwrap_or(maker_coin.requires_notarization()),
         ),
     };
-    if let Some(my_coin_confs_from_maker) = maker_reserved.rel_confs {
-        if my_coin_confs_from_maker < my_coin_confs {
-            my_coin_confs = my_coin_confs_from_maker;
+    if let Some(taker_coin_confs_from_maker) = maker_reserved.rel_confs {
+        if taker_coin_confs_from_maker < taker_coin_confs {
+            taker_coin_confs = taker_coin_confs_from_maker;
         }
     }
-    if let Some(my_coin_nota_from_maker) = maker_reserved.rel_nota {
-        if !my_coin_nota_from_maker {
-            my_coin_nota = my_coin_nota_from_maker
+    if let Some(taker_coin_nota_from_maker) = maker_reserved.rel_nota {
+        if !taker_coin_nota_from_maker {
+            taker_coin_nota = taker_coin_nota_from_maker
         }
     }
     SwapConfirmationsSettings {
-        my_coin_confs,
-        my_coin_nota,
-        other_coin_confs,
-        other_coin_nota,
+        maker_coin_confs,
+        maker_coin_nota,
+        taker_coin_confs,
+        taker_coin_nota,
     }
 }

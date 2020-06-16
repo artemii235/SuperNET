@@ -1101,7 +1101,7 @@ fn lp_connect_start_bob_should_not_be_invoked_if_order_match_already_connected()
     ordermatch_ctx.my_maker_orders.lock().unwrap().insert(maker_order.uuid, maker_order);
 
     static mut CONNECT_START_CALLED: bool = false;
-    lp_connect_start_bob.mock_safe(|_, _| MockResult::Return(unsafe {
+    lp_connect_start_bob.mock_safe(|_, _, _| MockResult::Return(unsafe {
         CONNECT_START_CALLED = true;
     }));
 
@@ -1141,10 +1141,10 @@ fn test_choose_maker_confs_settings() {
     TestCoin::required_confirmations.mock_safe(|_| MockResult::Return(8));
     let settings = choose_maker_confs_and_notas(&maker_order, &taker_request, &coin, &coin);
     // should pick settings from coin configuration
-    assert!(settings.my_coin_nota);
-    assert_eq!(settings.my_coin_confs, 8);
-    assert!(settings.other_coin_nota);
-    assert_eq!(settings.other_coin_confs, 8);
+    assert!(settings.maker_coin_nota);
+    assert_eq!(settings.maker_coin_confs, 8);
+    assert!(settings.taker_coin_nota);
+    assert_eq!(settings.taker_coin_confs, 8);
 
     let maker_order = MakerOrderBuilder::default()
         .with_base_confs(1)
@@ -1156,10 +1156,10 @@ fn test_choose_maker_confs_settings() {
     let taker_request = TakerRequestBuilder::default().build_unchecked();
     let settings = choose_maker_confs_and_notas(&maker_order, &taker_request, &coin, &coin);
     // should pick settings from maker order
-    assert!(!settings.my_coin_nota);
-    assert_eq!(settings.my_coin_confs, 1);
-    assert!(!settings.other_coin_nota);
-    assert_eq!(settings.other_coin_confs, 1);
+    assert!(!settings.maker_coin_nota);
+    assert_eq!(settings.maker_coin_confs, 1);
+    assert!(!settings.taker_coin_nota);
+    assert_eq!(settings.taker_coin_confs, 1);
 
     let maker_order = MakerOrderBuilder::default()
         .with_base_confs(10)
@@ -1174,10 +1174,10 @@ fn test_choose_maker_confs_settings() {
     let settings = choose_maker_confs_and_notas(&maker_order, &taker_request, &coin, &coin);
     // should pick settings from taker request because taker will wait less time for our
     // payment confirmation
-    assert!(!settings.my_coin_nota);
-    assert_eq!(settings.my_coin_confs, 5);
-    assert!(!settings.other_coin_nota);
-    assert_eq!(settings.other_coin_confs, 1);
+    assert!(!settings.maker_coin_nota);
+    assert_eq!(settings.maker_coin_confs, 5);
+    assert!(!settings.taker_coin_nota);
+    assert_eq!(settings.taker_coin_confs, 1);
 
     let maker_order = MakerOrderBuilder::default()
         .with_base_confs(10)
@@ -1191,10 +1191,10 @@ fn test_choose_maker_confs_settings() {
         .build_unchecked();
     let settings = choose_maker_confs_and_notas(&maker_order, &taker_request, &coin, &coin);
     // keep using our settings allowing taker to wait for our payment conf as much as he likes
-    assert!(!settings.my_coin_nota);
-    assert_eq!(settings.my_coin_confs, 10);
-    assert!(!settings.other_coin_nota);
-    assert_eq!(settings.other_coin_confs, 1);
+    assert!(!settings.maker_coin_nota);
+    assert_eq!(settings.maker_coin_confs, 10);
+    assert!(!settings.taker_coin_nota);
+    assert_eq!(settings.taker_coin_confs, 1);
 
     let maker_order = MakerOrderBuilder::default()
         .with_base_confs(10)
@@ -1209,8 +1209,8 @@ fn test_choose_maker_confs_settings() {
     let settings = choose_maker_confs_and_notas(&maker_order, &taker_request, &coin, &coin);
 
     // Taker conf settings should not have any effect on maker conf requirements for taker payment
-    assert!(settings.other_coin_nota);
-    assert_eq!(settings.other_coin_confs, 2);
+    assert!(settings.taker_coin_nota);
+    assert_eq!(settings.taker_coin_confs, 2);
 
     let maker_order = MakerOrderBuilder::default()
         .with_base_confs(10)
@@ -1227,10 +1227,10 @@ fn test_choose_maker_confs_settings() {
     let settings = choose_maker_confs_and_notas(&maker_order, &taker_request, &coin, &coin);
     // should pick settings from taker request because taker will wait less time for our
     // payment confirmation
-    assert!(!settings.my_coin_nota);
-    assert_eq!(settings.my_coin_confs, 5);
-    assert!(!settings.other_coin_nota);
-    assert_eq!(settings.other_coin_confs, 1);
+    assert!(!settings.maker_coin_nota);
+    assert_eq!(settings.maker_coin_confs, 5);
+    assert!(!settings.taker_coin_nota);
+    assert_eq!(settings.taker_coin_confs, 1);
 }
 
 #[test]
@@ -1244,10 +1244,10 @@ fn test_choose_taker_confs_settings_buy_action() {
     TestCoin::required_confirmations.mock_safe(|_| MockResult::Return(8));
     let settings = choose_taker_confs_and_notas(&taker_request, &maker_reserved, &coin, &coin);
     // should pick settings from coins
-    assert!(settings.my_coin_nota);
-    assert_eq!(settings.my_coin_confs, 8);
-    assert!(settings.other_coin_nota);
-    assert_eq!(settings.other_coin_confs, 8);
+    assert!(settings.taker_coin_nota);
+    assert_eq!(settings.taker_coin_confs, 8);
+    assert!(settings.maker_coin_nota);
+    assert_eq!(settings.maker_coin_confs, 8);
 
     let taker_request = TakerRequestBuilder::default()
         .with_base_confs(5)
@@ -1260,10 +1260,10 @@ fn test_choose_taker_confs_settings_buy_action() {
     let settings = choose_taker_confs_and_notas(&taker_request, &maker_reserved, &coin, &coin);
     // should pick settings from taker request
     // as action is buy my_coin is rel and other coin is base
-    assert!(!settings.my_coin_nota);
-    assert_eq!(settings.my_coin_confs, 4);
-    assert!(settings.other_coin_nota);
-    assert_eq!(settings.other_coin_confs, 5);
+    assert!(!settings.taker_coin_nota);
+    assert_eq!(settings.taker_coin_confs, 4);
+    assert!(settings.maker_coin_nota);
+    assert_eq!(settings.maker_coin_confs, 5);
 
     let taker_request = TakerRequestBuilder::default()
         .with_base_confs(2)
@@ -1277,10 +1277,10 @@ fn test_choose_taker_confs_settings_buy_action() {
     let settings = choose_taker_confs_and_notas(&taker_request, &maker_reserved, &coin, &coin);
     // should pick settings from maker reserved if he requires less confs
     // as action is buy my_coin is rel and other coin is base in request
-    assert!(!settings.my_coin_nota);
-    assert_eq!(settings.my_coin_confs, 1);
-    assert!(settings.other_coin_nota);
-    assert_eq!(settings.other_coin_confs, 2);
+    assert!(!settings.taker_coin_nota);
+    assert_eq!(settings.taker_coin_confs, 1);
+    assert!(settings.maker_coin_nota);
+    assert_eq!(settings.maker_coin_confs, 2);
 
     let taker_request = TakerRequestBuilder::default()
         .with_base_confs(2)
@@ -1294,10 +1294,10 @@ fn test_choose_taker_confs_settings_buy_action() {
     let settings = choose_taker_confs_and_notas(&taker_request, &maker_reserved, &coin, &coin);
     // should allow maker to use more confirmations than we require, but it shouldn't affect our settings
     // as action is buy my_coin is rel and other coin is base in request
-    assert!(!settings.my_coin_nota);
-    assert_eq!(settings.my_coin_confs, 1);
-    assert!(settings.other_coin_nota);
-    assert_eq!(settings.other_coin_confs, 2);
+    assert!(!settings.taker_coin_nota);
+    assert_eq!(settings.taker_coin_confs, 1);
+    assert!(settings.maker_coin_nota);
+    assert_eq!(settings.maker_coin_confs, 2);
 
     let taker_request = TakerRequestBuilder::default()
         .with_base_confs(2)
@@ -1313,10 +1313,10 @@ fn test_choose_taker_confs_settings_buy_action() {
     let settings = choose_taker_confs_and_notas(&taker_request, &maker_reserved, &coin, &coin);
     // maker settings should have no effect on other_coin_confs and other_coin_nota
     // as action is buy my_coin is rel and other coin is base in request
-    assert!(!settings.my_coin_nota);
-    assert_eq!(settings.my_coin_confs, 1);
-    assert!(settings.other_coin_nota);
-    assert_eq!(settings.other_coin_confs, 2);
+    assert!(!settings.taker_coin_nota);
+    assert_eq!(settings.taker_coin_confs, 1);
+    assert!(settings.maker_coin_nota);
+    assert_eq!(settings.maker_coin_confs, 2);
 }
 
 #[test]
@@ -1332,10 +1332,10 @@ fn test_choose_taker_confs_settings_sell_action() {
     TestCoin::required_confirmations.mock_safe(|_| MockResult::Return(8));
     let settings = choose_taker_confs_and_notas(&taker_request, &maker_reserved, &coin, &coin);
     // should pick settings from coins
-    assert!(settings.my_coin_nota);
-    assert_eq!(settings.my_coin_confs, 8);
-    assert!(settings.other_coin_nota);
-    assert_eq!(settings.other_coin_confs, 8);
+    assert!(settings.taker_coin_nota);
+    assert_eq!(settings.taker_coin_confs, 8);
+    assert!(settings.maker_coin_nota);
+    assert_eq!(settings.maker_coin_confs, 8);
 
     let taker_request = TakerRequestBuilder::default()
         .with_action(TakerAction::Sell)
@@ -1349,10 +1349,10 @@ fn test_choose_taker_confs_settings_sell_action() {
     let settings = choose_taker_confs_and_notas(&taker_request, &maker_reserved, &coin, &coin);
     // should pick settings from taker request
     // as action is sell my_coin is base and other coin is rel in request
-    assert!(!settings.my_coin_nota);
-    assert_eq!(settings.my_coin_confs, 4);
-    assert!(settings.other_coin_nota);
-    assert_eq!(settings.other_coin_confs, 5);
+    assert!(!settings.taker_coin_nota);
+    assert_eq!(settings.taker_coin_confs, 4);
+    assert!(settings.maker_coin_nota);
+    assert_eq!(settings.maker_coin_confs, 5);
 
     let taker_request = TakerRequestBuilder::default()
         .with_action(TakerAction::Sell)
@@ -1367,10 +1367,10 @@ fn test_choose_taker_confs_settings_sell_action() {
     let settings = choose_taker_confs_and_notas(&taker_request, &maker_reserved, &coin, &coin);
     // should pick settings from maker reserved if he requires less confs
     // as action is sell my_coin is base and other coin is rel in request
-    assert!(!settings.my_coin_nota);
-    assert_eq!(settings.my_coin_confs, 1);
-    assert!(settings.other_coin_nota);
-    assert_eq!(settings.other_coin_confs, 2);
+    assert!(!settings.taker_coin_nota);
+    assert_eq!(settings.taker_coin_confs, 1);
+    assert!(settings.maker_coin_nota);
+    assert_eq!(settings.maker_coin_confs, 2);
 
     let taker_request = TakerRequestBuilder::default()
         .with_action(TakerAction::Sell)
@@ -1385,10 +1385,10 @@ fn test_choose_taker_confs_settings_sell_action() {
     let settings = choose_taker_confs_and_notas(&taker_request, &maker_reserved, &coin, &coin);
     // should allow maker to use more confirmations than we require, but it shouldn't affect our settings
     // as action is sell my_coin is base and other coin is rel in request
-    assert!(!settings.my_coin_nota);
-    assert_eq!(settings.my_coin_confs, 1);
-    assert!(settings.other_coin_nota);
-    assert_eq!(settings.other_coin_confs, 2);
+    assert!(!settings.taker_coin_nota);
+    assert_eq!(settings.taker_coin_confs, 1);
+    assert!(settings.maker_coin_nota);
+    assert_eq!(settings.maker_coin_confs, 2);
 
     let taker_request = TakerRequestBuilder::default()
         .with_action(TakerAction::Sell)
@@ -1405,8 +1405,8 @@ fn test_choose_taker_confs_settings_sell_action() {
     let settings = choose_taker_confs_and_notas(&taker_request, &maker_reserved, &coin, &coin);
     // maker settings should have no effect on other_coin_confs and other_coin_nota
     // as action is sell my_coin is base and other coin is rel in request
-    assert!(!settings.my_coin_nota);
-    assert_eq!(settings.my_coin_confs, 1);
-    assert!(settings.other_coin_nota);
-    assert_eq!(settings.other_coin_confs, 2);
+    assert!(!settings.taker_coin_nota);
+    assert_eq!(settings.taker_coin_confs, 1);
+    assert!(settings.maker_coin_nota);
+    assert_eq!(settings.maker_coin_confs, 2);
 }
