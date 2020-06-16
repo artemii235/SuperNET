@@ -571,67 +571,14 @@ fn list_since_block_btc_serde() {
 }
 
 #[test]
-#[ignore]
-fn get_tx_details_doge() {
-    let conf = json!(  {
-        "coin": "DOGE",
-        "name": "dogecoin",
-        "fname": "Dogecoin",
-        "rpcport": 22555,
-        "pubtype": 30,
-        "p2shtype": 22,
-        "wiftype": 158,
-        "txfee": 0,
-        "mm2": 1,
-        "required_confirmations": 2
-    });
-    let req = json!({
-         "method": "electrum",
-         "servers": [{"url":"electrum1.cipig.net:10060"},{"url":"electrum2.cipig.net:10060"},{"url":"electrum3.cipig.net:10060"}]
-    });
-
-    let ctx = MmCtxBuilder::new().into_mm_arc();
-
-    use common::executor::spawn;
-    let coin = unwrap!(block_on(utxo_coin_from_conf_and_request(
-        &ctx, "DOGE", &conf, &req, &[1u8; 32])));
-
-    let coin1 = coin.clone();
-    let coin2 = coin.clone();
-    let fut1 = async move {
-        let block = coin1.current_block().compat().await.unwrap();
-        log!((block));
-        let hash = hex::decode("99caab76bd025d189f10856dc649aad1a191b1cfd9b139ece457c5fedac58132").unwrap();
-        loop {
-            let tx_details = coin1.tx_details_by_hash(&hash).compat().await.unwrap();
-            log!([tx_details]);
-            Timer::sleep(1.).await;
-        }
-    };
-    let fut2 = async move {
-        let block = coin2.current_block().compat().await.unwrap();
-        log!((block));
-        let hash = hex::decode("99caab76bd025d189f10856dc649aad1a191b1cfd9b139ece457c5fedac58132").unwrap();
-        loop {
-            let tx_details = coin2.tx_details_by_hash(&hash).compat().await.unwrap();
-            log!([tx_details]);
-            Timer::sleep(1.).await;
-        }
-    };
-    spawn(fut1);
-    spawn(fut2);
-    loop {};
-}
-
-#[test]
 // https://github.com/KomodoPlatform/atomicDEX-API/issues/587
 fn get_tx_details_coinbase_transaction() {
-    let client = electrum_client_for_test(&["el0.veruscoin.io:17485", "el1.veruscoin.io:17485"]);
+    let client = electrum_client_for_test(&["electrum1.cipig.net:10018","electrum2.cipig.net:10018","electrum3.cipig.net:10018"]);
     let coin: UtxoCoin = utxo_coin_for_test(client.into(), Some("spice describe gravity federal blast come thank unfair canal monkey style afraid")).into();
 
     let fut = async move {
-        // hash of coinbase transaction https://vrsc.explorer.dexstats.info/tx/0d95a7b11802621a65f9e7ca9da0bca6ee4956fd2328e5116a777285179dbd08
-        let hash = hex::decode("0d95a7b11802621a65f9e7ca9da0bca6ee4956fd2328e5116a777285179dbd08").unwrap();
+        // hash of coinbase transaction https://morty.explorer.dexstats.info/tx/b59b093ed97c1798f2a88ee3375a0c11d0822b6e4468478777f899891abd34a5
+        let hash = hex::decode("b59b093ed97c1798f2a88ee3375a0c11d0822b6e4468478777f899891abd34a5").unwrap();
 
         let tx_details = coin.tx_details_by_hash(&hash).compat().await.unwrap();
         assert!(tx_details.from.is_empty());
