@@ -475,6 +475,8 @@ pub trait RpcTransportEventHandler {
     fn on_outgoing_request(&self, data: &[u8]);
 
     fn on_incoming_response(&self, data: &[u8]);
+
+    fn on_connect(&self, address: String) -> Result<(), String>;
 }
 
 impl fmt::Debug for dyn RpcTransportEventHandler + Send + Sync {
@@ -495,9 +497,13 @@ impl RpcTransportEventHandler for RpcTransportEventHandlerShared {
     fn on_incoming_response(&self, data: &[u8]) {
         self.as_ref().on_incoming_response(data)
     }
+
+    fn on_connect(&self, address: String) -> Result<(), String> {
+        self.as_ref().on_connect(address)
+    }
 }
 
-impl<T: RpcTransportEventHandler> RpcTransportEventHandler for Vec<T> {
+impl<T: RpcTransportEventHandler + Sync> RpcTransportEventHandler for Vec<T> {
     fn debug_info(&self) -> String {
         let selfi: Vec<String> = self.iter().map(|x| x.debug_info()).collect();
         format!("{:?}", selfi)
@@ -513,6 +519,13 @@ impl<T: RpcTransportEventHandler> RpcTransportEventHandler for Vec<T> {
         for handler in self {
             handler.on_incoming_response(data)
         }
+    }
+
+    fn on_connect(&self, address: String) -> Result<(), String> {
+        for handler in self {
+            try_s!(handler.on_connect(address.clone()))
+        }
+        Ok(())
     }
 }
 
@@ -569,6 +582,11 @@ impl RpcTransportEventHandler for CoinTransportMetrics {
             "coin" => self.ticker.clone(), "client" => self.client.clone());
         mm_counter!(self.metrics, "rpc_client.response.count", 1,
             "coin" => self.ticker.clone(), "client" => self.client.clone());
+    }
+
+    fn on_connect(&self, _address: String) -> Result<(), String> {
+        // TODO
+        Ok(())
     }
 }
 

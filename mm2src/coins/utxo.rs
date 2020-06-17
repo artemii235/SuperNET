@@ -37,9 +37,11 @@ use common::mm_number::MmNumber;
 use dirs::home_dir;
 use futures01::{Future};
 use futures01::future::Either;
+use futures::channel::mpsc;
 use futures::compat::Future01CompatExt;
 use futures::future::{FutureExt, TryFutureExt};
 use futures::lock::{Mutex as AsyncMutex};
+use futures::stream::StreamExt;
 use gstuff::{now_ms};
 use keys::{KeyPair, Private, Public, Address, Secret, Type};
 use keys::bytes::Bytes;
@@ -57,7 +59,7 @@ use std::num::NonZeroU64;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrderding};
 use std::thread;
 use std::time::Duration;
@@ -69,6 +71,7 @@ use self::rpc_clients::{electrum_script_hash, ElectrumClient, ElectrumClientImpl
 use super::{CoinsContext, CoinTransportMetrics, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, RpcClientType, RpcTransportEventHandlerShared,
             SwapOps, TradeFee, TradeInfo, Transaction, TransactionEnum, TransactionFut, TransactionDetails, WithdrawFee, WithdrawRequest};
 use crate::utxo::rpc_clients::{NativeClientImpl, UtxoRpcClientOps, ElectrumRpcRequest};
+use crate::RpcTransportEventHandler;
 
 #[cfg(test)]
 pub mod utxo_tests;
@@ -1971,16 +1974,32 @@ fn read_native_mode_conf(_filename: &dyn AsRef<Path>) -> Result<(Option<u16>, St
     unimplemented!()
 }
 
-fn rpc_event_handlers_for_client_transport(
-    ctx: &MmArc,
-    ticker: String,
-    client: RpcClientType,
-)
-    -> Vec<RpcTransportEventHandlerShared> {
-    let metrics = ctx.metrics.weak();
-    vec![
-        CoinTransportMetrics::new(metrics, ticker, client).into_shared(),
-    ]
+struct ElectrumEventHandler {
+    on_connect_tx: mpsc::UnboundedSender<String>,
+}
+
+impl ElectrumEventHandler {
+    fn into_shared(self) -> RpcTransportEventHandlerShared {
+        Arc::new(self)
+    }
+}
+
+impl RpcTransportEventHandler for ElectrumEventHandler {
+    fn debug_info(&self) -> String {
+        "ElectrumEventHandler".into()
+    }
+
+    fn on_outgoing_request(&self, _data: &[u8]) {
+        // TODO
+    }
+
+    fn on_incoming_response(&self, _data: &[u8]) {
+        // TODO
+    }
+
+    fn on_connect(&self, address: String) -> Result<(), String> {
+        Ok(try_s!(self.on_connect_tx.unbounded_send(address)))
+    }
 }
 
 pub async fn utxo_coin_from_conf_and_request(
@@ -2032,7 +2051,7 @@ pub async fn utxo_coin_from_conf_and_request(
                     Some(p) => p,
                     None => try_s!(conf["rpcport"].as_u64().ok_or(ERRL!("Rpc port is not set neither in `coins` file nor in native daemon config"))) as u16,
                 };
-                let event_handlers = rpc_event_handlers_for_client_transport(ctx, ticker.to_string(), RpcClientType::Native);
+                let event_handlers = vec![CoinTransportMetrics::new(ctx.metrics.weak(), ticker.to_owned(), RpcClientType::Native).into_shared()];
                 let client = Arc::new(NativeClientImpl {
                     coin_ticker: ticker.to_string(),
                     uri: fomat!("http://127.0.0.1:"(rpc_port)),
@@ -2046,10 +2065,15 @@ pub async fn utxo_coin_from_conf_and_request(
             }
         },
         Some("electrum") => {
+            let (on_connect_tx, on_connect_rx) = mpsc::unbounded();
+            let event_handlers = vec![
+                CoinTransportMetrics::new(ctx.metrics.weak(), ticker.to_owned(), RpcClientType::Electrum).into_shared(),
+                ElectrumEventHandler { on_connect_tx }.into_shared(),
+            ];
+
             let mut servers: Vec<ElectrumRpcRequest> = try_s!(json::from_value(req["servers"].clone()));
             let mut rng = small_rng();
             servers.as_mut_slice().shuffle(&mut rng);
-            let event_handlers = rpc_event_handlers_for_client_transport(ctx, ticker.to_string(), RpcClientType::Electrum);
             let mut client = ElectrumClientImpl::new(ticker.to_string(), event_handlers);
             for server in servers.iter() {
                 match client.add_server(server) {
@@ -2087,6 +2111,8 @@ pub async fn utxo_coin_from_conf_and_request(
                     Timer::sleep(30.).await
                 }
             });
+            let weak_client = Arc::downgrade(&client);
+            spawn(electrum_version_loop(weak_client, on_connect_rx));
             UtxoRpcClientEnum::Electrum(ElectrumClient(client))
         },
         _ => return ERR!("utxo_coin_from_conf_and_request should be called only by enable or electrum requests"),
@@ -2196,6 +2222,28 @@ pub async fn utxo_coin_from_conf_and_request(
         estimate_fee_mode: json::from_value(conf["estimate_fee_mode"].clone()).unwrap_or(None),
     };
     Ok(UtxoCoin(Arc::new(coin)))
+}
+
+async fn electrum_version_loop(
+    weak_client: Weak<ElectrumClientImpl>,
+    mut on_connect_rx: mpsc::UnboundedReceiver<String>) {
+    while let Some(electrum_addr) = on_connect_rx.next().await {
+        let client = match weak_client.upgrade() {
+            Some(c) =>c ,
+            _ => break,
+        };
+
+        let version = match ElectrumClient(client).server_version(&electrum_addr, "TODO", "1.4").compat().await {
+            Ok(version) => version,
+            Err(e) => {
+                log!("Electrum " (electrum_addr) " server.version error \"" [e] "\". Remove the connection");
+                // client.
+                continue
+            }
+        };
+    }
+
+    log!("Electrum server.version loop stopped");
 }
 
 /// Function calculating KMD interest

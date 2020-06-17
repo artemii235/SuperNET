@@ -8,7 +8,7 @@ use chain::{BlockHeader, OutPoint, Transaction as UtxoTx};
 use common::{median, StringError};
 use common::custom_futures::{join_all_sequential, select_ok_sequential};
 use common::executor::{spawn, Timer};
-use common::jsonrpc_client::{JsonRpcClient, JsonRpcRemoteAddr, JsonRpcResponseFut, JsonRpcRequest, JsonRpcResponse, RpcRes};
+use common::jsonrpc_client::{JsonRpcClient, JsonRpcMultiClient, JsonRpcRemoteAddr, JsonRpcResponseFut, JsonRpcRequest, JsonRpcResponse, RpcRes};
 use common::wio::{slurp_req};
 use crate::{RpcTransportEventHandler, RpcTransportEventHandlerShared};
 use futures01::{Future, Poll, Sink, Stream};
@@ -741,6 +741,14 @@ pub enum ElectrumProtocol {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+/// Deserializable Electrum protocol version representation for RPC
+/// https://electrumx-spesmilo.readthedocs.io/en/latest/protocol-methods.html#server.version
+pub struct ElectrumProtocolVersion {
+    server_software_version: String,
+    protocol_version: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
 /// Electrum request RPC representation
 pub struct ElectrumRpcRequest {
     pub url: String,
@@ -922,6 +930,23 @@ async fn electrum_request_multi(
     }
 }
 
+#[cfg(feature = "native")]
+async fn electrum_request_to(
+    client: ElectrumClient,
+    request: JsonRpcRequest,
+    to_addr: String,
+) -> Result<(JsonRpcRemoteAddr, JsonRpcResponse), String> {
+    let connection = client.connections.iter().find(|c| c.addr == to_addr)
+        .ok_or(ERRL!("Unknown destination address {}", to_addr))?;
+
+    let response = match &*connection.tx.lock().await {
+        Some(tx) => try_s!(electrum_request(request.clone(), tx.clone(), connection.responses.clone()).compat().await),
+        None => return ERR!("Connection {} is not established yet", to_addr),
+    };
+
+    Ok((JsonRpcRemoteAddr(to_addr.to_owned()), response))
+}
+
 #[cfg(not(feature = "native"))]
 lazy_static! {
     static ref ELECTRUM_REPLIES: Mutex<HashMap<(i32, i32), ShotSender<()>>> = Mutex::new (HashMap::new());
@@ -1030,10 +1055,21 @@ impl JsonRpcClient for ElectrumClient {
     }
 }
 
+impl JsonRpcMultiClient for ElectrumClient {
+    fn transport_exact(&self, to_addr: String, request: JsonRpcRequest) -> JsonRpcResponseFut {
+        Box::new(electrum_request_to(self.clone(), request, to_addr).boxed().compat())
+    }
+}
+
 impl ElectrumClient {
     /// https://electrumx.readthedocs.io/en/latest/protocol-methods.html#server-ping
     pub fn server_ping(&self) -> RpcRes<()> {
         rpc_func!(self, "server.ping")
+    }
+
+    /// https://electrumx.readthedocs.io/en/latest/protocol-methods.html#server-version
+    pub fn server_version(&self, server_address: &str, client_name: &str, version: &str) -> RpcRes<ElectrumProtocolVersion> {
+        rpc_func_from!(self, server_address, "server.version", client_name, version)
     }
 
     /// https://electrumx.readthedocs.io/en/latest/protocol-methods.html#blockchain-scripthash-listunspent
@@ -1452,6 +1488,7 @@ async fn connect_loop(
         // reset the delay if we've connected successfully
         delay = 0;
         log!("Electrum client connected to " (addr));
+        try_loop!(event_handlers.on_connect(addr.clone()), addr, delay);
         let last_chunk = Arc::new(AtomicU64::new(now_ms()));
         let mut last_chunk_f = electrum_last_chunk_loop(last_chunk.clone()).boxed().fuse();
 
