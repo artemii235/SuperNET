@@ -381,6 +381,10 @@ fn test_my_balance() {
     assert_eq!(my_balance, "7.777");
     let my_address = unwrap!(json["address"].as_str());
     assert_eq!(my_address, "RRnMcSeKiLrNdbp91qNVQwwXx5azD4S4CD");
+
+    // locked by swaps should be displayed as fraction
+    assert_eq!(json["locked_by_swaps"]["numer"], Json::from("0"));
+    assert_eq!(json["locked_by_swaps"]["denom"], Json::from("1"));
 }
 
 fn check_set_price_fails(mm: &MarketMakerIt, base: &str, rel: &str) {

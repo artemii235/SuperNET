@@ -32,7 +32,6 @@ use common::{first_char_to_upper, small_rng};
 use common::executor::{spawn, Timer};
 use common::jsonrpc_client::{JsonRpcError, JsonRpcErrorType};
 use common::mm_ctx::MmArc;
-use common::mm_number::MmNumber;
 #[cfg(feature = "native")]
 use dirs::home_dir;
 use futures01::{Future};
@@ -67,7 +66,7 @@ pub use chain::Transaction as UtxoTx;
 use self::rpc_clients::{electrum_script_hash, ElectrumClient, ElectrumClientImpl,
                         EstimateFeeMethod, EstimateFeeMode, NativeClient, UtxoRpcClientEnum, UnspentInfo};
 use super::{CoinsContext, CoinTransportMetrics, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, RpcClientType, RpcTransportEventHandlerShared,
-            SwapOps, TradeFee, TradeInfo, Transaction, TransactionEnum, TransactionFut, TransactionDetails, WithdrawFee, WithdrawRequest};
+            SwapOps, TradeFee, Transaction, TransactionEnum, TransactionFut, TransactionDetails, WithdrawFee, WithdrawRequest};
 use crate::utxo::rpc_clients::{NativeClientImpl, UtxoRpcClientOps, ElectrumRpcRequest};
 
 #[cfg(test)]
@@ -1343,6 +1342,10 @@ impl MarketCoinOps for UtxoCoin {
         Box::new(self.rpc_client.display_balance(self.my_address.clone(), self.decimals).map_err(|e| ERRL!("{}", e)))
     }
 
+    fn base_coin_balance(&self) -> Box<dyn Future<Item=BigDecimal, Error=String> + Send> {
+        self.my_balance()
+    }
+
     fn send_raw_tx(&self, tx: &str) -> Box<dyn Future<Item=String, Error=String> + Send> {
         let bytes = try_fus!(hex::decode(tx));
         Box::new(self.rpc_client.send_raw_transaction(bytes.into()).map_err(|e| ERRL!("{}", e)).map(|hash| format!("{:?}", hash)))
@@ -1475,32 +1478,6 @@ pub struct UtxoFeeDetails {
 
 impl MmCoin for UtxoCoin {
     fn is_asset_chain(&self) -> bool { self.asset_chain }
-
-    fn check_i_have_enough_to_trade(&self, amount: &MmNumber, balance: &MmNumber, trade_info: TradeInfo) -> Box<dyn Future<Item=(), Error=String> + Send> {
-        let arc = self.clone();
-        let amount = amount.clone();
-        let balance = balance.clone();
-        let fee_fut = async move {
-            let coin_fee = try_s!(arc.get_tx_fee().await);
-            let fee = match coin_fee {
-                ActualTxFee::Fixed(f) => f,
-                ActualTxFee::Dynamic(f) => f,
-            };
-            let fee_decimal = MmNumber::from(fee) / MmNumber::from(10u64.pow(arc.decimals as u32));
-            if &amount < &fee_decimal {
-                return ERR!("Amount {} is too low, it'll result to dust error, at least {} is required", amount, fee_decimal);
-            }
-            let required = match trade_info {
-                TradeInfo::Maker => amount + fee_decimal,
-                TradeInfo::Taker(dex_fee) => &amount + &MmNumber::from(dex_fee.clone()) + MmNumber::from(2) * fee_decimal,
-            };
-            if balance < required {
-                return ERR!("{} balance {} is too low, required {}", arc.ticker(), balance, required);
-            }
-            Ok(())
-        };
-        Box::new(fee_fut.boxed().compat())
-    }
 
     fn can_i_spend_other_payment(&self) -> Box<dyn Future<Item=(), Error=String> + Send> {
         Box::new(futures01::future::ok(()))
@@ -1833,7 +1810,7 @@ impl MmCoin for UtxoCoin {
             };
             Ok(TradeFee {
                 coin: ticker,
-                amount: big_decimal_from_sat(amount as i64, decimals),
+                amount: big_decimal_from_sat(amount as i64, decimals).into(),
             })
         };
         Box::new(fut.boxed().compat())
@@ -1975,8 +1952,7 @@ fn rpc_event_handlers_for_client_transport(
     ctx: &MmArc,
     ticker: String,
     client: RpcClientType,
-)
-    -> Vec<RpcTransportEventHandlerShared> {
+) -> Vec<RpcTransportEventHandlerShared> {
     let metrics = ctx.metrics.weak();
     vec![
         CoinTransportMetrics::new(metrics, ticker, client).into_shared(),
