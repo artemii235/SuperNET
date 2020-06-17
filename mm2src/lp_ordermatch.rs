@@ -152,6 +152,25 @@ enum TakerRequestBuildError {
     RelNotaNotSet,
 }
 
+impl fmt::Display for TakerRequestBuildError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TakerRequestBuildError::BaseCoinEmpty => write!(f, "Base coin can not be empty"),
+            TakerRequestBuildError::RelCoinEmpty => write!(f, "Rel coin can not be empty"),
+            TakerRequestBuildError::BaseEqualRel => write!(f, "Rel coin can not be same as base"),
+            TakerRequestBuildError::BaseAmountTooLow { actual, threshold } =>
+                write!(f, "Base amount {} is too low, required: {}", actual.to_decimal(), threshold.to_decimal()),
+            TakerRequestBuildError::RelAmountTooLow { actual, threshold } =>
+                write!(f, "Rel amount {} is too low, required: {}", actual.to_decimal(), threshold.to_decimal()),
+            TakerRequestBuildError::SenderPubkeyIsZero => write!(f, "Sender pubkey can not be zero"),
+            TakerRequestBuildError::BaseConfsNotSet => write!(f, "Base coin confs must be set"),
+            TakerRequestBuildError::BaseNotaNotSet => write!(f, "Base coin nota must be set"),
+            TakerRequestBuildError::RelConfsNotSet => write!(f, "Rel coin confs must be set"),
+            TakerRequestBuildError::RelNotaNotSet => write!(f, "Rel coin nota must be set"),
+        }
+    }
+}
+
 impl TakerRequestBuilder {
     fn with_base_coin(mut self, ticker: String) -> Self {
         self.base = ticker;
@@ -203,6 +222,11 @@ impl TakerRequestBuilder {
         self
     }
 
+    fn with_sender_pubkey(mut self, sender_pubkey: H256Json) -> Self {
+        self.sender_pubkey = sender_pubkey;
+        self
+    }
+
     /// Validate fields and build
     fn build(self) -> Result<TakerRequest, TakerRequestBuildError> {
         let min_vol = MmNumber::from(MIN_TRADING_VOL.parse::<BigDecimal>().unwrap());
@@ -242,7 +266,7 @@ impl TakerRequestBuilder {
             rel_amount_rat: Some(self.rel_amount.into()),
             action: self.action,
             uuid: new_uuid(),
-            method: "".to_string(),
+            method: "request".to_string(),
             sender_pubkey: self.sender_pubkey,
             dest_pub_key: Default::default(),
             match_by: self.match_by,
@@ -265,7 +289,7 @@ impl TakerRequestBuilder {
             rel_amount_rat: Some(self.rel_amount.into()),
             action: self.action,
             uuid: new_uuid(),
-            method: "".to_string(),
+            method: "request".to_string(),
             sender_pubkey: self.sender_pubkey,
             dest_pub_key: Default::default(),
             match_by: self.match_by,
@@ -727,7 +751,7 @@ impl OrdermatchContext {
 }
 
 #[cfg_attr(test, mockable)]
-fn lp_connect_start_bob(ctx: MmArc, maker_order: MakerOrder, maker_match: MakerMatch) {
+fn lp_connect_start_bob(ctx: MmArc, maker_match: MakerMatch, maker_order: MakerOrder) {
     spawn(async move {  // aka "maker_loop"
         let taker_coin = match lp_coinfindᵃ(&ctx, &maker_match.reserved.rel).await {
             Ok(Some(c)) => c,
@@ -1069,7 +1093,7 @@ pub fn lp_trade_command(
                 order_match.connect = Some(connect_msg);
                 order_match.connected = Some(connected);
                 my_order.started_swaps.push(order_match.request.uuid);
-                lp_connect_start_bob(ctx.clone(), my_order.clone(), order_match.clone());
+                lp_connect_start_bob(ctx.clone(), order_match.clone(), my_order.clone());
                 save_my_maker_order(&ctx, &my_order);
             }
         }
@@ -1166,35 +1190,21 @@ pub fn lp_auto_buy(ctx: &MmArc, base_coin: &MmCoinEnum, rel_coin: &MmCoinEnum, i
 
     let ordermatch_ctx = try_s!(OrdermatchContext::from_ctx(&ctx));
     let mut my_taker_orders = try_s!(ordermatch_ctx.my_taker_orders.lock());
-    let uuid = new_uuid();
     let our_public_id = try_s!(ctx.public_id());
     let rel_volume = &input.volume * &input.price;
-    if input.volume < MmNumber::from(unwrap!(MIN_TRADING_VOL.parse::<BigDecimal>())) {
-        return ERR!("Base volume {} is too low, required at least {}", input.volume, MIN_TRADING_VOL);
-    }
-
-    if rel_volume < MmNumber::from(unwrap!(MIN_TRADING_VOL.parse::<BigDecimal>())) {
-        return ERR!("Rel volume {} is too low, required at least {}", rel_volume, MIN_TRADING_VOL);
-    }
-
-    let request = TakerRequest {
-        base: input.base,
-        rel: input.rel,
-        rel_amount: rel_volume.clone().into(),
-        rel_amount_rat: Some(rel_volume.into()),
-        base_amount: input.volume.clone().into(),
-        base_amount_rat: Some(BigRational::from(input.volume)),
-        method: "request".into(),
-        uuid,
-        dest_pub_key: input.dest_pub_key,
-        sender_pubkey: H256Json::from(our_public_id.bytes),
-        action,
-        match_by: input.match_by,
-        base_confs: Some(input.base_confs.unwrap_or(base_coin.required_confirmations())),
-        base_nota: Some(input.base_nota.unwrap_or(base_coin.requires_notarization())),
-        rel_confs: Some(input.rel_confs.unwrap_or(rel_coin.required_confirmations())),
-        rel_nota: Some(input.rel_nota.unwrap_or(rel_coin.requires_notarization())),
-    };
+    let request_builder = TakerRequestBuilder::default()
+        .with_base_coin(input.base)
+        .with_rel_coin(input.rel)
+        .with_base_amount(input.volume)
+        .with_rel_amount(rel_volume)
+        .with_action(action)
+        .with_match_by(input.match_by)
+        .with_base_confs(input.base_confs.unwrap_or(base_coin.required_confirmations()))
+        .with_rel_confs(input.rel_confs.unwrap_or(rel_coin.required_confirmations()))
+        .with_base_nota(input.base_nota.unwrap_or(base_coin.requires_notarization()))
+        .with_rel_nota(input.rel_nota.unwrap_or(rel_coin.requires_notarization()))
+        .with_sender_pubkey(H256Json::from(our_public_id.bytes));
+    let request = try_s!(request_builder.build());
     ctx.broadcast_p2p_msg(&unwrap!(json::to_string(&request)));
     let result = json!({
         "result": request
@@ -1206,7 +1216,7 @@ pub fn lp_auto_buy(ctx: &MmArc, base_coin: &MmCoinEnum, rel_coin: &MmCoinEnum, i
         order_type: input.order_type,
     };
     save_my_taker_order(ctx, &order);
-    my_taker_orders.insert(uuid, order);
+    my_taker_orders.insert(order.request.uuid, order);
     drop(my_taker_orders);
     Ok(result)
 }
@@ -2017,6 +2027,7 @@ pub fn migrate_saved_orders(ctx: &MmArc) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Debug)]
 struct SwapConfirmationsSettings {
     maker_coin_confs: u64,
     maker_coin_nota: bool,
