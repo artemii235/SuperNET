@@ -466,7 +466,7 @@ mod docker_tests {
 
     // https://github.com/KomodoPlatform/atomicDEX-API/issues/471
     #[test]
-    fn match_and_trade_max() {
+    fn test_match_and_trade_max() {
         let (_ctx, _, bob_priv_key) = generate_coin_with_random_privkey("MYCOIN", 1000);
         let (_ctx, _, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN1", 2000);
         let coins = json! ([
@@ -549,6 +549,334 @@ mod docker_tests {
         unwrap! (block_on (mm_bob.wait_for_log (22., |log| log.contains ("Entering the maker_swap_loop MYCOIN/MYCOIN1"))));
         unwrap! (block_on (mm_alice.wait_for_log (22., |log| log.contains ("Entering the taker_swap_loop MYCOIN/MYCOIN1"))));
         unwrap!(block_on(mm_bob.stop()));
+        unwrap!(block_on(mm_alice.stop()));
+    }
+
+    #[test]
+    fn test_buy_when_coins_locked_by_other_swap() {
+        let (_ctx, _, bob_priv_key) = generate_coin_with_random_privkey("MYCOIN", 1000);
+        let (_ctx, _, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN1", 2);
+        let coins = json! ([
+            {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000},
+            {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":1000},
+        ]);
+        let mut mm_bob = unwrap! (MarketMakerIt::start (
+            json! ({
+                "gui": "nogui",
+                "netid": 9000,
+                "dht": "on",  // Enable DHT without delay.
+                "passphrase": format!("0x{}", hex::encode(bob_priv_key)),
+                "coins": coins,
+                "rpc_password": "pass",
+                "i_am_seed": true,
+            }),
+            "pass".to_string(),
+            None,
+        ));
+        let (_bob_dump_log, _bob_dump_dashboard) = mm_dump (&mm_bob.log_path);
+        unwrap! (block_on (mm_bob.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
+
+        let mut mm_alice = unwrap! (MarketMakerIt::start (
+            json! ({
+                "gui": "nogui",
+                "netid": 9000,
+                "dht": "on",  // Enable DHT without delay.
+                "passphrase": format!("0x{}", hex::encode(alice_priv_key)),
+                "coins": coins,
+                "rpc_password": "pass",
+                "seednodes": vec![format!("{}", mm_bob.ip)],
+            }),
+            "pass".to_string(),
+            None,
+        ));
+        let (_alice_dump_log, _alice_dump_dashboard) = mm_dump (&mm_alice.log_path);
+        unwrap! (block_on (mm_alice.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
+
+        log!([block_on(enable_native(&mm_bob, "MYCOIN", vec![]))]);
+        log!([block_on(enable_native(&mm_bob, "MYCOIN1", vec![]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN", vec![]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN1", vec![]))]);
+        let rc = unwrap! (block_on (mm_bob.rpc (json! ({
+            "userpass": mm_bob.userpass,
+            "method": "setprice",
+            "base": "MYCOIN",
+            "rel": "MYCOIN1",
+            "price": 1,
+            "max": true,
+        }))));
+        assert! (rc.0.is_success(), "!setprice: {}", rc.1);
+
+        let rc = unwrap! (block_on (mm_alice.rpc (json! ({
+            "userpass": mm_alice.userpass,
+            "method": "buy",
+            "base": "MYCOIN",
+            "rel": "MYCOIN1",
+            "price": 1,
+            // the result of equation x + x / 777 + 0.00002 = 1
+            "volume": {
+                "numer":"77698446",
+                "denom":"77800000"
+            },
+        }))));
+        assert! (rc.0.is_success(), "!buy: {}", rc.1);
+
+        unwrap! (block_on (mm_bob.wait_for_log (22., |log| log.contains ("Entering the maker_swap_loop MYCOIN/MYCOIN1"))));
+        unwrap! (block_on (mm_alice.wait_for_log (22., |log| log.contains ("Entering the taker_swap_loop MYCOIN/MYCOIN1"))));
+
+        let rc = unwrap! (block_on (mm_alice.rpc (json! ({
+            "userpass": mm_alice.userpass,
+            "method": "buy",
+            "base": "MYCOIN",
+            "rel": "MYCOIN1",
+            "price": 1,
+            // it is slightly more than previous volume so it should fail
+            // because the total sum of used funds will be slightly more than available 2
+            "volume": {
+                "numer":"77698447",
+                "denom":"77800000"
+            },
+        }))));
+        assert! (!rc.0.is_success(), "buy success, but should fail: {}", rc.1);
+        assert! (rc.1.contains("is larger than available 1"));
+        unwrap!(block_on(mm_bob.stop()));
+        unwrap!(block_on(mm_alice.stop()));
+    }
+
+    #[test]
+    fn test_sell_when_coins_locked_by_other_swap() {
+        let (_ctx, _, bob_priv_key) = generate_coin_with_random_privkey("MYCOIN", 1000);
+        let (_ctx, _, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN1", 2);
+        let coins = json! ([
+            {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000},
+            {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":1000},
+        ]);
+        let mut mm_bob = unwrap! (MarketMakerIt::start (
+            json! ({
+                "gui": "nogui",
+                "netid": 9000,
+                "dht": "on",  // Enable DHT without delay.
+                "passphrase": format!("0x{}", hex::encode(bob_priv_key)),
+                "coins": coins,
+                "rpc_password": "pass",
+                "i_am_seed": true,
+            }),
+            "pass".to_string(),
+            None,
+        ));
+        let (_bob_dump_log, _bob_dump_dashboard) = mm_dump (&mm_bob.log_path);
+        unwrap! (block_on (mm_bob.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
+
+        let mut mm_alice = unwrap! (MarketMakerIt::start (
+            json! ({
+                "gui": "nogui",
+                "netid": 9000,
+                "dht": "on",  // Enable DHT without delay.
+                "passphrase": format!("0x{}", hex::encode(alice_priv_key)),
+                "coins": coins,
+                "rpc_password": "pass",
+                "seednodes": vec![format!("{}", mm_bob.ip)],
+            }),
+            "pass".to_string(),
+            None,
+        ));
+        let (_alice_dump_log, _alice_dump_dashboard) = mm_dump (&mm_alice.log_path);
+        unwrap! (block_on (mm_alice.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
+
+        log!([block_on(enable_native(&mm_bob, "MYCOIN", vec![]))]);
+        log!([block_on(enable_native(&mm_bob, "MYCOIN1", vec![]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN", vec![]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN1", vec![]))]);
+        let rc = unwrap! (block_on (mm_bob.rpc (json! ({
+            "userpass": mm_bob.userpass,
+            "method": "setprice",
+            "base": "MYCOIN",
+            "rel": "MYCOIN1",
+            "price": 1,
+            "max": true,
+        }))));
+        assert! (rc.0.is_success(), "!setprice: {}", rc.1);
+
+        let rc = unwrap! (block_on (mm_alice.rpc (json! ({
+            "userpass": mm_alice.userpass,
+            "method": "sell",
+            "base": "MYCOIN1",
+            "rel": "MYCOIN",
+            "price": 1,
+            // the result of equation x + x / 777 + 0.00002 = 1
+            "volume": {
+                "numer":"77698446",
+                "denom":"77800000"
+            },
+        }))));
+        assert! (rc.0.is_success(), "!sell: {}", rc.1);
+
+        unwrap! (block_on (mm_bob.wait_for_log (22., |log| log.contains ("Entering the maker_swap_loop MYCOIN/MYCOIN1"))));
+        unwrap! (block_on (mm_alice.wait_for_log (22., |log| log.contains ("Entering the taker_swap_loop MYCOIN/MYCOIN1"))));
+
+        let rc = unwrap! (block_on (mm_alice.rpc (json! ({
+            "userpass": mm_alice.userpass,
+            "method": "sell",
+            "base": "MYCOIN1",
+            "rel": "MYCOIN",
+            "price": 1,
+            // it is slightly more than previous volume so it should fail
+            // because the total sum of used funds will be slightly more than available 2
+            "volume": {
+                "numer":"77698447",
+                "denom":"77800000"
+            },
+        }))));
+        assert! (!rc.0.is_success(), "sell success, but should fail: {}", rc.1);
+        assert! (rc.1.contains("is larger than available 1"));
+        unwrap!(block_on(mm_bob.stop()));
+        unwrap!(block_on(mm_alice.stop()));
+    }
+
+    #[test]
+    fn test_buy_max() {
+        let (_ctx, _, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN1", 1);
+        let coins = json! ([
+            {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000},
+            {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":1000},
+        ]);
+        let mut mm_alice = unwrap! (MarketMakerIt::start (
+            json! ({
+                "gui": "nogui",
+                "netid": 9000,
+                "dht": "on",  // Enable DHT without delay.
+                "passphrase": format!("0x{}", hex::encode(alice_priv_key)),
+                "coins": coins,
+                "rpc_password": "pass",
+                "i_am_see": true,
+            }),
+            "pass".to_string(),
+            None,
+        ));
+        let (_alice_dump_log, _alice_dump_dashboard) = mm_dump (&mm_alice.log_path);
+        unwrap! (block_on (mm_alice.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
+
+        log!([block_on(enable_native(&mm_alice, "MYCOIN", vec![]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN1", vec![]))]);
+        let rc = unwrap! (block_on (mm_alice.rpc (json! ({
+            "userpass": mm_alice.userpass,
+            "method": "buy",
+            "base": "MYCOIN",
+            "rel": "MYCOIN1",
+            "price": 1,
+            // the result of equation x + x / 777 + 0.00002 = 1
+            "volume": {
+                "numer":"77698446",
+                "denom":"77800000"
+            },
+        }))));
+        assert! (rc.0.is_success(), "!buy: {}", rc.1);
+
+        let rc = unwrap! (block_on (mm_alice.rpc (json! ({
+            "userpass": mm_alice.userpass,
+            "method": "buy",
+            "base": "MYCOIN",
+            "rel": "MYCOIN1",
+            "price": 1,
+            // it is slightly more than previous volume so it should fail
+            "volume": {
+                "numer":"77698447",
+                "denom":"77800000"
+            },
+        }))));
+        assert! (!rc.0.is_success(), "buy success, but should fail: {}", rc.1);
+        // assert! (rc.1.contains("MYCOIN1 balance 1 is too low"));
+        unwrap!(block_on(mm_alice.stop()));
+    }
+
+    #[test]
+    fn test_get_max_taker_vol() {
+        let (_ctx, _, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN1", 1);
+        let coins = json! ([
+            {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000},
+            {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":1000},
+        ]);
+        let mut mm_alice = unwrap! (MarketMakerIt::start (
+            json! ({
+                "gui": "nogui",
+                "netid": 9000,
+                "dht": "on",  // Enable DHT without delay.
+                "passphrase": format!("0x{}", hex::encode(alice_priv_key)),
+                "coins": coins,
+                "rpc_password": "pass",
+                "i_am_see": true,
+            }),
+            "pass".to_string(),
+            None,
+        ));
+        let (_alice_dump_log, _alice_dump_dashboard) = mm_dump (&mm_alice.log_path);
+        unwrap! (block_on (mm_alice.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
+
+        log!([block_on(enable_native(&mm_alice, "MYCOIN1", vec![]))]);
+        let rc = unwrap! (block_on (mm_alice.rpc (json! ({
+            "userpass": mm_alice.userpass,
+            "method": "max_taker_vol",
+            "coin": "MYCOIN1",
+        }))));
+        assert! (rc.0.is_success(), "!max_taker_vol: {}", rc.1);
+        let json: Json = json::from_str(&rc.1).unwrap();
+        // the result of equation x + x / 777 + 0.00002 = 1
+        assert_eq!(json["result"]["numer"], Json::from("38849223"));
+        assert_eq!(json["result"]["denom"], Json::from("38900000"));
+        unwrap!(block_on(mm_alice.stop()));
+    }
+
+    #[test]
+    fn test_set_price_max() {
+        let (_ctx, _, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN", 1);
+        let coins = json! ([
+            {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000},
+            {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":1000},
+        ]);
+        let mut mm_alice = unwrap! (MarketMakerIt::start (
+            json! ({
+                "gui": "nogui",
+                "netid": 9000,
+                "dht": "on",  // Enable DHT without delay.
+                "passphrase": format!("0x{}", hex::encode(alice_priv_key)),
+                "coins": coins,
+                "rpc_password": "pass",
+                "i_am_see": true,
+            }),
+            "pass".to_string(),
+            None,
+        ));
+        let (_alice_dump_log, _alice_dump_dashboard) = mm_dump (&mm_alice.log_path);
+        unwrap! (block_on (mm_alice.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
+
+        log!([block_on(enable_native(&mm_alice, "MYCOIN", vec![]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN1", vec![]))]);
+        let rc = unwrap! (block_on (mm_alice.rpc (json! ({
+            "userpass": mm_alice.userpass,
+            "method": "setprice",
+            "base": "MYCOIN",
+            "rel": "MYCOIN1",
+            "price": 1,
+            // the result of equation x + 0.00001 = 1
+            "volume": {
+                "numer":"99999",
+                "denom":"100000"
+            },
+        }))));
+        assert! (rc.0.is_success(), "!setprice: {}", rc.1);
+
+        let rc = unwrap! (block_on (mm_alice.rpc (json! ({
+            "userpass": mm_alice.userpass,
+            "method": "setprice",
+            "base": "MYCOIN",
+            "rel": "MYCOIN1",
+            "price": 1,
+            // it is slightly more than previous volume so it should fail
+            "volume": {
+                "numer":"100000",
+                "denom":"100000"
+            },
+        }))));
+        assert! (!rc.0.is_success(), "setprice success, but should fail: {}", rc.1);
         unwrap!(block_on(mm_alice.stop()));
     }
 

@@ -7,8 +7,9 @@ use common::{
     executor::Timer,
     file_lock::FileLock,
     mm_ctx::MmArc,
+    mm_number::MmNumber,
 };
-use coins::{FoundSwapTxSpend, MmCoinEnum, TradeInfo, TransactionDetails};
+use coins::{lp_coinfindᵃ, FoundSwapTxSpend, MmCoinEnum, TradeFee, TransactionDetails};
 use crc::crc32;
 use futures::{
     FutureExt, select,
@@ -16,20 +17,21 @@ use futures::{
     future::Either,
 };
 use futures01::Future;
+use http::Response;
 use parking_lot::Mutex as PaMutex;
 use peers::FixedValidator;
 use primitives::hash::H264;
 use rpc::v1::types::{H160 as H160Json, H256 as H256Json, H264 as H264Json};
-use serde_json::{self as json};
+use serde_json::{self as json, Value as Json};
 use serialization::{deserialize, serialize};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::sync::atomic::Ordering;
-use super::{ban_pubkey, broadcast_my_swap_status, dex_fee_amount, get_locked_amount_by_other_swaps,
-  lp_atomic_locktime, my_swap_file_path, my_swaps_dir,
-  AtomicSwap, LockedAmount, MySwapInfo, RecoveredSwap, RecoveredSwapAction,
-  SavedSwap, SwapsContext, SwapError, SwapNegotiationData,
-  BASIC_COMM_TIMEOUT, WAIT_CONFIRM_INTERVAL};
+use super::{ban_pubkey, broadcast_my_swap_status, dex_fee_amount, get_locked_amount,
+            get_locked_amount_by_other_swaps, lp_atomic_locktime, my_swap_file_path, my_swaps_dir,
+            AtomicSwap, LockedAmount, MySwapInfo, RecoveredSwap, RecoveredSwapAction,
+            SavedSwap, SwapsContext, SwapError, SwapNegotiationData,
+            BASIC_COMM_TIMEOUT, WAIT_CONFIRM_INTERVAL};
 
 pub fn stats_taker_swap_file_path(ctx: &MmArc, uuid: &str) -> PathBuf {
     ctx.dbdir().join("SWAPS").join("STATS").join("TAKER").join(format!("{}.json", uuid))
@@ -550,31 +552,18 @@ impl TakerSwap {
     }
 
     async fn start(&self) -> Result<(Option<TakerSwapCommand>, Vec<TakerSwapEvent>), String> {
-        let my_balance = match self.taker_coin.my_balance().compat().await {
-            Ok(balance) => balance,
-            Err(e) => return Ok((
-                Some(TakerSwapCommand::Finish),
-                vec![TakerSwapEvent::StartFailed(ERRL!("!my_balance {}", e).into())],
-            ))
-        };
-
-        let locked = get_locked_amount_by_other_swaps(&self.ctx, &self.uuid, self.taker_coin.ticker());
-        let available = &my_balance - &locked;
-        if self.taker_amount > available {
+        let check_balance_f = check_balance_for_taker_swap(
+            &self.ctx,
+            &self.taker_coin,
+            &self.maker_coin,
+            self.taker_amount.clone().into(),
+            Some(&self.uuid)
+        );
+        if let Err(e) = check_balance_f.await {
             return Ok((
                 Some(TakerSwapCommand::Finish),
-                vec![TakerSwapEvent::StartFailed(ERRL!("taker amount {} is larger than available {}, balance {}, locked by other swaps {}",
-                    self.taker_amount, available, my_balance, locked
-                ).into())],
+                vec![TakerSwapEvent::StartFailed(ERRL!("!check_balance_for_taker_swap {}", e).into())],
             ));
-        }
-
-        let dex_fee_amount = dex_fee_amount(self.maker_coin.ticker(), self.taker_coin.ticker(), &self.taker_amount);
-        if let Err(e) = self.taker_coin.check_i_have_enough_to_trade(&self.taker_amount.clone().into(), &my_balance.clone().into(), TradeInfo::Taker(dex_fee_amount)).compat().await {
-            return Ok((
-                Some(TakerSwapCommand::Finish),
-                vec![TakerSwapEvent::StartFailed(ERRL!("!check_i_have_enough_to_trade {}", e).into())],
-            ))
         }
 
         if let Err(e) = self.maker_coin.can_i_spend_other_payment().compat().await {
@@ -715,8 +704,8 @@ impl TakerSwap {
         }
 
         let fee_addr_pub_key = unwrap!(hex::decode("03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc06"));
-        let fee_amount = dex_fee_amount(&self.r().data.maker_coin, &self.r().data.taker_coin, &self.taker_amount);
-        let fee_tx = self.taker_coin.send_taker_fee(&fee_addr_pub_key, fee_amount).compat().await;
+        let fee_amount = dex_fee_amount(&self.r().data.maker_coin, &self.r().data.taker_coin, &self.taker_amount.clone().into());
+        let fee_tx = self.taker_coin.send_taker_fee(&fee_addr_pub_key, fee_amount.into()).compat().await;
         let transaction = match fee_tx {
             Ok (t) => t,
             Err (err) => return Ok((
@@ -1223,16 +1212,29 @@ impl TakerSwap {
 }
 
 impl AtomicSwap for TakerSwap {
-    fn locked_amount(&self) -> LockedAmount {
+    fn locked_amount(&self, trade_fee: &TradeFee) -> LockedAmount {
         // if taker payment is not sent yet the taker fee amount must be virtually locked
-        let fee_amount = match self.r().taker_fee {
+        let dex_fee_amount = match self.r().taker_fee {
             Some(_) => 0.into(),
-            None => dex_fee_amount(self.maker_coin.ticker(), self.taker_coin.ticker(), &self.taker_amount),
+            None => {
+                let amount = dex_fee_amount(self.maker_coin.ticker(), self.taker_coin.ticker(), &self.taker_amount.clone().into());
+                if self.taker_coin.ticker() == trade_fee.coin {
+                    &amount + &trade_fee.amount
+                } else {
+                    amount
+                }
+            },
         };
-
         let amount = match self.r().taker_payment {
             Some(_) => 0.into(),
-            None => fee_amount + &self.taker_amount,
+            None => {
+                let amount = &dex_fee_amount + &MmNumber::from(self.taker_amount.clone());
+                if self.taker_coin.ticker() == trade_fee.coin {
+                    &amount + &trade_fee.amount
+                } else {
+                    amount
+                }
+            },
         };
 
         LockedAmount {
@@ -1248,6 +1250,66 @@ impl AtomicSwap for TakerSwap {
     fn maker_coin(&self) -> &str { self.maker_coin.ticker() }
 
     fn taker_coin(&self) -> &str { self.taker_coin.ticker() }
+}
+
+pub async fn check_balance_for_taker_swap(
+    ctx: &MmArc,
+    my_coin: &MmCoinEnum,
+    other_coin: &MmCoinEnum,
+    volume: MmNumber,
+    swap_uuid: Option<&str>,
+) -> Result<(), String> {
+    let miner_fee = try_s!(my_coin.get_trade_fee().compat().await);
+    log!("check_balance_for_taker_swap miner fee " [miner_fee.amount.to_fraction()]);
+    let locked = match swap_uuid {
+        Some(u) => get_locked_amount_by_other_swaps(ctx, u, my_coin.ticker(), &miner_fee),
+        None => get_locked_amount(&ctx, my_coin.ticker(), &miner_fee),
+    };
+    log!("check_balance_for_taker_swap locked " [locked.to_fraction()]);
+    let my_balance = try_s!(my_coin.my_balance().compat().await).into();
+    log!("check_balance_for_taker_swap balance " (my_balance));
+    let dex_fee = dex_fee_amount(my_coin.ticker(), other_coin.ticker(), &volume);
+    log!("check_balance_for_taker_swap dex_fee " [dex_fee.to_fraction()]);
+    let total_miner_fee = &MmNumber::from(2) * &(miner_fee.amount.clone().into());
+    let total = if my_coin.ticker() == miner_fee.coin {
+        &volume + &dex_fee + total_miner_fee
+    } else {
+        let base_coin_balance: MmNumber = try_s!(my_coin.base_coin_balance().compat().await).into();
+        if total_miner_fee > base_coin_balance {
+            return ERR!("Base coin {} balance {} is not sufficient to pay total miner fees {}",
+                        miner_fee.coin, base_coin_balance, total_miner_fee)
+        }
+        &volume + &dex_fee
+    };
+    let available = &my_balance - &locked;
+    if total <= available {
+        Ok(())
+    } else {
+        ERR!("The total required {} amount {} is larger than available {:.8}, balance: {}, locked by swaps: {:.8}",
+        my_coin.ticker(), total, available, my_balance, locked)
+    }
+}
+
+pub async fn max_taker_vol(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
+    let ticker = try_s!(req["coin"].as_str().ok_or ("No 'coin' field")).to_owned();
+    let coin = match lp_coinfindᵃ(&ctx, &ticker).await {
+        Ok(Some(t)) => t,
+        Ok(None) => return ERR!("No such coin: {}", ticker),
+        Err(err) => return ERR!("!lp_coinfind({}): {}", ticker, err),
+    };
+    let balance = try_s!(coin.my_balance().compat().await);
+    let fee_info = try_s!(coin.get_trade_fee().compat().await);
+    let locked = get_locked_amount(&ctx, coin.ticker(), &fee_info);
+    let mut available_vol = MmNumber::from(balance) - locked;
+    if fee_info.coin == coin.ticker() {
+        available_vol = available_vol - fee_info.amount * 2.into();
+    }
+    available_vol = available_vol * 777.into() / 778.into();
+
+    let res = try_s!(json::to_vec(&json!({
+        "result": available_vol.to_fraction()
+    })));
+    Ok(try_s!(Response::builder().body(res)))
 }
 
 #[cfg(test)]

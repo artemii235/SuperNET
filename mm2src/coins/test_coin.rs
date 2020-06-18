@@ -1,7 +1,6 @@
 use bigdecimal::BigDecimal;
 use common::mm_ctx::MmArc;
-use common::mm_number::MmNumber;
-use crate::{TradeInfo, FoundSwapTxSpend, WithdrawRequest};
+use crate::{FoundSwapTxSpend, WithdrawRequest};
 use futures01::Future;
 use mocktopus::macros::*;
 use super::{HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeFee, TransactionDetails, TransactionEnum, TransactionFut};
@@ -22,6 +21,10 @@ impl MarketCoinOps for TestCoin {
     }
 
     fn my_balance(&self) -> Box<dyn Future<Item=BigDecimal, Error=String> + Send> {
+        unimplemented!()
+    }
+
+    fn base_coin_balance(&self) -> Box<dyn Future<Item=BigDecimal, Error=String> + Send> {
         unimplemented!()
     }
 
@@ -195,10 +198,6 @@ impl SwapOps for TestCoin {
 #[mockable]
 impl MmCoin for TestCoin {
     fn is_asset_chain(&self) -> bool {
-        unimplemented!()
-    }
-
-    fn check_i_have_enough_to_trade(&self, amount: &MmNumber, balance: &MmNumber, trade_info: TradeInfo) -> Box<dyn Future<Item=(), Error=String> + Send> {
         unimplemented!()
     }
 
