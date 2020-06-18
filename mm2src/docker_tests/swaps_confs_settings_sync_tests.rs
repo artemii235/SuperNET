@@ -95,6 +95,8 @@ fn test_confirmation_settings_sync_correctly_on_buy(
 
     unwrap! (block_on (mm_bob.wait_for_log (22., |log| log.contains ("Entering the maker_swap_loop MYCOIN/MYCOIN1"))));
     unwrap! (block_on (mm_alice.wait_for_log (22., |log| log.contains ("Entering the taker_swap_loop MYCOIN/MYCOIN1"))));
+    log!("Sleep for 3 seconds to allow Started event to be saved");
+    thread::sleep(Duration::from_secs(3));
 
     let maker_status = unwrap! (block_on(mm_bob.rpc (json! ({
         "userpass": mm_bob.userpass,
@@ -211,6 +213,8 @@ fn test_confirmation_settings_sync_correctly_on_sell(
 
     unwrap! (block_on (mm_bob.wait_for_log (22., |log| log.contains ("Entering the maker_swap_loop MYCOIN/MYCOIN1"))));
     unwrap! (block_on (mm_alice.wait_for_log (22., |log| log.contains ("Entering the taker_swap_loop MYCOIN/MYCOIN1"))));
+    log!("Sleep for 3 seconds to allow Started event to be saved");
+    thread::sleep(Duration::from_secs(3));
 
     let maker_status = unwrap! (block_on(mm_bob.rpc (json! ({
         "userpass": mm_bob.userpass,
