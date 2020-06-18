@@ -1,11 +1,5 @@
+use crate::mm2::lp_ordermatch::OrderConfirmationsSettings;
 use super::*;
-
-struct OrderConfirmationsSettings {
-    base_coin_confs: u64,
-    base_coin_nota: bool,
-    rel_coin_confs: u64,
-    rel_coin_nota: bool,
-}
 
 struct SwapConfirmationsSettings {
     maker_coin_confs: u64,
@@ -69,10 +63,10 @@ fn test_confirmation_settings_sync_correctly_on_buy(
         "rel": "MYCOIN1",
         "price": 1,
         "volume": 1,
-        "base_confs": maker_settings.base_coin_confs,
-        "base_nota": maker_settings.base_coin_nota,
-        "rel_confs": maker_settings.rel_coin_confs,
-        "rel_nota": maker_settings.rel_coin_nota,
+        "base_confs": maker_settings.base_confs,
+        "base_nota": maker_settings.base_nota,
+        "rel_confs": maker_settings.rel_confs,
+        "rel_nota": maker_settings.rel_nota,
     }))));
     assert! (rc.0.is_success(), "!setprice: {}", rc.1);
     log!("Maker order " (rc.1));
@@ -84,10 +78,10 @@ fn test_confirmation_settings_sync_correctly_on_buy(
         "rel": "MYCOIN1",
         "price": 1,
         "volume": "0.5",
-        "base_confs": taker_settings.base_coin_confs,
-        "base_nota": taker_settings.base_coin_nota,
-        "rel_confs": taker_settings.rel_coin_confs,
-        "rel_nota": taker_settings.rel_coin_nota,
+        "base_confs": taker_settings.base_confs,
+        "base_nota": taker_settings.base_nota,
+        "rel_confs": taker_settings.rel_confs,
+        "rel_nota": taker_settings.rel_nota,
     }))));
     assert! (rc.0.is_success(), "!buy: {}", rc.1);
     let rc_json: Json = json::from_str(&rc.1).unwrap();
@@ -187,10 +181,10 @@ fn test_confirmation_settings_sync_correctly_on_sell(
         "rel": "MYCOIN1",
         "price": 1,
         "volume": 1,
-        "base_confs": maker_settings.base_coin_confs,
-        "base_nota": maker_settings.base_coin_nota,
-        "rel_confs": maker_settings.rel_coin_confs,
-        "rel_nota": maker_settings.rel_coin_nota,
+        "base_confs": maker_settings.base_confs,
+        "base_nota": maker_settings.base_nota,
+        "rel_confs": maker_settings.rel_confs,
+        "rel_nota": maker_settings.rel_nota,
     }))));
     assert! (rc.0.is_success(), "!setprice: {}", rc.1);
     log!("Maker order " (rc.1));
@@ -202,10 +196,10 @@ fn test_confirmation_settings_sync_correctly_on_sell(
         "rel": "MYCOIN",
         "price": 1,
         "volume": "0.5",
-        "base_confs": taker_settings.base_coin_confs,
-        "base_nota": taker_settings.base_coin_nota,
-        "rel_confs": taker_settings.rel_coin_confs,
-        "rel_nota": taker_settings.rel_coin_nota,
+        "base_confs": taker_settings.base_confs,
+        "base_nota": taker_settings.base_nota,
+        "rel_confs": taker_settings.rel_confs,
+        "rel_nota": taker_settings.rel_nota,
     }))));
     assert! (rc.0.is_success(), "!buy: {}", rc.1);
     let rc_json: Json = json::from_str(&rc.1).unwrap();
@@ -253,17 +247,17 @@ fn test_confirmation_settings_sync_correctly_on_sell(
 #[test]
 fn test_buy_maker_should_use_taker_confs_and_notas_for_maker_payment_if_taker_requires_less() {
     let maker_settings = OrderConfirmationsSettings {
-        base_coin_confs: 2,
-        base_coin_nota: true,
-        rel_coin_confs: 2,
-        rel_coin_nota: true,
+        base_confs: 2,
+        base_nota: true,
+        rel_confs: 2,
+        rel_nota: true,
     };
 
     let taker_settings = OrderConfirmationsSettings {
-        base_coin_confs: 1,
-        base_coin_nota: false,
-        rel_coin_confs: 1,
-        rel_coin_nota: false,
+        base_confs: 1,
+        base_nota: false,
+        rel_confs: 1,
+        rel_nota: false,
     };
 
     let expected_maker = SwapConfirmationsSettings {
@@ -291,17 +285,17 @@ fn test_buy_maker_should_use_taker_confs_and_notas_for_maker_payment_if_taker_re
 #[test]
 fn test_buy_maker_should_not_use_taker_confs_and_notas_for_maker_payment_if_taker_requires_more() {
     let maker_settings = OrderConfirmationsSettings {
-        base_coin_confs: 1,
-        base_coin_nota: false,
-        rel_coin_confs: 2,
-        rel_coin_nota: true,
+        base_confs: 1,
+        base_nota: false,
+        rel_confs: 2,
+        rel_nota: true,
     };
 
     let taker_settings = OrderConfirmationsSettings {
-        base_coin_confs: 100,
-        base_coin_nota: true,
-        rel_coin_confs: 1,
-        rel_coin_nota: false,
+        base_confs: 100,
+        base_nota: true,
+        rel_confs: 1,
+        rel_nota: false,
     };
 
     let expected_maker = SwapConfirmationsSettings {
@@ -329,17 +323,17 @@ fn test_buy_maker_should_not_use_taker_confs_and_notas_for_maker_payment_if_take
 #[test]
 fn test_buy_taker_should_use_maker_confs_and_notas_for_taker_payment_if_maker_requires_less() {
     let maker_settings = OrderConfirmationsSettings {
-        base_coin_confs: 1,
-        base_coin_nota: false,
-        rel_coin_confs: 1,
-        rel_coin_nota: false,
+        base_confs: 1,
+        base_nota: false,
+        rel_confs: 1,
+        rel_nota: false,
     };
 
     let taker_settings = OrderConfirmationsSettings {
-        base_coin_confs: 2,
-        base_coin_nota: true,
-        rel_coin_confs: 2,
-        rel_coin_nota: true,
+        base_confs: 2,
+        base_nota: true,
+        rel_confs: 2,
+        rel_nota: true,
     };
 
     let expected_maker = SwapConfirmationsSettings {
@@ -367,17 +361,17 @@ fn test_buy_taker_should_use_maker_confs_and_notas_for_taker_payment_if_maker_re
 #[test]
 fn test_buy_taker_should_not_use_maker_confs_and_notas_for_taker_payment_if_maker_requires_more() {
     let maker_settings = OrderConfirmationsSettings {
-        base_coin_confs: 1,
-        base_coin_nota: false,
-        rel_coin_confs: 100,
-        rel_coin_nota: true,
+        base_confs: 1,
+        base_nota: false,
+        rel_confs: 100,
+        rel_nota: true,
     };
 
     let taker_settings = OrderConfirmationsSettings {
-        base_coin_confs: 2,
-        base_coin_nota: true,
-        rel_coin_confs: 1,
-        rel_coin_nota: false,
+        base_confs: 2,
+        base_nota: true,
+        rel_confs: 1,
+        rel_nota: false,
     };
 
     let expected_maker = SwapConfirmationsSettings {
@@ -405,17 +399,17 @@ fn test_buy_taker_should_not_use_maker_confs_and_notas_for_taker_payment_if_make
 #[test]
 fn test_sell_maker_should_use_taker_confs_and_notas_for_maker_payment_if_taker_requires_less() {
     let maker_settings = OrderConfirmationsSettings {
-        base_coin_confs: 2,
-        base_coin_nota: true,
-        rel_coin_confs: 2,
-        rel_coin_nota: true,
+        base_confs: 2,
+        base_nota: true,
+        rel_confs: 2,
+        rel_nota: true,
     };
 
     let taker_settings = OrderConfirmationsSettings {
-        base_coin_confs: 1,
-        base_coin_nota: false,
-        rel_coin_confs: 1,
-        rel_coin_nota: false,
+        base_confs: 1,
+        base_nota: false,
+        rel_confs: 1,
+        rel_nota: false,
     };
 
     let expected_maker = SwapConfirmationsSettings {
@@ -443,17 +437,17 @@ fn test_sell_maker_should_use_taker_confs_and_notas_for_maker_payment_if_taker_r
 #[test]
 fn test_sell_maker_should_not_use_taker_confs_and_notas_for_maker_payment_if_taker_requires_more() {
     let maker_settings = OrderConfirmationsSettings {
-        base_coin_confs: 1,
-        base_coin_nota: false,
-        rel_coin_confs: 2,
-        rel_coin_nota: true,
+        base_confs: 1,
+        base_nota: false,
+        rel_confs: 2,
+        rel_nota: true,
     };
 
     let taker_settings = OrderConfirmationsSettings {
-        base_coin_confs: 1,
-        base_coin_nota: false,
-        rel_coin_confs: 100,
-        rel_coin_nota: true,
+        base_confs: 1,
+        base_nota: false,
+        rel_confs: 100,
+        rel_nota: true,
     };
 
     let expected_maker = SwapConfirmationsSettings {
@@ -481,17 +475,17 @@ fn test_sell_maker_should_not_use_taker_confs_and_notas_for_maker_payment_if_tak
 #[test]
 fn test_sell_taker_should_use_maker_confs_and_notas_for_taker_payment_if_maker_requires_less() {
     let maker_settings = OrderConfirmationsSettings {
-        base_coin_confs: 1,
-        base_coin_nota: false,
-        rel_coin_confs: 1,
-        rel_coin_nota: false,
+        base_confs: 1,
+        base_nota: false,
+        rel_confs: 1,
+        rel_nota: false,
     };
 
     let taker_settings = OrderConfirmationsSettings {
-        base_coin_confs: 2,
-        base_coin_nota: true,
-        rel_coin_confs: 2,
-        rel_coin_nota: true,
+        base_confs: 2,
+        base_nota: true,
+        rel_confs: 2,
+        rel_nota: true,
     };
 
     let expected_maker = SwapConfirmationsSettings {
@@ -519,17 +513,17 @@ fn test_sell_taker_should_use_maker_confs_and_notas_for_taker_payment_if_maker_r
 #[test]
 fn test_sell_taker_should_not_use_maker_confs_and_notas_for_taker_payment_if_maker_requires_more() {
     let maker_settings = OrderConfirmationsSettings {
-        base_coin_confs: 1,
-        base_coin_nota: false,
-        rel_coin_confs: 100,
-        rel_coin_nota: true,
+        base_confs: 1,
+        base_nota: false,
+        rel_confs: 100,
+        rel_nota: true,
     };
 
     let taker_settings = OrderConfirmationsSettings {
-        base_coin_confs: 1,
-        base_coin_nota: false,
-        rel_coin_confs: 2,
-        rel_coin_nota: true,
+        base_confs: 1,
+        base_nota: false,
+        rel_confs: 2,
+        rel_nota: true,
     };
 
     let expected_maker = SwapConfirmationsSettings {

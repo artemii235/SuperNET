@@ -2535,10 +2535,10 @@ fn test_buy_conf_settings() {
     }))));
     assert!(rc.0.is_success(), "!buy: {}", rc.1);
     let json: Json = json::from_str(&rc.1).unwrap();
-    assert_eq!(json["result"]["base_confs"], Json::from(5));
-    assert_eq!(json["result"]["base_nota"], Json::from(true));
-    assert_eq!(json["result"]["rel_confs"], Json::from(4));
-    assert_eq!(json["result"]["rel_nota"], Json::from(false));
+    assert_eq!(json["result"]["conf_settings"]["base_confs"], Json::from(5));
+    assert_eq!(json["result"]["conf_settings"]["base_nota"], Json::from(true));
+    assert_eq!(json["result"]["conf_settings"]["rel_confs"], Json::from(4));
+    assert_eq!(json["result"]["conf_settings"]["rel_nota"], Json::from(false));
 
     // must use coin config as defaults if not set in request
     log!("Issue bob buy request");
@@ -2552,10 +2552,10 @@ fn test_buy_conf_settings() {
     }))));
     assert!(rc.0.is_success(), "!buy: {}", rc.1);
     let json: Json = json::from_str(&rc.1).unwrap();
-    assert_eq!(json["result"]["base_confs"], Json::from(1));
-    assert_eq!(json["result"]["base_nota"], Json::from(false));
-    assert_eq!(json["result"]["rel_confs"], Json::from(2));
-    assert_eq!(json["result"]["rel_nota"], Json::from(false));
+    assert_eq!(json["result"]["conf_settings"]["base_confs"], Json::from(1));
+    assert_eq!(json["result"]["conf_settings"]["base_nota"], Json::from(false));
+    assert_eq!(json["result"]["conf_settings"]["rel_confs"], Json::from(2));
+    assert_eq!(json["result"]["conf_settings"]["rel_nota"], Json::from(false));
 }
 
 #[test]
@@ -2607,10 +2607,10 @@ fn test_sell_conf_settings() {
     }))));
     assert!(rc.0.is_success(), "!sell: {}", rc.1);
     let json: Json = json::from_str(&rc.1).unwrap();
-    assert_eq!(json["result"]["base_confs"], Json::from(5));
-    assert_eq!(json["result"]["base_nota"], Json::from(true));
-    assert_eq!(json["result"]["rel_confs"], Json::from(4));
-    assert_eq!(json["result"]["rel_nota"], Json::from(false));
+    assert_eq!(json["result"]["conf_settings"]["base_confs"], Json::from(5));
+    assert_eq!(json["result"]["conf_settings"]["base_nota"], Json::from(true));
+    assert_eq!(json["result"]["conf_settings"]["rel_confs"], Json::from(4));
+    assert_eq!(json["result"]["conf_settings"]["rel_nota"], Json::from(false));
 
     // must use coin config as defaults if not set in request
     log!("Issue bob sell request");
@@ -2624,10 +2624,10 @@ fn test_sell_conf_settings() {
     }))));
     assert!(rc.0.is_success(), "!sell: {}", rc.1);
     let json: Json = json::from_str(&rc.1).unwrap();
-    assert_eq!(json["result"]["base_confs"], Json::from(1));
-    assert_eq!(json["result"]["base_nota"], Json::from(false));
-    assert_eq!(json["result"]["rel_confs"], Json::from(2));
-    assert_eq!(json["result"]["rel_nota"], Json::from(false));
+    assert_eq!(json["result"]["conf_settings"]["base_confs"], Json::from(1));
+    assert_eq!(json["result"]["conf_settings"]["base_nota"], Json::from(false));
+    assert_eq!(json["result"]["conf_settings"]["rel_confs"], Json::from(2));
+    assert_eq!(json["result"]["conf_settings"]["rel_nota"], Json::from(false));
 }
 
 #[test]
@@ -2679,10 +2679,10 @@ fn test_set_price_conf_settings() {
     }))));
     assert!(rc.0.is_success(), "!setprice: {}", rc.1);
     let json: Json = json::from_str(&rc.1).unwrap();
-    assert_eq!(json["result"]["base_confs"], Json::from(5));
-    assert_eq!(json["result"]["base_nota"], Json::from(true));
-    assert_eq!(json["result"]["rel_confs"], Json::from(4));
-    assert_eq!(json["result"]["rel_nota"], Json::from(false));
+    assert_eq!(json["result"]["conf_settings"]["base_confs"], Json::from(5));
+    assert_eq!(json["result"]["conf_settings"]["base_nota"], Json::from(true));
+    assert_eq!(json["result"]["conf_settings"]["rel_confs"], Json::from(4));
+    assert_eq!(json["result"]["conf_settings"]["rel_nota"], Json::from(false));
 
     // must use coin config as defaults if not set in request
     log!("Issue bob sell request");
@@ -2696,10 +2696,10 @@ fn test_set_price_conf_settings() {
     }))));
     assert!(rc.0.is_success(), "!setprice: {}", rc.1);
     let json: Json = json::from_str(&rc.1).unwrap();
-    assert_eq!(json["result"]["base_confs"], Json::from(1));
-    assert_eq!(json["result"]["base_nota"], Json::from(false));
-    assert_eq!(json["result"]["rel_confs"], Json::from(2));
-    assert_eq!(json["result"]["rel_nota"], Json::from(false));
+    assert_eq!(json["result"]["conf_settings"]["base_confs"], Json::from(1));
+    assert_eq!(json["result"]["conf_settings"]["base_nota"], Json::from(false));
+    assert_eq!(json["result"]["conf_settings"]["rel_confs"], Json::from(2));
+    assert_eq!(json["result"]["conf_settings"]["rel_nota"], Json::from(false));
 }
 
 // HOWTO

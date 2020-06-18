@@ -51,8 +51,9 @@ use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
 use crate::mm2::lp_swap::{
-    check_balance_for_maker_swap, check_balance_for_taker_swap, get_locked_amount, is_pubkey_banned, run_maker_swap, run_taker_swap,
-    MakerSwap, RunMakerSwapInput, RunTakerSwapInput, TakerSwap,
+    check_balance_for_maker_swap, check_balance_for_taker_swap, get_locked_amount, is_pubkey_banned,
+    lp_atomic_locktime, run_maker_swap, run_taker_swap,
+    AtomicLocktimeVersion, MakerSwap, RunMakerSwapInput, RunTakerSwapInput, SwapConfirmationsSettings, TakerSwap,
 };
 
 #[cfg(test)]
@@ -66,6 +67,25 @@ const MIN_TRADING_VOL: &str = "0.00777";
 enum TakerAction {
     Buy,
     Sell,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+pub struct OrderConfirmationsSettings {
+    pub base_confs: u64,
+    pub base_nota: bool,
+    pub rel_confs: u64,
+    pub rel_nota: bool,
+}
+
+impl OrderConfirmationsSettings {
+    pub fn reversed(&self) -> OrderConfirmationsSettings {
+        OrderConfirmationsSettings {
+            base_confs: self.rel_confs,
+            base_nota: self.rel_nota,
+            rel_confs: self.base_confs,
+            rel_nota: self.base_nota,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -83,10 +103,7 @@ struct TakerRequest {
     dest_pub_key: H256Json,
     #[serde(default)]
     match_by: MatchBy,
-    base_confs: Option<u64>,
-    base_nota: Option<bool>,
-    rel_confs: Option<u64>,
-    rel_nota: Option<bool>,
+    conf_settings: Option<OrderConfirmationsSettings>,
 }
 
 impl TakerRequest {
@@ -113,10 +130,7 @@ struct TakerRequestBuilder {
     sender_pubkey: H256Json,
     action: TakerAction,
     match_by: MatchBy,
-    base_confs: Option<u64>,
-    base_nota: Option<bool>,
-    rel_confs: Option<u64>,
-    rel_nota: Option<bool>,
+    conf_settings: Option<OrderConfirmationsSettings>,
 }
 
 impl Default for TakerRequestBuilder {
@@ -129,10 +143,7 @@ impl Default for TakerRequestBuilder {
             sender_pubkey: H256Json::default(),
             action: TakerAction::Buy,
             match_by: MatchBy::Any,
-            base_confs: None,
-            base_nota: None,
-            rel_confs: None,
-            rel_nota: None,
+            conf_settings: None,
         }
     }
 }
@@ -146,10 +157,7 @@ enum TakerRequestBuildError {
     /// Rel amount too low with threshold
     RelAmountTooLow { actual: MmNumber, threshold: MmNumber },
     SenderPubkeyIsZero,
-    BaseConfsNotSet,
-    BaseNotaNotSet,
-    RelConfsNotSet,
-    RelNotaNotSet,
+    ConfsSettingsNotSet,
 }
 
 impl fmt::Display for TakerRequestBuildError {
@@ -163,10 +171,7 @@ impl fmt::Display for TakerRequestBuildError {
             TakerRequestBuildError::RelAmountTooLow { actual, threshold } =>
                 write!(f, "Rel amount {} is too low, required: {}", actual.to_decimal(), threshold.to_decimal()),
             TakerRequestBuildError::SenderPubkeyIsZero => write!(f, "Sender pubkey can not be zero"),
-            TakerRequestBuildError::BaseConfsNotSet => write!(f, "Base coin confs must be set"),
-            TakerRequestBuildError::BaseNotaNotSet => write!(f, "Base coin nota must be set"),
-            TakerRequestBuildError::RelConfsNotSet => write!(f, "Rel coin confs must be set"),
-            TakerRequestBuildError::RelNotaNotSet => write!(f, "Rel coin nota must be set"),
+            TakerRequestBuildError::ConfsSettingsNotSet => write!(f, "Confirmation settings must be set"),
         }
     }
 }
@@ -202,23 +207,8 @@ impl TakerRequestBuilder {
         self
     }
 
-    fn with_base_confs(mut self, confs: u64) -> Self {
-        self.base_confs = Some(confs);
-        self
-    }
-
-    fn with_base_nota(mut self, nota: bool) -> Self {
-        self.base_nota = Some(nota);
-        self
-    }
-
-    fn with_rel_confs(mut self, confs: u64) -> Self {
-        self.rel_confs = Some(confs);
-        self
-    }
-
-    fn with_rel_nota(mut self, nota: bool) -> Self {
-        self.rel_nota = Some(nota);
+    fn with_conf_settings(mut self, settings: OrderConfirmationsSettings) -> Self {
+        self.conf_settings = Some(settings);
         self
     }
 
@@ -249,13 +239,7 @@ impl TakerRequestBuilder {
             return Err(TakerRequestBuildError::SenderPubkeyIsZero);
         }
 
-        if self.base_confs.is_none() { return Err(TakerRequestBuildError::BaseConfsNotSet); }
-
-        if self.base_nota.is_none() { return Err(TakerRequestBuildError::BaseNotaNotSet); }
-
-        if self.rel_confs.is_none() { return Err(TakerRequestBuildError::RelConfsNotSet); }
-
-        if self.rel_nota.is_none() { return Err(TakerRequestBuildError::RelNotaNotSet); }
+        if self.conf_settings.is_none() { return Err(TakerRequestBuildError::ConfsSettingsNotSet); }
 
         Ok(TakerRequest {
             base: self.base,
@@ -270,10 +254,7 @@ impl TakerRequestBuilder {
             sender_pubkey: self.sender_pubkey,
             dest_pub_key: Default::default(),
             match_by: self.match_by,
-            base_confs: self.base_confs,
-            base_nota: self.base_nota,
-            rel_confs: self.rel_confs,
-            rel_nota: self.rel_nota,
+            conf_settings: self.conf_settings,
         })
     }
 
@@ -293,10 +274,7 @@ impl TakerRequestBuilder {
             sender_pubkey: self.sender_pubkey,
             dest_pub_key: Default::default(),
             match_by: self.match_by,
-            base_confs: self.base_confs,
-            base_nota: self.base_nota,
-            rel_confs: self.rel_confs,
-            rel_nota: self.rel_nota,
+            conf_settings: self.conf_settings,
         }
     }
 }
@@ -400,10 +378,7 @@ pub struct MakerOrder {
     matches: HashMap<Uuid, MakerMatch>,
     started_swaps: Vec<Uuid>,
     uuid: Uuid,
-    base_confs: Option<u64>,
-    base_nota: Option<bool>,
-    rel_confs: Option<u64>,
-    rel_nota: Option<bool>,
+    conf_settings: Option<OrderConfirmationsSettings>,
 }
 
 struct MakerOrderBuilder {
@@ -412,10 +387,7 @@ struct MakerOrderBuilder {
     price: MmNumber,
     base: String,
     rel: String,
-    base_confs: Option<u64>,
-    base_nota: Option<bool>,
-    rel_confs: Option<u64>,
-    rel_nota: Option<bool>,
+    conf_settings: Option<OrderConfirmationsSettings>,
 }
 
 impl Default for MakerOrderBuilder {
@@ -426,10 +398,7 @@ impl Default for MakerOrderBuilder {
             max_base_vol: 0.into(),
             min_base_vol: 0.into(),
             price: 0.into(),
-            base_confs: None,
-            base_nota: None,
-            rel_confs: None,
-            rel_nota: None,
+            conf_settings: None,
         }
     }
 }
@@ -446,10 +415,7 @@ enum MakerOrderBuildError {
     PriceTooLow { actual: MmNumber, threshold: MmNumber },
     /// Rel vol too low with threshold
     RelVolTooLow { actual: MmNumber, threshold: MmNumber },
-    BaseConfsNotSet,
-    BaseNotaNotSet,
-    RelConfsNotSet,
-    RelNotaNotSet,
+    ConfSettingsNotSet,
 }
 
 impl fmt::Display for MakerOrderBuildError {
@@ -466,10 +432,7 @@ impl fmt::Display for MakerOrderBuildError {
                 write!(f, "Price {} is too low, required: {}", actual.to_decimal(), threshold.to_decimal()),
             MakerOrderBuildError::RelVolTooLow { actual, threshold } =>
                 write!(f, "Max rel vol {} is too low, required: {}", actual.to_decimal(), threshold.to_decimal()),
-            MakerOrderBuildError::BaseConfsNotSet => write!(f, "Base coin confs must be set"),
-            MakerOrderBuildError::BaseNotaNotSet => write!(f, "Base coin nota must be set"),
-            MakerOrderBuildError::RelConfsNotSet => write!(f, "Rel coin confs must be set"),
-            MakerOrderBuildError::RelNotaNotSet => write!(f, "Rel coin nota must be set"),
+            MakerOrderBuildError::ConfSettingsNotSet => write!(f, "Confirmation settings must be set"),
         }
     }
 }
@@ -495,23 +458,8 @@ impl MakerOrderBuilder {
         self
     }
 
-    fn with_base_confs(mut self, confs: u64) -> Self {
-        self.base_confs = Some(confs);
-        self
-    }
-
-    fn with_base_nota(mut self, nota: bool) -> Self {
-        self.base_nota = Some(nota);
-        self
-    }
-
-    fn with_rel_confs(mut self, confs: u64) -> Self {
-        self.rel_confs = Some(confs);
-        self
-    }
-
-    fn with_rel_nota(mut self, nota: bool) -> Self {
-        self.rel_nota = Some(nota);
+    fn with_conf_settings(mut self, conf_settings: OrderConfirmationsSettings) -> Self {
+        self.conf_settings = Some(conf_settings);
         self
     }
 
@@ -544,13 +492,7 @@ impl MakerOrderBuilder {
             return Err(MakerOrderBuildError::MinBaseVolTooLow { actual: self.min_base_vol, threshold: zero });
         }
 
-        if self.base_confs.is_none() { return Err(MakerOrderBuildError::BaseConfsNotSet); }
-
-        if self.base_nota.is_none() { return Err(MakerOrderBuildError::BaseNotaNotSet); }
-
-        if self.rel_confs.is_none() { return Err(MakerOrderBuildError::RelConfsNotSet); }
-
-        if self.rel_nota.is_none() { return Err(MakerOrderBuildError::RelNotaNotSet); }
+        if self.conf_settings.is_none() { return Err(MakerOrderBuildError::ConfSettingsNotSet); }
 
         Ok(MakerOrder {
             base: self.base,
@@ -565,10 +507,7 @@ impl MakerOrderBuilder {
             matches: HashMap::new(),
             started_swaps: Vec::new(),
             uuid: new_uuid(),
-            base_confs: self.base_confs,
-            base_nota: self.base_nota,
-            rel_confs: self.rel_confs,
-            rel_nota: self.rel_nota,
+            conf_settings: self.conf_settings,
         })
     }
 
@@ -588,10 +527,7 @@ impl MakerOrderBuilder {
             matches: HashMap::new(),
             started_swaps: Vec::new(),
             uuid: Uuid::new_v4(),
-            base_confs: self.base_confs,
-            base_nota: self.base_nota,
-            rel_confs: self.rel_confs,
-            rel_nota: self.rel_nota,
+            conf_settings: self.conf_settings,
         }
     }
 }
@@ -638,10 +574,7 @@ impl Into<MakerOrder> for TakerOrder {
                 matches: HashMap::new(),
                 started_swaps: Vec::new(),
                 uuid: self.request.uuid,
-                base_confs: self.request.base_confs,
-                base_nota: self.request.base_nota,
-                rel_confs: self.request.rel_confs,
-                rel_nota: self.request.rel_nota,
+                conf_settings: self.request.conf_settings,
             },
             // The "buy" taker order is recreated with reversed pair as Maker order is always considered as "sell"
             TakerAction::Buy => MakerOrder {
@@ -657,10 +590,7 @@ impl Into<MakerOrder> for TakerOrder {
                 matches: HashMap::new(),
                 started_swaps: Vec::new(),
                 uuid: self.request.uuid,
-                base_confs: self.request.rel_confs,
-                base_nota: self.request.rel_nota,
-                rel_confs: self.request.base_confs,
-                rel_nota: self.request.base_nota,
+                conf_settings: self.request.conf_settings.map(|s| s.reversed()),
             },
         };
         order
@@ -690,10 +620,7 @@ struct MakerReserved {
     method: String,
     sender_pubkey: H256Json,
     dest_pub_key: H256Json,
-    base_confs: Option<u64>,
-    base_nota: Option<bool>,
-    rel_confs: Option<u64>,
-    rel_nota: Option<bool>,
+    conf_settings: Option<OrderConfirmationsSettings>,
 }
 
 impl MakerReserved {
@@ -772,6 +699,12 @@ fn lp_connect_start_bob(ctx: MmArc, maker_match: MakerMatch, maker_order: MakerO
         let my_persistent_pub = unwrap!(compressed_pub_key_from_priv_raw(&privkey[..], ChecksumType::DSHA256));
         let uuid = maker_match.request.uuid.to_string();
         let conf_settings = choose_maker_confs_and_notas(&maker_order, &maker_match.request, &maker_coin, &taker_coin);
+        // detect atomic lock time version implicitly by conf_settings existence in taker request
+        let atomic_locktime_v = match &maker_match.request.conf_settings {
+            Some(_) => AtomicLocktimeVersion::V2,
+            None => AtomicLocktimeVersion::V1,
+        };
+        let lock_time = lp_atomic_locktime(maker_coin.ticker(), taker_coin.ticker(), &conf_settings, atomic_locktime_v);
         log!("Entering the maker_swap_loop " (maker_coin.ticker()) "/" (taker_coin.ticker()) " with uuid: " (uuid));
         let maker_swap = MakerSwap::new(
             ctx.clone(),
@@ -780,12 +713,10 @@ fn lp_connect_start_bob(ctx: MmArc, maker_match: MakerMatch, maker_order: MakerO
             taker_amount,
             my_persistent_pub,
             uuid,
-            conf_settings.maker_coin_confs,
-            conf_settings.maker_coin_nota,
-            conf_settings.taker_coin_confs,
-            conf_settings.taker_coin_nota,
+            conf_settings,
             maker_coin,
             taker_coin,
+            lock_time,
         );
         run_maker_swap(RunMakerSwapInput::StartNew(maker_swap), ctx).await;
     });
@@ -826,6 +757,12 @@ fn lp_connected_alice(ctx: MmArc, taker_request: TakerRequest, taker_match: Take
         let uuid = taker_match.reserved.taker_order_uuid.to_string();
 
         let conf_settings = choose_taker_confs_and_notas(&taker_request, &taker_match.reserved, &maker_coin, &taker_coin);
+        // detect atomic lock time version implicitly by conf_settings existence in maker reserved
+        let atomic_locktime_v = match &taker_match.reserved.conf_settings {
+            Some(_) => AtomicLocktimeVersion::V2,
+            None => AtomicLocktimeVersion::V1,
+        };
+        let locktime = lp_atomic_locktime(maker_coin.ticker(), taker_coin.ticker(), &conf_settings, atomic_locktime_v);
         log!("Entering the taker_swap_loop " (maker_coin.ticker()) "/" (taker_coin.ticker())  " with uuid: " (uuid));
         let taker_swap = TakerSwap::new(
             ctx.clone(),
@@ -834,12 +771,10 @@ fn lp_connected_alice(ctx: MmArc, taker_request: TakerRequest, taker_match: Take
             taker_amount,
             my_persistent_pub,
             uuid,
-            conf_settings.maker_coin_confs,
-            conf_settings.maker_coin_nota,
-            conf_settings.taker_coin_confs,
-            conf_settings.taker_coin_nota,
+            conf_settings,
             maker_coin,
             taker_coin,
+            locktime,
         );
         run_taker_swap(RunTakerSwapInput::StartNew(taker_swap), ctx).await
     });
@@ -1037,10 +972,7 @@ pub fn lp_trade_command(
                         method: "reserved".into(),
                         taker_order_uuid: taker_request.uuid,
                         maker_order_uuid: *uuid,
-                        base_confs: order.base_confs,
-                        base_nota: order.base_nota,
-                        rel_confs: order.rel_confs,
-                        rel_nota: order.rel_nota,
+                        conf_settings: order.conf_settings,
                     };
                     ctx.broadcast_p2p_msg(&unwrap!(json::to_string(&reserved)));
                     let maker_match = MakerMatch {
@@ -1192,6 +1124,12 @@ pub fn lp_auto_buy(ctx: &MmArc, base_coin: &MmCoinEnum, rel_coin: &MmCoinEnum, i
     let mut my_taker_orders = try_s!(ordermatch_ctx.my_taker_orders.lock());
     let our_public_id = try_s!(ctx.public_id());
     let rel_volume = &input.volume * &input.price;
+    let conf_settings = OrderConfirmationsSettings {
+        base_confs: input.base_confs.unwrap_or(base_coin.required_confirmations()),
+        base_nota: input.base_nota.unwrap_or(base_coin.requires_notarization()),
+        rel_confs: input.rel_confs.unwrap_or(rel_coin.required_confirmations()),
+        rel_nota: input.rel_nota.unwrap_or(rel_coin.requires_notarization()),
+    };
     let request_builder = TakerRequestBuilder::default()
         .with_base_coin(input.base)
         .with_rel_coin(input.rel)
@@ -1199,10 +1137,7 @@ pub fn lp_auto_buy(ctx: &MmArc, base_coin: &MmCoinEnum, rel_coin: &MmCoinEnum, i
         .with_rel_amount(rel_volume)
         .with_action(action)
         .with_match_by(input.match_by)
-        .with_base_confs(input.base_confs.unwrap_or(base_coin.required_confirmations()))
-        .with_rel_confs(input.rel_confs.unwrap_or(rel_coin.required_confirmations()))
-        .with_base_nota(input.base_nota.unwrap_or(base_coin.requires_notarization()))
-        .with_rel_nota(input.rel_nota.unwrap_or(rel_coin.requires_notarization()))
+        .with_conf_settings(conf_settings)
         .with_sender_pubkey(H256Json::from(our_public_id.bytes));
     let request = try_s!(request_builder.build());
     ctx.broadcast_p2p_msg(&unwrap!(json::to_string(&request)));
@@ -1442,15 +1377,18 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
         }).collect();
     }
 
+    let conf_settings = OrderConfirmationsSettings {
+        base_confs: req.base_confs.unwrap_or(base_coin.required_confirmations()),
+        base_nota: req.base_nota.unwrap_or(base_coin.requires_notarization()),
+        rel_confs: req.rel_confs.unwrap_or(rel_coin.required_confirmations()),
+        rel_nota: req.rel_nota.unwrap_or(rel_coin.requires_notarization()),
+    };
     let builder = MakerOrderBuilder::default()
         .with_base_coin(req.base)
         .with_rel_coin(req.rel)
         .with_max_base_vol(volume)
         .with_price(req.price)
-        .with_base_confs(req.base_confs.unwrap_or(base_coin.required_confirmations()))
-        .with_base_nota(req.base_nota.unwrap_or(base_coin.requires_notarization()))
-        .with_rel_confs(req.rel_confs.unwrap_or(rel_coin.required_confirmations()))
-        .with_rel_nota(req.rel_nota.unwrap_or(rel_coin.requires_notarization()));
+        .with_conf_settings(conf_settings);
 
     let order = try_s!(builder.build());
     save_my_maker_order(&ctx, &order);
@@ -2027,44 +1965,56 @@ pub fn migrate_saved_orders(ctx: &MmArc) -> Result<(), String> {
     Ok(())
 }
 
-#[derive(Debug)]
-struct SwapConfirmationsSettings {
-    maker_coin_confs: u64,
-    maker_coin_nota: bool,
-    taker_coin_confs: u64,
-    taker_coin_nota: bool,
-}
-
 fn choose_maker_confs_and_notas(
     maker_order: &MakerOrder,
     taker_req: &TakerRequest,
     maker_coin: &MmCoinEnum,
     taker_coin: &MmCoinEnum,
 ) -> SwapConfirmationsSettings {
-    let (maker_coin_confs_from_taker, maker_coin_nota_from_taker) = match taker_req.action {
-        TakerAction::Buy => (taker_req.base_confs, taker_req.base_nota),
-        TakerAction::Sell => (taker_req.rel_confs, taker_req.rel_nota),
+    let maker_settings = maker_order.conf_settings.unwrap_or(OrderConfirmationsSettings {
+        base_confs: maker_coin.required_confirmations(),
+        base_nota: maker_coin.requires_notarization(),
+        rel_confs: taker_coin.required_confirmations(),
+        rel_nota: taker_coin.requires_notarization(),
+    });
+
+    let (maker_coin_confs, maker_coin_nota, taker_coin_confs, taker_coin_nota) = match taker_req.conf_settings {
+        Some(taker_settings) => match taker_req.action {
+            TakerAction::Sell => {
+                let maker_coin_confs = if taker_settings.rel_confs < maker_settings.base_confs {
+                    taker_settings.rel_confs
+                } else {
+                    maker_settings.base_confs
+                };
+                let maker_coin_nota = if !taker_settings.rel_nota {
+                    taker_settings.rel_nota
+                } else {
+                    maker_settings.base_nota
+                };
+                (maker_coin_confs, maker_coin_nota, maker_settings.rel_confs, maker_settings.rel_nota)
+            },
+            TakerAction::Buy => {
+                let maker_coin_confs = if taker_settings.base_confs < maker_settings.base_confs {
+                    taker_settings.base_confs
+                } else {
+                    maker_settings.base_confs
+                };
+                let maker_coin_nota = if !taker_settings.base_nota {
+                    taker_settings.base_nota
+                } else {
+                    maker_settings.base_nota
+                };
+                (maker_coin_confs, maker_coin_nota, maker_settings.rel_confs, maker_settings.rel_nota)
+            }
+        },
+        None => (maker_settings.base_confs, maker_settings.base_nota, maker_settings.rel_confs, maker_settings.rel_nota)
     };
-
-    let mut maker_coin_confs = maker_order.base_confs.unwrap_or(maker_coin.required_confirmations());
-    if let Some(maker_coin_confs_from_taker) = maker_coin_confs_from_taker {
-        if maker_coin_confs_from_taker < maker_coin_confs {
-            maker_coin_confs = maker_coin_confs_from_taker;
-        }
-    }
-
-    let mut maker_coin_nota = maker_order.base_nota.unwrap_or(maker_coin.requires_notarization());
-    if let Some(maker_coin_nota_from_taker) = maker_coin_nota_from_taker {
-        if !maker_coin_nota_from_taker {
-            maker_coin_nota = maker_coin_nota_from_taker;
-        }
-    }
 
     SwapConfirmationsSettings {
         maker_coin_confs,
         maker_coin_nota,
-        taker_coin_confs: maker_order.rel_confs.unwrap_or(taker_coin.required_confirmations()),
-        taker_coin_nota: maker_order.rel_nota.unwrap_or(taker_coin.requires_notarization()),
+        taker_coin_confs,
+        taker_coin_nota,
     }
 }
 
@@ -2075,27 +2025,23 @@ fn choose_taker_confs_and_notas(
     taker_coin: &MmCoinEnum,
 ) -> SwapConfirmationsSettings {
     let (mut taker_coin_confs, mut taker_coin_nota, maker_coin_confs, maker_coin_nota) = match taker_req.action {
-        TakerAction::Buy => (
-            taker_req.rel_confs.unwrap_or(taker_coin.required_confirmations()),
-            taker_req.rel_nota.unwrap_or(taker_coin.requires_notarization()),
-            taker_req.base_confs.unwrap_or(maker_coin.required_confirmations()),
-            taker_req.base_nota.unwrap_or(maker_coin.requires_notarization()),
-        ),
-        TakerAction::Sell => (
-            taker_req.base_confs.unwrap_or(taker_coin.required_confirmations()),
-            taker_req.base_nota.unwrap_or(taker_coin.requires_notarization()),
-            taker_req.rel_confs.unwrap_or(maker_coin.required_confirmations()),
-            taker_req.rel_nota.unwrap_or(maker_coin.requires_notarization()),
-        ),
+        TakerAction::Buy => match taker_req.conf_settings {
+            Some(s) => (s.rel_confs, s.rel_nota, s.base_confs, s.base_nota),
+            None => (taker_coin.required_confirmations(), taker_coin.requires_notarization(),
+                     maker_coin.required_confirmations(), maker_coin.requires_notarization()),
+        },
+        TakerAction::Sell => match taker_req.conf_settings {
+            Some(s) => (s.base_confs, s.base_nota, s.rel_confs, s.rel_nota),
+            None => (taker_coin.required_confirmations(), taker_coin.requires_notarization(),
+                     maker_coin.required_confirmations(), maker_coin.requires_notarization()),
+        },
     };
-    if let Some(taker_coin_confs_from_maker) = maker_reserved.rel_confs {
-        if taker_coin_confs_from_maker < taker_coin_confs {
-            taker_coin_confs = taker_coin_confs_from_maker;
+    if let Some(settings_from_maker) = maker_reserved.conf_settings {
+        if settings_from_maker.rel_confs < taker_coin_confs {
+            taker_coin_confs = settings_from_maker.rel_confs;
         }
-    }
-    if let Some(taker_coin_nota_from_maker) = maker_reserved.rel_nota {
-        if !taker_coin_nota_from_maker {
-            taker_coin_nota = taker_coin_nota_from_maker
+        if !settings_from_maker.rel_nota {
+            taker_coin_nota = settings_from_maker.rel_nota;
         }
     }
     SwapConfirmationsSettings {

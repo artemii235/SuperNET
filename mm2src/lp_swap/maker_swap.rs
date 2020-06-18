@@ -29,9 +29,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::sync::atomic::Ordering;
 use super::{ban_pubkey, broadcast_my_swap_status, dex_fee_amount, get_locked_amount,
-            get_locked_amount_by_other_swaps, lp_atomic_locktime, my_swaps_dir, my_swap_file_path,
+            get_locked_amount_by_other_swaps, my_swaps_dir, my_swap_file_path,
             AtomicSwap, LockedAmount, MySwapInfo, RecoveredSwap, RecoveredSwapAction,
-            SavedSwap, SwapsContext, SwapError, SwapNegotiationData,
+            SavedSwap, SwapConfirmationsSettings, SwapsContext, SwapError, SwapNegotiationData,
             BASIC_COMM_TIMEOUT, WAIT_CONFIRM_INTERVAL};
 
 pub fn stats_maker_swap_file_path(ctx: &MmArc, uuid: &str) -> PathBuf {
@@ -128,10 +128,8 @@ pub struct MakerSwap {
     errors: PaMutex<Vec<SwapError>>,
     finished_at: Atomic<u64>,
     mutable: RwLock<MakerSwapMut>,
-    maker_payment_confirmations: u64,
-    maker_payment_requires_nota: bool,
-    taker_payment_confirmations: u64,
-    taker_payment_requires_nota: bool,
+    conf_settings: SwapConfirmationsSettings,
+    payment_locktime: u64,
 }
 
 impl MakerSwap {
@@ -194,12 +192,10 @@ impl MakerSwap {
         taker_amount: BigDecimal,
         my_persistent_pub: H264,
         uuid: String,
-        maker_payment_confirmations: u64,
-        maker_payment_requires_nota: bool,
-        taker_payment_confirmations: u64,
-        taker_payment_requires_nota: bool,
+        conf_settings: SwapConfirmationsSettings,
         maker_coin: MmCoinEnum,
         taker_coin: MmCoinEnum,
+        payment_locktime: u64,
     ) -> Self {
         MakerSwap {
             ctx,
@@ -214,10 +210,8 @@ impl MakerSwap {
             errors: PaMutex::new(Vec::new()),
             finished_at: Atomic::new(0),
             taker_payment_confirmed: Atomic::new(false),
-            maker_payment_confirmations,
-            maker_payment_requires_nota,
-            taker_payment_confirmations,
-            taker_payment_requires_nota,
+            conf_settings,
+            payment_locktime,
             mutable: RwLock::new(MakerSwapMut {
                 data: MakerSwapData::default(),
                 other_persistent_pub: H264::default(),
@@ -245,8 +239,6 @@ impl MakerSwap {
                 vec![MakerSwapEvent::StartFailed(ERRL!("!can_i_spend_other_payment {}", e).into())],
             ));
         };
-
-        let lock_duration = lp_atomic_locktime(self.maker_coin.ticker(), self.taker_coin.ticker());
 
         let secret: [u8; 32] = {
             #[cfg(feature = "native")]
@@ -283,14 +275,14 @@ impl MakerSwap {
             secret_hash: Some(dhash160(&secret).into()),
             secret: secret.into(),
             started_at,
-            lock_duration,
+            lock_duration: self.payment_locktime,
             maker_amount: self.maker_amount.clone(),
             taker_amount: self.taker_amount.clone(),
-            maker_payment_confirmations: self.maker_payment_confirmations,
-            maker_payment_requires_nota: Some(self.maker_payment_requires_nota),
-            taker_payment_confirmations: self.taker_payment_confirmations,
-            taker_payment_requires_nota: Some(self.taker_payment_requires_nota),
-            maker_payment_lock: started_at + lock_duration * 2,
+            maker_payment_confirmations: self.conf_settings.maker_coin_confs,
+            maker_payment_requires_nota: Some(self.conf_settings.maker_coin_nota),
+            taker_payment_confirmations: self.conf_settings.taker_coin_confs,
+            taker_payment_requires_nota: Some(self.conf_settings.taker_coin_nota),
+            maker_payment_lock: started_at + self.payment_locktime * 2,
             my_persistent_pub: self.my_persistent_pub.clone().into(),
             uuid: self.uuid.clone(),
             maker_coin_start_block,
@@ -503,7 +495,7 @@ impl MakerSwap {
             ))
         };
 
-        let maker_payment_wait_confirm = self.r().data.started_at + (self.r().data.lock_duration * 3) / 5;
+        let maker_payment_wait_confirm = self.r().data.started_at + (self.r().data.lock_duration * 2) / 5;
         let f = self.maker_coin.wait_for_confirmations(
             &unwrap!(self.r().maker_payment.clone()).tx_hex,
             self.r().data.maker_payment_confirmations,
@@ -730,7 +722,12 @@ impl MakerSwap {
                 let mut taker = bits256::from([0; 32]);
                 taker.bytes = data.taker.0;
                 let my_persistent_pub = H264::from(&**ctx.secp256k1_key_pair().public());
-
+                let conf_settings = SwapConfirmationsSettings {
+                    maker_coin_confs: data.maker_payment_confirmations,
+                    maker_coin_nota: data.maker_payment_requires_nota.unwrap_or(maker_coin.requires_notarization()),
+                    taker_coin_confs: data.taker_payment_confirmations,
+                    taker_coin_nota: data.taker_payment_requires_nota.unwrap_or(taker_coin.requires_notarization()),
+                };
                 let swap = MakerSwap::new(
                     ctx,
                     taker.into(),
@@ -738,12 +735,10 @@ impl MakerSwap {
                     data.taker_amount.clone(),
                     my_persistent_pub,
                     saved.uuid,
-                    data.maker_payment_confirmations,
-                    data.maker_payment_requires_nota.unwrap_or(maker_coin.requires_notarization()),
-                    data.taker_payment_confirmations,
-                    data.taker_payment_requires_nota.unwrap_or(taker_coin.requires_notarization()),
+                    conf_settings,
                     maker_coin,
                     taker_coin,
+                    data.lock_duration,
                 );
                 let command = saved.events.last().unwrap().get_command();
                 for saved_event in saved.events {
