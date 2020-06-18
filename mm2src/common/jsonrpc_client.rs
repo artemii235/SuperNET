@@ -24,6 +24,7 @@ macro_rules! rpc_func {
 }
 
 /// Macro generating functions for RPC requests.
+/// Send the RPC request to specified remote endpoint using the passed address.
 /// Args must implement/derive Serialize trait.
 /// Generates params vector from input args, builds the request and sends it.
 #[macro_export]

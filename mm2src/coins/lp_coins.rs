@@ -504,7 +504,7 @@ impl RpcTransportEventHandler for RpcTransportEventHandlerShared {
     }
 }
 
-impl<T: RpcTransportEventHandler + Sync> RpcTransportEventHandler for Vec<T> {
+impl<T: RpcTransportEventHandler> RpcTransportEventHandler for Vec<T> {
     fn debug_info(&self) -> String {
         let selfi: Vec<String> = self.iter().map(|x| x.debug_info()).collect();
         format!("{:?}", selfi)

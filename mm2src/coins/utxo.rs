@@ -67,10 +67,9 @@ pub use chain::Transaction as UtxoTx;
 
 use self::rpc_clients::{electrum_script_hash, ElectrumClient, ElectrumClientImpl,
                         EstimateFeeMethod, EstimateFeeMode, NativeClient, UtxoRpcClientEnum, UnspentInfo};
-use super::{CoinsContext, CoinTransportMetrics, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, RpcClientType, RpcTransportEventHandlerShared,
-            SwapOps, TradeFee, Transaction, TransactionEnum, TransactionFut, TransactionDetails, WithdrawFee, WithdrawRequest};
+use super::{CoinsContext, CoinTransportMetrics, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, RpcClientType, RpcTransportEventHandler,
+            RpcTransportEventHandlerShared, SwapOps, TradeFee, Transaction, TransactionEnum, TransactionFut, TransactionDetails, WithdrawFee, WithdrawRequest};
 use crate::utxo::rpc_clients::{NativeClientImpl, UtxoRpcClientOps, ElectrumRpcRequest};
-use crate::RpcTransportEventHandler;
 
 #[cfg(test)]
 pub mod utxo_tests;
@@ -1965,7 +1964,7 @@ impl ElectrumProtoVerifier {
 
 impl RpcTransportEventHandler for ElectrumProtoVerifier {
     fn debug_info(&self) -> String {
-        "ElectrumEventHandler".into()
+        "ElectrumProtoVerifier".into()
     }
 
     fn on_outgoing_request(&self, _data: &[u8]) {}

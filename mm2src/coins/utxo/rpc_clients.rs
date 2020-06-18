@@ -1310,7 +1310,8 @@ impl UtxoRpcClientOps for ElectrumClient {
 #[cfg_attr(test, mockable)]
 impl ElectrumClientImpl {
     pub fn new(coin_ticker: String, event_handlers: Vec<RpcTransportEventHandlerShared>) -> ElectrumClientImpl {
-        // MM2 uses cp_height within the blockchain.block.headers call
+        // MM2 uses cp_height within the blockchain.block.headers call.
+        // The param was added in 1.4 protocol version.
         // https://electrumx.readthedocs.io/en/latest/protocol-methods.html#blockchain-block-headers
         let protocol_version = OrdRange::new(1.4, 1.4).unwrap();
         ElectrumClientImpl {
