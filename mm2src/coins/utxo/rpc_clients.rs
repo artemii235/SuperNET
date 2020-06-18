@@ -5,7 +5,7 @@
 use bigdecimal::BigDecimal;
 use bytes::{BytesMut};
 use chain::{BlockHeader, OutPoint, Transaction as UtxoTx};
-use common::{median, StringError};
+use common::{median, OrdRange, StringError};
 use common::custom_futures::{join_all_sequential, select_ok_sequential};
 use common::executor::{spawn, Timer};
 use common::jsonrpc_client::{JsonRpcClient, JsonRpcMultiClient, JsonRpcRemoteAddr, JsonRpcResponseFut, JsonRpcRequest, JsonRpcResponse, RpcRes};
@@ -744,8 +744,8 @@ pub enum ElectrumProtocol {
 /// Deserializable Electrum protocol version representation for RPC
 /// https://electrumx-spesmilo.readthedocs.io/en/latest/protocol-methods.html#server.version
 pub struct ElectrumProtocolVersion {
-    server_software_version: String,
-    protocol_version: String,
+    pub server_software_version: String,
+    pub protocol_version: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -896,10 +896,11 @@ impl Drop for ElectrumConnection {
 
 #[derive(Debug)]
 pub struct ElectrumClientImpl {
-    coin_ticker: String,
-    connections: Vec<ElectrumConnection>,
-    next_id: AtomicU64,
-    event_handlers: Vec<RpcTransportEventHandlerShared>,
+    pub coin_ticker: String,
+    pub connections: AsyncMutex<Vec<ElectrumConnection>>,
+    pub next_id: AtomicU64,
+    pub event_handlers: Vec<RpcTransportEventHandlerShared>,
+    pub protocol_version: OrdRange<f32>,
 }
 
 #[cfg(feature = "native")]
@@ -908,7 +909,7 @@ async fn electrum_request_multi(
     request: JsonRpcRequest,
 ) -> Result<(JsonRpcRemoteAddr, JsonRpcResponse), String> {
     let mut futures = vec![];
-    for connection in client.connections.iter() {
+    for connection in client.connections.lock().await.iter() {
         let connection_addr = connection.addr.clone();
         match &*connection.tx.lock().await {
             Some(tx) => {
@@ -936,7 +937,8 @@ async fn electrum_request_to(
     request: JsonRpcRequest,
     to_addr: String,
 ) -> Result<(JsonRpcRemoteAddr, JsonRpcResponse), String> {
-    let connection = client.connections.iter().find(|c| c.addr == to_addr)
+    let connections = client.connections.lock().await;
+    let connection = connections.iter().find(|c| c.addr == to_addr)
         .ok_or(ERRL!("Unknown destination address {}", to_addr))?;
 
     let response = match &*connection.tx.lock().await {
@@ -976,7 +978,7 @@ async fn electrum_request_multi (client: ElectrumClient, request: JsonRpcRequest
     // address of server from which an Rpc response was received
     let mut remote_address = JsonRpcRemoteAddr::default();
 
-    for connection in client.connections.iter() {
+    for connection in client.connections.lock().await.iter() {
         let (tx, rx) = futures::channel::oneshot::channel();
         try_s! (ELECTRUM_REPLIES.lock()) .insert ((connection.ri, id), tx);
         let rc = unsafe {host_electrum_request (connection.ri, req.as_ptr() as *const c_char, req.len() as i32)};
@@ -1013,14 +1015,26 @@ async fn electrum_request_multi (client: ElectrumClient, request: JsonRpcRequest
 
 impl ElectrumClientImpl {
     /// Create an Electrum connection and spawn a green thread actor to handle it.
-    pub fn add_server(&mut self, req: &ElectrumRpcRequest) -> Result<(), String> {
+    pub async fn add_server(&self, req: &ElectrumRpcRequest) -> Result<(), String> {
         let connection = try_s!(spawn_electrum(req, self.event_handlers.clone()));
-        self.connections.push(connection);
+        self.connections.lock().await.push(connection);
+        Ok(())
+    }
+
+    /// Remove an Electrum connection and stop corresponding spawned actor.
+    pub async fn remove_server(&self, server_addr: &str) -> Result<(), String> {
+        let mut connections = self.connections.lock().await;
+        // do not use retain, we would have to return an error if we did not find connection by the passd address
+        let pos = connections.iter()
+            .position(|con| &con.addr == server_addr)
+            .ok_or(ERRL!("Unknown electrum address {}", server_addr))?;
+        // shutdown_tx will be closed immediately on the connection drop
+        connections.remove(pos);
         Ok(())
     }
 
     pub async fn is_connected(&self) -> bool {
-        for connection in self.connections.iter() {
+        for connection in self.connections.lock().await.iter() {
             if connection.is_connected().await {
                 return true;
             }
@@ -1062,14 +1076,20 @@ impl JsonRpcMultiClient for ElectrumClient {
 }
 
 impl ElectrumClient {
+    /// Get available protocol versions.
+    pub fn protocol_version(&self) -> &OrdRange<f32> {
+        &self.protocol_version
+    }
+
     /// https://electrumx.readthedocs.io/en/latest/protocol-methods.html#server-ping
     pub fn server_ping(&self) -> RpcRes<()> {
         rpc_func!(self, "server.ping")
     }
 
     /// https://electrumx.readthedocs.io/en/latest/protocol-methods.html#server-version
-    pub fn server_version(&self, server_address: &str, client_name: &str, version: &str) -> RpcRes<ElectrumProtocolVersion> {
-        rpc_func_from!(self, server_address, "server.version", client_name, version)
+    pub fn server_version(&self, server_address: &str, client_name: &str, version: &OrdRange<f32>) -> RpcRes<ElectrumProtocolVersion> {
+        let protocol_version: Vec<String> = version.flatten().into_iter().map(|v| format!("{}", v)).collect();
+        rpc_func_from!(self, server_address, "server.version", client_name, protocol_version)
     }
 
     /// https://electrumx.readthedocs.io/en/latest/protocol-methods.html#blockchain-scripthash-listunspent
@@ -1290,11 +1310,15 @@ impl UtxoRpcClientOps for ElectrumClient {
 #[cfg_attr(test, mockable)]
 impl ElectrumClientImpl {
     pub fn new(coin_ticker: String, event_handlers: Vec<RpcTransportEventHandlerShared>) -> ElectrumClientImpl {
+        // MM2 uses cp_height within the blockchain.block.headers call
+        // https://electrumx.readthedocs.io/en/latest/protocol-methods.html#blockchain-block-headers
+        let protocol_version = OrdRange::new(1.4, 1.4).unwrap();
         ElectrumClientImpl {
             coin_ticker,
-            connections: vec![],
+            connections: AsyncMutex::new(vec![]),
             next_id: 0.into(),
             event_handlers,
+            protocol_version,
         }
     }
 }
@@ -1488,7 +1512,7 @@ async fn connect_loop(
         // reset the delay if we've connected successfully
         delay = 0;
         log!("Electrum client connected to " (addr));
-        try_loop!(event_handlers.on_connect(addr.clone()), addr, delay);
+        try_loop!(event_handlers.on_connected(addr.clone()), addr, delay);
         let last_chunk = Arc::new(AtomicU64::new(now_ms()));
         let mut last_chunk_f = electrum_last_chunk_loop(last_chunk.clone()).boxed().fuse();
 

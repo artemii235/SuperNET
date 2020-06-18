@@ -476,7 +476,7 @@ pub trait RpcTransportEventHandler {
 
     fn on_incoming_response(&self, data: &[u8]);
 
-    fn on_connect(&self, address: String) -> Result<(), String>;
+    fn on_connected(&self, address: String) -> Result<(), String>;
 }
 
 impl fmt::Debug for dyn RpcTransportEventHandler + Send + Sync {
@@ -498,8 +498,8 @@ impl RpcTransportEventHandler for RpcTransportEventHandlerShared {
         self.as_ref().on_incoming_response(data)
     }
 
-    fn on_connect(&self, address: String) -> Result<(), String> {
-        self.as_ref().on_connect(address)
+    fn on_connected(&self, address: String) -> Result<(), String> {
+        self.as_ref().on_connected(address)
     }
 }
 
@@ -521,9 +521,9 @@ impl<T: RpcTransportEventHandler + Sync> RpcTransportEventHandler for Vec<T> {
         }
     }
 
-    fn on_connect(&self, address: String) -> Result<(), String> {
+    fn on_connected(&self, address: String) -> Result<(), String> {
         for handler in self {
-            try_s!(handler.on_connect(address.clone()))
+            try_s!(handler.on_connected(address.clone()))
         }
         Ok(())
     }
@@ -584,8 +584,9 @@ impl RpcTransportEventHandler for CoinTransportMetrics {
             "coin" => self.ticker.clone(), "client" => self.client.clone());
     }
 
-    fn on_connect(&self, _address: String) -> Result<(), String> {
-        // TODO
+    fn on_connected(&self, _address: String) -> Result<(), String> {
+        // Handle a new connected endpoint if necessary.
+        // Now just return the Ok
         Ok(())
     }
 }

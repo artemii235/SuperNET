@@ -28,7 +28,7 @@ use bigdecimal::BigDecimal;
 pub use bitcrypto::{dhash160, ChecksumType, sha256};
 use chain::{TransactionOutput, TransactionInput, OutPoint};
 use chain::constants::{SEQUENCE_FINAL};
-use common::{first_char_to_upper, small_rng};
+use common::{first_char_to_upper, small_rng, MM_VERSION};
 use common::executor::{spawn, Timer};
 use common::jsonrpc_client::{JsonRpcError, JsonRpcErrorType};
 use common::mm_ctx::MmArc;
@@ -1974,30 +1974,28 @@ fn read_native_mode_conf(_filename: &dyn AsRef<Path>) -> Result<(Option<u16>, St
     unimplemented!()
 }
 
-struct ElectrumEventHandler {
+/// Electrum protocol version verifier.
+/// The structure is used to handle the `on_connected` event and notify `electrum_version_loop`.
+struct ElectrumProtoVerifier {
     on_connect_tx: mpsc::UnboundedSender<String>,
 }
 
-impl ElectrumEventHandler {
+impl ElectrumProtoVerifier {
     fn into_shared(self) -> RpcTransportEventHandlerShared {
         Arc::new(self)
     }
 }
 
-impl RpcTransportEventHandler for ElectrumEventHandler {
+impl RpcTransportEventHandler for ElectrumProtoVerifier {
     fn debug_info(&self) -> String {
         "ElectrumEventHandler".into()
     }
 
-    fn on_outgoing_request(&self, _data: &[u8]) {
-        // TODO
-    }
+    fn on_outgoing_request(&self, _data: &[u8]) {}
 
-    fn on_incoming_response(&self, _data: &[u8]) {
-        // TODO
-    }
+    fn on_incoming_response(&self, _data: &[u8]) {}
 
-    fn on_connect(&self, address: String) -> Result<(), String> {
+    fn on_connected(&self, address: String) -> Result<(), String> {
         Ok(try_s!(self.on_connect_tx.unbounded_send(address)))
     }
 }
@@ -2068,15 +2066,15 @@ pub async fn utxo_coin_from_conf_and_request(
             let (on_connect_tx, on_connect_rx) = mpsc::unbounded();
             let event_handlers = vec![
                 CoinTransportMetrics::new(ctx.metrics.weak(), ticker.to_owned(), RpcClientType::Electrum).into_shared(),
-                ElectrumEventHandler { on_connect_tx }.into_shared(),
+                ElectrumProtoVerifier { on_connect_tx }.into_shared(),
             ];
 
             let mut servers: Vec<ElectrumRpcRequest> = try_s!(json::from_value(req["servers"].clone()));
             let mut rng = small_rng();
             servers.as_mut_slice().shuffle(&mut rng);
-            let mut client = ElectrumClientImpl::new(ticker.to_string(), event_handlers);
+            let client = ElectrumClientImpl::new(ticker.to_string(), event_handlers);
             for server in servers.iter() {
-                match client.add_server(server) {
+                match client.add_server(server).await {
                     Ok(_) => (),
                     Err(e) => log!("Error " (e) " connecting to " [server] ". Address won't be used")
                 };
@@ -2093,26 +2091,14 @@ pub async fn utxo_coin_from_conf_and_request(
             }
 
             let client = Arc::new(client);
-            // ping the electrum servers every 30 seconds to prevent them from disconnecting us.
-            // according to docs server can do it if there are no messages in ~10 minutes.
-            // https://electrumx.readthedocs.io/en/latest/protocol-methods.html?highlight=keep#server-ping
-            // weak reference will allow to stop the thread if client is dropped
+
             let weak_client = Arc::downgrade(&client);
-            spawn(async move {
-                loop {
-                    if let Some(client) = weak_client.upgrade() {
-                        if let Err(e) = ElectrumClient(client).server_ping().compat().await {
-                            log!("Electrum servers " [servers] " ping error " [e]);
-                        }
-                    } else {
-                        log!("Electrum servers " [servers] " ping loop stopped");
-                        break;
-                    }
-                    Timer::sleep(30.).await
-                }
-            });
+            spawn_electrum_ping_loop(weak_client, servers);
+
             let weak_client = Arc::downgrade(&client);
-            spawn(electrum_version_loop(weak_client, on_connect_rx));
+            let client_name = format!("{} GUI/MM2 {}", ctx.gui().unwrap_or("UNKNOWN"), MM_VERSION);
+            spawn_electrum_version_loop(weak_client, on_connect_rx, client_name);
+
             UtxoRpcClientEnum::Electrum(ElectrumClient(client))
         },
         _ => return ERR!("utxo_coin_from_conf_and_request should be called only by enable or electrum requests"),
@@ -2224,26 +2210,78 @@ pub async fn utxo_coin_from_conf_and_request(
     Ok(UtxoCoin(Arc::new(coin)))
 }
 
-async fn electrum_version_loop(
-    weak_client: Weak<ElectrumClientImpl>,
-    mut on_connect_rx: mpsc::UnboundedReceiver<String>) {
-    while let Some(electrum_addr) = on_connect_rx.next().await {
-        let client = match weak_client.upgrade() {
-            Some(c) =>c ,
-            _ => break,
-        };
-
-        let version = match ElectrumClient(client).server_version(&electrum_addr, "TODO", "1.4").compat().await {
-            Ok(version) => version,
-            Err(e) => {
-                log!("Electrum " (electrum_addr) " server.version error \"" [e] "\". Remove the connection");
-                // client.
-                continue
+/// Ping the electrum servers every 30 seconds to prevent them from disconnecting us.
+/// According to docs server can do it if there are no messages in ~10 minutes.
+/// https://electrumx.readthedocs.io/en/latest/protocol-methods.html?highlight=keep#server-ping
+/// Weak reference will allow to stop the thread if client is dropped.
+fn spawn_electrum_ping_loop(weak_client: Weak<ElectrumClientImpl>, servers: Vec<ElectrumRpcRequest>) {
+    spawn(async move {
+        loop {
+            if let Some(client) = weak_client.upgrade() {
+                if let Err(e) = ElectrumClient(client).server_ping().compat().await {
+                    log!("Electrum servers " [servers] " ping error " [e]);
+                }
+            } else {
+                log!("Electrum servers " [servers] " ping loop stopped");
+                break;
             }
-        };
+            Timer::sleep(30.).await
+        }
+    });
+}
+
+/// Follow the `on_connect_rx` stream and verify the protocol version of each connected electrum server.
+/// https://electrumx.readthedocs.io/en/latest/protocol-methods.html?highlight=keep#server-version
+/// Weak reference will allow to stop the thread if client is dropped.
+fn spawn_electrum_version_loop(
+    weak_client: Weak<ElectrumClientImpl>,
+    mut on_connect_rx: mpsc::UnboundedReceiver<String>,
+    client_name: String,
+) {
+    async fn remove_server(client: ElectrumClient, electrum_addr: &str) {
+        if let Err(e) = client.remove_server(electrum_addr).await {
+            log!("Error on remove server "[e]);
+        }
     }
 
-    log!("Electrum server.version loop stopped");
+    spawn(async move {
+        while let Some(electrum_addr) = on_connect_rx.next().await {
+            let client = match weak_client.upgrade() {
+                Some(c) => ElectrumClient(c),
+                _ => break,
+            };
+
+            let available_protocols = client.protocol_version();
+            let version = match client.server_version(&electrum_addr, &client_name, available_protocols).compat().await {
+                Ok(version) => version,
+                Err(e) => {
+                    log!("Electrum " (electrum_addr) " server.version error \"" [e] "\". Remove the connection");
+                    remove_server(client, &electrum_addr).await;
+                    continue
+                }
+            };
+
+            // check if the version is allowed
+            let actual_version = match version.protocol_version.parse::<f32>() {
+                Ok(v) => v,
+                Err(e) => {
+                    log!("Error on parse protocol_version "[e]);
+                    remove_server(client, &electrum_addr).await;
+                    continue
+                },
+            };
+
+            if !available_protocols.contains(&actual_version) {
+                log!("Received unsupported protocol version " [actual_version] " from " [electrum_addr] ". Remove the connection");
+                remove_server(client, &electrum_addr).await;
+                continue
+            }
+
+            log!("Use protocol version " [actual_version] " for Electrum " [electrum_addr]);
+        }
+
+        log!("Electrum server.version loop stopped");
+    });
 }
 
 /// Function calculating KMD interest

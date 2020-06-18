@@ -118,7 +118,7 @@ use std::intrinsics::copy;
 use std::io::{Write};
 use std::mem::{forget, size_of, zeroed};
 use std::os::raw::{c_char, c_void};
-use std::ops::{Add, Div};
+use std::ops::{Add, Deref, Div, RangeInclusive};
 use std::path::{Path, PathBuf};
 #[cfg(not(feature = "native"))]
 use std::pin::Pin;
@@ -1546,6 +1546,36 @@ pub async fn helperᶜ (helper: &'static str, args: Vec<u8>) -> Result<Vec<u8>, 
 pub struct BroadcastP2pMessageArgs {
     pub ctx: u32,
     pub msg: String
+}
+
+#[derive(Debug, Clone)]
+/// Ordered from low to height inclusive range.
+pub struct OrdRange<T>(RangeInclusive<T>);
+
+impl<T> Deref for OrdRange<T> {
+    type Target = RangeInclusive<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T: PartialOrd> OrdRange<T> {
+    /// Construct the OrderedRange from the start-end pair.
+    pub fn new(start: T, end: T) -> Result<Self, String> {
+        if start > end {
+            return Err("".into());
+        }
+
+        Ok(Self(start..=end))
+    }
+}
+
+impl<T: Copy> OrdRange<T> {
+    /// Flatten a start-end pair into the vector.
+    pub fn flatten(&self) -> Vec<T> {
+        vec![*self.start(), *self.end()]
+    }
 }
 
 /// Invokes callback `cb_id` in the WASM host, passing a `(ptr,len)` string to it.
