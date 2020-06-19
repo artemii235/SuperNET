@@ -754,7 +754,12 @@ pub async fn get_trade_fee(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, S
     };
     let fee_info = try_s!(coin.get_trade_fee().compat().await);
     let res = try_s!(json::to_vec(&json!({
-        "result": fee_info
+        "result": {
+            "coin": fee_info.coin,
+            "amount": fee_info.amount.to_decimal(),
+            "amount_fraction": fee_info.amount.to_fraction(),
+            "amount_rat": fee_info.amount.to_ratio(),
+        }
     })));
     Ok(try_s!(Response::builder().body(res)))
 }
