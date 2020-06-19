@@ -87,8 +87,13 @@ impl UtxoCoinCommonOps for UtxoStandardCoin {
     async fn get_current_mtp(&self) -> Result<u32, String> {
         utxo_common::get_current_mtp(&self.utxo_arc).await
     }
+
+    fn is_unspent_mature(&self, output: &RpcTransaction) -> bool {
+        utxo_common::is_unspent_mature(self.utxo_arc.mature_confirmations, output)
+    }
 }
 
+#[mockable]
 #[async_trait]
 impl UtxoArcCommonOps for UtxoStandardCoin {
     fn send_outputs_from_my_address(&self, outputs: Vec<TransactionOutput>) -> TransactionFut {
@@ -159,6 +164,14 @@ impl UtxoArcCommonOps for UtxoStandardCoin {
             outputs,
             script_data,
             sequence)
+    }
+
+    fn ordered_mature_unspents(&self, address: &Address) -> Box<dyn Future<Item=Vec<UnspentInfo>, Error=String> + Send> {
+        Box::new(utxo_common::ordered_mature_unspents(self.clone(), address.clone()).boxed().compat())
+    }
+
+    fn get_verbose_transaction_from_cache_or_rpc(&self, txid: H256Json) -> Box<dyn Future<Item=VerboseTransactionFrom, Error=String> + Send> {
+        Box::new(utxo_common::get_verbose_transaction_from_cache_or_rpc(self.clone(), txid).boxed().compat())
     }
 }
 
@@ -300,8 +313,8 @@ impl MmCoin for UtxoStandardCoin {
         utxo_common::can_i_spend_other_payment()
     }
 
-    fn withdraw(&self, ctx: &MmArc, req: WithdrawRequest) -> Box<dyn Future<Item=TransactionDetails, Error=String> + Send> {
-        Box::new(utxo_common::withdraw(self.clone(), ctx.clone(), req).boxed().compat())
+    fn withdraw(&self, req: WithdrawRequest) -> Box<dyn Future<Item=TransactionDetails, Error=String> + Send> {
+        Box::new(utxo_common::withdraw(self.clone(), req).boxed().compat())
     }
 
     fn decimals(&self) -> u8 {
@@ -340,23 +353,7 @@ impl MmCoin for UtxoStandardCoin {
         utxo_common::set_requires_notarization(&self.utxo_arc, requires_nota)
     }
 
-    fn my_unspendable_balance(&self, ctx: &MmArc) -> Box<dyn Future<Item=BigDecimal, Error=String> + Send> {
-        Box::new(utxo_common::my_unspendable_balance(self.clone(), ctx.clone()).boxed().compat())
-    }
-}
-
-#[mockable]
-#[async_trait]
-impl UtxoMmCoin for UtxoStandardCoin {
-    fn ordered_mature_unspents(&self, ctx: &MmArc, address: &Address) -> Box<dyn Future<Item=Vec<UnspentInfo>, Error=String> + Send> {
-        Box::new(utxo_common::ordered_mature_unspents(self.clone(), ctx.clone(), address.clone()).boxed().compat())
-    }
-
-    async fn get_verbose_transaction_from_cache_or_rpc(&self, ctx: &MmArc, txid: H256Json) -> Result<VerboseTransactionFrom, String> {
-        utxo_common::get_verbose_transaction_from_cache_or_rpc(self, ctx, txid).await
-    }
-
-    fn is_unspent_mature(&self, output: &RpcTransaction) -> bool {
-        utxo_common::is_unspent_mature(self.utxo_arc.mature_confirmations, output)
+    fn my_unspendable_balance(&self) -> Box<dyn Future<Item=BigDecimal, Error=String> + Send> {
+        Box::new(utxo_common::my_unspendable_balance(self.clone()).boxed().compat())
     }
 }

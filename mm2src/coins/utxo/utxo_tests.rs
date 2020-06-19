@@ -15,6 +15,8 @@ use std::time::Duration;
 use super::*;
 use super::utxo_standard::{utxo_standard_coin_from_conf_and_request, UtxoStandardCoin, UTXO_STANDARD_DUST};
 use super::rpc_clients::{ElectrumProtocol, ListSinceBlockRes, NetworkInfo, UtxoRpcClientOps};
+use crate::utxo::qrc20::{qrc20_coin_from_conf_and_request, Qrc20FeeDetails, Qrc20Coin};
+use crate::{SwapOps, TxFeeDetails};
 
 const TEST_COIN_NAME: &'static str = "RICK";
 
@@ -105,6 +107,7 @@ fn utxo_coin_fields_for_test(rpc_client: UtxoRpcClientEnum, force_seed: Option<&
         estimate_fee_mode: None,
         dust_amount: UTXO_STANDARD_DUST,
         mature_confirmations: MATURE_CONFIRMATIONS_DEFAULT,
+        tx_cache_directory: None,
     }
 }
 
@@ -373,12 +376,10 @@ fn test_search_for_swap_tx_spend_electrum_was_refunded() {
 
 #[test]
 fn test_withdraw_impl_set_fixed_fee() {
-    UtxoStandardCoin::ordered_mature_unspents.mock_safe(|_,_,_| {
+    UtxoStandardCoin::ordered_mature_unspents.mock_safe(|_,_| {
         let unspents = vec![UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 1000000000, height: Default::default() }];
         MockResult::Return(Box::new(futures01::future::ok(unspents)))
     });
-
-    let ctx = MmCtxBuilder::new().into_mm_arc();
 
     let client = NativeClient(Arc::new(NativeClientImpl {
         coin_ticker: TEST_COIN_NAME.into(),
@@ -399,18 +400,16 @@ fn test_withdraw_impl_set_fixed_fee() {
     let expected = Some(UtxoFeeDetails {
         amount: "0.1".parse().unwrap()
     }.into());
-    let tx_details = unwrap!(coin.withdraw(&ctx, withdraw_req).wait());
+    let tx_details = unwrap!(coin.withdraw(withdraw_req).wait());
     assert_eq!(expected, tx_details.fee_details);
 }
 
 #[test]
 fn test_withdraw_impl_sat_per_kb_fee() {
-    UtxoStandardCoin::ordered_mature_unspents.mock_safe(|_,_,_| {
+    UtxoStandardCoin::ordered_mature_unspents.mock_safe(|_,_| {
         let unspents = vec![UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 1000000000, height: Default::default() }];
         MockResult::Return(Box::new(futures01::future::ok(unspents)))
     });
-
-    let ctx = MmCtxBuilder::new().into_mm_arc();
 
     let client = NativeClient(Arc::new(NativeClientImpl {
         coin_ticker: TEST_COIN_NAME.into(),
@@ -434,18 +433,16 @@ fn test_withdraw_impl_sat_per_kb_fee() {
     let expected = Some(UtxoFeeDetails {
         amount: "0.0245".parse().unwrap()
     }.into());
-    let tx_details = unwrap!(coin.withdraw(&ctx, withdraw_req).wait());
+    let tx_details = unwrap!(coin.withdraw(withdraw_req).wait());
     assert_eq!(expected, tx_details.fee_details);
 }
 
 #[test]
 fn test_withdraw_impl_sat_per_kb_fee_amount_equal_to_max() {
-    UtxoStandardCoin::ordered_mature_unspents.mock_safe(|_,_,_| {
+    UtxoStandardCoin::ordered_mature_unspents.mock_safe(|_,_| {
         let unspents = vec![UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 1000000000, height: Default::default() }];
         MockResult::Return(Box::new(futures01::future::ok(unspents)))
     });
-
-    let ctx = MmCtxBuilder::new().into_mm_arc();
 
     let client = NativeClient(Arc::new(NativeClientImpl {
         coin_ticker: TEST_COIN_NAME.into(),
@@ -463,7 +460,7 @@ fn test_withdraw_impl_sat_per_kb_fee_amount_equal_to_max() {
         max: false,
         fee: Some(WithdrawFee::UtxoPerKbyte { amount: "0.1".parse().unwrap() }),
     };
-    let tx_details = unwrap!(coin.withdraw(&ctx, withdraw_req).wait());
+    let tx_details = unwrap!(coin.withdraw(withdraw_req).wait());
     // The resulting transaction size might be 210 or 211 bytes depending on signature size
     // MM2 always expects the worst case during fee calculation
     // 0.1 * 211 / 1000 = 0.0211
@@ -477,12 +474,10 @@ fn test_withdraw_impl_sat_per_kb_fee_amount_equal_to_max() {
 
 #[test]
 fn test_withdraw_impl_sat_per_kb_fee_amount_equal_to_max_dust_included_to_fee() {
-    UtxoStandardCoin::ordered_mature_unspents.mock_safe(|_,_,_| {
+    UtxoStandardCoin::ordered_mature_unspents.mock_safe(|_,_| {
         let unspents = vec![UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 1000000000, height: Default::default() }];
         MockResult::Return(Box::new(futures01::future::ok(unspents)))
     });
-
-    let ctx = MmCtxBuilder::new().into_mm_arc();
 
     let client = NativeClient(Arc::new(NativeClientImpl {
         coin_ticker: TEST_COIN_NAME.into(),
@@ -500,7 +495,7 @@ fn test_withdraw_impl_sat_per_kb_fee_amount_equal_to_max_dust_included_to_fee() 
         max: false,
         fee: Some(WithdrawFee::UtxoPerKbyte { amount: "0.09999999".parse().unwrap() }),
     };
-    let tx_details = unwrap!(coin.withdraw(&ctx, withdraw_req).wait());
+    let tx_details = unwrap!(coin.withdraw(withdraw_req).wait());
     // The resulting transaction size might be 210 or 211 bytes depending on signature size
     // MM2 always expects the worst case during fee calculation
     // 0.1 * 211 / 1000 = 0.0211
@@ -514,12 +509,10 @@ fn test_withdraw_impl_sat_per_kb_fee_amount_equal_to_max_dust_included_to_fee() 
 
 #[test]
 fn test_withdraw_impl_sat_per_kb_fee_amount_over_max() {
-    UtxoStandardCoin::ordered_mature_unspents.mock_safe(|_,_,_| {
+    UtxoStandardCoin::ordered_mature_unspents.mock_safe(|_,_| {
         let unspents = vec![UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 1000000000, height: Default::default() }];
         MockResult::Return(Box::new(futures01::future::ok(unspents)))
     });
-
-    let ctx = MmCtxBuilder::new().into_mm_arc();
 
     let client = NativeClient(Arc::new(NativeClientImpl {
         coin_ticker: TEST_COIN_NAME.into(),
@@ -537,17 +530,15 @@ fn test_withdraw_impl_sat_per_kb_fee_amount_over_max() {
         max: false,
         fee: Some(WithdrawFee::UtxoPerKbyte { amount: "0.1".parse().unwrap() }),
     };
-    unwrap_err!(coin.withdraw(&ctx, withdraw_req).wait());
+    unwrap_err!(coin.withdraw(withdraw_req).wait());
 }
 
 #[test]
 fn test_withdraw_impl_sat_per_kb_fee_max() {
-    UtxoStandardCoin::ordered_mature_unspents.mock_safe(|_,_,_| {
+    UtxoStandardCoin::ordered_mature_unspents.mock_safe(|_,_| {
         let unspents = vec![UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 1000000000, height: Default::default() }];
         MockResult::Return(Box::new(futures01::future::ok(unspents)))
     });
-
-    let ctx = MmCtxBuilder::new().into_mm_arc();
 
     let client = NativeClient(Arc::new(NativeClientImpl {
         coin_ticker: TEST_COIN_NAME.into(),
@@ -571,8 +562,71 @@ fn test_withdraw_impl_sat_per_kb_fee_max() {
     let expected = Some(UtxoFeeDetails {
         amount: "0.0211".parse().unwrap()
     }.into());
-    let tx_details = unwrap!(coin.withdraw(&ctx, withdraw_req).wait());
+    let tx_details = unwrap!(coin.withdraw(withdraw_req).wait());
     assert_eq!(expected, tx_details.fee_details);
+}
+
+#[test]
+fn test_qrc20_withdraw_impl_fee_details() {
+    Qrc20Coin::ordered_mature_unspents.mock_safe(|_, _| {
+        let unspents = vec![UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 1000000000, height: Default::default() }];
+        MockResult::Return(Box::new(futures01::future::ok(unspents)))
+    });
+
+    let conf = json!({
+        "coin":"QRC20",
+        "required_confirmations":0,
+        "pubtype":120,
+        "p2shtype":50,
+        "wiftype":128,
+        "segwit":true,
+        // the tx fee method will be requested from Electrum
+        "txfee": 0,
+        "mm2":1,"mature_confirmations":500,
+    });
+    let req = json!({
+        "method": "electrum",
+        "servers": [{"url":"95.217.83.126:10001"}],
+    });
+    let priv_key = [3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144, 72, 172, 110, 180, 13, 123, 179, 10, 49];
+    let contract_address = "0xd362e096e873eb7907e205fadc6175c6fec7bc44".into();
+
+    let ctx = MmCtxBuilder::new().into_mm_arc();
+
+    let coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
+        &ctx, "QRC20", &conf, &req, &priv_key, contract_address)));
+
+    let withdraw_req = WithdrawRequest {
+        amount: 10.into(),
+        to: "qHmJ3KA6ZAjR9wGjpFASn4gtUSeFAqdZgs".into(),
+        coin: "QRC20".into(),
+        max: false,
+        fee: Some(WithdrawFee::Qrc20Gas { gas_limit: 2_500_000, gas_price: 40 }),
+    };
+    let tx_details = unwrap!(coin.withdraw(withdraw_req).wait());
+
+    let expected: Qrc20FeeDetails = unwrap!(json::from_value(json!({
+        "coin": "QRC20",
+        // (299 + total_gas_fee) from satoshi,
+        // where decimals = 8,
+        //       tx_hex.len() = 299
+        "miner_fee": "1.00000299",
+        "gas_limit": 2_500_000,
+        "gas_price": 40,
+        // (gas_limit * gas_price) from satoshi in Qtum
+        "total_gas_fee": "1",
+    })));
+    assert_eq!(Some(TxFeeDetails::Qrc20(expected)), tx_details.fee_details);
+}
+
+#[test]
+fn test_ordered_mature_unspents_without_tx_cache() {
+    let client = electrum_client_for_test(&["electrum1.cipig.net:10017", "electrum2.cipig.net:10017"]);
+    let coin = utxo_coin_for_test(client.into(), Some("spice describe gravity federal blast come thank unfair canal monkey style afraid"));
+    assert!(coin.as_ref().tx_cache_directory.is_none());
+    assert_ne!(coin.my_balance().wait().unwrap(), 0.into(), "The test address doesn't have unspent outputs");
+    let unspents = unwrap!(coin.ordered_mature_unspents(&Address::from("R9o9xTocqr6CeEDGDH6mEYpwLoMz6jNjMW")).wait());
+    assert!(!unspents.is_empty());
 }
 
 #[test]

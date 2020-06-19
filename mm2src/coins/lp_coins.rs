@@ -371,8 +371,7 @@ pub trait MmCoin: SwapOps + MarketCoinOps + fmt::Debug + Send + Sync + 'static {
 
     fn can_i_spend_other_payment(&self) -> Box<dyn Future<Item=(), Error=String> + Send>;
 
-    /// Withdraw uses MmArc in particular to cache unspent output transactions.
-    fn withdraw(&self, ctx: &MmArc, req: WithdrawRequest) -> Box<dyn Future<Item=TransactionDetails, Error=String> + Send>;
+    fn withdraw(&self, req: WithdrawRequest) -> Box<dyn Future<Item=TransactionDetails, Error=String> + Send>;
 
     /// Maximum number of digits after decimal point used to denominate integer coin units (satoshis, wei, etc.)
     fn decimals(&self) -> u8;
@@ -434,7 +433,7 @@ pub trait MmCoin: SwapOps + MarketCoinOps + fmt::Debug + Send + Sync + 'static {
     fn set_requires_notarization(&self, requires_nota: bool);
 
     /// Get unspendable balance (sum of non-mature output values).
-    fn my_unspendable_balance(&self, ctx: &MmArc) -> Box<dyn Future<Item=BigDecimal, Error=String> + Send>;
+    fn my_unspendable_balance(&self) -> Box<dyn Future<Item=BigDecimal, Error=String> + Send>;
 }
 
 #[derive(Clone, Debug)]
@@ -698,7 +697,7 @@ pub async fn withdraw (ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
         Err (err) => return ERR! ("!lp_coinfind({}): {}", ticker, err)
     };
     let withdraw_req: WithdrawRequest = try_s! (json::from_value (req));
-    let res = try_s! (coin.withdraw (&ctx, withdraw_req) .compat().await);
+    let res = try_s! (coin.withdraw (withdraw_req) .compat().await);
     let body = try_s! (json::to_vec (&res));
     Ok (try_s! (Response::builder().body (body)))
 }

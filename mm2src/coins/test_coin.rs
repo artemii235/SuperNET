@@ -206,7 +206,7 @@ impl MmCoin for TestCoin {
         unimplemented!()
     }
 
-    fn withdraw(&self, ctx: &MmArc, req: WithdrawRequest) -> Box<dyn Future<Item=TransactionDetails, Error=String> + Send> {
+    fn withdraw(&self, req: WithdrawRequest) -> Box<dyn Future<Item=TransactionDetails, Error=String> + Send> {
         unimplemented!()
     }
 
@@ -243,7 +243,7 @@ impl MmCoin for TestCoin {
 
     fn set_requires_notarization(&self, _requires_nota: bool) { unimplemented!() }
 
-    fn my_unspendable_balance(&self, ctx: &MmArc) -> Box<dyn Future<Item=BigDecimal, Error=String> + Send> {
+    fn my_unspendable_balance(&self) -> Box<dyn Future<Item=BigDecimal, Error=String> + Send> {
         unimplemented!()
     }
 }

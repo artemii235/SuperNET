@@ -138,8 +138,13 @@ impl UtxoCoinCommonOps for Qrc20Coin {
     async fn get_current_mtp(&self) -> Result<u32, String> {
         utxo_common::get_current_mtp(&self.utxo_arc).await
     }
+
+    fn is_unspent_mature(&self, output: &RpcTransaction) -> bool {
+        qtum::is_qtum_unspent_mature(self.utxo_arc.mature_confirmations, output)
+    }
 }
 
+#[mockable]
 #[async_trait]
 impl UtxoArcCommonOps for Qrc20Coin {
     fn send_outputs_from_my_address(&self, outputs: Vec<TransactionOutput>) -> TransactionFut {
@@ -210,6 +215,14 @@ impl UtxoArcCommonOps for Qrc20Coin {
             outputs,
             script_data,
             sequence)
+    }
+
+    fn ordered_mature_unspents(&self, address: &Address) -> Box<dyn Future<Item=Vec<UnspentInfo>, Error=String> + Send> {
+        Box::new(utxo_common::ordered_mature_unspents(self.clone(), address.clone()).boxed().compat())
+    }
+
+    fn get_verbose_transaction_from_cache_or_rpc(&self, txid: H256Json) -> Box<dyn Future<Item=VerboseTransactionFrom, Error=String> + Send> {
+        Box::new(utxo_common::get_verbose_transaction_from_cache_or_rpc(self.clone(), txid).boxed().compat())
     }
 }
 
@@ -369,8 +382,8 @@ impl MmCoin for Qrc20Coin {
         utxo_common::can_i_spend_other_payment()
     }
 
-    fn withdraw(&self, ctx: &MmArc, req: WithdrawRequest) -> Box<dyn Future<Item=TransactionDetails, Error=String> + Send> {
-        Box::new(qrc20_withdraw(self.clone(), ctx.clone(), req).boxed().compat())
+    fn withdraw(&self, req: WithdrawRequest) -> Box<dyn Future<Item=TransactionDetails, Error=String> + Send> {
+        Box::new(qrc20_withdraw(self.clone(), req).boxed().compat())
     }
 
     fn decimals(&self) -> u8 {
@@ -409,31 +422,16 @@ impl MmCoin for Qrc20Coin {
         utxo_common::set_requires_notarization(&self.utxo_arc, requires_nota)
     }
 
-    fn my_unspendable_balance(&self, _ctx: &MmArc) -> Box<dyn Future<Item=BigDecimal, Error=String> + Send> {
+    fn my_unspendable_balance(&self) -> Box<dyn Future<Item=BigDecimal, Error=String> + Send> {
         // QRC20 cannot have unspendable balance
         Box::new(futures01::future::ok(0.into()))
     }
 }
 
-#[async_trait]
-impl UtxoMmCoin for Qrc20Coin {
-    fn ordered_mature_unspents(&self, ctx: &MmArc, address: &Address) -> Box<dyn Future<Item=Vec<UnspentInfo>, Error=String> + Send> {
-        Box::new(utxo_common::ordered_mature_unspents(self.clone(), ctx.clone(), address.clone()).boxed().compat())
-    }
-
-    async fn get_verbose_transaction_from_cache_or_rpc(&self, ctx: &MmArc, txid: H256Json) -> Result<VerboseTransactionFrom, String> {
-        utxo_common::get_verbose_transaction_from_cache_or_rpc(self, ctx, txid).await
-    }
-
-    fn is_unspent_mature(&self, output: &RpcTransaction) -> bool {
-        qtum::is_qtum_unspent_mature(self.utxo_arc.mature_confirmations, output)
-    }
-}
-
-async fn qrc20_withdraw(coin: Qrc20Coin, ctx: MmArc, req: WithdrawRequest) -> Result<TransactionDetails, String> {
+async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> Result<TransactionDetails, String> {
     let to_addr = match &coin.utxo_arc.address_format {
         UtxoAddressFormat::Standard => try_s!(Address::from_str(&req.to)),
-        UtxoAddressFormat::CashAddress {..} => try_s!(Address::from_cashaddress(
+        UtxoAddressFormat::CashAddress { .. } => try_s!(Address::from_cashaddress(
             &req.to, coin.utxo_arc.checksum_type.clone(), coin.utxo_arc.pub_addr_prefix, coin.utxo_arc.p2sh_addr_prefix))
     };
 
@@ -469,7 +467,7 @@ async fn qrc20_withdraw(coin: Qrc20Coin, ctx: MmArc, req: WithdrawRequest) -> Re
         script_pubkey,
     }];
 
-    let unspents = try_s!(coin.ordered_mature_unspents(&ctx, &coin.utxo_arc.my_address).compat().await.map_err(|e| ERRL!("{}", e)));
+    let unspents = try_s!(coin.ordered_mature_unspents(&coin.utxo_arc.my_address).compat().await.map_err(|e| ERRL!("{}", e)));
 
     // None seems that the generate_transaction() should request estimated fee for Kbyte
     let actual_tx_fee = None;

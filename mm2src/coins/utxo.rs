@@ -24,9 +24,11 @@
 pub mod rpc_clients;
 pub mod qrc20;
 pub mod qtum;
-pub mod tx_cache;
 pub mod utxo_common;
 pub mod utxo_standard;
+
+#[cfg(feature = "native")]
+pub mod tx_cache;
 
 use async_trait::async_trait;
 use base64::{encode_config as base64_encode, URL_SAFE};
@@ -64,7 +66,7 @@ pub use chain::Transaction as UtxoTx;
 use self::rpc_clients::{ElectrumClient, ElectrumClientImpl,
                         EstimateFeeMethod, EstimateFeeMode, NativeClient, UtxoRpcClientEnum, UnspentInfo};
 use super::{CoinsContext, CoinTransportMetrics, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, RpcClientType, RpcTransportEventHandlerShared,
-            SwapOps, TradeFee, TradeInfo, Transaction, TransactionEnum, TransactionFut, TransactionDetails, WithdrawFee, WithdrawRequest};
+            TradeFee, TradeInfo, Transaction, TransactionEnum, TransactionFut, TransactionDetails, WithdrawFee, WithdrawRequest};
 use crate::utxo::rpc_clients::{NativeClientImpl, ElectrumRpcRequest};
 
 #[cfg(test)]
@@ -258,6 +260,8 @@ pub struct UtxoCoinFields {
     dust_amount: u64,
     /// Minimum number of confirmations at which a transaction is considered mature
     mature_confirmations: u32,
+    /// Path to the TX cache directory
+    tx_cache_directory: Option<PathBuf>,
 }
 
 #[async_trait]
@@ -285,6 +289,9 @@ pub trait UtxoCoinCommonOps {
     fn display_address(&self, address: &Address) -> Result<String, String>;
 
     async fn get_current_mtp(&self) -> Result<u32, String>;
+
+    /// Check if the output is spendable (is not coinbase or it has enough confirmations).
+    fn is_unspent_mature(&self, output: &RpcTransaction) -> bool;
 }
 
 #[derive(Clone, Debug)]
@@ -301,6 +308,7 @@ impl From<UtxoCoinFields> for UtxoArc {
 // It's highly likely that we won't experience any issues with it as we won't need to send "a lot" of transactions concurrently.
 lazy_static! {pub static ref UTXO_LOCK: AsyncMutex<()> = AsyncMutex::new(());}
 
+#[mockable]
 #[async_trait]
 pub trait UtxoArcCommonOps {
     fn send_outputs_from_my_address(&self, outputs: Vec<TransactionOutput>) -> TransactionFut;
@@ -347,30 +355,17 @@ pub trait UtxoArcCommonOps {
         script_data: Script,
         sequence: u32,
     ) -> Result<UtxoTx, String>;
+
+    /// Get transaction outputs available to spend.
+    fn ordered_mature_unspents(&self, address: &Address) -> Box<dyn Future<Item=Vec<UnspentInfo>, Error=String> + Send>;
+
+    /// Try load verbose transaction from cache or try to request it from Rpc client.
+    fn get_verbose_transaction_from_cache_or_rpc(&self, txid: H256Json) -> Box<dyn Future<Item=VerboseTransactionFrom, Error=String> + Send>;
 }
 
 pub enum VerboseTransactionFrom {
     Cache(RpcTransaction),
     Rpc(RpcTransaction),
-}
-
-/// The additional operations on UTXO coin that need to use MarketMaker context.
-#[async_trait]
-pub trait UtxoMmCoin {
-    /// Path to the transaction cache file.
-    fn cached_transaction_path(&self, ctx: &MmArc, txid: &H256Json) -> PathBuf {
-        ctx.dbdir().join("TX_CACHE").join(format!("{:?}", txid))
-    }
-
-    /// Get transaction outputs available to spend.
-    /// Note, the method is used in mock tests, therefore it can't be async.
-    fn ordered_mature_unspents(&self, ctx: &MmArc, address: &Address) -> Box<dyn Future<Item=Vec<UnspentInfo>, Error=String> + Send>;
-
-    /// Try load verbose transaction from cache or try to request it from Rpc client.
-    async fn get_verbose_transaction_from_cache_or_rpc(&self, ctx: &MmArc, txid: H256Json) -> Result<VerboseTransactionFrom, String>;
-
-    /// Check if the output is spendable (is not coinbase or it has enough confirmations).
-    fn is_unspent_mature(&self, output: &RpcTransaction) -> bool;
 }
 
 pub fn compressed_key_pair_from_bytes(raw: &[u8], prefix: u8, checksum_type: ChecksumType) -> Result<KeyPair, String> {
@@ -711,6 +706,7 @@ pub async fn utxo_arc_from_conf_and_request(
     let mature_confirmations = conf["mature_confirmations"].as_u64()
         .map(|x| x as u32)
         .unwrap_or(MATURE_CONFIRMATIONS_DEFAULT);
+    let tx_cache_directory = Some(ctx.dbdir().join("TX_CACHE"));
 
     let coin = UtxoCoinFields {
         ticker: ticker.into(),
@@ -744,6 +740,7 @@ pub async fn utxo_arc_from_conf_and_request(
         estimate_fee_mode: json::from_value(conf["estimate_fee_mode"].clone()).unwrap_or(None),
         dust_amount,
         mature_confirmations,
+        tx_cache_directory,
     };
     Ok(UtxoArc(Arc::new(coin)))
 }

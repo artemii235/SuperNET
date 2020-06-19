@@ -1888,8 +1888,9 @@ impl MmCoin for EthCoin {
         }))
     }
 
-    fn withdraw(&self, ctx: &MmArc, req: WithdrawRequest) -> Box<dyn Future<Item=TransactionDetails, Error=String> + Send> {
-        Box::new(Box::pin(withdraw_impl(ctx.clone(), self.clone(), req)).compat())
+    fn withdraw(&self, req: WithdrawRequest) -> Box<dyn Future<Item=TransactionDetails, Error=String> + Send> {
+        let ctx = try_fus!(MmArc::from_weak(&self.ctx).ok_or("!ctx"));
+        Box::new(Box::pin(withdraw_impl(ctx, self.clone(), req)).compat())
     }
 
     fn decimals(&self) -> u8 {
@@ -1996,7 +1997,7 @@ impl MmCoin for EthCoin {
        log!("Warning: set_requires_notarization doesn't take any effect on ETH/ERC20 coins");
     }
 
-    fn my_unspendable_balance(&self, _ctx: &MmArc) -> Box<dyn Future<Item=BigDecimal, Error=String> + Send> {
+    fn my_unspendable_balance(&self) -> Box<dyn Future<Item=BigDecimal, Error=String> + Send> {
         // Eth has not unspendable outputs
         Box::new(futures01::future::ok(0.into()))
     }
