@@ -86,6 +86,10 @@ impl OrderConfirmationsSettings {
             rel_nota: self.base_nota,
         }
     }
+
+    pub fn requires_notarization(&self) -> bool {
+        self.base_nota || self.rel_nota
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -698,13 +702,13 @@ fn lp_connect_start_bob(ctx: MmArc, maker_match: MakerMatch, maker_order: MakerO
         let privkey = &ctx.secp256k1_key_pair().private().secret;
         let my_persistent_pub = unwrap!(compressed_pub_key_from_priv_raw(&privkey[..], ChecksumType::DSHA256));
         let uuid = maker_match.request.uuid.to_string();
-        let conf_settings = choose_maker_confs_and_notas(&maker_order, &maker_match.request, &maker_coin, &taker_coin);
+        let my_conf_settings = choose_maker_confs_and_notas(&maker_order, &maker_match.request, &maker_coin, &taker_coin);
         // detect atomic lock time version implicitly by conf_settings existence in taker request
-        let atomic_locktime_v = match &maker_match.request.conf_settings {
-            Some(_) => AtomicLocktimeVersion::V2,
+        let atomic_locktime_v = match maker_match.request.conf_settings {
+            Some(other_conf_settings) => AtomicLocktimeVersion::V2 { my_conf_settings, other_conf_settings },
             None => AtomicLocktimeVersion::V1,
         };
-        let lock_time = lp_atomic_locktime(maker_coin.ticker(), taker_coin.ticker(), &conf_settings, atomic_locktime_v);
+        let lock_time = lp_atomic_locktime(maker_coin.ticker(), taker_coin.ticker(), atomic_locktime_v);
         log!("Entering the maker_swap_loop " (maker_coin.ticker()) "/" (taker_coin.ticker()) " with uuid: " (uuid));
         let maker_swap = MakerSwap::new(
             ctx.clone(),
@@ -713,7 +717,7 @@ fn lp_connect_start_bob(ctx: MmArc, maker_match: MakerMatch, maker_order: MakerO
             taker_amount,
             my_persistent_pub,
             uuid,
-            conf_settings,
+            my_conf_settings,
             maker_coin,
             taker_coin,
             lock_time,
@@ -756,13 +760,13 @@ fn lp_connected_alice(ctx: MmArc, taker_request: TakerRequest, taker_match: Take
         let taker_amount = taker_match.reserved.get_rel_amount().into();
         let uuid = taker_match.reserved.taker_order_uuid.to_string();
 
-        let conf_settings = choose_taker_confs_and_notas(&taker_request, &taker_match.reserved, &maker_coin, &taker_coin);
+        let my_conf_settings = choose_taker_confs_and_notas(&taker_request, &taker_match.reserved, &maker_coin, &taker_coin);
         // detect atomic lock time version implicitly by conf_settings existence in maker reserved
-        let atomic_locktime_v = match &taker_match.reserved.conf_settings {
-            Some(_) => AtomicLocktimeVersion::V2,
+        let atomic_locktime_v = match taker_match.reserved.conf_settings {
+            Some(other_conf_settings) => AtomicLocktimeVersion::V2 { my_conf_settings, other_conf_settings },
             None => AtomicLocktimeVersion::V1,
         };
-        let locktime = lp_atomic_locktime(maker_coin.ticker(), taker_coin.ticker(), &conf_settings, atomic_locktime_v);
+        let locktime = lp_atomic_locktime(maker_coin.ticker(), taker_coin.ticker(), atomic_locktime_v);
         log!("Entering the taker_swap_loop " (maker_coin.ticker()) "/" (taker_coin.ticker())  " with uuid: " (uuid));
         let taker_swap = TakerSwap::new(
             ctx.clone(),
@@ -771,7 +775,7 @@ fn lp_connected_alice(ctx: MmArc, taker_request: TakerRequest, taker_match: Take
             taker_amount,
             my_persistent_pub,
             uuid,
-            conf_settings,
+            my_conf_settings,
             maker_coin,
             taker_coin,
             locktime,

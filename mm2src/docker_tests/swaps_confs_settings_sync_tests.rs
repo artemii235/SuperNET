@@ -1,4 +1,5 @@
 use crate::mm2::lp_ordermatch::OrderConfirmationsSettings;
+use crate::mm2::lp_swap::PAYMENT_LOCKTIME;
 use super::*;
 
 struct SwapConfirmationsSettings {
@@ -13,6 +14,7 @@ fn test_confirmation_settings_sync_correctly_on_buy(
     taker_settings: OrderConfirmationsSettings,
     expected_maker: SwapConfirmationsSettings,
     expected_taker: SwapConfirmationsSettings,
+    expected_lock_duration: u64,
 ) {
     let (_ctx, _, bob_priv_key) = generate_coin_with_random_privkey("MYCOIN", 1000);
     let (_ctx, _, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN1", 2000);
@@ -106,6 +108,7 @@ fn test_confirmation_settings_sync_correctly_on_buy(
     assert_eq!(maker_started_event["event"]["data"]["maker_payment_requires_nota"].as_bool(), Some(expected_maker.maker_coin_nota));
     assert_eq!(maker_started_event["event"]["data"]["taker_payment_confirmations"].as_u64(), Some(expected_maker.taker_coin_confs));
     assert_eq!(maker_started_event["event"]["data"]["taker_payment_requires_nota"].as_bool(), Some(expected_maker.taker_coin_nota));
+    assert_eq!(maker_started_event["event"]["data"]["lock_duration"].as_u64(), Some(expected_lock_duration));
 
     let taker_status = unwrap! (block_on(mm_alice.rpc (json! ({
         "userpass": mm_alice.userpass,
@@ -115,12 +118,13 @@ fn test_confirmation_settings_sync_correctly_on_buy(
         }
     }))));
     assert!(taker_status.0.is_success(), "!taker_status of {}: {}", uuid, taker_status.1);
-    let maker_status_json: Json = json::from_str(&taker_status.1).unwrap();
-    let maker_started_event = maker_status_json["result"]["events"].as_array().unwrap()[0].clone();
-    assert_eq!(maker_started_event["event"]["data"]["maker_payment_confirmations"].as_u64(), Some(expected_taker.maker_coin_confs));
-    assert_eq!(maker_started_event["event"]["data"]["maker_payment_requires_nota"].as_bool(), Some(expected_taker.maker_coin_nota));
-    assert_eq!(maker_started_event["event"]["data"]["taker_payment_confirmations"].as_u64(), Some(expected_taker.taker_coin_confs));
-    assert_eq!(maker_started_event["event"]["data"]["taker_payment_requires_nota"].as_bool(), Some(expected_taker.taker_coin_nota));
+    let taker_status_json: Json = json::from_str(&taker_status.1).unwrap();
+    let taker_started_event = taker_status_json["result"]["events"].as_array().unwrap()[0].clone();
+    assert_eq!(taker_started_event["event"]["data"]["maker_payment_confirmations"].as_u64(), Some(expected_taker.maker_coin_confs));
+    assert_eq!(taker_started_event["event"]["data"]["maker_payment_requires_nota"].as_bool(), Some(expected_taker.maker_coin_nota));
+    assert_eq!(taker_started_event["event"]["data"]["taker_payment_confirmations"].as_u64(), Some(expected_taker.taker_coin_confs));
+    assert_eq!(taker_started_event["event"]["data"]["taker_payment_requires_nota"].as_bool(), Some(expected_taker.taker_coin_nota));
+    assert_eq!(taker_started_event["event"]["data"]["lock_duration"].as_u64(), Some(expected_lock_duration));
 
     unwrap!(block_on(mm_bob.stop()));
     unwrap!(block_on(mm_alice.stop()));
@@ -131,6 +135,7 @@ fn test_confirmation_settings_sync_correctly_on_sell(
     taker_settings: OrderConfirmationsSettings,
     expected_maker: SwapConfirmationsSettings,
     expected_taker: SwapConfirmationsSettings,
+    expected_lock_duration: u64,
 ) {
     let (_ctx, _, bob_priv_key) = generate_coin_with_random_privkey("MYCOIN", 1000);
     let (_ctx, _, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN1", 2000);
@@ -224,6 +229,7 @@ fn test_confirmation_settings_sync_correctly_on_sell(
     assert_eq!(maker_started_event["event"]["data"]["maker_payment_requires_nota"].as_bool(), Some(expected_maker.maker_coin_nota));
     assert_eq!(maker_started_event["event"]["data"]["taker_payment_confirmations"].as_u64(), Some(expected_maker.taker_coin_confs));
     assert_eq!(maker_started_event["event"]["data"]["taker_payment_requires_nota"].as_bool(), Some(expected_maker.taker_coin_nota));
+    assert_eq!(maker_started_event["event"]["data"]["lock_duration"].as_u64(), Some(expected_lock_duration));
 
     let taker_status = unwrap! (block_on(mm_alice.rpc (json! ({
         "userpass": mm_alice.userpass,
@@ -233,12 +239,13 @@ fn test_confirmation_settings_sync_correctly_on_sell(
         }
     }))));
     assert!(taker_status.0.is_success(), "!taker_status of {}: {}", uuid, taker_status.1);
-    let maker_status_json: Json = json::from_str(&taker_status.1).unwrap();
-    let maker_started_event = maker_status_json["result"]["events"].as_array().unwrap()[0].clone();
-    assert_eq!(maker_started_event["event"]["data"]["maker_payment_confirmations"].as_u64(), Some(expected_taker.maker_coin_confs));
-    assert_eq!(maker_started_event["event"]["data"]["maker_payment_requires_nota"].as_bool(), Some(expected_taker.maker_coin_nota));
-    assert_eq!(maker_started_event["event"]["data"]["taker_payment_confirmations"].as_u64(), Some(expected_taker.taker_coin_confs));
-    assert_eq!(maker_started_event["event"]["data"]["taker_payment_requires_nota"].as_bool(), Some(expected_taker.taker_coin_nota));
+    let taker_status_json: Json = json::from_str(&taker_status.1).unwrap();
+    let taker_started_event = taker_status_json["result"]["events"].as_array().unwrap()[0].clone();
+    assert_eq!(taker_started_event["event"]["data"]["maker_payment_confirmations"].as_u64(), Some(expected_taker.maker_coin_confs));
+    assert_eq!(taker_started_event["event"]["data"]["maker_payment_requires_nota"].as_bool(), Some(expected_taker.maker_coin_nota));
+    assert_eq!(taker_started_event["event"]["data"]["taker_payment_confirmations"].as_u64(), Some(expected_taker.taker_coin_confs));
+    assert_eq!(taker_started_event["event"]["data"]["taker_payment_requires_nota"].as_bool(), Some(expected_taker.taker_coin_nota));
+    assert_eq!(taker_started_event["event"]["data"]["lock_duration"].as_u64(), Some(expected_lock_duration));
 
     unwrap!(block_on(mm_bob.stop()));
     unwrap!(block_on(mm_alice.stop()));
@@ -278,7 +285,8 @@ fn test_buy_maker_should_use_taker_confs_and_notas_for_maker_payment_if_taker_re
         maker_settings,
         taker_settings,
         expected_maker,
-        expected_taker
+        expected_taker,
+        PAYMENT_LOCKTIME * 4,
     );
 }
 
@@ -316,7 +324,8 @@ fn test_buy_maker_should_not_use_taker_confs_and_notas_for_maker_payment_if_take
         maker_settings,
         taker_settings,
         expected_maker,
-        expected_taker
+        expected_taker,
+        PAYMENT_LOCKTIME * 4,
     );
 }
 
@@ -354,7 +363,8 @@ fn test_buy_taker_should_use_maker_confs_and_notas_for_taker_payment_if_maker_re
         maker_settings,
         taker_settings,
         expected_maker,
-        expected_taker
+        expected_taker,
+        PAYMENT_LOCKTIME * 4,
     );
 }
 
@@ -392,7 +402,8 @@ fn test_buy_taker_should_not_use_maker_confs_and_notas_for_taker_payment_if_make
         maker_settings,
         taker_settings,
         expected_maker,
-        expected_taker
+        expected_taker,
+        PAYMENT_LOCKTIME * 4,
     );
 }
 
@@ -430,7 +441,8 @@ fn test_sell_maker_should_use_taker_confs_and_notas_for_maker_payment_if_taker_r
         maker_settings,
         taker_settings,
         expected_maker,
-        expected_taker
+        expected_taker,
+        PAYMENT_LOCKTIME * 4,
     );
 }
 
@@ -468,7 +480,8 @@ fn test_sell_maker_should_not_use_taker_confs_and_notas_for_maker_payment_if_tak
         maker_settings,
         taker_settings,
         expected_maker,
-        expected_taker
+        expected_taker,
+        PAYMENT_LOCKTIME * 4,
     );
 }
 
@@ -506,7 +519,8 @@ fn test_sell_taker_should_use_maker_confs_and_notas_for_taker_payment_if_maker_r
         maker_settings,
         taker_settings,
         expected_maker,
-        expected_taker
+        expected_taker,
+        PAYMENT_LOCKTIME * 4,
     );
 }
 
@@ -544,6 +558,7 @@ fn test_sell_taker_should_not_use_maker_confs_and_notas_for_taker_payment_if_mak
         maker_settings,
         taker_settings,
         expected_maker,
-        expected_taker
+        expected_taker,
+        PAYMENT_LOCKTIME * 4
     );
 }

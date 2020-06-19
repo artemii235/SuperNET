@@ -66,6 +66,7 @@ use common::{
     mm_ctx::{from_ctx, MmArc},
     mm_number::MmNumber,
 };
+use crate::mm2::lp_ordermatch::OrderConfirmationsSettings;
 use http::Response;
 use primitives::hash::{H160, H256, H264};
 use rpc::v1::types::{Bytes as BytesJson, H256 as H256Json};
@@ -147,7 +148,7 @@ const BASIC_COMM_TIMEOUT: u64 = 90;
 /// Default atomic swap payment locktime, in seconds.
 /// Maker sends payment with LOCKTIME * 2
 /// Taker sends payment with LOCKTIME
-const PAYMENT_LOCKTIME: u64 = 3600 * 2 + 300 * 2;
+pub const PAYMENT_LOCKTIME: u64 = 3600 * 2 + 300 * 2;
 const _SWAP_DEFAULT_NUM_CONFIRMS: u32 = 1;
 const _SWAP_DEFAULT_MAX_CONFIRMS: u32 = 6;
 /// MM2 checks that swap payment is confirmed every WAIT_CONFIRM_INTERVAL seconds
@@ -342,7 +343,7 @@ pub fn active_swaps_using_coin(ctx: &MmArc, coin: &str) -> Result<Vec<Uuid>, Str
     Ok(uuids)
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct SwapConfirmationsSettings {
     pub maker_coin_confs: u64,
     pub maker_coin_nota: bool,
@@ -368,7 +369,10 @@ fn coin_with_4x_locktime(ticker: &str) -> bool {
 #[derive(Debug)]
 pub enum AtomicLocktimeVersion {
     V1,
-    V2,
+    V2 {
+        my_conf_settings: SwapConfirmationsSettings,
+        other_conf_settings: OrderConfirmationsSettings,
+    },
 }
 
 pub fn lp_atomic_locktime_v1(maker_coin: &str, taker_coin: &str) -> u64 {
@@ -381,10 +385,16 @@ pub fn lp_atomic_locktime_v1(maker_coin: &str, taker_coin: &str) -> u64 {
     }
 }
 
-pub fn lp_atomic_locktime_v2(maker_coin: &str, taker_coin: &str, conf_settings: &SwapConfirmationsSettings) -> u64 {
+pub fn lp_atomic_locktime_v2(
+    maker_coin: &str,
+    taker_coin: &str,
+    my_conf_settings: &SwapConfirmationsSettings,
+    other_conf_settings: &OrderConfirmationsSettings
+) -> u64 {
     if maker_coin == "BTC" || taker_coin == "BTC" {
         PAYMENT_LOCKTIME * 4
-    } else if coin_with_4x_locktime(maker_coin) || coin_with_4x_locktime(taker_coin) || conf_settings.requires_notarization() {
+    } else if coin_with_4x_locktime(maker_coin) || coin_with_4x_locktime(taker_coin) || my_conf_settings.requires_notarization()
+        || other_conf_settings.requires_notarization() {
         PAYMENT_LOCKTIME * 4
     } else {
         PAYMENT_LOCKTIME
@@ -394,10 +404,11 @@ pub fn lp_atomic_locktime_v2(maker_coin: &str, taker_coin: &str, conf_settings: 
 /// Some coins are "slow" (block time is high - e.g. BTC average block time is ~10 minutes).
 /// https://bitinfocharts.com/comparison/bitcoin-confirmationtime.html
 /// We need to increase payment locktime accordingly when at least 1 side of swap uses "slow" coin.
-pub fn lp_atomic_locktime(maker_coin: &str, taker_coin: &str, conf_settings: &SwapConfirmationsSettings, version: AtomicLocktimeVersion) -> u64 {
+pub fn lp_atomic_locktime(maker_coin: &str, taker_coin: &str, version: AtomicLocktimeVersion) -> u64 {
     match version {
         AtomicLocktimeVersion::V1 => lp_atomic_locktime_v1(maker_coin, taker_coin),
-        AtomicLocktimeVersion::V2 => lp_atomic_locktime_v2(maker_coin, taker_coin, conf_settings)
+        AtomicLocktimeVersion::V2 { my_conf_settings, other_conf_settings } =>
+            lp_atomic_locktime_v2(maker_coin, taker_coin, &my_conf_settings, &other_conf_settings)
     }
 }
 
@@ -932,146 +943,152 @@ mod lp_swap_tests {
     fn test_lp_atomic_locktime() {
         let maker_coin = "KMD";
         let taker_coin = "DEX";
-        let conf_settings = SwapConfirmationsSettings {
+        let my_conf_settings = SwapConfirmationsSettings {
             maker_coin_confs: 2,
             maker_coin_nota: true,
             taker_coin_confs: 2,
             taker_coin_nota: true,
         };
+        let other_conf_settings = OrderConfirmationsSettings {
+            base_confs: 1,
+            base_nota: false,
+            rel_confs: 1,
+            rel_nota: false,
+        };
         let expected = PAYMENT_LOCKTIME * 4;
-        let actual = lp_atomic_locktime(maker_coin, taker_coin, &conf_settings, AtomicLocktimeVersion::V2);
+        let version = AtomicLocktimeVersion::V2 { my_conf_settings, other_conf_settings };
+        let actual = lp_atomic_locktime(maker_coin, taker_coin, version);
         assert_eq!(expected, actual);
 
         let maker_coin = "KMD";
         let taker_coin = "DEX";
-        let conf_settings = SwapConfirmationsSettings {
+        let my_conf_settings = SwapConfirmationsSettings {
             maker_coin_confs: 2,
             maker_coin_nota: true,
             taker_coin_confs: 2,
             taker_coin_nota: false,
         };
+        let other_conf_settings = OrderConfirmationsSettings {
+            base_confs: 1,
+            base_nota: false,
+            rel_confs: 1,
+            rel_nota: false,
+        };
         let expected = PAYMENT_LOCKTIME * 4;
-        let actual = lp_atomic_locktime(maker_coin, taker_coin, &conf_settings, AtomicLocktimeVersion::V2);
+        let version = AtomicLocktimeVersion::V2 { my_conf_settings, other_conf_settings };
+        let actual = lp_atomic_locktime(maker_coin, taker_coin, version);
         assert_eq!(expected, actual);
 
         let maker_coin = "KMD";
         let taker_coin = "DEX";
-        let conf_settings = SwapConfirmationsSettings {
+        let my_conf_settings = SwapConfirmationsSettings {
             maker_coin_confs: 2,
             maker_coin_nota: false,
             taker_coin_confs: 2,
             taker_coin_nota: true,
         };
+        let other_conf_settings = OrderConfirmationsSettings {
+            base_confs: 1,
+            base_nota: false,
+            rel_confs: 1,
+            rel_nota: false,
+        };
         let expected = PAYMENT_LOCKTIME * 4;
-        let actual = lp_atomic_locktime(maker_coin, taker_coin, &conf_settings, AtomicLocktimeVersion::V2);
+        let version = AtomicLocktimeVersion::V2 { my_conf_settings, other_conf_settings };
+        let actual = lp_atomic_locktime(maker_coin, taker_coin, version);
         assert_eq!(expected, actual);
 
         let maker_coin = "KMD";
         let taker_coin = "DEX";
-        let conf_settings = SwapConfirmationsSettings {
+        let my_conf_settings = SwapConfirmationsSettings {
             maker_coin_confs: 2,
             maker_coin_nota: false,
             taker_coin_confs: 2,
             taker_coin_nota: false,
+        };
+        let other_conf_settings = OrderConfirmationsSettings {
+            base_confs: 1,
+            base_nota: false,
+            rel_confs: 1,
+            rel_nota: false,
         };
         let expected = PAYMENT_LOCKTIME;
-        let actual = lp_atomic_locktime(maker_coin, taker_coin, &conf_settings, AtomicLocktimeVersion::V2);
+        let version = AtomicLocktimeVersion::V2 { my_conf_settings, other_conf_settings };
+        let actual = lp_atomic_locktime(maker_coin, taker_coin, version);
         assert_eq!(expected, actual);
 
         let maker_coin = "BTC";
         let taker_coin = "DEX";
-        let conf_settings = SwapConfirmationsSettings {
+        let my_conf_settings = SwapConfirmationsSettings {
             maker_coin_confs: 2,
             maker_coin_nota: false,
             taker_coin_confs: 2,
             taker_coin_nota: false,
         };
+        let other_conf_settings = OrderConfirmationsSettings {
+            base_confs: 1,
+            base_nota: false,
+            rel_confs: 1,
+            rel_nota: false,
+        };
         let expected = PAYMENT_LOCKTIME * 4;
-        let actual = lp_atomic_locktime(maker_coin, taker_coin, &conf_settings, AtomicLocktimeVersion::V2);
+        let version = AtomicLocktimeVersion::V2 { my_conf_settings, other_conf_settings };
+        let actual = lp_atomic_locktime(maker_coin, taker_coin, version);
         assert_eq!(expected, actual);
 
         let maker_coin = "KMD";
         let taker_coin = "BTC";
-        let conf_settings = SwapConfirmationsSettings {
+        let my_conf_settings = SwapConfirmationsSettings {
             maker_coin_confs: 2,
             maker_coin_nota: false,
             taker_coin_confs: 2,
             taker_coin_nota: false,
+        };
+        let other_conf_settings = OrderConfirmationsSettings {
+            base_confs: 1,
+            base_nota: false,
+            rel_confs: 1,
+            rel_nota: false,
         };
         let expected = PAYMENT_LOCKTIME * 4;
-        let actual = lp_atomic_locktime(maker_coin, taker_coin, &conf_settings, AtomicLocktimeVersion::V2);
+        let version = AtomicLocktimeVersion::V2 { my_conf_settings, other_conf_settings };
+        let actual = lp_atomic_locktime(maker_coin, taker_coin, version);
         assert_eq!(expected, actual);
 
         let maker_coin = "KMD";
         let taker_coin = "DEX";
-        let conf_settings = SwapConfirmationsSettings {
-            maker_coin_confs: 2,
-            maker_coin_nota: true,
-            taker_coin_confs: 2,
-            taker_coin_nota: true,
-        };
         let expected = PAYMENT_LOCKTIME;
-        let actual = lp_atomic_locktime(maker_coin, taker_coin, &conf_settings, AtomicLocktimeVersion::V1);
+        let actual = lp_atomic_locktime(maker_coin, taker_coin, AtomicLocktimeVersion::V1);
         assert_eq!(expected, actual);
 
         let maker_coin = "KMD";
         let taker_coin = "DEX";
-        let conf_settings = SwapConfirmationsSettings {
-            maker_coin_confs: 2,
-            maker_coin_nota: true,
-            taker_coin_confs: 2,
-            taker_coin_nota: false,
-        };
         let expected = PAYMENT_LOCKTIME;
-        let actual = lp_atomic_locktime(maker_coin, taker_coin, &conf_settings, AtomicLocktimeVersion::V1);
+        let actual = lp_atomic_locktime(maker_coin, taker_coin, AtomicLocktimeVersion::V1);
         assert_eq!(expected, actual);
 
         let maker_coin = "KMD";
         let taker_coin = "DEX";
-        let conf_settings = SwapConfirmationsSettings {
-            maker_coin_confs: 2,
-            maker_coin_nota: false,
-            taker_coin_confs: 2,
-            taker_coin_nota: true,
-        };
         let expected = PAYMENT_LOCKTIME;
-        let actual = lp_atomic_locktime(maker_coin, taker_coin, &conf_settings, AtomicLocktimeVersion::V1);
+        let actual = lp_atomic_locktime(maker_coin, taker_coin, AtomicLocktimeVersion::V1);
         assert_eq!(expected, actual);
 
         let maker_coin = "KMD";
         let taker_coin = "DEX";
-        let conf_settings = SwapConfirmationsSettings {
-            maker_coin_confs: 2,
-            maker_coin_nota: false,
-            taker_coin_confs: 2,
-            taker_coin_nota: false,
-        };
         let expected = PAYMENT_LOCKTIME;
-        let actual = lp_atomic_locktime(maker_coin, taker_coin, &conf_settings, AtomicLocktimeVersion::V1);
+        let actual = lp_atomic_locktime(maker_coin, taker_coin, AtomicLocktimeVersion::V1);
         assert_eq!(expected, actual);
 
         let maker_coin = "BTC";
         let taker_coin = "DEX";
-        let conf_settings = SwapConfirmationsSettings {
-            maker_coin_confs: 2,
-            maker_coin_nota: false,
-            taker_coin_confs: 2,
-            taker_coin_nota: false,
-        };
         let expected = PAYMENT_LOCKTIME * 10;
-        let actual = lp_atomic_locktime(maker_coin, taker_coin, &conf_settings, AtomicLocktimeVersion::V1);
+        let actual = lp_atomic_locktime(maker_coin, taker_coin, AtomicLocktimeVersion::V1);
         assert_eq!(expected, actual);
 
         let maker_coin = "KMD";
         let taker_coin = "BTC";
-        let conf_settings = SwapConfirmationsSettings {
-            maker_coin_confs: 2,
-            maker_coin_nota: false,
-            taker_coin_confs: 2,
-            taker_coin_nota: false,
-        };
         let expected = PAYMENT_LOCKTIME * 10;
-        let actual = lp_atomic_locktime(maker_coin, taker_coin, &conf_settings, AtomicLocktimeVersion::V1);
+        let actual = lp_atomic_locktime(maker_coin, taker_coin, AtomicLocktimeVersion::V1);
         assert_eq!(expected, actual);
     }
 }
