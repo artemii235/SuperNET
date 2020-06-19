@@ -819,9 +819,7 @@ async fn send_outputs_from_my_address_impl<T>(coin: T, outputs: Vec<TransactionO
                                               -> Result<UtxoTx, String>
     where T: AsRef<UtxoArc> + UtxoArcCommonOps {
     let _utxo_lock = UTXO_LOCK.lock().await;
-    // TODO replace list_unspent_ordered with ordered_mature_unspents
-    let unspents = try_s!(coin.as_ref().rpc_client.list_unspent_ordered(&coin.as_ref().my_address).map_err(|e| ERRL!("{}", e)).compat().await);
-    // TODO check for QRC20
+    let unspents = try_s!(coin.ordered_mature_unspents(&coin.as_ref().my_address).map_err(|e| ERRL!("{}", e)).compat().await);
     let (unsigned, _) = try_s!(coin.generate_transaction(unspents, outputs, FeePolicy::SendExact, None, None).await);
     let prev_script = Builder::build_p2pkh(&coin.as_ref().my_address.hash);
     let signed = try_s!(sign_tx(unsigned, &coin.as_ref().key_pair, prev_script, coin.as_ref().signature_version, coin.as_ref().fork_id));

@@ -148,6 +148,7 @@ impl UtxoCoinCommonOps for Qrc20Coin {
 #[async_trait]
 impl UtxoArcCommonOps for Qrc20Coin {
     fn send_outputs_from_my_address(&self, outputs: Vec<TransactionOutput>) -> TransactionFut {
+        // TODO implement qrc20_send_outputs_from_my_address with a non-empty gas_fee
         utxo_common::send_outputs_from_my_address(self.clone(), outputs)
     }
 
