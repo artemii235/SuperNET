@@ -59,11 +59,12 @@
 
 use async_std::{sync as async_std_sync};
 use bigdecimal::BigDecimal;
-use coins::{lp_coinfind, TransactionEnum};
+use coins::{lp_coinfind, TradeFee, TransactionEnum};
 use common::{
-    block_on, HyRes, read_dir, rpc_response, slurp, write,
+    block_on, read_dir, rpc_response, slurp, write, HyRes,
     executor::spawn,
-    mm_ctx::{from_ctx, MmArc}
+    mm_ctx::{from_ctx, MmArc},
+    mm_number::MmNumber,
 };
 use http::Response;
 use primitives::hash::{H160, H256, H264};
@@ -135,8 +136,9 @@ mod taker_swap;
 
 use maker_swap::{MakerSavedSwap, MakerSwapEvent, stats_maker_swap_file_path};
 use taker_swap::{TakerSavedSwap, TakerSwapEvent, stats_taker_swap_file_path};
-pub use maker_swap::{MakerSwap, RunMakerSwapInput, run_maker_swap};
-pub use taker_swap::{RunTakerSwapInput, TakerSwap, run_taker_swap};
+pub use maker_swap::{check_balance_for_maker_swap, run_maker_swap, MakerSwap, RunMakerSwapInput};
+pub use taker_swap::{check_balance_for_taker_swap, max_taker_vol, run_taker_swap, RunTakerSwapInput, TakerSwap};
+use num_rational::BigRational;
 
 /// Includes the grace time we add to the "normal" timeouts
 /// in order to give different and/or heavy communication channels a chance.
@@ -167,11 +169,11 @@ pub struct RecoveredSwap {
 /// Represents the amount of a coin locked by ongoing swap
 pub struct LockedAmount {
     coin: String,
-    amount: BigDecimal,
+    amount: MmNumber,
 }
 
 pub trait AtomicSwap: Send + Sync {
-    fn locked_amount(&self) -> LockedAmount;
+    fn locked_amount(&self, trade_fee: &TradeFee) -> LockedAmount;
 
     fn uuid(&self) -> &str;
 
@@ -257,7 +259,7 @@ pub fn is_pubkey_banned(ctx: &MmArc, pubkey: &H256Json) -> bool {
 }
 
 /// Get total amount of selected coin locked by all currently ongoing swaps
-pub fn get_locked_amount(ctx: &MmArc, coin: &str) -> BigDecimal {
+pub fn get_locked_amount(ctx: &MmArc, coin: &str, trade_fee: &TradeFee) -> MmNumber {
     let swap_ctx = unwrap!(SwapsContext::from_ctx(&ctx));
     let mut swaps = unwrap!(swap_ctx.running_swaps.lock());
     *swaps = swaps.drain_filter(|swap| match swap.upgrade() {
@@ -269,9 +271,9 @@ pub fn get_locked_amount(ctx: &MmArc, coin: &str) -> BigDecimal {
         |total, swap| {
             match swap.upgrade() {
                 Some(swap) => {
-                    let locked = swap.locked_amount();
+                    let locked = swap.locked_amount(trade_fee);
                     if locked.coin == coin {
-                        total + &locked.amount
+                        &total + &locked.amount
                     } else {
                         total
                     }
@@ -298,7 +300,7 @@ pub fn running_swaps_num(ctx: &MmArc) -> u64 {
 }
 
 /// Get total amount of selected coin locked by all currently ongoing swaps except the one with selected uuid
-fn get_locked_amount_by_other_swaps(ctx: &MmArc, except_uuid: &str, coin: &str) -> BigDecimal {
+fn get_locked_amount_by_other_swaps(ctx: &MmArc, except_uuid: &str, coin: &str, trade_fee: &TradeFee) -> MmNumber {
     let swap_ctx = unwrap!(SwapsContext::from_ctx(&ctx));
     let mut swaps = unwrap!(swap_ctx.running_swaps.lock());
     *swaps = swaps.drain_filter(|swap| match swap.upgrade() {
@@ -310,9 +312,9 @@ fn get_locked_amount_by_other_swaps(ctx: &MmArc, except_uuid: &str, coin: &str) 
         |total, swap| {
             match swap.upgrade() {
                 Some(swap) => {
-                    let locked = swap.locked_amount();
+                    let locked = swap.locked_amount(trade_fee);
                     if locked.coin == coin && swap.uuid() != except_uuid {
-                        total + &locked.amount
+                        &total + &locked.amount
                     } else {
                         total
                     }
@@ -353,19 +355,20 @@ fn lp_atomic_locktime(base: &str, rel: &str) -> u64 {
     }
 }
 
-fn dex_fee_rate(base: &str, rel: &str) -> BigDecimal {
+fn dex_fee_rate(base: &str, rel: &str) -> MmNumber {
     if base == "KMD" || rel == "KMD" {
         // 1/777 - 10%
-        BigDecimal::from(9) / BigDecimal::from(7770)
+        BigRational::new(9.into(), 7770.into()).into()
     } else {
-        BigDecimal::from(1) / BigDecimal::from(777)
+        BigRational::new(1.into(), 777.into()).into()
     }
 }
 
-pub fn dex_fee_amount(base: &str, rel: &str, trade_amount: &BigDecimal) -> BigDecimal {
+pub fn dex_fee_amount(base: &str, rel: &str, trade_amount: &MmNumber) -> MmNumber {
     let rate = dex_fee_rate(base, rel);
-    let min_fee = unwrap!("0.0001".parse());
-    let fee_amount = trade_amount * rate;
+    // 0.00001
+    let min_fee = BigRational::new(1.into(), 10000.into()).into();
+    let fee_amount = trade_amount * &rate;
     if fee_amount < min_fee {
         min_fee
     } else {
@@ -846,28 +849,28 @@ mod lp_swap_tests {
         let rel = "ETH";
         let amount = 1.into();
         let actual_fee = dex_fee_amount(base, rel, &amount);
-        let expected_fee = amount / 777;
+        let expected_fee = amount / 777u64.into();
         assert_eq!(expected_fee, actual_fee);
 
         let base = "KMD";
         let rel = "ETH";
         let amount = 1.into();
         let actual_fee = dex_fee_amount(base, rel, &amount);
-        let expected_fee = amount * BigDecimal::from(9) / 7770;
+        let expected_fee = amount * (9, 7770).into();
         assert_eq!(expected_fee, actual_fee);
 
         let base = "BTC";
         let rel = "KMD";
         let amount = 1.into();
         let actual_fee = dex_fee_amount(base, rel, &amount);
-        let expected_fee = amount * BigDecimal::from(9) / 7770;
+        let expected_fee = amount * (9, 7770).into();
         assert_eq!(expected_fee, actual_fee);
 
         let base = "BTC";
         let rel = "KMD";
-        let amount = unwrap!("0.001".parse());
+        let amount: MmNumber = unwrap!("0.001".parse::<BigDecimal>()).into();
         let actual_fee = dex_fee_amount(base, rel, &amount);
-        let expected_fee: BigDecimal = unwrap!("0.0001".parse());
+        let expected_fee: MmNumber = unwrap!("0.0001".parse::<BigDecimal>()).into();
         assert_eq!(expected_fee, actual_fee);
     }
 

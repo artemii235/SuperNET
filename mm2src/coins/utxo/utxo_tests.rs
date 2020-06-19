@@ -710,12 +710,12 @@ fn get_tx_details_doge() {
 #[test]
 // https://github.com/KomodoPlatform/atomicDEX-API/issues/587
 fn get_tx_details_coinbase_transaction() {
-    let client = electrum_client_for_test(&["el0.veruscoin.io:17485", "el1.veruscoin.io:17485"]);
+    let client = electrum_client_for_test(&["electrum1.cipig.net:10018","electrum2.cipig.net:10018","electrum3.cipig.net:10018"]);
     let coin = utxo_coin_for_test(client.into(), Some("spice describe gravity federal blast come thank unfair canal monkey style afraid"));
 
     let fut = async move {
-        // hash of coinbase transaction https://vrsc.explorer.dexstats.info/tx/0d95a7b11802621a65f9e7ca9da0bca6ee4956fd2328e5116a777285179dbd08
-        let hash = hex::decode("0d95a7b11802621a65f9e7ca9da0bca6ee4956fd2328e5116a777285179dbd08").unwrap();
+        // hash of coinbase transaction https://morty.explorer.dexstats.info/tx/b59b093ed97c1798f2a88ee3375a0c11d0822b6e4468478777f899891abd34a5
+        let hash = hex::decode("b59b093ed97c1798f2a88ee3375a0c11d0822b6e4468478777f899891abd34a5").unwrap();
 
         let tx_details = coin.tx_details_by_hash(&hash).compat().await.unwrap();
         assert!(tx_details.from.is_empty());

@@ -1,4 +1,3 @@
-use common::mm_number::MmNumber;
 use crate::SwapOps;
 use futures::{TryFutureExt, FutureExt};
 use super::*;
@@ -269,6 +268,10 @@ impl MarketCoinOps for QtumCoin {
         utxo_common::my_balance(&self.utxo_arc)
     }
 
+    fn base_coin_balance(&self) -> Box<dyn Future<Item=BigDecimal, Error=String> + Send> {
+        utxo_common::base_coin_balance(self)
+    }
+
     fn send_raw_tx(&self, tx: &str) -> Box<dyn Future<Item=String, Error=String> + Send> {
         utxo_common::send_raw_tx(&self.utxo_arc, tx)
     }
@@ -302,11 +305,6 @@ impl MarketCoinOps for QtumCoin {
 impl MmCoin for QtumCoin {
     fn is_asset_chain(&self) -> bool {
         utxo_common::is_asset_chain(&self.utxo_arc)
-    }
-
-    fn check_i_have_enough_to_trade(&self, amount: &MmNumber, balance: &MmNumber, trade_info: TradeInfo)
-                                    -> Box<dyn Future<Item=(), Error=String> + Send> {
-        utxo_common::check_i_have_enough_to_trade(self.clone(), amount, balance, trade_info)
     }
 
     fn can_i_spend_other_payment(&self) -> Box<dyn Future<Item=(), Error=String> + Send> {

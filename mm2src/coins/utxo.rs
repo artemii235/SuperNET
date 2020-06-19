@@ -66,7 +66,7 @@ pub use chain::Transaction as UtxoTx;
 use self::rpc_clients::{ElectrumClient, ElectrumClientImpl,
                         EstimateFeeMethod, EstimateFeeMode, NativeClient, UtxoRpcClientEnum, UnspentInfo};
 use super::{CoinsContext, CoinTransportMetrics, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, RpcClientType, RpcTransportEventHandlerShared,
-            TradeFee, TradeInfo, Transaction, TransactionEnum, TransactionFut, TransactionDetails, WithdrawFee, WithdrawRequest};
+            TradeFee, Transaction, TransactionEnum, TransactionFut, TransactionDetails, WithdrawFee, WithdrawRequest};
 use crate::utxo::rpc_clients::{NativeClientImpl, ElectrumRpcRequest};
 
 #[cfg(test)]
@@ -513,8 +513,7 @@ fn rpc_event_handlers_for_client_transport(
     ctx: &MmArc,
     ticker: String,
     client: RpcClientType,
-)
-    -> Vec<RpcTransportEventHandlerShared> {
+) -> Vec<RpcTransportEventHandlerShared> {
     let metrics = ctx.metrics.weak();
     vec![
         CoinTransportMetrics::new(metrics, ticker, client).into_shared(),

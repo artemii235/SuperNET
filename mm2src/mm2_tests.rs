@@ -385,6 +385,10 @@ fn test_my_balance() {
     assert_eq!(my_unspendable_balance, "0.000");
     let my_address = unwrap!(json["address"].as_str());
     assert_eq!(my_address, "RRnMcSeKiLrNdbp91qNVQwwXx5azD4S4CD");
+
+    // locked by swaps should be displayed as fraction
+    assert_eq!(json["locked_by_swaps"]["numer"], Json::from("0"));
+    assert_eq!(json["locked_by_swaps"]["denom"], Json::from("1"));
 }
 
 fn check_set_price_fails(mm: &MarketMakerIt, base: &str, rel: &str) {
@@ -2601,6 +2605,52 @@ fn test_qrc20_withdraw() {
     }))));
     assert!(send_tx.0.is_success(), "QRC20 send_raw_transaction: {}", send_tx.1);
     log!((send_tx.1));
+}
+
+#[test]
+// https://github.com/KomodoPlatform/atomicDEX-API/issues/683
+// trade fee should return numbers in all 3 available formats and
+// "amount" must be always in decimal representation for backwards compatibility
+fn test_trade_fee_returns_numbers_in_various_formats() {
+    let coins = json!([
+        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"protocol":"UTXO"},
+        {"coin":"MORTY","asset":"MORTY","rpcport":11608,"txversion":4,"overwintered":1,"protocol":"UTXO"},
+        {"coin":"ETH","name":"ethereum","protocol":"ETH","rpcport":80},
+        {"coin":"JST","name":"jst","protocol":{"ERC20":{"platform":"ETH","contract_address":"0xc0eb7AeD740E1796992A08962c15661bDEB58003"}}}
+    ]);
+
+    // start bob and immediately place the order
+    let mut mm_bob = unwrap! (MarketMakerIt::start (
+        json! ({
+            "gui": "nogui",
+            "netid": 9998,
+            "dht": "on",  // Enable DHT without delay.
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| unwrap! (s.parse::<i64>())),
+            "passphrase": "bob passphrase",
+            "coins": coins,
+            "i_am_seed": true,
+            "rpc_password": "pass",
+        }),
+        "pass".into(),
+        match var ("LOCAL_THREAD_MM") {Ok (ref e) if e == "bob" => Some (local_start()), _ => None}
+    ));
+    let (_bob_dump_log, _bob_dump_dashboard) = mm_dump (&mm_bob.log_path);
+    log!({"Bob log path: {}", mm_bob.log_path.display()});
+    unwrap! (block_on (mm_bob.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
+    block_on(enable_coins_eth_electrum (&mm_bob, vec!["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b"]));
+
+    let rc = unwrap! (block_on (mm_bob.rpc (json! ({
+        "userpass": mm_bob.userpass,
+        "method": "get_trade_fee",
+        "coin": "RICK",
+    }))));
+    assert!(rc.0.is_success(), "!get_trade_fee: {}", rc.1);
+    let trade_fee_json: Json = json::from_str(&rc.1).unwrap();
+    let _amount_dec: BigDecimal = json::from_value(trade_fee_json["result"]["amount"].clone()).unwrap();
+    let _amount_rat: BigRational = json::from_value(trade_fee_json["result"]["amount_rat"].clone()).unwrap();
+    let _amount_fraction: Fraction = json::from_value(trade_fee_json["result"]["amount_fraction"].clone()).unwrap();
 }
 
 // HOWTO

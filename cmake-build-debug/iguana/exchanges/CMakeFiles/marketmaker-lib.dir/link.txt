@@ -1,0 +1,2 @@
+/usr/bin/ar qc libmarketmaker-lib.a  CMakeFiles/marketmaker-lib.dir/mm.c.o
+/usr/bin/ranlib libmarketmaker-lib.a

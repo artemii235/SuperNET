@@ -5,7 +5,6 @@ use chain::constants::{SEQUENCE_FINAL};
 use common::executor::Timer;
 use common::jsonrpc_client::{JsonRpcError, JsonRpcErrorType};
 use common::mm_ctx::MmArc;
-use common::mm_number::MmNumber;
 #[cfg(feature = "native")]
 use futures01::{Future};
 use futures01::future::Either;
@@ -30,7 +29,7 @@ use super::*;
 pub use chain::Transaction as UtxoTx;
 
 use self::rpc_clients::{electrum_script_hash, UtxoRpcClientEnum, UnspentInfo};
-use super::{CoinsContext, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, TradeFee, TradeInfo,
+use super::{CoinsContext, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, TradeFee,
             Transaction, TransactionEnum, TransactionFut, TransactionDetails, WithdrawFee, WithdrawRequest};
 use crate::utxo::rpc_clients::UtxoRpcClientOps;
 
@@ -93,6 +92,11 @@ pub fn addresses_from_script(coin: &UtxoCoinFields, script: &Script) -> Result<V
 
 pub fn denominate_satoshis(coin: &UtxoCoinFields, satoshi: i64) -> f64 {
     satoshi as f64 / 10f64.powf(coin.decimals as f64)
+}
+
+pub fn base_coin_balance<T>(coin: &T) -> Box<dyn Future<Item=BigDecimal, Error=String> + Send>
+    where T: MarketCoinOps {
+    coin.my_balance()
 }
 
 pub fn search_for_swap_tx_spend(
@@ -984,32 +988,6 @@ pub fn display_priv_key(coin: &UtxoCoinFields) -> String {
 
 pub fn is_asset_chain(coin: &UtxoCoinFields) -> bool { coin.asset_chain }
 
-pub fn check_i_have_enough_to_trade<T>(coin: T, amount: &MmNumber, balance: &MmNumber, trade_info: TradeInfo) -> Box<dyn Future<Item=(), Error=String> + Send>
-    where T: AsRef<UtxoArc> + UtxoCoinCommonOps + Send + Sync + 'static {
-    let amount = amount.clone();
-    let balance = balance.clone();
-    let fee_fut = async move {
-        let coin_fee = try_s!(coin.get_tx_fee().await);
-        let fee = match coin_fee {
-            ActualTxFee::Fixed(f) => f,
-            ActualTxFee::Dynamic(f) => f,
-        };
-        let fee_decimal = MmNumber::from(fee) / MmNumber::from(10u64.pow(coin.as_ref().decimals as u32));
-        if &amount < &fee_decimal {
-            return ERR!("Amount {} is too low, it'll result to dust error, at least {} is required", amount, fee_decimal);
-        }
-        let required = match trade_info {
-            TradeInfo::Maker => amount + fee_decimal,
-            TradeInfo::Taker(dex_fee) => &amount + &MmNumber::from(dex_fee.clone()) + MmNumber::from(2) * fee_decimal,
-        };
-        if balance < required {
-            return ERR!("{} balance {} is too low, required {}", coin.as_ref().ticker, balance, required);
-        }
-        Ok(())
-    };
-    Box::new(fee_fut.boxed().compat())
-}
-
 pub fn can_i_spend_other_payment() -> Box<dyn Future<Item=(), Error=String> + Send> {
     Box::new(futures01::future::ok(()))
 }
@@ -1410,7 +1388,7 @@ pub fn get_trade_fee<T>(coin: T) -> Box<dyn Future<Item=TradeFee, Error=String> 
         };
         Ok(TradeFee {
             coin: ticker,
-            amount: big_decimal_from_sat(amount as i64, decimals),
+            amount: big_decimal_from_sat(amount as i64, decimals).into(),
         })
     };
     Box::new(fut.boxed().compat())

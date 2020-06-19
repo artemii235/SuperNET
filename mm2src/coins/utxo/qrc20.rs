@@ -1,5 +1,4 @@
 use common::jsonrpc_client::{JsonRpcClient, JsonRpcRequest, RpcRes};
-use common::mm_number::MmNumber;
 use crate::eth::{ERC20_CONTRACT, u256_to_big_decimal, wei_from_big_decimal};
 use crate::SwapOps;
 use ethabi::Token;
@@ -339,6 +338,11 @@ impl MarketCoinOps for Qrc20Coin {
         }
     }
 
+    fn base_coin_balance(&self) -> Box<dyn Future<Item=BigDecimal, Error=String> + Send> {
+        // use standard UTXO my_balance implementation that returns Qtum balance instead of QRC20
+        utxo_common::my_balance(&self.utxo_arc)
+    }
+
     fn send_raw_tx(&self, tx: &str) -> Box<dyn Future<Item=String, Error=String> + Send> {
         utxo_common::send_raw_tx(&self.utxo_arc, tx)
     }
@@ -372,11 +376,6 @@ impl MarketCoinOps for Qrc20Coin {
 impl MmCoin for Qrc20Coin {
     fn is_asset_chain(&self) -> bool {
         utxo_common::is_asset_chain(&self.utxo_arc)
-    }
-
-    fn check_i_have_enough_to_trade(&self, amount: &MmNumber, balance: &MmNumber, trade_info: TradeInfo)
-                                    -> Box<dyn Future<Item=(), Error=String> + Send> {
-        utxo_common::check_i_have_enough_to_trade(self.clone(), amount, balance, trade_info)
     }
 
     fn can_i_spend_other_payment(&self) -> Box<dyn Future<Item=(), Error=String> + Send> {
