@@ -851,7 +851,8 @@ pub fn spawn_electrum(req: &ElectrumRpcRequest, _event_handlers: Vec<RpcTranspor
         tx,
         shutdown_tx: None,
         responses,
-        ri
+        ri,
+        protocol_version: AsyncMutex::new(None),
     })
 }
 
@@ -869,7 +870,9 @@ pub struct ElectrumConnection {
     /// Responses are stored here
     responses: Arc<AsyncMutex<HashMap<String, async_oneshot::Sender<JsonRpcResponse>>>>,
     /// [Random] connection ID assigned by the WASM host
-    ri: i32
+    ri: i32,
+    /// Selected protocol version. The value is initialized after the server.version RPC call.
+    protocol_version: AsyncMutex<Option<f32>>,
 }
 
 impl ElectrumConnection {
@@ -885,6 +888,10 @@ impl ElectrumConnection {
         //log! ("is_connected] host_electrum_is_connected (" [=self.ri] ") " [=rc]);
         if rc == 1 {true} else {false}
     }
+
+    async fn set_protocol_version(&self, version: f32) {
+        self.protocol_version.lock().await.replace(version);
+    }
 }
 
 impl Drop for ElectrumConnection {
@@ -896,11 +903,11 @@ impl Drop for ElectrumConnection {
 
 #[derive(Debug)]
 pub struct ElectrumClientImpl {
-    pub coin_ticker: String,
-    pub connections: AsyncMutex<Vec<ElectrumConnection>>,
-    pub next_id: AtomicU64,
-    pub event_handlers: Vec<RpcTransportEventHandlerShared>,
-    pub protocol_version: OrdRange<f32>,
+    coin_ticker: String,
+    connections: AsyncMutex<Vec<ElectrumConnection>>,
+    next_id: AtomicU64,
+    event_handlers: Vec<RpcTransportEventHandlerShared>,
+    protocol_version: OrdRange<f32>,
 }
 
 #[cfg(feature = "native")]
@@ -1033,6 +1040,7 @@ impl ElectrumClientImpl {
         Ok(())
     }
 
+    /// Check if one of the spawned connections is connected.
     pub async fn is_connected(&self) -> bool {
         for connection in self.connections.lock().await.iter() {
             if connection.is_connected().await {
@@ -1040,6 +1048,34 @@ impl ElectrumClientImpl {
             }
         }
         false
+    }
+
+    pub async fn count_connections(&self) -> usize {
+        self.connections.lock().await.len()
+    }
+
+    /// Check if the protocol version was checked for one of the spawned connections.
+    pub async fn is_protocol_version_checked(&self) -> bool {
+        for connection in self.connections.lock().await.iter() {
+            if connection.protocol_version.lock().await.is_some() {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Set the protocol version for the specified server.
+    pub async fn set_protocol_version(&self, server_addr: &str, version: f32) -> Result<(), String> {
+        let connections = self.connections.lock().await;
+        let con = connections.iter().find(|con| &con.addr == server_addr)
+            .ok_or(ERRL!("Unknown electrum address {}", server_addr))?;
+        con.set_protocol_version(version).await;
+        Ok(())
+    }
+
+    /// Get available protocol versions.
+    pub fn protocol_version(&self) -> &OrdRange<f32> {
+        &self.protocol_version
     }
 }
 
@@ -1076,11 +1112,6 @@ impl JsonRpcMultiClient for ElectrumClient {
 }
 
 impl ElectrumClient {
-    /// Get available protocol versions.
-    pub fn protocol_version(&self) -> &OrdRange<f32> {
-        &self.protocol_version
-    }
-
     /// https://electrumx.readthedocs.io/en/latest/protocol-methods.html#server-ping
     pub fn server_ping(&self) -> RpcRes<()> {
         rpc_func!(self, "server.ping")
@@ -1142,9 +1173,9 @@ impl ElectrumClient {
     }
 
     /// https://electrumx.readthedocs.io/en/latest/protocol-methods.html#blockchain-block-headers
-    pub fn blockchain_block_headers(&self, start_height: u64, count: NonZeroU64, cp_height: u64)
+    pub fn blockchain_block_headers(&self, start_height: u64, count: NonZeroU64)
         -> RpcRes<ElectrumBlockHeadersRes> {
-        rpc_func!(self, "blockchain.block.headers", start_height, count, cp_height)
+        rpc_func!(self, "blockchain.block.headers", start_height, count)
     }
 }
 
@@ -1288,7 +1319,7 @@ impl UtxoRpcClientOps for ElectrumClient {
         } else {
             starting_block - count.get() + 1
         };
-        Box::new(self.blockchain_block_headers(from, count, 0)
+        Box::new(self.blockchain_block_headers(from, count)
             .map_err(|e| ERRL!("{}", e))
             .and_then(|res| {
                 if res.count == 0 {
@@ -1310,16 +1341,21 @@ impl UtxoRpcClientOps for ElectrumClient {
 #[cfg_attr(test, mockable)]
 impl ElectrumClientImpl {
     pub fn new(coin_ticker: String, event_handlers: Vec<RpcTransportEventHandlerShared>) -> ElectrumClientImpl {
-        // MM2 uses cp_height within the blockchain.block.headers call.
-        // The param was added in 1.4 protocol version.
-        // https://electrumx.readthedocs.io/en/latest/protocol-methods.html#blockchain-block-headers
-        let protocol_version = OrdRange::new(1.4, 1.4).unwrap();
+        let protocol_version = OrdRange::new(1.2, 1.4).unwrap();
         ElectrumClientImpl {
             coin_ticker,
             connections: AsyncMutex::new(vec![]),
             next_id: 0.into(),
             event_handlers,
             protocol_version,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn with_protocol_version(coin_ticker: String, event_handlers: Vec<RpcTransportEventHandlerShared>, protocol_version: OrdRange<f32>) -> ElectrumClientImpl {
+        ElectrumClientImpl {
+            protocol_version,
+            ..ElectrumClientImpl::new(coin_ticker, event_handlers)
         }
     }
 }
@@ -1598,7 +1634,8 @@ fn electrum_connect(
         tx,
         shutdown_tx: Some(shutdown_tx),
         responses,
-        ri: -1
+        ri: -1,
+        protocol_version: AsyncMutex::new(None),
     }
 }
 

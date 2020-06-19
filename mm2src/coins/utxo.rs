@@ -2056,7 +2056,7 @@ pub async fn utxo_coin_from_conf_and_request(
                 };
             }
 
-            let mut attempts = 0;
+            let mut attempts = 0i32;
             while !client.is_connected().await {
                 if attempts >= 10 {
                     return ERR!("Failed to connect to at least 1 of {:?} in 5 seconds.", servers);
@@ -2075,6 +2075,7 @@ pub async fn utxo_coin_from_conf_and_request(
             let client_name = format!("{} GUI/MM2 {}", ctx.gui().unwrap_or("UNKNOWN"), MM_VERSION);
             spawn_electrum_version_loop(weak_client, on_connect_rx, client_name);
 
+            try_s!(wait_for_protocol_version_checked(&client).await);
             UtxoRpcClientEnum::Electrum(ElectrumClient(client))
         },
         _ => return ERR!("utxo_coin_from_conf_and_request should be called only by enable or electrum requests"),
@@ -2214,6 +2215,7 @@ fn spawn_electrum_version_loop(
     mut on_connect_rx: mpsc::UnboundedReceiver<String>,
     client_name: String,
 ) {
+    // client.remove_server() is called too often
     async fn remove_server(client: ElectrumClient, electrum_addr: &str) {
         if let Err(e) = client.remove_server(electrum_addr).await {
             log!("Error on remove server "[e]);
@@ -2253,11 +2255,39 @@ fn spawn_electrum_version_loop(
                 continue
             }
 
+            if let Err(e) = client.set_protocol_version(&electrum_addr, actual_version).await {
+                log!("Error on set protocol_version "[e]);
+            };
+
             log!("Use protocol version " [actual_version] " for Electrum " [electrum_addr]);
         }
 
         log!("Electrum server.version loop stopped");
     });
+}
+
+/// Wait until the protocol version of at least one client's Electrum is checked.
+async fn wait_for_protocol_version_checked(client: &ElectrumClientImpl) -> Result<(), String> {
+    let mut attempts = 0;
+    loop {
+        if attempts >= 10 {
+            return ERR!("Failed protocol version verifying of at least 1 of Electrums in 5 seconds.");
+        }
+
+        if client.count_connections().await == 0 {
+            // All of the connections were removed because of server.version checking
+            return ERR!("There are no Electrums with the required protocol version {:?}", client.protocol_version());
+        }
+
+        if client.is_protocol_version_checked().await {
+            break;
+        }
+
+        Timer::sleep(0.5).await;
+        attempts += 1;
+    }
+
+    Ok(())
 }
 
 /// Function calculating KMD interest

@@ -893,10 +893,9 @@ fn test_network_info_negative_time_offset() {
 #[test]
 fn test_unavailable_electrum_proto_version() {
     ElectrumClientImpl::new.mock_safe(|coin_ticker, event_handlers| {
-        MockResult::Return(ElectrumClientImpl {
-            protocol_version: OrdRange::new(1.8, 1.9).unwrap(),
-            ..ElectrumClientImpl::new(coin_ticker, event_handlers)
-        })
+        MockResult::Return(
+            ElectrumClientImpl::with_protocol_version(coin_ticker, event_handlers, OrdRange::new(1.8, 1.9).unwrap())
+        )
     });
 
     let conf = json!({"coin":"RICK","asset":"RICK","rpcport":8923});
@@ -906,23 +905,18 @@ fn test_unavailable_electrum_proto_version() {
     });
 
     let ctx = MmCtxBuilder::new().into_mm_arc();
-    let coin = unwrap!(block_on(utxo_coin_from_conf_and_request(
-        &ctx, "RICK", &conf, &req, &[1u8; 32])));
-
-    block_on(async { Timer::sleep(0.5).await });
-
-    let error = format!("{}", coin.rpc_client.get_block_count().wait().err().unwrap());
+    let error = unwrap!(block_on(utxo_coin_from_conf_and_request(
+        &ctx, "RICK", &conf, &req, &[1u8; 32])).err());
     log!("Error: "(error));
-    assert!(error.contains("All electrums are currently disconnected"));
+    assert!(error.contains("There are no Electrums with the required protocol version"));
 }
 
 #[test]
 fn test_one_unavailable_electrum_proto_version() {
     ElectrumClientImpl::new.mock_safe(|coin_ticker, event_handlers| {
-        MockResult::Return(ElectrumClientImpl {
-            protocol_version: OrdRange::new(1.4, 1.4).unwrap(),
-            ..ElectrumClientImpl::new(coin_ticker, event_handlers)
-        })
+        MockResult::Return(
+            ElectrumClientImpl::with_protocol_version(coin_ticker, event_handlers, OrdRange::new(1.4, 1.4).unwrap())
+        )
     });
 
     // check if the electrum-mona.bitbank.cc:50001 doesn't support the protocol version 1.4
