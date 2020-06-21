@@ -1,0 +1,59 @@
+name: atomicDex-API poist-release tests
+
+on:
+  release:
+    types: [published]
+
+jobs:
+
+  test_saturation_s1:
+    name: Run Scenario
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        tests: [saturation-s1, saturation-s2, saturation-s3, saturation-s4, swaps-s1, swaps-s2, swaps-s3]
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Extract tag name
+        shell: bash
+        run: echo "##[set-output name=tag;]$(echo ${GITHUB_REF/refs\/tags\//})"
+        id: extract_tag
+
+      - name: Extract Repo
+        shell: bash
+        run: echo "##[set-output name=repo;]$(echo ${GITHUB_REPOSITORY})"
+        id: extract_repo
+
+      - name: Shortify commit sha
+        shell: bash
+        run: echo "##[set-output name=sha_short;]$(echo ${GITHUB_SHA::9})"
+        id: shortify_commit
+
+      - name: Prepare ${{ matrix.tests }}
+        shell: bash
+        run: |
+          echo "Repository: ${{ steps.extract_repo.outputs.repo }}" > qa/logs/release_note.txt
+          echo "Release: ${{ steps.extract_tag.outputs.tag }}" >> qa/logs/release_note.txt
+          echo "latest_commit: ${{ steps.shortify_commit.outputs.sha_short }}" >> qa/logs/release_note.txt
+          cd qa
+          echo "REPO=${{ steps.extract_repo.outputs.repo }}" > .env
+          echo "TAG=${{ steps.extract_tag.outputs.tag }}" >> .env
+          echo "SHA=${{ steps.shortify_commit.outputs.sha_short }}" >> .env
+          cp ${{ matrix.tests }}-compose.yml docker-compose.yml
+          docker-compose build
+
+      - name: Run ${{ matrix.tests }}
+        shell: bash
+        run: |
+          cd qa
+          docker-compose run workspace
+          docker-compose down
+          tar -cvzf ${{ matrix.tests }}-logs.tar.gz logs
+
+      - name: Upload test log as artifact
+        uses: actions/upload-artifact@v1
+        with:
+          name: ${{ matrix.tests }}
+          path: ./qa/${{ matrix.tests }}-logs.tar.gz

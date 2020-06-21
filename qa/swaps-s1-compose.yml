@@ -1,0 +1,99 @@
+version: '3'
+
+networks:
+
+  mm:
+    ipam:
+      driver: default
+      config:
+        - subnet: "172.23.0.0/24"
+
+services:
+
+  workspace:
+    build: ./workspace
+    networks:
+      mm:
+        ipv4_address: 172.23.0.10
+    volumes:
+      - ./logs:/workdir/log
+    depends_on:
+      - mm_a
+      - mm_b
+    command: ["python3.8", "-m", "pytest", "swaps_s1.py", "-s", "-vv"]
+
+  mm_a:
+    build:
+      context: .
+      args:
+        REPO: "${REPO}"
+        TAG: "${TAG}"
+        CHASH: "${SHA}"
+    environment:
+      MM_LOG: /atomicDEX/log/MM2_taker.log
+      PASSPHRASE: "Uuw5XXdTCjice4S6buknpcjJ6KQJQTw4ZHCrbeUkJXx8ESSGhfBa"
+    expose:
+      - "43803"
+      - "41613"
+      - "7783"
+      - "7793"
+      - "7803"
+      - "80"
+    networks:
+      mm:
+        ipv4_address: 172.23.0.20
+    volumes:
+      - ./logs:/atomicDEX/log
+    depends_on:
+      - mm_seed
+    command: ["/bin/bash", "./start_maker.sh"]
+
+  mm_b:
+    build:
+      context: .
+      args:
+        REPO: "${REPO}"
+        TAG: "${TAG}"
+        CHASH: "${SHA}"
+    environment:
+      MM_LOG: /atomicDEX/log/MM2_maker.log
+      PASSPHRASE: "Utayuxd6qydZpD3zhFD6oWaV5y6mVjAXeEiF49qSG5JQmoEYFxcH"
+    expose:
+      - "43803"
+      - "41613"
+      - "7783"
+      - "7793"
+      - "7803"
+      - "80"
+    networks:
+      mm:
+        ipv4_address: 172.23.0.22
+    volumes:
+      - ./logs:/atomicDEX/log
+    depends_on:
+      - mm_seed
+    command: ["/bin/bash", "./start_maker.sh"]
+
+  mm_seed:
+    build:
+      context: .
+      args:
+        REPO: "${REPO}"
+        TAG: "${TAG}"
+        CHASH: "${SHA}"
+    environment:
+      MM_LOG: /atomicDEX/log/MM2_seed.log
+      PASSPHRASE: "UttKRkG5i3uZRh62Ha2rVKeYkAxLf4QAgE3CmruhPiXA68bvpPVy"
+    expose:
+      - "43803"
+      - "41613"
+      - "7783"
+      - "7793"
+      - "7803"
+      - "80"
+    networks:
+      mm:
+        ipv4_address: 172.23.0.18
+    volumes:
+      - ./logs:/atomicDEX/log
+    command: ["/bin/bash", "./start_seed.sh"]

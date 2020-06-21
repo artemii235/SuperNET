@@ -1,0 +1,177 @@
+version: '3'
+
+networks:
+
+  mm:
+    ipam:
+      driver: default
+      config:
+        - subnet: "172.23.0.0/24"
+
+services:
+
+  workspace:
+    build: ./workspace
+    networks:
+      mm:
+        ipv4_address: 172.23.0.10
+    volumes:
+      - ./logs:/workdir/log
+    depends_on:
+      - mm_a
+      - mm_b
+    command: ["python3.8", "-m", "pytest", "saturation_s4.py", "-s", "-vv"]
+
+  mm_a:
+    build:
+      context: .
+      args:
+        REPO: "${REPO}"
+        TAG: "${TAG}"
+        CHASH: "${SHA}"
+    environment:
+      MM_LOG: /atomicDEX/log/MM2_maker.log
+      PASSPHRASE: "UvweTu63i8AvShpCBSjJNdVuKHqXLyBuEz3kfb6TDqouXP4AADhK"
+    expose:
+      - "43803"
+      - "41613"
+      - "7783"
+      - "7793"
+      - "7803"
+      - "80"
+    volumes:
+      - ./logs:/atomicDEX/log
+    networks:
+      mm:
+        ipv4_address: 172.23.0.20
+    depends_on:
+      - mm_seed_a
+      - mm_seed_b
+      - mm_seed_c
+      - mm_seed_d
+    command: ["/bin/bash", "./start_maker_s4.sh"]
+
+  mm_b:
+    build:
+      context: .
+      args:
+        REPO: "${REPO}"
+        TAG: "${TAG}"
+        CHASH: "${SHA}"
+    environment:
+      MM_LOG: /atomicDEX/log/MM2_taker.log
+      PASSPHRASE: "Uuw5XXdTCjice4S6buknpcjJ6KQJQTw4ZHCrbeUkJXx8ESSGhfBa"
+    expose:
+      - "43803"
+      - "41613"
+      - "7783"
+      - "7793"
+      - "7803"
+      - "80"
+    volumes:
+      - ./logs:/atomicDEX/log
+    networks:
+      mm:
+        ipv4_address: 172.23.0.22
+    depends_on:
+      - mm_seed_a
+      - mm_seed_b
+      - mm_seed_c
+      - mm_seed_d
+    command: ["/bin/bash", "./start_maker_s4.sh"]
+
+  mm_seed_a:
+    build:
+      context: .
+      args:
+        REPO: "${REPO}"
+        TAG: "${TAG}"
+        CHASH: "${SHA}"
+    environment:
+      MM_LOG: /atomicDEX/log/MM2_seed1.log
+      PASSPHRASE: "UvQP3mudmYWjprww1YZn7SgVovvx3kPkKnXnHmPaE4uwYASzGnDF"
+    expose:
+      - "43803"
+      - "41613"
+      - "7783"
+      - "7793"
+      - "7803"
+      - "80"
+    volumes:
+      - ./logs:/atomicDEX/log
+    networks:
+      mm:
+        ipv4_address: 172.23.0.18
+    command: ["/bin/bash", "./start_seed.sh"]
+
+  mm_seed_b:
+    build:
+      context: .
+      args:
+        REPO: "${REPO}"
+        TAG: "${TAG}"
+        CHASH: "${SHA}"
+    environment:
+      MM_LOG: /atomicDEX/log/MM2_seed2.log
+      PASSPHRASE: "UtMUKMU8A1Nikc86fB5X9WEfwarSfP9vBpoSRpn1tVgdtKLqMWTr"
+    expose:
+      - "43803"
+      - "41613"
+      - "7783"
+      - "7793"
+      - "7803"
+      - "80"
+    volumes:
+      - ./logs:/atomicDEX/log
+    networks:
+      mm:
+        ipv4_address: 172.23.0.16
+    command: ["/bin/bash", "./start_seed.sh"]
+
+  mm_seed_c:
+    build:
+      context: .
+      args:
+        REPO: "${REPO}"
+        TAG: "${TAG}"
+        CHASH: "${SHA}"
+    environment:
+      MM_LOG: /atomicDEX/log/MM2_seed3.log
+      PASSPHRASE: "Utovd1JeRZ8jKGRQgUyxrFvGKEck9danoTqZRHfB7MBXpTUqB6vr"
+    expose:
+      - "43803"
+      - "41613"
+      - "7783"
+      - "7793"
+      - "7803"
+      - "80"
+    volumes:
+      - ./logs:/atomicDEX/log
+    networks:
+      mm:
+        ipv4_address: 172.23.0.14
+    command: ["/bin/bash", "./start_seed.sh"]
+
+  mm_seed_d:
+    build:
+      context: .
+      args:
+        REPO: "${REPO}"
+        TAG: "${TAG}"
+        CHASH: "${SHA}"
+    environment:
+      MM_LOG: /atomicDEX/log/MM2_seed4.log
+      PASSPHRASE: "Ux1uBwyR3Xs5PPJJ2Hb3aVKXdPb2oPXU4R3rky6RM6HoRKZY8SkU"
+    expose:
+      - "43803"
+      - "41613"
+      - "7783"
+      - "7793"
+      - "7803"
+      - "80"
+    volumes:
+      - ./logs:/atomicDEX/log
+    networks:
+      mm:
+        ipv4_address: 172.23.0.12
+    command: ["/bin/bash", "./start_seed.sh"]

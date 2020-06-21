@@ -1,0 +1,126 @@
+version: '3'
+
+networks:
+
+  mm:
+    ipam:
+      driver: default
+      config:
+        - subnet: "172.23.0.0/24"
+
+services:
+
+  workspace:
+    build: ./workspace
+    networks:
+      mm:
+        ipv4_address: 172.23.0.10
+    volumes:
+      - ./logs:/workdir/log
+    depends_on:
+      - mm_a
+      - mm_b
+      - mm_c
+    command: ["python3.8", "-m", "pytest", "swaps_s2.py", "-s", "-vv"]
+
+  mm_a:
+    build:
+      context: .
+      args:
+        REPO: "${REPO}"
+        TAG: "${TAG}"
+        CHASH: "${SHA}"
+    environment:
+      MM_LOG: /atomicDEX/log/MM2_taker1.log
+      PASSPHRASE: "UvNGesEzypb9b7knjWjTT7AUxBdZk4Ti56qFp6LtwT1LimhJuqX4"
+    expose:
+      - "43803"
+      - "41613"
+      - "7783"
+      - "7793"
+      - "7803"
+      - "80"
+    networks:
+      mm:
+        ipv4_address: 172.23.0.20
+    volumes:
+      - ./logs:/atomicDEX/log
+    depends_on:
+      - mm_seed
+    command: ["/bin/bash", "./start_maker.sh"]
+
+  mm_b:
+    build:
+      context: .
+      args:
+        REPO: "${REPO}"
+        TAG: "${TAG}"
+        CHASH: "${SHA}"
+    environment:
+      MM_LOG: /atomicDEX/log/MM2_maker.log
+      PASSPHRASE: "UqwaH5ULaMSLpKNKGW1TfZZPu86eLAtZoiF3an3my9MBkqrUQgpC"
+    expose:
+      - "43803"
+      - "41613"
+      - "7783"
+      - "7793"
+      - "7803"
+      - "80"
+    networks:
+      mm:
+        ipv4_address: 172.23.0.22
+    volumes:
+      - ./logs:/atomicDEX/log
+    depends_on:
+      - mm_seed
+    command: ["/bin/bash", "./start_maker.sh"]
+
+  mm_c:
+    build:
+      context: .
+      args:
+        REPO: "${REPO}"
+        TAG: "${TAG}"
+        CHASH: "${SHA}"
+    environment:
+      MM_LOG: /atomicDEX/log/MM2_taker2.log
+      PASSPHRASE: "UvRd4RVBbMX2fjUVSswFDfWLZ34RwscSZ85dL9RdDgtK6JqNs3qT"
+    expose:
+      - "43803"
+      - "41613"
+      - "7783"
+      - "7793"
+      - "7803"
+      - "80"
+    networks:
+      mm:
+        ipv4_address: 172.23.0.24
+    volumes:
+      - ./logs:/atomicDEX/log
+    depends_on:
+      - mm_seed
+    command: ["/bin/bash", "./start_maker.sh"]
+
+  mm_seed:
+    build:
+      context: .
+      args:
+        REPO: "${REPO}"
+        TAG: "${TAG}"
+        CHASH: "${SHA}"
+    environment:
+      MM_LOG: /atomicDEX/log/MM2_seed.log
+      PASSPHRASE: "UqFcYkQ8Kew2ABcQBdn4J4CHkFsP8mhuexfAtkB1Kvb8xq2bbuNS"
+    expose:
+      - "43803"
+      - "41613"
+      - "7783"
+      - "7793"
+      - "7803"
+      - "80"
+    networks:
+      mm:
+        ipv4_address: 172.23.0.18
+    volumes:
+      - ./logs:/atomicDEX/log
+    command: ["/bin/bash", "./start_seed.sh"]
