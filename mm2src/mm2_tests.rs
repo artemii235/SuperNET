@@ -2532,6 +2532,164 @@ fn test_trade_fee_returns_numbers_in_various_formats() {
     let _amount_fraction: Fraction = json::from_value(trade_fee_json["result"]["amount_fraction"].clone()).unwrap();
 }
 
+#[test]
+fn test_orderbook_is_mine_orders() {
+    let coins = json!([
+        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1},
+        {"coin":"MORTY","asset":"MORTY","rpcport":11608,"txversion":4,"overwintered":1},
+        {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000","rpcport":80},
+        {"coin":"JST","name":"jst","etomic":"0xc0eb7AeD740E1796992A08962c15661bDEB58003"}
+    ]);
+
+    // start bob and immediately place the order
+    let mut mm_bob = unwrap! (MarketMakerIt::start (
+        json! ({
+            "gui": "nogui",
+            "netid": 9998,
+            "dht": "on",  // Enable DHT without delay.
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| unwrap! (s.parse::<i64>())),
+            "passphrase": "bob passphrase",
+            "coins": coins,
+            "i_am_seed": true,
+            "rpc_password": "pass",
+        }),
+        "pass".into(),
+        match var ("LOCAL_THREAD_MM") {Ok (ref e) if e == "bob" => Some (local_start()), _ => None}
+    ));
+    let (_bob_dump_log, _bob_dump_dashboard) = mm_dump (&mm_bob.log_path);
+    log!({"Bob log path: {}", mm_bob.log_path.display()});
+    unwrap! (block_on (mm_bob.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
+    // Enable coins on Bob side. Print the replies in case we need the "address".
+    log! ({"enable_coins (bob): {:?}", block_on (enable_coins_eth_electrum (&mm_bob, vec!["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b"]))});
+
+    let rc = unwrap! (block_on (mm_bob.rpc (json! ({
+        "userpass": mm_bob.userpass,
+        "method": "setprice",
+        "base": "RICK",
+        "rel": "MORTY",
+        "price": 0.9,
+        "volume": "0.9",
+    }))));
+    assert! (rc.0.is_success(), "!setprice: {}", rc.1);
+    let _bob_setprice: Json = unwrap!(json::from_str(&rc.1));
+
+    let mut mm_alice = unwrap! (MarketMakerIt::start (
+        json! ({
+            "gui": "nogui",
+            "netid": 9998,
+            "dht": "on",  // Enable DHT without delay.
+            "myipaddr": env::var ("ALICE_TRADE_IP") .ok(),
+            "rpcip": env::var ("ALICE_TRADE_IP") .ok(),
+            "passphrase": "alice passphrase",
+            "coins": coins,
+            "seednodes": [fomat!((mm_bob.ip))],
+            "rpc_password": "pass",
+        }),
+        "pass".into(),
+        match var ("LOCAL_THREAD_MM") {Ok (ref e) if e == "alice" => Some (local_start()), _ => None}
+    ));
+
+    let (_alice_dump_log, _alice_dump_dashboard) = mm_dump (&mm_alice.log_path);
+    log!({"Alice log path: {}", mm_alice.log_path.display()});
+
+    unwrap! (block_on (mm_alice.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
+
+    // Enable coins on Alice side. Print the replies in case we need the "address".
+    log! ({"enable_coins (alice): {:?}", block_on (enable_coins_eth_electrum (&mm_alice, vec!["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b"]))});
+
+    log!("Give Alice 15 seconds to import the order…");
+    thread::sleep(Duration::from_secs(15));
+
+    // Bob orderbook must show 1 mine order
+    log!("Get RICK/MORTY orderbook on Bob side");
+    let rc = unwrap! (block_on (mm_bob.rpc (json! ({
+        "userpass": mm_bob.userpass,
+        "method": "orderbook",
+        "base": "RICK",
+        "rel": "MORTY",
+    }))));
+    assert! (rc.0.is_success(), "!orderbook: {}", rc.1);
+
+    let bob_orderbook: Json = unwrap!(json::from_str(&rc.1));
+    log!("Bob orderbook " [bob_orderbook]);
+    let asks = bob_orderbook["asks"].as_array().unwrap();
+    assert_eq!(asks.len(), 1, "Bob RICK/MORTY orderbook must have exactly 1 ask");
+    let is_mine = asks[0]["is_mine"].as_bool().unwrap();
+    assert_eq!(is_mine, true);
+
+    // Alice orderbook must show 1 not-mine order
+    log!("Get RICK/MORTY orderbook on Alice side");
+    let rc = unwrap! (block_on (mm_alice.rpc (json! ({
+        "userpass": mm_alice.userpass,
+        "method": "orderbook",
+        "base": "RICK",
+        "rel": "MORTY",
+    }))));
+    assert! (rc.0.is_success(), "!orderbook: {}", rc.1);
+
+    let alice_orderbook: Json = unwrap!(json::from_str(&rc.1));
+    log!("Alice orderbook " [alice_orderbook]);
+    let asks = alice_orderbook["asks"].as_array().unwrap();
+    assert_eq!(asks.len(), 1, "Alice RICK/MORTY orderbook must have exactly 1 ask");
+    let is_mine = asks[0]["is_mine"].as_bool().unwrap();
+    assert_eq!(is_mine, false);
+
+    // make another order by Alice
+    let rc = unwrap! (block_on (mm_alice.rpc (json! ({
+        "userpass": mm_alice.userpass,
+        "method": "setprice",
+        "base": "RICK",
+        "rel": "MORTY",
+        "price": 1,
+        "volume": 0.1,
+    }))));
+    assert! (rc.0.is_success(), "!buy: {}", rc.1);
+
+    log!("Give Bob 15 seconds to import the order…");
+    thread::sleep(Duration::from_secs(15));
+
+    // Bob orderbook must show 1 mine and 1 non-mine orders.
+    // Request orderbook with reverse base and rel coins to check bids instead of asks
+    log!("Get RICK/MORTY orderbook on Bob side");
+    let rc = unwrap! (block_on (mm_bob.rpc (json! ({
+        "userpass": mm_bob.userpass,
+        "method": "orderbook",
+        "base": "MORTY",
+        "rel": "RICK",
+    }))));
+    assert! (rc.0.is_success(), "!orderbook: {}", rc.1);
+
+    let bob_orderbook: Json = unwrap!(json::from_str(&rc.1));
+    log!("Bob orderbook " [bob_orderbook]);
+    let asks = bob_orderbook["asks"].as_array().unwrap();
+    let bids = bob_orderbook["bids"].as_array().unwrap();
+    assert!(asks.is_empty(), "Bob MORTY/RICK orderbook must contain an empty asks");
+    assert_eq!(bids.len(), 2, "Bob MORTY/RICK orderbook must have exactly 2 bids");
+    let mine_orders = bids.iter().filter(|bid| bid["is_mine"].as_bool().unwrap()).count();
+    assert_eq!(mine_orders, 1, "Bob RICK/MORTY orderbook must have exactly 1 mine bid");
+
+    // Alice orderbook must show 1 mine and 1 non-mine orders
+    log!("Get RICK/MORTY orderbook on Alice side");
+    let rc = unwrap! (block_on (mm_bob.rpc (json! ({
+        "userpass": mm_bob.userpass,
+        "method": "orderbook",
+        "base": "RICK",
+        "rel": "MORTY",
+    }))));
+    assert! (rc.0.is_success(), "!orderbook: {}", rc.1);
+
+    let alice_orderbook: Json = unwrap!(json::from_str(&rc.1));
+    log!("Alice orderbook " [alice_orderbook]);
+    let asks = alice_orderbook["asks"].as_array().unwrap();
+    let bids = alice_orderbook["bids"].as_array().unwrap();
+    assert!(bids.is_empty(), "Alice MORTY/RICK orderbook must contain an empty bids");
+    assert_eq!(asks.len(), 2, "Alice MORTY/RICK orderbook must have exactly 2 asks");
+    let mine_orders = asks.iter().filter(|ask| ask["is_mine"].as_bool().unwrap()).count();
+    assert_eq!(mine_orders, 1, "Alice RICK/MORTY orderbook must have exactly 1 mine bid");
+}
+
 // HOWTO
 // 1. Install Firefox.
 // 2. Install forked version of wasm-bindgen-cli: cargo install wasm-bindgen-cli --git https://github.com/artemii235/wasm-bindgen.git

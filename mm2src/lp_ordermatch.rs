@@ -1487,6 +1487,7 @@ pub struct OrderbookEntry {
     age: i64,
     zcredits: u64,
     uuid: Uuid,
+    is_mine: bool,
 }
 
 #[derive(Serialize)]
@@ -1522,10 +1523,13 @@ pub async fn orderbook(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
     let base_coin: MmCoinEnum = try_s!(base_coin.ok_or("Base coin is not found or inactive"));
     let ordermatch_ctx: Arc<OrdermatchContext> = try_s!(OrdermatchContext::from_ctx(&ctx));
     let orderbook = try_s!(ordermatch_ctx.orderbook.lock());
+    let my_maker_orders = try_s!(ordermatch_ctx.my_maker_orders.lock());
+    let my_taker_orders = try_s!(ordermatch_ctx.my_taker_orders.lock());
     let asks = match orderbook.get(&(req.base.clone(), req.rel.clone())) {
         Some(asks) => {
             let mut orderbook_entries = vec![];
             for (uuid, ask) in asks.iter() {
+                let is_mine = my_maker_orders.get(uuid).is_some() || my_taker_orders.get(uuid).is_some();
                 orderbook_entries.push(OrderbookEntry {
                     coin: req.base.clone(),
                     address: try_s!(base_coin.address_from_pubkey_str(&ask.pubsecp)),
@@ -1539,6 +1543,7 @@ pub async fn orderbook(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
                     age: (now_ms() as i64 / 1000) - ask.timestamp as i64,
                     zcredits: 0,
                     uuid: *uuid,
+                    is_mine,
                 })
             }
             orderbook_entries
@@ -1550,6 +1555,7 @@ pub async fn orderbook(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
             let mut orderbook_entries = vec![];
             for (uuid, ask) in asks.iter() {
                 let price_mm = MmNumber::from(1i32) / ask.price_rat.as_ref().map(|p| p.clone()).unwrap_or(from_dec_to_ratio(ask.price.clone()).into());
+                let is_mine = my_maker_orders.get(uuid).is_some() || my_taker_orders.get(uuid).is_some();
                 orderbook_entries.push(OrderbookEntry {
                     coin: req.rel.clone(),
                     address: try_s!(rel_coin.address_from_pubkey_str(&ask.pubsecp)),
@@ -1565,6 +1571,7 @@ pub async fn orderbook(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
                     age: (now_ms() as i64 / 1000) - ask.timestamp as i64,
                     zcredits: 0,
                     uuid: *uuid,
+                    is_mine,
                 })
             }
             orderbook_entries
