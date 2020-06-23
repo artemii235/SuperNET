@@ -74,6 +74,10 @@ pub async fn qrc20_coin_from_conf_and_request(
     contract_address: H160,
 ) -> Result<Qrc20Coin, String> {
     let inner = try_s!(utxo_arc_from_conf_and_request(ctx, ticker, conf, req, priv_key, QRC20_DUST).await);
+    match &inner.address_format {
+        UtxoAddressFormat::Standard => (),
+        _ => return ERR!("Expect standard UTXO address format"),
+    }
     Ok(Qrc20Coin { utxo_arc: inner, contract_address })
 }
 
@@ -429,12 +433,7 @@ impl MmCoin for Qrc20Coin {
 }
 
 async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> Result<TransactionDetails, String> {
-    let to_addr = match &coin.utxo_arc.address_format {
-        UtxoAddressFormat::Standard => try_s!(Address::from_str(&req.to)),
-        UtxoAddressFormat::CashAddress { .. } => try_s!(Address::from_cashaddress(
-            &req.to, coin.utxo_arc.checksum_type.clone(), coin.utxo_arc.pub_addr_prefix, coin.utxo_arc.p2sh_addr_prefix))
-    };
-
+    let to_addr = try_s!(Address::from_str(&req.to));
     let is_p2pkh = to_addr.prefix == coin.utxo_arc.pub_addr_prefix && to_addr.t_addr_prefix == coin.utxo_arc.pub_t_addr_prefix;
     let is_p2sh = to_addr.prefix == coin.utxo_arc.p2sh_addr_prefix && to_addr.t_addr_prefix == coin.utxo_arc.p2sh_t_addr_prefix && coin.utxo_arc.segwit;
     if !is_p2pkh && !is_p2sh {
