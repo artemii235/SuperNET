@@ -386,6 +386,11 @@ impl MmCoin for Qrc20Coin {
         utxo_common::can_i_spend_other_payment()
     }
 
+    fn wallet_only(&self) -> bool {
+        // QRC20 cannot participate in the swaps
+        true
+    }
+
     fn withdraw(&self, req: WithdrawRequest) -> Box<dyn Future<Item=TransactionDetails, Error=String> + Send> {
         Box::new(qrc20_withdraw(self.clone(), req).boxed().compat())
     }

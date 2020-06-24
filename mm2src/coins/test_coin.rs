@@ -205,6 +205,10 @@ impl MmCoin for TestCoin {
         unimplemented!()
     }
 
+    fn wallet_only(&self) -> bool {
+        unimplemented!()
+    }
+
     fn withdraw(&self, req: WithdrawRequest) -> Box<dyn Future<Item=TransactionDetails, Error=String> + Send> {
         unimplemented!()
     }

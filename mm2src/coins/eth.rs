@@ -1860,6 +1860,10 @@ impl MmCoin for EthCoin {
         }))
     }
 
+    fn wallet_only(&self) -> bool {
+        false
+    }
+
     fn withdraw(&self, req: WithdrawRequest) -> Box<dyn Future<Item=TransactionDetails, Error=String> + Send> {
         let ctx = try_fus!(MmArc::from_weak(&self.ctx).ok_or("!ctx"));
         Box::new(Box::pin(withdraw_impl(ctx, self.clone(), req)).compat())

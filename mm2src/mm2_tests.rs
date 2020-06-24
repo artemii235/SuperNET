@@ -2608,6 +2608,116 @@ fn test_qrc20_withdraw() {
 }
 
 #[test]
+/// Test if the setprice/buy/sell returns an error on attempt to swap QRC20
+/// Note: remove the test after the QRC20 supports swaps
+fn test_qrc20_wallet_only() {
+    let passphrase = "cMhHM3PMpMrChygR4bLF7QsTdenhWpFrrmf2UezBG3eeFsz41rtL";
+    let coins = json!([
+        {"coin":"QRC20","required_confirmations":0,"pubtype": 120,"p2shtype": 50,"wiftype": 128,"segwit": true,"txfee": 0,"mm2": 1,"mature_confirmations":500,
+         "protocol":{"QRC20":{"platform":"QTUM","contract_address":"0xd362e096e873eb7907e205fadc6175c6fec7bc44"}}},
+        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"protocol":"UTXO"},
+    ]);
+
+    let mut mm = unwrap!(MarketMakerIt::start (
+        json! ({
+            "gui": "nogui",
+            "netid": 8999,
+            "dht": "on",  // Enable DHT without delay.
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| unwrap! (s.parse::<i64>())),
+            "passphrase": passphrase,
+            "coins": coins,
+            "rpc_password": "password",
+            "i_am_seed": true,
+        }),
+        "password".into(),
+        local_start! ("bob")
+    ));
+    let (_dump_log, _dump_dashboard) = mm_dump(&mm.log_path);
+    log!({ "log path: {}", mm.log_path.display() });
+    unwrap!(block_on(mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))));
+
+    let _electrum = block_on(enable_electrum(&mm, "RICK", vec!["electrum1.cipig.net:10017", "electrum2.cipig.net:10017", "electrum3.cipig.net:10017"]));
+    let electrum = unwrap!(block_on(mm.rpc(json!({
+        "userpass": mm.userpass,
+        "method": "electrum",
+        "coin": "QRC20",
+        "servers": [{"url":"95.217.83.126:10001"}],
+        "mm2": 1,
+    }))));
+    assert_eq!(electrum.0, StatusCode::OK, "RPC «electrum» failed with status «{}», response «{}»", electrum.0, electrum.1);
+    let electrum_json: Json = json::from_str(&electrum.1).unwrap();
+    assert_eq!(electrum_json["address"].as_str(), Some("qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG"));
+
+    let rc = unwrap!(block_on(mm.rpc(json!({
+        "userpass": mm.userpass,
+        "method": "setprice",
+        "base": "QRC20",
+        "rel": "RICK",
+        "price": 0.9,
+        "volume": "0.9",
+    }))));
+    assert!(rc.0.is_server_error(), "setprice should have failed, but got {:?}", rc);
+    assert!(rc.1.contains("Base coin is wallet only"));
+
+    let rc = unwrap!(block_on(mm.rpc(json!({
+        "userpass": mm.userpass,
+        "method": "setprice",
+        "base": "RICK",
+        "rel": "QRC20",
+        "price": 0.9,
+        "volume": "0.9",
+    }))));
+    assert!(rc.0.is_server_error(), "setprice should have failed, but got {:?}", rc);
+    assert!(rc.1.contains("Rel coin is wallet only"));
+
+    let rc = unwrap!(block_on(mm.rpc(json!({
+        "userpass": mm.userpass,
+        "method": "buy",
+        "base": "QRC20",
+        "rel": "RICK",
+        "price": 0.9,
+        "volume": "0.9",
+    }))));
+    assert!(rc.0.is_server_error(), "buy should have failed, but got {:?}", rc);
+    assert!(rc.1.contains("Base coin is wallet only"));
+
+    let rc = unwrap!(block_on(mm.rpc(json!({
+        "userpass": mm.userpass,
+        "method": "buy",
+        "base": "RICK",
+        "rel": "QRC20",
+        "price": 0.9,
+        "volume": "0.9",
+    }))));
+    assert!(rc.0.is_server_error(), "buy should have failed, but got {:?}", rc);
+    assert!(rc.1.contains("Rel coin is wallet only"));
+
+    let rc = unwrap!(block_on(mm.rpc(json!({
+        "userpass": mm.userpass,
+        "method": "sell",
+        "base": "QRC20",
+        "rel": "RICK",
+        "price": 0.9,
+        "volume": "0.9",
+    }))));
+    assert!(rc.0.is_server_error(), "sell should have failed, but got {:?}", rc);
+    assert!(rc.1.contains("Base coin is wallet only"));
+
+    let rc = unwrap!(block_on(mm.rpc(json!({
+        "userpass": mm.userpass,
+        "method": "sell",
+        "base": "RICK",
+        "rel": "QRC20",
+        "price": 0.9,
+        "volume": "0.9",
+    }))));
+    assert!(rc.0.is_server_error(), "sell should have failed, but got {:?}", rc);
+    assert!(rc.1.contains("Rel coin is wallet only"));
+}
+
+#[test]
 // https://github.com/KomodoPlatform/atomicDEX-API/issues/683
 // trade fee should return numbers in all 3 available formats and
 // "amount" must be always in decimal representation for backwards compatibility

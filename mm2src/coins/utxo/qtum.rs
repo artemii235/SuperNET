@@ -311,6 +311,10 @@ impl MmCoin for QtumCoin {
         utxo_common::can_i_spend_other_payment()
     }
 
+    fn wallet_only(&self) -> bool {
+        false
+    }
+
     fn withdraw(&self, req: WithdrawRequest) -> Box<dyn Future<Item=TransactionDetails, Error=String> + Send> {
         Box::new(utxo_common::withdraw(self.clone(), req).boxed().compat())
     }
