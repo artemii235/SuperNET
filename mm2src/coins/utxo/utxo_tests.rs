@@ -1,5 +1,5 @@
 use bigdecimal::BigDecimal;
-use common::block_on;
+use common::{block_on, OrdRange};
 use common::mm_ctx::MmCtxBuilder;
 use common::privkey::key_pair_from_seed;
 use crate::{
@@ -14,13 +14,13 @@ use super::*;
 const TEST_COIN_NAME: &'static str = "RICK";
 
 fn electrum_client_for_test(servers: &[&str]) -> ElectrumClient {
-    let mut client = ElectrumClientImpl::new(TEST_COIN_NAME.into(), Default::default());
+    let client = ElectrumClientImpl::new(TEST_COIN_NAME.into(), Default::default());
     for server in servers {
-        client.add_server(&ElectrumRpcRequest {
+        block_on(client.add_server(&ElectrumRpcRequest {
             url: server.to_string(),
             protocol: ElectrumProtocol::TCP,
             disable_cert_verification: false,
-        }).unwrap();
+        })).unwrap();
     }
 
     let mut attempts = 0;
@@ -888,4 +888,57 @@ fn test_cashaddresses_in_tx_details_by_hash() {
 fn test_network_info_negative_time_offset() {
     let info_str = r#"{"version":1140200,"subversion":"/Shibetoshi:1.14.2/","protocolversion":70015,"localservices":"0000000000000005","localrelay":true,"timeoffset":-1,"networkactive":true,"connections":12,"networks":[{"name":"ipv4","limited":false,"reachable":true,"proxy":"","proxy_randomize_credentials":false},{"name":"ipv6","limited":false,"reachable":true,"proxy":"","proxy_randomize_credentials":false},{"name":"onion","limited":false,"reachable":true,"proxy":"127.0.0.1:9050","proxy_randomize_credentials":true}],"relayfee":1.00000000,"incrementalfee":0.00001000,"localaddresses":[],"warnings":""}"#;
     let _info: NetworkInfo = json::from_str(&info_str).unwrap();
+}
+
+#[test]
+fn test_unavailable_electrum_proto_version() {
+    ElectrumClientImpl::new.mock_safe(|coin_ticker, event_handlers| {
+        MockResult::Return(
+            ElectrumClientImpl::with_protocol_version(coin_ticker, event_handlers, OrdRange::new(1.8, 1.9).unwrap())
+        )
+    });
+
+    let conf = json!({"coin":"RICK","asset":"RICK","rpcport":8923});
+    let req = json!({
+         "method": "electrum",
+         "servers": [{"url":"electrum1.cipig.net:10017"}],
+    });
+
+    let ctx = MmCtxBuilder::new().into_mm_arc();
+    let error = unwrap!(block_on(utxo_coin_from_conf_and_request(
+        &ctx, "RICK", &conf, &req, &[1u8; 32])).err());
+    log!("Error: "(error));
+    assert!(error.contains("There are no Electrums with the required protocol version"));
+}
+
+#[test]
+fn test_one_unavailable_electrum_proto_version() {
+    ElectrumClientImpl::new.mock_safe(|coin_ticker, event_handlers| {
+        MockResult::Return(
+            ElectrumClientImpl::with_protocol_version(coin_ticker, event_handlers, OrdRange::new(1.4, 1.4).unwrap())
+        )
+    });
+
+    // check if the electrum-mona.bitbank.cc:50001 doesn't support the protocol version 1.4
+    let client = electrum_client_for_test(&["electrum-mona.bitbank.cc:50001"]);
+    let result = client.server_version("electrum-mona.bitbank.cc:50001", "AtomicDEX", &OrdRange::new(1.4, 1.4).unwrap()).wait();
+    assert!(result.err().unwrap().to_string().contains("unsupported protocol version"));
+
+    drop(client);
+    log!("Run BTC coin to test the server.version loop");
+
+    let conf = json!({"coin":"BTC","asset":"BTC","rpcport":8332});
+    let req = json!({
+         "method": "electrum",
+         // electrum-mona.bitbank.cc:50001 supports only 1.2 protocol version
+         "servers": [{"url":"electrum1.cipig.net:10000"},{"url":"electrum-mona.bitbank.cc:50001"}],
+    });
+
+    let ctx = MmCtxBuilder::new().into_mm_arc();
+    let coin = unwrap!(block_on(utxo_coin_from_conf_and_request(
+        &ctx, "BTC", &conf, &req, &[1u8; 32])));
+
+    block_on(async { Timer::sleep(0.5).await });
+
+    assert!(coin.rpc_client.get_block_count().wait().is_ok());
 }
