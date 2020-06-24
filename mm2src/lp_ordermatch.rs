@@ -86,10 +86,6 @@ impl OrderConfirmationsSettings {
             rel_nota: self.base_nota,
         }
     }
-
-    pub fn requires_notarization(&self) -> bool {
-        self.base_nota || self.rel_nota
-    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -514,26 +510,6 @@ impl MakerOrderBuilder {
             conf_settings: self.conf_settings,
         })
     }
-
-    #[cfg(test)]
-    /// skip validation for tests
-    fn build_unchecked(self) -> MakerOrder {
-        MakerOrder {
-            base: self.base,
-            rel: self.rel,
-            created_at: now_ms(),
-            max_base_vol: self.max_base_vol.to_decimal(),
-            max_base_vol_rat: self.max_base_vol.into(),
-            min_base_vol: 0.into(),
-            min_base_vol_rat: BigRational::from_integer(0.into()),
-            price: self.price.to_decimal(),
-            price_rat: self.price.into(),
-            matches: HashMap::new(),
-            started_swaps: Vec::new(),
-            uuid: Uuid::new_v4(),
-            conf_settings: self.conf_settings,
-        }
-    }
 }
 
 fn zero_rat() -> BigRational { BigRational::zero() }
@@ -702,10 +678,18 @@ fn lp_connect_start_bob(ctx: MmArc, maker_match: MakerMatch, maker_order: MakerO
         let privkey = &ctx.secp256k1_key_pair().private().secret;
         let my_persistent_pub = unwrap!(compressed_pub_key_from_priv_raw(&privkey[..], ChecksumType::DSHA256));
         let uuid = maker_match.request.uuid.to_string();
-        let my_conf_settings = choose_maker_confs_and_notas(&maker_order, &maker_match.request, &maker_coin, &taker_coin);
+        let my_conf_settings = choose_maker_confs_and_notas(maker_order.conf_settings, &maker_match.request, &maker_coin, &taker_coin);
         // detect atomic lock time version implicitly by conf_settings existence in taker request
         let atomic_locktime_v = match maker_match.request.conf_settings {
-            Some(other_conf_settings) => AtomicLocktimeVersion::V2 { my_conf_settings, other_conf_settings },
+            Some(_) => {
+                let other_conf_settings = choose_taker_confs_and_notas(
+                    &maker_match.request,
+                    &maker_match.reserved,
+                    &maker_coin,
+                    &taker_coin,
+                );
+                AtomicLocktimeVersion::V2 { my_conf_settings, other_conf_settings }
+            },
             None => AtomicLocktimeVersion::V1,
         };
         let lock_time = lp_atomic_locktime(maker_coin.ticker(), taker_coin.ticker(), atomic_locktime_v);
@@ -763,7 +747,15 @@ fn lp_connected_alice(ctx: MmArc, taker_request: TakerRequest, taker_match: Take
         let my_conf_settings = choose_taker_confs_and_notas(&taker_request, &taker_match.reserved, &maker_coin, &taker_coin);
         // detect atomic lock time version implicitly by conf_settings existence in maker reserved
         let atomic_locktime_v = match taker_match.reserved.conf_settings {
-            Some(other_conf_settings) => AtomicLocktimeVersion::V2 { my_conf_settings, other_conf_settings },
+            Some(_) => {
+                let other_conf_settings = choose_maker_confs_and_notas(
+                    taker_match.reserved.conf_settings,
+                    &taker_request,
+                    &maker_coin,
+                    &taker_coin,
+                );
+                AtomicLocktimeVersion::V2 { my_conf_settings, other_conf_settings }
+            },
             None => AtomicLocktimeVersion::V1,
         };
         let locktime = lp_atomic_locktime(maker_coin.ticker(), taker_coin.ticker(), atomic_locktime_v);
@@ -1974,12 +1966,12 @@ pub fn migrate_saved_orders(ctx: &MmArc) -> Result<(), String> {
 }
 
 fn choose_maker_confs_and_notas(
-    maker_order: &MakerOrder,
+    maker_confs: Option<OrderConfirmationsSettings>,
     taker_req: &TakerRequest,
     maker_coin: &MmCoinEnum,
     taker_coin: &MmCoinEnum,
 ) -> SwapConfirmationsSettings {
-    let maker_settings = maker_order.conf_settings.unwrap_or(OrderConfirmationsSettings {
+    let maker_settings = maker_confs.unwrap_or(OrderConfirmationsSettings {
         base_confs: maker_coin.required_confirmations(),
         base_nota: maker_coin.requires_notarization(),
         rel_confs: taker_coin.required_confirmations(),

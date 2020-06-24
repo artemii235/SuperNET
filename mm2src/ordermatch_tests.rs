@@ -1001,13 +1001,11 @@ fn should_process_request_only_once() {
 #[test]
 fn test_choose_maker_confs_settings() {
     // no confs set
-    let maker_order = MakerOrderBuilder::default().build_unchecked();
-    // no confs set
     let taker_request = TakerRequestBuilder::default().build_unchecked();
     let coin = TestCoin {}.into();
     TestCoin::requires_notarization.mock_safe(|_| MockResult::Return(true));
     TestCoin::required_confirmations.mock_safe(|_| MockResult::Return(8));
-    let settings = choose_maker_confs_and_notas(&maker_order, &taker_request, &coin, &coin);
+    let settings = choose_maker_confs_and_notas(None, &taker_request, &coin, &coin);
     // should pick settings from coin configuration
     assert!(settings.maker_coin_nota);
     assert_eq!(settings.maker_coin_confs, 8);
@@ -1020,12 +1018,9 @@ fn test_choose_maker_confs_settings() {
         rel_confs: 1,
         rel_nota: false,
     };
-    let maker_order = MakerOrderBuilder::default()
-        .with_conf_settings(maker_conf_settings)
-        .build_unchecked();
     // no confs set
     let taker_request = TakerRequestBuilder::default().build_unchecked();
-    let settings = choose_maker_confs_and_notas(&maker_order, &taker_request, &coin, &coin);
+    let settings = choose_maker_confs_and_notas(Some(maker_conf_settings), &taker_request, &coin, &coin);
     // should pick settings from maker order
     assert!(!settings.maker_coin_nota);
     assert_eq!(settings.maker_coin_confs, 1);
@@ -1038,9 +1033,6 @@ fn test_choose_maker_confs_settings() {
         rel_confs: 1,
         rel_nota: false,
     };
-    let maker_order = MakerOrderBuilder::default()
-        .with_conf_settings(maker_conf_settings)
-        .build_unchecked();
     let taker_conf_settings = OrderConfirmationsSettings {
         base_confs: 5,
         base_nota: false,
@@ -1050,7 +1042,7 @@ fn test_choose_maker_confs_settings() {
     let taker_request = TakerRequestBuilder::default()
         .with_conf_settings(taker_conf_settings)
         .build_unchecked();
-    let settings = choose_maker_confs_and_notas(&maker_order, &taker_request, &coin, &coin);
+    let settings = choose_maker_confs_and_notas(Some(maker_conf_settings), &taker_request, &coin, &coin);
     // should pick settings from taker request because taker will wait less time for our
     // payment confirmation
     assert!(!settings.maker_coin_nota);
@@ -1064,9 +1056,6 @@ fn test_choose_maker_confs_settings() {
         rel_confs: 1,
         rel_nota: false,
     };
-    let maker_order = MakerOrderBuilder::default()
-        .with_conf_settings(maker_conf_settings)
-        .build_unchecked();
     let taker_conf_settings = OrderConfirmationsSettings {
         base_confs: 1000,
         base_nota: true,
@@ -1076,7 +1065,7 @@ fn test_choose_maker_confs_settings() {
     let taker_request = TakerRequestBuilder::default()
         .with_conf_settings(taker_conf_settings)
         .build_unchecked();
-    let settings = choose_maker_confs_and_notas(&maker_order, &taker_request, &coin, &coin);
+    let settings = choose_maker_confs_and_notas(Some(maker_conf_settings), &taker_request, &coin, &coin);
     // keep using our settings allowing taker to wait for our payment conf as much as he likes
     assert!(!settings.maker_coin_nota);
     assert_eq!(settings.maker_coin_confs, 10);
@@ -1089,9 +1078,6 @@ fn test_choose_maker_confs_settings() {
         rel_confs: 2,
         rel_nota: true,
     };
-    let maker_order = MakerOrderBuilder::default()
-        .with_conf_settings(maker_conf_settings)
-        .build_unchecked();
 
     let taker_conf_settings = OrderConfirmationsSettings {
         rel_confs: 1,
@@ -1102,7 +1088,7 @@ fn test_choose_maker_confs_settings() {
     let taker_request = TakerRequestBuilder::default()
         .with_conf_settings(taker_conf_settings)
         .build_unchecked();
-    let settings = choose_maker_confs_and_notas(&maker_order, &taker_request, &coin, &coin);
+    let settings = choose_maker_confs_and_notas(Some(maker_conf_settings), &taker_request, &coin, &coin);
 
     // Taker conf settings should not have any effect on maker conf requirements for taker payment
     assert!(settings.taker_coin_nota);
@@ -1114,9 +1100,6 @@ fn test_choose_maker_confs_settings() {
         rel_confs: 1,
         rel_nota: false,
     };
-    let maker_order = MakerOrderBuilder::default()
-        .with_conf_settings(maker_conf_settings)
-        .build_unchecked();
     // Pair is reversed for TakerAction::Sell
     let taker_conf_settings = OrderConfirmationsSettings {
         rel_confs: 5,
@@ -1128,7 +1111,7 @@ fn test_choose_maker_confs_settings() {
         .with_conf_settings(taker_conf_settings)
         .with_action(TakerAction::Sell)
         .build_unchecked();
-    let settings = choose_maker_confs_and_notas(&maker_order, &taker_request, &coin, &coin);
+    let settings = choose_maker_confs_and_notas(Some(maker_conf_settings), &taker_request, &coin, &coin);
     // should pick settings from taker request because taker will wait less time for our
     // payment confirmation
     assert!(!settings.maker_coin_nota);

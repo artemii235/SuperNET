@@ -408,6 +408,45 @@ fn test_buy_taker_should_not_use_maker_confs_and_notas_for_taker_payment_if_make
 }
 
 #[test]
+fn test_buy_nodes_should_properly_sync_locktime_if_conf_sync_ends_up_without_nota() {
+    let maker_settings = OrderConfirmationsSettings {
+        base_confs: 1,
+        base_nota: false,
+        rel_confs: 5,
+        rel_nota: false,
+    };
+
+    let taker_settings = OrderConfirmationsSettings {
+        base_confs: 1,
+        base_nota: false,
+        rel_confs: 2,
+        rel_nota: true,
+    };
+
+    let expected_maker = SwapConfirmationsSettings {
+        maker_coin_confs: 1,
+        maker_coin_nota: false,
+        taker_coin_confs: 5,
+        taker_coin_nota: false,
+    };
+
+    let expected_taker = SwapConfirmationsSettings {
+        maker_coin_confs: 1,
+        maker_coin_nota: false,
+        taker_coin_confs: 2,
+        taker_coin_nota: false,
+    };
+
+    test_confirmation_settings_sync_correctly_on_buy(
+        maker_settings,
+        taker_settings,
+        expected_maker,
+        expected_taker,
+        PAYMENT_LOCKTIME,
+    );
+}
+
+#[test]
 fn test_sell_maker_should_use_taker_confs_and_notas_for_maker_payment_if_taker_requires_less() {
     let maker_settings = OrderConfirmationsSettings {
         base_confs: 2,
@@ -560,5 +599,44 @@ fn test_sell_taker_should_not_use_maker_confs_and_notas_for_taker_payment_if_mak
         expected_maker,
         expected_taker,
         PAYMENT_LOCKTIME * 4
+    );
+}
+
+#[test]
+fn test_sell_nodes_should_properly_sync_locktime_if_conf_sync_ends_up_without_nota() {
+    let maker_settings = OrderConfirmationsSettings {
+        base_confs: 1,
+        base_nota: false,
+        rel_confs: 5,
+        rel_nota: false,
+    };
+
+    let taker_settings = OrderConfirmationsSettings {
+        base_confs: 2,
+        base_nota: true,
+        rel_confs: 1,
+        rel_nota: false,
+    };
+
+    let expected_maker = SwapConfirmationsSettings {
+        maker_coin_confs: 1,
+        maker_coin_nota: false,
+        taker_coin_confs: 5,
+        taker_coin_nota: false,
+    };
+
+    let expected_taker = SwapConfirmationsSettings {
+        maker_coin_confs: 1,
+        maker_coin_nota: false,
+        taker_coin_confs: 2,
+        taker_coin_nota: false,
+    };
+
+    test_confirmation_settings_sync_correctly_on_sell(
+        maker_settings,
+        taker_settings,
+        expected_maker,
+        expected_taker,
+        PAYMENT_LOCKTIME,
     );
 }

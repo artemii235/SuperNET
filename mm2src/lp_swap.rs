@@ -66,7 +66,6 @@ use common::{
     mm_ctx::{from_ctx, MmArc},
     mm_number::MmNumber,
 };
-use crate::mm2::lp_ordermatch::OrderConfirmationsSettings;
 use http::Response;
 use primitives::hash::{H160, H256, H264};
 use rpc::v1::types::{Bytes as BytesJson, H256 as H256Json};
@@ -371,7 +370,7 @@ pub enum AtomicLocktimeVersion {
     V1,
     V2 {
         my_conf_settings: SwapConfirmationsSettings,
-        other_conf_settings: OrderConfirmationsSettings,
+        other_conf_settings: SwapConfirmationsSettings,
     },
 }
 
@@ -389,7 +388,7 @@ pub fn lp_atomic_locktime_v2(
     maker_coin: &str,
     taker_coin: &str,
     my_conf_settings: &SwapConfirmationsSettings,
-    other_conf_settings: &OrderConfirmationsSettings
+    other_conf_settings: &SwapConfirmationsSettings
 ) -> u64 {
     if maker_coin == "BTC" || taker_coin == "BTC" {
         PAYMENT_LOCKTIME * 4
@@ -949,11 +948,11 @@ mod lp_swap_tests {
             taker_coin_confs: 2,
             taker_coin_nota: true,
         };
-        let other_conf_settings = OrderConfirmationsSettings {
-            base_confs: 1,
-            base_nota: false,
-            rel_confs: 1,
-            rel_nota: false,
+        let other_conf_settings = SwapConfirmationsSettings {
+            maker_coin_confs: 1,
+            maker_coin_nota: false,
+            taker_coin_confs: 1,
+            taker_coin_nota: false,
         };
         let expected = PAYMENT_LOCKTIME * 4;
         let version = AtomicLocktimeVersion::V2 { my_conf_settings, other_conf_settings };
@@ -968,11 +967,11 @@ mod lp_swap_tests {
             taker_coin_confs: 2,
             taker_coin_nota: false,
         };
-        let other_conf_settings = OrderConfirmationsSettings {
-            base_confs: 1,
-            base_nota: false,
-            rel_confs: 1,
-            rel_nota: false,
+        let other_conf_settings = SwapConfirmationsSettings {
+            maker_coin_confs: 1,
+            maker_coin_nota: false,
+            taker_coin_confs: 1,
+            taker_coin_nota: false,
         };
         let expected = PAYMENT_LOCKTIME * 4;
         let version = AtomicLocktimeVersion::V2 { my_conf_settings, other_conf_settings };
@@ -987,11 +986,11 @@ mod lp_swap_tests {
             taker_coin_confs: 2,
             taker_coin_nota: true,
         };
-        let other_conf_settings = OrderConfirmationsSettings {
-            base_confs: 1,
-            base_nota: false,
-            rel_confs: 1,
-            rel_nota: false,
+        let other_conf_settings = SwapConfirmationsSettings {
+            maker_coin_confs: 1,
+            maker_coin_nota: false,
+            taker_coin_confs: 1,
+            taker_coin_nota: false,
         };
         let expected = PAYMENT_LOCKTIME * 4;
         let version = AtomicLocktimeVersion::V2 { my_conf_settings, other_conf_settings };
@@ -1006,11 +1005,11 @@ mod lp_swap_tests {
             taker_coin_confs: 2,
             taker_coin_nota: false,
         };
-        let other_conf_settings = OrderConfirmationsSettings {
-            base_confs: 1,
-            base_nota: false,
-            rel_confs: 1,
-            rel_nota: false,
+        let other_conf_settings = SwapConfirmationsSettings {
+            maker_coin_confs: 1,
+            maker_coin_nota: false,
+            taker_coin_confs: 1,
+            taker_coin_nota: false,
         };
         let expected = PAYMENT_LOCKTIME;
         let version = AtomicLocktimeVersion::V2 { my_conf_settings, other_conf_settings };
@@ -1025,11 +1024,11 @@ mod lp_swap_tests {
             taker_coin_confs: 2,
             taker_coin_nota: false,
         };
-        let other_conf_settings = OrderConfirmationsSettings {
-            base_confs: 1,
-            base_nota: false,
-            rel_confs: 1,
-            rel_nota: false,
+        let other_conf_settings = SwapConfirmationsSettings {
+            maker_coin_confs: 1,
+            maker_coin_nota: false,
+            taker_coin_confs: 1,
+            taker_coin_nota: false,
         };
         let expected = PAYMENT_LOCKTIME * 4;
         let version = AtomicLocktimeVersion::V2 { my_conf_settings, other_conf_settings };
@@ -1044,11 +1043,11 @@ mod lp_swap_tests {
             taker_coin_confs: 2,
             taker_coin_nota: false,
         };
-        let other_conf_settings = OrderConfirmationsSettings {
-            base_confs: 1,
-            base_nota: false,
-            rel_confs: 1,
-            rel_nota: false,
+        let other_conf_settings = SwapConfirmationsSettings {
+            maker_coin_confs: 1,
+            maker_coin_nota: false,
+            taker_coin_confs: 1,
+            taker_coin_nota: false,
         };
         let expected = PAYMENT_LOCKTIME * 4;
         let version = AtomicLocktimeVersion::V2 { my_conf_settings, other_conf_settings };
