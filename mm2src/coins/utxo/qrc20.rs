@@ -437,6 +437,12 @@ impl MmCoin for Qrc20Coin {
     }
 }
 
+pub fn qrc20_addr_from_str(address: &str) -> Result<H160, String> {
+    // use deserialization instead of eth::contract_addr_from_str(),
+    // because that function fails on some of the QRC20 contract addresses
+    Ok(try_s!(json::from_str(&format!("\"{}\"", address))))
+}
+
 async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> Result<TransactionDetails, String> {
     let to_addr = try_s!(Address::from_str(&req.to));
     let is_p2pkh = to_addr.prefix == coin.utxo_arc.pub_addr_prefix && to_addr.t_addr_prefix == coin.utxo_arc.pub_t_addr_prefix;

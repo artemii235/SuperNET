@@ -40,7 +40,7 @@ use mocktopus::macros::*;
 use rand::seq::SliceRandom;
 use rpc::v1::types::{Bytes as BytesJson};
 use serde_json::{self as json, Value as Json};
-use serde::{de, Deserialize, Deserializer};
+use serde::Deserialize;
 use sha3::{Keccak256, Digest};
 use std::collections::HashMap;
 use std::cmp::Ordering;
@@ -139,21 +139,6 @@ pub struct EthCoinImpl {  // pImpl idiom.
 pub struct Web3Instance {
     web3: Web3<Web3Transport>,
     is_parity: bool,
-}
-
-/// The enable request helper that implements custom deserialization.
-#[derive(Serialize)]
-pub struct ERC20ContractAddress(Address);
-
-impl<'de> Deserialize<'de> for ERC20ContractAddress {
-    fn deserialize<D>(deserializer: D) -> Result<Self, <D as Deserializer<'de>>::Error> where
-        D: Deserializer<'de> {
-        let address: String = Deserialize::deserialize(deserializer)?;
-        match addr_from_str(&address) {
-            Ok(addr) => Ok(ERC20ContractAddress(addr)),
-            Err(e) => Err(de::Error::custom(e)),
-        }
-    }
 }
 
 #[cfg_attr(test, mockable)]
@@ -2194,7 +2179,7 @@ pub async fn eth_coin_from_conf_and_request(
     let (coin_type, decimals) = match protocol {
         CoinProtocol::ETH => (EthCoinType::Eth, 18),
         CoinProtocol::ERC20 {contract_address, ..} => {
-            let token_addr = contract_address.0;
+            let token_addr = try_s!(addr_from_str(&contract_address));
             let decimals = match conf["decimals"].as_u64() {
                 None | Some(0) => try_s!(get_token_decimals(&web3, token_addr).await),
                 Some(d) => d as u8,

@@ -115,7 +115,7 @@ use std::fs::DirEntry;
 use std::ffi::{CStr, OsStr};
 use std::future::Future as Future03;
 use std::intrinsics::copy;
-use std::io::{Write};
+use std::io::{Read, Write};
 use std::mem::{forget, size_of, zeroed};
 use std::os::raw::{c_char, c_void};
 use std::ops::{Add, Deref, Div, RangeInclusive};
@@ -1218,6 +1218,18 @@ pub fn now_float() -> f64 {
 
 #[cfg(feature = "native")]
 pub fn slurp (path: &dyn AsRef<Path>) -> Result<Vec<u8>, String> {Ok (gstuff::slurp (path))}
+
+#[cfg(feature = "native")]
+pub fn safe_slurp(path: &dyn AsRef<Path>) -> Result<Vec<u8>, String> {
+    let mut file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(ref err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return ERR!("Can't open {:?}: {}", path.as_ref(), err),
+    };
+    let mut buf = Vec::new();
+    try_s!(file.read_to_end(&mut buf));
+    Ok(buf)
+}
 
 #[cfg(not(feature = "native"))]
 pub fn slurp (path: &dyn AsRef<Path>) -> Result<Vec<u8>, String> {

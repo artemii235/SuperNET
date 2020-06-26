@@ -1,7 +1,7 @@
+use common::safe_slurp;
 use futures::lock::{Mutex as AsyncMutex};
 use rpc::v1::types::{H256 as H256Json, Transaction as RpcTransaction};
-use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 lazy_static! {static ref TX_CACHE_LOCK: AsyncMutex<()> = AsyncMutex::new(());}
 
@@ -38,15 +38,4 @@ pub async fn cache_transaction(tx_cache_path: &PathBuf, tx: &RpcTransaction) -> 
 
 fn cached_transaction_path(tx_cache_path: &PathBuf, txid: &H256Json) -> PathBuf {
     tx_cache_path.join(format!("{:?}", txid))
-}
-
-fn safe_slurp(path: &dyn AsRef<Path>) -> Result<Vec<u8>, String> {
-    let mut file = match std::fs::File::open(path) {
-        Ok(f) => f,
-        Err(ref err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(err) => return ERR!("Can't open {:?}: {}", path.as_ref(), err),
-    };
-    let mut buf = Vec::new();
-    file.read_to_end(&mut buf).expect("!read");
-    Ok(buf)
 }

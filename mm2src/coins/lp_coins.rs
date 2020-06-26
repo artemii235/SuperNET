@@ -38,7 +38,6 @@ use common::duplex_mutex::DuplexMutex;
 use common::mm_ctx::{from_ctx, MmArc};
 use common::mm_metrics::{MetricsWeak};
 use common::mm_number::MmNumber;
-use ethereum_types::H160;
 use futures01::Future;
 use futures::compat::Future01CompatExt;
 use gstuff::{slurp};
@@ -58,14 +57,14 @@ macro_rules! try_fus {
     Ok (ok) => ok,
     Err (err) => {return Box::new (futures01::future::err (ERRL! ("{}", err)))}}}}
 
-#[doc(hidden)]
+#[cfg(test)]
 pub mod coins_tests;
 pub mod eth;
-use self::eth::{eth_coin_from_conf_and_request, ERC20ContractAddress, EthCoin, EthTxFeeDetails, SignedEthTx};
+use self::eth::{eth_coin_from_conf_and_request, EthCoin, EthTxFeeDetails, SignedEthTx};
 pub mod utxo;
 use self::utxo::{UtxoFeeDetails, UtxoTx};
 use self::utxo::utxo_standard::{UtxoStandardCoin, utxo_standard_coin_from_conf_and_request};
-use self::utxo::qrc20::{qrc20_coin_from_conf_and_request, Qrc20Coin, Qrc20FeeDetails};
+use self::utxo::qrc20::{qrc20_addr_from_str, qrc20_coin_from_conf_and_request, Qrc20Coin, Qrc20FeeDetails};
 #[doc(hidden)]
 #[allow(unused_variables)]
 pub mod test_coin;
@@ -502,9 +501,9 @@ impl CoinsContext {
 #[derive(Serialize, Deserialize)]
 pub enum CoinProtocol {
     UTXO,
-    QRC20 { platform: String, contract_address: H160 },
+    QRC20 { platform: String, contract_address: String },
     ETH,
-    ERC20 { platform: String, contract_address: ERC20ContractAddress },
+    ERC20 { platform: String, contract_address: String },
 }
 
 pub type RpcTransportEventHandlerShared = Arc<dyn RpcTransportEventHandler + Send + Sync + 'static>;
@@ -665,8 +664,10 @@ pub async fn lp_coininit (ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoi
         CoinProtocol::UTXO => try_s!(utxo_standard_coin_from_conf_and_request(ctx, ticker, coins_en, req, secret).await).into(),
         CoinProtocol::ETH | CoinProtocol::ERC20 { .. } =>
             try_s!(eth_coin_from_conf_and_request (ctx, ticker, coins_en, req, secret, protocol).await).into(),
-        CoinProtocol::QRC20 { contract_address, .. } =>
-            try_s!(qrc20_coin_from_conf_and_request(ctx, ticker, coins_en, req, secret, contract_address.clone()).await).into(),
+        CoinProtocol::QRC20 { contract_address, .. } => {
+            let contract_address = try_s!(qrc20_addr_from_str(&contract_address));
+            try_s!(qrc20_coin_from_conf_and_request(ctx, ticker, coins_en, req, secret, contract_address).await).into()
+        },
     };
 
     let block_count = try_s! (coin.current_block().compat().await);
@@ -919,4 +920,40 @@ pub async fn show_priv_key(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, S
         }
     })));
     Ok(try_s!(Response::builder().body(res)))
+}
+
+pub fn update_coins_config(mut config: Json) -> Result<Json, String> {
+    let coins = match config.as_array_mut() {
+        Some(c) => c,
+        _ => return ERR!("Coins config must be an array"),
+    };
+
+    for coin in coins {
+        // the coin_as_str is used only to be formatted
+        let coin_as_str = format!("{}", coin);
+        let coin = try_s!(coin.as_object_mut().ok_or(ERRL!("Expected object, found {:?}", coin_as_str)));
+        if coin.contains_key("protocol") {
+            // the coin is up-to-date
+            continue;
+        }
+        let protocol = match coin.remove("etomic") {
+            Some(etomic) => {
+                let etomic = etomic.as_str()
+                    .ok_or(ERRL!("Expected etomic as string, found {:?}", etomic))?;
+                if etomic == "0x0000000000000000000000000000000000000000" {
+                    CoinProtocol::ETH
+                } else {
+                    let contract_address = etomic.to_owned();
+                    CoinProtocol::ERC20 { platform: "ETH".into(), contract_address }
+                }
+            },
+            _ => CoinProtocol::UTXO,
+        };
+
+        let protocol = json::to_value(protocol)
+            .map_err(|e| ERRL!("Error {:?} on process {:?}", e, coin_as_str))?;
+        coin.insert("protocol".into(), protocol);
+    };
+
+    Ok(config)
 }

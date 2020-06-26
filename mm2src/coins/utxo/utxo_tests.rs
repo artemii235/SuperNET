@@ -580,9 +580,8 @@ fn test_qrc20_withdraw_impl_fee_details() {
         "p2shtype":50,
         "wiftype":128,
         "segwit":true,
-        // the tx fee method will be requested from Electrum
-        "txfee": 0,
-        "mm2":1,"mature_confirmations":500,
+        "mm2":1,
+        "mature_confirmations":500,
     });
     let req = json!({
         "method": "electrum",
@@ -607,10 +606,10 @@ fn test_qrc20_withdraw_impl_fee_details() {
 
     let expected: Qrc20FeeDetails = unwrap!(json::from_value(json!({
         "coin": "QRC20",
-        // (299 + total_gas_fee) from satoshi,
+        // (1000 + total_gas_fee) from satoshi,
         // where decimals = 8,
-        //       tx_hex.len() = 299
-        "miner_fee": "1.00000299",
+        //       1000 is fixed fee
+        "miner_fee": "1.00001",
         "gas_limit": 2_500_000,
         "gas_price": 40,
         // (gas_limit * gas_price) from satoshi in Qtum
