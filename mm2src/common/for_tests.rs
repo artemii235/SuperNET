@@ -375,8 +375,9 @@ pub fn wait_for_log (log: &LogState, timeout_sec: f64, pred: &dyn Fn (&str) -> b
     loop {
         log.with_tail (&mut |tail| {
             for en in tail {
-                if en.format (&mut buf) .is_ok() {
-                    if pred (&buf) {found = true; break}
+                if en.format(&mut buf).is_ok() && pred(&buf) {
+                    found = true;
+                    break;
                 }
             }
         });
@@ -533,7 +534,7 @@ pub async fn enable_native(mm: &MarketMakerIt, coin: &str, urls: Vec<&str>) -> J
 /// Appends IpAddr if it is pre-known
 pub fn new_mm2_temp_folder_path(ip: Option<IpAddr>) -> PathBuf {
     let now = super::now_ms();
-    let now = Local.timestamp ((now / 1000) as i64, (now % 1000) as u32 * 1000000);
+    let now = Local.timestamp ((now / 1000) as i64, (now % 1000) as u32 * 1_000_000);
     let folder = match ip {
         Some(ip) => format! ("mm2_{}_{}", now.format ("%Y-%m-%d_%H-%M-%S-%3f"), ip),
         None => format! ("mm2_{}", now.format ("%Y-%m-%d_%H-%M-%S-%3f")),

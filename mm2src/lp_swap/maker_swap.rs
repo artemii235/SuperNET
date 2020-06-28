@@ -160,7 +160,7 @@ impl MakerSwap {
             MakerSwapEvent::TakerPaymentWaitConfirmFailed(err) => self.errors.lock().push(err),
             MakerSwapEvent::TakerPaymentSpent(tx) => self.w().taker_payment_spend = Some(tx),
             MakerSwapEvent::TakerPaymentSpendFailed(err) => self.errors.lock().push(err),
-            MakerSwapEvent::MakerPaymentWaitRefundStarted { wait_until: _ } => (),
+            MakerSwapEvent::MakerPaymentWaitRefundStarted { .. } => (),
             MakerSwapEvent::MakerPaymentRefunded(tx) => self.w().maker_payment_refund = Some(tx),
             MakerSwapEvent::MakerPaymentRefundFailed(err) => self.errors.lock().push(err),
             MakerSwapEvent::Finished => self.finished_at.store(now_ms() / 1000, Ordering::Relaxed),
@@ -183,6 +183,7 @@ impl MakerSwap {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         ctx: MmArc,
         taker: bits256,
@@ -721,7 +722,7 @@ impl MakerSwap {
 
                 let swap = MakerSwap::new(
                     ctx,
-                    taker.into(),
+                    taker,
                     maker_coin,
                     taker_coin,
                     data.maker_amount.clone(),
@@ -746,9 +747,8 @@ impl MakerSwap {
 
         if self.r().taker_payment_spend.is_some() { return ERR!("Taker payment is spent, swap is not recoverable"); }
 
-        let secret_hash = self.r().data.secret_hash.clone().unwrap_or(
-            dhash160(&self.r().data.secret.0).into(),
-        );
+        let secret_hash = self.r().data.secret_hash.clone()
+            .unwrap_or_else(|| dhash160(&self.r().data.secret.0).into());
 
         let maker_payment = match &self.r().maker_payment {
             Some(tx) => tx.tx_hex.0.clone(),
@@ -837,6 +837,7 @@ pub enum MakerSwapCommand {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "type", content = "data")]
+#[allow(clippy::large_enum_variant)]
 pub enum MakerSwapEvent {
     Started(MakerSwapData),
     StartFailed(SwapError),
@@ -924,7 +925,7 @@ impl MakerSavedEvent {
             MakerSwapEvent::TakerPaymentWaitConfirmFailed(_) => Some(MakerSwapCommand::RefundMakerPayment),
             MakerSwapEvent::TakerPaymentSpent(_) => Some(MakerSwapCommand::Finish),
             MakerSwapEvent::TakerPaymentSpendFailed(_) => Some(MakerSwapCommand::RefundMakerPayment),
-            MakerSwapEvent::MakerPaymentWaitRefundStarted { wait_until: _ } => Some(MakerSwapCommand::RefundMakerPayment),
+            MakerSwapEvent::MakerPaymentWaitRefundStarted { .. } => Some(MakerSwapCommand::RefundMakerPayment),
             MakerSwapEvent::MakerPaymentRefunded(_) => Some(MakerSwapCommand::Finish),
             MakerSwapEvent::MakerPaymentRefundFailed(_) => Some(MakerSwapCommand::Finish),
             MakerSwapEvent::Finished => None,
@@ -993,12 +994,10 @@ impl MakerSavedSwap {
     }
 
     pub fn hide_secret(&mut self) {
-        match self.events.first_mut() {
-            Some(ref mut event) => match &mut event.event {
-                MakerSwapEvent::Started(ref mut data) => data.secret = H256Json::default(),
-                _ => (),
+        if let Some(ref mut event) = self.events.first_mut(){
+            if let MakerSwapEvent::Started(ref mut data) = event.event {
+                data.secret = H256Json::default();
             }
-            None => (),
         }
     }
 
@@ -1017,6 +1016,7 @@ impl MakerSavedSwap {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum RunMakerSwapInput {
     StartNew(MakerSwap),
     KickStart {
@@ -1152,7 +1152,7 @@ pub async fn check_balance_for_maker_swap(
     let my_balance = try_s!(my_coin.my_balance().compat().await).into();
     log!("check_balance_for_maker_swap my_balance " (my_balance));
     let total = if my_coin.ticker() == miner_fee.coin {
-        volume + miner_fee.amount.into()
+        volume + miner_fee.amount
     } else {
         let base_coin_balance = try_s!(my_coin.base_coin_balance().compat().await);
         if miner_fee.amount > base_coin_balance {

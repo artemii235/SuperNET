@@ -31,6 +31,8 @@ use crate::executor::Timer;
 /// Default interval to export and record metrics to log.
 const EXPORT_METRICS_INTERVAL: f64 = 5. * 60.;
 
+type StopListenerCallback = Box<dyn FnMut()->Result<(), String>>;
+
 /// MarketMaker state, shared between the various MarketMaker threads.
 ///
 /// Every MarketMaker has one and only one instance of `MmCtx`.
@@ -71,7 +73,7 @@ pub struct MmCtx {
     /// 0 if the handler ID is allocated yet.
     pub ffi_handle: Constructible<u32>,
     /// Callbacks to invoke from `fn stop`.
-    pub stop_listeners: Mutex<Vec<Box<dyn FnMut()->Result<(), String>>>>,
+    pub stop_listeners: Mutex<Vec<StopListenerCallback>>,
     /// The context belonging to the `portfolio` crate: `PortfolioContext`.
     pub portfolio_ctx: Mutex<Option<Arc<dyn Any + 'static + Send + Sync>>>,
     /// The context belonging to the `ordermatch` mod: `OrdermatchContext`.
@@ -249,13 +251,14 @@ impl MmCtx {
 
     /// This is our public ID, allowing us to be different from other peers.
     /// This should also be our public key which we'd use for message verification.
-    pub fn public_id (&self) -> Result<bits256, String> {
-        for pair in &self.secp256k1_key_pair {
-            let public = pair.public();  // Compressed public key is going to be 33 bytes.
-            // First byte is a prefix, https://davidederosa.com/basic-blockchain-programming/elliptic-curve-keys/.
-            return Ok (bits256 {bytes: *array_ref! (public, 1, 32)})
-        }
-        ERR! ("Public ID is not yet available")
+    pub fn public_id(&self) -> Result<bits256, String> {
+        self.secp256k1_key_pair
+            .ok_or(ERRL!("Public ID is not yet available"))
+            .map(|keypair| {
+                let public = keypair.public();  // Compressed public key is going to be 33 bytes.
+                // First byte is a prefix, https://davidederosa.com/basic-blockchain-programming/elliptic-curve-keys/.
+                bits256 { bytes: *array_ref!(public, 1, 32) }
+            })
     }
 
     pub fn gui (&self) -> Option<&str> {
@@ -282,7 +285,7 @@ unsafe impl Sync for MmArc {}
 impl Clone for MmArc {fn clone (&self) -> MmArc {MmArc (self.0.clone())}}
 impl Deref for MmArc {type Target = MmCtx; fn deref (&self) -> &MmCtx {&*self.0}}
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct MmWeak (Weak<MmCtx>);
 // Same as `MmArc`.
 unsafe impl Send for MmWeak {}
@@ -291,7 +294,7 @@ unsafe impl Sync for MmWeak {}
 impl MmWeak {
     /// Create a default MmWeak without allocating any memory.
     pub fn new() -> MmWeak {
-        MmWeak(Default::default())
+        MmWeak::default()
     }
 
     pub fn dropped (&self) -> bool {
@@ -337,7 +340,9 @@ impl MmArc {
     /// Unique context identifier, allowing us to more easily pass the context through the FFI boundaries.
     pub fn ffi_handle (&self) -> Result<u32, String> {
         let mut mm_ctx_ffi = try_s! (MM_CTX_FFI.lock());
-        for &have in &self.ffi_handle {return Ok (have)}
+        if let Some(have) = self.ffi_handle.as_option() {
+            return Ok(*have);
+        }
         let mut tries = 0;
         let mut rng = small_rng();
         loop {
@@ -397,8 +402,8 @@ impl MmArc {
     }
 
     /// Tries to obtain the MM context from the weak link.
-    pub fn from_weak (weak: &MmWeak) -> Option<MmArc> {
-        weak.0.upgrade().map (|arc| MmArc (arc))
+    pub fn from_weak(weak: &MmWeak) -> Option<MmArc> {
+        weak.0.upgrade().map(MmArc)
     }
 
     /// Init metrics with dashboard.
@@ -509,7 +514,7 @@ where C: FnOnce()->Result<T, String>, T: 'static + Send + Sync {
     }
     let arc = Arc::new (try_s! (constructor()));
     *ctx_field = Some (arc.clone());
-    return Ok (arc)
+    Ok (arc)
 }
 
 #[derive(Default)]

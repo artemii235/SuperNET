@@ -259,7 +259,7 @@ fn test_nonce_several_urls() {
     let payment = coin.send_to_address(coin.my_address, 200000000.into()).wait().unwrap();
 
     log!([payment]);
-    let new_nonce = get_addr_nonce(coin.my_address, &coin.web3_instances).wait().unwrap();
+    let new_nonce = get_addr_nonce(coin.my_address, coin.web3_instances.clone()).wait().unwrap();
     log!([new_nonce]);
 }
 

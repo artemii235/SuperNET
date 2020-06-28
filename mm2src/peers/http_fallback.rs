@@ -18,7 +18,6 @@ use serde_json::{self as json, Value as Json};
 use std::collections::btree_map::BTreeMap;
 use std::collections::hash_map::{Entry, HashMap, RawEntryMut};
 use std::io::{Cursor, Read, Write};
-use std::mem::MaybeUninit;
 use std::net::SocketAddr;
 use std::ptr::null_mut;
 use std::sync::{Arc, Mutex};
@@ -58,7 +57,7 @@ impl HttpFallbackContext {
 /// cf. https://github.com/facebook/zstd/commit/b633377d0e6e2857e2ad2ffaa57f3015b7bc0b8f?short_path=e180ef2#diff-e180ef2189a1472b04a07b61bee5b50b
 const COMPRESSION_LEVEL: i32 = 3;
 /// "A dictionary can be any arbitrary data segment (also called a prefix)"
-const DICT_PREFIX: &'static str = concat! (
+const DICT_PREFIX: &str = concat! (
     r#","val":{"clock":{"dots":{"1":1}},"entries":{""#,
     r#","deferred":{}"#
 );
@@ -125,7 +124,7 @@ fn fetch_maps_by_prefix_impl (ctx: MmWeak, req: Request<Vec<u8>>) -> HyRes {
     let hf_last_poll_id = try_fus! (cur.read_u64::<BigEndian>());
     let mut prefix = Vec::with_capacity (33);
     try_fus! (cur.read_to_end (&mut prefix));
-    if prefix.len() < 1 {return Box::new (future::err (ERRL! ("No prefix")))}
+    if prefix.is_empty() {return Box::new (future::err (ERRL! ("No prefix")))}
 //pintln! ("fetch_maps_by_prefix_impl] " [=hf_last_poll_id] ", prefix: " (binprint (&prefix, b'.')));
 
     let ctx = try_fus! (MmArc::from_weak (&ctx) .ok_or ("MM stopping"));
@@ -295,7 +294,7 @@ pub fn new_http_fallback (ctx: MmWeak, addr: SocketAddr)
         ServiceFabric {ctx: ctxʹ.clone()}});
 
     let shutdown_detector = async move {while !ctx.dropped() {Timer::sleep (0.5) .await}};
-    let shutdown_detector = Compat::new (Box::pin (shutdown_detector.map (|r|->Result<_,()>{Ok(r)})));
+    let shutdown_detector = Compat::new (Box::pin (shutdown_detector.map (|_|->Result<_,()>{Ok(())})));
 
     let server = try_s! (Server::try_bind (&addr))
         .http1_half_close (false)  // https://github.com/hyperium/hyper/issues/1764
@@ -417,7 +416,7 @@ pub fn hf_transmit (pctx: &super::PeersContext, hf_addr: &Option<SocketAddr>, ou
             continue
         };
 
-        let deliver_to_seed = cart.entry (seed) .or_insert (HashMap::new());
+        let deliver_to_seed = cart.entry (seed) .or_insert_with (HashMap::new);
         for (payload, meta) in package.payloads.iter_mut() {
             let fallback = match package.fallback {Some (sec) => sec, None => continue};
             if now - package.scheduled_at < fallback.get() as f64 {continue}
@@ -514,13 +513,13 @@ pub fn hf_transmit (_pctx: &super::PeersContext, _hf_addr: &Option<SocketAddr>, 
 /// Invoked when a delayed retrieval is detected by the peers loop.
 /// 
 /// * `salt` - The subject salt (checksum of the `subject` passed to `fn recv`).
-pub fn hf_delayed_get (pctx: &super::PeersContext, salt: &Vec<u8>) {
+pub fn hf_delayed_get (pctx: &super::PeersContext, salt: &[u8]) {
     let mut delayed_salts = match pctx.hf_delayed_salts.lock() {
         Ok (set) => set,
         Err (err) => {log! ("Can't lock `delayed_salts`: " (err)); return}
     };
     if let RawEntryMut::Vacant (ve) = delayed_salts.raw_entry_mut().from_key (salt) {
-        ve.insert (salt.clone(), ());
+        ve.insert (salt.to_vec(), ());
     }
 }
 
@@ -538,7 +537,7 @@ fn process_pulled_maps (ctx: &MmArc, status: StatusCode, _headers: HeaderMap, bo
 
     let compressed = &body[9..];
     // NB: We know the payload will not be bigger than this.
-    let mut buf: [u8; 65536] = unsafe {MaybeUninit::uninit().assume_init()};
+    let mut buf = [0u8; 65536];
     let dctx = unsafe {ZSTD_createDCtx()};  // TODO: Reuse a locked one.
     let len = unsafe {ZSTD_decompress_usingDDict (
         dctx,
@@ -549,7 +548,7 @@ fn process_pulled_maps (ctx: &MmArc, status: StatusCode, _headers: HeaderMap, bo
     unsafe {ZSTD_freeDCtx (dctx)};
     if unsafe {ZSTD_isError (len)} != 0 {return ERR! ("Can't decompress")}
 
-    let our_public_key = try_s! (ctx.public_id()) .clone();
+    let our_public_key = try_s!(ctx.public_id());
     let mut chunks = BTreeMap::new();
 
     let mut tail = &buf[0..len];
@@ -654,7 +653,7 @@ pub fn hf_poll (ctx: &MmArc, hf_addr: &Option<SocketAddr>) -> Result<(), String>
 /// Invoked when the client terminates a retrieval attempt.
 /// 
 /// * `salt` - The subject salt (checksum of the `subject` passed to `fn recv`).
-pub fn hf_drop_get (pctx: &super::PeersContext, salt: &Vec<u8>) {
+pub fn hf_drop_get (pctx: &super::PeersContext, salt: &[u8]) {
     let mut delayed_salts = match pctx.hf_delayed_salts.lock() {
         Ok (set) => set,
         Err (err) => {log! ("Can't lock `delayed_salts`: " (err)); return}

@@ -91,8 +91,8 @@ impl Deref for UtxoRpcClientEnum {
     type Target = dyn UtxoRpcClientOps;
     fn deref(&self) -> &dyn UtxoRpcClientOps {
         match self {
-            &UtxoRpcClientEnum::Native(ref c) => c,
-            &UtxoRpcClientEnum::Electrum(ref c) => c,
+            UtxoRpcClientEnum::Native(ref c) => c,
+            UtxoRpcClientEnum::Electrum(ref c) => c,
         }
     }
 }
@@ -882,7 +882,7 @@ impl ElectrumConnection {
 impl Drop for ElectrumConnection {
     fn drop(&mut self) {
         if let Some (shutdown_tx) = self.shutdown_tx.take() {
-            if let Err(_) = shutdown_tx.send(()) {
+            if shutdown_tx.send(()).is_err() {
                 log! ("electrum_connection_drop] Warning, shutdown_tx already closed");
 }   }   }   }
 
@@ -1008,7 +1008,7 @@ impl ElectrumClientImpl {
 pub struct ElectrumClient(pub Arc<ElectrumClientImpl>);
 impl Deref for ElectrumClient {type Target = ElectrumClientImpl; fn deref (&self) -> &ElectrumClientImpl {&*self.0}}
 
-const BLOCKCHAIN_HEADERS_SUB_ID: &'static str = "blockchain.headers.subscribe";
+const BLOCKCHAIN_HEADERS_SUB_ID: &str = "blockchain.headers.subscribe";
 
 impl UtxoJsonRpcClientInfo for ElectrumClient {
     fn coin_name(&self) -> &str {
@@ -1270,10 +1270,10 @@ fn rx_to_stream(rx: mpsc::Receiver<Vec<u8>>) -> impl Stream<Item = Vec<u8>, Erro
 
 async fn electrum_process_chunk(chunk: BytesMut, arc: Arc<AsyncMutex<HashMap<String, async_oneshot::Sender<JsonRpcResponse>>>>) {
     // we should split the received chunk because we can get several responses in 1 chunk.
-    let split = chunk.split(|item| *item == '\n' as u8);
+    let split = chunk.split(|item| *item == b'\n');
     for chunk in split {
         // split returns empty slice if it ends with separator which is our case
-        if chunk.len() > 0 {
+        if !chunk.is_empty() {
             let raw_json: Json = match json::from_slice(chunk) {
                 Ok(json) => json,
                 Err(e) => {
@@ -1294,7 +1294,7 @@ async fn electrum_process_chunk(chunk: BytesMut, arc: Arc<AsyncMutex<HashMap<Str
                 let mut resp = arc.lock().await;
                 // the corresponding sender may not exist, receiver may be dropped
                 // these situations are not considered as errors so we just silently skip them
-                resp.remove(&response.id.to_string()).map(|tx| tx.send(response).unwrap_or(()));
+                if let Some(tx) = resp.remove(&response.id.to_string()) { tx.send(response).unwrap_or(()) }
                 drop(resp);
             } else {
                 let request: JsonRpcRequest = match json::from_value(raw_json) {
@@ -1321,7 +1321,7 @@ async fn electrum_process_chunk(chunk: BytesMut, arc: Arc<AsyncMutex<HashMap<Str
                 let mut resp = arc.lock().await;
                 // the corresponding sender may not exist, receiver may be dropped
                 // these situations are not considered as errors so we just silently skip them
-                resp.remove(&response.id.to_string()).map(|tx| tx.send(response).unwrap_or(()));
+                if let Some(tx) = resp.remove(&response.id.to_string()) { tx.send(response).unwrap_or(()) }
                 drop(resp);
             }
         }
@@ -1428,7 +1428,7 @@ async fn connect_loop(
         let socket_addr = try_loop!(addr_to_socket_addr(&addr), addr, delay);
 
         let connect_f = match config.clone() {
-            ElectrumConfig::TCP => Either::A(TcpStream::connect(&socket_addr).map(|stream| ElectrumStream::Tcp(stream))),
+            ElectrumConfig::TCP => Either::A(TcpStream::connect(&socket_addr).map(ElectrumStream::Tcp)),
             ElectrumConfig::SSL { dns_name, skip_validation } => {
                 let mut ssl_config = ClientConfig::new();
                 ssl_config.root_store.add_server_trust_anchors(&TLS_SERVER_ROOTS);
@@ -1442,7 +1442,7 @@ async fn connect_loop(
                 Either::B(TcpStream::connect(&socket_addr).and_then(move |stream| {
                     // Can use `unwrap` cause `dns_name` is pre-checked.
                     let dns = unwrap!(DNSNameRef::try_from_ascii_str(&dns_name).map_err(|e| fomat!([e])));
-                    tls_connector.connect(dns, stream).map(|stream| ElectrumStream::Tls(stream))
+                    tls_connector.connect(dns, stream).map(ElectrumStream::Tls)
                 }))
             }
         };
@@ -1557,7 +1557,7 @@ impl Decoder for Bytes {
 
     fn decode(&mut self, buf: &mut BytesMut) -> io::Result<Option<BytesMut>> {
         let len = buf.len();
-        if len > 0 && buf[len - 1] == '\n' as u8 {
+        if len > 0 && buf[len - 1] == b'\n' {
             Ok(Some(buf.split_to(len)))
         } else {
             Ok(None)
@@ -1596,7 +1596,7 @@ fn electrum_request(
     let send_fut = send_fut
         .boxed()
         .compat()
-        .map_err(|e| StringError(e))
+        .map_err(StringError)
         .timeout(Duration::from_secs(ELECTRUM_TIMEOUT));
 
     Box::new(send_fut.map_err(|e| ERRL!("{}", e.0)))

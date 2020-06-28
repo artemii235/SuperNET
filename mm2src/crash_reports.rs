@@ -70,8 +70,8 @@ fn init_signal_handling() {
     let mut sa: libc::sigaction = unsafe {zeroed()};
     sa.sa_sigaction = signal_handler as *const extern fn (c_int) as usize;
     for &signal in [libc::SIGILL, libc::SIGFPE, libc::SIGSEGV, libc::SIGBUS, libc::SIGSYS].iter() {
-        let mut prev: libc::sigaction = unsafe {MaybeUninit::uninit().assume_init()};
-        let rc = unsafe {libc::sigaction (signal, &sa, &mut prev)};
+        let mut prev = MaybeUninit::<libc::sigaction>::uninit();
+        let rc = unsafe {libc::sigaction (signal, &sa, prev.as_mut_ptr())};
         if rc != 0 {log! ("Error " (rc) " invoking sigaction on " (signal))}
 }   }
 

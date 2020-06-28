@@ -136,10 +136,10 @@ pub use num_bigint::BigInt;
 #[allow(dead_code,non_upper_case_globals,non_camel_case_types,non_snake_case)]
 pub mod lp {include! ("c_headers/LP_include.rs");}
 
-pub const MM_DATETIME: &'static str = env! ("MM_DATETIME");
-pub const MM_VERSION: &'static str = env! ("MM_VERSION");
+pub const MM_DATETIME: &str = env! ("MM_DATETIME");
+pub const MM_VERSION: &str = env! ("MM_VERSION");
 
-pub const SATOSHIS: u64 = 100000000;
+pub const SATOSHIS: u64 = 100_000_000;
 
 /// Converts u64 satoshis to f64
 pub fn sat_to_f(sat: u64) -> f64 { sat as f64 / SATOSHIS as f64 }
@@ -227,14 +227,14 @@ pub fn jbits256 (json: &Json) -> Result<bits256, String> {
     Ok (unsafe {zeroed()})
 }
 
-pub const SATOSHIDEN: i64 = 100000000;
+pub const SATOSHIDEN: i64 = 100_000_000;
 pub fn dstr (x: i64, decimals: u8) -> f64 {x as f64 / 10.0_f64.powf(decimals as f64)}
 
 /// Apparently helps to workaround `double` fluctuations occuring on *certain* systems.
 /// cf. https://stackoverflow.com/questions/19804472/double-randomly-adds-0-000000000000001.
 /// Not sure it's needed in Rust, the floating point operations should be determenistic here,
 /// but better safe than sorry.
-pub const SMALLVAL: f64 = 0.000000000000001;  // 1e-15f64
+pub const SMALLVAL: f64 = 0.000_000_000_000_001;  // 1e-15f64
 
 /// Helps sharing a string slice with C code by allocating a zero-terminated string with the C standard library allocator.
 /// 
@@ -251,7 +251,7 @@ pub fn str_to_malloc (s: &str) -> *mut c_char {
 pub fn slice_to_malloc (bytes: &[u8]) -> *mut u8 {unsafe {
     let buf = malloc (bytes.len() + 1) as *mut u8;
     copy (bytes.as_ptr(), buf, bytes.len());
-    *buf.offset (bytes.len() as isize) = 0;
+    *buf.add (bytes.len()) = 0;
     buf
 }}
 
@@ -260,7 +260,8 @@ pub fn slice_to_malloc (bytes: &[u8]) -> *mut u8 {unsafe {
 /// It's responsibility of the caller to free the memory when required
 /// Returns error in case of null pointer input
 #[cfg(feature = "native")]
-pub fn c_char_to_string(ptr: *mut c_char) -> Result<String, String> { unsafe {
+#[allow(clippy::missing_safety_doc)]
+pub unsafe fn c_char_to_string(ptr: *mut c_char) -> Result<String, String> {
     if !ptr.is_null() {
         let res_str = try_s!(CStr::from_ptr(ptr).to_str());
         let res_str = String::from(res_str);
@@ -268,7 +269,7 @@ pub fn c_char_to_string(ptr: *mut c_char) -> Result<String, String> { unsafe {
     } else {
         ERR!("Tried to convert null pointer to Rust String!")
     }
-}}
+}
 
 /// Frees C raw pointer
 /// Does nothing in case of null pointer input
@@ -449,7 +450,7 @@ pub fn double_panic_crash() {
             panic! ("panic in drop")
     }   }
     let panicker = Panicker;
-    if 1 == 1 {panic! ("first panic")}
+    if 1 < 2 {panic! ("first panic")}
     drop (panicker)  // Delays the drop.
 }
 
@@ -687,7 +688,7 @@ pub mod wio {
     impl<R> Timeout<R> {
         pub fn new (fut: Box<dyn Future<Item=R, Error=String>>, timeout: Duration) -> Timeout<R> {
             Timeout {
-                fut: fut,
+                fut,
                 started: now_float(),
                 timeout: duration_to_float (timeout),
                 monitor: None
@@ -707,7 +708,7 @@ pub mod wio {
         pub static ref HYPER: Client<HttpsConnector<HttpConnector>, LiftBody<Vec<u8>>> = {
             let dns_threads = 2;
             let https = HttpsConnector::new (dns_threads);
-            let client = Client::builder()
+            Client::builder()
                 .executor (unwrap! (CORE.lock()) .executor())
                 // Hyper had a lot of Keep-Alive bugs over the years and I suspect
                 // that with the shared client we might be getting errno 10054
@@ -720,8 +721,7 @@ pub mod wio {
                 // Performance of Keep-Alive in the Hyper client is questionable as well,
                 // should measure it on a case-by-case basis when we need it.
                 .keep_alive (false)
-                .build (https);
-            client
+                .build (https)
         };
     }
 
@@ -811,13 +811,15 @@ pub mod executor {
         use std::collections::BTreeMap;
         use std::sync::Once;
 
+        type SheduleChannelItem = (f64, Pin<Box<dyn Future03<Output = ()> + Send + 'static>>);
         static START: Once = Once::new();
-        static SCHEDULE: Constructible<channel::Sender<(f64, Pin<Box<dyn Future03<Output = ()> + Send + 'static>>)>> = Constructible::new();
+        static SCHEDULE: Constructible<channel::Sender<SheduleChannelItem>> = Constructible::new();
         START.call_once (|| {
             unwrap! (thread::Builder::new().name ("spawn_after".into()) .spawn (move || {
                 let (tx, rx) = channel::bounded (0);
                 unwrap! (SCHEDULE.pin (tx), "spawn_after] Can't pin the channel");
-                let mut tasks: BTreeMap<Duration, Vec<Pin<Box<dyn Future03<Output = ()> + Send + 'static>>>> = BTreeMap::new();
+                type Task = Pin<Box<dyn Future03<Output = ()> + Send + 'static>>;
+                let mut tasks: BTreeMap<Duration, Vec<Task>> = BTreeMap::new();
                 let mut ready = Vec::with_capacity (4);
                 loop {
                     let now = Duration::from_secs_f64 (now_float());
@@ -836,7 +838,7 @@ pub mod executor {
                         Err (channel::RecvTimeoutError::Disconnected) => break,
                         Err (channel::RecvTimeoutError::Timeout) => continue
                     };
-                    tasks.entry (Duration::from_secs_f64 (utc)) .or_insert (Vec::new()) .push (f)
+                    tasks.entry (Duration::from_secs_f64 (utc)) .or_insert_with (Vec::new) .push (f)
                 }
             }), "Can't spawn a spawn_after thread");
         });
@@ -1125,14 +1127,15 @@ pub struct QueuedCommand {
 /// Register an RPC command that came internally or from the peer-to-peer bus.
 #[no_mangle]
 #[cfg(feature = "native")]
-pub extern "C" fn lp_queue_command_for_c (retstrp: *mut *mut c_char, buf: *mut c_char, response_sock: i32,
-                                          stats_json_only: i32, queue_id: u32) -> () {
-    if retstrp != null_mut() {
-        unsafe { *retstrp = null_mut() }
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn lp_queue_command_for_c (retstrp: *mut *mut c_char, buf: *mut c_char, response_sock: i32,
+                                          stats_json_only: i32, queue_id: u32) {
+    if !retstrp.is_null() {
+        *retstrp = null_mut()
     }
 
-    if buf == null_mut() {panic! ("!buf")}
-    let msg = String::from (unwrap! (unsafe {CStr::from_ptr (buf)} .to_str()));
+    if buf.is_null() {panic! ("!buf")}
+    let msg = String::from (unwrap! (CStr::from_ptr (buf) .to_str()));
     let _cmd = QueuedCommand {
         msg,
         queue_id,
@@ -1671,10 +1674,7 @@ pub fn new_uuid() -> Uuid {
 
 pub fn first_char_to_upper(input: &str) -> String {
     let mut v: Vec<char> = input.chars().collect();
-    match v.first_mut() {
-        Some(c) => c.make_ascii_uppercase(),
-        None => (),
-    }
+    if let Some(c) = v.first_mut() { c.make_ascii_uppercase() }
     v.into_iter().collect()
 }
 
@@ -1707,7 +1707,7 @@ pub fn json_dir_entries(path: &dyn AsRef<Path>) -> Result<Vec<DirEntry>, String>
 /// Calculates the median of the set represented as slice
 pub fn median<T: Add<Output = T> + Div<Output = T> + Copy + From<u8> + Ord>(input: &mut [T]) -> Option<T> {
     // median is undefined on empty sets
-    if input.len() == 0 { return None }
+    if input.is_empty() { return None; }
     input.sort();
     let median_index = input.len() / 2;
     if input.len() % 2 == 0 {

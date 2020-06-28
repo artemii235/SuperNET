@@ -47,7 +47,8 @@ enum MainErr {
 /// Starts the MM2 in a detached singleton thread.
 #[no_mangle]
 #[cfg(feature = "native")]
-pub extern fn mm2_main (
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern fn mm2_main (
   conf: *const c_char, log_cb: extern fn (line: *const c_char)) -> i8 {
     macro_rules! log {
         ($($args: tt)+) => {{
@@ -64,7 +65,7 @@ pub extern fn mm2_main (
     CTX.store (0, Ordering::Relaxed);  // Remove the old context ID during restarts.
 
     if conf.is_null() {eret! (MainErr::ConfIsNull)}
-    let conf = unsafe {CStr::from_ptr (conf)};
+    let conf = CStr::from_ptr (conf);
     let conf = match conf.to_str() {Ok (s) => s, Err (e) => eret! (MainErr::ConfNotUtf8, (e))};
     let conf = conf.to_owned();
 
@@ -117,7 +118,7 @@ pub extern fn mm2_test (torch: i32, log_cb: extern fn (line: *const c_char)) -> 
     }
 
     static RUNNING: AtomicBool = AtomicBool::new (false);
-    if RUNNING.compare_and_swap (false, true, Ordering::Relaxed) != false {
+    if RUNNING.compare_and_swap (false, true, Ordering::Relaxed) {
         log! ("mm2_test] Running already!");
         return -1
     }
@@ -180,8 +181,8 @@ pub extern fn mm2_test (torch: i32, log_cb: extern fn (line: *const c_char)) -> 
     // #402: Restart the MM.
     if let Some ((prev_ctx_id, conf)) = prev {
         log! ("mm2_test] Restarting MM…");
-        let confᶜ = unwrap! (CString::new (&conf[..]));
-        let rc = mm2_main (confᶜ.as_ptr(), log_cb);
+        let conf = unwrap! (CString::new (&conf[..]));
+        let rc = unsafe { mm2_main(conf.as_ptr(), log_cb) };
         let rc = unwrap! (MainErr::from_i8 (rc));
         if rc != MainErr::Ok {log! ("!mm2_main: " [rc]); return -1}
 

@@ -35,7 +35,7 @@ use futures::compat::Future01CompatExt;
 use futures::future::{Either, FutureExt, join_all, select, TryFutureExt};
 use gstuff::slurp;
 use http::StatusCode;
-// #[cfg(test)]
+#[cfg(test)]
 use mocktopus::macros::*;
 use rand::seq::SliceRandom;
 use rpc::v1::types::{Bytes as BytesJson};
@@ -69,9 +69,9 @@ mod eth_tests;
 /// Dev chain (195.201.0.6:8565) contract address: 0xa09ad3cd7e96586ebd05a2607ee56b56fb2db8fd
 /// Ropsten: https://ropsten.etherscan.io/address/0x7bc1bbdd6a0a722fc9bffc49c921b685ecb84b94
 /// ETH mainnet: https://etherscan.io/address/0x8500AFc0bc5214728082163326C2FF0C73f4a871
-const SWAP_CONTRACT_ABI: &'static str = r#"[{"constant":false,"inputs":[{"name":"_id","type":"bytes32"},{"name":"_amount","type":"uint256"},{"name":"_secret","type":"bytes32"},{"name":"_tokenAddress","type":"address"},{"name":"_sender","type":"address"}],"name":"receiverSpend","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[{"name":"","type":"bytes32"}],"name":"payments","outputs":[{"name":"paymentHash","type":"bytes20"},{"name":"lockTime","type":"uint64"},{"name":"state","type":"uint8"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"_id","type":"bytes32"},{"name":"_receiver","type":"address"},{"name":"_secretHash","type":"bytes20"},{"name":"_lockTime","type":"uint64"}],"name":"ethPayment","outputs":[],"payable":true,"stateMutability":"payable","type":"function"},{"constant":false,"inputs":[{"name":"_id","type":"bytes32"},{"name":"_amount","type":"uint256"},{"name":"_paymentHash","type":"bytes20"},{"name":"_tokenAddress","type":"address"},{"name":"_receiver","type":"address"}],"name":"senderRefund","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"_id","type":"bytes32"},{"name":"_amount","type":"uint256"},{"name":"_tokenAddress","type":"address"},{"name":"_receiver","type":"address"},{"name":"_secretHash","type":"bytes20"},{"name":"_lockTime","type":"uint64"}],"name":"erc20Payment","outputs":[],"payable":true,"stateMutability":"payable","type":"function"},{"inputs":[],"payable":false,"stateMutability":"nonpayable","type":"constructor"},{"anonymous":false,"inputs":[{"indexed":false,"name":"id","type":"bytes32"}],"name":"PaymentSent","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"name":"id","type":"bytes32"},{"indexed":false,"name":"secret","type":"bytes32"}],"name":"ReceiverSpent","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"name":"id","type":"bytes32"}],"name":"SenderRefunded","type":"event"}]"#;
+const SWAP_CONTRACT_ABI: &str = r#"[{"constant":false,"inputs":[{"name":"_id","type":"bytes32"},{"name":"_amount","type":"uint256"},{"name":"_secret","type":"bytes32"},{"name":"_tokenAddress","type":"address"},{"name":"_sender","type":"address"}],"name":"receiverSpend","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[{"name":"","type":"bytes32"}],"name":"payments","outputs":[{"name":"paymentHash","type":"bytes20"},{"name":"lockTime","type":"uint64"},{"name":"state","type":"uint8"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"_id","type":"bytes32"},{"name":"_receiver","type":"address"},{"name":"_secretHash","type":"bytes20"},{"name":"_lockTime","type":"uint64"}],"name":"ethPayment","outputs":[],"payable":true,"stateMutability":"payable","type":"function"},{"constant":false,"inputs":[{"name":"_id","type":"bytes32"},{"name":"_amount","type":"uint256"},{"name":"_paymentHash","type":"bytes20"},{"name":"_tokenAddress","type":"address"},{"name":"_receiver","type":"address"}],"name":"senderRefund","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"_id","type":"bytes32"},{"name":"_amount","type":"uint256"},{"name":"_tokenAddress","type":"address"},{"name":"_receiver","type":"address"},{"name":"_secretHash","type":"bytes20"},{"name":"_lockTime","type":"uint64"}],"name":"erc20Payment","outputs":[],"payable":true,"stateMutability":"payable","type":"function"},{"inputs":[],"payable":false,"stateMutability":"nonpayable","type":"constructor"},{"anonymous":false,"inputs":[{"indexed":false,"name":"id","type":"bytes32"}],"name":"PaymentSent","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"name":"id","type":"bytes32"},{"indexed":false,"name":"secret","type":"bytes32"}],"name":"ReceiverSpent","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"name":"id","type":"bytes32"}],"name":"SenderRefunded","type":"event"}]"#;
 /// https://github.com/ethereum/EIPs/blob/master/EIPS/eip-20.md
-const ERC20_ABI: &'static str = r#"[{"constant":true,"inputs":[],"name":"name","outputs":[{"name":"","type":"string"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"_spender","type":"address"},{"name":"_value","type":"uint256"}],"name":"approve","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[],"name":"totalSupply","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"_from","type":"address"},{"name":"_to","type":"address"},{"name":"_value","type":"uint256"}],"name":"transferFrom","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[],"name":"decimals","outputs":[{"name":"","type":"uint8"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"_spender","type":"address"},{"name":"_subtractedValue","type":"uint256"}],"name":"decreaseApproval","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[{"name":"_owner","type":"address"}],"name":"balanceOf","outputs":[{"name":"balance","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":true,"inputs":[],"name":"symbol","outputs":[{"name":"","type":"string"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"_to","type":"address"},{"name":"_value","type":"uint256"}],"name":"transfer","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"_spender","type":"address"},{"name":"_addedValue","type":"uint256"}],"name":"increaseApproval","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[{"name":"_owner","type":"address"},{"name":"_spender","type":"address"}],"name":"allowance","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"inputs":[],"payable":false,"stateMutability":"nonpayable","type":"constructor"},{"anonymous":false,"inputs":[{"indexed":true,"name":"owner","type":"address"},{"indexed":true,"name":"spender","type":"address"},{"indexed":false,"name":"value","type":"uint256"}],"name":"Approval","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"name":"from","type":"address"},{"indexed":true,"name":"to","type":"address"},{"indexed":false,"name":"value","type":"uint256"}],"name":"Transfer","type":"event"}]"#;
+const ERC20_ABI: &str = r#"[{"constant":true,"inputs":[],"name":"name","outputs":[{"name":"","type":"string"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"_spender","type":"address"},{"name":"_value","type":"uint256"}],"name":"approve","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[],"name":"totalSupply","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"_from","type":"address"},{"name":"_to","type":"address"},{"name":"_value","type":"uint256"}],"name":"transferFrom","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[],"name":"decimals","outputs":[{"name":"","type":"uint8"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"_spender","type":"address"},{"name":"_subtractedValue","type":"uint256"}],"name":"decreaseApproval","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[{"name":"_owner","type":"address"}],"name":"balanceOf","outputs":[{"name":"balance","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":true,"inputs":[],"name":"symbol","outputs":[{"name":"","type":"string"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"_to","type":"address"},{"name":"_value","type":"uint256"}],"name":"transfer","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"_spender","type":"address"},{"name":"_addedValue","type":"uint256"}],"name":"increaseApproval","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[{"name":"_owner","type":"address"},{"name":"_spender","type":"address"}],"name":"allowance","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"inputs":[],"payable":false,"stateMutability":"nonpayable","type":"constructor"},{"anonymous":false,"inputs":[{"indexed":true,"name":"owner","type":"address"},{"indexed":true,"name":"spender","type":"address"},{"indexed":false,"name":"value","type":"uint256"}],"name":"Approval","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"name":"from","type":"address"},{"indexed":true,"name":"to","type":"address"},{"indexed":false,"name":"value","type":"uint256"}],"name":"Transfer","type":"event"}]"#;
 
 /// Payment states from etomic swap smart contract: https://github.com/artemii235/etomic-swap/blob/master/contracts/EtomicSwap.sol#L5
 const PAYMENT_STATE_UNINITIALIZED: u8 = 0;
@@ -198,7 +198,7 @@ impl EthCoinImpl {
     fn load_saved_traces(&self, ctx: &MmArc) -> Option<SavedTraces> {
         let content = slurp(&self.eth_traces_path(ctx));
         if content.is_empty() {
-            return None
+            None
         } else {
             match json::from_slice(&content) {
                 Ok(t) => Some(t),
@@ -231,7 +231,7 @@ impl EthCoinImpl {
     fn load_saved_erc20_events(&self, ctx: &MmArc) -> Option<SavedErc20Events> {
         let content = slurp(&self.erc20_events_path(ctx));
         if content.is_empty() {
-            return None
+            None
         } else {
             match json::from_slice(&content) {
                 Ok(t) => Some(t),
@@ -255,7 +255,7 @@ impl EthCoinImpl {
     /// Get gas price
     fn get_gas_price(&self) -> impl Future<Item=U256, Error=String> {
         if let Some(url) = &self.gas_station_url {
-            Either01::A(GasStationData::get_gas_price(&url).map(|price| add_ten_pct_one_gwei(price)))
+            Either01::A(GasStationData::get_gas_price(&url).map(add_ten_pct_one_gwei))
         } else {
             Either01::B(self.web3.eth().gas_price().map_err(|e| ERRL!("{}", e)))
         }
@@ -398,7 +398,7 @@ async fn withdraw_impl(ctx: MmArc, coin: EthCoin, req: WithdrawRequest) -> Resul
         if ctx.is_stopping() {return ERR!("MM is stopping, aborting withdraw_impl in NONCE_LOCK")}
         Ok(0.5)
     }).await);
-    let nonce_fut = get_addr_nonce(coin.my_address, &coin.web3_instances).compat();
+    let nonce_fut = get_addr_nonce(coin.my_address, coin.web3_instances.clone()).compat();
     let nonce = match select(nonce_fut, Timer::sleep(30.)).await {
         Either::Left((nonce_res, _)) => try_s!(nonce_res),
         Either::Right(_) => return ERR!("Get address nonce timed out"),
@@ -409,10 +409,11 @@ async fn withdraw_impl(ctx: MmArc, coin: EthCoin, req: WithdrawRequest) -> Resul
     let bytes = rlp::encode(&signed);
     let amount_decimal = try_s!(u256_to_big_decimal(wei_amount, coin.decimals));
     let mut spent_by_me = amount_decimal.clone();
-    let mut received_by_me = 0.into();
-    if to_addr == coin.my_address {
-        received_by_me = amount_decimal.clone();
-    }
+    let received_by_me = if to_addr == coin.my_address {
+        amount_decimal.clone()
+    } else {
+        0.into()
+    };
     let fee_details = try_s!(EthTxFeeDetails::new(gas, gas_price, "ETH"));
     if coin.coin_type == EthCoinType::Eth {
         spent_by_me += &fee_details.total_fee;
@@ -885,7 +886,7 @@ async fn sign_and_send_transaction_impl(
         Ok(0.5)
     }).await;
     status.status(tags!(), "get_addr_nonce…");
-    let nonce = try_s!(get_addr_nonce(coin.my_address, &coin.web3_instances).compat().await);
+    let nonce = try_s!(get_addr_nonce(coin.my_address, coin.web3_instances.clone()).compat().await);
     status.status(tags!(), "get_gas_price…");
     let gas_price = try_s!(coin.get_gas_price().compat().await);
     let tx = UnSignedEthTx {
@@ -906,7 +907,7 @@ async fn sign_and_send_transaction_impl(
         // Parity has reliable "nextNonce" method that always returns correct nonce for address
         // But we can't expect that all nodes will always be Parity.
         // Some of ETH forks use Geth only so they don't have Parity nodes at all.
-        let new_nonce = match get_addr_nonce(coin.my_address, &coin.web3_instances).compat().await {
+        let new_nonce = match get_addr_nonce(coin.my_address, coin.web3_instances.clone()).compat().await {
             Ok(n) => n,
             Err(e) => {
                 log!("Error " [e] " getting " [coin.ticker()] " " [coin.my_address] " nonce");
@@ -944,7 +945,7 @@ impl EthCoin {
                     Token::Address(address),
                     Token::Uint(value)
                 ]));
-                self.sign_and_send_transaction(0.into(), Action::Call(token_addr), data, U256::from(210000))
+                self.sign_and_send_transaction(0.into(), Action::Call(token_addr), data, U256::from(210_000))
             }
         }
     }
@@ -966,7 +967,7 @@ impl EthCoin {
                     Token::FixedBytes(secret_hash.to_vec()),
                     Token::Uint(U256::from(time_lock))
                 ]));
-                self.sign_and_send_transaction(value, Action::Call(self.swap_contract_address), data, U256::from(150000))
+                self.sign_and_send_transaction(value, Action::Call(self.swap_contract_address), data, U256::from(150_000))
             },
             EthCoinType::Erc20(token_addr) => {
                 let allowance_fut = self.allowance(self.swap_contract_address);
@@ -974,7 +975,7 @@ impl EthCoin {
                 let function = try_fus!(SWAP_CONTRACT.function("erc20Payment"));
                 let data = try_fus!(function.encode_input(&[
                     Token::FixedBytes(id),
-                    Token::Uint(U256::from(value)),
+                    Token::Uint(value),
                     Token::Address(token_addr),
                     Token::Address(receiver_addr),
                     Token::FixedBytes(secret_hash.to_vec()),
@@ -987,11 +988,11 @@ impl EthCoin {
                         let balance_f = arc.my_balance();
                         Box::new(balance_f.and_then(move |balance| {
                             arc.approve(arc.swap_contract_address, balance).and_then(move |_approved| {
-                                arc.sign_and_send_transaction(0.into(), Action::Call(arc.swap_contract_address), data, U256::from(150000))
+                                arc.sign_and_send_transaction(0.into(), Action::Call(arc.swap_contract_address), data, U256::from(150_000))
                             })
                         }))
                     } else {
-                        Box::new(arc.sign_and_send_transaction(0.into(), Action::Call(arc.swap_contract_address), data, U256::from(150000)))
+                        Box::new(arc.sign_and_send_transaction(0.into(), Action::Call(arc.swap_contract_address), data, U256::from(150_000)))
                     }
                 }))
             }
@@ -1027,7 +1028,7 @@ impl EthCoin {
                         Token::Address(payment.sender()),
                     ]));
 
-                    clone.sign_and_send_transaction(0.into(), Action::Call(clone.swap_contract_address), data, U256::from(150000))
+                    clone.sign_and_send_transaction(0.into(), Action::Call(clone.swap_contract_address), data, U256::from(150_000))
                 }))
             },
             EthCoinType::Erc20(token_addr) => {
@@ -1047,7 +1048,7 @@ impl EthCoin {
                         Token::Address(payment.sender()),
                     ]));
 
-                    clone.sign_and_send_transaction(0.into(), Action::Call(clone.swap_contract_address), data, U256::from(150000))
+                    clone.sign_and_send_transaction(0.into(), Action::Call(clone.swap_contract_address), data, U256::from(150_000))
                 }))
             }
         }
@@ -1080,7 +1081,7 @@ impl EthCoin {
                         decoded[1].clone(),
                     ]));
 
-                    clone.sign_and_send_transaction(0.into(), Action::Call(clone.swap_contract_address), data, U256::from(150000))
+                    clone.sign_and_send_transaction(0.into(), Action::Call(clone.swap_contract_address), data, U256::from(150_000))
                 }))
             },
             EthCoinType::Erc20(token_addr) => {
@@ -1100,7 +1101,7 @@ impl EthCoin {
                         decoded[3].clone(),
                     ]));
 
-                    clone.sign_and_send_transaction(0.into(), Action::Call(clone.swap_contract_address), data, U256::from(150000))
+                    clone.sign_and_send_transaction(0.into(), Action::Call(clone.swap_contract_address), data, U256::from(150_000))
                 }))
             }
         }
@@ -1180,7 +1181,7 @@ impl EthCoin {
                     Token::Uint(amount),
                 ]));
 
-                self.sign_and_send_transaction(0.into(), Action::Call(token_addr), data, U256::from(150000))
+                self.sign_and_send_transaction(0.into(), Action::Call(token_addr), data, U256::from(150_000))
             }
         }
     }
@@ -1296,6 +1297,7 @@ impl EthCoin {
     }
 
     /// Downloads and saves ERC20 transaction history of my_address
+    #[allow(clippy::cognitive_complexity)]
     fn process_erc20_history(&self, token_addr: H160, ctx: &MmArc) {
         let delta = U256::from(10000);
 
@@ -1440,7 +1442,7 @@ impl EthCoin {
             for event in all_events {
                 let mut existing_history = self.load_history_from_file(ctx);
                 let internal_id = BytesJson::from(sha256(&json::to_vec(&event).unwrap()).to_vec());
-                if existing_history.iter().find(|item| item.internal_id == internal_id).is_some() {
+                if existing_history.iter().any(|item| item.internal_id == internal_id) {
                     // the transaction already imported
                     continue;
                 };
@@ -1491,7 +1493,7 @@ impl EthCoin {
                     }
                 };
                 let fee_details = match receipt {
-                    Some(r) => Some(unwrap!(EthTxFeeDetails::new(r.gas_used.unwrap_or(0.into()), web3_tx.gas_price, "ETH"))),
+                    Some(r) => Some(unwrap!(EthTxFeeDetails::new(r.gas_used.unwrap_or_else(|| 0.into()), web3_tx.gas_price, "ETH"))),
                     None => None,
                 };
                 let block_number = event.block_number.unwrap();
@@ -1551,6 +1553,7 @@ impl EthCoin {
     /// Downloads and saves ETH transaction history of my_address, relies on Parity trace_filter API
     /// https://wiki.parity.io/JSONRPC-trace-module#trace_filter, this requires tracing to be enabled
     /// in node config. Other ETH clients (Geth, etc.) are `not` supported (yet).
+    #[allow(clippy::cognitive_complexity)]
     fn process_eth_history(&self, ctx: &MmArc) {
         // Artem Pikulin: by playing a bit with Parity mainnet node I've discovered that trace_filter API responds after reasonable time for 1000 blocks.
         // I've tried to increase the amount to 10000, but request times out somewhere near 2500000 block.
@@ -1729,7 +1732,7 @@ impl EthCoin {
                     }
                 };
                 let fee_details: Option<EthTxFeeDetails> = match receipt {
-                    Some(r) => Some(unwrap!(EthTxFeeDetails::new(r.gas_used.unwrap_or(0.into()), web3_tx.gas_price, "ETH"))),
+                    Some(r) => Some(unwrap!(EthTxFeeDetails::new(r.gas_used.unwrap_or_else(|| 0.into()), web3_tx.gas_price, "ETH"))),
                     None => None,
                 };
 
@@ -1891,7 +1894,7 @@ impl MmCoin for EthCoin {
                         from: vec![checksum_address(&format!("{:#02x}", tx.from))],
                         to,
                         coin: selfi.ticker.clone(),
-                        block_height: tx.block_number.unwrap_or(U256::from(0)).into(),
+                        block_height: tx.block_number.unwrap_or_else(|| U256::from(0)).into(),
                         tx_hex: rlp::encode(&raw).into(),
                         tx_hash: tx.hash.0.to_vec().into(),
                         received_by_me,
@@ -1908,7 +1911,7 @@ impl MmCoin for EthCoin {
                         from: vec![checksum_address(&format!("{:#02x}", tx.from))],
                         to,
                         coin: selfi.ticker.clone(),
-                        block_height: tx.block_number.unwrap_or(U256::from(0)).into(),
+                        block_height: tx.block_number.unwrap_or_else(|| U256::from(0)).into(),
                         tx_hex: rlp::encode(&raw).into(),
                         tx_hash: tx.hash.0.to_vec().into(),
                         received_by_me,
@@ -1930,7 +1933,7 @@ impl MmCoin for EthCoin {
 
     fn get_trade_fee(&self) -> Box<dyn Future<Item=TradeFee, Error=String> + Send> {
         Box::new(self.get_gas_price().and_then(|gas_price| {
-            let fee = gas_price * U256::from(150000);
+            let fee = gas_price * U256::from(150_000);
             Ok(TradeFee {
                 coin: "ETH".into(),
                 amount: try_s!(u256_to_big_decimal(fee, 18)).into()
@@ -2177,9 +2180,10 @@ pub async fn eth_coin_from_conf_and_request(
     };
 
     // param from request should override the config
-    let required_confirmations = req["required_confirmations"].as_u64().unwrap_or(
-        conf["required_confirmations"].as_u64().unwrap_or(1)
-    ).into();
+    let required_confirmations = req["required_confirmations"]
+        .as_u64()
+        .unwrap_or_else(|| conf["required_confirmations"].as_u64().unwrap_or(1))
+        .into();
 
     if req["requires_notarization"].as_bool().is_some() {
         log!("Warning: requires_notarization doesn't take any effect on ETH/ERC20 coins");
@@ -2241,15 +2245,14 @@ fn checksum_address(addr: &str) -> String {
 /// Checks that input is valid mixed-case checksum form address
 /// The input must be 0x prefixed hex string
 fn is_valid_checksum_addr(addr: &str) -> bool {
-    addr == &checksum_address(addr)
+    addr == checksum_address(addr)
 }
 
 /// Requests the nonce from all available nodes and checks that returned results equal.
 /// Nodes might need some time to sync and there can be other coins that use same nodes in different order.
 /// We need to be sure that nonce is updated on all of them before and after transaction is sent.
-#[mockable]
-fn get_addr_nonce(addr: Address, web3s: &Vec<Web3Instance>) -> Box<dyn Future<Item=U256, Error=String> + Send> {
-    let web3s = web3s.clone();
+#[cfg_attr(test, mockable)]
+fn get_addr_nonce(addr: Address, web3s: Vec<Web3Instance>) -> Box<dyn Future<Item=U256, Error=String> + Send> {
     let fut = async move {
         let mut errors: u32 = 0;
         loop {

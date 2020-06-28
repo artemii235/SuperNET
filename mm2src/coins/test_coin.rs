@@ -11,6 +11,7 @@ use super::{HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeFee, Transact
 pub struct TestCoin {}
 
 #[mockable]
+#[allow(clippy::forget_ref, clippy::forget_copy)]
 impl MarketCoinOps for TestCoin {
     fn ticker (&self) -> &str {
         unimplemented!()
@@ -66,6 +67,7 @@ impl MarketCoinOps for TestCoin {
 }
 
 #[mockable]
+#[allow(clippy::forget_ref, clippy::forget_copy)]
 impl SwapOps for TestCoin {
     fn send_taker_fee(&self, fee_addr: &[u8], amount: BigDecimal) -> TransactionFut {
         unimplemented!()
@@ -196,6 +198,7 @@ impl SwapOps for TestCoin {
 }
 
 #[mockable]
+#[allow(clippy::forget_ref, clippy::forget_copy)]
 impl MmCoin for TestCoin {
     fn is_asset_chain(&self) -> bool {
         unimplemented!()

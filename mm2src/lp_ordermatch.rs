@@ -223,13 +223,13 @@ impl MakerOrder {
                 return true;
             }
         }
-        return false;
+        false
     }
 }
 
 impl Into<MakerOrder> for TakerOrder {
     fn into(self) -> MakerOrder {
-        let order = match self.request.action {
+        match self.request.action {
             TakerAction::Sell => MakerOrder {
                 price: &self.request.rel_amount / &self.request.base_amount,
                 price_rat: (self.request.get_rel_amount() / self.request.get_base_amount()).into(),
@@ -259,8 +259,7 @@ impl Into<MakerOrder> for TakerOrder {
                 started_swaps: Vec::new(),
                 uuid: self.request.uuid,
             },
-        };
-        order
+        }
     }
 }
 
@@ -367,7 +366,7 @@ fn lp_connect_start_bob(ctx: MmArc, maker_match: MakerMatch) {
         log!("Entering the maker_swap_loop " (maker_coin.ticker()) "/" (taker_coin.ticker()) " with uuid: " (uuid));
         let maker_swap = MakerSwap::new(
             ctx.clone(),
-            alice.into(),
+            alice,
             maker_coin,
             taker_coin,
             maker_amount,
@@ -416,7 +415,7 @@ fn lp_connected_alice(ctx: MmArc, taker_match: TakerMatch) {
         log!("Entering the taker_swap_loop " (maker_coin.ticker()) "/" (taker_coin.ticker())  " with uuid: " (uuid));
         let taker_swap = TakerSwap::new(
             ctx.clone(),
-            maker.into(),
+            maker,
             maker_coin,
             taker_coin,
             maker_amount,
@@ -512,7 +511,7 @@ pub fn lp_trade_command(
             Ok(r) => r,
             Err(_) => return 1,
         };
-        if is_pubkey_banned(&ctx, &reserved_msg.sender_pubkey.clone().into()) {
+        if is_pubkey_banned(&ctx, &reserved_msg.sender_pubkey.clone()) {
             log!("Sender pubkey " [reserved_msg.sender_pubkey] " is banned");
             return 1;
         }
@@ -594,7 +593,7 @@ pub fn lp_trade_command(
             Ok(r) => r,
             Err(_) => return 1,
         };
-        if is_pubkey_banned(&ctx, &taker_request.sender_pubkey.clone().into()) {
+        if is_pubkey_banned(&ctx, &taker_request.sender_pubkey.clone()) {
             log!("Sender pubkey " [taker_request.sender_pubkey] " is banned");
             return 1;
         }
@@ -749,7 +748,7 @@ struct TakerMatch {
 }
 
 pub fn lp_auto_buy(ctx: &MmArc, input: AutoBuyInput) -> Result<String, String> {
-    if input.price < MmNumber::from(BigRational::new(1.into(), 100000000.into())) {
+    if input.price < MmNumber::from(BigRational::new(1.into(), 100_000_000.into())) {
         return ERR!("Price is too low, minimum is 0.00000001");
     }
 
@@ -840,7 +839,7 @@ impl PricePingRequest {
     fn new(ctx: &MmArc, order: &MakerOrder, balance: BigDecimal) -> Result<PricePingRequest, String> {
         let public_id = try_s!(ctx.public_id());
 
-        let price64 = (&order.price * BigDecimal::from(100000000)).to_u64().unwrap();
+        let price64 = (&order.price * BigDecimal::from(100_000_000)).to_u64().unwrap();
         let timestamp = now_ms() / 1000;
         let sig_hash = price_ping_sig_hash(
             timestamp as u32,
@@ -854,7 +853,7 @@ impl PricePingRequest {
         let sig = try_s!(ctx.secp256k1_key_pair().private().sign(&sig_hash));
 
         let available_amount: BigRational = order.available_amount().into();
-        let min_amount = BigRational::new(777.into(), 100000.into());
+        let min_amount = BigRational::new(777.into(), 100_000.into());
         let max_volume = if available_amount > min_amount {
             let my_balance = from_dec_to_ratio(balance);
             if available_amount <= my_balance && available_amount > BigRational::from_integer(0.into()) {
@@ -910,7 +909,7 @@ pub fn lp_post_price_recv(ctx: &MmArc, req: Json) -> HyRes {
         // TODO remove this when all nodes are updated
         let mut bytes = [0; 16];
         bytes.copy_from_slice(&pubkey[..16]);
-        let uuid = req.uuid.unwrap_or(Uuid::from_bytes(bytes));
+        let uuid = req.uuid.unwrap_or_else(|| Uuid::from_bytes(bytes));
         let ordermatch_ctx: Arc<OrdermatchContext> = try_h!(OrdermatchContext::from_ctx(ctx));
         let mut orderbook = try_h!(ordermatch_ctx.orderbook.lock());
         match orderbook.entry((req.base.clone(), req.rel.clone())) {
@@ -976,7 +975,7 @@ struct SetPriceReq {
 
 pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
     let req: SetPriceReq = try_s!(json::from_value(req));
-    if req.price < MmNumber::from(BigRational::new(1.into(), 100000000.into())) {
+    if req.price < MmNumber::from(BigRational::new(1.into(), 100_000_000.into())) {
         return ERR!("Price is too low, minimum is 0.00000001");
     }
     if req.base == req.rel {
@@ -1000,9 +999,9 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
         let trade_fee = try_s!(base_coin.get_trade_fee().compat().await);
         let mut vol = MmNumber::from(my_balance) - get_locked_amount(&ctx, base_coin.ticker(), &trade_fee);
         if trade_fee.coin == base_coin.ticker() {
-            vol = vol - trade_fee.amount.into();
+            vol = vol - trade_fee.amount;
         }
-        MmNumber::from(vol)
+        vol
     } else {
         try_s!(check_balance_for_maker_swap(&ctx, &base_coin, req.volume.clone(), None).await);
         req.volume.clone()
@@ -1348,13 +1347,10 @@ pub fn orders_kick_start(ctx: &MmArc) -> Result<HashSet<String>, String> {
     let maker_entries = try_s!(json_dir_entries(&my_maker_orders_dir(&ctx)));
 
     maker_entries.iter().for_each(|entry| {
-        match json::from_slice::<MakerOrder>(&slurp(&entry.path())) {
-            Ok(order) => {
-                coins.insert(order.base.clone());
-                coins.insert(order.rel.clone());
-                maker_orders.insert(order.uuid, order);
-            }
-            Err(_) => (),
+        if let Ok(order) = json::from_slice::<MakerOrder>(&slurp(&entry.path())) {
+            coins.insert(order.base.clone());
+            coins.insert(order.rel.clone());
+            maker_orders.insert(order.uuid, order);
         }
     });
 
@@ -1362,13 +1358,10 @@ pub fn orders_kick_start(ctx: &MmArc) -> Result<HashSet<String>, String> {
     let taker_entries: Vec<DirEntry> = try_s!(json_dir_entries(&my_taker_orders_dir(&ctx)));
 
     taker_entries.iter().for_each(|entry| {
-        match json::from_slice::<TakerOrder>(&slurp(&entry.path())) {
-            Ok(order) => {
-                coins.insert(order.request.base.clone());
-                coins.insert(order.request.rel.clone());
-                taker_orders.insert(order.request.uuid, order);
-            }
-            Err(_) => (),
+        if let Ok(order) = json::from_slice::<TakerOrder>(&slurp(&entry.path())) {
+            coins.insert(order.request.base.clone());
+            coins.insert(order.request.rel.clone());
+            taker_orders.insert(order.request.uuid, order);
         }
     });
     Ok(coins)
@@ -1530,11 +1523,11 @@ pub async fn orderbook(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
                     coin: req.base.clone(),
                     address: try_s!(base_coin.address_from_pubkey_str(&ask.pubsecp)),
                     price: ask.price.clone(),
-                    price_rat: ask.price_rat.as_ref().map(|p| p.to_ratio()).unwrap_or(from_dec_to_ratio(ask.price.clone())),
-                    price_fraction: ask.price_rat.as_ref().map(|p| p.to_fraction()).unwrap_or(ask.price.clone().into()),
+                    price_rat: ask.price_rat.as_ref().map(|p| p.to_ratio()).unwrap_or_else(|| from_dec_to_ratio(ask.price.clone())),
+                    price_fraction: ask.price_rat.as_ref().map(|p| p.to_fraction()).unwrap_or_else(|| ask.price.clone().into()),
                     max_volume: ask.balance.clone(),
-                    max_volume_rat: ask.balance_rat.as_ref().map(|p| p.to_ratio()).unwrap_or(from_dec_to_ratio(ask.balance.clone())),
-                    max_volume_fraction: ask.balance_rat.as_ref().map(|p| p.to_fraction()).unwrap_or(ask.balance.clone().into()),
+                    max_volume_rat: ask.balance_rat.as_ref().map(|p| p.to_ratio()).unwrap_or_else(|| from_dec_to_ratio(ask.balance.clone())),
+                    max_volume_fraction: ask.balance_rat.as_ref().map(|p| p.to_fraction()).unwrap_or_else(|| ask.balance.clone().into()),
                     pubkey: ask.pubkey.clone(),
                     age: (now_ms() as i64 / 1000) - ask.timestamp as i64,
                     zcredits: 0,
@@ -1549,7 +1542,7 @@ pub async fn orderbook(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
         Some(asks) => {
             let mut orderbook_entries = vec![];
             for (uuid, ask) in asks.iter() {
-                let price_mm = MmNumber::from(1i32) / ask.price_rat.as_ref().map(|p| p.clone()).unwrap_or(from_dec_to_ratio(ask.price.clone()).into());
+                let price_mm = MmNumber::from(1i32) / ask.price_rat.clone().unwrap_or_else(|| from_dec_to_ratio(ask.price.clone()).into());
                 orderbook_entries.push(OrderbookEntry {
                     coin: req.rel.clone(),
                     address: try_s!(rel_coin.address_from_pubkey_str(&ask.pubsecp)),
@@ -1559,8 +1552,8 @@ pub async fn orderbook(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
                     price_rat: price_mm.to_ratio(),
                     price_fraction: price_mm.to_fraction(),
                     max_volume: ask.balance.clone(),
-                    max_volume_rat: ask.balance_rat.as_ref().map(|p| p.to_ratio()).unwrap_or(from_dec_to_ratio(ask.balance.clone())),
-                    max_volume_fraction: ask.balance_rat.as_ref().map(|p| p.to_fraction()).unwrap_or(from_dec_to_ratio(ask.balance.clone()).into()),
+                    max_volume_rat: ask.balance_rat.as_ref().map(|p| p.to_ratio()).unwrap_or_else(|| from_dec_to_ratio(ask.balance.clone())),
+                    max_volume_fraction: ask.balance_rat.as_ref().map(|p| p.to_fraction()).unwrap_or_else(|| from_dec_to_ratio(ask.balance.clone()).into()),
                     pubkey: ask.pubkey.clone(),
                     age: (now_ms() as i64 / 1000) - ask.timestamp as i64,
                     zcredits: 0,
@@ -1590,36 +1583,30 @@ pub async fn orderbook(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
 pub fn migrate_saved_orders(ctx: &MmArc) -> Result<(), String> {
     let maker_entries = try_s!(json_dir_entries(&my_maker_orders_dir(&ctx)));
     maker_entries.iter().for_each(|entry| {
-        match json::from_slice::<MakerOrder>(&slurp(&entry.path())) {
-            Ok(mut order) => {
-                if order.max_base_vol_rat == BigRational::zero() {
-                    order.max_base_vol_rat = from_dec_to_ratio(order.max_base_vol.clone());
-                }
-                if order.min_base_vol_rat == BigRational::zero() {
-                    order.min_base_vol_rat = from_dec_to_ratio(order.min_base_vol.clone());
-                }
-                if order.price_rat == BigRational::zero() {
-                    order.price_rat = from_dec_to_ratio(order.price.clone());
-                }
-                save_my_maker_order(ctx, &order)
+        if let Ok(mut order) = json::from_slice::<MakerOrder>(&slurp(&entry.path())) {
+            if order.max_base_vol_rat == BigRational::zero() {
+                order.max_base_vol_rat = from_dec_to_ratio(order.max_base_vol.clone());
             }
-            Err(_) => (),
+            if order.min_base_vol_rat == BigRational::zero() {
+                order.min_base_vol_rat = from_dec_to_ratio(order.min_base_vol.clone());
+            }
+            if order.price_rat == BigRational::zero() {
+                order.price_rat = from_dec_to_ratio(order.price.clone());
+            }
+            save_my_maker_order(ctx, &order)
         }
     });
 
     let taker_entries: Vec<DirEntry> = try_s!(json_dir_entries(&my_taker_orders_dir(&ctx)));
     taker_entries.iter().for_each(|entry| {
-        match json::from_slice::<TakerOrder>(&slurp(&entry.path())) {
-            Ok(mut order) => {
-                if order.request.base_amount_rat.is_none() {
-                    order.request.base_amount_rat = Some(from_dec_to_ratio(order.request.base_amount.clone()));
-                }
-                if order.request.rel_amount_rat.is_none() {
-                    order.request.rel_amount_rat = Some(from_dec_to_ratio(order.request.rel_amount.clone()));
-                }
-                save_my_taker_order(ctx, &order)
-            },
-            Err(_) => (),
+        if let Ok(mut order) = json::from_slice::<TakerOrder>(&slurp(&entry.path())) {
+            if order.request.base_amount_rat.is_none() {
+                order.request.base_amount_rat = Some(from_dec_to_ratio(order.request.base_amount.clone()));
+            }
+            if order.request.rel_amount_rat.is_none() {
+                order.request.rel_amount_rat = Some(from_dec_to_ratio(order.request.rel_amount.clone()));
+            }
+            save_my_taker_order(ctx, &order)
         }
     });
     Ok(())

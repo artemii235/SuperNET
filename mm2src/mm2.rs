@@ -201,7 +201,7 @@ pub fn mm2_main() {
 /// * `ctx_cb` - Invoked with the MM context handle,
 ///              allowing the `run_lp_main` caller to communicate with MM.
 pub fn run_lp_main (first_arg: Option<&str>, ctx_cb: &dyn Fn (u32)) -> Result<(), String> {
-    let conf_path = env::var("MM_CONF_PATH").unwrap_or("MM2.json".into());
+    let conf_path = env::var("MM_CONF_PATH").unwrap_or_else(|_| "MM2.json".into());
     let conf_from_file = slurp(&conf_path);
     let conf = match first_arg {
         Some(s) => s,
@@ -219,7 +219,7 @@ pub fn run_lp_main (first_arg: Option<&str>, ctx_cb: &dyn Fn (u32)) -> Result<()
     };
 
     if conf["coins"].is_null() {
-        let coins_path = env::var("MM_COINS_PATH").unwrap_or("coins".into());
+        let coins_path = env::var("MM_COINS_PATH").unwrap_or_else(|_| "coins".into());
         let coins_from_file = slurp(&coins_path);
         if coins_from_file.is_empty() {
             return ERR!("No coins are set in JSON config and '{}' file doesn't exist", coins_path);

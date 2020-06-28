@@ -5,6 +5,7 @@ pub struct FileLock<T: AsRef<Path>> {
     /// Filesystem path of the lock file.
     lock_path: T,
     /// The time in seconds after which an outdated lock file can be removed.
+    #[allow(dead_code)]
     ttl_sec: f64,
 }
 

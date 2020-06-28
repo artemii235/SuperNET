@@ -282,7 +282,7 @@ pub enum MetricType {
     },
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct MetricsArc(pub Arc<Metrics>);
 
 impl Deref for MetricsArc {
@@ -306,7 +306,7 @@ impl MetricsArc {
 
     /// Try to obtain the `Metrics` from the weak pointer.
     pub fn from_weak(weak: &MetricsWeak) -> Option<MetricsArc> {
-        weak.0.upgrade().map(|arc| MetricsArc(arc))
+        weak.0.upgrade().map(MetricsArc)
     }
 
     /// Create a weak pointer from `MetricsWeak`.
@@ -315,7 +315,7 @@ impl MetricsArc {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct MetricsWeak(pub Weak<Metrics>);
 
 impl TrySink for MetricsWeak {
@@ -328,7 +328,7 @@ impl TrySink for MetricsWeak {
 impl MetricsWeak {
     /// Create a default MmWeak without allocating any memory.
     pub fn new() -> MetricsWeak {
-        MetricsWeak(Default::default())
+        MetricsWeak::default()
     }
 
     pub fn dropped(&self) -> bool {
@@ -615,7 +615,7 @@ fn name_value_map_to_message(name_value_map: &MetricNameValueMap) -> String {
 
 fn hist_at_quantiles(hist: Histogram<u64>, quantiles: &[Quantile]) -> HashMap<String, u64> {
     quantiles
-        .into_iter()
+        .iter()
         .map(|quantile| {
             let key = quantile.label().to_string();
             let val = hist.value_at_quantile(quantile.value());

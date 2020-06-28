@@ -27,7 +27,7 @@ pub fn join_all_sequential<I>(
     let iter = i.into_iter();
     loop_fn((vec![], iter), |(mut output, mut iter)| {
         let fut = if let Some(next) = iter.next() {
-            Either01::A(next.into_future().map(|v| Some(v)))
+            Either01::A(next.into_future().map(Some))
         } else {
             Either01::B(future::ok(None))
         };
@@ -58,7 +58,7 @@ pub fn select_ok_sequential<I: IntoIterator>(
     let futures = i.into_iter();
     loop_fn((vec![], futures), |(mut errors, mut futures)| {
         let fut = if let Some(next) = futures.next() {
-            Either01::A(next.into_future().map(|v| Some(v)))
+            Either01::A(next.into_future().map(Some))
         } else {
             Either01::B(future::ok(None))
         };

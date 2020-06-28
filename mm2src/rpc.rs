@@ -356,7 +356,7 @@ impl Service for RpcService {
     type Future = RpcRes;
 
     fn call(&mut self, req: Request<hyper::Body>) -> Self::Future {
-        let f = rpc_service (req, self.ctx_h, self.client.clone());
+        let f = rpc_service (req, self.ctx_h, self.client);
         let f = Compat::new (Box::pin (f.map (|r|->Result<_,String>{Ok(r)})));
         Box::new (f)
     }
@@ -409,7 +409,7 @@ pub extern fn spawn_rpc(ctx_h: u32) {
     ctx.on_stop (Box::new (move || {
         if let Some (shutdown_tx) = shutdown_tx.take() {
             log! ("on_stop] firing shutdown_tx!");
-            if let Err (_) = shutdown_tx.send(()) {log! ("on_stop] Warning, shutdown_tx already closed")}
+            if shutdown_tx.send(()).is_err() {log! ("on_stop] Warning, shutdown_tx already closed")}
             Ok(())
         } else {ERR! ("on_stop callback called twice!")}
     }));

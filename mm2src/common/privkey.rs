@@ -25,10 +25,9 @@ use primitives::hash::H256;
 fn private_from_seed(seed: &str) -> Result<Private, String> {
     match seed.parse() {
         Ok(private) => return Ok(private),
-        Err(e) => match e {
-            KeysError::InvalidChecksum => return ERR!("Provided WIF passphrase has invalid checksum!"),
-            _ => (), // ignore other errors, assume the passphrase is not WIF
-        },
+        Err(e) => if let KeysError::InvalidChecksum = e {
+            return ERR!("Provided WIF passphrase has invalid checksum!");
+        } // else ignore other errors, assume the passphrase is not WIF
     }
 
     if seed.starts_with("0x") {

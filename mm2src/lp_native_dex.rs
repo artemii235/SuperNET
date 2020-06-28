@@ -63,12 +63,12 @@ pub fn lp_command_process(
 ) {
     if !json["result"].is_null() || !json["error"].is_null() {
         return;
-    } else {
-        if std::env::var("LOG_COMMANDS").is_ok() {
-            log!("Got command: " [json]);
-        }
-        lp_trade_command(ctx.clone(), json);
     }
+
+    if std::env::var("LOG_COMMANDS").is_ok() {
+        log!("Got command: "[json]);
+    }
+    lp_trade_command(ctx, json);
 }
 
 /*
@@ -775,7 +775,7 @@ void gameaddrs()
 //       We might also diverge in how we handle the p2p communication in the future.
 
 /// Aka `default_LPnodes`. Initial nodes of the peer-to-peer network.
-const P2P_SEED_NODES: [&'static str; 5] = [
+const P2P_SEED_NODES: [&str; 5] = [
     "5.9.253.195",
     "173.212.225.176",
     "136.243.45.140",
@@ -784,7 +784,7 @@ const P2P_SEED_NODES: [&'static str; 5] = [
 ];
 
 /// Default seed nodes for netid 9999 that is used for MM2 testing
-const P2P_SEED_NODES_9999: [&'static str; 3] = [
+const P2P_SEED_NODES_9999: [&str; 3] = [
     "195.201.116.176",
     "46.4.87.18",
     "46.4.78.11",
@@ -842,7 +842,7 @@ pub async fn lp_initpeers (ctx: &MmArc, netid: u16, seednodes: Option<Vec<String
 
     let i_am_seed = ctx.conf["i_am_seed"].as_bool().unwrap_or(false);
     if !i_am_seed {
-        if seeds.len() == 0 {
+        if seeds.is_empty() {
             return ERR!("At least 1 IP must be provided");
         }
         let seed_ips = seeds.iter().map(|(ip, _)| fomat!((ip) ":" (pubport))).collect();
@@ -951,7 +951,7 @@ int32_t LP_reserved_msg(int32_t priority,char *base,char *rel,bits256 pubkey,cha
 */
 /// True during the threads initialization in `lp_init`.  
 /// Mirrors the C `bitcoind_RPC_inittime`.
-const BITCOIND_RPC_INITIALIZING: AtomicBool = AtomicBool::new (false);
+static BITCOIND_RPC_INITIALIZING: AtomicBool = AtomicBool::new (false);
 
 /// Invokes `OS_ensure_directory`,
 /// then prints an error and returns `false` if the directory is not writable.
@@ -999,7 +999,7 @@ fn ensure_dir_is_writable(dir_path: &Path) -> bool {
 }
 
 fn ensure_file_is_writable(file_path: &Path) -> Result<(), String> {
-    if let Err(_) = fs::File::open(file_path) {
+    if fs::File::open(file_path).is_err() {
         // try to create file if opening fails
         if let Err(e) = fs::OpenOptions::new().write(true).create_new(true).open(file_path) {
             return ERR!("{} when trying to create the file {}", e, file_path.display())
@@ -1246,7 +1246,8 @@ pub async fn lp_init (mypubport: u16, ctx: MmArc) -> Result<(), String> {
         // and this will break under NAT or forwarding because the internal IP address will be different.
         // Which might be a good thing, allowing us to detect the likehoodness of NAT early.
 
-        let ip_providers: [(&'static str, fn (&str) -> Result<IpAddr, String>); 2] = [
+        type Extractor = fn (&str) -> Result<IpAddr, String>;
+        let ip_providers: [(&'static str, Extractor); 2] = [
             ("http://checkip.amazonaws.com/", simple_ip_extractor),
             ("http://api.ipify.org", simple_ip_extractor)
         ];

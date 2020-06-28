@@ -207,7 +207,7 @@ pub fn seednode_loop(ctx: MmArc, listener: TcpListener) {
         clients = clients.drain_filter(|(client, addr, buf)| {
             match client.read_line(buf) {
                 Ok(_) => {
-                    if buf.len() > 0 {
+                    if !buf.is_empty() {
                         let msgs = buf.split('\n');
                         for msg in msgs {if !msg.is_empty() {commands.push(msg.to_string())}}
                         buf.clear();
@@ -227,7 +227,7 @@ pub fn seednode_loop(ctx: MmArc, listener: TcpListener) {
 
         clients = match ctx.seednode_p2p_channel.1.recv_timeout(Duration::from_millis(1)) {
             Ok(mut msg) => clients.drain_filter(|(client, addr, _)| {
-                msg.push('\n' as u8);
+                msg.push(b'\n');
                 match client.get_mut().write(&msg) {
                     Ok(_) => true,
                     Err(e) => {
@@ -439,7 +439,7 @@ fn client_p2p_loop(ctx: MmArc, addrs: Vec<String>) {
                                 Ok(_) => {
                                     let conn = SeedConnection {
                                         stream: BufReader::new(stream),
-                                        addr: addr.to_string(),
+                                        addr: (*addr).to_string(),
                                         buf: String::new(),
                                         last_msg: now_ms(),
                                     };
@@ -459,7 +459,7 @@ fn client_p2p_loop(ctx: MmArc, addrs: Vec<String>) {
         seed_connections = seed_connections.drain_filter(|conn| {
             match conn.stream.read_line(&mut conn.buf) {
                 Ok(_) => {
-                    if conn.buf.len() > 0 {
+                    if !conn.buf.is_empty() {
                         let msgs = conn.buf.split('\n');
                         for msg in msgs { if !msg.is_empty() { commands.push(msg.to_string()) } }
                         conn.buf.clear();
@@ -480,7 +480,7 @@ fn client_p2p_loop(ctx: MmArc, addrs: Vec<String>) {
 
         seed_connections = match ctx.client_p2p_channel.1.recv_timeout(Duration::from_millis(1)) {
             Ok(mut msg) => seed_connections.drain_filter(|conn| {
-                msg.push('\n' as u8);
+                msg.push(b'\n');
                 match conn.stream.get_mut().write(&msg) {
                     Ok(_) => true,
                     Err(e) => {

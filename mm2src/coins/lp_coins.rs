@@ -89,8 +89,8 @@ impl Deref for TransactionEnum {
     type Target = dyn Transaction;
     fn deref (&self) -> &dyn Transaction {
         match self {
-            &TransactionEnum::UtxoTx (ref t) => t,
-            &TransactionEnum::SignedEthTx (ref t) => t,
+            TransactionEnum::UtxoTx (ref t) => t,
+            TransactionEnum::SignedEthTx (ref t) => t,
 }   }   }
 
 pub type TransactionFut = Box<dyn Future<Item=TransactionEnum, Error=String> + Send>;
@@ -367,7 +367,7 @@ pub trait MmCoin: SwapOps + MarketCoinOps + fmt::Debug + Send + Sync + 'static {
 
     /// Path to tx history file
     fn tx_history_path(&self, ctx: &MmArc) -> PathBuf {
-        let my_address = self.my_address().unwrap_or(Default::default());
+        let my_address = self.my_address().unwrap_or_default();
         ctx.dbdir().join("TRANSACTIONS").join(format!("{}_{}.json", self.ticker(), my_address))
     }
 
@@ -446,9 +446,9 @@ impl Deref for MmCoinEnum {
     type Target = dyn MmCoin;
     fn deref (&self) -> &dyn MmCoin {
         match self {
-            &MmCoinEnum::UtxoCoin (ref c) => c,
-            &MmCoinEnum::EthCoin (ref c) => c,
-            &MmCoinEnum::Test (ref c) => c,
+            MmCoinEnum::UtxoCoin (ref c) => c,
+            MmCoinEnum::EthCoin (ref c) => c,
+            MmCoinEnum::Test (ref c) => c,
 }   }   }
 
 struct CoinsContext {
@@ -639,14 +639,14 @@ pub async fn lp_coininit (ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoi
 pub fn lp_coinfind (ctx: &MmArc, ticker: &str) -> Result<Option<MmCoinEnum>, String> {
     let cctx = try_s! (CoinsContext::from_ctx (ctx));
     let coins = try_s! (cctx.coins.spinlock (77));
-    Ok (coins.get (ticker) .map (|coin| coin.clone()))
+    Ok(coins.get(ticker).cloned())
 }
 
 /// NB: Returns only the enabled (aka active) coins.
 pub async fn lp_coinfindᵃ (ctx: &MmArc, ticker: &str) -> Result<Option<MmCoinEnum>, String> {
     let cctx = try_s! (CoinsContext::from_ctx (ctx));
     let coins = try_s! (cctx.coins.sleeplock (77) .await);
-    Ok (coins.get (ticker) .map (|coin| coin.clone()))
+    Ok(coins.get(ticker).cloned())
 }
 
 pub async fn withdraw (ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
@@ -722,12 +722,10 @@ pub fn my_tx_history(ctx: MmArc, req: Json) -> HyRes {
             let mut json = unwrap!(json::to_value(item));
             json["confirmations"] = if tx_block == 0 {
                 Json::from(0)
+            } else if block_number >= tx_block {
+                Json::from((block_number - tx_block) + 1)
             } else {
-                if block_number >= tx_block {
-                    Json::from((block_number - tx_block) + 1)
-                } else {
-                    Json::from(0)
-                }
+                Json::from(0)
             };
             json
         }).collect();

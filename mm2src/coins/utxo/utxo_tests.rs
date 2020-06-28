@@ -11,7 +11,7 @@ use mocktopus::mocking::*;
 use rpc::v1::types::{H256 as H256Json, VerboseBlockClient};
 use super::*;
 
-const TEST_COIN_NAME: &'static str = "RICK";
+const TEST_COIN_NAME: &str = "RICK";
 
 fn electrum_client_for_test(servers: &[&str]) -> ElectrumClient {
     let mut client = ElectrumClientImpl::new(TEST_COIN_NAME.into(), Default::default());

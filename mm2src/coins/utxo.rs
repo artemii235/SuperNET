@@ -115,10 +115,8 @@ impl Transaction for UtxoTx {
         let script: Script = self.inputs[0].script_sig.clone().into();
         for (i, instr) in script.iter().enumerate() {
             let instruction = instr.unwrap();
-            if i == 1 {
-                if instruction.opcode == Opcode::OP_PUSHBYTES_32 {
-                    return Ok(instruction.data.unwrap().to_vec());
-                }
+            if i == 1 && instruction.opcode == Opcode::OP_PUSHBYTES_32 {
+                return Ok(instruction.data.unwrap().to_vec());
             }
         }
         ERR!("Couldn't extract secret")
@@ -330,21 +328,13 @@ impl UtxoCoinImpl {
         match spend {
             Some(tx) => {
                 let script: Script = tx.inputs[0].script_sig.clone().into();
-                match script.iter().nth(2) {
-                    Some(instruction) => match instruction {
-                        Ok(ref i) if i.opcode == Opcode::OP_0 => return Ok(Some(FoundSwapTxSpend::Spent(tx.into()))),
-                        _ => (),
-                    },
-                    None => (),
-                };
+                if let Some(Ok(ref i)) = script.iter().nth(2) {
+                    if i.opcode == Opcode::OP_0 { return Ok(Some(FoundSwapTxSpend::Spent(tx.into()))); }
+                }
 
-                match script.iter().nth(1) {
-                    Some(instruction) => match instruction {
-                        Ok(ref i) if i.opcode == Opcode::OP_1 => return Ok(Some(FoundSwapTxSpend::Refunded(tx.into()))),
-                        _ => (),
-                    },
-                    None => (),
-                };
+                if let Some(Ok(ref i)) = script.iter().nth(1) {
+                    if i.opcode == Opcode::OP_1 { return Ok(Some(FoundSwapTxSpend::Refunded(tx.into()))); }
+                }
 
                 ERR!("Couldn't find required instruction in script_sig of input 0 of tx {:?}", tx)
             },
@@ -473,7 +463,7 @@ fn p2sh_spend(
     resulting_script.extend_from_slice(&redeem_part);
 
     Ok(TransactionInput {
-        script_sig: resulting_script.into(),
+        script_sig: resulting_script,
         sequence: signer.inputs[input_index].sequence,
         script_witness: vec![],
         previous_output: signer.inputs[input_index].previous_output.clone()
@@ -650,7 +640,7 @@ impl UtxoCoin {
         let mut received_by_me = 0;
         for output in outputs.iter() {
             let script: Script = output.script_pubkey.clone().into();
-            if script.opcodes().nth(0) != Some(Ok(Opcode::OP_RETURN)) {
+            if script.opcodes().next() != Some(Ok(Opcode::OP_RETURN)) {
                 true_or_err!(output.value >= DUST, "Output value {} is less than dust amount {}", output.value, DUST);
             }
             sum_outputs_value += output.value;
@@ -730,7 +720,6 @@ impl UtxoCoin {
                             break;
                         }
                     }
-                    ()
                 },
                 FeePolicy::DeductFromOutput(_) => {
                     if sum_inputs >= sum_outputs_value {
@@ -781,7 +770,7 @@ impl UtxoCoin {
             received_by_me,
             spent_by_me: sum_inputs,
         };
-        self.calc_interest_if_required(tx.into(), data, change_script_pubkey).await
+        self.calc_interest_if_required(tx, data, change_script_pubkey).await
     }
 
     /// Calculates interest if the coin is KMD
@@ -1380,7 +1369,6 @@ impl MarketCoinOps for UtxoCoin {
                     Ok(None) => (),
                     Err(e) => {
                         log!("Error " (e) " on find_output_spend of tx " [e]);
-                        ()
                     },
                 };
 
@@ -1417,7 +1405,7 @@ async fn withdraw_impl(coin: UtxoCoin, req: WithdrawRequest) -> Result<Transacti
     let to = match &coin.address_format {
         UtxoAddressFormat::Standard => try_s!(Address::from_str(&req.to)),
         UtxoAddressFormat::CashAddress {..} => try_s!(Address::from_cashaddress(
-            &req.to, coin.checksum_type.clone(),coin.pub_addr_prefix, coin.p2sh_addr_prefix))
+            &req.to, coin.checksum_type,coin.pub_addr_prefix, coin.p2sh_addr_prefix))
     };
     if to.checksum_type != coin.checksum_type {
         return ERR!("Address {} has invalid checksum type, it must be {:?}", to, coin.checksum_type);
@@ -1492,6 +1480,7 @@ impl MmCoin for UtxoCoin {
         self.decimals
     }
 
+    #[allow(clippy::cognitive_complexity)]
     fn process_history_loop(&self, ctx: MmArc) {
         const HISTORY_TOO_LARGE_ERR_CODE: i64 = -1;
         let history_too_large = json!({
@@ -1535,8 +1524,7 @@ impl MmCoin for UtxoCoin {
 
             let need_update = history_map
                 .iter()
-                .find(|(_, tx)| tx.should_update_timestamp() || tx.should_update_block_height())
-                .is_some();
+                .any(|(_, tx)| tx.should_update_timestamp() || tx.should_update_block_height());
             match (&my_balance, &actual_balance) {
                 (Some(prev_balance), Some(actual_balance))
                 if prev_balance == actual_balance && !need_update => {
@@ -1869,12 +1857,10 @@ pub fn coin_daemon_data_dir(name: &str, is_asset_chain: bool) -> PathBuf {
         } else {
             data_dir.push (first_char_to_upper(name));
         }
+    } else if is_asset_chain {
+        data_dir.push(".komodo");
     } else {
-        if is_asset_chain {
-            data_dir.push (".komodo");
-        } else {
-            data_dir.push (format!(".{}", name));
-        }
+        data_dir.push(format!(".{}", name));
     }
 
     if is_asset_chain {data_dir.push (name)};
@@ -2091,9 +2077,9 @@ pub async fn utxo_coin_from_conf_and_request(
             u32::from_be_bytes(try_s!(bytes.as_slice().try_into()))
         },
         None => if tx_version == 3 && overwintered {
-            0x03c48270
+            0x03c4_8270
         } else if tx_version == 4 && overwintered {
-            0x892f2085
+            0x892f_2085
         } else {
             0
         }
@@ -2109,8 +2095,8 @@ pub async fn utxo_coin_from_conf_and_request(
         },
         None => {
             match tx_version {
-                3 => 0x5ba81b19,
-                4 => 0x76b809bb,
+                3 => 0x5ba8_1b19,
+                4 => 0x76b8_09bb,
                 _ => 0,
             }
         },
@@ -2133,12 +2119,13 @@ pub async fn utxo_coin_from_conf_and_request(
     };
 
     // param from request should override the config
-    let required_confirmations = req["required_confirmations"].as_u64().unwrap_or(
-        conf["required_confirmations"].as_u64().unwrap_or(1)
-    );
-    let requires_notarization = req["requires_notarization"].as_bool().unwrap_or(
-        conf["requires_notarization"].as_bool().unwrap_or(false)
-    ).into();
+    let required_confirmations = req["required_confirmations"]
+        .as_u64()
+        .unwrap_or_else(|| conf["required_confirmations"].as_u64().unwrap_or(1));
+    let requires_notarization = req["requires_notarization"]
+        .as_bool()
+        .unwrap_or_else(|| conf["requires_notarization"].as_bool().unwrap_or(false))
+        .into();
 
     let coin = UtxoCoinImpl {
         ticker: ticker.into(),
@@ -2182,13 +2169,13 @@ fn kmd_interest(height: Option<u64>, value: u64, lock_time: u64, current_time: u
         Some(h) => h,
         None => return 0, // return 0 if height is unknown
     };
-    const KOMODO_ENDOFERA: u64 = 7777777;
-    const LOCKTIME_THRESHOLD: u64 = 500000000;
+    const KOMODO_ENDOFERA: u64 = 7_777_777;
+    const LOCKTIME_THRESHOLD: u64 = 500_000_000;
     // value must be at least 10 KMD
-    if value < 1000000000 { return 0; }
-    // interest will stop accrue after block 7777777
+    if value < 1_000_000_000 { return 0; }
+    // interest will stop accrue after block 7_777_777
     if height >= KOMODO_ENDOFERA { return 0 };
-    // interest doesn't accrue for lock_time < 500000000
+    // interest doesn't accrue for lock_time < 500_000_000
     if lock_time < LOCKTIME_THRESHOLD { return 0; }
     // current time must be greater than tx lock_time
     if current_time < lock_time { return 0; }
@@ -2199,8 +2186,8 @@ fn kmd_interest(height: Option<u64>, value: u64, lock_time: u64, current_time: u
     // interest stop accruing after 1 year before block 1000000
     if minutes > 365 * 24 * 60 { minutes = 365 * 24 * 60 };
     // interest stop accruing after 1 month past 1000000 block
-    if height >= 1000000 && minutes > 31 * 24 * 60 { minutes = 31 * 24 * 60; }
+    if height >= 1_000_000 && minutes > 31 * 24 * 60 { minutes = 31 * 24 * 60; }
     // next 2 lines ported as is from Komodo codebase
     minutes -= 59;
-    (value / 10512000) * minutes
+    (value / 10_512_000) * minutes
 }

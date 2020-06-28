@@ -101,7 +101,7 @@ pub fn chunk2log (mut chunk: String) {
             } else {false}
         } else {false}
     });
-    match rc {Ok (true) => return, _ => ()}
+    if let Ok(true) = rc { return; }
 
     if used_log_output {return}
 
@@ -433,7 +433,7 @@ impl LogArc {
 
     /// Try to obtain the `LogState` from the weak pointer.
     pub fn from_weak(weak: &LogWeak) -> Option<LogArc> {
-        weak.0.upgrade().map(|arc| LogArc(arc))
+        weak.0.upgrade().map(LogArc)
     }
 
     /// Create a weak pointer to `LogState`.
@@ -442,12 +442,13 @@ impl LogArc {
     }
 }
 
+#[derive(Default)]
 pub struct LogWeak(pub Weak<LogState>);
 
 impl LogWeak {
     /// Create a default MmWeak without allocating any memory.
     pub fn new() -> LogWeak {
-        LogWeak(Default::default())
+        Default::default()
     }
 
     pub fn dropped(&self) -> bool {
@@ -471,7 +472,7 @@ impl Default for DashboardLogging {
             last_hash: Atomic::new (0)
 }   }   }
 
-fn log_dashboard_sometimesʹ (dashboard: &Vec<Arc<Status>>, dl: &mut DashboardLogging) {
+fn log_dashboard_sometimesʹ (dashboard: &[Arc<Status>], dl: &mut DashboardLogging) {
     // See if it's time to log the dashboard.
     if dashboard.is_empty() {return}
     let mut hasher = DefaultHasher::new();
@@ -575,8 +576,8 @@ impl LogState {
     }   }
 
     /// Creates the status or rewrites it if the tags match.
-    pub fn status<'b> (&self, tags: &[&dyn TagParam], line: &str) -> StatusHandle {
-        let mut status = self.claim_status (tags) .unwrap_or (self.status_handle());
+    pub fn status (&self, tags: &[&dyn TagParam], line: &str) -> StatusHandle {
+        let mut status = self.claim_status (tags) .unwrap_or_else (|| self.status_handle());
         status.status (tags, line);
         status
     }
@@ -607,7 +608,7 @@ impl LogState {
             if en.tags == tags {
                 return true
         }   }
-        return false
+        false
     }
 
     /// Creates a new human-readable log entry.
@@ -761,7 +762,7 @@ impl Drop for LogState {
         }
 
         let dashboard_copy = unwrap! (self.dashboard.spinlock (77)) .clone();
-        if dashboard_copy.len() > 0 {
+        if !dashboard_copy.is_empty() {
             log! ("--- LogState] Bye! Remaining status entries. ---");
             for status in &*dashboard_copy {Status::finished (status, &self.dashboard, &self.tail)}
         } else {

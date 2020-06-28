@@ -6,11 +6,12 @@ use std::net::IpAddr;
 //lazy_static! {pub static ref PEERS_SEND_COMPAT: Mutex<Option<fn (u32, i32, *const u8, i32) -> i32>> = Mutex::new (None);}
 
 #[no_mangle]
-pub extern fn log_stacktrace (desc: *const c_char) {
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern fn log_stacktrace (desc: *const c_char) {
     let desc = if desc.is_null() {
         ""
     } else {
-        match unsafe {CStr::from_ptr (desc)} .to_str() {
+        match CStr::from_ptr (desc) .to_str() {
             Ok (s) => s,
             Err (err) => {
                 log! ({"log_stacktrace] Bad trace description: {}", err});
@@ -24,13 +25,14 @@ pub extern fn log_stacktrace (desc: *const c_char) {
 }
 
 #[no_mangle]
-pub extern fn is_loopback_ip (ip: *mut c_char) -> u8 {
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern fn is_loopback_ip (ip: *mut c_char) -> u8 {
     if ip.is_null() {
         log!("received null ip");
         return 0;
     }
 
-    let ip_str = match unsafe { CStr::from_ptr(ip).to_str() } {
+    let ip_str = match CStr::from_ptr(ip).to_str() {
         Ok(s) => s,
         Err(e) => {
             log!("Error creating CStr " [e]);

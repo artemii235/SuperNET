@@ -38,6 +38,5 @@ pub fn test_import_address() {
         "bMjWGCinft5qEvsuf9Wg1fgz1CjpXBXbTB",
         true
     );
-    let import_addr = import_addr.wait().unwrap();
-    log!("Block count " [import_addr]);
+    import_addr.wait().unwrap();
 }

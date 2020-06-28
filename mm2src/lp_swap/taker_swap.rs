@@ -105,7 +105,7 @@ impl TakerSavedEvent {
             TakerSwapEvent::TakerPaymentWaitConfirmFailed(_) => Some(TakerSwapCommand::RefundTakerPayment),
             TakerSwapEvent::MakerPaymentSpent(_) => Some(TakerSwapCommand::Finish),
             TakerSwapEvent::MakerPaymentSpendFailed(_) => Some(TakerSwapCommand::RefundTakerPayment),
-            TakerSwapEvent::TakerPaymentWaitRefundStarted { wait_until: _ } => Some(TakerSwapCommand::RefundTakerPayment),
+            TakerSwapEvent::TakerPaymentWaitRefundStarted { .. } => Some(TakerSwapCommand::RefundTakerPayment),
             TakerSwapEvent::TakerPaymentRefunded(_) => Some(TakerSwapCommand::Finish),
             TakerSwapEvent::TakerPaymentRefundFailed(_) => Some(TakerSwapCommand::Finish),
             TakerSwapEvent::Finished => None,
@@ -190,6 +190,7 @@ impl TakerSavedSwap {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum RunTakerSwapInput {
     StartNew(TakerSwap),
     KickStart {
@@ -375,6 +376,7 @@ pub struct MakerNegotiationData {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "type", content = "data")]
+#[allow(clippy::large_enum_variant)]
 pub enum TakerSwapEvent {
     Started(TakerSwapData),
     StartFailed(SwapError),
@@ -489,7 +491,7 @@ impl TakerSwap {
             TakerSwapEvent::TakerPaymentWaitForSpendFailed(err) => self.errors.lock().push(err),
             TakerSwapEvent::MakerPaymentSpent(tx) => self.w().maker_payment_spend = Some(tx),
             TakerSwapEvent::MakerPaymentSpendFailed(err) => self.errors.lock().push(err),
-            TakerSwapEvent::TakerPaymentWaitRefundStarted { wait_until: _ } => (),
+            TakerSwapEvent::TakerPaymentWaitRefundStarted { .. } => (),
             TakerSwapEvent::TakerPaymentRefunded(tx) => self.w().taker_payment_refund = Some(tx),
             TakerSwapEvent::TakerPaymentRefundFailed(err) => self.errors.lock().push(err),
             TakerSwapEvent::Finished => self.finished_at.store(now_ms() / 1000, Ordering::Relaxed),
@@ -513,6 +515,7 @@ impl TakerSwap {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         ctx: MmArc,
         maker: bits256,
@@ -1079,7 +1082,7 @@ impl TakerSwap {
 
                 let swap = TakerSwap::new(
                     ctx,
-                    maker.into(),
+                    maker,
                     maker_coin,
                     taker_coin,
                     data.maker_amount.clone(),
@@ -1270,7 +1273,7 @@ pub async fn check_balance_for_taker_swap(
     log!("check_balance_for_taker_swap balance " (my_balance));
     let dex_fee = dex_fee_amount(my_coin.ticker(), other_coin.ticker(), &volume);
     log!("check_balance_for_taker_swap dex_fee " [dex_fee.to_fraction()]);
-    let total_miner_fee = &MmNumber::from(2) * &(miner_fee.amount.clone().into());
+    let total_miner_fee = &MmNumber::from(2) * &(miner_fee.amount.clone());
     let total = if my_coin.ticker() == miner_fee.coin {
         &volume + &dex_fee + total_miner_fee
     } else {
