@@ -42,10 +42,7 @@ def mainloop(maker: object, takers: list, coin_a: str, coin_b: str, log: object)
         result = swap_status_iterator(swap_uuids, maker)
         log.info("Iteration result: %s", str(result))
         log.info("Out of %s swaps %s finished successfully", swaps_all(result), swaps_success(result))
-        if swaps_all(result) == swaps_success(result):
-            check = True
-        else:
-            check = False
+        check = swaps_all(result) == swaps_success(result)
         swap_uuids = []
         swaps_to_run += step
     log.info("\nTest result: %s", str(result))

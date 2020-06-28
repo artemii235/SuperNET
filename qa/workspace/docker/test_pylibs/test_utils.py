@@ -111,8 +111,7 @@ def init_connection(mm2userpass: str, mm_nodes: list) -> dict:
                 print('MM2 does not respond, retrying\nError: ', e)
                 if attempt > 15:
                     raise Exception("Connection error ", e)
-                else:
-                    time.sleep(5)
+                time.sleep(5)
     return mm_proxy
 
 
@@ -134,10 +133,7 @@ def check_saturation(vol1: int, vol2: int) -> bool:
     acceptance = 0.95
     volume = sorted([vol1, vol2])
     try:
-        if volume[0]/volume[1] >= acceptance:
-            return True
-        else:
-            return False
+        return volume[0] / volume[1] >= acceptance
     except ZeroDivisionError:
         return False
 
@@ -171,8 +167,7 @@ def check_for_errors(resp: dict, uuid: str) -> bool:  # resp - mm2proxy response
             print("\n error finding uuid: " + uuid + " response " + str(resp) + "resp.get(error)" +
                   str(resp.get('error')) + "\n")
             return True
-        else:
-            return False
+        return False
     except AttributeError:
         return False
 
@@ -200,7 +195,6 @@ def check_swap_status(swaps_dict: dict, node_proxy: MMProxy) -> dict:
         if check_for_errors(resp, uuid):  # keeps swap status "unknown"
             event_occur.append('Error_response')
             time.sleep(5)  # prevents my_swap_status method spam
-            pass
         else:
             try:
                 events_list = resp.get('result').get('events')

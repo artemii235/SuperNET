@@ -20,7 +20,7 @@ class MMProxy:
 
     def __getattr__(self, method):
         conn = self.conn
-        id = next(self._ids)
+        call_id = next(self._ids)
         upass = self.userpass
 
         def call(**params):
@@ -28,7 +28,7 @@ class MMProxy:
                 'jsonrpc': '2.0',
                 'userpass': upass,
                 'method': method,
-                'id': id
+                'id': call_id
             }
             for param, value in params.items():
                 post_dict.update({param: value})

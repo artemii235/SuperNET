@@ -17,7 +17,9 @@ ENV         PACKS="python3.8 \
             libssl-dev"
 
 RUN         apt-get update && \
-            apt-get -y install -q $PACKS && \
+            apt-get -y install -q $PACKS --no-install-recommends && \
+            apt-get clean && \
+            rm -rf /var/lib/apt/lists/* && \
             python3.8 -m pip install --upgrade pip && \
             python3.8 -m pip install -r /workdir/reqs.txt && \
             mkdir /log && touch /log/test.log
