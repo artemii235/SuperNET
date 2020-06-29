@@ -277,7 +277,7 @@ impl MmNumber {
         self.0.clone()
     }
 
-    /// Returns decimal representation of number
+    /// Get BigDecimal representation
     pub fn to_decimal(&self) -> BigDecimal {
         from_ratio_to_dec(&self.0)
     }

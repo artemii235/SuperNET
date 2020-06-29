@@ -235,10 +235,10 @@ impl MmCoin for TestCoin {
     }
 
     fn required_confirmations(&self) -> u64 {
-        unimplemented!()
+        1
     }
 
-    fn requires_notarization(&self) -> bool { unimplemented!() }
+    fn requires_notarization(&self) -> bool { false }
 
     fn set_required_confirmations(&self, _confirmations: u64) {
         unimplemented!()

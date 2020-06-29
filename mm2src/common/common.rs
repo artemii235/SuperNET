@@ -14,6 +14,7 @@
 #![feature(async_closure)]
 #![feature(hash_raw_entry)]
 #![feature(optin_builtin_traits)]
+#![feature(const_fn)]
 
 #![allow(uncommon_codepoints)]
 #![cfg_attr(not(feature = "native"), allow(unused_imports))]

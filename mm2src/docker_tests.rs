@@ -25,6 +25,7 @@ fn main() {
 
 #[cfg(all(test, feature = "native"))]
 mod docker_tests {
+    mod swaps_confs_settings_sync_tests;
     mod swaps_file_lock_tests;
 
     use bitcrypto::ChecksumType;
