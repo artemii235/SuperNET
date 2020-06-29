@@ -1082,3 +1082,73 @@ fn test_one_unavailable_electrum_proto_version() {
 
     assert!(coin.as_ref().rpc_client.get_block_count().wait().is_ok());
 }
+
+#[test]
+fn test_unspendable_balance_failed_once() {
+    let mut unspents = vec![
+        // unspendable balance (8) > balance (7.777)
+        vec![
+            UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 500000000, height: Default::default() },
+            UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 300000000, height: Default::default() },
+        ],
+        // unspendable balance (7.777) == balance (7.777)
+        vec![
+            UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 333300000, height: Default::default() },
+            UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 444400000, height: Default::default() },
+        ],
+    ];
+    UtxoStandardCoin::ordered_mature_unspents.mock_safe(move |_,_| {
+        let unspents = unspents.pop().unwrap();
+        MockResult::Return(Box::new(futures01::future::ok(unspents)))
+    });
+
+    let conf = json!({"coin":"RICK","asset":"RICK","rpcport":8923});
+    let req = json!({
+        "method": "electrum",
+        "servers": [{"url":"electrum1.cipig.net:10017"}],
+    });
+
+    let ctx = MmCtxBuilder::new().into_mm_arc();
+
+    let priv_key = [184, 199, 116, 240, 113, 222, 8, 199, 253, 143, 98, 185, 127, 26, 87, 38, 246, 206, 159, 27, 207, 20, 27, 112, 184, 102, 137, 37, 78, 214, 113, 78];
+    let coin = unwrap!(block_on(utxo_standard_coin_from_conf_and_request(
+        &ctx, "RICK", &conf, &req, &priv_key)));
+
+    let balance = coin.my_balance().wait().unwrap();
+    let expected = "7.777".parse().unwrap();
+    assert_eq!(balance, expected);
+
+    let unspendable_balance = coin.my_unspendable_balance().wait().unwrap();
+    let expected = "0.000".parse().unwrap();
+    assert_eq!(unspendable_balance, expected);
+}
+
+#[test]
+fn test_unspendable_balance_failed() {
+    UtxoStandardCoin::ordered_mature_unspents.mock_safe(move |_,_| {
+        let unspents = vec![
+            UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 500000000, height: Default::default() },
+            UnspentInfo { outpoint: OutPoint { hash: 1.into(), index: 0 }, value: 300000000, height: Default::default() },
+        ];
+        MockResult::Return(Box::new(futures01::future::ok(unspents)))
+    });
+
+    let conf = json!({"coin":"RICK","asset":"RICK","rpcport":8923});
+    let req = json!({
+        "method": "electrum",
+        "servers": [{"url":"electrum1.cipig.net:10017"}],
+    });
+
+    let ctx = MmCtxBuilder::new().into_mm_arc();
+
+    let priv_key = [184, 199, 116, 240, 113, 222, 8, 199, 253, 143, 98, 185, 127, 26, 87, 38, 246, 206, 159, 27, 207, 20, 27, 112, 184, 102, 137, 37, 78, 214, 113, 78];
+    let coin = unwrap!(block_on(utxo_standard_coin_from_conf_and_request(
+        &ctx, "RICK", &conf, &req, &priv_key)));
+
+    let balance = coin.my_balance().wait().unwrap();
+    let expected = "7.777".parse().unwrap();
+    assert_eq!(balance, expected);
+
+    let error = coin.my_unspendable_balance().wait().err().unwrap();
+    assert!(error.contains("spendable balance 8 more than total balance 7.777"));
+}

@@ -1491,16 +1491,25 @@ pub async fn get_verbose_transaction_from_cache_or_rpc<T>(coin: T, txid: H256Jso
 
 pub async fn my_unspendable_balance<T>(coin: T) -> Result<BigDecimal, String>
     where T: AsRef<UtxoArc> + UtxoArcCommonOps + MarketCoinOps {
-    let balance = try_s!(coin.my_balance().compat().await);
-    let mature_unspents = try_s!(coin.ordered_mature_unspents(&coin.as_ref().my_address).compat().await);
-    let spendable_balance = mature_unspents.iter().fold(BigDecimal::zero(), |acc, x|
-        acc + big_decimal_from_sat(x.value as i64, coin.as_ref().decimals));
-    if balance < spendable_balance {
-        log!("Warning, spendable balance " [spendable_balance] " more than total balance " [balance]);
-        return ERR!("spendable balance {} more than total balance {}", spendable_balance, balance);
-    }
+    let mut attempts = 0i32;
+    loop {
+        let balance = try_s!(coin.my_balance().compat().await);
+        let mature_unspents = try_s!(coin.ordered_mature_unspents(&coin.as_ref().my_address).compat().await);
+        let spendable_balance = mature_unspents.iter().fold(BigDecimal::zero(), |acc, x|
+            acc + big_decimal_from_sat(x.value as i64, coin.as_ref().decimals));
+        if balance >= spendable_balance {
+            return Ok(balance - spendable_balance);
+        }
 
-    Ok(balance - spendable_balance)
+        if attempts == 2 {
+            return ERR!("spendable balance {} more than total balance {}", spendable_balance, balance);
+        }
+
+        // the balance could be changed by other instance between my_balance() and ordered_mature_unspents() calls
+        // try again
+        attempts += 1;
+        Timer::sleep(0.3).await;
+    }
 }
 
 /// Convert satoshis to BigDecimal amount of coin units
