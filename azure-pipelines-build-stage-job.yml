@@ -35,6 +35,8 @@ jobs:
         displayName: Build Windows deps
         condition: eq( variables['Agent.OS'], 'Windows_NT' )
       - bash: |
+          cargo clippy -- -D warnings
+      - bash: |
           rm -rf upload
           mkdir upload
           echo 2.0.$(Build.BuildId)_$(Build.SourceBranchName)_$(COMMIT_HASH)_$(Agent.OS)_Debug > MM_VERSION
@@ -49,7 +51,7 @@ jobs:
         displayName: 'Test MM2'
         timeoutInMinutes: 22
         env:
-          BOB_PASSPHRASE: $(${{ parameters.bob_passphrase }})
+          BOB_PASSPHRASE: $(${{ paramet%ers.bob_passphrase }})
           BOB_USERPASS: $(${{ parameters.bob_userpass }})
           ALICE_PASSPHRASE: $(${{ parameters.alice_passphrase }})
           ALICE_USERPASS: $(${{ parameters.alice_userpass }})
