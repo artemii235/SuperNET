@@ -28,21 +28,15 @@ macro_rules! rpc_func {
 pub struct JsonRpcRemoteAddr(pub String);
 
 impl fmt::Debug for JsonRpcRemoteAddr {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "{}", self.0) }
 }
 
 impl From<JsonRpcRemoteAddr> for String {
-    fn from(addr: JsonRpcRemoteAddr) -> Self {
-        addr.0
-    }
+    fn from(addr: JsonRpcRemoteAddr) -> Self { addr.0 }
 }
 
 impl From<String> for JsonRpcRemoteAddr {
-    fn from(addr: String) -> Self {
-        JsonRpcRemoteAddr(addr)
-    }
+    fn from(addr: String) -> Self { JsonRpcRemoteAddr(addr) }
 }
 
 /// Serializable RPC request
@@ -56,9 +50,7 @@ pub struct JsonRpcRequest {
 }
 
 impl JsonRpcRequest {
-    pub fn get_id(&self) -> &str {
-        &self.id
-    }
+    pub fn get_id(&self) -> &str { &self.id }
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -74,7 +66,7 @@ pub struct JsonRpcResponse {
 }
 
 #[derive(Debug)]
-pub struct  JsonRpcError {
+pub struct JsonRpcError {
     /// Additional member contains an instance info that implements the JsonRpcClient trait.
     /// The info is used in particular to supplement the error info.
     client_info: String,
@@ -91,17 +83,16 @@ pub enum JsonRpcErrorType {
     /// Response parse error
     Parse(JsonRpcRemoteAddr, String),
     /// The JSON-RPC error returned from server
-    Response(JsonRpcRemoteAddr, Json)
+    Response(JsonRpcRemoteAddr, Json),
 }
 
 impl fmt::Display for JsonRpcError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:?}", self)
-    }
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { write!(f, "{:?}", self) }
 }
 
-pub type JsonRpcResponseFut = Box<dyn Future<Item=(JsonRpcRemoteAddr, JsonRpcResponse), Error=String> + Send + 'static>;
-pub type RpcRes<T> = Box<dyn Future<Item=T, Error=JsonRpcError> + Send + 'static>;
+pub type JsonRpcResponseFut =
+    Box<dyn Future<Item = (JsonRpcRemoteAddr, JsonRpcResponse), Error = String> + Send + 'static>;
+pub type RpcRes<T> = Box<dyn Future<Item = T, Error = JsonRpcError> + Send + 'static>;
 
 pub trait JsonRpcClient {
     fn version(&self) -> &'static str;
@@ -121,7 +112,7 @@ pub trait JsonRpcClient {
             move |e| JsonRpcError {
                 client_info,
                 request,
-                error: JsonRpcErrorType::Transport(e)
+                error: JsonRpcErrorType::Transport(e),
             }
         });
         Box::new(request_f.and_then(move |(addr, response)| -> Result<T, JsonRpcError> {
@@ -138,7 +129,10 @@ pub trait JsonRpcClient {
                 Err(e) => Err(JsonRpcError {
                     client_info,
                     request,
-                    error: JsonRpcErrorType::Parse(addr, ERRL!("error {:?} parsing result from response {:?}", e, response)),
+                    error: JsonRpcErrorType::Parse(
+                        addr,
+                        ERRL!("error {:?} parsing result from response {:?}", e, response),
+                    ),
                 }),
             }
         }))

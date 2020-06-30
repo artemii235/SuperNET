@@ -1,4 +1,3 @@
-
 /******************************************************************************
  * Copyright © 2014-2019 The SuperNET Developers.                             *
  *                                                                            *
@@ -23,36 +22,33 @@
 
 use bigdecimal::BigDecimal;
 use bitcrypto::sha256;
-use coins::{lp_coinfindᵃ, MmCoinEnum};
 use coins::utxo::{compressed_pub_key_from_priv_raw, ChecksumType};
-use common::{bits256, json_dir_entries, now_ms, new_uuid,
-  remove_file, rpc_response, rpc_err_response, write, HyRes};
+use coins::{lp_coinfindᵃ, MmCoinEnum};
 use common::executor::{spawn, Timer};
 use common::mm_ctx::{from_ctx, MmArc, MmWeak};
 use common::mm_number::{from_dec_to_ratio, from_ratio_to_dec, Fraction, MmNumber};
+use common::{bits256, json_dir_entries, new_uuid, now_ms, remove_file, rpc_err_response, rpc_response, write, HyRes};
 use futures::compat::Future01CompatExt;
 use gstuff::slurp;
 use http::Response;
 use keys::{Public, Signature};
-#[cfg(test)]
-use mocktopus::macros::*;
+#[cfg(test)] use mocktopus::macros::*;
 use num_rational::BigRational;
 use num_traits::cast::ToPrimitive;
 use num_traits::identities::Zero;
-use primitives::hash::{H256};
-use rpc::v1::types::{H256 as H256Json};
+use primitives::hash::H256;
+use rpc::v1::types::H256 as H256Json;
 use serde_json::{self as json, Value as Json};
-use std::collections::HashSet;
 use std::collections::hash_map::{Entry, HashMap};
+use std::collections::HashSet;
 use std::fs::DirEntry;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
-use crate::mm2::lp_swap::{
-    check_balance_for_maker_swap, check_balance_for_taker_swap, get_locked_amount, is_pubkey_banned, run_maker_swap, run_taker_swap,
-    MakerSwap, RunMakerSwapInput, RunTakerSwapInput, TakerSwap,
-};
+use crate::mm2::lp_swap::{check_balance_for_maker_swap, check_balance_for_taker_swap, get_locked_amount,
+                          is_pubkey_banned, run_maker_swap, run_taker_swap, MakerSwap, RunMakerSwapInput,
+                          RunTakerSwapInput, TakerSwap};
 
 #[cfg(test)]
 #[cfg(feature = "native")]
@@ -88,14 +84,14 @@ impl TakerRequest {
     fn get_base_amount(&self) -> MmNumber {
         match &self.base_amount_rat {
             Some(r) => r.clone().into(),
-            None => self.base_amount.clone().into()
+            None => self.base_amount.clone().into(),
         }
     }
 
     fn get_rel_amount(&self) -> MmNumber {
         match &self.rel_amount_rat {
             Some(r) => r.clone().into(),
-            None => self.rel_amount.clone().into()
+            None => self.rel_amount.clone().into(),
         }
     }
 }
@@ -105,7 +101,7 @@ impl TakerRequest {
 enum MatchBy {
     Any,
     Orders(HashSet<Uuid>),
-    Pubkeys(HashSet<H256Json>)
+    Pubkeys(HashSet<H256Json>),
 }
 
 impl Default for MatchBy {
@@ -141,18 +137,20 @@ enum MatchReservedResult {
 }
 
 impl TakerOrder {
-    fn is_cancellable(&self) -> bool {
-        self.matches.is_empty()
-    }
+    fn is_cancellable(&self) -> bool { self.matches.is_empty() }
 
     fn match_reserved(&self, reserved: &MakerReserved) -> MatchReservedResult {
         match &self.request.match_by {
             MatchBy::Any => (),
-            MatchBy::Orders(uuids) => if !uuids.contains(&reserved.maker_order_uuid) {
-                return MatchReservedResult::NotMatched;
+            MatchBy::Orders(uuids) => {
+                if !uuids.contains(&reserved.maker_order_uuid) {
+                    return MatchReservedResult::NotMatched;
+                }
             },
-            MatchBy::Pubkeys(pubkeys) => if !pubkeys.contains(&reserved.sender_pubkey) {
-                return MatchReservedResult::NotMatched;
+            MatchBy::Pubkeys(pubkeys) => {
+                if !pubkeys.contains(&reserved.sender_pubkey) {
+                    return MatchReservedResult::NotMatched;
+                }
             },
         }
 
@@ -162,18 +160,28 @@ impl TakerOrder {
         let other_rel_amount: MmNumber = reserved.get_rel_amount();
 
         match self.request.action {
-            TakerAction::Buy => if self.request.base == reserved.base && self.request.rel == reserved.rel
-                && my_base_amount == other_base_amount && other_rel_amount <= my_rel_amount {
-                MatchReservedResult::Matched
-            } else {
-                MatchReservedResult::NotMatched
+            TakerAction::Buy => {
+                if self.request.base == reserved.base
+                    && self.request.rel == reserved.rel
+                    && my_base_amount == other_base_amount
+                    && other_rel_amount <= my_rel_amount
+                {
+                    MatchReservedResult::Matched
+                } else {
+                    MatchReservedResult::NotMatched
+                }
             },
-            TakerAction::Sell => if self.request.base == reserved.rel && self.request.rel == reserved.base
-                && my_base_amount == other_rel_amount && my_rel_amount <= other_base_amount {
-                MatchReservedResult::Matched
-            } else {
-                MatchReservedResult::NotMatched
-            }
+            TakerAction::Sell => {
+                if self.request.base == reserved.rel
+                    && self.request.rel == reserved.base
+                    && my_base_amount == other_rel_amount
+                    && my_rel_amount <= other_base_amount
+                {
+                    MatchReservedResult::Matched
+                } else {
+                    MatchReservedResult::NotMatched
+                }
+            },
         }
     }
 }
@@ -207,14 +215,12 @@ impl MakerOrder {
     fn available_amount(&self) -> MmNumber {
         let reserved: MmNumber = self.matches.iter().fold(
             MmNumber::from(BigRational::from_integer(0.into())),
-            |reserved, (_, order_match)| reserved + order_match.reserved.get_base_amount()
+            |reserved, (_, order_match)| reserved + order_match.reserved.get_base_amount(),
         );
         MmNumber::from(self.max_base_vol_rat.clone()) - reserved
     }
 
-    fn is_cancellable(&self) -> bool {
-        !self.has_ongoing_matches()
-    }
+    fn is_cancellable(&self) -> bool { !self.has_ongoing_matches() }
 
     fn has_ongoing_matches(&self) -> bool {
         for (_, order_match) in self.matches.iter() {
@@ -291,14 +297,14 @@ impl MakerReserved {
     fn get_base_amount(&self) -> MmNumber {
         match &self.base_amount_rat {
             Some(r) => r.clone().into(),
-            None => self.base_amount.clone().into()
+            None => self.base_amount.clone().into(),
         }
     }
 
     fn get_rel_amount(&self) -> MmNumber {
         match &self.rel_amount_rat {
             Some(r) => r.clone().into(),
-            None => self.rel_amount.clone().into()
+            None => self.rel_amount.clone().into(),
         }
     }
 }
@@ -322,38 +328,51 @@ struct OrdermatchContext {
 
 impl OrdermatchContext {
     /// Obtains a reference to this crate context, creating it if necessary.
-    fn from_ctx (ctx: &MmArc) -> Result<Arc<OrdermatchContext>, String> {
-        Ok (try_s! (from_ctx (&ctx.ordermatch_ctx, move || {
-            Ok (OrdermatchContext {
-                my_taker_orders: Mutex::new (HashMap::default()),
-                my_maker_orders: Mutex::new (HashMap::default()),
-                my_cancelled_orders: Mutex::new (HashMap::default()),
-                orderbook: Mutex::new (HashMap::default()),
+    fn from_ctx(ctx: &MmArc) -> Result<Arc<OrdermatchContext>, String> {
+        Ok(try_s!(from_ctx(&ctx.ordermatch_ctx, move || {
+            Ok(OrdermatchContext {
+                my_taker_orders: Mutex::new(HashMap::default()),
+                my_maker_orders: Mutex::new(HashMap::default()),
+                my_cancelled_orders: Mutex::new(HashMap::default()),
+                orderbook: Mutex::new(HashMap::default()),
             })
         })))
     }
 
     /// Obtains a reference to this crate context, creating it if necessary.
     #[allow(dead_code)]
-    fn from_ctx_weak (ctx_weak: &MmWeak) -> Result<Arc<OrdermatchContext>, String> {
-        let ctx = try_s! (MmArc::from_weak (ctx_weak) .ok_or ("Context expired"));
-        Self::from_ctx (&ctx)
+    fn from_ctx_weak(ctx_weak: &MmWeak) -> Result<Arc<OrdermatchContext>, String> {
+        let ctx = try_s!(MmArc::from_weak(ctx_weak).ok_or("Context expired"));
+        Self::from_ctx(&ctx)
     }
 }
 
 #[cfg_attr(test, mockable)]
 fn lp_connect_start_bob(ctx: MmArc, maker_match: MakerMatch) {
-    spawn(async move {  // aka "maker_loop"
+    spawn(async move {
+        // aka "maker_loop"
         let taker_coin = match lp_coinfindᵃ(&ctx, &maker_match.reserved.rel).await {
             Ok(Some(c)) => c,
-            Ok(None) => {log!("Coin " (maker_match.reserved.rel) " is not found/enabled"); return},
-            Err(e) => {log!("!lp_coinfind(" (maker_match.reserved.rel) "): " (e)); return}
+            Ok(None) => {
+                log!("Coin " (maker_match.reserved.rel) " is not found/enabled");
+                return;
+            },
+            Err(e) => {
+                log!("!lp_coinfind(" (maker_match.reserved.rel) "): " (e));
+                return;
+            },
         };
 
         let maker_coin = match lp_coinfindᵃ(&ctx, &maker_match.reserved.base).await {
             Ok(Some(c)) => c,
-            Ok(None) => {log!("Coin " (maker_match.reserved.base) " is not found/enabled"); return},
-            Err(e) => {log!("!lp_coinfind(" (maker_match.reserved.base) "): " (e)); return}
+            Ok(None) => {
+                log!("Coin " (maker_match.reserved.base) " is not found/enabled");
+                return;
+            },
+            Err(e) => {
+                log!("!lp_coinfind(" (maker_match.reserved.base) "): " (e));
+                return;
+            },
         };
         let mut alice = bits256::default();
         alice.bytes = maker_match.request.sender_pubkey.0;
@@ -379,31 +398,32 @@ fn lp_connect_start_bob(ctx: MmArc, maker_match: MakerMatch) {
 }
 
 fn lp_connected_alice(ctx: MmArc, taker_match: TakerMatch) {
-    spawn (async move {  // aka "taker_loop"
+    spawn(async move {
+        // aka "taker_loop"
         let mut maker = bits256::default();
         maker.bytes = taker_match.reserved.sender_pubkey.0;
-        let taker_coin = match lp_coinfindᵃ (&ctx, &taker_match.reserved.rel) .await {
+        let taker_coin = match lp_coinfindᵃ(&ctx, &taker_match.reserved.rel).await {
             Ok(Some(c)) => c,
             Ok(None) => {
                 log!("Coin " (taker_match.reserved.rel) " is not found/enabled");
                 return;
-            }
+            },
             Err(e) => {
                 log!("!lp_coinfind(" (taker_match.reserved.rel) "): " (e));
                 return;
-            }
+            },
         };
 
-        let maker_coin = match lp_coinfindᵃ (&ctx, &taker_match.reserved.base) .await {
+        let maker_coin = match lp_coinfindᵃ(&ctx, &taker_match.reserved.base).await {
             Ok(Some(c)) => c,
             Ok(None) => {
                 log!("Coin " (taker_match.reserved.base) " is not found/enabled");
                 return;
-            }
+            },
             Err(e) => {
                 log!("!lp_coinfind(" (taker_match.reserved.base) "): " (e));
                 return;
-            }
+            },
         };
 
         let privkey = &ctx.secp256k1_key_pair().private().secret;
@@ -432,47 +452,62 @@ pub async fn lp_ordermatch_loop(ctx: MmArc) {
     let mut last_price_broadcast = 0;
 
     loop {
-        if ctx.is_stopping() { break }
+        if ctx.is_stopping() {
+            break;
+        }
         let ordermatch_ctx = unwrap!(OrdermatchContext::from_ctx(&ctx));
         {
             let mut my_taker_orders = unwrap!(ordermatch_ctx.my_taker_orders.lock());
             let mut my_maker_orders = unwrap!(ordermatch_ctx.my_maker_orders.lock());
             let mut my_cancelled_orders = unwrap!(ordermatch_ctx.my_cancelled_orders.lock());
             // transform the timed out and unmatched GTC taker orders to maker
-            *my_taker_orders = my_taker_orders.drain().filter_map(|(uuid, order)| if order.created_at + ORDERMATCH_TIMEOUT < now_ms() {
-                delete_my_taker_order(&ctx, &order);
-                if order.matches.is_empty() && order.order_type == OrderType::GoodTillCancelled {
-                    let maker_order = order.into();
-                    save_my_maker_order(&ctx, &maker_order);
-                    my_maker_orders.insert(uuid, maker_order);
-                }
-                None
-            } else {
-                Some((uuid, order))
-            }).collect();
+            *my_taker_orders = my_taker_orders
+                .drain()
+                .filter_map(|(uuid, order)| {
+                    if order.created_at + ORDERMATCH_TIMEOUT < now_ms() {
+                        delete_my_taker_order(&ctx, &order);
+                        if order.matches.is_empty() && order.order_type == OrderType::GoodTillCancelled {
+                            let maker_order = order.into();
+                            save_my_maker_order(&ctx, &maker_order);
+                            my_maker_orders.insert(uuid, maker_order);
+                        }
+                        None
+                    } else {
+                        Some((uuid, order))
+                    }
+                })
+                .collect();
             // remove timed out unfinished matches to unlock the reserved amount
             my_maker_orders.iter_mut().for_each(|(_, order)| {
-                order.matches = order.matches.drain().filter(
-                    |(_, order_match)| order_match.last_updated + ORDERMATCH_TIMEOUT > now_ms() || order_match.connected.is_some()
-                ).collect();
+                order.matches = order
+                    .matches
+                    .drain()
+                    .filter(|(_, order_match)| {
+                        order_match.last_updated + ORDERMATCH_TIMEOUT > now_ms() || order_match.connected.is_some()
+                    })
+                    .collect();
                 save_my_maker_order(&ctx, order);
             });
-            *my_maker_orders = my_maker_orders.drain().filter_map(|(uuid, order)| {
-                let min_amount: BigDecimal = MIN_TRADING_VOL.parse().unwrap();
-                let min_amount: MmNumber = min_amount.into();
-                if order.available_amount() <= min_amount && !order.has_ongoing_matches() {
-                    delete_my_maker_order(&ctx, &order);
-                    my_cancelled_orders.insert(uuid, order);
-                    None
-                } else {
-                    Some((uuid, order))
-                }
-            }).collect();
+            *my_maker_orders = my_maker_orders
+                .drain()
+                .filter_map(|(uuid, order)| {
+                    let min_amount: BigDecimal = MIN_TRADING_VOL.parse().unwrap();
+                    let min_amount: MmNumber = min_amount.into();
+                    if order.available_amount() <= min_amount && !order.has_ongoing_matches() {
+                        delete_my_maker_order(&ctx, &order);
+                        my_cancelled_orders.insert(uuid, order);
+                        None
+                    } else {
+                        Some((uuid, order))
+                    }
+                })
+                .collect();
         }
 
         if now_ms() > last_price_broadcast + 10000 {
             if let Err(e) = broadcast_my_maker_orders(&ctx).await {
-                ctx.log.log("", &[&"broadcast_my_maker_orders"], &format!("error {}", e));
+                ctx.log
+                    .log("", &[&"broadcast_my_maker_orders"], &format!("error {}", e));
             }
             last_price_broadcast = now_ms();
         }
@@ -481,28 +516,33 @@ pub async fn lp_ordermatch_loop(ctx: MmArc) {
             // remove "timed out" orders from orderbook
             // ones that didn't receive an update for 30 seconds or more
             let mut orderbook = unwrap!(ordermatch_ctx.orderbook.lock());
-            *orderbook = orderbook.drain().filter_map(|((base, rel), mut pair_orderbook)| {
-                pair_orderbook = pair_orderbook.drain().filter_map(|(pubkey, order)| if now_ms() / 1000 > order.timestamp + 30 {
-                    None
-                } else {
-                    Some((pubkey, order))
-                }).collect();
-                if pair_orderbook.is_empty() {
-                    None
-                } else {
-                    Some(((base, rel), pair_orderbook))
-                }
-            }).collect();
+            *orderbook = orderbook
+                .drain()
+                .filter_map(|((base, rel), mut pair_orderbook)| {
+                    pair_orderbook = pair_orderbook
+                        .drain()
+                        .filter_map(|(pubkey, order)| {
+                            if now_ms() / 1000 > order.timestamp + 30 {
+                                None
+                            } else {
+                                Some((pubkey, order))
+                            }
+                        })
+                        .collect();
+                    if pair_orderbook.is_empty() {
+                        None
+                    } else {
+                        Some(((base, rel), pair_orderbook))
+                    }
+                })
+                .collect();
         }
 
         Timer::sleep(0.777).await;
     }
 }
 
-pub fn lp_trade_command(
-    ctx: MmArc,
-    json: Json,
-) -> i32 {
+pub fn lp_trade_command(ctx: MmArc, json: Json) -> i32 {
     let method = json["method"].as_str();
     let ordermatch_ctx = unwrap!(OrdermatchContext::from_ctx(&ctx));
     let our_public_id = unwrap!(ctx.public_id());
@@ -523,14 +563,20 @@ pub fn lp_trade_command(
         let mut my_taker_orders = unwrap!(ordermatch_ctx.my_taker_orders.lock());
         let my_order = match my_taker_orders.entry(reserved_msg.taker_order_uuid) {
             Entry::Vacant(_) => {
-                log!("Our node doesn't have the order with uuid " (reserved_msg.taker_order_uuid));
+                log!("Our node doesn't have the order with uuid "(
+                    reserved_msg.taker_order_uuid
+                ));
                 return 1;
             },
-            Entry::Occupied(entry) => entry.into_mut()
+            Entry::Occupied(entry) => entry.into_mut(),
         };
 
-        if my_order.request.dest_pub_key != H256Json::default() && my_order.request.dest_pub_key != reserved_msg.sender_pubkey {
-            log!("got reserved response from different node " (hex::encode(&reserved_msg.sender_pubkey.0)));
+        if my_order.request.dest_pub_key != H256Json::default()
+            && my_order.request.dest_pub_key != reserved_msg.sender_pubkey
+        {
+            log!("got reserved response from different node "(hex::encode(
+                &reserved_msg.sender_pubkey.0
+            )));
             return 1;
         }
 
@@ -551,7 +597,9 @@ pub fn lp_trade_command(
                 connected: None,
                 last_updated: now_ms(),
             };
-            my_order.matches.insert(taker_match.reserved.maker_order_uuid, taker_match);
+            my_order
+                .matches
+                .insert(taker_match.reserved.maker_order_uuid, taker_match);
             save_my_taker_order(&ctx, &my_order);
         }
         return 1;
@@ -561,7 +609,9 @@ pub fn lp_trade_command(
             Ok(c) => c,
             Err(_) => return 1,
         };
-        if H256Json::from(our_public_id.bytes) == connected.dest_pub_key && H256Json::from(our_public_id.bytes) != connected.sender_pubkey {
+        if H256Json::from(our_public_id.bytes) == connected.dest_pub_key
+            && H256Json::from(our_public_id.bytes) != connected.sender_pubkey
+        {
             let mut my_taker_orders = unwrap!(ordermatch_ctx.my_taker_orders.lock());
             let my_order_entry = match my_taker_orders.entry(connected.taker_order_uuid) {
                 Entry::Occupied(e) => e,
@@ -575,7 +625,7 @@ pub fn lp_trade_command(
                 None => {
                     log!("Our node doesn't have the match with uuid "(connected.maker_order_uuid));
                     return 1;
-                }
+                },
             };
             // alice
             lp_connected_alice(ctx.clone(), order_match.clone());
@@ -605,7 +655,8 @@ pub fn lp_trade_command(
         let mut my_orders = unwrap!(ordermatch_ctx.my_maker_orders.lock());
 
         for (uuid, order) in my_orders.iter_mut() {
-            if let OrderMatchResult::Matched((base_amount, rel_amount)) = match_order_and_request(order, &taker_request) {
+            if let OrderMatchResult::Matched((base_amount, rel_amount)) = match_order_and_request(order, &taker_request)
+            {
                 if !order.matches.contains_key(&taker_request.uuid) {
                     let reserved = MakerReserved {
                         dest_pub_key: taker_request.sender_pubkey.clone(),
@@ -647,14 +698,18 @@ pub fn lp_trade_command(
             let my_order = match maker_orders.get_mut(&connect_msg.maker_order_uuid) {
                 Some(o) => o,
                 None => {
-                    log!("Our node doesn't have the order with uuid " (connect_msg.maker_order_uuid));
+                    log!("Our node doesn't have the order with uuid "(
+                        connect_msg.maker_order_uuid
+                    ));
                     return 1;
                 },
             };
             let order_match = match my_order.matches.get_mut(&connect_msg.taker_order_uuid) {
                 Some(o) => o,
                 None => {
-                    log!("Our node doesn't have the match with uuid " (connect_msg.taker_order_uuid));
+                    log!("Our node doesn't have the match with uuid "(
+                        connect_msg.taker_order_uuid
+                    ));
                     return 1;
                 },
             };
@@ -692,7 +747,7 @@ pub struct AutoBuyInput {
     // TODO: remove this field on API refactoring, method should be separated from params
     method: String,
     gui: Option<String>,
-    #[serde(rename="destpubkey")]
+    #[serde(rename = "destpubkey")]
     #[serde(default)]
     dest_pub_key: H256Json,
     #[serde(default)]
@@ -703,7 +758,9 @@ pub struct AutoBuyInput {
 
 pub async fn buy(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
     let input: AutoBuyInput = try_s!(json::from_value(req));
-    if input.base == input.rel {return ERR!("Base and rel must be different coins")}
+    if input.base == input.rel {
+        return ERR!("Base and rel must be different coins");
+    }
     let rel_coin = try_s!(lp_coinfindᵃ(&ctx, &input.rel).await);
     let rel_coin = try_s!(rel_coin.ok_or("Rel coin is not found or inactive"));
     let base_coin = try_s!(lp_coinfindᵃ(&ctx, &input.base).await);
@@ -717,7 +774,9 @@ pub async fn buy(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
 
 pub async fn sell(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
     let input: AutoBuyInput = try_s!(json::from_value(req));
-    if input.base == input.rel {return ERR!("Base and rel must be different coins")}
+    if input.base == input.rel {
+        return ERR!("Base and rel must be different coins");
+    }
     let base_coin = try_s!(lp_coinfindᵃ(&ctx, &input.base).await);
     let base_coin = try_s!(base_coin.ok_or("Base coin is not found or inactive"));
     let rel_coin = try_s!(lp_coinfindᵃ(&ctx, &input.rel).await);
@@ -753,13 +812,9 @@ pub fn lp_auto_buy(ctx: &MmArc, input: AutoBuyInput) -> Result<String, String> {
     }
 
     let action = match Some(input.method.as_ref()) {
-        Some("buy") => {
-            TakerAction::Buy
-        },
-        Some("sell") => {
-            TakerAction::Sell
-        },
-        _ => return ERR!("Auto buy must be called only from buy/sell RPC methods")
+        Some("buy") => TakerAction::Buy,
+        Some("sell") => TakerAction::Sell,
+        _ => return ERR!("Auto buy must be called only from buy/sell RPC methods"),
     };
 
     let ordermatch_ctx = try_s!(OrdermatchContext::from_ctx(&ctx));
@@ -768,11 +823,19 @@ pub fn lp_auto_buy(ctx: &MmArc, input: AutoBuyInput) -> Result<String, String> {
     let our_public_id = try_s!(ctx.public_id());
     let rel_volume = &input.volume * &input.price;
     if input.volume < MmNumber::from(unwrap!(MIN_TRADING_VOL.parse::<BigDecimal>())) {
-        return ERR!("Base volume {} is too low, required at least {}", input.volume, MIN_TRADING_VOL);
+        return ERR!(
+            "Base volume {} is too low, required at least {}",
+            input.volume,
+            MIN_TRADING_VOL
+        );
     }
 
     if rel_volume < MmNumber::from(unwrap!(MIN_TRADING_VOL.parse::<BigDecimal>())) {
-        return ERR!("Rel volume {} is too low, required at least {}", rel_volume, MIN_TRADING_VOL);
+        return ERR!(
+            "Rel volume {} is too low, required at least {}",
+            rel_volume,
+            MIN_TRADING_VOL
+        );
     }
 
     let request = TakerRequest {
@@ -790,9 +853,7 @@ pub fn lp_auto_buy(ctx: &MmArc, input: AutoBuyInput) -> Result<String, String> {
         match_by: input.match_by,
     };
     ctx.broadcast_p2p_msg(&unwrap!(json::to_string(&request)));
-    let result = json!({
-        "result": request
-    }).to_string();
+    let result = json!({ "result": request }).to_string();
     let order = TakerOrder {
         created_at: now_ms(),
         matches: HashMap::new(),
@@ -829,7 +890,7 @@ struct PricePingRequest {
     pubsecp: String,
     sig: String,
     // TODO rename, it's called "balance", but it's actual meaning is max available volume to trade
-    #[serde(rename="bal")]
+    #[serde(rename = "bal")]
     balance: BigDecimal,
     balance_rat: Option<MmNumber>,
     uuid: Option<Uuid>,
@@ -913,23 +974,27 @@ pub fn lp_post_price_recv(ctx: &MmArc, req: Json) -> HyRes {
         let ordermatch_ctx: Arc<OrdermatchContext> = try_h!(OrdermatchContext::from_ctx(ctx));
         let mut orderbook = try_h!(ordermatch_ctx.orderbook.lock());
         match orderbook.entry((req.base.clone(), req.rel.clone())) {
-            Entry::Vacant(pair_orders) => if req.balance > 0.into() && req.price > 0.into() {
-                let mut orders = HashMap::new();
-                orders.insert(uuid, req);
-                pair_orders.insert(orders);
+            Entry::Vacant(pair_orders) => {
+                if req.balance > 0.into() && req.price > 0.into() {
+                    let mut orders = HashMap::new();
+                    orders.insert(uuid, req);
+                    pair_orders.insert(orders);
+                }
             },
-            Entry::Occupied(mut pair_orders) => {
-                match pair_orders.get_mut().entry(uuid) {
-                    Entry::Vacant(order) => if req.balance > 0.into() && req.price > 0.into() {
+            Entry::Occupied(mut pair_orders) => match pair_orders.get_mut().entry(uuid) {
+                Entry::Vacant(order) => {
+                    if req.balance > 0.into() && req.price > 0.into() {
                         order.insert(req);
-                    },
-                    Entry::Occupied(mut order) => if req.balance > 0.into() {
+                    }
+                },
+                Entry::Occupied(mut order) => {
+                    if req.balance > 0.into() {
                         order.insert(req);
                     } else {
                         order.remove();
-                    },
-                }
-            }
+                    }
+                },
+            },
         }
         rpc_response(200, r#"{"result":"success"}"#)
     } else {
@@ -946,7 +1011,9 @@ fn lp_send_price_ping(req: &PricePingRequest, ctx: &MmArc) -> Result<(), String>
     let ctxʹ = ctx.clone();
     spawn(async move {
         let rc = lp_post_price_recv(&ctxʹ, req_value).compat().await;
-        if let Err(err) = rc {log!("!lp_post_price_recv: "(err))}
+        if let Err(err) = rc {
+            log!("!lp_post_price_recv: "(err))
+        }
     });
 
     ctx.broadcast_p2p_msg(&req_string);
@@ -1007,11 +1074,19 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
         req.volume.clone()
     };
     if volume < MmNumber::from(unwrap!(MIN_TRADING_VOL.parse::<BigDecimal>())) {
-        return ERR!("Base volume {} is too low, required at least {}", volume, MIN_TRADING_VOL);
+        return ERR!(
+            "Base volume {} is too low, required at least {}",
+            volume,
+            MIN_TRADING_VOL
+        );
     }
     let rel_volume = &volume * &req.price;
     if rel_volume < MmNumber::from(unwrap!(MIN_TRADING_VOL.parse::<BigDecimal>())) {
-        return ERR!("Rel volume {} is too low, required at least {}", rel_volume, MIN_TRADING_VOL);
+        return ERR!(
+            "Rel volume {} is too low, required at least {}",
+            rel_volume,
+            MIN_TRADING_VOL
+        );
     }
     try_s!(rel_coin.can_i_spend_other_payment().compat().await);
 
@@ -1023,16 +1098,19 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
         // it's common use case now as `autoprice` doesn't work with new ordermatching and
         // MM2 users request the coins price from aggregators by their own scripts issuing
         // repetitive setprice calls with new price
-        *my_orders = my_orders.drain().filter_map(|(uuid, order)| {
-            let to_delete = order.base == req.base && order.rel == req.rel;
-            if to_delete {
-                delete_my_maker_order(&ctx, &order);
-                cancelled_orders.insert(uuid, order);
-                None
-            } else {
-                Some((uuid, order))
-            }
-        }).collect();
+        *my_orders = my_orders
+            .drain()
+            .filter_map(|(uuid, order)| {
+                let to_delete = order.base == req.base && order.rel == req.rel;
+                if to_delete {
+                    delete_my_maker_order(&ctx, &order);
+                    cancelled_orders.insert(uuid, order);
+                    None
+                } else {
+                    Some((uuid, order))
+                }
+            })
+            .collect();
     }
 
     let uuid = new_uuid();
@@ -1051,7 +1129,7 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
         uuid,
     };
     save_my_maker_order(&ctx, &order);
-    let res = try_s!(json::to_vec(&json!({"result":order})));
+    let res = try_s!(json::to_vec(&json!({ "result": order })));
     my_orders.insert(uuid, order);
     Ok(try_s!(Response::builder().body(res)))
 }
@@ -1063,38 +1141,58 @@ pub async fn broadcast_my_maker_orders(ctx: &MmArc) -> Result<(), String> {
         let base_coin = match try_s!(lp_coinfindᵃ(ctx, &order.base).await) {
             Some(coin) => coin,
             None => {
-                ctx.log.log("", &[&"broadcast_my_maker_orders", &order.base, &order.rel], "base coin is not active yet");
-                continue
+                ctx.log.log(
+                    "",
+                    &[&"broadcast_my_maker_orders", &order.base, &order.rel],
+                    "base coin is not active yet",
+                );
+                continue;
             },
         };
 
         let _rel_coin = match try_s!(lp_coinfindᵃ(ctx, &order.rel).await) {
             Some(coin) => coin,
             None => {
-                ctx.log.log("", &[&"broadcast_my_maker_orders", &order.base, &order.rel], "rel coin is not active yet");
-                continue
+                ctx.log.log(
+                    "",
+                    &[&"broadcast_my_maker_orders", &order.base, &order.rel],
+                    "rel coin is not active yet",
+                );
+                continue;
             },
         };
 
         let balance = match base_coin.my_balance().compat().await {
             Ok(b) => b,
             Err(e) => {
-                ctx.log.log("", &[&"broadcast_my_maker_orders", &order.base, &order.rel], &format! ("failed to get balance of base coin: {}", e));
+                ctx.log.log(
+                    "",
+                    &[&"broadcast_my_maker_orders", &order.base, &order.rel],
+                    &format!("failed to get balance of base coin: {}", e),
+                );
                 continue;
-            }
+            },
         };
 
         if balance >= MIN_TRADING_VOL.parse().unwrap() {
             let ping = match PricePingRequest::new(ctx, &order, balance) {
                 Ok(p) => p,
                 Err(e) => {
-                    ctx.log.log("", &[&"broadcast_my_maker_orders", &order.base, &order.rel], &format!("ping request creation failed {}", e));
+                    ctx.log.log(
+                        "",
+                        &[&"broadcast_my_maker_orders", &order.base, &order.rel],
+                        &format!("ping request creation failed {}", e),
+                    );
                     continue;
                 },
             };
 
             if let Err(e) = lp_send_price_ping(&ping, ctx) {
-                ctx.log.log("", &[&"broadcast_my_maker_orders", &order.base, &order.rel], &format!("ping request send failed {}", e));
+                ctx.log.log(
+                    "",
+                    &[&"broadcast_my_maker_orders", &order.base, &order.rel],
+                    &format!("ping request send failed {}", e),
+                );
                 continue;
             }
         } else {
@@ -1114,13 +1212,21 @@ pub async fn broadcast_my_maker_orders(ctx: &MmArc) -> Result<(), String> {
         let ping = match PricePingRequest::new(ctx, &order, 0.into()) {
             Ok(p) => p,
             Err(e) => {
-                ctx.log.log("", &[&"broadcast_cancelled_orders", &order.base, &order.rel], &format! ("ping request creation failed {}", e));
+                ctx.log.log(
+                    "",
+                    &[&"broadcast_cancelled_orders", &order.base, &order.rel],
+                    &format!("ping request creation failed {}", e),
+                );
                 continue;
             },
         };
 
         if let Err(e) = lp_send_price_ping(&ping, ctx) {
-            ctx.log.log("", &[&"broadcast_cancelled_orders", &order.base, &order.rel], &format! ("ping request send failed {}", e));
+            ctx.log.log(
+                "",
+                &[&"broadcast_cancelled_orders", &order.base, &order.rel],
+                &format!("ping request send failed {}", e),
+            );
             continue;
         }
     }
@@ -1146,7 +1252,11 @@ fn match_order_and_request(maker: &MakerOrder, taker: &TakerRequest) -> OrderMat
 
     match taker.action {
         TakerAction::Buy => {
-            if maker.base == taker.base && maker.rel == taker.rel && taker_base_amount <= maker.available_amount() && taker_base_amount >= maker_min_vol {
+            if maker.base == taker.base
+                && maker.rel == taker.rel
+                && taker_base_amount <= maker.available_amount()
+                && taker_base_amount >= maker_min_vol
+            {
                 let taker_price = &taker_rel_amount / &taker_base_amount;
                 if taker_price >= maker_price {
                     OrderMatchResult::Matched((taker_base_amount.clone(), taker_base_amount * maker_price))
@@ -1158,7 +1268,11 @@ fn match_order_and_request(maker: &MakerOrder, taker: &TakerRequest) -> OrderMat
             }
         },
         TakerAction::Sell => {
-            if maker.base == taker.rel && maker.rel == taker.base && taker_rel_amount <= maker.available_amount() && taker_rel_amount >= maker_min_vol {
+            if maker.base == taker.rel
+                && maker.rel == taker.base
+                && taker_rel_amount <= maker.available_amount()
+                && taker_rel_amount >= maker_min_vol
+            {
                 let taker_price = &taker_base_amount / &taker_rel_amount;
                 if taker_price >= maker_price {
                     OrderMatchResult::Matched((&taker_base_amount / &maker_price, taker_base_amount))
@@ -1183,18 +1297,26 @@ pub fn order_status(ctx: MmArc, req: Json) -> HyRes {
     let ordermatch_ctx = try_h!(OrdermatchContext::from_ctx(&ctx));
     let maker_orders = try_h!(ordermatch_ctx.my_maker_orders.lock());
     if let Some(order) = maker_orders.get(&req.uuid) {
-        return rpc_response(200, json!({
-            "type": "Maker",
-            "order": MakerOrderForRpc::from(order),
-        }).to_string());
+        return rpc_response(
+            200,
+            json!({
+                "type": "Maker",
+                "order": MakerOrderForRpc::from(order),
+            })
+            .to_string(),
+        );
     }
 
     let taker_orders = try_h!(ordermatch_ctx.my_taker_orders.lock());
     if let Some(order) = taker_orders.get(&req.uuid) {
-        return rpc_response(200, json!({
-            "type": "Taker",
-            "order": TakerOrderForRpc::from(order),
-        }).to_string());
+        return rpc_response(
+            200,
+            json!({
+                "type": "Taker",
+                "order": TakerOrderForRpc::from(order),
+            })
+            .to_string(),
+        );
     }
 
     rpc_err_response(404, &format!("Order with uuid {} is not found", req.uuid))
@@ -1219,9 +1341,13 @@ pub fn cancel_order(ctx: MmArc, req: Json) -> HyRes {
             let order = order.remove();
             delete_my_maker_order(&ctx, &order);
             cancelled_orders.insert(req.uuid, order);
-            return rpc_response(200, json!({
-                "result": "success"
-            }).to_string())
+            return rpc_response(
+                200,
+                json!({
+                    "result": "success"
+                })
+                .to_string(),
+            );
         },
         // look for taker order with provided uuid
         Entry::Vacant(_) => (),
@@ -1235,9 +1361,13 @@ pub fn cancel_order(ctx: MmArc, req: Json) -> HyRes {
             }
             let order = order.remove();
             delete_my_taker_order(&ctx, &order);
-            return rpc_response(200, json!({
-                "result": "success"
-            }).to_string())
+            return rpc_response(
+                200,
+                json!({
+                    "result": "success"
+                })
+                .to_string(),
+            );
         },
         // error is returned
         Entry::Vacant(_) => (),
@@ -1268,7 +1398,7 @@ impl<'a> From<&'a MakerOrder> for MakerOrderForRpc<'a> {
 struct TakerOrderForRpc<'a> {
     #[serde(flatten)]
     order: &'a TakerOrder,
-    cancellable: bool
+    cancellable: bool,
 }
 
 impl<'a> From<&'a TakerOrder> for TakerOrderForRpc<'a> {
@@ -1284,23 +1414,29 @@ pub fn my_orders(ctx: MmArc) -> HyRes {
     let ordermatch_ctx = try_h!(OrdermatchContext::from_ctx(&ctx));
     let maker_orders = try_h!(ordermatch_ctx.my_maker_orders.lock());
     let taker_orders = try_h!(ordermatch_ctx.my_taker_orders.lock());
-    let maker_orders_for_rpc: HashMap<_, _> = maker_orders.iter().map(|(uuid, order)| (uuid, MakerOrderForRpc::from(order))).collect();
-    let taker_orders_for_rpc: HashMap<_, _> = taker_orders.iter().map(|(uuid, order)| (uuid, TakerOrderForRpc::from(order))).collect();
-    rpc_response(200, json!({
-        "result": {
-            "maker_orders": maker_orders_for_rpc,
-            "taker_orders": taker_orders_for_rpc,
-        }
-    }).to_string())
+    let maker_orders_for_rpc: HashMap<_, _> = maker_orders
+        .iter()
+        .map(|(uuid, order)| (uuid, MakerOrderForRpc::from(order)))
+        .collect();
+    let taker_orders_for_rpc: HashMap<_, _> = taker_orders
+        .iter()
+        .map(|(uuid, order)| (uuid, TakerOrderForRpc::from(order)))
+        .collect();
+    rpc_response(
+        200,
+        json!({
+            "result": {
+                "maker_orders": maker_orders_for_rpc,
+                "taker_orders": taker_orders_for_rpc,
+            }
+        })
+        .to_string(),
+    )
 }
 
-pub fn my_maker_orders_dir(ctx: &MmArc) -> PathBuf {
-    ctx.dbdir().join("ORDERS").join("MY").join("MAKER")
-}
+pub fn my_maker_orders_dir(ctx: &MmArc) -> PathBuf { ctx.dbdir().join("ORDERS").join("MY").join("MAKER") }
 
-fn my_taker_orders_dir(ctx: &MmArc) -> PathBuf {
-    ctx.dbdir().join("ORDERS").join("MY").join("TAKER")
-}
+fn my_taker_orders_dir(ctx: &MmArc) -> PathBuf { ctx.dbdir().join("ORDERS").join("MY").join("TAKER") }
 
 fn my_maker_order_file_path(ctx: &MmArc, uuid: &Uuid) -> PathBuf {
     my_maker_orders_dir(ctx).join(format!("{}.json", uuid))
@@ -1424,28 +1560,40 @@ pub fn cancel_orders_by(ctx: &MmArc, cancel_by: CancelBy) -> Result<(Vec<Uuid>, 
 
     match cancel_by {
         CancelBy::All => {
-            *maker_orders = maker_orders.drain().filter_map(|(uuid, order)| {
-                cancel_maker_if_true!(true, uuid, order)
-            }).collect();
-            *taker_orders = taker_orders.drain().filter_map(|(uuid, order)| {
-                cancel_taker_if_true!(true, uuid, order)
-            }).collect();
+            *maker_orders = maker_orders
+                .drain()
+                .filter_map(|(uuid, order)| cancel_maker_if_true!(true, uuid, order))
+                .collect();
+            *taker_orders = taker_orders
+                .drain()
+                .filter_map(|(uuid, order)| cancel_taker_if_true!(true, uuid, order))
+                .collect();
         },
-        CancelBy::Pair{base, rel} => {
-            *maker_orders = maker_orders.drain().filter_map(|(uuid, order)| {
-                cancel_maker_if_true!(order.base == base && order.rel == rel, uuid, order)
-            }).collect();
-            *taker_orders = taker_orders.drain().filter_map(|(uuid, order)| {
-                cancel_taker_if_true!(order.request.base == base && order.request.rel == rel, uuid, order)
-            }).collect();
+        CancelBy::Pair { base, rel } => {
+            *maker_orders = maker_orders
+                .drain()
+                .filter_map(|(uuid, order)| cancel_maker_if_true!(order.base == base && order.rel == rel, uuid, order))
+                .collect();
+            *taker_orders = taker_orders
+                .drain()
+                .filter_map(|(uuid, order)| {
+                    cancel_taker_if_true!(order.request.base == base && order.request.rel == rel, uuid, order)
+                })
+                .collect();
         },
-        CancelBy::Coin{ticker} => {
-            *maker_orders = maker_orders.drain().filter_map(|(uuid, order)| {
-                cancel_maker_if_true!(order.base == ticker || order.rel == ticker, uuid, order)
-            }).collect();
-            *taker_orders = taker_orders.drain().filter_map(|(uuid, order)| {
-                cancel_taker_if_true!(order.request.base == ticker || order.request.rel == ticker, uuid, order)
-            }).collect();
+        CancelBy::Coin { ticker } => {
+            *maker_orders = maker_orders
+                .drain()
+                .filter_map(|(uuid, order)| {
+                    cancel_maker_if_true!(order.base == ticker || order.rel == ticker, uuid, order)
+                })
+                .collect();
+            *taker_orders = taker_orders
+                .drain()
+                .filter_map(|(uuid, order)| {
+                    cancel_taker_if_true!(order.request.base == ticker || order.request.rel == ticker, uuid, order)
+                })
+                .collect();
         },
     };
 
@@ -1457,12 +1605,16 @@ pub fn cancel_all_orders(ctx: MmArc, req: Json) -> HyRes {
 
     let (cancelled, currently_matching) = try_h!(cancel_orders_by(&ctx, cancel_by));
 
-    rpc_response(200, json!({
-        "result": {
-            "cancelled": cancelled,
-            "currently_matching": currently_matching,
-        }
-    }).to_string())
+    rpc_response(
+        200,
+        json!({
+            "result": {
+                "cancelled": cancelled,
+                "currently_matching": currently_matching,
+            }
+        })
+        .to_string(),
+    )
 }
 
 #[derive(Serialize)]
@@ -1472,7 +1624,7 @@ pub struct OrderbookEntry {
     price: BigDecimal,
     price_rat: BigRational,
     price_fraction: Fraction,
-    #[serde(rename="maxvolume")]
+    #[serde(rename = "maxvolume")]
     max_volume: BigDecimal,
     max_volume_rat: BigRational,
     max_volume_fraction: Fraction,
@@ -1484,17 +1636,17 @@ pub struct OrderbookEntry {
 
 #[derive(Serialize)]
 pub struct OrderbookResponse {
-    #[serde(rename="askdepth")]
+    #[serde(rename = "askdepth")]
     ask_depth: u32,
     asks: Vec<OrderbookEntry>,
     base: String,
-    #[serde(rename="biddepth")]
+    #[serde(rename = "biddepth")]
     bid_depth: u32,
     bids: Vec<OrderbookEntry>,
     netid: u16,
-    #[serde(rename="numasks")]
+    #[serde(rename = "numasks")]
     num_asks: usize,
-    #[serde(rename="numbids")]
+    #[serde(rename = "numbids")]
     num_bids: usize,
     rel: String,
     timestamp: u64,
@@ -1508,7 +1660,9 @@ struct OrderbookReq {
 
 pub async fn orderbook(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
     let req: OrderbookReq = try_s!(json::from_value(req));
-    if req.base == req.rel {return ERR!("Base and rel must be different coins")}
+    if req.base == req.rel {
+        return ERR!("Base and rel must be different coins");
+    }
     let rel_coin = try_s!(lp_coinfindᵃ(&ctx, &req.rel).await);
     let rel_coin = try_s!(rel_coin.ok_or("Rel coin is not found or inactive"));
     let base_coin = try_s!(lp_coinfindᵃ(&ctx, &req.base).await);
@@ -1523,11 +1677,27 @@ pub async fn orderbook(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
                     coin: req.base.clone(),
                     address: try_s!(base_coin.address_from_pubkey_str(&ask.pubsecp)),
                     price: ask.price.clone(),
-                    price_rat: ask.price_rat.as_ref().map(|p| p.to_ratio()).unwrap_or_else(|| from_dec_to_ratio(ask.price.clone())),
-                    price_fraction: ask.price_rat.as_ref().map(|p| p.to_fraction()).unwrap_or_else(|| ask.price.clone().into()),
+                    price_rat: ask
+                        .price_rat
+                        .as_ref()
+                        .map(|p| p.to_ratio())
+                        .unwrap_or_else(|| from_dec_to_ratio(ask.price.clone())),
+                    price_fraction: ask
+                        .price_rat
+                        .as_ref()
+                        .map(|p| p.to_fraction())
+                        .unwrap_or_else(|| ask.price.clone().into()),
                     max_volume: ask.balance.clone(),
-                    max_volume_rat: ask.balance_rat.as_ref().map(|p| p.to_ratio()).unwrap_or_else(|| from_dec_to_ratio(ask.balance.clone())),
-                    max_volume_fraction: ask.balance_rat.as_ref().map(|p| p.to_fraction()).unwrap_or_else(|| ask.balance.clone().into()),
+                    max_volume_rat: ask
+                        .balance_rat
+                        .as_ref()
+                        .map(|p| p.to_ratio())
+                        .unwrap_or_else(|| from_dec_to_ratio(ask.balance.clone())),
+                    max_volume_fraction: ask
+                        .balance_rat
+                        .as_ref()
+                        .map(|p| p.to_fraction())
+                        .unwrap_or_else(|| ask.balance.clone().into()),
                     pubkey: ask.pubkey.clone(),
                     age: (now_ms() as i64 / 1000) - ask.timestamp as i64,
                     zcredits: 0,
@@ -1542,18 +1712,30 @@ pub async fn orderbook(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
         Some(asks) => {
             let mut orderbook_entries = vec![];
             for (uuid, ask) in asks.iter() {
-                let price_mm = MmNumber::from(1i32) / ask.price_rat.clone().unwrap_or_else(|| from_dec_to_ratio(ask.price.clone()).into());
+                let price_mm = MmNumber::from(1i32)
+                    / ask
+                        .price_rat
+                        .clone()
+                        .unwrap_or_else(|| from_dec_to_ratio(ask.price.clone()).into());
                 orderbook_entries.push(OrderbookEntry {
                     coin: req.rel.clone(),
                     address: try_s!(rel_coin.address_from_pubkey_str(&ask.pubsecp)),
                     // NB: 1/x can not be represented as a decimal and introduces a rounding error
                     // cf. https://github.com/KomodoPlatform/atomicDEX-API/issues/495#issuecomment-516365682
-                    price: BigDecimal::from (1) / &ask.price,
+                    price: BigDecimal::from(1) / &ask.price,
                     price_rat: price_mm.to_ratio(),
                     price_fraction: price_mm.to_fraction(),
                     max_volume: ask.balance.clone(),
-                    max_volume_rat: ask.balance_rat.as_ref().map(|p| p.to_ratio()).unwrap_or_else(|| from_dec_to_ratio(ask.balance.clone())),
-                    max_volume_fraction: ask.balance_rat.as_ref().map(|p| p.to_fraction()).unwrap_or_else(|| from_dec_to_ratio(ask.balance.clone()).into()),
+                    max_volume_rat: ask
+                        .balance_rat
+                        .as_ref()
+                        .map(|p| p.to_ratio())
+                        .unwrap_or_else(|| from_dec_to_ratio(ask.balance.clone())),
+                    max_volume_fraction: ask
+                        .balance_rat
+                        .as_ref()
+                        .map(|p| p.to_fraction())
+                        .unwrap_or_else(|| from_dec_to_ratio(ask.balance.clone()).into()),
                     pubkey: ask.pubkey.clone(),
                     age: (now_ms() as i64 / 1000) - ask.timestamp as i64,
                     zcredits: 0,

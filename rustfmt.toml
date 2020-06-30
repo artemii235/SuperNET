@@ -2,27 +2,14 @@
 # https://github.com/rust-lang/rustfmt/blob/master/Configurations.md#unstable_features
 unstable_features = true
 
-# Maximum width of each line.
-# Default: 100
-# https://github.com/rust-lang/rustfmt/blob/master/Configurations.md#max_width
-max_width = 120
-
-# This option can be used to simplify the management and bulk updates of the granular width configuration settings
-# (fn_call_width, attr_fn_like_width, struct_lit_width, struct_variant_width, array_width, chain_width, single_line_if_else_max_width),
-# that respectively control when formatted constructs are multi-lined/vertical based on width.
-# Note: depricated since 2.0, use width_heuristics:
-# https://github.com/rust-lang/rustfmt/blob/master/Configurations.md#width_heuristics
-use_small_heuristics = "Max"
-
-# Break comments to fit on the line
-# Note: Unstable
-# https://github.com/rust-lang/rustfmt/blob/master/Configurations.md#wrap_comments
-wrap_comments = true
-
 # Put single-expression functions on a single line
 # Note: Unstable
 # https://github.com/rust-lang/rustfmt/blob/master/Configurations.md#fn_single_line
 fn_single_line = true
+
+# Force multiline closure and match arm bodies to be wrapped in a block
+# https://github.com/rust-lang/rustfmt/blob/master/Configurations.md#force_multiline_blocks
+force_multiline_blocks = false
 
 # Indent style of imports
 # Note: Unstable
@@ -38,10 +25,10 @@ inline_attribute_width = 65
 # https://github.com/rust-lang/rustfmt/blob/master/Configurations.md#match_block_trailing_comma
 match_block_trailing_comma = true
 
-# Merge multiple imports into a single nested import.
-# Note: Unstable
-# https://github.com/rust-lang/rustfmt/blob/master/Configurations.md#merge_imports
-merge_imports = true
+# Maximum width of each line.
+# Default: 100
+# https://github.com/rust-lang/rustfmt/blob/master/Configurations.md#max_width
+max_width = 120
 
 # Unix or Windows line endings
 # https://github.com/rust-lang/rustfmt/blob/master/Configurations.md#newline_style
