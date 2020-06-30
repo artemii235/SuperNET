@@ -31,8 +31,6 @@ mod swaps_file_lock_tests;
 
 #[cfg(all(test, feature = "native"))]
 mod docker_tests {
-    #[cfg(all(test, feature = "native"))]
-    #[path = "swaps_file_lock_tests.rs"]
     #[rustfmt::skip]
     mod swaps_file_lock_tests;
 
