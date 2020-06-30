@@ -208,7 +208,7 @@ fn mm_version() -> String {
     let dt_file = unwrap!(String::from_utf8(slurp(&mm_datetimeᵖ)));
     let mut dt_file = dt_file.trim().to_string();
     if let Some(ref dt_git) = dt_git {
-        if &dt_git[..] != &dt_file[..] {
+        if dt_git[..] != dt_file[..] {
             // Create or update the “MM_DATETIME” file in order to appease the Cargo dependency management.
             let mut mm_datetimeᶠ = unwrap!(fs::File::create(&mm_datetimeᵖ));
             unwrap!(mm_datetimeᶠ.write_all(dt_git.as_bytes()));
@@ -514,8 +514,7 @@ impl Target {
     }
     fn is_mac(&self) -> bool { *self == Target::Mac }
     fn cc(&self, _plus_plus: bool) -> cc::Build {
-        let cc = cc::Build::new();
-        cc
+        cc::Build::new()
     }
 }
 impl fmt::Display for Target {
@@ -756,7 +755,7 @@ fn build_libtorrent(boost: &Path, target: &Target) -> (PathBuf, PathBuf) {
     //  - https://github.com/arvidn/libtorrent/issues/26#issuecomment-121478708
 
     let boostˢ = unwrap!(boost.to_str());
-    let boostᵉ = escape_some(boostˢ.into());
+    let boostᵉ = escape_some(boostˢ);
     // NB: The common compiler flags go to the "cxxflags=" here
     // and the platform-specific flags go to the jam files or to conditionals below.
     let mut b2 = fomat!(
