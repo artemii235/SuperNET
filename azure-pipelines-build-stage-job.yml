@@ -53,7 +53,7 @@ jobs:
         displayName: 'Test MM2'
         timeoutInMinutes: 22
         env:
-          BOB_PASSPHRASE: $(${{ paramet%ers.bob_passphrase }})
+          BOB_PASSPHRASE: $(${{ parameters.bob_passphrase }})
           BOB_USERPASS: $(${{ parameters.bob_userpass }})
           ALICE_PASSPHRASE: $(${{ parameters.alice_passphrase }})
           ALICE_USERPASS: $(${{ parameters.alice_userpass }})
