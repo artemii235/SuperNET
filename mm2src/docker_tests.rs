@@ -23,8 +23,17 @@ fn main() {
     unimplemented!()
 }
 
+/// rustfmt cannot resolve the module path within docker_tests.
+/// Specify the path manually outside the docker_tests.
+#[cfg(rustfmt)]
+#[path = "docker_tests/swaps_file_lock_tests.rs"]
+mod swaps_file_lock_tests;
+
 #[cfg(all(test, feature = "native"))]
 mod docker_tests {
+    #[cfg(all(test, feature = "native"))]
+    #[path = "swaps_file_lock_tests.rs"]
+    #[rustfmt::skip]
     mod swaps_file_lock_tests;
 
     use bitcrypto::ChecksumType;
