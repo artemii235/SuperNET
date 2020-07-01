@@ -513,9 +513,7 @@ impl Target {
         }
     }
     fn is_mac(&self) -> bool { *self == Target::Mac }
-    fn cc(&self, _plus_plus: bool) -> cc::Build {
-        cc::Build::new()
-    }
+    fn cc(&self, _plus_plus: bool) -> cc::Build { cc::Build::new() }
 }
 impl fmt::Display for Target {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
