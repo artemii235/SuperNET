@@ -22,11 +22,26 @@ The current state can be considered as very early alpha.
     ```
     rustup install nightly-2020-02-01
     rustup default nightly-2020-02-01
-    rustup component add rustfmt-preview
+    rustup component add rustfmt --toolchain nightly
+    rustup component add clippy
     ```
 1. (Optional) Win: run `marketmaker_build_depends.cmd` to build dependencies.
 1. Run `cargo build --features native` (or `cargo build --features native -vv` to get verbose build output).
 
 ## Help and troubleshooting
 
-If you have any question/want to report a bug/suggest an improvement feel free to [open an issue](https://github.com/artemii235/SuperNET/issues/new) or reach the team at [Discord `dev-marketmaker` channel](https://discord.gg/PGxVm2y).  
+If you have any question/want to report a bug/suggest an improvement feel free to [open an issue](https://github.com/artemii235/SuperNET/issues/new) or reach the team at [Discord `dev-marketmaker` channel](https://discord.gg/PGxVm2y).
+
+Before uploading any changes, do the following:
+1. Format the code using rustfmt:
+    ```
+    cargo +nightly fmt
+    ```
+1. Make sure there are no warnings and errors. Run the Clippy:
+    ```
+    cargo clippy --features native -- -D warnings
+    ```
+1. Make sure all tests run successfully:
+    ```
+   cargo test --all --features native
+    ```
