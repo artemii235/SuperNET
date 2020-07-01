@@ -593,7 +593,7 @@ fn test_qrc20_withdraw_impl_fee_details() {
     let ctx = MmCtxBuilder::new().into_mm_arc();
 
     let coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
-        &ctx, "QRC20", &conf, &req, &priv_key, contract_address)));
+        &ctx, "QRC20", "QTUM", &conf, &req, &priv_key, contract_address)));
 
     let withdraw_req = WithdrawRequest {
         amount: 10.into(),
@@ -605,7 +605,7 @@ fn test_qrc20_withdraw_impl_fee_details() {
     let tx_details = unwrap!(coin.withdraw(withdraw_req).wait());
 
     let expected: Qrc20FeeDetails = unwrap!(json::from_value(json!({
-        "coin": "QRC20",
+        "coin": "QTUM",
         // (1000 + total_gas_fee) from satoshi,
         // where decimals = 8,
         //       1000 is fixed fee

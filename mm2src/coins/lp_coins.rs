@@ -664,9 +664,9 @@ pub async fn lp_coininit (ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoi
         CoinProtocol::UTXO => try_s!(utxo_standard_coin_from_conf_and_request(ctx, ticker, coins_en, req, secret).await).into(),
         CoinProtocol::ETH | CoinProtocol::ERC20 { .. } =>
             try_s!(eth_coin_from_conf_and_request (ctx, ticker, coins_en, req, secret, protocol).await).into(),
-        CoinProtocol::QRC20 { contract_address, .. } => {
+        CoinProtocol::QRC20 { platform, contract_address } => {
             let contract_address = try_s!(qrc20_addr_from_str(&contract_address));
-            try_s!(qrc20_coin_from_conf_and_request(ctx, ticker, coins_en, req, secret, contract_address).await).into()
+            try_s!(qrc20_coin_from_conf_and_request(ctx, ticker, &platform, coins_en, req, secret, contract_address).await).into()
         },
     };
 

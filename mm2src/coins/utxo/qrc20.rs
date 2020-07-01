@@ -68,6 +68,7 @@ pub struct Qrc20FeeDetails {
 pub async fn qrc20_coin_from_conf_and_request(
     ctx: &MmArc,
     ticker: &str,
+    platform: &str,
     conf: &Json,
     req: &Json,
     priv_key: &[u8],
@@ -78,12 +79,14 @@ pub async fn qrc20_coin_from_conf_and_request(
         UtxoAddressFormat::Standard => (),
         _ => return ERR!("Expect standard UTXO address format"),
     }
-    Ok(Qrc20Coin { utxo_arc: inner, contract_address })
+    let platform = platform.to_owned();
+    Ok(Qrc20Coin { utxo_arc: inner, platform, contract_address })
 }
 
 #[derive(Clone, Debug)]
 pub struct Qrc20Coin {
     pub utxo_arc: UtxoArc,
+    pub platform: String,
     pub contract_address: H160,
 }
 
@@ -488,21 +491,27 @@ async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> Result<Transac
     let prev_script = Builder::build_p2pkh(&coin.utxo_arc.my_address.hash);
     let signed = try_s!(sign_tx(unsigned, &coin.utxo_arc.key_pair, prev_script, coin.utxo_arc.signature_version, coin.utxo_arc.fork_id));
     let fee_details = Qrc20FeeDetails {
-        coin: coin.ticker().to_owned(),
+        // QRC20 fees are paid in base platform currency (in particular Qtum)
+        coin: coin.platform.clone(),
         miner_fee: utxo_common::big_decimal_from_sat(data.fee_amount as i64, coin.utxo_arc.decimals),
         gas_limit,
         gas_price,
         total_gas_fee: utxo_common::big_decimal_from_sat(gas_fee as i64, coin.utxo_arc.decimals),
     };
+    let mut received_by_me = 0.into();
+    if to_addr == coin.utxo_arc.my_address {
+        received_by_me = req.amount.clone();
+    }
+    let my_balance_change = &received_by_me - &req.amount;
     let my_address = try_s!(coin.my_address());
     let to_address = try_s!(coin.display_address(&to_addr));
     Ok(TransactionDetails {
         from: vec![my_address],
         to: vec![to_address],
-        total_amount: utxo_common::big_decimal_from_sat(data.spent_by_me as i64, coin.utxo_arc.decimals),
-        spent_by_me: utxo_common::big_decimal_from_sat(data.spent_by_me as i64, coin.utxo_arc.decimals),
-        received_by_me: utxo_common::big_decimal_from_sat(data.received_by_me as i64, coin.utxo_arc.decimals),
-        my_balance_change: utxo_common::big_decimal_from_sat(data.received_by_me as i64 - data.spent_by_me as i64, coin.utxo_arc.decimals),
+        total_amount: req.amount.clone(),
+        spent_by_me: req.amount,
+        received_by_me,
+        my_balance_change,
         tx_hash: signed.hash().reversed().to_vec().into(),
         tx_hex: serialize(&signed).into(),
         fee_details: Some(fee_details.into()),
