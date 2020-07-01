@@ -40,11 +40,17 @@ fn main() { unimplemented!() }
 /// rustfmt cannot resolve the module path within docker_tests.
 /// Specify the path manually outside the docker_tests.
 #[cfg(rustfmt)]
+#[path = "docker_tests/swaps_confs_settings_sync_tests.rs"]
+mod swaps_confs_settings_sync_tests;
+
+#[cfg(rustfmt)]
 #[path = "docker_tests/swaps_file_lock_tests.rs"]
 mod swaps_file_lock_tests;
 
 #[cfg(all(test, feature = "native"))]
 mod docker_tests {
+    #[rustfmt::skip]
+    mod swaps_confs_settings_sync_tests;
     #[rustfmt::skip]
     mod swaps_file_lock_tests;
 

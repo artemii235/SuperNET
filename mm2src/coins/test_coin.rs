@@ -202,9 +202,9 @@ impl MmCoin for TestCoin {
     /// Get fee to be paid per 1 swap transaction
     fn get_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = String> + Send> { unimplemented!() }
 
-    fn required_confirmations(&self) -> u64 { unimplemented!() }
+    fn required_confirmations(&self) -> u64 { 1 }
 
-    fn requires_notarization(&self) -> bool { unimplemented!() }
+    fn requires_notarization(&self) -> bool { false }
 
     fn set_required_confirmations(&self, _confirmations: u64) { unimplemented!() }
 

@@ -416,10 +416,6 @@ fn test_my_balance() {
     assert_eq!(my_balance, "7.777");
     let my_address = unwrap!(json["address"].as_str());
     assert_eq!(my_address, "RRnMcSeKiLrNdbp91qNVQwwXx5azD4S4CD");
-
-    // locked by swaps should be displayed as fraction
-    assert_eq!(json["locked_by_swaps"]["numer"], Json::from("0"));
-    assert_eq!(json["locked_by_swaps"]["denom"], Json::from("1"));
 }
 
 fn check_set_price_fails(mm: &MarketMakerIt, base: &str, rel: &str) {
@@ -2768,11 +2764,11 @@ fn test_withdraw_cashaddresses() {
 
     // Enable BCH electrum client with tx_history loop.
     // Enable RICK electrum client with tx_history loop.
-    let electrum = unwrap!(block_on(mm.rpc (json! ({
+    let electrum = unwrap!(block_on(mm.rpc(json! ({
         "userpass": mm.userpass,
         "method": "electrum",
         "coin": "BCH",
-        "servers": [{"url":"blackie.c3-soft.com:60001"}, {"url":"bch0.kister.net:51001"}, {"url":"testnet.imaginary.cash:50001"}],
+        "servers": [{"url":"blackie.c3-soft.com:60001"}],
         "mm2": 1,
     }))));
 
@@ -2913,6 +2909,234 @@ fn test_common_cashaddresses() {
 }
 
 #[test]
+fn test_buy_conf_settings() {
+    let bob_passphrase = unwrap!(get_passphrase(&".env.client", "BOB_PASSPHRASE"));
+
+    let coins = json! ([
+        {"coin":"RICK","asset":"RICK","required_confirmations":0,"txversion":4,"overwintered":1},
+        {"coin":"MORTY","asset":"MORTY","required_confirmations":0,"txversion":4,"overwintered":1},
+        {"coin":"ETOMIC","asset":"ETOMIC","required_confirmations":0,"txversion":4,"overwintered":1},
+        {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000"},
+        {"coin":"JST","name":"jst","etomic":"0x2b294F029Fde858b2c62184e8390591755521d8E","required_confirmations":2}
+    ]);
+
+    let mut mm_bob = unwrap!(MarketMakerIt::start(
+        json! ({
+            "gui": "nogui",
+            "netid": 8999,
+            "dht": "on",  // Enable DHT without delay.
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| unwrap! (s.parse::<i64>())),
+            "passphrase": bob_passphrase,
+            "coins": coins,
+            "rpc_password": "password",
+            "i_am_seed": true,
+        }),
+        "password".into(),
+        local_start!("bob")
+    ));
+
+    let (_bob_dump_log, _bob_dump_dashboard) = mm_bob.mm_dump();
+    log! ({"Bob log path: {}", mm_bob.log_path.display()});
+    unwrap!(block_on(
+        mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
+    ));
+    log!([block_on(enable_coins_eth_electrum(&mm_bob, vec![
+        "http://195.201.0.6:8565"
+    ]))]);
+
+    log!("Issue bob buy request");
+    let rc = unwrap!(block_on(mm_bob.rpc(json! ({
+        "userpass": mm_bob.userpass,
+        "method": "buy",
+        "base": "ETH",
+        "rel": "JST",
+        "price": 1,
+        "volume": 0.1,
+        "base_confs": 5,
+        "base_nota": true,
+        "rel_confs": 4,
+        "rel_nota": false,
+    }))));
+    assert!(rc.0.is_success(), "!buy: {}", rc.1);
+    let json: Json = json::from_str(&rc.1).unwrap();
+    assert_eq!(json["result"]["conf_settings"]["base_confs"], Json::from(5));
+    assert_eq!(json["result"]["conf_settings"]["base_nota"], Json::from(true));
+    assert_eq!(json["result"]["conf_settings"]["rel_confs"], Json::from(4));
+    assert_eq!(json["result"]["conf_settings"]["rel_nota"], Json::from(false));
+
+    // must use coin config as defaults if not set in request
+    log!("Issue bob buy request");
+    let rc = unwrap!(block_on(mm_bob.rpc(json! ({
+        "userpass": mm_bob.userpass,
+        "method": "buy",
+        "base": "ETH",
+        "rel": "JST",
+        "price": 1,
+        "volume": 0.1,
+    }))));
+    assert!(rc.0.is_success(), "!buy: {}", rc.1);
+    let json: Json = json::from_str(&rc.1).unwrap();
+    assert_eq!(json["result"]["conf_settings"]["base_confs"], Json::from(1));
+    assert_eq!(json["result"]["conf_settings"]["base_nota"], Json::from(false));
+    assert_eq!(json["result"]["conf_settings"]["rel_confs"], Json::from(2));
+    assert_eq!(json["result"]["conf_settings"]["rel_nota"], Json::from(false));
+}
+
+#[test]
+fn test_sell_conf_settings() {
+    let bob_passphrase = unwrap!(get_passphrase(&".env.client", "BOB_PASSPHRASE"));
+
+    let coins = json! ([
+        {"coin":"RICK","asset":"RICK","required_confirmations":0,"txversion":4,"overwintered":1},
+        {"coin":"MORTY","asset":"MORTY","required_confirmations":0,"txversion":4,"overwintered":1},
+        {"coin":"ETOMIC","asset":"ETOMIC","required_confirmations":0,"txversion":4,"overwintered":1},
+        {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000"},
+        {"coin":"JST","name":"jst","etomic":"0x2b294F029Fde858b2c62184e8390591755521d8E","required_confirmations":2}
+    ]);
+
+    let mut mm_bob = unwrap!(MarketMakerIt::start(
+        json! ({
+            "gui": "nogui",
+            "netid": 8999,
+            "dht": "on",  // Enable DHT without delay.
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| unwrap! (s.parse::<i64>())),
+            "passphrase": bob_passphrase,
+            "coins": coins,
+            "rpc_password": "password",
+            "i_am_seed": true,
+        }),
+        "password".into(),
+        local_start!("bob")
+    ));
+
+    let (_bob_dump_log, _bob_dump_dashboard) = mm_bob.mm_dump();
+    log! ({"Bob log path: {}", mm_bob.log_path.display()});
+    unwrap!(block_on(
+        mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
+    ));
+    log!([block_on(enable_coins_eth_electrum(&mm_bob, vec![
+        "http://195.201.0.6:8565"
+    ]))]);
+
+    log!("Issue bob sell request");
+    let rc = unwrap!(block_on(mm_bob.rpc(json! ({
+        "userpass": mm_bob.userpass,
+        "method": "sell",
+        "base": "ETH",
+        "rel": "JST",
+        "price": 1,
+        "volume": 0.1,
+        "base_confs": 5,
+        "base_nota": true,
+        "rel_confs": 4,
+        "rel_nota": false,
+    }))));
+    assert!(rc.0.is_success(), "!sell: {}", rc.1);
+    let json: Json = json::from_str(&rc.1).unwrap();
+    assert_eq!(json["result"]["conf_settings"]["base_confs"], Json::from(5));
+    assert_eq!(json["result"]["conf_settings"]["base_nota"], Json::from(true));
+    assert_eq!(json["result"]["conf_settings"]["rel_confs"], Json::from(4));
+    assert_eq!(json["result"]["conf_settings"]["rel_nota"], Json::from(false));
+
+    // must use coin config as defaults if not set in request
+    log!("Issue bob sell request");
+    let rc = unwrap!(block_on(mm_bob.rpc(json! ({
+        "userpass": mm_bob.userpass,
+        "method": "sell",
+        "base": "ETH",
+        "rel": "JST",
+        "price": 1,
+        "volume": 0.1,
+    }))));
+    assert!(rc.0.is_success(), "!sell: {}", rc.1);
+    let json: Json = json::from_str(&rc.1).unwrap();
+    assert_eq!(json["result"]["conf_settings"]["base_confs"], Json::from(1));
+    assert_eq!(json["result"]["conf_settings"]["base_nota"], Json::from(false));
+    assert_eq!(json["result"]["conf_settings"]["rel_confs"], Json::from(2));
+    assert_eq!(json["result"]["conf_settings"]["rel_nota"], Json::from(false));
+}
+
+#[test]
+fn test_set_price_conf_settings() {
+    let bob_passphrase = unwrap!(get_passphrase(&".env.client", "BOB_PASSPHRASE"));
+
+    let coins = json! ([
+        {"coin":"RICK","asset":"RICK","required_confirmations":0,"txversion":4,"overwintered":1},
+        {"coin":"MORTY","asset":"MORTY","required_confirmations":0,"txversion":4,"overwintered":1},
+        {"coin":"ETOMIC","asset":"ETOMIC","required_confirmations":0,"txversion":4,"overwintered":1},
+        {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000"},
+        {"coin":"JST","name":"jst","etomic":"0x2b294F029Fde858b2c62184e8390591755521d8E","required_confirmations":2}
+    ]);
+
+    let mut mm_bob = unwrap!(MarketMakerIt::start(
+        json! ({
+            "gui": "nogui",
+            "netid": 8999,
+            "dht": "on",  // Enable DHT without delay.
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| unwrap! (s.parse::<i64>())),
+            "passphrase": bob_passphrase,
+            "coins": coins,
+            "rpc_password": "password",
+            "i_am_seed": true,
+        }),
+        "password".into(),
+        local_start!("bob")
+    ));
+
+    let (_bob_dump_log, _bob_dump_dashboard) = mm_bob.mm_dump();
+    log! ({"Bob log path: {}", mm_bob.log_path.display()});
+    unwrap!(block_on(
+        mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
+    ));
+    log!([block_on(enable_coins_eth_electrum(&mm_bob, vec![
+        "http://195.201.0.6:8565"
+    ]))]);
+
+    log!("Issue bob sell request");
+    let rc = unwrap!(block_on(mm_bob.rpc(json! ({
+        "userpass": mm_bob.userpass,
+        "method": "setprice",
+        "base": "ETH",
+        "rel": "JST",
+        "price": 1,
+        "volume": 0.1,
+        "base_confs": 5,
+        "base_nota": true,
+        "rel_confs": 4,
+        "rel_nota": false,
+    }))));
+    assert!(rc.0.is_success(), "!setprice: {}", rc.1);
+    let json: Json = json::from_str(&rc.1).unwrap();
+    assert_eq!(json["result"]["conf_settings"]["base_confs"], Json::from(5));
+    assert_eq!(json["result"]["conf_settings"]["base_nota"], Json::from(true));
+    assert_eq!(json["result"]["conf_settings"]["rel_confs"], Json::from(4));
+    assert_eq!(json["result"]["conf_settings"]["rel_nota"], Json::from(false));
+
+    // must use coin config as defaults if not set in request
+    log!("Issue bob sell request");
+    let rc = unwrap!(block_on(mm_bob.rpc(json! ({
+        "userpass": mm_bob.userpass,
+        "method": "setprice",
+        "base": "ETH",
+        "rel": "JST",
+        "price": 1,
+        "volume": 0.1,
+    }))));
+    assert!(rc.0.is_success(), "!setprice: {}", rc.1);
+    let json: Json = json::from_str(&rc.1).unwrap();
+    assert_eq!(json["result"]["conf_settings"]["base_confs"], Json::from(1));
+    assert_eq!(json["result"]["conf_settings"]["base_nota"], Json::from(false));
+    assert_eq!(json["result"]["conf_settings"]["rel_confs"], Json::from(2));
+    assert_eq!(json["result"]["conf_settings"]["rel_nota"], Json::from(false));
+}
+
+#[test]
 // https://github.com/KomodoPlatform/atomicDEX-API/issues/683
 // trade fee should return numbers in all 3 available formats and
 // "amount" must be always in decimal representation for backwards compatibility
@@ -2963,6 +3187,177 @@ fn test_trade_fee_returns_numbers_in_various_formats() {
     let _amount_dec: BigDecimal = json::from_value(trade_fee_json["result"]["amount"].clone()).unwrap();
     let _amount_rat: BigRational = json::from_value(trade_fee_json["result"]["amount_rat"].clone()).unwrap();
     let _amount_fraction: Fraction = json::from_value(trade_fee_json["result"]["amount_fraction"].clone()).unwrap();
+}
+
+#[test]
+fn test_orderbook_is_mine_orders() {
+    let coins = json!([
+        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1},
+        {"coin":"MORTY","asset":"MORTY","rpcport":11608,"txversion":4,"overwintered":1},
+        {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000","rpcport":80},
+        {"coin":"JST","name":"jst","etomic":"0xc0eb7AeD740E1796992A08962c15661bDEB58003"}
+    ]);
+
+    // start bob and immediately place the order
+    let mut mm_bob = unwrap!(MarketMakerIt::start(
+        json! ({
+            "gui": "nogui",
+            "netid": 9998,
+            "dht": "on",  // Enable DHT without delay.
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| unwrap! (s.parse::<i64>())),
+            "passphrase": "bob passphrase",
+            "coins": coins,
+            "i_am_seed": true,
+            "rpc_password": "pass",
+        }),
+        "pass".into(),
+        match var("LOCAL_THREAD_MM") {
+            Ok(ref e) if e == "bob" => Some(local_start()),
+            _ => None,
+        }
+    ));
+    let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
+    log!({"Bob log path: {}", mm_bob.log_path.display()});
+    unwrap!(block_on(
+        mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
+    ));
+    // Enable coins on Bob side. Print the replies in case we need the "address".
+    log! ({"enable_coins (bob): {:?}", block_on (enable_coins_eth_electrum (&mm_bob, vec!["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b"]))});
+
+    let rc = unwrap!(block_on(mm_bob.rpc(json! ({
+        "userpass": mm_bob.userpass,
+        "method": "setprice",
+        "base": "RICK",
+        "rel": "MORTY",
+        "price": 0.9,
+        "volume": "0.9",
+    }))));
+    assert!(rc.0.is_success(), "!setprice: {}", rc.1);
+    let _bob_setprice: Json = unwrap!(json::from_str(&rc.1));
+
+    let mut mm_alice = unwrap!(MarketMakerIt::start(
+        json! ({
+            "gui": "nogui",
+            "netid": 9998,
+            "dht": "on",  // Enable DHT without delay.
+            "myipaddr": env::var ("ALICE_TRADE_IP") .ok(),
+            "rpcip": env::var ("ALICE_TRADE_IP") .ok(),
+            "passphrase": "alice passphrase",
+            "coins": coins,
+            "seednodes": [fomat!((mm_bob.ip))],
+            "rpc_password": "pass",
+        }),
+        "pass".into(),
+        match var("LOCAL_THREAD_MM") {
+            Ok(ref e) if e == "alice" => Some(local_start()),
+            _ => None,
+        }
+    ));
+
+    let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
+    log!({"Alice log path: {}", mm_alice.log_path.display()});
+
+    unwrap!(block_on(
+        mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
+    ));
+
+    // Enable coins on Alice side. Print the replies in case we need the "address".
+    log! ({"enable_coins (alice): {:?}", block_on (enable_coins_eth_electrum (&mm_alice, vec!["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b"]))});
+
+    log!("Give Alice 15 seconds to import the order…");
+    thread::sleep(Duration::from_secs(15));
+
+    // Bob orderbook must show 1 mine order
+    log!("Get RICK/MORTY orderbook on Bob side");
+    let rc = unwrap!(block_on(mm_bob.rpc(json! ({
+        "userpass": mm_bob.userpass,
+        "method": "orderbook",
+        "base": "RICK",
+        "rel": "MORTY",
+    }))));
+    assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
+
+    let bob_orderbook: Json = unwrap!(json::from_str(&rc.1));
+    log!("Bob orderbook "[bob_orderbook]);
+    let asks = bob_orderbook["asks"].as_array().unwrap();
+    assert_eq!(asks.len(), 1, "Bob RICK/MORTY orderbook must have exactly 1 ask");
+    let is_mine = asks[0]["is_mine"].as_bool().unwrap();
+    assert_eq!(is_mine, true);
+
+    // Alice orderbook must show 1 not-mine order
+    log!("Get RICK/MORTY orderbook on Alice side");
+    let rc = unwrap!(block_on(mm_alice.rpc(json! ({
+        "userpass": mm_alice.userpass,
+        "method": "orderbook",
+        "base": "RICK",
+        "rel": "MORTY",
+    }))));
+    assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
+
+    let alice_orderbook: Json = unwrap!(json::from_str(&rc.1));
+    log!("Alice orderbook "[alice_orderbook]);
+    let asks = alice_orderbook["asks"].as_array().unwrap();
+    assert_eq!(asks.len(), 1, "Alice RICK/MORTY orderbook must have exactly 1 ask");
+    let is_mine = asks[0]["is_mine"].as_bool().unwrap();
+    assert_eq!(is_mine, false);
+
+    // make another order by Alice
+    let rc = unwrap!(block_on(mm_alice.rpc(json! ({
+        "userpass": mm_alice.userpass,
+        "method": "setprice",
+        "base": "RICK",
+        "rel": "MORTY",
+        "price": 1,
+        "volume": 0.1,
+    }))));
+    assert!(rc.0.is_success(), "!buy: {}", rc.1);
+
+    log!("Give Bob 15 seconds to import the order…");
+    thread::sleep(Duration::from_secs(15));
+
+    // Bob orderbook must show 1 mine and 1 non-mine orders.
+    // Request orderbook with reverse base and rel coins to check bids instead of asks
+    log!("Get RICK/MORTY orderbook on Bob side");
+    let rc = unwrap!(block_on(mm_bob.rpc(json! ({
+        "userpass": mm_bob.userpass,
+        "method": "orderbook",
+        "base": "MORTY",
+        "rel": "RICK",
+    }))));
+    assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
+
+    let bob_orderbook: Json = unwrap!(json::from_str(&rc.1));
+    log!("Bob orderbook "[bob_orderbook]);
+    let asks = bob_orderbook["asks"].as_array().unwrap();
+    let bids = bob_orderbook["bids"].as_array().unwrap();
+    assert!(asks.is_empty(), "Bob MORTY/RICK orderbook must contain an empty asks");
+    assert_eq!(bids.len(), 2, "Bob MORTY/RICK orderbook must have exactly 2 bids");
+    let mine_orders = bids.iter().filter(|bid| bid["is_mine"].as_bool().unwrap()).count();
+    assert_eq!(mine_orders, 1, "Bob RICK/MORTY orderbook must have exactly 1 mine bid");
+
+    // Alice orderbook must show 1 mine and 1 non-mine orders
+    log!("Get RICK/MORTY orderbook on Alice side");
+    let rc = unwrap!(block_on(mm_bob.rpc(json! ({
+        "userpass": mm_bob.userpass,
+        "method": "orderbook",
+        "base": "RICK",
+        "rel": "MORTY",
+    }))));
+    assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
+
+    let alice_orderbook: Json = unwrap!(json::from_str(&rc.1));
+    log!("Alice orderbook "[alice_orderbook]);
+    let asks = alice_orderbook["asks"].as_array().unwrap();
+    let bids = alice_orderbook["bids"].as_array().unwrap();
+    assert!(bids.is_empty(), "Alice MORTY/RICK orderbook must contain an empty bids");
+    assert_eq!(asks.len(), 2, "Alice MORTY/RICK orderbook must have exactly 2 asks");
+    let mine_orders = asks.iter().filter(|ask| ask["is_mine"].as_bool().unwrap()).count();
+    assert_eq!(
+        mine_orders, 1,
+        "Alice RICK/MORTY orderbook must have exactly 1 mine bid"
+    );
 }
 
 // HOWTO

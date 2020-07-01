@@ -242,7 +242,7 @@ impl MmNumber {
     /// Clones the internal BigRational
     pub fn to_ratio(&self) -> BigRational { self.0.clone() }
 
-    /// Returns decimal representation of number
+    /// Get BigDecimal representation
     pub fn to_decimal(&self) -> BigDecimal { from_ratio_to_dec(&self.0) }
 }
 
