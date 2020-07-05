@@ -2718,6 +2718,77 @@ fn test_qrc20_wallet_only() {
 }
 
 #[test]
+#[cfg(feature = "native")]
+fn test_qrc20_tx_history() {
+    let passphrase = "daring blind measure rebuild grab boost fix favorite nurse stereo april rookie";
+    let coins = json!([
+        {"coin":"QRC20","required_confirmations":0,"pubtype": 120,"p2shtype": 50,"wiftype": 128,"segwit": true,"txfee": 0,"mm2": 1,"mature_confirmations":500,
+         "protocol":{"QRC20":{"platform":"QTUM","contract_address":"0xd362e096e873eb7907e205fadc6175c6fec7bc44"}}},
+    ]);
+
+    let mut mm = unwrap! (MarketMakerIt::start (
+        json! ({
+            "gui": "nogui",
+            "netid": 9998,
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "passphrase": passphrase,
+            "coins": coins,
+            "i_am_seed": true,
+            "rpc_password": "pass",
+            "metrics_interval": 30.,
+        }),
+        "pass".into(),
+        local_start! ("bob")
+    ));
+    let (_dump_log, _dump_dashboard) = mm_dump(&mm.log_path);
+    log!({ "log path: {}", mm.log_path.display() });
+    unwrap!(block_on (mm.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
+
+    let electrum = unwrap!(block_on(mm.rpc(json!({
+        "userpass": mm.userpass,
+        "method": "electrum",
+        "coin": "QRC20",
+        "servers": [{"url":"95.217.83.126:10001"}],
+        "mm2": 1,
+        "tx_history": true,
+    }))));
+    assert_eq!(electrum.0, StatusCode::OK, "RPC «electrum» failed with status «{}», response «{}»", electrum.0, electrum.1);
+    let electrum_json: Json = json::from_str(&electrum.1).unwrap();
+    assert_eq!(electrum_json["address"].as_str(), Some("qfkXE2cNFEwPFQqvBcqs8m9KrkNa9KV4xi"));
+
+    // Wait till tx_history will not be loaded
+    unwrap!(block_on (mm.wait_for_log (22., |log| log.contains ("history has been loaded successfully"))));
+
+    let tx_history = unwrap!(block_on(mm.rpc(json!({
+        "userpass": mm.userpass,
+        "method": "my_tx_history",
+        "coin": "QRC20",
+        "limit": 100,
+    }))));
+    assert_eq!(tx_history.0, StatusCode::OK, "RPC «my_tx_history» failed with status «{}», response «{}»", tx_history.0, tx_history.1);
+    let tx_history_json: Json = json::from_str(&tx_history.1).unwrap();
+    log!([tx_history_json]);
+    let tx_history_result = &tx_history_json["result"];
+
+    let mut expected = vec![
+        /// https://testnet.qtum.info/tx/39104d29d77ba83c5c6c63ab7a0f096301c443b4538dc6b30140453a40caa80a
+        "39104d29d77ba83c5c6c63ab7a0f096301c443b4538dc6b30140453a40caa80a",
+        /// https://testnet.qtum.info/tx/d9965e3496a8a4af2d462424b989694b3146d78c61654b99bbadba64464f75cb
+        "d9965e3496a8a4af2d462424b989694b3146d78c61654b99bbadba64464f75cb",
+        /// https://testnet.qtum.info/tx/c2f346d3d2aadc35f5343d0d493a139b2579175496d685ec30734d161e62f7a1
+        "c2f346d3d2aadc35f5343d0d493a139b2579175496d685ec30734d161e62f7a1",
+    ];
+
+    assert_eq!(tx_history_result["total"].as_u64().unwrap(), 3);
+    for tx in tx_history_result["transactions"].as_array().unwrap() {
+        // pop front item
+        let expected_tx = expected.remove(0);
+        assert_eq!(tx["tx_hash"].as_str().unwrap(), expected_tx);
+    }
+}
+
+#[test]
 fn test_buy_conf_settings() {
     let bob_passphrase = unwrap! (get_passphrase (&".env.client", "BOB_PASSPHRASE"));
 

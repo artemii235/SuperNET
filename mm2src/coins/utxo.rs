@@ -39,6 +39,7 @@ use common::{first_char_to_upper, small_rng, MM_VERSION};
 use common::executor::{spawn, Timer};
 use common::jsonrpc_client::JsonRpcError;
 use common::mm_ctx::MmArc;
+use common::mm_metrics::MetricsArc;
 #[cfg(feature = "native")]
 use dirs::home_dir;
 use futures01::{Future};
@@ -363,6 +364,15 @@ pub trait UtxoArcCommonOps {
 
     /// Try load verbose transaction from cache or try to request it from Rpc client.
     fn get_verbose_transaction_from_cache_or_rpc(&self, txid: H256Json) -> Box<dyn Future<Item=VerboseTransactionFrom, Error=String> + Send>;
+
+    async fn request_tx_history(&self, metrics: MetricsArc) -> RequestTxHistoryResult;
+}
+
+pub enum RequestTxHistoryResult {
+    Ok(Vec<(H256Json, u64)>),
+    Retry { error: String },
+    HistoryTooLarge,
+    UnknownError(String),
 }
 
 pub enum VerboseTransactionFrom {

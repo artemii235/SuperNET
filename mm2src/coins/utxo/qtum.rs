@@ -1,3 +1,4 @@
+use common::mm_metrics::MetricsArc;
 use crate::SwapOps;
 use futures::{TryFutureExt, FutureExt};
 use super::*;
@@ -171,6 +172,10 @@ impl UtxoArcCommonOps for QtumCoin {
 
     fn get_verbose_transaction_from_cache_or_rpc(&self, txid: H256Json) -> Box<dyn Future<Item=VerboseTransactionFrom, Error=String> + Send> {
         Box::new(utxo_common::get_verbose_transaction_from_cache_or_rpc(self.clone(), txid).boxed().compat())
+    }
+
+    async fn request_tx_history(&self, metrics: MetricsArc) -> RequestTxHistoryResult {
+        utxo_common::request_tx_history(self, metrics).await
     }
 }
 

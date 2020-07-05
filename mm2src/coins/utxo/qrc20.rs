@@ -1,4 +1,5 @@
-use common::jsonrpc_client::{JsonRpcClient, JsonRpcRequest, RpcRes};
+use common::jsonrpc_client::{JsonRpcClient, JsonRpcRequest, RpcRes, JsonRpcErrorType};
+use common::mm_metrics::MetricsArc;
 use crate::eth::{ERC20_CONTRACT, u256_to_big_decimal, wei_from_big_decimal};
 use crate::SwapOps;
 use ethabi::Token;
@@ -8,6 +9,7 @@ use gstuff::now_ms;
 use rpc::v1::types::H160 as H160Json;
 use std::str::FromStr;
 use super::*;
+use utxo_common::HISTORY_TOO_LARGE_ERROR;
 
 const QRC20_GAS_LIMIT_DEFAULT: u64 = 250_000;
 const QRC20_GAS_PRICE_DEFAULT: u64 = 40;
@@ -33,13 +35,25 @@ pub struct ContractCallResult {
     pub execution_result: ExecutionResult,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct Qrc20TxHistoryItem {
+    pub tx_hash: H256Json,
+    pub height: i64,
+    pub log_index: i64,
+}
+
 /// QTUM specific RPC ops
 pub trait QtumRpcOps {
-    /// This can be used to get the basic information(name、decimals、total_supply、symbol) of a QRC20 token.
+    /// This can be used to get the basic information(name, decimals, total_supply, symbol) of a QRC20 token.
     /// https://github.com/qtumproject/qtum-electrumx-server/blob/master/docs/qrc20-integration.md#blockchaintokenget_infotoken_address
     fn blockchain_token_get_info(&self, token_addr: &H160Json) -> RpcRes<TokenInfo>;
 
     fn blockchain_contract_call(&self, contract_addr: &H160Json, data: BytesJson) -> RpcRes<ContractCallResult>;
+
+    /// this can be used to retrieve QRC20 token transfer history, params are the same as blockchain.contract.event.subscribe,
+    /// and it returns a list of map{tx_hash, height, log_index}, where log_index is the position for this event log in its transaction.
+    /// https://github.com/qtumproject/qtum-electrumx-server/blob/master/docs/qrc20-integration.md#blockchaincontracteventget_historyhash160-contract_addr-topic
+    fn blockchain_contract_event_get_history(&self, address: &H160Json, contract_addr: &H160Json) -> RpcRes<Vec<Qrc20TxHistoryItem>>;
 }
 
 impl QtumRpcOps for ElectrumClient {
@@ -50,6 +64,13 @@ impl QtumRpcOps for ElectrumClient {
     fn blockchain_contract_call(&self, contract_addr: &H160Json, data: BytesJson) -> RpcRes<ContractCallResult> {
         let sender = "";
         rpc_func!(self, "blockchain.contract.call", contract_addr, data, sender)
+    }
+
+    fn blockchain_contract_event_get_history(&self, address: &H160Json, contract_addr: &H160Json) -> RpcRes<Vec<Qrc20TxHistoryItem>> {
+        // for QRC20, just use ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef
+        // (Keccak-256 hash of event Transfer(address indexed _from, address indexed _to, uint256 _value))
+        let topic = "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+        rpc_func!(self, "blockchain.contract.event.get_history", address, contract_addr, topic)
     }
 }
 
@@ -74,6 +95,7 @@ pub async fn qrc20_coin_from_conf_and_request(
     priv_key: &[u8],
     contract_address: H160,
 ) -> Result<Qrc20Coin, String> {
+    if let Some("enable") = req["method"].as_str() { return ERR!("Native mode not supported yet for QRC20"); }
     let inner = try_s!(utxo_arc_from_conf_and_request(ctx, ticker, conf, req, priv_key, QRC20_DUST).await);
     match &inner.address_format {
         UtxoAddressFormat::Standard => (),
@@ -230,6 +252,57 @@ impl UtxoArcCommonOps for Qrc20Coin {
 
     fn get_verbose_transaction_from_cache_or_rpc(&self, txid: H256Json) -> Box<dyn Future<Item=VerboseTransactionFrom, Error=String> + Send> {
         Box::new(utxo_common::get_verbose_transaction_from_cache_or_rpc(self.clone(), txid).boxed().compat())
+    }
+
+    async fn request_tx_history(&self, metrics: MetricsArc) -> RequestTxHistoryResult {
+        let tx_ids = match &self.utxo_arc.rpc_client {
+            UtxoRpcClientEnum::Native(_client) => {
+                // it should not be happened because qrc20_coin_from_conf_and_request() must not allow enable mode
+                return RequestTxHistoryResult::UnknownError(ERRL!("Native mode not supported"));
+            }
+            UtxoRpcClientEnum::Electrum(client) => {
+                let my_address = self.utxo_arc.my_address.hash.clone().take().into();
+                let contract_addr = self.contract_address.to_vec().as_slice().into();
+
+                mm_counter!(metrics, "tx.history.request.count", 1,
+                    "coin" => self.utxo_arc.ticker.clone(), "client" => "electrum", "method" => "blockchain.contract.event.get_history");
+
+                let history = match client.blockchain_contract_event_get_history(&my_address, &contract_addr).compat().await {
+                    Ok(value) => value,
+                    Err(e) => {
+                        match &e.error {
+                            JsonRpcErrorType::Transport(e) | JsonRpcErrorType::Parse(_, e) => {
+                                return RequestTxHistoryResult::Retry { error: ERRL!("Error {} on blockchain_contract_event_get_history", e) };
+                            }
+                            JsonRpcErrorType::Response(_addr, err) => {
+                                if HISTORY_TOO_LARGE_ERROR.eq(err) {
+                                    return RequestTxHistoryResult::HistoryTooLarge;
+                                } else {
+                                    return RequestTxHistoryResult::Retry { error: ERRL!("Error {:?} on blockchain_contract_event_get_history", e) };
+                                }
+                            }
+                        }
+                    }
+                };
+                mm_counter!(metrics, "tx.history.response.count", 1,
+                    "coin" => self.utxo_arc.ticker.clone(), "client" => "electrum", "method" => "blockchain.contract.event.get_history");
+
+                mm_counter!(metrics, "tx.history.response.total_length", history.len() as u64,
+                    "coin" => self.utxo_arc.ticker.clone(), "client" => "electrum", "method" => "blockchain.contract.event.get_history");
+
+                // electrum returns the most recent transactions in the end but we need to
+                // process them first so rev is required
+                history.into_iter().rev().map(|item| {
+                    let height = if item.height < 0 {
+                        0
+                    } else {
+                        item.height as u64
+                    };
+                    (item.tx_hash, height)
+                }).collect()
+            }
+        };
+        RequestTxHistoryResult::Ok(tx_ids)
     }
 }
 

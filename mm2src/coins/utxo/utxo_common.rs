@@ -5,6 +5,7 @@ use chain::constants::{SEQUENCE_FINAL};
 use common::executor::Timer;
 use common::jsonrpc_client::{JsonRpcError, JsonRpcErrorType};
 use common::mm_ctx::MmArc;
+use common::mm_metrics::MetricsArc;
 #[cfg(feature = "native")]
 use futures01::{Future};
 use futures01::future::Either;
@@ -32,6 +33,7 @@ use self::rpc_clients::{electrum_script_hash, UtxoRpcClientEnum, UnspentInfo};
 use super::{CoinsContext, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, TradeFee,
             Transaction, TransactionEnum, TransactionFut, TransactionDetails, WithdrawFee, WithdrawRequest};
 use crate::utxo::rpc_clients::UtxoRpcClientOps;
+use common::block_on;
 
 macro_rules! true_or_err {
     ($cond: expr, $msg: expr $(, $args:expr)*) => {
@@ -39,6 +41,13 @@ macro_rules! true_or_err {
             return ERR!($msg $(, $args)*);
         }
     };
+}
+
+lazy_static! {
+    pub static ref HISTORY_TOO_LARGE_ERROR: Json = json!({
+        "code": 1,
+        "message": "history too large"
+    });
 }
 
 pub async fn get_tx_fee(coin: &UtxoCoinFields) -> Result<ActualTxFee, JsonRpcError> {
@@ -1065,23 +1074,12 @@ pub fn decimals(coin: &UtxoCoinFields) -> u8 {
 }
 
 pub fn process_history_loop<T>(coin: &T, ctx: MmArc)
-    where T: AsRef<UtxoArc> + MmCoin + MarketCoinOps {
+    where T: AsRef<UtxoArc> + UtxoArcCommonOps + MmCoin + MarketCoinOps {
     const HISTORY_TOO_LARGE_ERR_CODE: i64 = -1;
-    let history_too_large = json!({
-            "code": 1,
-            "message": "history too large"
-        });
 
     let mut my_balance: Option<BigDecimal> = None;
     let history = coin.load_history_from_file(&ctx);
     let mut history_map: HashMap<H256Json, TransactionDetails> = history.into_iter().map(|tx| (H256Json::from(tx.tx_hash.as_slice()), tx)).collect();
-    let my_address = match coin.my_address() {
-        Ok(addr) => addr,
-        Err(e) => {
-            log!("Error on getting self address: " [e] ". Stop tx history");
-            return;
-        }
-    };
 
     let mut success_iteration = 0i32;
     loop {
@@ -1123,94 +1121,25 @@ pub fn process_history_loop<T>(coin: &T, ctx: MmArc)
             _ => ()
         }
 
-        let tx_ids: Vec<(H256Json, u64)> = match &coin.as_ref().rpc_client {
-            UtxoRpcClientEnum::Native(client) => {
-                let mut from = 0;
-                let mut all_transactions = vec![];
-                loop {
-                    mm_counter!(ctx.metrics, "tx.history.request.count", 1,
-                        "coin" => coin.as_ref().ticker.clone(), "client" => "native", "method" => "listtransactions");
-
-                    let transactions = match client.list_transactions(100, from).wait() {
-                        Ok(value) => value,
-                        Err(e) => {
-                            ctx.log.log("", &[&"tx_history", &coin.as_ref().ticker], &ERRL!("Error {} on list transactions, retrying", e));
-                            thread::sleep(Duration::from_secs(10));
-                            continue;
-                        }
-                    };
-
-                    mm_counter!(ctx.metrics, "tx.history.response.count", 1,
-                        "coin" => coin.as_ref().ticker.clone(), "client" => "native", "method" => "listtransactions");
-
-                    if transactions.is_empty() {
-                        break;
-                    }
-                    from += 100;
-                    all_transactions.extend(transactions);
-                }
-
-                mm_counter!(ctx.metrics, "tx.history.response.total_length", all_transactions.len() as u64,
-                    "coin" => coin.as_ref().ticker.clone(), "client" => "native", "method" => "listtransactions");
-
-                all_transactions.into_iter().filter_map(|item| {
-                    if item.address == my_address {
-                        Some((item.txid, item.blockindex))
-                    } else {
-                        None
-                    }
-                }).collect()
-            }
-            UtxoRpcClientEnum::Electrum(client) => {
-                let script = Builder::build_p2pkh(&coin.as_ref().my_address.hash);
-                let script_hash = electrum_script_hash(&script);
-
-                mm_counter!(ctx.metrics, "tx.history.request.count", 1,
-                    "coin" => coin.as_ref().ticker.clone(), "client" => "electrum", "method" => "blockchain.scripthash.get_history");
-
-                let electrum_history = match client.scripthash_get_history(&hex::encode(script_hash)).wait() {
-                    Ok(value) => value,
-                    Err(e) => {
-                        match &e.error {
-                            JsonRpcErrorType::Transport(e) | JsonRpcErrorType::Parse(_, e) => {
-                                ctx.log.log("", &[&"tx_history", &coin.as_ref().ticker], &ERRL!("Error {} on scripthash_get_history, retrying", e));
-                                thread::sleep(Duration::from_secs(10));
-                                continue;
-                            }
-                            JsonRpcErrorType::Response(_addr, err) => {
-                                if *err == history_too_large {
-                                    ctx.log.log("", &[&"tx_history", &coin.as_ref().ticker], &ERRL!("Got `history too large`, stopping further attempts to retrieve it"));
-                                    *unwrap!(coin.as_ref().history_sync_state.lock()) = HistorySyncState::Error(json!({
-                                            "code": HISTORY_TOO_LARGE_ERR_CODE,
-                                            "message": "Got `history too large` error from Electrum server. History is not available",
-                                        }));
-                                    break;
-                                } else {
-                                    ctx.log.log("", &[&"tx_history", &coin.as_ref().ticker], &ERRL!("Error {:?} on scripthash_get_history, retrying", e));
-                                    thread::sleep(Duration::from_secs(10));
-                                    continue;
-                                }
-                            }
-                        }
-                    }
-                };
-                mm_counter!(ctx.metrics, "tx.history.response.count", 1,
-                    "coin" => coin.as_ref().ticker.clone(), "client" => "electrum", "method" => "blockchain.scripthash.get_history");
-
-                mm_counter!(ctx.metrics, "tx.history.response.total_length", electrum_history.len() as u64,
-                    "coin" => coin.as_ref().ticker.clone(), "client" => "electrum", "method" => "blockchain.scripthash.get_history");
-
-                // electrum returns the most recent transactions in the end but we need to
-                // process them first so rev is required
-                electrum_history.into_iter().rev().map(|item| {
-                    let height = if item.height < 0 {
-                        0
-                    } else {
-                        item.height as u64
-                    };
-                    (item.tx_hash, height)
-                }).collect()
-            }
+        let tx_ids = match block_on(coin.request_tx_history(ctx.metrics.clone())) {
+            RequestTxHistoryResult::Ok(tx_ids) => tx_ids,
+            RequestTxHistoryResult::Retry { error } => {
+                ctx.log.log("", &[&"tx_history", &coin.as_ref().ticker], &ERRL!("{}, retrying", error));
+                thread::sleep(Duration::from_secs(10));
+                continue;
+            },
+            RequestTxHistoryResult::HistoryTooLarge => {
+                ctx.log.log("", &[&"tx_history", &coin.as_ref().ticker], &ERRL!("Got `history too large`, stopping further attempts to retrieve it"));
+                *unwrap!(coin.as_ref().history_sync_state.lock()) = HistorySyncState::Error(json!({
+                    "code": HISTORY_TOO_LARGE_ERR_CODE,
+                    "message": "Got `history too large` error from Electrum server. History is not available",
+                }));
+                break;
+            },
+            RequestTxHistoryResult::UnknownError(e) => {
+                ctx.log.log("", &[&"tx_history", &coin.as_ref().ticker], &ERRL!("{}, stopping futher attempts to retreive it", e));
+                break;
+            },
         };
         let mut transactions_left = if tx_ids.len() > history_map.len() {
             *unwrap!(coin.as_ref().history_sync_state.lock()) = HistorySyncState::InProgress(json!({
@@ -1291,6 +1220,94 @@ pub fn process_history_loop<T>(coin: &T, ctx: MmArc)
         success_iteration += 1;
         thread::sleep(Duration::from_secs(30));
     }
+}
+
+pub async fn request_tx_history<T>(coin: &T, metrics: MetricsArc) -> RequestTxHistoryResult
+    where T: AsRef<UtxoArc> + MmCoin + MarketCoinOps {
+    let my_address = match coin.my_address() {
+        Ok(addr) => addr,
+        Err(e) => return RequestTxHistoryResult::UnknownError(ERRL!("Error on getting self address: {}. Stop tx history", e)),
+    };
+
+    let tx_ids = match &coin.as_ref().rpc_client {
+        UtxoRpcClientEnum::Native(client) => {
+            let mut from = 0;
+            let mut all_transactions = vec![];
+            loop {
+                mm_counter!(metrics, "tx.history.request.count", 1,
+                    "coin" => coin.as_ref().ticker.clone(), "client" => "native", "method" => "listtransactions");
+
+                let transactions = match client.list_transactions(100, from).compat().await {
+                    Ok(value) => value,
+                    Err(e) => {
+                        return RequestTxHistoryResult::Retry { error: ERRL!("Error {} on list transactions", e) };
+                    }
+                };
+
+                mm_counter!(metrics, "tx.history.response.count", 1,
+                    "coin" => coin.as_ref().ticker.clone(), "client" => "native", "method" => "listtransactions");
+
+                if transactions.is_empty() {
+                    break;
+                }
+                from += 100;
+                all_transactions.extend(transactions);
+            }
+
+            mm_counter!(metrics, "tx.history.response.total_length", all_transactions.len() as u64,
+                "coin" => coin.as_ref().ticker.clone(), "client" => "native", "method" => "listtransactions");
+
+            all_transactions.into_iter().filter_map(|item| {
+                if item.address == my_address {
+                    Some((item.txid, item.blockindex))
+                } else {
+                    None
+                }
+            }).collect()
+        }
+        UtxoRpcClientEnum::Electrum(client) => {
+            let script = Builder::build_p2pkh(&coin.as_ref().my_address.hash);
+            let script_hash = electrum_script_hash(&script);
+
+            mm_counter!(metrics, "tx.history.request.count", 1,
+                "coin" => coin.as_ref().ticker.clone(), "client" => "electrum", "method" => "blockchain.scripthash.get_history");
+
+            let electrum_history = match client.scripthash_get_history(&hex::encode(script_hash)).compat().await {
+                Ok(value) => value,
+                Err(e) => {
+                    match &e.error {
+                        JsonRpcErrorType::Transport(e) | JsonRpcErrorType::Parse(_, e) => {
+                            return RequestTxHistoryResult::Retry { error: ERRL!("Error {} on scripthash_get_history", e) };
+                        }
+                        JsonRpcErrorType::Response(_addr, err) => {
+                            if HISTORY_TOO_LARGE_ERROR.eq(err) {
+                                return RequestTxHistoryResult::HistoryTooLarge;
+                            } else {
+                                return RequestTxHistoryResult::Retry { error: ERRL!("Error {:?} on scripthash_get_history", e) };
+                            }
+                        }
+                    }
+                }
+            };
+            mm_counter!(metrics, "tx.history.response.count", 1,
+                "coin" => coin.as_ref().ticker.clone(), "client" => "electrum", "method" => "blockchain.scripthash.get_history");
+
+            mm_counter!(metrics, "tx.history.response.total_length", electrum_history.len() as u64,
+                "coin" => coin.as_ref().ticker.clone(), "client" => "electrum", "method" => "blockchain.scripthash.get_history");
+
+            // electrum returns the most recent transactions in the end but we need to
+            // process them first so rev is required
+            electrum_history.into_iter().rev().map(|item| {
+                let height = if item.height < 0 {
+                    0
+                } else {
+                    item.height as u64
+                };
+                (item.tx_hash, height)
+            }).collect()
+        }
+    };
+    RequestTxHistoryResult::Ok(tx_ids)
 }
 
 pub fn tx_details_by_hash<T>(coin: T, hash: &[u8]) -> Box<dyn Future<Item=TransactionDetails, Error=String> + Send>
