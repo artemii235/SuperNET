@@ -2483,6 +2483,97 @@ fn test_common_cashaddresses() {
 }
 
 #[test]
+fn test_convertaddress() {
+    let coins = json!([
+        {"coin":"BCH","pubtype":0,"p2shtype":5,"mm2":1},
+    ]);
+
+    let mut mm = unwrap! (MarketMakerIt::start (
+        json! ({
+            "gui": "nogui",
+            "netid": 9998,
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "passphrase": "face pin block number add byte put seek mime test note password sin tab multiple",
+            "coins": coins,
+            "i_am_seed": true,
+            "rpc_password": "pass",
+        }),
+        "pass".into(),
+        local_start! ("bob")
+    ));
+    let (_dump_log, _dump_dashboard) = mm_dump(&mm.log_path);
+    log!({ "log path: {}", mm.log_path.display() });
+    unwrap!(block_on (mm.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
+
+    let _electrum = block_on(enable_electrum(&mm, "BCH", vec!["electrum1.cipig.net:10017", "electrum2.cipig.net:10017", "electrum3.cipig.net:10017"]));
+
+    // test standard to cashaddress
+    let rc = unwrap! (block_on (mm.rpc (json! ({
+        "userpass": mm.userpass,
+        "method": "convertaddress",
+        "coin": "BCH",
+        "from": "1DmFp16U73RrVZtYUbo2Ectt8mAnYScpqM",
+        "to_address_format":{"format":"cashaddress","network":"bitcoincash"},
+    }))));
+    assert_eq! (rc.0, StatusCode::OK, "RPC «convertaddress» failed with status «{}»", rc.0);
+    let actual: Json = unwrap!(json::from_str(&rc.1));
+
+    let expected = json!({
+        "result": {
+            "address": "bitcoincash:qzxqqt9lh4feptf0mplnk58gnajfepzwcq9f2rxk55",
+        },
+    });
+    assert_eq!(actual, expected);
+
+    // test cashaddress to standard
+    let rc = unwrap! (block_on (mm.rpc (json! ({
+        "userpass": mm.userpass,
+        "method": "convertaddress",
+        "coin": "BCH",
+        "from": "bitcoincash:qzxqqt9lh4feptf0mplnk58gnajfepzwcq9f2rxk55",
+        "to_address_format":{"format":"standard"},
+    }))));
+    assert_eq! (rc.0, StatusCode::OK, "RPC «convertaddress» failed with status «{}»", rc.0);
+    let actual: Json = unwrap!(json::from_str(&rc.1));
+
+    let expected = json!({
+        "result": {
+            "address": "1DmFp16U73RrVZtYUbo2Ectt8mAnYScpqM",
+        },
+    });
+    assert_eq!(actual, expected);
+
+    // test standard to standard
+    let rc = unwrap! (block_on (mm.rpc (json! ({
+        "userpass": mm.userpass,
+        "method": "convertaddress",
+        "coin": "BCH",
+        "from": "1DmFp16U73RrVZtYUbo2Ectt8mAnYScpqM",
+        "to_address_format":{"format":"standard"},
+    }))));
+    assert_eq! (rc.0, StatusCode::OK, "RPC «convertaddress» failed with status «{}»", rc.0);
+    let actual: Json = unwrap!(json::from_str(&rc.1));
+
+    let expected = json!({
+        "result": {
+            "address": "1DmFp16U73RrVZtYUbo2Ectt8mAnYScpqM",
+        },
+    });
+    assert_eq!(actual, expected);
+
+    // test invalid from
+    let rc = unwrap! (block_on (mm.rpc (json! ({
+        "userpass": mm.userpass,
+        "method": "convertaddress",
+        "coin": "BCH",
+        "from": "0000000000000000000000000000000000",
+        "to_address_format":{"format":"standard"},
+    }))));
+    assert!(rc.0.is_server_error(), "!convertaddress success but should be error: {}", rc.1);
+}
+
+#[test]
 fn test_buy_conf_settings() {
     let bob_passphrase = unwrap! (get_passphrase (&".env.client", "BOB_PASSPHRASE"));
 

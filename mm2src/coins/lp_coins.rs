@@ -61,7 +61,7 @@ pub mod coins_tests;
 pub mod eth;
 use self::eth::{eth_coin_from_conf_and_request, EthCoin, EthTxFeeDetails, SignedEthTx};
 pub mod utxo;
-use self::utxo::{utxo_coin_from_conf_and_request, UtxoCoin, UtxoFeeDetails, UtxoTx};
+use self::utxo::{utxo_coin_from_conf_and_request, UtxoAddressFormat, UtxoCoin, UtxoFeeDetails, UtxoTx};
 #[doc(hidden)]
 #[allow(unused_variables)]
 pub mod test_coin;
@@ -666,6 +666,39 @@ pub async fn lp_coinfindᵃ (ctx: &MmArc, ticker: &str) -> Result<Option<MmCoinE
     let cctx = try_s! (CoinsContext::from_ctx (ctx));
     let coins = try_s! (cctx.coins.sleeplock (77) .await);
     Ok (coins.get (ticker) .map (|coin| coin.clone()))
+}
+
+pub async fn convert_address(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
+    let ticker = try_s!(req["coin"].as_str().ok_or("No 'coin' field")).to_owned();
+    let coin = match lp_coinfindᵃ(&ctx, &ticker).await {
+        Ok(Some(t)) => t,
+        Ok(None) => return ERR!("No such coin: {}", ticker),
+        Err(err) => return ERR!("!lp_coinfind({}): {}", ticker, err),
+    };
+    let coin = match coin {
+        MmCoinEnum::UtxoCoin(coin) => coin,
+        _ => return ERR!("Conversion is available between UTXO's address formats only"),
+    };
+
+    let from = try_s!(
+        req["from"].as_str().ok_or("Expect 'from' field")
+    );
+    let from = try_s!(utxo::try_address_from_str(coin.clone(), from));
+
+    if req["to_address_format"].is_null() {
+        return ERR!("Expect 'to_address_format' field");
+    }
+    let to_address_format: UtxoAddressFormat = try_s!(
+        json::from_value(req["to_address_format"].clone())
+    );
+
+    let result = json!({
+        "result": {
+            "address": try_s!(coin.convert_to_address(&from, to_address_format)),
+        },
+    });
+    let body = try_s!(json::to_vec(&result));
+    Ok(try_s!(Response::builder().body(body)))
 }
 
 pub async fn withdraw (ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {

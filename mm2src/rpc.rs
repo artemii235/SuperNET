@@ -21,7 +21,7 @@
 #![cfg_attr(not(feature = "native"), allow(dead_code))]
 
 use bytes::Bytes;
-use coins::{get_enabled_coins, get_trade_fee, my_tx_history, send_raw_transaction, set_required_confirmations,
+use coins::{convert_address, get_enabled_coins, get_trade_fee, my_tx_history, send_raw_transaction, set_required_confirmations,
             set_requires_notarization, show_priv_key, withdraw};
 use common::{err_tp_rpc_json, err_to_rpc_json_string, HyRes};
 #[cfg(feature = "native")]
@@ -205,6 +205,7 @@ pub fn dispatcher (req: Json, ctx: MmArc) -> DispatcherRes {
         "cancel_all_orders" => cancel_all_orders (ctx, req),
         "cancel_order" => cancel_order (ctx, req),
         "coins_needed_for_kick_start" => hyres (coins_needed_for_kick_start (ctx)),
+        "convertaddress" => hyres (convert_address (ctx, req)),
         "disable_coin" => disable_coin(ctx, req),
         "electrum" => hyres (electrum (ctx, req)),
         "enable" => hyres (enable (ctx, req)),

@@ -167,7 +167,7 @@ enum FeePolicy {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "format")]
-enum UtxoAddressFormat {
+pub enum UtxoAddressFormat {
     /// Standard UTXO address format.
     /// In Bitcoin Cash context the standard format also known as 'legacy'.
     #[serde(rename = "standard")]
@@ -368,6 +368,17 @@ impl UtxoCoinImpl {
             UtxoAddressFormat::CashAddress { network } =>
                 address.to_cashaddress(&network, self.pub_addr_prefix, self.p2sh_addr_prefix)
                     .and_then(|cashaddress| cashaddress.encode()),
+        }
+    }
+
+    pub fn convert_to_address(&self, from_address: &Address, to_address_format: UtxoAddressFormat) -> Result<String, String> {
+        match to_address_format {
+            UtxoAddressFormat::Standard => Ok(from_address.to_string()),
+            UtxoAddressFormat::CashAddress { network } =>
+                Ok(try_s!(from_address
+                    .to_cashaddress(&network, self.pub_addr_prefix, self.p2sh_addr_prefix)
+                    .and_then(|cashaddress| cashaddress.encode())
+                )),
         }
     }
 
@@ -2319,4 +2330,26 @@ fn kmd_interest(height: Option<u64>, value: u64, lock_time: u64, current_time: u
     // next 2 lines ported as is from Komodo codebase
     minutes -= 59;
     (value / 10512000) * minutes
+}
+
+pub fn try_address_from_str(coin: UtxoCoin, from: &str) -> Result<Address, String> {
+    let standard_err = match Address::from_str(from) {
+        Ok(a) => return Ok(a),
+        Err(e) => e,
+    };
+
+    let cashaddress_err = match Address::from_cashaddress(
+        from,
+        coin.checksum_type,
+        coin.pub_addr_prefix,
+        coin.p2sh_addr_prefix) {
+        Ok(a) => return Ok(a),
+        Err(e) => e,
+    };
+
+    ERR!(
+        "error on parse standard address: {:?}, error on parse cashaddress: {:?}",
+        standard_err,
+        cashaddress_err,
+    )
 }
