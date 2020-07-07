@@ -3025,6 +3025,107 @@ fn test_convertaddress() {
 }
 
 #[test]
+fn test_validateaddress() {
+    let coins = json!([
+        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1},
+        {"coin":"MORTY","asset":"MORTY","rpcport":11608,"txversion":4,"overwintered":1},
+        {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000","rpcport":80},
+        {"coin":"JST","name":"jst","etomic":"0xc0eb7AeD740E1796992A08962c15661bDEB58003"}
+    ]);
+
+    // start bob and immediately place the order
+    let mut mm_bob = unwrap!(MarketMakerIt::start(
+        json! ({
+            "gui": "nogui",
+            "netid": 9998,
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| unwrap! (s.parse::<i64>())),
+            "passphrase": "bob passphrase",
+            "coins": coins,
+            "rpc_password": "pass",
+            "i_am_seed": true,
+        }),
+        "pass".into(),
+        local_start!("bob")
+    ));
+    let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
+    log!({"Bob log path: {}", mm_bob.log_path.display()});
+    unwrap!(block_on(
+        mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
+    ));
+    log! ({"enable_coins: {:?}", block_on (enable_coins_eth_electrum (&mm, vec!["http://195.201.0.6:8565"]))});
+
+    // test valid RICK address
+
+    let rc = unwrap!(block_on(mm.rpc(json! ({
+        "userpass": mm.userpass,
+        "method": "validateaddress",
+        "coin": "RICK",
+        "address": "RRnMcSeKiLrNdbp91qNVQwwXx5azD4S4CD",
+    }))));
+    assert_eq!(
+        rc.0,
+        StatusCode::OK,
+        "RPC «validateaddress» failed with status «{}»",
+        rc.0
+    );
+    let actual: Json = unwrap!(json::from_str(&rc.1));
+
+    let expected = json!({
+        "result": {
+            "is_valid": true,
+        },
+    });
+    assert_eq!(actual, expected);
+
+    // test valid ETH address
+
+    let rc = unwrap!(block_on(mm.rpc(json! ({
+        "userpass": mm.userpass,
+        "method": "validateaddress",
+        "coin": "ETH",
+        "address": "0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94",
+    }))));
+    assert_eq!(
+        rc.0,
+        StatusCode::OK,
+        "RPC «validateaddress» failed with status «{}»",
+        rc.0
+    );
+    let actual: Json = unwrap!(json::from_str(&rc.1));
+
+    let expected = json!({
+        "result": {
+            "is_valid": true,
+        },
+    });
+    assert_eq!(actual, expected);
+
+    // test invalid ETH address
+
+    let rc = unwrap!(block_on(mm.rpc(json! ({
+        "userpass": mm.userpass,
+        "method": "validateaddress",
+        "coin": "ETH",
+        "address": "7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94",
+    }))));
+    assert_eq!(
+        rc.0,
+        StatusCode::OK,
+        "RPC «validateaddress» failed with status «{}»",
+        rc.0
+    );
+    let json: Json = unwrap!(json::from_str(&rc.1));
+    let result = &json["result"];
+
+    assert!(!result["is_valid"].as_bool().unwrap());
+    let reason = result["reason"].as_str().unwrap();
+    log!((reason));
+    assert!(reason.contains("Address must be prefixed with 0x"));
+}
+
+#[test]
 fn test_buy_conf_settings() {
     let bob_passphrase = unwrap!(get_passphrase(&".env.client", "BOB_PASSPHRASE"));
 

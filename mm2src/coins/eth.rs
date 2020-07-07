@@ -342,10 +342,13 @@ impl EthCoinImpl {
 
         Ok(None)
     }
+
+    /// Try to parse address from string.
+    pub fn address_from_str(&self, address: &str) -> Result<Address, String> { Ok(try_s!(addr_from_str(address))) }
 }
 
 async fn withdraw_impl(ctx: MmArc, coin: EthCoin, req: WithdrawRequest) -> Result<TransactionDetails, String> {
-    let to_addr = try_s!(addr_from_str(&req.to));
+    let to_addr = try_s!(coin.address_from_str(&req.to));
     let my_balance = try_s!(coin.my_balance().compat().await);
     let mut wei_amount = if req.max {
         my_balance

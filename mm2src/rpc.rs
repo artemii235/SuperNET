@@ -22,7 +22,7 @@
 
 use bytes::Bytes;
 use coins::{convert_address, get_enabled_coins, get_trade_fee, my_tx_history, send_raw_transaction,
-            set_required_confirmations, set_requires_notarization, show_priv_key, withdraw};
+            set_required_confirmations, set_requires_notarization, show_priv_key, validate_address, withdraw};
 #[cfg(feature = "native")]
 use common::for_tests::common_wait_for_log_re;
 use common::lift_body::LiftBody;
@@ -267,6 +267,7 @@ pub fn dispatcher(req: Json, ctx: MmArc) -> DispatcherRes {
         "stats_swap_status" => stats_swap_status(ctx, req),
         "stop" => stop(ctx),
         "unban_pubkeys" => hyres(unban_pubkeys(ctx, req)),
+        "validateaddress" => hyres(validate_address(ctx, req)),
         "version" => version(),
         "withdraw" => hyres(withdraw(ctx, req)),
         _ => return DispatcherRes::NoMatch(req),

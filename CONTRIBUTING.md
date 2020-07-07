@@ -1,6 +1,6 @@
 # Contributing to AtomicDEX Marketmaker
 
-We welcomes contribution from everyone in the form of suggestions, bug reports, pull requests, and feedback.
+We welcome contribution from everyone in the form of suggestions, bug reports, pull requests, and feedback.
 Please note we have a code of conduct, please follow it in all your interactions with the project.
 
 ## Submitting feature requests

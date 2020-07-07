@@ -715,6 +715,42 @@ pub async fn convert_address(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>,
     Ok(try_s!(Response::builder().body(body)))
 }
 
+#[derive(Deserialize)]
+struct ValidateAddressReq {
+    coin: String,
+    address: String,
+}
+
+#[derive(Serialize)]
+struct ValidateAddressResult {
+    is_valid: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
+}
+
+pub async fn validate_address(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
+    let req: ValidateAddressReq = try_s!(json::from_value(req));
+    let coin = match lp_coinfindᵃ(&ctx, &req.coin).await {
+        Ok(Some(t)) => t,
+        Ok(None) => return ERR!("No such coin: {}", req.coin),
+        Err(err) => return ERR!("!lp_coinfind({}): {}", req.coin, err),
+    };
+
+    let result = match coin {
+        MmCoinEnum::UtxoCoin(coin) => coin.address_from_str(&req.address).map(|_| ()),
+        MmCoinEnum::EthCoin(coin) => coin.address_from_str(&req.address).map(|_| ()),
+        MmCoinEnum::Test(_coin) => unreachable!(),
+    };
+    let result = ValidateAddressResult {
+        is_valid: result.is_ok(),
+        reason: result.err(),
+    };
+
+    let result = json!({ "result": result });
+    let body = try_s!(json::to_vec(&result));
+    Ok(try_s!(Response::builder().body(body)))
+}
+
 pub async fn withdraw(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
     let ticker = try_s!(req["coin"].as_str().ok_or("No 'coin' field")).to_owned();
     let coin = match lp_coinfindᵃ(&ctx, &ticker).await {
