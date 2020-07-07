@@ -1019,6 +1019,90 @@ fn test_cashaddresses_in_tx_details_by_hash() {
 }
 
 #[test]
+fn test_address_from_str_with_cashaddress_activated() {
+    let conf = json!({
+        "coin": "BCH",
+        "pubtype": 0,
+        "p2shtype": 5,
+        "mm2": 1,
+        "address_format":{"format":"cashaddress","network":"bitcoincash"},
+    });
+    let req = json!({
+         "method": "electrum",
+         "servers": [{"url":"blackie.c3-soft.com:60001"}, {"url":"bch0.kister.net:51001"}, {"url":"testnet.imaginary.cash:50001"}],
+    });
+
+    let ctx = MmCtxBuilder::new().into_mm_arc();
+
+    let coin = unwrap!(block_on(utxo_coin_from_conf_and_request(
+        &ctx, "BCH", &conf, &req, &[1u8; 32]
+    )));
+
+    assert_eq!(
+        coin.address_from_str("bitcoincash:qzxqqt9lh4feptf0mplnk58gnajfepzwcq9f2rxk55"),
+        Ok("1DmFp16U73RrVZtYUbo2Ectt8mAnYScpqM".into())
+    );
+
+    let error = coin
+        .address_from_str("1DmFp16U73RrVZtYUbo2Ectt8mAnYScpqM")
+        .err()
+        .unwrap();
+    assert!(error.contains("Cashaddress address format activated for BCH, but legacy format used instead"));
+
+    // other error on parse
+    let error = coin
+        .address_from_str("bitcoincash:000000000000000000000000000000000000000000")
+        .err()
+        .unwrap();
+    assert!(error.contains("Checksum verification failed"));
+}
+
+#[test]
+fn test_address_from_str_with_legacy_address_activated() {
+    let conf = json!({
+        "coin": "BCH",
+        "pubtype": 0,
+        "p2shtype": 5,
+        "mm2": 1,
+    });
+    let req = json!({
+         "method": "electrum",
+         "servers": [{"url":"blackie.c3-soft.com:60001"}, {"url":"bch0.kister.net:51001"}, {"url":"testnet.imaginary.cash:50001"}],
+    });
+
+    let ctx = MmCtxBuilder::new().into_mm_arc();
+
+    let coin = unwrap!(block_on(utxo_coin_from_conf_and_request(
+        &ctx, "BCH", &conf, &req, &[1u8; 32]
+    )));
+
+    let expected = Address::from_cashaddress(
+        "bitcoincash:qzxqqt9lh4feptf0mplnk58gnajfepzwcq9f2rxk55",
+        coin.checksum_type,
+        coin.pub_addr_prefix,
+        coin.p2sh_addr_prefix,
+    )
+    .unwrap();
+    assert_eq!(
+        coin.address_from_str("1DmFp16U73RrVZtYUbo2Ectt8mAnYScpqM"),
+        Ok(expected)
+    );
+
+    let error = coin
+        .address_from_str("bitcoincash:qzxqqt9lh4feptf0mplnk58gnajfepzwcq9f2rxk55")
+        .err()
+        .unwrap();
+    assert!(error.contains("Legacy address format activated for BCH, but cashaddress format used instead"));
+
+    // other error on parse
+    let error = coin
+        .address_from_str("0000000000000000000000000000000000")
+        .err()
+        .unwrap();
+    assert!(error.contains("Invalid Address"));
+}
+
+#[test]
 // https://github.com/KomodoPlatform/atomicDEX-API/issues/673
 fn test_network_info_negative_time_offset() {
     let info_str = r#"{"version":1140200,"subversion":"/Shibetoshi:1.14.2/","protocolversion":70015,"localservices":"0000000000000005","localrelay":true,"timeoffset":-1,"networkactive":true,"connections":12,"networks":[{"name":"ipv4","limited":false,"reachable":true,"proxy":"","proxy_randomize_credentials":false},{"name":"ipv6","limited":false,"reachable":true,"proxy":"","proxy_randomize_credentials":false},{"name":"onion","limited":false,"reachable":true,"proxy":"127.0.0.1:9050","proxy_randomize_credentials":true}],"relayfee":1.00000000,"incrementalfee":0.00001000,"localaddresses":[],"warnings":""}"#;

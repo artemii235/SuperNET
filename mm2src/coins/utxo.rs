@@ -385,6 +385,31 @@ impl UtxoCoinImpl {
         }
     }
 
+    /// Try to parse address from string using specified format
+    /// and if it failed inform user that he used a wrong format.
+    pub fn address_from_str(&self, address: &str) -> Result<Address, String> {
+        match &self.address_format {
+            UtxoAddressFormat::Standard => Address::from_str(address)
+                .or_else(|e| match Address::from_cashaddress(
+                    &address,
+                    self.checksum_type,
+                    self.pub_addr_prefix,
+                    self.p2sh_addr_prefix) {
+                    Ok(_) => ERR!("Legacy address format activated for {}, but cashaddress format used instead. Try to call 'convertaddress'", self.ticker),
+                    Err(_) => ERR!("{}", e),
+                }),
+            UtxoAddressFormat::CashAddress { .. } => Address::from_cashaddress(
+                &address,
+                self.checksum_type,
+                self.pub_addr_prefix,
+                self.p2sh_addr_prefix)
+                .or_else(|e| match Address::from_str(&address) {
+                    Ok(_) => ERR!("Cashaddress address format activated for {}, but legacy format used instead. Try to call 'convertaddress'", self.ticker),
+                    Err(_) => ERR!("{}", e),
+                })
+        }
+    }
+
     async fn get_current_mtp(&self) -> Result<u32, String> {
         let current_block = try_s!(self.rpc_client.get_block_count().compat().await);
         self.rpc_client
@@ -1582,15 +1607,7 @@ impl MarketCoinOps for UtxoCoin {
 }
 
 async fn withdraw_impl(coin: UtxoCoin, req: WithdrawRequest) -> Result<TransactionDetails, String> {
-    let to = match &coin.address_format {
-        UtxoAddressFormat::Standard => try_s!(Address::from_str(&req.to)),
-        UtxoAddressFormat::CashAddress { .. } => try_s!(Address::from_cashaddress(
-            &req.to,
-            coin.checksum_type,
-            coin.pub_addr_prefix,
-            coin.p2sh_addr_prefix
-        )),
-    };
+    let to = try_s!(coin.address_from_str(&req.to));
     if to.checksum_type != coin.checksum_type {
         return ERR!(
             "Address {} has invalid checksum type, it must be {:?}",
