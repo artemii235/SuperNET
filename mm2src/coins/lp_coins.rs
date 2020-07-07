@@ -686,29 +686,29 @@ pub async fn lp_coinfindᵃ(ctx: &MmArc, ticker: &str) -> Result<Option<MmCoinEn
     Ok(coins.get(ticker).cloned())
 }
 
+#[derive(Deserialize)]
+struct ConvertAddressReq {
+    coin: String,
+    from: String,
+    to_address_format: UtxoAddressFormat,
+}
+
 pub async fn convert_address(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
-    let ticker = try_s!(req["coin"].as_str().ok_or("No 'coin' field")).to_owned();
-    let coin = match lp_coinfindᵃ(&ctx, &ticker).await {
+    let req: ConvertAddressReq = try_s!(json::from_value(req));
+    let coin = match lp_coinfindᵃ(&ctx, &req.coin).await {
         Ok(Some(t)) => t,
-        Ok(None) => return ERR!("No such coin: {}", ticker),
-        Err(err) => return ERR!("!lp_coinfind({}): {}", ticker, err),
+        Ok(None) => return ERR!("No such coin: {}", req.coin),
+        Err(err) => return ERR!("!lp_coinfind({}): {}", req.coin, err),
     };
     let coin = match coin {
         MmCoinEnum::UtxoCoin(coin) => coin,
         _ => return ERR!("Conversion is available between UTXO's address formats only"),
     };
 
-    let from = try_s!(req["from"].as_str().ok_or("Expect 'from' field"));
-    let from = try_s!(utxo::try_address_from_str(coin.clone(), from));
-
-    if req["to_address_format"].is_null() {
-        return ERR!("Expect 'to_address_format' field");
-    }
-    let to_address_format: UtxoAddressFormat = try_s!(json::from_value(req["to_address_format"].clone()));
-
+    let from = try_s!(utxo::try_address_from_str(coin.clone(), &req.from));
     let result = json!({
         "result": {
-            "address": try_s!(coin.convert_to_address(&from, to_address_format)),
+            "address": try_s!(coin.convert_to_address(&from, &req.to_address_format)),
         },
     });
     let body = try_s!(json::to_vec(&result));

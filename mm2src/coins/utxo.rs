@@ -375,7 +375,7 @@ impl UtxoCoinImpl {
     pub fn convert_to_address(
         &self,
         from_address: &Address,
-        to_address_format: UtxoAddressFormat,
+        to_address_format: &UtxoAddressFormat,
     ) -> Result<String, String> {
         match to_address_format {
             UtxoAddressFormat::Standard => Ok(from_address.to_string()),
