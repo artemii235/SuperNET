@@ -3029,36 +3029,46 @@ fn test_validateaddress() {
     let coins = json!([
         {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1},
         {"coin":"MORTY","asset":"MORTY","rpcport":11608,"txversion":4,"overwintered":1},
-        {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000","rpcport":80},
-        {"coin":"JST","name":"jst","etomic":"0xc0eb7AeD740E1796992A08962c15661bDEB58003"}
+        {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000"},
+        {"coin":"JST","name":"jst","etomic":"0x2b294F029Fde858b2c62184e8390591755521d8E"}
     ]);
 
-    // start bob and immediately place the order
-    let mut mm_bob = unwrap!(MarketMakerIt::start(
-        json! ({
+    let (bob_file_passphrase, _bob_file_userpass) = from_env_file(unwrap!(slurp(&".env.seed")));
+    let bob_passphrase = unwrap!(
+        var("BOB_PASSPHRASE").ok().or(bob_file_passphrase),
+        "No BOB_PASSPHRASE or .env.seed/PASSPHRASE"
+    );
+
+    let mut mm = unwrap!(MarketMakerIt::start(
+        json!({
             "gui": "nogui",
             "netid": 9998,
-            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
-            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
-            "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| unwrap! (s.parse::<i64>())),
-            "passphrase": "bob passphrase",
+            "myipaddr": env::var("BOB_TRADE_IP").ok(),
+            "rpcip": env::var("BOB_TRADE_IP").ok(),
+            "canbind": env::var("BOB_TRADE_PORT").ok().map(|s| unwrap!(s.parse::<i64>())),
+            "passphrase": bob_passphrase,
             "coins": coins,
             "rpc_password": "pass",
             "i_am_seed": true,
         }),
         "pass".into(),
-        local_start!("bob")
+        match var("LOCAL_THREAD_MM") {
+            Ok(ref e) if e == "bob" => Some(local_start()),
+            _ => None,
+        }
     ));
-    let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
-    log!({"Bob log path: {}", mm_bob.log_path.display()});
+    let (_dump_log, _dump_dashboard) = mm_dump(&mm.log_path);
+    log!({"Log path: {}", mm.log_path.display()});
     unwrap!(block_on(
-        mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
+        mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
-    log! ({"enable_coins: {:?}", block_on (enable_coins_eth_electrum (&mm, vec!["http://195.201.0.6:8565"]))});
+    log!([block_on(enable_coins_eth_electrum(&mm, vec![
+        "http://195.201.0.6:8565"
+    ]))]);
 
     // test valid RICK address
 
-    let rc = unwrap!(block_on(mm.rpc(json! ({
+    let rc = unwrap!(block_on(mm.rpc(json!({
         "userpass": mm.userpass,
         "method": "validateaddress",
         "coin": "RICK",
@@ -3102,6 +3112,28 @@ fn test_validateaddress() {
     });
     assert_eq!(actual, expected);
 
+    // test invalid RICK address
+
+    let rc = unwrap!(block_on(mm.rpc(json! ({
+        "userpass": mm.userpass,
+        "method": "validateaddress",
+        "coin": "RICK",
+        "address": "bchtest:qr39na5d25wdeecgw3euh9fkd4ygvd4pnsury96597",
+    }))));
+    assert_eq!(
+        rc.0,
+        StatusCode::OK,
+        "RPC «validateaddress» failed with status «{}»",
+        rc.0
+    );
+    let json: Json = unwrap!(json::from_str(&rc.1));
+    let result = &json["result"];
+
+    assert!(!result["is_valid"].as_bool().unwrap());
+    let reason = result["reason"].as_str().unwrap();
+    log!((reason));
+    assert!(reason.contains("Legacy address format activated for RICK, but cashaddress format used instead"));
+
     // test invalid ETH address
 
     let rc = unwrap!(block_on(mm.rpc(json! ({
@@ -3132,7 +3164,6 @@ fn test_buy_conf_settings() {
     let coins = json! ([
         {"coin":"RICK","asset":"RICK","required_confirmations":0,"txversion":4,"overwintered":1},
         {"coin":"MORTY","asset":"MORTY","required_confirmations":0,"txversion":4,"overwintered":1},
-        {"coin":"ETOMIC","asset":"ETOMIC","required_confirmations":0,"txversion":4,"overwintered":1},
         {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000"},
         {"coin":"JST","name":"jst","etomic":"0x2b294F029Fde858b2c62184e8390591755521d8E","required_confirmations":2}
     ]);
@@ -3208,7 +3239,6 @@ fn test_sell_conf_settings() {
     let coins = json! ([
         {"coin":"RICK","asset":"RICK","required_confirmations":0,"txversion":4,"overwintered":1},
         {"coin":"MORTY","asset":"MORTY","required_confirmations":0,"txversion":4,"overwintered":1},
-        {"coin":"ETOMIC","asset":"ETOMIC","required_confirmations":0,"txversion":4,"overwintered":1},
         {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000"},
         {"coin":"JST","name":"jst","etomic":"0x2b294F029Fde858b2c62184e8390591755521d8E","required_confirmations":2}
     ]);
@@ -3284,7 +3314,6 @@ fn test_set_price_conf_settings() {
     let coins = json! ([
         {"coin":"RICK","asset":"RICK","required_confirmations":0,"txversion":4,"overwintered":1},
         {"coin":"MORTY","asset":"MORTY","required_confirmations":0,"txversion":4,"overwintered":1},
-        {"coin":"ETOMIC","asset":"ETOMIC","required_confirmations":0,"txversion":4,"overwintered":1},
         {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000"},
         {"coin":"JST","name":"jst","etomic":"0x2b294F029Fde858b2c62184e8390591755521d8E","required_confirmations":2}
     ]);
