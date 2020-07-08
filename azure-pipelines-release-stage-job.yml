@@ -73,7 +73,7 @@ jobs:
         condition: and( eq( variables['Agent.OS'], 'Linux' ), eq( variables['DEBUG_UPLOADED'], '' ) )
       - bash: |
           cd target/debug
-          zip ../../upload/mm2-$(COMMIT_HASH)-$(Agent.OS)-Debug mm2.dSYM mm2 -r
+          zip ../../upload/mm2-$(COMMIT_HASH)-$(Agent.OS)-Debug mm2.dSYM mm2 libmm2.a -r
         displayName: 'Prepare debug build upload MacOS'
         condition: and( eq( variables['Agent.OS'], 'Darwin' ), eq( variables['DEBUG_UPLOADED'], '' ) )
       - powershell: |
@@ -117,6 +117,7 @@ jobs:
           cd target/release
           zip ../../upload/mm2-$(COMMIT_HASH)-$(Agent.OS)-Release.zip mm2
           zip ../../upload/mm2-$(COMMIT_HASH)-$(Agent.OS)-Release.dSYM.zip mm2.dSYM -r
+          zip ../../upload/mm2-$(COMMIT_HASH)-$(Agent.OS)-Release.dSYM.zip libmm2.a -r
         displayName: 'Prepare release build upload MacOS'
         condition: and( eq( variables['Agent.OS'], 'Darwin' ), eq( variables['RELEASE_UPLOADED'], '' ) )
       - task: Docker@2
