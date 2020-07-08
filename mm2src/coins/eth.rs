@@ -139,6 +139,18 @@ pub struct Web3Instance {
     is_parity: bool,
 }
 
+#[derive(Deserialize, Serialize)]
+#[serde(tag = "format")]
+pub enum EthAddressFormat {
+    /// Single-case address (lowercase)
+    #[serde(rename = "singlecase")]
+    SingleCase,
+    /// Mixed-case address.
+    /// https://eips.ethereum.org/EIPS/eip-55
+    #[serde(rename = "mixedcase")]
+    MixedCase,
+}
+
 #[cfg_attr(test, mockable)]
 impl EthCoinImpl {
     /// Gets Transfer events from ERC20 smart contract `addr` between `from_block` and `to_block`
@@ -344,7 +356,9 @@ impl EthCoinImpl {
     }
 
     /// Try to parse address from string.
-    pub fn address_from_str(&self, address: &str) -> Result<Address, String> { Ok(try_s!(addr_from_str(address))) }
+    pub fn address_from_str(&self, address: &str) -> Result<Address, String> {
+        Ok(try_s!(valid_addr_from_str(address)))
+    }
 }
 
 async fn withdraw_impl(ctx: MmArc, coin: EthCoin, req: WithdrawRequest) -> Result<TransactionDetails, String> {
@@ -2247,6 +2261,18 @@ impl MmCoin for EthCoin {
 
     fn decimals(&self) -> u8 { self.decimals }
 
+    fn convert_to_address(&self, from: &str, to_address_format: Json) -> Result<String, String> {
+        let to_address_format: EthAddressFormat =
+            json::from_value(to_address_format).map_err(|e| ERRL!("Error on parse ETH address format {:?}", e))?;
+        match to_address_format {
+            EthAddressFormat::SingleCase => ERR!("conversion is available only to mixed-case"),
+            EthAddressFormat::MixedCase => {
+                let _addr = try_s!(addr_from_str(from));
+                Ok(checksum_address(from))
+            },
+        }
+    }
+
     fn process_history_loop(&self, ctx: MmArc) {
         match self.coin_type {
             EthCoinType::Eth => self.process_eth_history(&ctx),
@@ -2488,17 +2514,20 @@ async fn get_token_decimals(web3: &Web3<Web3Transport>, token_addr: Address) -> 
     Ok(decimals as u8)
 }
 
+fn valid_addr_from_str(addr_str: &str) -> Result<Address, String> {
+    let addr = try_s!(addr_from_str(addr_str));
+    if !is_valid_checksum_addr(addr_str) {
+        return ERR!("Invalid address checksum");
+    }
+    Ok(addr)
+}
+
 fn addr_from_str(addr_str: &str) -> Result<Address, String> {
     if !addr_str.starts_with("0x") {
         return ERR!("Address must be prefixed with 0x");
     };
 
-    let addr = try_s!(Address::from_str(&addr_str[2..]));
-
-    if !is_valid_checksum_addr(addr_str) {
-        return ERR!("Invalid address checksum");
-    }
-    Ok(addr)
+    Ok(try_s!(Address::from_str(&addr_str[2..])))
 }
 
 fn rpc_event_handlers_for_eth_transport(ctx: &MmArc, ticker: String) -> Vec<RpcTransportEventHandlerShared> {
@@ -2560,7 +2589,7 @@ pub async fn eth_coin_from_conf_and_request(
     let (coin_type, decimals) = if etomic == "0x0000000000000000000000000000000000000000" {
         (EthCoinType::Eth, 18)
     } else {
-        let token_addr = try_s!(addr_from_str(etomic));
+        let token_addr = try_s!(valid_addr_from_str(etomic));
         let decimals = match conf["decimals"].as_u64() {
             None | Some(0) => try_s!(get_token_decimals(&web3, token_addr).await),
             Some(d) => d as u8,

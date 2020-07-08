@@ -372,17 +372,24 @@ impl UtxoCoinImpl {
         }
     }
 
-    pub fn convert_to_address(
-        &self,
-        from_address: &Address,
-        to_address_format: &UtxoAddressFormat,
-    ) -> Result<String, String> {
-        match to_address_format {
-            UtxoAddressFormat::Standard => Ok(from_address.to_string()),
-            UtxoAddressFormat::CashAddress { network } => Ok(try_s!(from_address
-                .to_cashaddress(&network, self.pub_addr_prefix, self.p2sh_addr_prefix)
-                .and_then(|cashaddress| cashaddress.encode()))),
-        }
+    /// Try to convert either standard address or cashaddress.
+    fn try_address_from_str(&self, from: &str) -> Result<Address, String> {
+        let standard_err = match Address::from_str(from) {
+            Ok(a) => return Ok(a),
+            Err(e) => e,
+        };
+
+        let cashaddress_err =
+            match Address::from_cashaddress(from, self.checksum_type, self.pub_addr_prefix, self.p2sh_addr_prefix) {
+                Ok(a) => return Ok(a),
+                Err(e) => e,
+            };
+
+        ERR!(
+            "error on parse standard address: {:?}, error on parse cashaddress: {:?}",
+            standard_err,
+            cashaddress_err,
+        )
     }
 
     /// Try to parse address from string using specified format
@@ -1703,6 +1710,18 @@ impl MmCoin for UtxoCoin {
 
     fn decimals(&self) -> u8 { self.decimals }
 
+    fn convert_to_address(&self, from: &str, to_address_format: Json) -> Result<String, String> {
+        let to_address_format: UtxoAddressFormat =
+            json::from_value(to_address_format).map_err(|e| ERRL!("Error on parse UTXO address format {:?}", e))?;
+        let from_address = try_s!(self.try_address_from_str(from));
+        match to_address_format {
+            UtxoAddressFormat::Standard => Ok(from_address.to_string()),
+            UtxoAddressFormat::CashAddress { network } => Ok(try_s!(from_address
+                .to_cashaddress(&network, self.pub_addr_prefix, self.p2sh_addr_prefix)
+                .and_then(|cashaddress| cashaddress.encode()))),
+        }
+    }
+
     #[allow(clippy::cognitive_complexity)]
     fn process_history_loop(&self, ctx: MmArc) {
         const HISTORY_TOO_LARGE_ERR_CODE: i64 = -1;
@@ -2627,23 +2646,4 @@ fn kmd_interest(height: Option<u64>, value: u64, lock_time: u64, current_time: u
     // next 2 lines ported as is from Komodo codebase
     minutes -= 59;
     (value / 10_512_000) * minutes
-}
-
-pub fn try_address_from_str(coin: UtxoCoin, from: &str) -> Result<Address, String> {
-    let standard_err = match Address::from_str(from) {
-        Ok(a) => return Ok(a),
-        Err(e) => e,
-    };
-
-    let cashaddress_err =
-        match Address::from_cashaddress(from, coin.checksum_type, coin.pub_addr_prefix, coin.p2sh_addr_prefix) {
-            Ok(a) => return Ok(a),
-            Err(e) => e,
-        };
-
-    ERR!(
-        "error on parse standard address: {:?}, error on parse cashaddress: {:?}",
-        standard_err,
-        cashaddress_err,
-    )
 }

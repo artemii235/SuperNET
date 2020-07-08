@@ -63,7 +63,7 @@ macro_rules! try_fus {
 pub mod eth;
 use self::eth::{eth_coin_from_conf_and_request, EthCoin, EthTxFeeDetails, SignedEthTx};
 pub mod utxo;
-use self::utxo::{utxo_coin_from_conf_and_request, UtxoAddressFormat, UtxoCoin, UtxoFeeDetails, UtxoTx};
+use self::utxo::{utxo_coin_from_conf_and_request, UtxoCoin, UtxoFeeDetails, UtxoTx};
 #[doc(hidden)]
 #[allow(unused_variables)]
 pub mod test_coin;
@@ -365,6 +365,9 @@ pub trait MmCoin: SwapOps + MarketCoinOps + fmt::Debug + Send + Sync + 'static {
 
     /// Maximum number of digits after decimal point used to denominate integer coin units (satoshis, wei, etc.)
     fn decimals(&self) -> u8;
+
+    /// Convert input address to the specified address format.
+    fn convert_to_address(&self, from: &str, to_address_format: Json) -> Result<String, String>;
 
     /// Loop collecting coin transaction history and saving it to local DB
     fn process_history_loop(&self, ctx: MmArc);
@@ -690,7 +693,8 @@ pub async fn lp_coinfindᵃ(ctx: &MmArc, ticker: &str) -> Result<Option<MmCoinEn
 struct ConvertAddressReq {
     coin: String,
     from: String,
-    to_address_format: UtxoAddressFormat,
+    /// format to that the input address should be converted
+    to_address_format: Json,
 }
 
 pub async fn convert_address(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
@@ -700,15 +704,9 @@ pub async fn convert_address(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>,
         Ok(None) => return ERR!("No such coin: {}", req.coin),
         Err(err) => return ERR!("!lp_coinfind({}): {}", req.coin, err),
     };
-    let coin = match coin {
-        MmCoinEnum::UtxoCoin(coin) => coin,
-        _ => return ERR!("Conversion is available between UTXO's address formats only"),
-    };
-
-    let from = try_s!(utxo::try_address_from_str(coin.clone(), &req.from));
     let result = json!({
         "result": {
-            "address": try_s!(coin.convert_to_address(&from, &req.to_address_format)),
+            "address": try_s!(coin.convert_to_address(&req.from, req.to_address_format)),
         },
     });
     let body = try_s!(json::to_vec(&result));

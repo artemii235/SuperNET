@@ -2909,7 +2909,7 @@ fn test_common_cashaddresses() {
 }
 
 #[test]
-fn test_convertaddress() {
+fn test_convert_utxo_address() {
     let coins = json!([
         {"coin":"BCH","pubtype":0,"p2shtype":5,"mm2":1},
     ]);
@@ -3009,7 +3009,7 @@ fn test_convertaddress() {
     });
     assert_eq!(actual, expected);
 
-    // test invalid from
+    // test invalid address
     let rc = unwrap!(block_on(mm.rpc(json! ({
         "userpass": mm.userpass,
         "method": "convertaddress",
@@ -3022,6 +3022,102 @@ fn test_convertaddress() {
         "!convertaddress success but should be error: {}",
         rc.1
     );
+}
+
+#[test]
+fn test_convert_eth_address() {
+    let coins = json!([
+        {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000"},
+    ]);
+
+    // start mm and immediately place the order
+    let mut mm = unwrap!(MarketMakerIt::start(
+        json! ({
+            "gui": "nogui",
+            "netid": 9998,
+            "dht": "on",  // Enable DHT without delay.
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| unwrap! (s.parse::<i64>())),
+            "passphrase": "bob passphrase",
+            "coins": coins,
+            "i_am_seed": true,
+            "rpc_password": "pass",
+        }),
+        "pass".into(),
+        match var("LOCAL_THREAD_MM") {
+            Ok(ref e) if e == "bob" => Some(local_start()),
+            _ => None,
+        }
+    ));
+    let (_dump_log, _dump_dashboard) = mm_dump(&mm.log_path);
+    log!({ "log path: {}", mm.log_path.display() });
+    unwrap!(block_on(
+        mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
+    ));
+
+    block_on(enable_native(&mm, "ETH", vec!["http://195.201.0.6:8565"]));
+
+    // test single-case to mixed-case
+    let rc = unwrap!(block_on(mm.rpc(json! ({
+        "userpass": mm.userpass,
+        "method": "convertaddress",
+        "coin": "ETH",
+        "from": "0xfb6916095ca1df60bb79ce92ce3ea74c37c5d359",
+        "to_address_format":{"format":"mixedcase"},
+    }))));
+    assert_eq!(
+        rc.0,
+        StatusCode::OK,
+        "RPC «convertaddress» failed with status «{}»",
+        rc.0
+    );
+    let actual: Json = unwrap!(json::from_str(&rc.1));
+
+    let expected = json!({
+        "result": {
+            "address": "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359",
+        },
+    });
+    assert_eq!(actual, expected);
+
+    // test mixed-case to mixed-case (expect error)
+    let rc = unwrap!(block_on(mm.rpc(json! ({
+        "userpass": mm.userpass,
+        "method": "convertaddress",
+        "coin": "ETH",
+        "from": "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359",
+        "to_address_format":{"format":"mixedcase"},
+    }))));
+    assert_eq!(
+        rc.0,
+        StatusCode::OK,
+        "RPC «convertaddress» failed with status «{}»",
+        rc.0
+    );
+    let actual: Json = unwrap!(json::from_str(&rc.1));
+
+    let expected = json!({
+        "result": {
+            "address": "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359",
+        },
+    });
+    assert_eq!(actual, expected);
+
+    // test invalid address
+    let rc = unwrap!(block_on(mm.rpc(json! ({
+        "userpass": mm.userpass,
+        "method": "convertaddress",
+        "coin": "ETH",
+        "from": "fB6916095ca1df60bB79Ce92cE3Ea74c37c5d359",
+        "to_address_format":{"format":"mixedcase"},
+    }))));
+    assert!(
+        rc.0.is_server_error(),
+        "!convertaddress success but should be error: {}",
+        rc.1
+    );
+    assert!(rc.1.contains("Address must be prefixed with 0x"));
 }
 
 #[test]
