@@ -55,7 +55,7 @@ use web3::{self, Web3};
 
 use super::{CoinTransportMetrics, CoinsContext, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin,
             RpcClientType, RpcTransportEventHandler, RpcTransportEventHandlerShared, SwapOps, TradeFee, Transaction,
-            TransactionDetails, TransactionEnum, TransactionFut, WithdrawFee, WithdrawRequest};
+            TransactionDetails, TransactionEnum, TransactionFut, ValidateAddressResult, WithdrawFee, WithdrawRequest};
 
 pub use ethcore_transaction::SignedTransaction as SignedEthTx;
 pub use rlp;
@@ -2272,6 +2272,8 @@ impl MmCoin for EthCoin {
             },
         }
     }
+
+    fn validate_address(&self, address: &str) -> ValidateAddressResult { validate_address_impl!(self, address) }
 
     fn process_history_loop(&self, ctx: MmArc) {
         match self.coin_type {

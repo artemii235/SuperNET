@@ -59,6 +59,17 @@ macro_rules! try_fus {
     };
 }
 
+// validate_address implementation for coin that has address_from_str method
+macro_rules! validate_address_impl {
+    ($self: ident, $address: expr) => {{
+        let result = $self.address_from_str($address);
+        $crate::ValidateAddressResult {
+            is_valid: result.is_ok(),
+            reason: result.err(),
+        }
+    }};
+}
+
 #[doc(hidden)] pub mod coins_tests;
 pub mod eth;
 use self::eth::{eth_coin_from_conf_and_request, EthCoin, EthTxFeeDetails, SignedEthTx};
@@ -368,6 +379,8 @@ pub trait MmCoin: SwapOps + MarketCoinOps + fmt::Debug + Send + Sync + 'static {
 
     /// Convert input address to the specified address format.
     fn convert_to_address(&self, from: &str, to_address_format: Json) -> Result<String, String>;
+
+    fn validate_address(&self, address: &str) -> ValidateAddressResult;
 
     /// Loop collecting coin transaction history and saving it to local DB
     fn process_history_loop(&self, ctx: MmArc);
@@ -720,7 +733,7 @@ struct ValidateAddressReq {
 }
 
 #[derive(Serialize)]
-struct ValidateAddressResult {
+pub struct ValidateAddressResult {
     is_valid: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     reason: Option<String>,
@@ -734,18 +747,8 @@ pub async fn validate_address(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>
         Err(err) => return ERR!("!lp_coinfind({}): {}", req.coin, err),
     };
 
-    let result = match coin {
-        MmCoinEnum::UtxoCoin(coin) => coin.address_from_str(&req.address).map(|_| ()),
-        MmCoinEnum::EthCoin(coin) => coin.address_from_str(&req.address).map(|_| ()),
-        MmCoinEnum::Test(_coin) => unreachable!(),
-    };
-    let result = ValidateAddressResult {
-        is_valid: result.is_ok(),
-        reason: result.err(),
-    };
-
-    let result = json!({ "result": result });
-    let body = try_s!(json::to_vec(&result));
+    let res = json!({ "result": coin.validate_address(&req.address) });
+    let body = try_s!(json::to_vec(&res));
     Ok(try_s!(Response::builder().body(body)))
 }
 

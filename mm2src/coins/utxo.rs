@@ -69,7 +69,7 @@ use self::rpc_clients::{electrum_script_hash, ElectrumClient, ElectrumClientImpl
                         NativeClient, UnspentInfo, UtxoRpcClientEnum};
 use super::{CoinTransportMetrics, CoinsContext, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin,
             RpcClientType, RpcTransportEventHandler, RpcTransportEventHandlerShared, SwapOps, TradeFee, Transaction,
-            TransactionDetails, TransactionEnum, TransactionFut, WithdrawFee, WithdrawRequest};
+            TransactionDetails, TransactionEnum, TransactionFut, ValidateAddressResult, WithdrawFee, WithdrawRequest};
 use crate::utxo::rpc_clients::{ElectrumRpcRequest, NativeClientImpl, UtxoRpcClientOps};
 
 #[cfg(test)] pub mod utxo_tests;
@@ -1721,6 +1721,8 @@ impl MmCoin for UtxoCoin {
                 .and_then(|cashaddress| cashaddress.encode()))),
         }
     }
+
+    fn validate_address(&self, address: &str) -> ValidateAddressResult { validate_address_impl!(self, address) }
 
     #[allow(clippy::cognitive_complexity)]
     fn process_history_loop(&self, ctx: MmArc) {
