@@ -419,7 +419,9 @@ pub trait MmCoin: SwapOps + MarketCoinOps + fmt::Debug + Send + Sync + 'static {
     fn save_history_to_file(&self, content: &[u8], ctx: &MmArc) {
         let tmp_file = format!("{}.tmp", self.tx_history_path(&ctx).display());
         unwrap!(std::fs::write(&tmp_file, content));
-        unwrap!(std::fs::rename(tmp_file, self.tx_history_path(&ctx)));
+        if let Err(e) = std::fs::rename(&tmp_file, self.tx_history_path(&ctx)) {
+            log!("tx_history_troubleshoot] error renaming file " (tmp_file) " to " [self.tx_history_path(&ctx)] " error " (e));
+        }
     }
 
     /// Gets tx details by hash requesting the coin RPC if required

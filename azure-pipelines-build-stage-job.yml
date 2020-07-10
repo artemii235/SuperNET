@@ -48,6 +48,7 @@ jobs:
           cargo test --features native --all -- --test-threads=8
         displayName: 'Test MM2'
         timeoutInMinutes: 22
+        enabled: false
         env:
           BOB_PASSPHRASE: $(${{ parameters.bob_passphrase }})
           BOB_USERPASS: $(${{ parameters.bob_userpass }})
