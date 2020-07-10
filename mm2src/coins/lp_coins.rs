@@ -388,6 +388,9 @@ pub trait MmCoin: SwapOps + MarketCoinOps + fmt::Debug + Send + Sync + 'static {
     /// Path to tx history file
     fn tx_history_path(&self, ctx: &MmArc) -> PathBuf {
         let my_address = self.my_address().unwrap_or_default();
+        // BCH cash address format has colon after prefix, e.g. bitcoincash:
+        // Colon can't be used in file names on Windows so it should be escaped
+        let my_address = my_address.replace(":", "_");
         ctx.dbdir()
             .join("TRANSACTIONS")
             .join(format!("{}_{}.json", self.ticker(), my_address))
@@ -418,9 +421,11 @@ pub trait MmCoin: SwapOps + MarketCoinOps + fmt::Debug + Send + Sync + 'static {
 
     fn save_history_to_file(&self, content: &[u8], ctx: &MmArc) {
         let tmp_file = format!("{}.tmp", self.tx_history_path(&ctx).display());
-        unwrap!(std::fs::write(&tmp_file, content));
+        if let Err(e) = std::fs::write(&tmp_file, content) {
+            log!("Error " (e) " writing history to the tmp file " (tmp_file));
+        }
         if let Err(e) = std::fs::rename(&tmp_file, self.tx_history_path(&ctx)) {
-            log!("tx_history_troubleshoot] error renaming file " (tmp_file) " to " [self.tx_history_path(&ctx)] " error " (e));
+            log!("Error " (e) " renaming file " (tmp_file) " to " [self.tx_history_path(&ctx)]);
         }
     }
 

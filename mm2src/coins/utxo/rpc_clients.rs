@@ -81,6 +81,10 @@ impl From<ElectrumClient> for UtxoRpcClientEnum {
     fn from(client: ElectrumClient) -> UtxoRpcClientEnum { UtxoRpcClientEnum::Electrum(client) }
 }
 
+impl From<NativeClient> for UtxoRpcClientEnum {
+    fn from(client: NativeClient) -> UtxoRpcClientEnum { UtxoRpcClientEnum::Native(client) }
+}
+
 impl Deref for UtxoRpcClientEnum {
     type Target = dyn UtxoRpcClientOps;
     fn deref(&self) -> &dyn UtxoRpcClientOps {
