@@ -116,7 +116,7 @@ serialization_derive = { git = "https://github.com/artemii235/parity-bitcoin.git
 term = "=0.5.1"
 
 tokio-core = { version = "0.1", optional = true }
-tokio = { version = "0.2.20", features = ["io-util", "rt-threaded", "stream", "tcp"] }
+tokio = { version = "0.2.22", features = ["io-util", "rt-threaded", "stream", "tcp"] }
 unwrap = "1.2"
 uuid = { version = "0.7", features = ["serde", "v4"] }
 winapi = "0.3"
