@@ -1,7 +1,6 @@
 #![feature(non_ascii_idents)]
 #![feature(drain_filter)]
 #![feature(integer_atomics)]
-#![recursion_limit = "256"]
 #![cfg_attr(not(feature = "native"), allow(unused_imports))]
 
 #[macro_use] extern crate common;
@@ -44,7 +43,8 @@ enum MainErr {
 /// Starts the MM2 in a detached singleton thread.
 #[no_mangle]
 #[cfg(feature = "native")]
-pub extern "C" fn mm2_main(conf: *const c_char, log_cb: extern "C" fn(line: *const c_char)) -> i8 {
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn mm2_main(conf: *const c_char, log_cb: extern "C" fn(line: *const c_char)) -> i8 {
     macro_rules! log {
         ($($args: tt)+) => {{
             let msg = fomat! ("mm2_lib:" ((line!())) "] " $($args)+ '\0');
@@ -64,7 +64,7 @@ pub extern "C" fn mm2_main(conf: *const c_char, log_cb: extern "C" fn(line: *con
     if conf.is_null() {
         eret!(MainErr::ConfIsNull)
     }
-    let conf = unsafe { CStr::from_ptr(conf) };
+    let conf = CStr::from_ptr(conf);
     let conf = match conf.to_str() {
         Ok(s) => s,
         Err(e) => eret!(MainErr::ConfNotUtf8, (e)),
@@ -132,7 +132,7 @@ pub extern "C" fn mm2_test(torch: i32, log_cb: extern "C" fn(line: *const c_char
     }
 
     static RUNNING: AtomicBool = AtomicBool::new(false);
-    if RUNNING.compare_and_swap(false, true, Ordering::Relaxed) != false {
+    if RUNNING.compare_and_swap(false, true, Ordering::Relaxed) {
         log!("mm2_test] Running already!");
         return -1;
     }
@@ -215,8 +215,8 @@ pub extern "C" fn mm2_test(torch: i32, log_cb: extern "C" fn(line: *const c_char
     // #402: Restart the MM.
     if let Some((prev_ctx_id, conf)) = prev {
         log!("mm2_test] Restarting MM…");
-        let confᶜ = unwrap!(CString::new(&conf[..]));
-        let rc = mm2_main(confᶜ.as_ptr(), log_cb);
+        let conf = unwrap!(CString::new(&conf[..]));
+        let rc = unsafe { mm2_main(conf.as_ptr(), log_cb) };
         let rc = unwrap!(MainErr::from_i8(rc));
         if rc != MainErr::Ok {
             log!("!mm2_main: "[rc]);
@@ -244,138 +244,6 @@ pub extern "C" fn mm2_test(torch: i32, log_cb: extern "C" fn(line: *const c_char
         log! ("mm2_test] New MM instance " (ctx_id) " started");
     }
 
-    RUNNING.store(false, Ordering::Relaxed);
-    log!("mm2_test] All done, passing the torch.");
-#[path = "mm2.rs"] mod mm2;
-#[cfg(feature = "native")] use crate::common::log::LOG_OUTPUT;
-#[cfg(feature = "native")] use libc::c_char;
-static LP_MAIN_RUNNING: AtomicBool = AtomicBool::new(false);
-static CTX: AtomicU32 = AtomicU32::new(0);
-    CantThread = 5,
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn mm2_main(conf: *const c_char, log_cb: extern "C" fn(line: *const c_char)) -> i8 {
-    if LP_MAIN_RUNNING.load(Ordering::Relaxed) {
-        eret!(MainErr::AlreadyRuns)
-    }
-    CTX.store(0, Ordering::Relaxed); // Remove the old context ID during restarts.
-    if conf.is_null() {
-        eret!(MainErr::ConfIsNull)
-    }
-    let conf = CStr::from_ptr(conf);
-    let conf = match conf.to_str() {
-        Ok(s) => s,
-        Err(e) => eret!(MainErr::ConfNotUtf8, (e)),
-    };
-    #[cfg(feature = "native")]
-    {
-        *log_output = Some(log_cb);
-    let rc = thread::Builder::new().name("lp_main".into()).spawn(move || {
-        if LP_MAIN_RUNNING.compare_and_swap(false, true, Ordering::Relaxed) {
-            log!("lp_main already started!");
-            return;
-        let ctx_cb = &|ctx| CTX.store(ctx, Ordering::Relaxed);
-        match catch_unwind(move || mm2::run_lp_main(Some(&conf), ctx_cb)) {
-            Ok(Ok(_)) => log!("run_lp_main finished"),
-            Ok(Err(err)) => log!("run_lp_main error: "(err)),
-            Err(err) => log!("run_lp_main panic: "[any_to_str(&*err)]),
-        LP_MAIN_RUNNING.store(false, Ordering::Relaxed)
-    if let Err(e) = rc {
-        eret!(MainErr::CantThread, (e))
-    }
-pub extern "C" fn mm2_main_status() -> i8 {
-    if LP_MAIN_RUNNING.load(Ordering::Relaxed) {
-        let ctx = CTX.load(Ordering::Relaxed);
-            if let Ok(ctx) = MmArc::from_ffi_handle(ctx) {
-                if ctx.rpc_started.copy_or(false) {
-                } else {
-                    2
-                }
-            } else {
-                2
-            }
-        } else {
-            1
-        }
-    } else {
-        0
-    }
-pub extern "C" fn mm2_test(torch: i32, log_cb: extern "C" fn(line: *const c_char)) -> i32 {
-    #[cfg(feature = "native")]
-    {
-        *LOG_OUTPUT.lock() = Some(log_cb);
-    static RUNNING: AtomicBool = AtomicBool::new(false);
-    if RUNNING.compare_and_swap(false, true, Ordering::Relaxed) {
-        log!("mm2_test] Running already!");
-        return -1;
-    let prev = if LP_MAIN_RUNNING.load(Ordering::Relaxed) {
-        let ctx_id = CTX.load(Ordering::Relaxed);
-        let ctx = match MmArc::from_ffi_handle(ctx_id) {
-            Ok(ctx) => ctx,
-            Err(err) => {
-                log!("mm2_test] Invalid CTX? !from_ffi_handle: "(err));
-                return -1;
-            },
-        let conf = unwrap!(json::to_string(&ctx.conf));
-        let hy_res = mm2::rpc::lp_commands::stop(ctx);
-        let r = match hy_res.wait() {
-            Ok(r) => r,
-            Err(err) => {
-                log!("mm2_test] !stop: "(err));
-                return -1;
-            },
-        };
-        if !r.status().is_success() {
-            log!("mm2_test] stop status "(r.status()));
-            return -1;
-        }
-            thread::sleep(Duration::from_millis(100));
-            if !LP_MAIN_RUNNING.load(Ordering::Relaxed) {
-                break;
-            }
-            if now_float() - since > 60. {
-                log!("mm2_test] LP_MAIN_RUNNING won't flip");
-                return -1;
-            }
-        Some((ctx_id, conf))
-    } else {
-        None
-    };
-    let grace = 5; // Grace time for late threads to discover the stop flag before we reset it.
-    thread::sleep(Duration::from_secs(grace));
-    let rc = catch_unwind(|| {
-        log!("mm2_test] test_status…");
-        log!("mm2_test] peers_dht…");
-        block_on(peers::peers_tests::peers_dht());
-        #[cfg(feature = "native")]
-        {
-            log!("mm2_test] peers_direct_send…");
-        log!("mm2_test] peers_http_fallback_kv…");
-        log!("mm2_test] peers_http_fallback_recv…");
-    if let Err(err) = rc {
-        log!("mm2_test] There was an error: "(any_to_str(&*err).unwrap_or("-")));
-        return -1;
-    if let Some((prev_ctx_id, conf)) = prev {
-        log!("mm2_test] Restarting MM…");
-        let conf = unwrap!(CString::new(&conf[..]));
-        let rc = unsafe { mm2_main(conf.as_ptr(), log_cb) };
-        let rc = unwrap!(MainErr::from_i8(rc));
-        if rc != MainErr::Ok {
-            log!("!mm2_main: "[rc]);
-            return -1;
-        }
-            thread::sleep(Duration::from_millis(10));
-            if LP_MAIN_RUNNING.load(Ordering::Relaxed) && CTX.load(Ordering::Relaxed) != 0 {
-                break;
-            }
-            if now_float() - since > 60.0 {
-                log!("mm2_test] Won't start");
-                return -1;
-            }
-        let ctx_id = CTX.load(Ordering::Relaxed);
-        if ctx_id == prev_ctx_id {
-            log!("mm2_test] Context ID is the same");
-            return -1;
-        }
     RUNNING.store(false, Ordering::Relaxed);
     log!("mm2_test] All done, passing the torch.");
     torch

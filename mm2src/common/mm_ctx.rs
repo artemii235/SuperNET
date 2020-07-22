@@ -25,7 +25,6 @@ use crate::executor::Timer;
 use crate::log::{self, LogState};
 use crate::mm_metrics::{prometheus, MetricsArc};
 use crate::{bits256, block_on, small_rng, P2PMessage, QueuedCommand};
-use crate::{bits256, small_rng, QueuedCommand};
 
 /// Default interval to export and record metrics to log.
 const EXPORT_METRICS_INTERVAL: f64 = 5. * 60.;
@@ -236,10 +235,7 @@ impl MmCtx {
         if i_am_seed {
             let mut txs = self.seednode_p2p_channel.lock().unwrap();
             *txs = txs
-                .drain_filter(|sender| match block_on(sender.send(msg.clone())) {
-                    Ok(_) => true,
-                    Err(_) => false,
-                })
+                .drain_filter(|sender| block_on(sender.send(msg.clone())).is_ok())
                 .collect();
         } else {
             unwrap!(self.client_p2p_channel.0.send(msg.content.into_bytes()));

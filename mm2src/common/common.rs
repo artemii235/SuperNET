@@ -123,7 +123,7 @@ use std::ops::{Add, Deref, Div, RangeInclusive};
 use std::os::raw::{c_char, c_void};
 use std::path::{Path, PathBuf};
 #[cfg(not(feature = "native"))] use std::pin::Pin;
-use std::ptr::{null_mut, read_volatile};
+use std::ptr::read_volatile;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::UNIX_EPOCH;

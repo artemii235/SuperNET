@@ -63,6 +63,7 @@ use coins::{lp_coinfind, TradeFee, TransactionEnum};
 use common::{block_on,
              executor::spawn,
              mm_ctx::{from_ctx, MmArc},
+             mm_number::MmNumber,
              read_dir, rpc_response, slurp, write, HyRes, P2PMessage};
 use http::Response;
 use primitives::hash::{H160, H256, H264};

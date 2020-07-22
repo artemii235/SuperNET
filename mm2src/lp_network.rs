@@ -23,14 +23,15 @@ use bytes::Bytes;
 use common::executor::{spawn, Timer};
 #[cfg(not(feature = "native"))] use common::helperᶜ;
 use common::mm_ctx::MmArc;
-use common::{lp_queue_command, now_float, now_ms, HyRes, QueuedCommand};
+use common::{lp_queue_command, now_ms, HyRes, P2PMessage, QueuedCommand};
 use crossbeam::channel;
+use futures::channel::mpsc;
 use futures::compat::Future01CompatExt;
 use futures::future::FutureExt;
+use futures::StreamExt;
 use futures01::{future, Future};
 use primitives::hash::H160;
 use serde_bencode::de::from_bytes as bdecode;
-use serde_bencode::ser::to_bytes as bencode;
 use serde_json::{self as json, Value as Json};
 use std::collections::hash_map::{Entry, HashMap};
 use std::io::{BufRead, BufReader, Write};
@@ -123,7 +124,6 @@ fn rpc_reply_to_peer(handler: HyRes, cmd: QueuedCommand) {
 /// The thread processing the peer-to-peer messaging bus.
 pub async fn lp_command_q_loop(ctx: MmArc) {
     use futures::future::{select, Either};
-    use futures::StreamExt;
 
     let mut command_queueʳ = unwrap!(unwrap!(ctx.command_queueʳ.lock()).take().ok_or("!command_queueʳ"));
 
@@ -163,7 +163,7 @@ pub async fn lp_command_q_loop(ctx: MmArc) {
 
         let json: Json = match json::from_str(&cmd.msg.content) {
             Ok(j) => j,
-            Err(e) => {
+            Err(_) => {
                 if cmd.msg.content.len() > 1 {
                     log!("Invalid JSON " (cmd.msg.content) " from " (cmd.msg.from));
                 }
@@ -235,7 +235,7 @@ pub fn seednode_loop(ctx: MmArc, listener: std::net::TcpListener) {
                 loop {
                     match read.read_line(&mut buffer).await {
                         Ok(read) => {
-                            if read > 0 && buffer.len() > 0 {
+                            if read > 0 && !buffer.is_empty() {
                                 unwrap!(lp_queue_command(&ctx_read, P2PMessage {
                                     from: peer_addr,
                                     content: buffer.clone(),
@@ -245,7 +245,7 @@ pub fn seednode_loop(ctx: MmArc, listener: std::net::TcpListener) {
                                 ctx_read.log.log(
                                     "😟",
                                     &[&"incoming_connection", &peer_addr.to_string().as_str()],
-                                    &format!("Reached EOF, dropping connection"),
+                                    "Reached EOF, dropping connection",
                                 );
                                 break;
                             }
@@ -262,34 +262,29 @@ pub fn seednode_loop(ctx: MmArc, listener: std::net::TcpListener) {
                 }
             };
             let write_loop = async move {
-                loop {
-                    match rx.next().await {
-                        Some(mut msg) => {
-                            if msg.from != peer_addr {
-                                if !msg.content.ends_with('\n') {
-                                    msg.content.push('\n');
-                                }
-                                match write.write_all(msg.content.as_bytes()).await {
-                                    Ok(_) => (),
-                                    Err(e) => {
-                                        ctx_write.log.log(
-                                            "😟",
-                                            &[&"incoming_connection", &peer_addr.to_string().as_str()],
-                                            &format!("Error {} writing to socket, dropping connection", e),
-                                        );
-                                        break;
-                                    },
-                                };
-                            }
-                        },
-                        None => break,
+                while let Some(mut msg) = rx.next().await {
+                    if msg.from != peer_addr {
+                        if !msg.content.ends_with('\n') {
+                            msg.content.push('\n');
+                        }
+                        match write.write_all(msg.content.as_bytes()).await {
+                            Ok(_) => (),
+                            Err(e) => {
+                                ctx_write.log.log(
+                                    "😟",
+                                    &[&"incoming_connection", &peer_addr.to_string().as_str()],
+                                    &format!("Error {} writing to socket, dropping connection", e),
+                                );
+                                break;
+                            },
+                        };
                     }
                 }
             };
             tokio::spawn(async move {
                 // selecting over the read and write parts processing loops in order to
                 // drop both parts and close connection in case of errors
-                select! {
+                futures::select! {
                     read = Box::pin(read_loop).fuse() => (),
                     write = Box::pin(write_loop).fuse() => (),
                 };
