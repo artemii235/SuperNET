@@ -1,5 +1,5 @@
 /******************************************************************************
- * Copyright © 2014-2019 The SuperNET Developers.                             *
+ * Copyright © 2014-2020 The SuperNET Developers.                             *
  *                                                                            *
  * See the AUTHORS, DEVELOPER-AGREEMENT and LICENSE files at                  *
  * the top-level directory of this distribution for the individual copyright  *
@@ -50,11 +50,11 @@ use crate::mm2::lp_ordermatch::{lp_ordermatch_loop, lp_trade_command, migrate_sa
 use crate::mm2::lp_swap::{running_swaps_num, swap_kick_starts};
 use crate::mm2::rpc::spawn_rpc;
 
-/// Process a previously queued command that wasn't handled by the RPC `dispatcher`.  
-/// NB: It might be preferable to port more commands into the RPC `dispatcher`, rather than `lp_command_process`, because:  
-/// 1) It allows us to more easily test such commands through the local HTTP endpoint;  
-/// 2) It allows the command handler to run asynchronously and use more time wihtout slowing down the queue loop;  
-/// 3) By being present in the `dispatcher` table the commands are easier to find and to be accounted for;  
+/// Process a previously queued command that wasn't handled by the RPC `dispatcher`.
+/// NB: It might be preferable to port more commands into the RPC `dispatcher`, rather than `lp_command_process`, because:
+/// 1) It allows us to more easily test such commands through the local HTTP endpoint;
+/// 2) It allows the command handler to run asynchronously and use more time wihtout slowing down the queue loop;
+/// 3) By being present in the `dispatcher` table the commands are easier to find and to be accounted for;
 /// 4) No need for `unsafe`, `CJSON` and `*mut c_char` there.
 pub fn lp_command_process(ctx: MmArc, json: Json) {
     if !json["result"].is_null() || !json["error"].is_null() {
@@ -806,7 +806,7 @@ pub async fn lp_initpeers(ctx: &MmArc, netid: u16, seednodes: Option<Vec<String>
 
     type IP<'a> = Cow<'a, str>;
 
-    /// True if the node is a liquid provider (e.g. Bob, Maker).  
+    /// True if the node is a liquid provider (e.g. Bob, Maker).
     /// NB: We want the peers to be equal, freely functioning as either a Bob or an Alice, and I wonder how the p2p LP flags are affected by that.
     type IsLp = bool;
 
@@ -951,7 +951,7 @@ int32_t LP_reserved_msg(int32_t priority,char *base,char *rel,bits256 pubkey,cha
 }
 
 */
-/// True during the threads initialization in `lp_init`.  
+/// True during the threads initialization in `lp_init`.
 /// Mirrors the C `bitcoind_RPC_inittime`.
 static BITCOIND_RPC_INITIALIZING: AtomicBool = AtomicBool::new(false);
 
@@ -1135,7 +1135,7 @@ fn migration_1(ctx: &MmArc) -> Result<(), String> {
 /// Restarts the peer connections.
 /// Reloads the coin keys.
 ///
-/// Besides the `passphrase` it also allows changing the `seednode` at runtime.  
+/// Besides the `passphrase` it also allows changing the `seednode` at runtime.
 /// AG: While there might be value in changing `seednode` at runtime, I'm not sure if changing `gui` is actually necessary.
 ///
 /// AG: If possible, I think we should avoid calling this function on a working MM, using it for initialization only,
@@ -1155,7 +1155,7 @@ pub unsafe fn lp_passphrase_init(ctx: &MmArc) -> Result<(), String> {
     Ok(())
 }
 
-/// Tries to serve on the given IP to check if it's available.  
+/// Tries to serve on the given IP to check if it's available.
 /// We need this check because our external IP, particularly under NAT,
 /// might be outside of the set of IPs we can open and run a server on.
 ///

@@ -1,5 +1,5 @@
 /******************************************************************************
- * Copyright © 2014-2018 The SuperNET Developers.                             *
+ * Copyright © 2014-2020 The SuperNET Developers.                             *
  *                                                                            *
  * See the AUTHORS, DEVELOPER-AGREEMENT and LICENSE files at                  *
  * the top-level directory of this distribution for the individual copyright  *
@@ -16,7 +16,7 @@
 //  main.c
 //  marketmaker
 //
-//  Copyright © 2017-2018 SuperNET. All rights reserved.
+//  Copyright © 2017-2020 SuperNET. All rights reserved.
 //
 
 #include <stdio.h>
@@ -83,4 +83,3 @@ void OS_ensure_directory(char *dirname)
         else printf("cant create.(%s) errno.%d %s\n",fname,errno,strerror(errno));
     } else fclose(fp);//, printf("%s exists\n",fname);
 }
-

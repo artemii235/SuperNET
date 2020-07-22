@@ -1,5 +1,5 @@
 /******************************************************************************
- * Copyright © 2014-2018 The SuperNET Developers.                             *
+ * Copyright © 2014-2020 The SuperNET Developers.                             *
  *                                                                            *
  * See the AUTHORS, DEVELOPER-AGREEMENT and LICENSE files at                  *
  * the top-level directory of this distribution for the individual copyright  *
@@ -14,7 +14,7 @@
 //
 //  rpc.rs
 //
-//  Copyright © 2014-2018 SuperNET. All rights reserved.
+//  Copyright © 2014-2020 SuperNET. All rights reserved.
 //
 #![allow(uncommon_codepoints)]
 #![cfg_attr(not(feature = "native"), allow(unused_imports))]
@@ -55,7 +55,7 @@ use self::lp_commands::*;
 
 #[path = "rpc/lp_signatures.rs"] pub mod lp_signatures;
 
-/// Lists the RPC method not requiring the "userpass" authentication.  
+/// Lists the RPC method not requiring the "userpass" authentication.
 /// None is also public to skip auth and display proper error in case of method is missing
 const PUBLIC_METHODS: &[Option<&str>] = &[
     // Sorted alphanumerically (on the first letter) for readability.

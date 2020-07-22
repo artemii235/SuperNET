@@ -1,6 +1,6 @@
 
 /******************************************************************************
- * Copyright © 2014-2018 The SuperNET Developers.                             *
+ * Copyright © 2014-2020 The SuperNET Developers.                             *
  *                                                                            *
  * See the AUTHORS, DEVELOPER-AGREEMENT and LICENSE files at                  *
  * the top-level directory of this distribution for the individual copyright  *
@@ -925,7 +925,7 @@ void LP_autoprices_update(char *method,char *base,double basevol,char *rel,doubl
 }
 */
 
-/// JSON structure passed to the "autoprice" RPC call.  
+/// JSON structure passed to the "autoprice" RPC call.
 /// cf. https://docs.komodoplatform.com/barterDEX/barterDEX-API.html#autoprice
 #[derive(Clone, Deserialize, Debug, Serialize)]
 struct AutopriceReq {
@@ -1084,7 +1084,7 @@ int32_t LP_portfolio_trade(void *ctx,uint32_t *requestidp,uint32_t *quoteidp,str
                     {
                         if ( (requestid= juint(retjson2,"requestid")) != 0 && (quoteid= juint(retjson2,"quoteid")) != 0 )
                         {
-                            
+
                         }
                         free_json(retjson2);
                     }

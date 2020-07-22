@@ -1,5 +1,5 @@
 /******************************************************************************
- * Copyright © 2014-2019 The SuperNET Developers.                             *
+ * Copyright © 2014-2020 The SuperNET Developers.                             *
  *                                                                            *
  * See the AUTHORS, DEVELOPER-AGREEMENT and LICENSE files at                  *
  * the top-level directory of this distribution for the individual copyright  *
@@ -16,7 +16,7 @@
 //  mm2.rs
 //  marketmaker
 //
-//  Copyright © 2017-2019 SuperNET. All rights reserved.
+//  Copyright © 2017-2020 SuperNET. All rights reserved.
 //
 
 #![cfg_attr(not(feature = "native"), allow(dead_code))]

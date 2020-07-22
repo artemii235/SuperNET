@@ -1,6 +1,6 @@
 
 /******************************************************************************
- * Copyright © 2014-2018 The SuperNET Developers.                             *
+ * Copyright © 2014-2020 The SuperNET Developers.                             *
  *                                                                            *
  * See the AUTHORS, DEVELOPER-AGREEMENT and LICENSE files at                  *
  * the top-level directory of this distribution for the individual copyright  *
@@ -502,7 +502,7 @@ int32_t LP_mypriceset(int32_t iambob,int32_t *changedp,char *base,char *rel,doub
     //    printf("%s/%s setprice %.8f\n",base,rel,price);
     if ( base != 0 && rel != 0 && (basepp= LP_priceinfofind(base)) != 0 && (relpp= LP_priceinfofind(rel)) != 0 )
     {
-        
+
         if ( price == 0. || fabs(basepp->myprices[iambob][relpp->ind] - price)/price > 0.001 )
             *changedp = 1;
         if ( iambob != 0 )
@@ -1009,8 +1009,8 @@ impl fmt::Display for PricingProvider {
     }
 }
 
-/// Things like "komodo", "bitcoin-cash" or "litecoin" are kept there.  
-/// The value is the one we're getting from the RPC API in "refbase".  
+/// Things like "komodo", "bitcoin-cash" or "litecoin" are kept there.
+/// The value is the one we're getting from the RPC API in "refbase".
 /// According to the examples in https://docs.komodoplatform.com/barterDEX/barterDEX-API.html the "refbase"
 /// might be a lowercased coin name or it's ticker symbol (dash/DASH, litecoin/LTC, komodo/KMD).
 #[derive(PartialEq, Eq, Hash, Clone, Debug)]
@@ -1041,8 +1041,8 @@ impl CoinId {
     pub fn from_gecko (_coins: &[Json], label: &str) -> Result<CoinId, String> {
         Ok (CoinId (label.into()))
     }
-    /// CoinMarketCap gives us both the ticker symbol and the CoinGecko-compatible "slug" in its reply.  
-    /// The code in `lp_autoprice_iter` presently uses the coin names ("komodo", "bitcoin-cash", "litecoin") so we prefer to get these.  
+    /// CoinMarketCap gives us both the ticker symbol and the CoinGecko-compatible "slug" in its reply.
+    /// The code in `lp_autoprice_iter` presently uses the coin names ("komodo", "bitcoin-cash", "litecoin") so we prefer to get these.
     /// Given a bit of ambiguity coming with the unregulated ticker symbols and names we're trying to match with the `coins` first.
     pub fn from_cmc (coins: &[Json], ticker_symbol: &str, slug: &str) -> Result<CoinId, String> {
         for coin_conf in coins {
@@ -1117,7 +1117,7 @@ mod gecko_reply {
 }
 
 /// Load coin prices from CoinGecko or, if `cmc_key` is given, from CoinMarketCap.
-/// 
+///
 /// NB: We're using the MM command-line configuration ("coins") to convert between the coin names and the ticker symbols,
 /// meaning that the price loader futures are not reusable across the MM instances (the `MmWeak` argument hints at it).
 pub fn lp_btcprice (ctx_weak: MmWeak, provider: &PricingProvider, unit: PriceUnit, coins: &Arc<Coins>) -> Box<dyn Future<Item=ExternalPrices, Error=String> + Send> {
@@ -1218,7 +1218,7 @@ struct FundvalueHoldingReq {
     balance: f64
 }
 
-/// JSON structure passed to the "fundvalue" RPC call.  
+/// JSON structure passed to the "fundvalue" RPC call.
 /// cf. https://docs.komodoplatform.com/barterDEX/barterDEX-API.html#fundvalue
 #[derive(Clone, Deserialize, Debug)]
 struct FundvalueReq {
@@ -1253,7 +1253,7 @@ pub struct FundvalueRes {
     btcsum: f64,
     fundvalue: f64,
     holdings: Vec<FundvalueHoldingRes>,
-    /// True if there are holdings with a zero balance.  
+    /// True if there are holdings with a zero balance.
     /// (Triggers a special code path in `lp_autoprice_iter`).
     pub missing: u32,
     /// "success"
@@ -1274,9 +1274,9 @@ pub struct FundvalueRes {
 }
 
 /// List the holdings, calculating the current price in BTC and KMD, summing things up.
-/// 
+///
 /// NB: Besides the RPC it's also invoked from the `lp_autoprice_iter` to calculate the number of the `missing` holdings.
-/// 
+///
 /// * `immediate` - Don't wait for the external pricing resources, returning a "no price source" error for any prices that aren't already available.
 pub fn lp_fundvalue (ctx: MmArc, req: Json, immediate: bool) -> HyRes {
     match lp_coinfind (&ctx, "KMD") {
