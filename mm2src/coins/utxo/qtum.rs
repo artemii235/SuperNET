@@ -1,7 +1,7 @@
-use common::mm_metrics::MetricsArc;
-use crate::SwapOps;
-use futures::{TryFutureExt, FutureExt};
 use super::*;
+use crate::{SwapOps, ValidateAddressResult};
+use common::mm_metrics::MetricsArc;
+use futures::{FutureExt, TryFutureExt};
 
 pub const QTUM_STANDARD_DUST: u64 = 1000;
 
@@ -11,21 +11,15 @@ pub struct QtumCoin {
 }
 
 impl AsRef<UtxoArc> for QtumCoin {
-    fn as_ref(&self) -> &UtxoArc {
-        &self.utxo_arc
-    }
+    fn as_ref(&self) -> &UtxoArc { &self.utxo_arc }
 }
 
 impl From<UtxoArc> for QtumCoin {
-    fn from(coin: UtxoArc) -> QtumCoin {
-        QtumCoin { utxo_arc: coin }
-    }
+    fn from(coin: UtxoArc) -> QtumCoin { QtumCoin { utxo_arc: coin } }
 }
 
 impl From<QtumCoin> for UtxoArc {
-    fn from(coin: QtumCoin) -> Self {
-        coin.utxo_arc
-    }
+    fn from(coin: QtumCoin) -> Self { coin.utxo_arc }
 }
 
 pub async fn qtum_coin_from_conf_and_request(
@@ -41,21 +35,15 @@ pub async fn qtum_coin_from_conf_and_request(
 
 #[async_trait]
 impl UtxoCoinCommonOps for QtumCoin {
-    async fn get_tx_fee(&self) -> Result<ActualTxFee, JsonRpcError> {
-        utxo_common::get_tx_fee(&self.utxo_arc).await
-    }
+    async fn get_tx_fee(&self) -> Result<ActualTxFee, JsonRpcError> { utxo_common::get_tx_fee(&self.utxo_arc).await }
 
-    async fn get_htlc_spend_fee(&self) -> Result<u64, String> {
-        utxo_common::get_htlc_spend_fee(self).await
-    }
+    async fn get_htlc_spend_fee(&self) -> Result<u64, String> { utxo_common::get_htlc_spend_fee(self).await }
 
     fn addresses_from_script(&self, script: &Script) -> Result<Vec<Address>, String> {
         utxo_common::addresses_from_script(&self.utxo_arc, script)
     }
 
-    fn denominate_satoshis(&self, satoshi: i64) -> f64 {
-        utxo_common::denominate_satoshis(&self.utxo_arc, satoshi)
-    }
+    fn denominate_satoshis(&self, satoshi: i64) -> f64 { utxo_common::denominate_satoshis(&self.utxo_arc, satoshi) }
 
     fn search_for_swap_tx_spend(
         &self,
@@ -64,8 +52,8 @@ impl UtxoCoinCommonOps for QtumCoin {
         second_pub: &Public,
         secret_hash: &[u8],
         tx: &[u8],
-        search_from_block: u64)
-        -> Result<Option<FoundSwapTxSpend>, String> {
+        search_from_block: u64,
+    ) -> Result<Option<FoundSwapTxSpend>, String> {
         utxo_common::search_for_swap_tx_spend(
             &self.utxo_arc,
             time_lock,
@@ -73,20 +61,25 @@ impl UtxoCoinCommonOps for QtumCoin {
             second_pub,
             secret_hash,
             tx,
-            search_from_block)
+            search_from_block,
+        )
     }
 
-    fn my_public_key(&self) -> &Public {
-        self.utxo_arc.key_pair.public()
-    }
+    fn my_public_key(&self) -> &Public { self.utxo_arc.key_pair.public() }
 
     fn display_address(&self, address: &Address) -> Result<String, String> {
         utxo_common::display_address(&self.utxo_arc, address)
     }
 
-    async fn get_current_mtp(&self) -> Result<u32, String> {
-        utxo_common::get_current_mtp(&self.utxo_arc).await
+    fn try_address_from_str(&self, from: &str) -> Result<Address, String> {
+        utxo_common::try_address_from_str(&self.utxo_arc, from)
     }
+
+    fn address_from_str(&self, address: &str) -> Result<Address, String> {
+        utxo_common::address_from_str(&self.utxo_arc, address)
+    }
+
+    async fn get_current_mtp(&self) -> Result<u32, String> { utxo_common::get_current_mtp(&self.utxo_arc).await }
 
     fn is_unspent_mature(&self, output: &RpcTransaction) -> bool {
         is_qtum_unspent_mature(self.utxo_arc.mature_confirmations, output)
@@ -95,6 +88,7 @@ impl UtxoCoinCommonOps for QtumCoin {
 
 #[mockable]
 #[async_trait]
+#[allow(clippy::forget_ref, clippy::forget_copy)]
 impl UtxoArcCommonOps for QtumCoin {
     fn send_outputs_from_my_address(&self, outputs: Vec<TransactionOutput>) -> TransactionFut {
         utxo_common::send_outputs_from_my_address(self.clone(), outputs)
@@ -107,8 +101,8 @@ impl UtxoArcCommonOps for QtumCoin {
         first_pub0: &Public,
         second_pub0: &Public,
         priv_bn_hash: &[u8],
-        amount: BigDecimal)
-        -> Box<dyn Future<Item=(), Error=String> + Send> {
+        amount: BigDecimal,
+    ) -> Box<dyn Future<Item = (), Error = String> + Send> {
         utxo_common::validate_payment(
             self.utxo_arc.clone(),
             payment_tx,
@@ -116,7 +110,8 @@ impl UtxoArcCommonOps for QtumCoin {
             first_pub0,
             second_pub0,
             priv_bn_hash,
-            amount)
+            amount,
+        )
     }
 
     async fn generate_transaction(
@@ -125,28 +120,18 @@ impl UtxoArcCommonOps for QtumCoin {
         outputs: Vec<TransactionOutput>,
         fee_policy: FeePolicy,
         fee: Option<ActualTxFee>,
-        gas_fee: Option<u64>)
-        -> Result<(TransactionInputSigner, AdditionalTxData), String> {
-        utxo_common::generate_transaction(
-            self,
-            utxos,
-            outputs,
-            fee_policy,
-            fee,
-            gas_fee).await
+        gas_fee: Option<u64>,
+    ) -> Result<(TransactionInputSigner, AdditionalTxData), String> {
+        utxo_common::generate_transaction(self, utxos, outputs, fee_policy, fee, gas_fee).await
     }
 
     async fn calc_interest_if_required(
         &self,
         unsigned: TransactionInputSigner,
         data: AdditionalTxData,
-        my_script_pub: Bytes)
-        -> Result<(TransactionInputSigner, AdditionalTxData), String> {
-        utxo_common::calc_interest_if_required(
-            self,
-            unsigned,
-            data,
-            my_script_pub).await
+        my_script_pub: Bytes,
+    ) -> Result<(TransactionInputSigner, AdditionalTxData), String> {
+        utxo_common::calc_interest_if_required(self, unsigned, data, my_script_pub).await
     }
 
     fn p2sh_spending_tx(
@@ -155,23 +140,38 @@ impl UtxoArcCommonOps for QtumCoin {
         redeem_script: Bytes,
         outputs: Vec<TransactionOutput>,
         script_data: Script,
-        sequence: u32)
-        -> Result<UtxoTx, String> {
+        sequence: u32,
+    ) -> Result<UtxoTx, String> {
         utxo_common::p2sh_spending_tx(
             &self.utxo_arc,
             prev_transaction,
             redeem_script,
             outputs,
             script_data,
-            sequence)
+            sequence,
+        )
     }
 
-    fn ordered_mature_unspents(&self, address: &Address) -> Box<dyn Future<Item=Vec<UnspentInfo>, Error=String> + Send> {
-        Box::new(utxo_common::ordered_mature_unspents(self.clone(), address.clone()).boxed().compat())
+    fn ordered_mature_unspents(
+        &self,
+        address: &Address,
+    ) -> Box<dyn Future<Item = Vec<UnspentInfo>, Error = String> + Send> {
+        Box::new(
+            utxo_common::ordered_mature_unspents(self.clone(), address.clone())
+                .boxed()
+                .compat(),
+        )
     }
 
-    fn get_verbose_transaction_from_cache_or_rpc(&self, txid: H256Json) -> Box<dyn Future<Item=VerboseTransactionFrom, Error=String> + Send> {
-        Box::new(utxo_common::get_verbose_transaction_from_cache_or_rpc(self.clone(), txid).boxed().compat())
+    fn get_verbose_transaction_from_cache_or_rpc(
+        &self,
+        txid: H256Json,
+    ) -> Box<dyn Future<Item = VerboseTransactionFrom, Error = String> + Send> {
+        Box::new(
+            utxo_common::get_verbose_transaction_from_cache_or_rpc(self.clone(), txid)
+                .boxed()
+                .compat(),
+        )
     }
 
     async fn request_tx_history(&self, metrics: MetricsArc) -> RequestTxHistoryResult {
@@ -184,106 +184,163 @@ impl SwapOps for QtumCoin {
         utxo_common::send_taker_fee(self, fee_addr, amount)
     }
 
-    fn send_maker_payment(&self, time_lock: u32, taker_pub: &[u8], secret_hash: &[u8], amount: BigDecimal) -> TransactionFut {
+    fn send_maker_payment(
+        &self,
+        time_lock: u32,
+        taker_pub: &[u8],
+        secret_hash: &[u8],
+        amount: BigDecimal,
+    ) -> TransactionFut {
         utxo_common::send_maker_payment(self.clone(), time_lock, taker_pub, secret_hash, amount)
     }
 
-    fn send_taker_payment(&self, time_lock: u32, maker_pub: &[u8], secret_hash: &[u8], amount: BigDecimal) -> TransactionFut {
+    fn send_taker_payment(
+        &self,
+        time_lock: u32,
+        maker_pub: &[u8],
+        secret_hash: &[u8],
+        amount: BigDecimal,
+    ) -> TransactionFut {
         utxo_common::send_taker_payment(self.clone(), time_lock, maker_pub, secret_hash, amount)
     }
 
     fn send_maker_spends_taker_payment(
-        &self, taker_payment_tx: &[u8], time_lock: u32, taker_pub: &[u8], secret: &[u8])
-        -> TransactionFut {
-        utxo_common::send_maker_spends_taker_payment(
-            self.clone(), taker_payment_tx, time_lock, taker_pub, secret)
+        &self,
+        taker_payment_tx: &[u8],
+        time_lock: u32,
+        taker_pub: &[u8],
+        secret: &[u8],
+    ) -> TransactionFut {
+        utxo_common::send_maker_spends_taker_payment(self.clone(), taker_payment_tx, time_lock, taker_pub, secret)
     }
 
     fn send_taker_spends_maker_payment(
-        &self, maker_payment_tx: &[u8], time_lock: u32, maker_pub: &[u8], secret: &[u8])
-        -> TransactionFut {
-        utxo_common::send_taker_spends_maker_payment(
-            self.clone(), maker_payment_tx, time_lock, maker_pub, secret)
+        &self,
+        maker_payment_tx: &[u8],
+        time_lock: u32,
+        maker_pub: &[u8],
+        secret: &[u8],
+    ) -> TransactionFut {
+        utxo_common::send_taker_spends_maker_payment(self.clone(), maker_payment_tx, time_lock, maker_pub, secret)
     }
 
     fn send_taker_refunds_payment(
-        &self, taker_payment_tx: &[u8], time_lock: u32, maker_pub: &[u8], secret_hash: &[u8])
-        -> TransactionFut {
-        utxo_common::send_taker_refunds_payment(
-            self.clone(), taker_payment_tx, time_lock, maker_pub, secret_hash)
+        &self,
+        taker_payment_tx: &[u8],
+        time_lock: u32,
+        maker_pub: &[u8],
+        secret_hash: &[u8],
+    ) -> TransactionFut {
+        utxo_common::send_taker_refunds_payment(self.clone(), taker_payment_tx, time_lock, maker_pub, secret_hash)
     }
 
     fn send_maker_refunds_payment(
-        &self, maker_payment_tx: &[u8], time_lock: u32, taker_pub: &[u8], secret_hash: &[u8])
-        -> TransactionFut {
-        utxo_common::send_maker_refunds_payment(
-            self.clone(), maker_payment_tx, time_lock, taker_pub, secret_hash)
+        &self,
+        maker_payment_tx: &[u8],
+        time_lock: u32,
+        taker_pub: &[u8],
+        secret_hash: &[u8],
+    ) -> TransactionFut {
+        utxo_common::send_maker_refunds_payment(self.clone(), maker_payment_tx, time_lock, taker_pub, secret_hash)
     }
 
-    fn validate_fee(&self, fee_tx: &TransactionEnum, fee_addr: &[u8], amount: &BigDecimal)
-                    -> Box<dyn Future<Item=(), Error=String> + Send> {
+    fn validate_fee(
+        &self,
+        fee_tx: &TransactionEnum,
+        fee_addr: &[u8],
+        amount: &BigDecimal,
+    ) -> Box<dyn Future<Item = (), Error = String> + Send> {
         utxo_common::validate_fee(self.utxo_arc.clone(), fee_tx, fee_addr, amount)
     }
 
     fn validate_maker_payment(
-        &self, payment_tx: &[u8], time_lock: u32, maker_pub: &[u8], priv_bn_hash: &[u8], amount: BigDecimal)
-        -> Box<dyn Future<Item=(), Error=String> + Send> {
+        &self,
+        payment_tx: &[u8],
+        time_lock: u32,
+        maker_pub: &[u8],
+        priv_bn_hash: &[u8],
+        amount: BigDecimal,
+    ) -> Box<dyn Future<Item = (), Error = String> + Send> {
         utxo_common::validate_maker_payment(self, payment_tx, time_lock, maker_pub, priv_bn_hash, amount)
     }
 
     fn validate_taker_payment(
-        &self, payment_tx: &[u8], time_lock: u32, taker_pub: &[u8], priv_bn_hash: &[u8], amount: BigDecimal)
-        -> Box<dyn Future<Item=(), Error=String> + Send> {
-        utxo_common::validate_taker_payment(
-            self, payment_tx, time_lock, taker_pub, priv_bn_hash, amount)
+        &self,
+        payment_tx: &[u8],
+        time_lock: u32,
+        taker_pub: &[u8],
+        priv_bn_hash: &[u8],
+        amount: BigDecimal,
+    ) -> Box<dyn Future<Item = (), Error = String> + Send> {
+        utxo_common::validate_taker_payment(self, payment_tx, time_lock, taker_pub, priv_bn_hash, amount)
     }
 
     fn check_if_my_payment_sent(
-        &self, time_lock: u32, other_pub: &[u8], secret_hash: &[u8], search_from_block: u64)
-        -> Box<dyn Future<Item=Option<TransactionEnum>, Error=String> + Send> {
-        utxo_common::check_if_my_payment_sent(
-            self.clone(), time_lock, other_pub, secret_hash, search_from_block)
+        &self,
+        time_lock: u32,
+        other_pub: &[u8],
+        secret_hash: &[u8],
+        search_from_block: u64,
+    ) -> Box<dyn Future<Item = Option<TransactionEnum>, Error = String> + Send> {
+        utxo_common::check_if_my_payment_sent(self.clone(), time_lock, other_pub, secret_hash, search_from_block)
     }
 
     fn search_for_swap_tx_spend_my(
-        &self, time_lock: u32, other_pub: &[u8], secret_hash: &[u8], tx: &[u8], search_from_block: u64)
-        -> Result<Option<FoundSwapTxSpend>, String> {
-        utxo_common::search_for_swap_tx_spend_my(
-            self, time_lock, other_pub, secret_hash, tx, search_from_block)
+        &self,
+        time_lock: u32,
+        other_pub: &[u8],
+        secret_hash: &[u8],
+        tx: &[u8],
+        search_from_block: u64,
+    ) -> Result<Option<FoundSwapTxSpend>, String> {
+        utxo_common::search_for_swap_tx_spend_my(self, time_lock, other_pub, secret_hash, tx, search_from_block)
     }
 
     fn search_for_swap_tx_spend_other(
-        &self, time_lock: u32, other_pub: &[u8], secret_hash: &[u8], tx: &[u8], search_from_block: u64)
-        -> Result<Option<FoundSwapTxSpend>, String> {
-        utxo_common::search_for_swap_tx_spend_other(
-            self, time_lock, other_pub, secret_hash, tx, search_from_block)
+        &self,
+        time_lock: u32,
+        other_pub: &[u8],
+        secret_hash: &[u8],
+        tx: &[u8],
+        search_from_block: u64,
+    ) -> Result<Option<FoundSwapTxSpend>, String> {
+        utxo_common::search_for_swap_tx_spend_other(self, time_lock, other_pub, secret_hash, tx, search_from_block)
     }
 }
 
 impl MarketCoinOps for QtumCoin {
-    fn ticker(&self) -> &str {
-        &self.utxo_arc.ticker
-    }
+    fn ticker(&self) -> &str { &self.utxo_arc.ticker }
 
-    fn my_address(&self) -> Result<String, String> {
-        utxo_common::my_address(self)
-    }
+    fn my_address(&self) -> Result<String, String> { utxo_common::my_address(self) }
 
-    fn my_balance(&self) -> Box<dyn Future<Item=BigDecimal, Error=String> + Send> {
+    fn my_balance(&self) -> Box<dyn Future<Item = BigDecimal, Error = String> + Send> {
         utxo_common::my_balance(&self.utxo_arc)
     }
 
-    fn base_coin_balance(&self) -> Box<dyn Future<Item=BigDecimal, Error=String> + Send> {
+    fn base_coin_balance(&self) -> Box<dyn Future<Item = BigDecimal, Error = String> + Send> {
         utxo_common::base_coin_balance(self)
     }
 
-    fn send_raw_tx(&self, tx: &str) -> Box<dyn Future<Item=String, Error=String> + Send> {
+    fn send_raw_tx(&self, tx: &str) -> Box<dyn Future<Item = String, Error = String> + Send> {
         utxo_common::send_raw_tx(&self.utxo_arc, tx)
     }
 
-    fn wait_for_confirmations(&self, tx: &[u8], confirmations: u64, requires_nota: bool, wait_until: u64, check_every: u64)
-                              -> Box<dyn Future<Item=(), Error=String> + Send> {
-        utxo_common::wait_for_confirmations(&self.utxo_arc, tx, confirmations, requires_nota, wait_until, check_every)
+    fn wait_for_confirmations(
+        &self,
+        tx: &[u8],
+        confirmations: u64,
+        requires_nota: bool,
+        wait_until: u64,
+        check_every: u64,
+    ) -> Box<dyn Future<Item = (), Error = String> + Send> {
+        utxo_common::wait_for_confirmations(
+            &self.utxo_arc,
+            tx,
+            confirmations,
+            requires_nota,
+            wait_until,
+            check_every,
+        )
     }
 
     fn wait_for_tx_spend(&self, transaction: &[u8], wait_until: u64, from_block: u64) -> TransactionFut {
@@ -294,7 +351,7 @@ impl MarketCoinOps for QtumCoin {
         utxo_common::tx_enum_from_bytes(bytes)
     }
 
-    fn current_block(&self) -> Box<dyn Future<Item=u64, Error=String> + Send> {
+    fn current_block(&self) -> Box<dyn Future<Item = u64, Error = String> + Send> {
         utxo_common::current_block(&self.utxo_arc)
     }
 
@@ -302,55 +359,46 @@ impl MarketCoinOps for QtumCoin {
         utxo_common::address_from_pubkey_str(self, pubkey)
     }
 
-    fn display_priv_key(&self) -> String {
-        utxo_common::display_priv_key(&self.utxo_arc)
-    }
+    fn display_priv_key(&self) -> String { utxo_common::display_priv_key(&self.utxo_arc) }
 }
 
 impl MmCoin for QtumCoin {
-    fn is_asset_chain(&self) -> bool {
-        utxo_common::is_asset_chain(&self.utxo_arc)
-    }
+    fn is_asset_chain(&self) -> bool { utxo_common::is_asset_chain(&self.utxo_arc) }
 
-    fn can_i_spend_other_payment(&self) -> Box<dyn Future<Item=(), Error=String> + Send> {
+    fn can_i_spend_other_payment(&self) -> Box<dyn Future<Item = (), Error = String> + Send> {
         utxo_common::can_i_spend_other_payment()
     }
 
-    fn wallet_only(&self) -> bool {
-        false
-    }
+    fn wallet_only(&self) -> bool { false }
 
-    fn withdraw(&self, req: WithdrawRequest) -> Box<dyn Future<Item=TransactionDetails, Error=String> + Send> {
+    fn withdraw(&self, req: WithdrawRequest) -> Box<dyn Future<Item = TransactionDetails, Error = String> + Send> {
         Box::new(utxo_common::withdraw(self.clone(), req).boxed().compat())
     }
 
-    fn decimals(&self) -> u8 {
-        utxo_common::decimals(&self.utxo_arc)
+    fn decimals(&self) -> u8 { utxo_common::decimals(&self.utxo_arc) }
+
+    /// Check if the `to_address_format` is standard and if the `from` address is standard UTXO address.
+    fn convert_to_address(&self, from: &str, to_address_format: Json) -> Result<String, String> {
+        convert_qtum_address(&self.utxo_arc.ticker, from, to_address_format)
     }
 
-    fn process_history_loop(&self, ctx: MmArc) {
-        utxo_common::process_history_loop(self, ctx)
-    }
+    fn validate_address(&self, address: &str) -> ValidateAddressResult { utxo_common::validate_address(self, address) }
 
-    fn tx_details_by_hash(&self, hash: &[u8]) -> Box<dyn Future<Item=TransactionDetails, Error=String> + Send> {
+    fn process_history_loop(&self, ctx: MmArc) { utxo_common::process_history_loop(self, ctx) }
+
+    fn tx_details_by_hash(&self, hash: &[u8]) -> Box<dyn Future<Item = TransactionDetails, Error = String> + Send> {
         utxo_common::tx_details_by_hash(self.clone(), hash)
     }
 
-    fn history_sync_status(&self) -> HistorySyncState {
-        utxo_common::history_sync_status(&self.utxo_arc)
-    }
+    fn history_sync_status(&self) -> HistorySyncState { utxo_common::history_sync_status(&self.utxo_arc) }
 
-    fn get_trade_fee(&self) -> Box<dyn Future<Item=TradeFee, Error=String> + Send> {
+    fn get_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = String> + Send> {
         utxo_common::get_trade_fee(self.clone())
     }
 
-    fn required_confirmations(&self) -> u64 {
-        utxo_common::required_confirmations(&self.utxo_arc)
-    }
+    fn required_confirmations(&self) -> u64 { utxo_common::required_confirmations(&self.utxo_arc) }
 
-    fn requires_notarization(&self) -> bool {
-        utxo_common::requires_notarization(&self.utxo_arc)
-    }
+    fn requires_notarization(&self) -> bool { utxo_common::requires_notarization(&self.utxo_arc) }
 
     fn set_required_confirmations(&self, confirmations: u64) {
         utxo_common::set_required_confirmations(&self.utxo_arc, confirmations)
@@ -360,7 +408,7 @@ impl MmCoin for QtumCoin {
         utxo_common::set_requires_notarization(&self.utxo_arc, requires_nota)
     }
 
-    fn my_unspendable_balance(&self) -> Box<dyn Future<Item=BigDecimal, Error=String> + Send> {
+    fn my_unspendable_balance(&self) -> Box<dyn Future<Item = BigDecimal, Error = String> + Send> {
         Box::new(utxo_common::my_unspendable_balance(self.clone()).boxed().compat())
     }
 }
@@ -373,15 +421,27 @@ pub fn is_qtum_unspent_mature(mature_confirmations: u32, output: &RpcTransaction
         return false;
     }
 
-    let is_qrc20_coinbase = output.vout.iter().find(|x| x.is_empty()).is_some();
+    let is_qrc20_coinbase = output.vout.iter().any(|x| x.is_empty());
     let is_coinbase = output.is_coinbase() || is_qrc20_coinbase;
     !is_coinbase || output.confirmations >= mature_confirmations
 }
 
+pub fn convert_qtum_address(coin: &str, from: &str, to_address_format: Json) -> Result<String, String> {
+    let to_address_format: UtxoAddressFormat =
+        json::from_value(to_address_format).map_err(|e| ERRL!("Error on parse UTXO address format {:?}", e))?;
+    match to_address_format {
+        UtxoAddressFormat::Standard => (),
+        _ => return ERR!("{} supports standard UTXO address format only", coin),
+    }
+
+    let from_address = try_s!(Address::from_str(from));
+    Ok(from_address.to_string())
+}
+
 #[cfg(test)]
 mod tests {
-    use rpc::v1::types::{ScriptType, SignedTransactionOutput, TransactionOutputScript};
     use super::*;
+    use rpc::v1::types::{ScriptType, SignedTransactionOutput, TransactionOutputScript};
 
     #[test]
     fn test_is_unspent_mature() {

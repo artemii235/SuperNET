@@ -1,13 +1,18 @@
 use common::safe_slurp;
-use futures::lock::{Mutex as AsyncMutex};
-use rpc::v1::types::{H256 as H256Json, Transaction as RpcTransaction};
+use futures::lock::Mutex as AsyncMutex;
+use rpc::v1::types::{Transaction as RpcTransaction, H256 as H256Json};
 use std::path::PathBuf;
 
-lazy_static! {static ref TX_CACHE_LOCK: AsyncMutex<()> = AsyncMutex::new(());}
+lazy_static! {
+    static ref TX_CACHE_LOCK: AsyncMutex<()> = AsyncMutex::new(());
+}
 
 /// Try load transaction from cache.
 /// Note: tx.confirmations can be out-of-date.
-pub async fn load_transaction_from_cache(tx_cache_path: &PathBuf, txid: &H256Json) -> Result<Option<RpcTransaction>, String> {
+pub async fn load_transaction_from_cache(
+    tx_cache_path: &PathBuf,
+    txid: &H256Json,
+) -> Result<Option<RpcTransaction>, String> {
     let _lock = TX_CACHE_LOCK.lock().await;
 
     let path = cached_transaction_path(tx_cache_path, &txid);
@@ -18,9 +23,7 @@ pub async fn load_transaction_from_cache(tx_cache_path: &PathBuf, txid: &H256Jso
     }
 
     let data = try_s!(String::from_utf8(data));
-    serde_json::from_str(&data)
-        .map(|x| Some(x))
-        .map_err(|e| ERRL!("{}", e))
+    serde_json::from_str(&data).map(Some).map_err(|e| ERRL!("{}", e))
 }
 
 /// Upload transaction to cache.
