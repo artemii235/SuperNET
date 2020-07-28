@@ -689,6 +689,9 @@ pub async fn lp_coininit(ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoin
     }
     let secret = &*ctx.secp256k1_key_pair().private().secret;
 
+    if coins_en["protocol"].is_null() {
+        return ERR!(r#""protocol" field is missing in coins file. The file format is deprecated, please execute ./mm2 update_config command to convert it or download a new one"#);
+    }
     let protocol: CoinProtocol = try_s!(json::from_value(coins_en["protocol"].clone()));
 
     let coin: MmCoinEnum = match &protocol {
