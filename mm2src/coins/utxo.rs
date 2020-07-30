@@ -2649,3 +2649,69 @@ fn kmd_interest(height: Option<u64>, value: u64, lock_time: u64, current_time: u
     minutes -= 59;
     (value / 10_512_000) * minutes
 }
+
+fn kmd_interest_accrue_stop_at(height: u64, lock_time: u64) -> u64 {
+    let minutes = if height < 1_000_000 {
+        // interest stop accruing after 1 year before block 1000000
+        365 * 24 * 60
+    } else {
+        // interest stop accruing after 1 month past 1000000 block
+        31 * 24 * 60
+    };
+
+    lock_time + minutes
+}
+
+#[derive(Deserialize, Eq, PartialEq, Serialize)]
+pub struct KmdRewardInfoElement {
+    tx_hash: H256Json,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    height: Option<u64>,
+    amount: u64,
+    locktime: u64,
+    /// Amount of accrued rewards.
+    accrued_rewards: u64,
+    /// Rewards accruing stop at this time for the given transaction.
+    /// None if the transaction is not mined yet.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    accrue_stop_at: Option<u64>,
+}
+
+/// Get rewards info of unspent outputs.
+/// The list is ordered by the output value.
+pub async fn kmd_rewards_info(coin: &UtxoCoin) -> Result<Vec<KmdRewardInfoElement>, String> {
+    if coin.ticker != "KMD" {
+        return ERR!("rewards info can be obtained for KMD only");
+    }
+    let mut result = Vec::new();
+
+    let rpc_client = coin.rpc_client();
+    let unspents = try_s!(rpc_client.list_unspent_ordered(&coin.my_address).compat().await);
+    for unspent in unspents {
+        let tx_hash: H256Json = unspent.outpoint.hash.reversed().into();
+        let tx_info = try_s!(rpc_client.get_verbose_transaction(tx_hash.clone()).compat().await);
+
+        let amount = unspent.value;
+        let locktime = tx_info.locktime as u64;
+        let current_time = try_s!(coin.get_current_mtp().await) as u64;
+        let accrued_rewards = kmd_interest(tx_info.height, amount, locktime, current_time);
+        let accrue_stop_at = tx_info
+            .height
+            .clone()
+            .map(|height| kmd_interest_accrue_stop_at(height, locktime));
+
+        result.push(KmdRewardInfoElement {
+            tx_hash,
+            height: tx_info.height,
+            amount,
+            locktime,
+            accrued_rewards,
+            accrue_stop_at,
+        });
+    }
+
+    // list_unspent_ordered() returns ordered from lowest to highest by value unspent outputs.
+    // reverse it to reorder from highest to lowest outputs.
+    result.reverse();
+    Ok(result)
+}

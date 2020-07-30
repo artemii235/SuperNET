@@ -232,6 +232,22 @@ fn test_kmd_interest() {
 }
 
 #[test]
+fn test_kmd_interest_accrue_stop_at() {
+    let lock_time = 1595845640;
+    let height = 1000001;
+
+    let expected = lock_time + 31 * 24 * 60;
+    let actual = kmd_interest_accrue_stop_at(height, lock_time);
+    assert_eq!(expected, actual);
+
+    let height = 999999;
+
+    let expected = lock_time + 365 * 24 * 60;
+    let actual = kmd_interest_accrue_stop_at(height, lock_time);
+    assert_eq!(expected, actual);
+}
+
+#[test]
 fn test_sat_from_big_decimal() {
     let amount = "0.000001".parse().unwrap();
     let sat = sat_from_big_decimal(&amount, 18).unwrap();
