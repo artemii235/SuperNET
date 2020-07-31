@@ -2701,8 +2701,7 @@ pub struct KmdRewardsInfoElement {
     #[serde(skip_serializing_if = "Option::is_none")]
     height: Option<u64>,
     /// The zero-based index of the output in the transaction’s list of outputs.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    input_index: Option<u32>,
+    output_index: u32,
     amount: BigDecimal,
     locktime: u64,
     /// Amount of accrued rewards.
@@ -2719,10 +2718,14 @@ pub async fn kmd_rewards_info(coin: &UtxoCoin) -> Result<Vec<KmdRewardsInfoEleme
     if coin.ticker != "KMD" {
         return ERR!("rewards info can be obtained for KMD only");
     }
-    let mut result = Vec::new();
 
     let rpc_client = coin.rpc_client();
-    let unspents = try_s!(rpc_client.list_unspent_ordered(&coin.my_address).compat().await);
+    let mut unspents = try_s!(rpc_client.list_unspent_ordered(&coin.my_address).compat().await);
+    // list_unspent_ordered() returns ordered from lowest to highest by value unspent outputs.
+    // reverse it to reorder from highest to lowest outputs.
+    unspents.reverse();
+
+    let mut result = Vec::with_capacity(unspents.len());
     for unspent in unspents {
         let tx_hash: H256Json = unspent.outpoint.hash.reversed().into();
         let tx_info = try_s!(rpc_client.get_verbose_transaction(tx_hash.clone()).compat().await);
@@ -2738,15 +2741,11 @@ pub async fn kmd_rewards_info(coin: &UtxoCoin) -> Result<Vec<KmdRewardsInfoEleme
             .height
             .clone()
             .map(|height| kmd_interest_accrue_stop_at(height, locktime));
-        let input_index = match tx_info.height {
-            Some(_) => Some(unspent.outpoint.index),
-            _ => None,
-        };
 
         result.push(KmdRewardsInfoElement {
             tx_hash,
             height: tx_info.height,
-            input_index,
+            output_index: unspent.outpoint.index,
             amount: big_decimal_from_sat(value as i64, coin.decimals),
             locktime,
             accrued_rewards,
@@ -2754,8 +2753,5 @@ pub async fn kmd_rewards_info(coin: &UtxoCoin) -> Result<Vec<KmdRewardsInfoEleme
         });
     }
 
-    // list_unspent_ordered() returns ordered from lowest to highest by value unspent outputs.
-    // reverse it to reorder from highest to lowest outputs.
-    result.reverse();
     Ok(result)
 }
