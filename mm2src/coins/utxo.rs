@@ -934,7 +934,9 @@ impl UtxoCoin {
         for input in unsigned.inputs.iter() {
             let prev_hash = input.previous_output.hash.reversed().into();
             let tx = try_s!(self.rpc_client.get_verbose_transaction(prev_hash).compat().await);
-            if let Ok(output_interest) = kmd_interest(tx.height, input.amount, tx.locktime as u64, unsigned.lock_time as u64) {
+            if let Ok(output_interest) =
+                kmd_interest(tx.height, input.amount, tx.locktime as u64, unsigned.lock_time as u64)
+            {
                 interest += output_interest;
             };
         }
@@ -2610,7 +2612,12 @@ async fn wait_for_protocol_version_checked(client: &ElectrumClientImpl) -> Resul
 /// Function calculating KMD interest
 /// https://komodoplatform.atlassian.net/wiki/spaces/KPSD/pages/71729215/What+is+the+5+Komodo+Stake+Reward
 /// https://github.com/KomodoPlatform/komodo/blob/master/src/komodo_interest.h
-fn kmd_interest(height: Option<u64>, value: u64, lock_time: u64, current_time: u64) -> Result<u64, KmdRewardsNotAccruedReason> {
+fn kmd_interest(
+    height: Option<u64>,
+    value: u64,
+    lock_time: u64,
+    current_time: u64,
+) -> Result<u64, KmdRewardsNotAccruedReason> {
     const KOMODO_ENDOFERA: u64 = 7_777_777;
     const LOCKTIME_THRESHOLD: u64 = 500_000_000;
 
@@ -2672,7 +2679,7 @@ fn kmd_interest_accrue_stop_at(height: u64, lock_time: u64) -> u64 {
     lock_time + minutes
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize, Eq, PartialEq)]
 enum KmdRewardsNotAccruedReason {
     LocktimeNotSet,
     LocktimeLessThanThreshold,
@@ -2704,7 +2711,6 @@ pub struct KmdRewardsInfoElement {
     /// None if the transaction is not mined yet.
     #[serde(skip_serializing_if = "Option::is_none")]
     accrue_stop_at: Option<u64>,
-
 }
 
 /// Get rewards info of unspent outputs.
