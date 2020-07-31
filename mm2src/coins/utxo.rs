@@ -934,7 +934,9 @@ impl UtxoCoin {
         for input in unsigned.inputs.iter() {
             let prev_hash = input.previous_output.hash.reversed().into();
             let tx = try_s!(self.rpc_client.get_verbose_transaction(prev_hash).compat().await);
-            interest += kmd_interest(tx.height, input.amount, tx.locktime as u64, unsigned.lock_time as u64);
+            if let Ok(output_interest) = kmd_interest(tx.height, input.amount, tx.locktime as u64, unsigned.lock_time as u64) {
+                interest += output_interest;
+            };
         }
         if interest > 0 {
             data.received_by_me += interest;
@@ -2608,34 +2610,40 @@ async fn wait_for_protocol_version_checked(client: &ElectrumClientImpl) -> Resul
 /// Function calculating KMD interest
 /// https://komodoplatform.atlassian.net/wiki/spaces/KPSD/pages/71729215/What+is+the+5+Komodo+Stake+Reward
 /// https://github.com/KomodoPlatform/komodo/blob/master/src/komodo_interest.h
-fn kmd_interest(height: Option<u64>, value: u64, lock_time: u64, current_time: u64) -> u64 {
-    let height = match height {
-        Some(h) => h,
-        None => return 0, // return 0 if height is unknown
-    };
+fn kmd_interest(height: Option<u64>, value: u64, lock_time: u64, current_time: u64) -> Result<u64, KmdRewardsNotAccruedReason> {
     const KOMODO_ENDOFERA: u64 = 7_777_777;
     const LOCKTIME_THRESHOLD: u64 = 500_000_000;
+
+    let height = match height {
+        Some(h) => h,
+        None => return Err(KmdRewardsNotAccruedReason::TransactionInMempool), // consider that the transaction is not mined yet
+    };
+
+    // locktime must be set
+    if lock_time == 0 {
+        return Err(KmdRewardsNotAccruedReason::LocktimeNotSet);
+    }
     // value must be at least 10 KMD
     if value < 1_000_000_000 {
-        return 0;
+        return Err(KmdRewardsNotAccruedReason::UtxoAmountLessThanTen);
     }
     // interest will stop accrue after block 7_777_777
     if height >= KOMODO_ENDOFERA {
-        return 0;
+        return Err(KmdRewardsNotAccruedReason::UtxoHeightGreaterThanEndOfEra);
     };
     // interest doesn't accrue for lock_time < 500_000_000
     if lock_time < LOCKTIME_THRESHOLD {
-        return 0;
+        return Err(KmdRewardsNotAccruedReason::LocktimeLessThanThreshold);
     }
     // current time must be greater than tx lock_time
     if current_time < lock_time {
-        return 0;
+        return Err(KmdRewardsNotAccruedReason::OneHourNotPassedYet);
     }
 
     let mut minutes = (current_time - lock_time) / 60;
     // at least 1 hour should pass
     if minutes < 60 {
-        return 0;
+        return Err(KmdRewardsNotAccruedReason::OneHourNotPassedYet);
     }
     // interest stop accruing after 1 year before block 1000000
     if minutes > 365 * 24 * 60 {
@@ -2647,7 +2655,9 @@ fn kmd_interest(height: Option<u64>, value: u64, lock_time: u64, current_time: u
     }
     // next 2 lines ported as is from Komodo codebase
     minutes -= 59;
-    (value / 10_512_000) * minutes
+    let accrued = (value / 10_512_000) * minutes;
+
+    Ok(accrued)
 }
 
 fn kmd_interest_accrue_stop_at(height: u64, lock_time: u64) -> u64 {
@@ -2662,24 +2672,44 @@ fn kmd_interest_accrue_stop_at(height: u64, lock_time: u64) -> u64 {
     lock_time + minutes
 }
 
-#[derive(Deserialize, Eq, PartialEq, Serialize)]
-pub struct KmdRewardInfoElement {
+#[derive(Serialize)]
+enum KmdRewardsNotAccruedReason {
+    LocktimeNotSet,
+    LocktimeLessThanThreshold,
+    UtxoHeightGreaterThanEndOfEra,
+    UtxoAmountLessThanTen,
+    OneHourNotPassedYet,
+    TransactionInMempool,
+}
+
+#[derive(Serialize)]
+enum KmdRewardsAccrueInfo {
+    Accrued(BigDecimal),
+    NotAccruedReason(KmdRewardsNotAccruedReason),
+}
+
+#[derive(Serialize)]
+pub struct KmdRewardsInfoElement {
     tx_hash: H256Json,
     #[serde(skip_serializing_if = "Option::is_none")]
     height: Option<u64>,
-    amount: u64,
+    /// The zero-based index of the output in the transaction’s list of outputs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    input_index: Option<u32>,
+    amount: BigDecimal,
     locktime: u64,
     /// Amount of accrued rewards.
-    accrued_rewards: u64,
+    accrued_rewards: KmdRewardsAccrueInfo,
     /// Rewards accruing stop at this time for the given transaction.
     /// None if the transaction is not mined yet.
     #[serde(skip_serializing_if = "Option::is_none")]
     accrue_stop_at: Option<u64>,
+
 }
 
 /// Get rewards info of unspent outputs.
 /// The list is ordered by the output value.
-pub async fn kmd_rewards_info(coin: &UtxoCoin) -> Result<Vec<KmdRewardInfoElement>, String> {
+pub async fn kmd_rewards_info(coin: &UtxoCoin) -> Result<Vec<KmdRewardsInfoElement>, String> {
     if coin.ticker != "KMD" {
         return ERR!("rewards info can be obtained for KMD only");
     }
@@ -2691,19 +2721,27 @@ pub async fn kmd_rewards_info(coin: &UtxoCoin) -> Result<Vec<KmdRewardInfoElemen
         let tx_hash: H256Json = unspent.outpoint.hash.reversed().into();
         let tx_info = try_s!(rpc_client.get_verbose_transaction(tx_hash.clone()).compat().await);
 
-        let amount = unspent.value;
+        let value = unspent.value;
         let locktime = tx_info.locktime as u64;
         let current_time = try_s!(coin.get_current_mtp().await) as u64;
-        let accrued_rewards = kmd_interest(tx_info.height, amount, locktime, current_time);
+        let accrued_rewards = match kmd_interest(tx_info.height, value, locktime, current_time) {
+            Ok(interest) => KmdRewardsAccrueInfo::Accrued(big_decimal_from_sat(interest as i64, coin.decimals)),
+            Err(reason) => KmdRewardsAccrueInfo::NotAccruedReason(reason),
+        };
         let accrue_stop_at = tx_info
             .height
             .clone()
             .map(|height| kmd_interest_accrue_stop_at(height, locktime));
+        let input_index = match tx_info.height {
+            Some(_) => Some(unspent.outpoint.index),
+            _ => None,
+        };
 
-        result.push(KmdRewardInfoElement {
+        result.push(KmdRewardsInfoElement {
             tx_hash,
             height: tx_info.height,
-            amount,
+            input_index,
+            amount: big_decimal_from_sat(value as i64, coin.decimals),
             locktime,
             accrued_rewards,
             accrue_stop_at,
