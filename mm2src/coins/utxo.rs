@@ -2669,15 +2669,20 @@ fn kmd_interest(
 }
 
 fn kmd_interest_accrue_stop_at(height: u64, lock_time: u64) -> u64 {
-    let minutes = if height < 1_000_000 {
+    let seconds = if height < 1_000_000 {
         // interest stop accruing after 1 year before block 1000000
-        365 * 24 * 60
+        365 * 24 * 60 * 60
     } else {
         // interest stop accruing after 1 month past 1000000 block
-        31 * 24 * 60
+        31 * 24 * 60 * 60
     };
 
-    lock_time + minutes
+    lock_time + seconds
+}
+
+fn kmd_interest_accrue_start_at(lock_time: u64) -> u64 {
+    let one_hour = 60 * 60;
+    lock_time + one_hour
 }
 
 #[derive(Debug, Serialize, Eq, PartialEq)]
@@ -2707,7 +2712,9 @@ pub struct KmdRewardsInfoElement {
     locktime: u64,
     /// Amount of accrued rewards.
     accrued_rewards: KmdRewardsAccrueInfo,
-    /// Rewards accruing stop at this time for the given transaction.
+    /// Rewards start to accrue at this time for the given transaction.
+    accrue_start_at: u64,
+    /// Rewards stop to accrue at this time for the given transaction.
     /// None if the transaction is not mined yet.
     #[serde(skip_serializing_if = "Option::is_none")]
     accrue_stop_at: Option<u64>,
@@ -2738,10 +2745,15 @@ pub async fn kmd_rewards_info(coin: &UtxoCoin) -> Result<Vec<KmdRewardsInfoEleme
             Ok(interest) => KmdRewardsAccrueInfo::Accrued(big_decimal_from_sat(interest as i64, coin.decimals)),
             Err(reason) => KmdRewardsAccrueInfo::NotAccruedReason(reason),
         };
-        let accrue_stop_at = tx_info
-            .height
-            .clone()
-            .map(|height| kmd_interest_accrue_stop_at(height, locktime));
+        let accrue_start_at = if locktime == 0 {
+            0
+        } else {
+            kmd_interest_accrue_start_at(locktime)
+        };
+        let accrue_stop_at = match tx_info.height {
+            Some(height) => Some(kmd_interest_accrue_stop_at(height, locktime)),
+            _ => None,
+        };
 
         result.push(KmdRewardsInfoElement {
             tx_hash,
@@ -2750,6 +2762,7 @@ pub async fn kmd_rewards_info(coin: &UtxoCoin) -> Result<Vec<KmdRewardsInfoEleme
             amount: big_decimal_from_sat(value as i64, coin.decimals),
             locktime,
             accrued_rewards,
+            accrue_start_at,
             accrue_stop_at,
         });
     }
