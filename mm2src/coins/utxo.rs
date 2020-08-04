@@ -2713,9 +2713,11 @@ pub struct KmdRewardsInfoElement {
     /// Amount of accrued rewards.
     accrued_rewards: KmdRewardsAccrueInfo,
     /// Rewards start to accrue at this time for the given transaction.
-    accrue_start_at: u64,
+    /// None if the rewards will not be accrued.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    accrue_start_at: Option<u64>,
     /// Rewards stop to accrue at this time for the given transaction.
-    /// None if the transaction is not mined yet.
+    /// None if the rewards will not be accrued.
     #[serde(skip_serializing_if = "Option::is_none")]
     accrue_stop_at: Option<u64>,
 }
@@ -2745,14 +2747,20 @@ pub async fn kmd_rewards_info(coin: &UtxoCoin) -> Result<Vec<KmdRewardsInfoEleme
             Ok(interest) => KmdRewardsAccrueInfo::Accrued(big_decimal_from_sat(interest as i64, coin.decimals)),
             Err(reason) => KmdRewardsAccrueInfo::NotAccruedReason(reason),
         };
-        let accrue_start_at = if locktime == 0 {
-            0
-        } else {
-            kmd_interest_accrue_start_at(locktime)
-        };
-        let accrue_stop_at = match tx_info.height {
-            Some(height) => Some(kmd_interest_accrue_stop_at(height, locktime)),
-            _ => None,
+
+        // `accrue_start_at` and `accrue_stop_at` should be None if the rewards will never be obtained for the given transaction
+        let (accrue_start_at, accrue_stop_at) = match &accrued_rewards {
+            KmdRewardsAccrueInfo::Accrued(_)
+            | KmdRewardsAccrueInfo::NotAccruedReason(KmdRewardsNotAccruedReason::TransactionInMempool)
+            | KmdRewardsAccrueInfo::NotAccruedReason(KmdRewardsNotAccruedReason::OneHourNotPassedYet) => {
+                let start_at = Some(kmd_interest_accrue_start_at(locktime));
+                let stop_at = match tx_info.height {
+                    Some(height) => Some(kmd_interest_accrue_stop_at(height, locktime)),
+                    _ => None,
+                };
+                (start_at, stop_at)
+            },
+            _ => (None, None),
         };
 
         result.push(KmdRewardsInfoElement {
