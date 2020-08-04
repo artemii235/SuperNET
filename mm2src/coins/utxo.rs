@@ -2621,6 +2621,10 @@ fn kmd_interest(
     const KOMODO_ENDOFERA: u64 = 7_777_777;
     const LOCKTIME_THRESHOLD: u64 = 500_000_000;
 
+    // value must be at least 10 KMD
+    if value < 1_000_000_000 {
+        return Err(KmdRewardsNotAccruedReason::UtxoAmountLessThanTen);
+    }
     // locktime must be set
     if lock_time == 0 {
         return Err(KmdRewardsNotAccruedReason::LocktimeNotSet);
@@ -2629,10 +2633,14 @@ fn kmd_interest(
     if lock_time < LOCKTIME_THRESHOLD {
         return Err(KmdRewardsNotAccruedReason::LocktimeLessThanThreshold);
     }
-    // value must be at least 10 KMD
-    if value < 1_000_000_000 {
-        return Err(KmdRewardsNotAccruedReason::UtxoAmountLessThanTen);
-    }
+    let height = match height {
+        Some(h) => h,
+        None => return Err(KmdRewardsNotAccruedReason::TransactionInMempool), // consider that the transaction is not mined yet
+    };
+    // interest will stop accrue after block 7_777_777
+    if height >= KOMODO_ENDOFERA {
+        return Err(KmdRewardsNotAccruedReason::UtxoHeightGreaterThanEndOfEra);
+    };
     // current time must be greater than tx lock_time
     if current_time < lock_time {
         return Err(KmdRewardsNotAccruedReason::OneHourNotPassedYet);
@@ -2644,14 +2652,6 @@ fn kmd_interest(
     if minutes < 60 {
         return Err(KmdRewardsNotAccruedReason::OneHourNotPassedYet);
     }
-    let height = match height {
-        Some(h) => h,
-        None => return Err(KmdRewardsNotAccruedReason::TransactionInMempool), // consider that the transaction is not mined yet
-    };
-    // interest will stop accrue after block 7_777_777
-    if height >= KOMODO_ENDOFERA {
-        return Err(KmdRewardsNotAccruedReason::UtxoHeightGreaterThanEndOfEra);
-    };
 
     // interest stop accruing after 1 year before block 1000000
     if minutes > 365 * 24 * 60 {
