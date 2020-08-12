@@ -36,10 +36,112 @@ pub struct ContractCallResult {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct Qrc20TxHistoryItem {
+pub struct TxHistoryItem {
     pub tx_hash: H256Json,
     pub height: i64,
     pub log_index: i64,
+}
+
+/// The structure is the same as Qtum Core RPC gettransactionreceipt returned data.
+/// https://docs.qtum.site/en/Qtum-RPC-API/#gettransactionreceipt
+#[derive(Debug, Deserialize)]
+pub struct TxReceipt {
+    /// Hash of the block this transaction was included within.
+    #[serde(rename = "blockHash")]
+    block_hash: H256Json,
+    /// Number of the block this transaction was included within.
+    #[serde(rename = "blockNumber")]
+    block_number: i64,
+    /// Transaction hash.
+    #[serde(rename = "transactionHash")]
+    transaction_hash: H256Json,
+    /// Index within the block.
+    #[serde(rename = "transactionIndex")]
+    transaction_index: i64,
+    /// Index within the outputs.
+    #[serde(rename = "outputIndex")]
+    output_index: i64,
+    /// 20 bytes，the sender address of this tx.
+    from: String,
+    /// 20 bytes，the receiver address of this tx. if this  address is created by a contract, return null.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    to: Option<String>,
+    /// Cumulative gas used within the block after this was executed.
+    #[serde(rename = "cumulativeGasUsed")]
+    cumulative_gas_used: u64,
+    /// Gas used by this transaction alone.
+    ///
+    /// Gas used is `None` if the the client is running in light client mode.
+    #[serde(rename = "gasUsed")]
+    gas_used: Option<u64>,
+    /// Contract address created, or `None` if not a deployment.
+    #[serde(rename = "contractAddress")]
+    contract_address: Option<String>,
+    /// Logs generated within this transaction.
+    log: Vec<LogEntry>,
+    // There are 'expected' and 'expectedMessage' fields. Skip them.
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LogEntry {
+    /// Contract address.
+    address: String,
+    /// Vector of 0x-prefixed hex strings with length of 64.
+    topics: Vec<String>,
+    /// In other words the data means a transaction value.
+    data: String,
+}
+
+impl LogEntry {
+    /// https://github.com/qtumproject/qtum-electrum/blob/v4.0.2/electrum/wallet.py#L2112
+    fn get_from_addess(&self, prefix: u8, t_addr_prefix: u8, checksum_type: ChecksumType) -> Result<Address, String> {
+        if self.topics.len() < 3 {
+            return ERR!("Expected topics.len() >= 3, actual length {}", self.topics.len());
+        }
+
+        self._address_from_topic(&self.topics[1], prefix, t_addr_prefix, checksum_type)
+    }
+
+    /// https://github.com/qtumproject/qtum-electrum/blob/v4.0.2/electrum/wallet.py#L2113
+    fn get_to_address(&self, prefix: u8, t_addr_prefix: u8, checksum_type: ChecksumType) -> Result<Address, String> {
+        if self.topics.len() < 3 {
+            return ERR!("Expected topics.len() >= 3, actual length {}", self.topics.len());
+        }
+
+        self._address_from_topic(&self.topics[2], prefix, t_addr_prefix, checksum_type)
+    }
+
+    /// https://github.com/qtumproject/qtum-electrum/blob/v4.0.2/electrum/wallet.py#L2111
+    fn get_amount(&self, decimals: u8) -> Result<BigDecimal, String> {
+        let amount = try_s!(U256::from_str(&self.data));
+        u256_to_big_decimal(amount, decimals)
+    }
+
+    fn _address_from_topic(
+        &self,
+        topic: &str,
+        prefix: u8,
+        t_addr_prefix: u8,
+        checksum_type: ChecksumType,
+    ) -> Result<Address, String> {
+        if topic.len() != 64 {
+            return ERR!(
+                "Topic {:?} is expected to be H256 encoded topic (with length of 64)",
+                topic
+            );
+        }
+
+        // skip the first 24 characters to parse the last 40 characters to H160.
+        // https://github.com/qtumproject/qtum-electrum/blob/v4.0.2/electrum/wallet.py#L2112
+        let hash = try_s!(H160Json::from_str(&topic[24..]));
+
+        Ok(Address {
+            prefix,
+            t_addr_prefix,
+            hash: hash.into(),
+            checksum_type,
+        })
+    }
 }
 
 /// QTUM specific RPC ops
@@ -57,7 +159,9 @@ pub trait QtumRpcOps {
         &self,
         address: &H160Json,
         contract_addr: &H160Json,
-    ) -> RpcRes<Vec<Qrc20TxHistoryItem>>;
+    ) -> RpcRes<Vec<TxHistoryItem>>;
+
+    fn blochchain_transaction_get_receipt(&self, hash: &H256Json) -> RpcRes<Vec<TxReceipt>>;
 }
 
 impl QtumRpcOps for ElectrumClient {
@@ -74,7 +178,7 @@ impl QtumRpcOps for ElectrumClient {
         &self,
         address: &H160Json,
         contract_addr: &H160Json,
-    ) -> RpcRes<Vec<Qrc20TxHistoryItem>> {
+    ) -> RpcRes<Vec<TxHistoryItem>> {
         // for QRC20, just use ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef
         // (Keccak-256 hash of event Transfer(address indexed _from, address indexed _to, uint256 _value))
         let topic = "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
@@ -85,6 +189,10 @@ impl QtumRpcOps for ElectrumClient {
             contract_addr,
             topic
         )
+    }
+
+    fn blochchain_transaction_get_receipt(&self, hash: &H256Json) -> RpcRes<Vec<TxReceipt>> {
+        rpc_func!(self, "blochchain.transaction.get_receipt", hash)
     }
 }
 
@@ -894,5 +1002,63 @@ mod qtum_tests {
         for (actual, expected) in numbers {
             assert_eq!(contract_encode_number(actual), expected);
         }
+    }
+
+    #[test]
+    fn test_tx_details_from_receipt() {
+        let prefix = 120;
+        let t_addr_prefix = 0;
+        let checksum = ChecksumType::DSHA256;
+
+        let log_entry = LogEntry {
+            address: "d362e096e873eb7907e205fadc6175c6fec7bc44".into(),
+            topics: vec![
+                "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef".into(),
+                "0000000000000000000000009e032d4b0090a11dc40fe6c47601499a35d55fbb".into(),
+                "000000000000000000000000f36e14131c70e5f15a3f92b1d7e8622a62e570d8".into(),
+            ],
+            data: "0000000000000000000000000000000000000000000000000000000059682f00".into(),
+        };
+
+        let expected = "qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG".into();
+        let from = unwrap!(log_entry.get_from_addess(prefix, t_addr_prefix, checksum.clone()));
+        assert_eq!(from, expected);
+
+        let expected = "qfkXE2cNFEwPFQqvBcqs8m9KrkNa9KV4xi".into();
+        let to = unwrap!(log_entry.get_to_address(prefix, t_addr_prefix, checksum.clone()));
+        assert_eq!(to, expected);
+
+        let expected = 15.into();
+        let amount = unwrap!(log_entry.get_amount(8));
+        assert_eq!(amount, expected);
+    }
+
+    #[test]
+    fn test_tx_details_from_receipt_error() {
+        let prefix = 120;
+        let t_addr_prefix = 0;
+        let checksum = ChecksumType::DSHA256;
+
+        let log_entry = LogEntry {
+            address: "d362e096e873eb7907e205fadc6175c6fec7bc44".into(),
+            topics: vec!["ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef".into()],
+            data: "0000000000000000000000000000000000000000000000000000000059682f00".into(),
+        };
+
+        let error = unwrap!(log_entry.get_from_addess(prefix, t_addr_prefix, checksum.clone()).err());
+        assert!(error.contains("Expected topics.len() >= 3, actual length 1"));
+
+        let log_entry = LogEntry {
+            address: "d362e096e873eb7907e205fadc6175c6fec7bc44".into(),
+            topics: vec![
+                "ddf252ad1be2c89b69c2b068fc378daa952ba7f1".into(),
+                "0000000000000000000000009e032d4b0090a11d".into(),
+                "000000000000000000000000f36e14131c70e5f1".into(),
+            ],
+            data: "0000000000000000000000000000000000000000000000000000000059682f00".into(),
+        };
+
+        let error = unwrap!(log_entry.get_from_addess(prefix, t_addr_prefix, checksum.clone()).err());
+        assert!(error.contains("is expected to be H256 encoded topic (with length of 64)"));
     }
 }
