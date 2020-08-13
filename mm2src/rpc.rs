@@ -21,7 +21,7 @@
 #![cfg_attr(not(feature = "native"), allow(dead_code))]
 
 use bytes::Bytes;
-use coins::{convert_address, get_enabled_coins, get_trade_fee, my_tx_history, send_raw_transaction,
+use coins::{convert_address, get_enabled_coins, get_trade_fee, kmd_rewards_info, my_tx_history, send_raw_transaction,
             set_required_confirmations, set_requires_notarization, show_priv_key, validate_address, withdraw};
 #[cfg(feature = "native")]
 use common::for_tests::common_wait_for_log_re;
@@ -234,6 +234,7 @@ pub fn dispatcher(req: Json, ctx: MmArc) -> DispatcherRes {
                 return DispatcherRes::NoMatch(req);
             }
         },
+        "kmd_rewards_info" => hyres(kmd_rewards_info(ctx)),
         // "inventory" => inventory (ctx, req),
         "list_banned_pubkeys" => hyres(list_banned_pubkeys(ctx)),
         "metrics" => metrics(ctx),

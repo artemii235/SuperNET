@@ -513,7 +513,11 @@ where
                 .compat()
                 .await
         );
-        interest += kmd_interest(tx.height, input.amount, tx.locktime as u64, unsigned.lock_time as u64);
+        if let Ok(output_interest) =
+            kmd_interest(tx.height, input.amount, tx.locktime as u64, unsigned.lock_time as u64)
+        {
+            interest += output_interest;
+        };
     }
     if interest > 0 {
         data.received_by_me += interest;
