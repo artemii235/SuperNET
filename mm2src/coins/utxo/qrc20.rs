@@ -804,10 +804,18 @@ async fn qrc20_tx_details_by_hash(coin: Qrc20Coin, hash: H256Json) -> Result<Tra
     let script_pubkey: Script = {
         // Deserialize the UtxoTx to get a script pubkey
         let utxo_tx: UtxoTx = try_s!(deserialize(qtum_tx.tx_hex.as_slice()).map_err(|e| ERRL!("{:?}", e)));
-        if utxo_tx.outputs.is_empty() {
-            return ERR!("Transaction {:?} outputs is empty", qtum_tx.tx_hash);
+        if utxo_tx.outputs.len() <= (receipt.output_index as usize) {
+            return ERR!(
+                "Length of the transaction {:?} outputs less than output_index {}",
+                qtum_tx.tx_hash,
+                receipt.output_index
+            );
         }
-        utxo_tx.outputs[0].script_pubkey.clone().into()
+
+        utxo_tx.outputs[receipt.output_index as usize]
+            .script_pubkey
+            .clone()
+            .into()
     };
 
     // We can get a log_index from get_history call, but it is overhead to request it on every tx_details_by_hash(),
