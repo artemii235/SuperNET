@@ -1547,7 +1547,9 @@ fn test_qrc20_tx_details_by_hash() {
         "fee_details":{
             "coin":"QTUM",
             "miner_fee":"1.01526596",
-            "total_gas_fee":"0.00036231"
+            "gas_limit":2_500_000,
+            "gas_price":40,
+            "total_gas_fee":"0.00036231",
         },
         "coin":"QRC20",
         "internal_id":""

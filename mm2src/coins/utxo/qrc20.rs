@@ -8,6 +8,8 @@ use ethereum_types::{H160, U256};
 use futures::{FutureExt, TryFutureExt};
 use gstuff::now_ms;
 use rpc::v1::types::H160 as H160Json;
+use serialization::deserialize;
+use std::ops::Neg;
 use std::str::FromStr;
 use utxo_common::HISTORY_TOO_LARGE_ERROR;
 
@@ -150,10 +152,8 @@ pub struct Qrc20FeeDetails {
     /// Standard UTXO miner fee based on transaction size
     miner_fee: BigDecimal,
     /// in satoshi
-    #[serde(skip_serializing_if = "Option::is_none")]
-    gas_limit: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    gas_price: Option<u64>,
+    gas_limit: u64,
+    gas_price: u64,
     total_gas_fee: BigDecimal,
 }
 
@@ -753,8 +753,8 @@ async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> Result<Transac
         // QRC20 fees are paid in base platform currency (in particular Qtum)
         coin: coin.platform.clone(),
         miner_fee: utxo_common::big_decimal_from_sat(data.fee_amount as i64, coin.utxo_arc.decimals),
-        gas_limit: Some(gas_limit),
-        gas_price: Some(gas_price),
+        gas_limit,
+        gas_price,
         total_gas_fee: utxo_common::big_decimal_from_sat(gas_fee as i64, coin.utxo_arc.decimals),
     };
     let received_by_me = if to_addr == coin.utxo_arc.my_address {
@@ -801,6 +801,14 @@ async fn qrc20_tx_details_by_hash(coin: Qrc20Coin, hash: H256Json) -> Result<Tra
 
     // request Qtum transaction details to get a tx_hex, timestamp, block_height and miner_fee
     let qtum_tx = try_s!(utxo_common::tx_details_by_hash(coin.clone(), &hash.0).compat().await);
+    let script_pubkey: Script = {
+        // Deserialize the UtxoTx to get a script pubkey
+        let utxo_tx: UtxoTx = try_s!(deserialize(qtum_tx.tx_hex.as_slice()).map_err(|e| ERRL!("{:?}", e)));
+        if utxo_tx.outputs.is_empty() {
+            return ERR!("Transaction {:?} outputs is empty", qtum_tx.tx_hash);
+        }
+        utxo_tx.outputs[0].script_pubkey.clone().into()
+    };
 
     // We can get a log_index from get_history call, but it is overhead to request it on every tx_details_by_hash(),
     // because of this try to find corresponding log entry below
@@ -862,13 +870,16 @@ async fn qrc20_tx_details_by_hash(coin: Qrc20Coin, hash: H256Json) -> Result<Tra
     };
 
     let fee_details = {
+        let gas_limit = try_s!(extract_from_script(&script_pubkey, ExtractEnum::GasLimit));
+        let gas_price = try_s!(extract_from_script(&script_pubkey, ExtractEnum::GasPrice));
+
         let total_gas_fee = utxo_common::big_decimal_from_sat(receipt.gas_used, coin.utxo_arc.decimals);
         Qrc20FeeDetails {
             // QRC20 fees are paid in base platform currency (in particular Qtum)
             coin: coin.platform.clone(),
             miner_fee: &total_qtum_fee - &total_gas_fee,
-            gas_limit: None,
-            gas_price: None,
+            gas_limit,
+            gas_price,
             total_gas_fee,
         }
     };
@@ -892,7 +903,7 @@ async fn qrc20_tx_details_by_hash(coin: Qrc20Coin, hash: H256Json) -> Result<Tra
 }
 
 /// Serialize the `number` similar to BigEndian but in QRC20 specific format.
-fn contract_encode_number(number: i64) -> Vec<u8> {
+fn encode_contract_number(number: i64) -> Vec<u8> {
     // | encoded number (0 - 8 bytes) |
     // therefore the max result vector length is 8
     let capacity = 8;
@@ -926,6 +937,53 @@ fn contract_encode_number(number: i64) -> Vec<u8> {
     encoded
 }
 
+fn decode_contract_number(source: &[u8]) -> Result<i64, String> {
+    macro_rules! try_opt {
+        ($e: expr) => {
+            match $e {
+                Some(x) => x,
+                _ => return ERR!("Couldn't decode the input {:?}", source),
+            }
+        };
+    }
+
+    if source.is_empty() {
+        return Ok(0);
+    }
+
+    let mut data = source.to_vec();
+
+    // let last_byte = data.pop().unwrap();
+    let mut decoded = 0i128;
+
+    // first pop the data last byte
+    let (is_negative, last_byte) = match data.pop().unwrap() {
+        // this last byte is the sign byte, pop the real last byte
+        0x80 => (true, try_opt!(data.pop())),
+        // this last byte is the sign byte, pop the real last byte
+        0 => (false, try_opt!(data.pop())),
+        // this last byte is real, do XOR on it because it's greater than 0x80
+        last_byte if 0x80 < last_byte => (true, last_byte ^ 0x80),
+        // this last byte is real, returns it
+        last_byte => (false, last_byte),
+    };
+
+    // push the last_byte back to the data array
+    data.push(last_byte);
+
+    for byte in data.iter().rev() {
+        decoded <<= 8;
+        decoded |= *byte as i128;
+    }
+
+    if is_negative {
+        let decoded = decoded.neg();
+        Ok(decoded as i64)
+    } else {
+        Ok(decoded as i64)
+    }
+}
+
 fn generate_token_transfer_script_pubkey(
     to_addr: Address,
     amount: U256,
@@ -943,8 +1001,8 @@ fn generate_token_transfer_script_pubkey(
         return ERR!("token_addr cannot be empty");
     }
 
-    let gas_limit = contract_encode_number(gas_limit as i64);
-    let gas_price = contract_encode_number(gas_price as i64);
+    let gas_limit = encode_contract_number(gas_limit as i64);
+    let gas_price = encode_contract_number(gas_price as i64);
 
     let function = try_s!(ERC20_CONTRACT.function("transfer"));
     let function_call =
@@ -958,6 +1016,39 @@ fn generate_token_transfer_script_pubkey(
         .push_bytes(token_addr)
         .push_opcode(Opcode::OP_CALL)
         .into_script())
+}
+
+/// The `extract_gas_limit_from_script_pubkey` helper.
+#[derive(Clone, Copy, Debug)]
+enum ExtractEnum {
+    GasLimit = 1,
+    GasPrice = 2,
+}
+
+fn extract_from_script(script: &Script, extract: ExtractEnum) -> Result<u64, String> {
+    let instruction = try_s!(script
+        .iter()
+        .enumerate()
+        .find_map(|(i, instr)| {
+            if i == extract as usize {
+                Some(instr.unwrap())
+            } else {
+                None
+            }
+        })
+        .ok_or(ERRL!("Couldn't extract {:?} from script pubkey", extract)));
+
+    let opcode = instruction.opcode as usize;
+    if !(1..75).contains(&opcode) {
+        return ERR!("Opcode::OP_PUSHBYTES_[X] expected, found {:?}", instruction.opcode);
+    }
+
+    let number = match instruction.data {
+        Some(d) => try_s!(decode_contract_number(d)),
+        _ => return ERR!("Non-empty instruction data expected"),
+    };
+
+    Ok(number as u64)
 }
 
 #[cfg(test)]
@@ -1057,7 +1148,7 @@ mod qtum_tests {
     }
 
     #[test]
-    fn test_number_serialize() {
+    fn test_encode_decode_contract_number() {
         let numbers = vec![
             // left is source number, right is expected encoded array
             (0i64, vec![]),
@@ -1081,8 +1172,25 @@ mod qtum_tests {
             (Opcode::OP_CALL as i64, vec![194, 0]),
         ];
 
-        for (actual, expected) in numbers {
-            assert_eq!(contract_encode_number(actual), expected);
+        for (source, encoded) in numbers {
+            println!("{}", source);
+            let actual_encoded = encode_contract_number(source);
+            assert_eq!(actual_encoded, encoded);
+            let actual_decoded = unwrap!(decode_contract_number(&encoded));
+            assert_eq!(actual_decoded, source);
         }
+    }
+
+    #[test]
+    fn test_extract_gas_limit_gas_price() {
+        let script: Script = "5403a02526012844a9059cbb0000000000000000000000000240b898276ad2cc0d2fe6f527e8e31104e7fde3000000000000000000000000000000000000000000000000000000003b9aca0014d362e096e873eb7907e205fadc6175c6fec7bc44c2".into();
+
+        let expected_gas_limit = 2_500_000;
+        let actual = unwrap!(extract_from_script(&script, ExtractEnum::GasLimit));
+        assert_eq!(actual, expected_gas_limit);
+
+        let expected_gas_price = 40;
+        let actual = unwrap!(extract_from_script(&script, ExtractEnum::GasPrice));
+        assert_eq!(actual, expected_gas_price);
     }
 }
