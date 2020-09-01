@@ -97,6 +97,12 @@ pub enum AdexBehaviourCmd {
         req: Vec<u8>,
         response_tx: oneshot::Sender<Option<(PeerId, Vec<u8>)>>,
     },
+    /// Request given peers and collect all their responses.
+    RequestPeers {
+        req: Vec<u8>,
+        peers: Vec<String>,
+        response_tx: oneshot::Sender<Vec<(PeerId, AdexResponse)>>,
+    },
     /// Request relays and collect all their responses.
     RequestRelays {
         req: Vec<u8>,
@@ -276,6 +282,24 @@ impl AtomicDexBehaviour {
                 let relays = self.gossipsub.get_mesh_relays();
                 // spawn the `request_any_peer` future
                 let future = request_any_peer(relays, req, self.request_response.sender(), response_tx);
+                self.spawn(future);
+            },
+            AdexBehaviourCmd::RequestPeers {
+                req,
+                peers,
+                response_tx,
+            } => {
+                let peers = peers
+                    .into_iter()
+                    .filter_map(|peer| match peer.parse() {
+                        Ok(p) => Some(p),
+                        Err(e) => {
+                            error!("Error on parse peer id {:?}: {:?}", peer, e);
+                            None
+                        },
+                    })
+                    .collect();
+                let future = request_peers(peers, req, self.request_response.sender(), response_tx);
                 self.spawn(future);
             },
             AdexBehaviourCmd::RequestRelays { req, response_tx } => {

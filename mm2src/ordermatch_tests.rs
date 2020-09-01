@@ -1667,7 +1667,7 @@ fn test_process_order_keep_alive_requested_from_peer() {
     let initial_message = initial_order_message.clone();
     spawn(async move {
         let cmd = cmd_rx.next().await.unwrap();
-        let (req, response_tx) = if let AdexBehaviourCmd::RequestAnyRelay { req, response_tx } = cmd {
+        let (req, response_tx) = if let AdexBehaviourCmd::RequestPeers { req, response_tx, .. } = cmd {
             (req, response_tx)
         } else {
             panic!("Unexpected cmd");
@@ -1680,13 +1680,13 @@ fn test_process_order_keep_alive_requested_from_peer() {
         // create a response with the initial_message and random from_peer
         let response = new_protocol::OrderInitialMessage {
             initial_message,
-            from_peer,
+            from_peer: from_peer.clone(),
         };
 
-        // encode the response with the secret
-        let encoded = encode_and_sign(&response, &secret).unwrap();
-        // send the encoded response through the response channel
-        response_tx.send(Some((PeerId::random(), encoded))).unwrap();
+        let response = AdexResponse::Ok {
+            response: encode_and_sign(&response, &secret).unwrap(),
+        };
+        response_tx.send(vec![(PeerId::random(), response)]).unwrap();
     });
 
     let keep_alive = new_protocol::MakerOrderKeepAlive {
@@ -1697,6 +1697,7 @@ fn test_process_order_keep_alive_requested_from_peer() {
     // process_order_keep_alive() should return true because an order should be requested from a peer.
     assert!(block_on(process_order_keep_alive(
         &ctx,
+        peer.clone(),
         &pubkey,
         &keep_alive
     )));

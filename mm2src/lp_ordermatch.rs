@@ -48,7 +48,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::mm2::{lp_network::{broadcast_p2p_msg, request_any_relay, request_relays, subscribe_to_topic, P2PRequest,
+use crate::mm2::{lp_network::{broadcast_p2p_msg, request_one_peer, request_relays, subscribe_to_topic, P2PRequest,
                               RelayDecodedResponse},
                  lp_swap::{check_balance_for_maker_swap, check_balance_for_taker_swap, get_locked_amount,
                            is_pubkey_banned, lp_atomic_locktime, run_maker_swap, run_taker_swap,
@@ -61,6 +61,7 @@ const MAKER_ORDER_TIMEOUT: u64 = MIN_ORDER_KEEP_ALIVE_INTERVAL * 3;
 const TAKER_ORDER_TIMEOUT: u64 = 30;
 const ORDER_MATCH_TIMEOUT: u64 = 30;
 const ORDERBOOK_REQUESTING_TIMEOUT: u64 = MIN_ORDER_KEEP_ALIVE_INTERVAL * 2;
+const INACTIVE_ORDER_TIMEOUT: u64 = 240;
 
 impl From<(new_protocol::MakerOrderCreated, Vec<u8>, String, String)> for PricePingRequest {
     fn from(tuple: (new_protocol::MakerOrderCreated, Vec<u8>, String, String)) -> PricePingRequest {
@@ -87,6 +88,7 @@ impl From<(new_protocol::MakerOrderCreated, Vec<u8>, String, String)> for PriceP
 
 async fn process_order_keep_alive(
     ctx: &MmArc,
+    propagated_from_peer: String,
     from_pubkey: &str,
     keep_alive: &new_protocol::MakerOrderKeepAlive,
 ) -> bool {
@@ -105,7 +107,7 @@ async fn process_order_keep_alive(
     }
 
     log!("Couldn't find an order " [uuid] ", try request it from peers");
-    match request_order(ctx.clone(), uuid, from_pubkey).await {
+    match request_order(ctx.clone(), uuid, propagated_from_peer, from_pubkey).await {
         Ok(Some(order)) => {
             orderbook.insert_or_update_order(uuid, order);
             return true;
@@ -114,26 +116,31 @@ async fn process_order_keep_alive(
         Err(e) => log!("Error on GetOrder request: "(e)),
     }
 
-    log!("Skip the order " [uuid]);
+    log!("Skip the order "[uuid]);
     false
 }
 
-async fn request_order(ctx: MmArc, uuid: Uuid, from_pubkey: &str) -> Result<Option<PricePingRequest>, String> {
+async fn request_order(
+    ctx: MmArc,
+    uuid: Uuid,
+    propagated_from_peer: String,
+    from_pubkey: &str,
+) -> Result<Option<PricePingRequest>, String> {
     let get_order = OrdermatchRequest::GetOrder {
         uuid,
         from_pubkey: from_pubkey.to_string(),
     };
     let req = P2PRequest::Ordermatch(get_order);
-    let new_protocol::OrderInitialMessage {
-        initial_message,
-        from_peer,
-    } = match try_s!(request_any_relay(ctx, req).await) {
-        Some((response, _from_peer, _pubkey)) => response,
-        None => return Ok(None),
-    };
-
-    let order = try_s!(PricePingRequest::from_initial_msg(initial_message, from_peer));
-    Ok(Some(order))
+    match try_s!(request_one_peer::<new_protocol::OrderInitialMessage>(ctx, req, propagated_from_peer).await) {
+        Some((order, _pubkey)) => {
+            let order = try_s!(PricePingRequest::from_initial_msg(
+                order.initial_message,
+                order.from_peer
+            ));
+            Ok(Some(order))
+        },
+        None => Ok(None),
+    }
 }
 
 /// Request best asks and bids for the given `base` and `rel` coins from relays.
@@ -245,14 +252,26 @@ async fn insert_or_update_order(ctx: &MmArc, req: PricePingRequest, uuid: Uuid) 
 
 async fn delete_order(ctx: &MmArc, pubkey: &str, uuid: Uuid) {
     let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
+
+    let mut inactive = ordermatch_ctx.inactive_orders.lock().await;
+    match inactive.get(&uuid) {
+        // don't remove the order if the pubkey is not equal
+        Some(order) if order.pubsecp != pubkey => (),
+        Some(_) => {
+            inactive.remove(&uuid);
+        },
+        None => (),
+    }
+
     let mut orderbook = ordermatch_ctx.orderbook.lock().await;
     match orderbook.order_set.get(&uuid) {
         // don't remove the order if the pubkey is not equal
-        Some(order) if order.pubsecp != pubkey => return,
-        Some(_) => (),
-        None => return,
+        Some(order) if order.pubsecp != pubkey => (),
+        Some(_) => {
+            orderbook.remove_order(uuid);
+        },
+        None => (),
     }
-    orderbook.remove_order(uuid);
 }
 
 async fn delete_my_order(ctx: &MmArc, uuid: Uuid) {
@@ -278,7 +297,7 @@ pub async fn process_msg(ctx: MmArc, _initial_topic: &str, from_peer: String, ms
                 true
             },
             new_protocol::OrdermatchMessage::MakerOrderKeepAlive(keep_alive) => {
-                process_order_keep_alive(&ctx, &pubkey.to_hex(), &keep_alive).await
+                process_order_keep_alive(&ctx, from_peer, &pubkey.to_hex(), &keep_alive).await
             },
             new_protocol::OrdermatchMessage::TakerRequest(taker_request) => {
                 let msg = TakerRequest::from_new_proto_and_pubkey(taker_request, pubkey.unprefixed().into());
@@ -1681,12 +1700,18 @@ pub async fn lp_ordermatch_loop(ctx: MmArc) {
         broadcast_maker_keep_alives(&ctx).await;
 
         {
+            // remove "timed out" orders from inactive_orders
+            // ones they are inactive for 180 seconds or more
+            let mut inactive = ordermatch_ctx.inactive_orders.lock().await;
+
+            let current = now_ms();
+            inactive.retain(|_, order| order.timestamp + INACTIVE_ORDER_TIMEOUT < current);
+
             // remove "timed out" orders from orderbook
             // ones that didn't receive an update for 30 seconds or more
             // store them in inactive orders temporary in order not to request them from relays in case we start
             // receiving keep alive again
             let mut orderbook = ordermatch_ctx.orderbook.lock().await;
-            let mut inactive = ordermatch_ctx.inactive_orders.lock().await;
 
             let inactive_uuids: Vec<Uuid> = orderbook
                 .order_set
