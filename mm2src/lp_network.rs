@@ -251,8 +251,8 @@ pub async fn request_one_peer<T: de::DeserializeOwned>(
     let (_, response) = responses.remove(0);
     match response {
         RelayDecodedResponse::Ok((response, pubkey)) => Ok(Some((response, pubkey))),
-        RelayDecodedResponse::None => return Ok(None),
-        RelayDecodedResponse::Err(e) => return ERR!("{}", e),
+        RelayDecodedResponse::None => Ok(None),
+        RelayDecodedResponse::Err(e) => ERR!("{}", e),
     }
 }
 
