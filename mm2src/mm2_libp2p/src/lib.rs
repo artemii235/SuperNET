@@ -1,11 +1,10 @@
+mod adex_ping;
 pub mod atomicdex_behaviour;
 pub mod request_response;
 
 use secp256k1::{sign, verify, Message as SecpMessage, PublicKey as Secp256k1Pubkey, SecretKey, Signature};
-use serde::{de,
-            ser::{Serialize, Serializer}};
+use serde::{de, ser::Serializer, Deserialize, Serialize};
 use serde_bytes;
-use serde_derive::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 pub use atomicdex_behaviour::start_gossipsub;

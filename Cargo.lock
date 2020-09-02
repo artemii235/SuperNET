@@ -2800,7 +2800,6 @@ dependencies = [
  "rmp-serde",
  "serde",
  "serde_bytes 0.11.5",
- "serde_derive",
  "sha2 0.9.0",
  "tokio 0.2.22",
  "void",

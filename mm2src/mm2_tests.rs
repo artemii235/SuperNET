@@ -1853,7 +1853,7 @@ fn test_order_should_not_be_displayed_when_node_is_down() {
     assert_eq!(asks.len(), 1, "Alice RICK/MORTY orderbook must have exactly 1 ask");
 
     unwrap!(block_on(mm_bob.stop()));
-    thread::sleep(Duration::from_secs(61));
+    thread::sleep(Duration::from_secs(65));
 
     let rc = unwrap!(block_on(mm_alice.rpc(json! ({
         "userpass": mm_alice.userpass,

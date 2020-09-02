@@ -114,7 +114,7 @@ async fn process_order_keep_alive(
         Err(e) => log!("Error on GetOrder request: "(e)),
     }
 
-    log!("Skip the order " [uuid]);
+    log!("Skip the order "[uuid]);
     false
 }
 

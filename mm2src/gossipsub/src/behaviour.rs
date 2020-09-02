@@ -1083,7 +1083,7 @@ impl Gossipsub {
             debug!(
                 "HEARTBEAT: relayers high. Contains: {:?} needs: {:?}",
                 self.relayers_mesh.len(),
-                self.config.mesh_n_high,
+                self.config.mesh_n,
             );
             let mesh_n = self.config.mesh_n;
             self.relayers_mesh = self
