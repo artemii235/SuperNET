@@ -1704,8 +1704,8 @@ pub async fn lp_ordermatch_loop(ctx: MmArc) {
             // ones they are inactive for 180 seconds or more
             let mut inactive = ordermatch_ctx.inactive_orders.lock().await;
 
-            let current = now_ms();
-            inactive.retain(|_, order| order.timestamp + INACTIVE_ORDER_TIMEOUT > current);
+            let current = now_ms() / 1000;
+            inactive.retain(|_, order| current < order.timestamp + INACTIVE_ORDER_TIMEOUT);
 
             // remove "timed out" orders from orderbook
             // ones that didn't receive an update for 30 seconds or more
@@ -1717,7 +1717,7 @@ pub async fn lp_ordermatch_loop(ctx: MmArc) {
                 .order_set
                 .iter()
                 .filter_map(|(uuid, order)| {
-                    if now_ms() / 1000 > order.timestamp + MAKER_ORDER_TIMEOUT {
+                    if order.timestamp + MAKER_ORDER_TIMEOUT < current {
                         Some(*uuid)
                     } else {
                         None
@@ -1729,6 +1729,9 @@ pub async fn lp_ordermatch_loop(ctx: MmArc) {
                 let order = orderbook.remove_order(uuid.clone()).unwrap();
                 inactive.insert(uuid, order);
             }
+
+            mm_gauge!(ctx.metrics, "orderbook.len", orderbook.order_set.len() as i64);
+            mm_gauge!(ctx.metrics, "inactive_orders.len", inactive.len() as i64);
         }
 
         Timer::sleep(0.777).await;
