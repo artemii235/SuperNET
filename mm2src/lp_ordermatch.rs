@@ -1705,7 +1705,7 @@ pub async fn lp_ordermatch_loop(ctx: MmArc) {
             let mut inactive = ordermatch_ctx.inactive_orders.lock().await;
 
             let current = now_ms();
-            inactive.retain(|_, order| order.timestamp + INACTIVE_ORDER_TIMEOUT < current);
+            inactive.retain(|_, order| order.timestamp + INACTIVE_ORDER_TIMEOUT > current);
 
             // remove "timed out" orders from orderbook
             // ones that didn't receive an update for 30 seconds or more
