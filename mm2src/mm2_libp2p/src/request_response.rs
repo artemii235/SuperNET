@@ -27,7 +27,7 @@ pub type RequestResponseSender = mpsc::UnboundedSender<(PeerId, PeerRequest, one
 pub fn build_request_response_behaviour() -> RequestResponseBehaviour {
     let config = RequestResponseConfig::default();
     let protocol = iter::once((Protocol::Version1, ProtocolSupport::Full));
-    let inner = RequestResponse::new(Codec, protocol, config);
+    let inner = RequestResponse::new(Codec::default(), protocol, config);
 
     let (tx, rx) = mpsc::unbounded();
     let pending_requests = HashMap::new();
@@ -63,7 +63,7 @@ pub struct RequestResponseBehaviour {
     #[behaviour(ignore)]
     events: VecDeque<RequestResponseBehaviourEvent>,
     /// The inner RequestResponse network behaviour.
-    inner: RequestResponse<Codec>,
+    inner: RequestResponse<Codec<PeerRequest, PeerResponse>>,
 }
 
 impl RequestResponseBehaviour {
@@ -88,7 +88,8 @@ impl RequestResponseBehaviour {
         &mut self,
         cx: &mut Context,
         _params: &mut impl PollParameters,
-    ) -> Poll<NetworkBehaviourAction<RequestProtocol<Codec>, RequestResponseBehaviourEvent>> {
+    ) -> Poll<NetworkBehaviourAction<RequestProtocol<Codec<PeerRequest, PeerResponse>>, RequestResponseBehaviourEvent>>
+    {
         // poll the `rx`
         match self.rx.poll_next_unpin(cx) {
             // received a request, forward it through the network and put to the `pending_requests`
@@ -172,7 +173,17 @@ impl NetworkBehaviourEventProcess<RequestResponseEvent<PeerRequest, PeerResponse
 }
 
 #[derive(Clone)]
-pub struct Codec;
+pub struct Codec<Req, Res> {
+    phantom: std::marker::PhantomData<(Req, Res)>,
+}
+
+impl<Req, Res> Default for Codec<Req, Res> {
+    fn default() -> Self {
+        Codec {
+            phantom: Default::default(),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum Protocol {
@@ -184,7 +195,7 @@ pub struct PeerRequest {
     pub req: Vec<u8>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum PeerResponse {
     Ok { res: Vec<u8> },
     None,
@@ -209,10 +220,13 @@ impl ProtocolName for Protocol {
 }
 
 #[async_trait]
-impl RequestResponseCodec for Codec {
+impl<Req: DeserializeOwned + Serialize + Send + Sync, Res: DeserializeOwned + Serialize + Send + Sync>
+    RequestResponseCodec for Codec<Req, Res>
+{
+    // TODO make Protocol generic too
     type Protocol = Protocol;
-    type Request = PeerRequest;
-    type Response = PeerResponse;
+    type Request = Req;
+    type Response = Res;
 
     async fn read_request<T>(&mut self, _protocol: &Self::Protocol, io: &mut T) -> io::Result<Self::Request>
     where

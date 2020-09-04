@@ -36,7 +36,7 @@ mod tests {
         // generate a default GossipsubConfig
         let gs_config = GossipsubConfig::default();
         // create a gossipsub struct
-        let mut gs: Gossipsub = Gossipsub::new(PeerId::random(), gs_config, vec![]);
+        let mut gs: Gossipsub = Gossipsub::new(PeerId::random(), gs_config);
 
         let mut topic_hashes = vec![];
 
@@ -523,7 +523,7 @@ mod tests {
         // generate a default GossipsubConfig
         let gs_config = GossipsubConfig::default();
         // create a gossipsub struct
-        let mut gs: Gossipsub = Gossipsub::new(PeerId::random(), gs_config, vec![]);
+        let mut gs: Gossipsub = Gossipsub::new(PeerId::random(), gs_config);
 
         // create a topic and fill it with some peers
         let topic_hash = Topic::new("Test".into()).no_hash().clone();

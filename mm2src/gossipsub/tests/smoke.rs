@@ -139,7 +139,7 @@ fn build_node() -> (Multiaddr, Swarm<Gossipsub>) {
         .boxed();
 
     let peer_id = public_key.clone().into_peer_id();
-    let behaviour = Gossipsub::new(peer_id.clone(), GossipsubConfig::default(), vec![]);
+    let behaviour = Gossipsub::new(peer_id.clone(), GossipsubConfig::default());
     let mut swarm = Swarm::new(transport, behaviour, peer_id);
 
     let port = 1 + random::<u64>();

@@ -1,5 +1,8 @@
+#![feature(ip)]
+
 mod adex_ping;
 pub mod atomicdex_behaviour;
+mod peers_exchange;
 pub mod request_response;
 
 use secp256k1::{sign, verify, Message as SecpMessage, PublicKey as Secp256k1Pubkey, SecretKey, Signature};

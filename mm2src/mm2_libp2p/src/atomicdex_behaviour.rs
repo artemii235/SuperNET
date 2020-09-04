@@ -1,7 +1,7 @@
-use crate::adex_ping::AdexPing;
-use crate::decode_signed;
-use crate::request_response::{build_request_response_behaviour, PeerRequest, PeerResponse, RequestResponseBehaviour,
-                              RequestResponseBehaviourEvent, RequestResponseSender};
+use crate::{adex_ping::AdexPing,
+            peers_exchange::PeersExchange,
+            request_response::{build_request_response_behaviour, PeerRequest, PeerResponse, RequestResponseBehaviour,
+                               RequestResponseBehaviourEvent, RequestResponseSender}};
 use atomicdex_gossipsub::{Gossipsub, GossipsubConfigBuilder, GossipsubEvent, GossipsubMessage, MessageId, Topic,
                           TopicHash};
 use futures::{channel::{mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
@@ -11,8 +11,9 @@ use futures::{channel::{mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
 use lazy_static::lazy_static;
 use libp2p::{core::{ConnectedPoint, Multiaddr, Transport},
              identity,
+             multiaddr::Protocol,
              request_response::ResponseChannel,
-             swarm::NetworkBehaviourEventProcess,
+             swarm::{NetworkBehaviourEventProcess, Swarm},
              NetworkBehaviour, PeerId};
 use log::{debug, error};
 use std::{collections::hash_map::{DefaultHasher, HashMap},
@@ -212,6 +213,7 @@ pub struct AtomicDexBehaviour {
     cmd_rx: UnboundedReceiver<AdexBehaviourCmd>,
     gossipsub: Gossipsub,
     request_response: RequestResponseBehaviour,
+    peers_exchange: PeersExchange,
     ping: AdexPing,
 }
 
@@ -325,6 +327,11 @@ impl AtomicDexBehaviour {
             },
         }
     }
+
+    fn announce_listeners(&mut self, listeners: Vec<Multiaddr>) {
+        let serialized = rmp_serde::to_vec(&listeners).expect("Vec<Multiaddr> serialization should never fail");
+        self.gossipsub.publish(&Topic::new(PEERS_TOPIC.to_owned()), serialized);
+    }
 }
 
 impl NetworkBehaviourEventProcess<GossipsubEvent> for AtomicDexBehaviour {
@@ -332,10 +339,11 @@ impl NetworkBehaviourEventProcess<GossipsubEvent> for AtomicDexBehaviour {
         if let GossipsubEvent::Message(propagation_source, message_id, message) = &event {
             for topic in &message.topics {
                 if topic == &TopicHash::from_raw(PEERS_TOPIC) {
-                    let addresses = match decode_signed::<Vec<Multiaddr>>(&message.data) {
-                        Ok((a, ..)) => a,
+                    let addresses: Vec<Multiaddr> = match rmp_serde::from_read_ref(&message.data) {
+                        Ok(a) => a,
                         Err(_) => return,
                     };
+                    self.peers_exchange.add_peer_addresses(&message.source, addresses);
                     self.gossipsub.propagate_message(message_id, propagation_source);
                 }
             }
@@ -346,6 +354,10 @@ impl NetworkBehaviourEventProcess<GossipsubEvent> for AtomicDexBehaviour {
 
 impl NetworkBehaviourEventProcess<Void> for AtomicDexBehaviour {
     fn inject_event(&mut self, _event: Void) {}
+}
+
+impl NetworkBehaviourEventProcess<()> for AtomicDexBehaviour {
+    fn inject_event(&mut self, _event: ()) {}
 }
 
 impl NetworkBehaviourEventProcess<RequestResponseBehaviourEvent> for AtomicDexBehaviour {
@@ -431,7 +443,7 @@ pub fn start_gossipsub(
             .max_transmit_size(1024 * 1024 - 100)
             .build();
         // build a gossipsub network behaviour
-        let gossipsub = Gossipsub::new(local_peer_id.clone(), gossipsub_config, relayers.clone());
+        let gossipsub = Gossipsub::new(local_peer_id.clone(), gossipsub_config);
 
         // build a request-response network behaviour
         let request_response = build_request_response_behaviour();
@@ -445,6 +457,7 @@ pub fn start_gossipsub(
             cmd_rx,
             gossipsub,
             request_response,
+            peers_exchange: PeersExchange::new(),
             ping,
         };
         libp2p::swarm::SwarmBuilder::new(transport, adex_behavior, local_peer_id.clone())
@@ -476,6 +489,29 @@ pub fn start_gossipsub(
                 Poll::Ready(None) => return Poll::Ready(()),
                 Poll::Pending => break,
             }
+        }
+
+        if swarm.gossipsub.is_relay() {
+            let global_listeners: Vec<_> = Swarm::listeners(&swarm)
+                .filter(|listener| {
+                    for protocol in listener.iter() {
+                        if let Protocol::Ip4(ip) = &protocol {
+                            if ip.is_global() {
+                                return true;
+                            }
+                        }
+
+                        if let Protocol::Ip6(ip) = &protocol {
+                            if ip.is_global() {
+                                return true;
+                            }
+                        }
+                    }
+                    false
+                })
+                .cloned()
+                .collect();
+            swarm.announce_listeners(global_listeners);
         }
 
         Poll::Pending
