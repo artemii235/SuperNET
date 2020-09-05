@@ -20,9 +20,11 @@ use std::{collections::hash_map::{DefaultHasher, HashMap},
           hash::{Hash, Hasher},
           net::IpAddr,
           pin::Pin,
-          task::{Context, Poll}};
+          task::{Context, Poll},
+          time::Duration};
 use tokio::runtime::Runtime;
 use void::Void;
+use wasm_timer::{Instant, Interval};
 
 pub type AdexCmdTx = UnboundedSender<AdexBehaviourCmd>;
 pub type AdexEventRx = UnboundedReceiver<AdexBehaviourEvent>;
@@ -32,6 +34,8 @@ pub type AdexEventRx = UnboundedReceiver<AdexBehaviourEvent>;
 struct SwarmRuntime(Runtime);
 
 pub const PEERS_TOPIC: &str = "PEERS";
+const CONNECTED_RELAYS_CHECK_INTERVAL: Duration = Duration::from_secs(30);
+const ANNOUNCE_INTERVAL: Duration = Duration::from_secs(600);
 
 impl libp2p::core::Executor for &SwarmRuntime {
     fn exec(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>) { self.0.spawn(future); }
@@ -474,6 +478,11 @@ pub fn start_gossipsub(
         }
     }
 
+    let mut check_connected_relays_interval = Interval::new_at(
+        Instant::now() + CONNECTED_RELAYS_CHECK_INTERVAL,
+        CONNECTED_RELAYS_CHECK_INTERVAL,
+    );
+    let mut announce_interval = Interval::new_at(Instant::now() + ANNOUNCE_INTERVAL, ANNOUNCE_INTERVAL);
     let polling_fut = poll_fn(move |cx: &mut Context| {
         loop {
             match swarm.cmd_rx.poll_next_unpin(cx) {
@@ -492,26 +501,43 @@ pub fn start_gossipsub(
         }
 
         if swarm.gossipsub.is_relay() {
-            let global_listeners: Vec<_> = Swarm::listeners(&swarm)
-                .filter(|listener| {
-                    for protocol in listener.iter() {
-                        if let Protocol::Ip4(ip) = &protocol {
-                            if ip.is_global() {
-                                return true;
+            while let Poll::Ready(Some(())) = announce_interval.poll_next_unpin(cx) {
+                let global_listeners: Vec<_> = Swarm::listeners(&swarm)
+                    .filter(|listener| {
+                        for protocol in listener.iter() {
+                            if let Protocol::Ip4(ip) = &protocol {
+                                if ip.is_global() {
+                                    return true;
+                                }
                             }
-                        }
 
-                        if let Protocol::Ip6(ip) = &protocol {
-                            if ip.is_global() {
-                                return true;
+                            if let Protocol::Ip6(ip) = &protocol {
+                                if ip.is_global() {
+                                    return true;
+                                }
                             }
                         }
+                        false
+                    })
+                    .cloned()
+                    .collect();
+                swarm.announce_listeners(global_listeners);
+            }
+        }
+
+        while let Poll::Ready(Some(())) = check_connected_relays_interval.poll_next_unpin(cx) {
+            let connected_relayers = swarm.gossipsub.connected_relayers();
+            if connected_relayers.len() < 6 {
+                let to_connect_num = 6 - connected_relayers.len();
+                let to_connect = swarm
+                    .peers_exchange
+                    .get_random_peers(to_connect_num, |peer| !connected_relayers.contains(peer));
+                for peer in to_connect {
+                    if let Err(e) = libp2p::Swarm::dial(&mut swarm, &peer) {
+                        error!("Peer {} dial error {}", peer, e);
                     }
-                    false
-                })
-                .cloned()
-                .collect();
-            swarm.announce_listeners(global_listeners);
+                }
+            }
         }
 
         Poll::Pending

@@ -1051,6 +1051,8 @@ impl Gossipsub {
     }
 
     pub fn is_relay(&self) -> bool { self.config.i_am_relay }
+
+    pub fn connected_relayers(&self) -> Vec<PeerId> { self.connected_relayers.iter().cloned().collect() }
 }
 
 impl NetworkBehaviour for Gossipsub {

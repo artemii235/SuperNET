@@ -1,17 +1,25 @@
 use crate::request_response::{Codec, Protocol};
+use futures::StreamExt;
 use libp2p::swarm::NetworkBehaviour;
 use libp2p::{multiaddr::Multiaddr,
-             request_response::{ProtocolSupport, RequestResponse, RequestResponseConfig, RequestResponseEvent,
-                                RequestResponseMessage},
-             swarm::{NetworkBehaviourAction, NetworkBehaviourEventProcess},
+             request_response::{handler::RequestProtocol, ProtocolSupport, RequestResponse, RequestResponseConfig,
+                                RequestResponseEvent, RequestResponseMessage},
+             swarm::{NetworkBehaviourAction, NetworkBehaviourEventProcess, PollParameters},
              NetworkBehaviour, PeerId};
 use log::error;
 use rand::{seq::SliceRandom, thread_rng};
 use serde::{de::Deserializer, ser::Serializer, Deserialize, Serialize};
 use std::{collections::{HashMap, VecDeque},
-          iter};
+          iter,
+          task::{Context, Poll},
+          time::Duration};
+use wasm_timer::{Instant, Interval};
 
 type PeersExchangeCodec = Codec<PeersExchangeRequest, PeersExchangeResponse>;
+
+const REQUEST_PEERS_INITIAL_DELAY: u64 = 10;
+const REQUEST_PEERS_INTERVAL: u64 = 60;
+const MAX_PEERS: usize = 100;
 
 #[derive(Debug, Clone, Eq, Hash, PartialEq)]
 pub struct PeerIdSerde(PeerId);
@@ -48,12 +56,15 @@ pub enum PeersExchangeResponse {
 
 /// Behaviour that requests known peers list from other peers at random
 #[derive(NetworkBehaviour)]
+#[behaviour(poll_method = "poll")]
 pub struct PeersExchange {
     request_response: RequestResponse<PeersExchangeCodec>,
     #[behaviour(ignore)]
     known_peers: Vec<PeerId>,
     #[behaviour(ignore)]
-    events: VecDeque<NetworkBehaviourAction<(), ()>>,
+    events: VecDeque<NetworkBehaviourAction<RequestProtocol<PeersExchangeCodec>, ()>>,
+    #[behaviour(ignore)]
+    maintain_peers_interval: Interval,
 }
 
 impl PeersExchange {
@@ -66,6 +77,10 @@ impl PeersExchange {
             request_response,
             known_peers: Vec::new(),
             events: VecDeque::new(),
+            maintain_peers_interval: Interval::new_at(
+                Instant::now() + Duration::from_secs(REQUEST_PEERS_INITIAL_DELAY),
+                Duration::from_secs(REQUEST_PEERS_INTERVAL),
+            ),
         }
     }
 
@@ -82,6 +97,10 @@ impl PeersExchange {
 
     fn forget_peer(&mut self, peer: &PeerId) {
         self.known_peers.retain(|known_peer| known_peer != peer);
+        self.forget_peer_addresses(peer);
+    }
+
+    fn forget_peer_addresses(&mut self, peer: &PeerId) {
         for address in self.request_response.addresses_of_peer(&peer) {
             self.request_response.remove_address(&peer, &address);
         }
@@ -94,6 +113,54 @@ impl PeersExchange {
         for address in addresses {
             self.request_response.add_address(&peer, address);
         }
+    }
+
+    fn maintain_known_peers(&mut self) {
+        if self.known_peers.len() > MAX_PEERS {
+            let mut rng = thread_rng();
+            let to_remove_num = self.known_peers.len() - MAX_PEERS;
+            self.known_peers.shuffle(&mut rng);
+            let removed_peers: Vec<_> = self.known_peers.drain(..to_remove_num).collect();
+            for peer in removed_peers {
+                self.forget_peer_addresses(&peer);
+            }
+        }
+        self.request_known_peers_from_random_peer();
+    }
+
+    fn request_known_peers_from_random_peer(&mut self) {
+        let mut rng = thread_rng();
+        if let Some(from_peer) = self.known_peers.choose(&mut rng) {
+            let request = PeersExchangeRequest::GetKnownPeers { num: 20 };
+            self.request_response.send_request(from_peer, request);
+        }
+    }
+
+    pub fn get_random_peers(&self, num: usize, mut filter: impl FnMut(&PeerId) -> bool) -> Vec<PeerId> {
+        let mut rng = thread_rng();
+        self.known_peers
+            .iter()
+            .filter(|peer| filter(*peer))
+            .collect::<Vec<_>>()
+            .choose_multiple(&mut rng, num)
+            .map(|peer| (*peer).clone())
+            .collect()
+    }
+
+    fn poll(
+        &mut self,
+        cx: &mut Context,
+        _params: &mut impl PollParameters,
+    ) -> Poll<NetworkBehaviourAction<RequestProtocol<PeersExchangeCodec>, ()>> {
+        while let Poll::Ready(Some(())) = self.maintain_peers_interval.poll_next_unpin(cx) {
+            self.maintain_known_peers();
+        }
+
+        if let Some(event) = self.events.pop_front() {
+            return Poll::Ready(event);
+        }
+
+        Poll::Pending
     }
 }
 
