@@ -1701,7 +1701,7 @@ pub async fn lp_ordermatch_loop(ctx: MmArc) {
 
         {
             // remove "timed out" orders from inactive_orders
-            // ones they are inactive for 180 seconds or more
+            // ones they are inactive for 240 seconds or more
             let mut inactive = ordermatch_ctx.inactive_orders.lock().await;
 
             let current = now_ms() / 1000;
