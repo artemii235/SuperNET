@@ -157,7 +157,7 @@ impl NetworkBehaviourEventProcess<RequestResponseEvent<PeerRequest, PeerResponse
         };
 
         match message {
-            RequestResponseMessage::Request { request, channel } => {
+            RequestResponseMessage::Request { request, channel, .. } => {
                 debug!("Received a request from {:?} peer", peer_id);
                 self.process_request(peer_id, request, channel)
             },

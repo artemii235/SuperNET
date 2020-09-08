@@ -168,7 +168,7 @@ impl NetworkBehaviourEventProcess<RequestResponseEvent<PeersExchangeRequest, Pee
     fn inject_event(&mut self, event: RequestResponseEvent<PeersExchangeRequest, PeersExchangeResponse>) {
         match event {
             RequestResponseEvent::Message { message, .. } => match message {
-                RequestResponseMessage::Request { request, channel } => match request {
+                RequestResponseMessage::Request { request, channel, .. } => match request {
                     PeersExchangeRequest::GetKnownPeers { num } => {
                         let response = PeersExchangeResponse::KnownPeers {
                             peers: self.get_random_known_peers(num),
@@ -193,7 +193,7 @@ impl NetworkBehaviourEventProcess<RequestResponseEvent<PeersExchangeRequest, Pee
                 );
                 self.forget_peer(&peer);
             },
-            RequestResponseEvent::InboundFailure { peer, error } => {
+            RequestResponseEvent::InboundFailure { peer, error, .. } => {
                 error!(
                     "Inbound failure {:?} while processing request from peer {}",
                     error, peer
