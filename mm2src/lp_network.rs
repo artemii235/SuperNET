@@ -165,6 +165,7 @@ pub async fn subscribe_to_topic(ctx: &MmArc, topic: String) {
 }
 
 #[cfg(feature = "native")]
+#[allow(dead_code)]
 pub async fn request_any_relay<T: de::DeserializeOwned>(
     ctx: MmArc,
     req: P2PRequest,
@@ -211,7 +212,54 @@ pub async fn request_relays<T: de::DeserializeOwned>(
         response_tx,
     };
     tx.send(cmd).await.unwrap();
-    Ok(try_s!(response_rx.await)
+    let responses = try_s!(response_rx.await);
+    Ok(parse_peers_responses(responses))
+}
+
+#[cfg(feature = "native")]
+pub async fn request_peers<T: de::DeserializeOwned>(
+    ctx: MmArc,
+    req: P2PRequest,
+    peers: Vec<String>,
+) -> Result<Vec<(PeerId, RelayDecodedResponse<T>)>, String> {
+    let key_pair = ctx.secp256k1_key_pair.or(&&|| panic!());
+    let secret = &*key_pair.private().secret;
+    let encoded = try_s!(encode_and_sign(&req, secret));
+
+    let (response_tx, response_rx) = oneshot::channel();
+    let mut tx = P2PContext::fetch_from_mm_arc(&ctx).cmd_tx.clone();
+    let cmd = AdexBehaviourCmd::RequestPeers {
+        req: encoded,
+        peers,
+        response_tx,
+    };
+    tx.send(cmd).await.unwrap();
+    let responses = try_s!(response_rx.await);
+    Ok(parse_peers_responses(responses))
+}
+
+#[cfg(feature = "native")]
+pub async fn request_one_peer<T: de::DeserializeOwned>(
+    ctx: MmArc,
+    req: P2PRequest,
+    peer: String,
+) -> Result<Option<(T, PublicKey)>, String> {
+    let mut responses = try_s!(request_peers::<T>(ctx, req, vec![peer]).await);
+    if responses.len() != 1 {
+        return ERR!("Expected 1 response, found {}", responses.len());
+    }
+    let (_, response) = responses.remove(0);
+    match response {
+        RelayDecodedResponse::Ok((response, pubkey)) => Ok(Some((response, pubkey))),
+        RelayDecodedResponse::None => Ok(None),
+        RelayDecodedResponse::Err(e) => ERR!("{}", e),
+    }
+}
+
+fn parse_peers_responses<T: de::DeserializeOwned>(
+    responses: Vec<(PeerId, AdexResponse)>,
+) -> Vec<(PeerId, RelayDecodedResponse<T>)> {
+    responses
         .into_iter()
         .map(|(peer_id, res)| {
             let res = match res {
@@ -224,7 +272,7 @@ pub async fn request_relays<T: de::DeserializeOwned>(
             };
             (peer_id, res)
         })
-        .collect())
+        .collect()
 }
 
 #[cfg(feature = "native")]
