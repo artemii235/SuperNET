@@ -12,6 +12,7 @@ use lazy_static::lazy_static;
 use libp2p::{core::{ConnectedPoint, Multiaddr, Transport},
              identity,
              multiaddr::Protocol,
+             noise,
              request_response::ResponseChannel,
              swarm::{NetworkBehaviourEventProcess, Swarm},
              NetworkBehaviour, PeerId};
@@ -434,9 +435,13 @@ pub fn start_gossipsub(
         transport.or_transport(libp2p::websocket::WsConfig::new(trans_clone))
     };
 
+    let noise_keys = noise::Keypair::<noise::X25519Spec>::new()
+        .into_authentic(&local_key)
+        .expect("Signing libp2p-noise static DH keypair failed.");
+
     let transport = transport
         .upgrade(libp2p::core::upgrade::Version::V1)
-        .authenticate(libp2p::secio::SecioConfig::new(local_key))
+        .authenticate(noise::NoiseConfig::xx(noise_keys).into_authenticated())
         .multiplex(libp2p::mplex::MplexConfig::new())
         .map(|(peer, muxer), _| (peer, libp2p::core::muxing::StreamMuxerBox::new(muxer)))
         .timeout(std::time::Duration::from_secs(20));

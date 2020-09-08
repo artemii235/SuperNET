@@ -139,6 +139,7 @@ impl Encoder for GossipsubCodec {
             graft: Vec::new(),
             prune: Vec::new(),
             iamrelay: None,
+            included_to_relayers_mesh: None,
         };
 
         let empty_control_msg = item.control_msgs.is_empty();
@@ -176,6 +177,9 @@ impl Encoder for GossipsubCodec {
                 },
                 GossipsubControlAction::IAmRelay(is_relay) => {
                     control.iamrelay = Some(is_relay);
+                },
+                GossipsubControlAction::IncludedToRelayersMesh(is_included) => {
+                    control.included_to_relayers_mesh = Some(is_included);
                 },
             }
         }
@@ -273,6 +277,12 @@ impl Decoder for GossipsubCodec {
             if let Some(is_relay) = rpc_control.iamrelay {
                 control_msgs.extend(iter::once(GossipsubControlAction::IAmRelay(is_relay)));
             }
+
+            if let Some(is_included_to_relayers_mesh) = rpc_control.included_to_relayers_mesh {
+                control_msgs.extend(iter::once(GossipsubControlAction::IncludedToRelayersMesh(
+                    is_included_to_relayers_mesh,
+                )));
+            }
         }
 
         Ok(Some(GossipsubRpc {
@@ -368,4 +378,6 @@ pub enum GossipsubControlAction {
         topic_hash: TopicHash,
     },
     IAmRelay(bool),
+    /// Whether the node included or excluded from other node relayers mesh
+    IncludedToRelayersMesh(bool),
 }

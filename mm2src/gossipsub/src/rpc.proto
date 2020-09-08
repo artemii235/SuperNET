@@ -27,6 +27,7 @@ message ControlMessage {
 	repeated ControlGraft graft = 3;
 	repeated ControlPrune prune = 4;
 	optional bool iamrelay = 5;
+	optional bool included_to_relayers_mesh = 6;
 }
 
 message ControlIHave {
@@ -42,9 +43,13 @@ message ControlGraft {
 	optional string topic_id = 1;
 }
 
+message ControlGraftRelay {}
+
 message ControlPrune {
 	optional string topic_id = 1;
 }
+
+message ControlPruneRelay {}
 
 // topicID = hash(topicDescriptor); (not the topic.name)
 message TopicDescriptor {
