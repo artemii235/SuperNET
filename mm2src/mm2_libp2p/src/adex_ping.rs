@@ -32,6 +32,7 @@ impl NetworkBehaviourEventProcess<PingEvent> for AdexPing {
     }
 }
 
+#[allow(clippy::new_without_default)]
 impl AdexPing {
     pub fn new() -> Self {
         AdexPing {

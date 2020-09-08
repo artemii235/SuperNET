@@ -67,6 +67,7 @@ pub struct PeersExchange {
     maintain_peers_interval: Interval,
 }
 
+#[allow(clippy::new_without_default)]
 impl PeersExchange {
     pub fn new() -> Self {
         let codec = Codec::default();
