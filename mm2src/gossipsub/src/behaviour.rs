@@ -1025,7 +1025,7 @@ impl Gossipsub {
         }
     }
 
-    pub fn get_mesh_relays(&self) -> Vec<PeerId> { self.relayers_mesh.iter().cloned().collect() }
+    pub fn get_relayers_mesh(&self) -> Vec<PeerId> { self.relayers_mesh.iter().cloned().collect() }
 
     pub fn get_mesh_peers(&self, topic: &TopicHash) -> Vec<PeerId> {
         self.mesh.get(&topic).cloned().unwrap_or_else(|| vec![])
@@ -1045,6 +1045,8 @@ impl Gossipsub {
 
     pub fn get_all_peer_topics(&self) -> &HashMap<PeerId, Vec<TopicHash>> { &self.peer_topics }
 
+    pub fn get_config(&self) -> &GossipsubConfig { &self.config }
+
     /// Adds peers to relayers mesh and notifies them they are added
     fn add_peers_to_relayers_mesh(&mut self, peers: Vec<PeerId>) {
         for peer in &peers {
@@ -1061,7 +1063,7 @@ impl Gossipsub {
         self.relayers_mesh.extend(peers);
     }
 
-    /// Cleans up relayers mesh so it contains mesh_n peers
+    /// Cleans up relayers mesh so it remains mesh_n peers
     fn clean_up_relayers_mesh(&mut self) {
         let mesh_n = self.config.mesh_n;
         let mut removed = Vec::with_capacity(self.relayers_mesh.len() - mesh_n);

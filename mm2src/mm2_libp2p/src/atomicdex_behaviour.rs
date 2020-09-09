@@ -9,12 +9,13 @@ use futures::{channel::{mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
               future::{join_all, poll_fn},
               Future, SinkExt, StreamExt};
 use lazy_static::lazy_static;
+use libp2p::swarm::{IntoProtocolsHandler, NetworkBehaviour, ProtocolsHandler};
 use libp2p::{core::{ConnectedPoint, Multiaddr, Transport},
              identity,
              multiaddr::Protocol,
              noise,
              request_response::ResponseChannel,
-             swarm::{NetworkBehaviourEventProcess, Swarm},
+             swarm::{ExpandedSwarm, NetworkBehaviourEventProcess, Swarm},
              NetworkBehaviour, PeerId};
 use log::{debug, error};
 use rand::{seq::SliceRandom, thread_rng};
@@ -251,7 +252,7 @@ impl AtomicDexBehaviour {
                 self.gossipsub.publish(&Topic::new(topic), msg);
             },
             AdexBehaviourCmd::RequestAnyRelay { req, response_tx } => {
-                let relays = self.gossipsub.get_mesh_relays();
+                let relays = self.gossipsub.get_relayers_mesh();
                 // spawn the `request_any_peer` future
                 let future = request_any_peer(relays, req, self.request_response.sender(), response_tx);
                 self.spawn(future);
@@ -275,7 +276,7 @@ impl AtomicDexBehaviour {
                 self.spawn(future);
             },
             AdexBehaviourCmd::RequestRelays { req, response_tx } => {
-                let relays = self.gossipsub.get_mesh_relays();
+                let relays = self.gossipsub.get_relayers_mesh();
                 // spawn the `request_peers` future
                 let future = request_peers(relays, req, self.request_response.sender(), response_tx);
                 self.spawn(future);
@@ -410,6 +411,71 @@ impl NetworkBehaviourEventProcess<RequestResponseBehaviourEvent> for AtomicDexBe
     }
 }
 
+/// Custom types mapping the complex associated types of AtomicDexBehaviour to the ExpandedSwarm
+type AdexSwarmHandler = <<AtomicDexBehaviour as NetworkBehaviour>::ProtocolsHandler as IntoProtocolsHandler>::Handler;
+type AtomicDexSwarm = ExpandedSwarm<
+    AtomicDexBehaviour,
+    <AdexSwarmHandler as ProtocolsHandler>::InEvent,
+    <AdexSwarmHandler as ProtocolsHandler>::OutEvent,
+    <AtomicDexBehaviour as NetworkBehaviour>::ProtocolsHandler,
+>;
+
+fn maintain_connection_to_relayers(swarm: &mut AtomicDexSwarm) {
+    let connected_relayers = swarm.gossipsub.connected_relayers();
+    let mesh_n_low = swarm.gossipsub.get_config().mesh_n_low;
+    let mesh_n = swarm.gossipsub.get_config().mesh_n;
+    let mesh_n_high = swarm.gossipsub.get_config().mesh_n_high;
+    if connected_relayers.len() < mesh_n_low {
+        let to_connect_num = mesh_n - connected_relayers.len();
+        let to_connect = swarm
+            .peers_exchange
+            .get_random_peers(to_connect_num, |peer| !connected_relayers.contains(peer));
+        for peer in to_connect {
+            if let Err(e) = libp2p::Swarm::dial(swarm, &peer) {
+                error!("Peer {} dial error {}", peer, e);
+            }
+        }
+    }
+
+    if connected_relayers.len() > mesh_n_high {
+        let mut rng = thread_rng();
+        let to_disconnect_num = connected_relayers.len() - mesh_n;
+        let relayers_mesh = swarm.gossipsub.get_relayers_mesh();
+        let not_in_mesh: Vec<_> = connected_relayers
+            .into_iter()
+            .filter(|peer| !relayers_mesh.contains(peer))
+            .collect();
+        for peer in not_in_mesh.choose_multiple(&mut rng, to_disconnect_num) {
+            if Swarm::disconnect_peer_id(swarm, peer.clone()).is_err() {
+                error!("Peer {} disconnect error", peer);
+            }
+        }
+    }
+}
+
+fn announce_my_addresses(swarm: &mut AtomicDexSwarm) {
+    let global_listeners: Vec<_> = Swarm::listeners(&swarm)
+        .filter(|listener| {
+            for protocol in listener.iter() {
+                if let Protocol::Ip4(ip) = &protocol {
+                    if ip.is_global() {
+                        return true;
+                    }
+                }
+
+                if let Protocol::Ip6(ip) = &protocol {
+                    if ip.is_global() {
+                        return true;
+                    }
+                }
+            }
+            false
+        })
+        .cloned()
+        .collect();
+    swarm.announce_listeners(global_listeners);
+}
+
 /// Creates and spawns new AdexBehaviour Swarm returning:
 /// 1. tx to send control commands
 /// 2. rx emitting gossip events to processing side
@@ -532,59 +598,13 @@ pub fn start_gossipsub(
 
         if swarm.gossipsub.is_relay() {
             while let Poll::Ready(Some(())) = announce_interval.poll_next_unpin(cx) {
-                let global_listeners: Vec<_> = Swarm::listeners(&swarm)
-                    .filter(|listener| {
-                        for protocol in listener.iter() {
-                            if let Protocol::Ip4(ip) = &protocol {
-                                if ip.is_global() {
-                                    return true;
-                                }
-                            }
-
-                            if let Protocol::Ip6(ip) = &protocol {
-                                if ip.is_global() {
-                                    return true;
-                                }
-                            }
-                        }
-                        false
-                    })
-                    .cloned()
-                    .collect();
-                swarm.announce_listeners(global_listeners);
+                announce_my_addresses(&mut swarm);
             }
         }
 
         while let Poll::Ready(Some(())) = check_connected_relays_interval.poll_next_unpin(cx) {
-            let connected_relayers = swarm.gossipsub.connected_relayers();
-            if connected_relayers.len() < 6 {
-                let to_connect_num = 6 - connected_relayers.len();
-                let to_connect = swarm
-                    .peers_exchange
-                    .get_random_peers(to_connect_num, |peer| !connected_relayers.contains(peer));
-                for peer in to_connect {
-                    if let Err(e) = libp2p::Swarm::dial(&mut swarm, &peer) {
-                        error!("Peer {} dial error {}", peer, e);
-                    }
-                }
-            }
-
-            if connected_relayers.len() > 12 {
-                let mut rng = thread_rng();
-                let to_disconnect_num = connected_relayers.len() - 6;
-                let in_mesh = swarm.gossipsub.get_mesh_relays();
-                let not_in_mesh: Vec<_> = connected_relayers
-                    .into_iter()
-                    .filter(|peer| !in_mesh.contains(peer))
-                    .collect();
-                for peer in not_in_mesh.choose_multiple(&mut rng, to_disconnect_num) {
-                    if Swarm::disconnect_peer_id(&mut swarm, peer.clone()).is_err() {
-                        error!("Peer {} disconnect error", peer);
-                    }
-                }
-            }
+            maintain_connection_to_relayers(&mut swarm);
         }
-
         Poll::Pending
     });
 
