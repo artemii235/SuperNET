@@ -17,6 +17,7 @@ use libp2p::{core::{ConnectedPoint, Multiaddr, Transport},
              swarm::{NetworkBehaviourEventProcess, Swarm},
              NetworkBehaviour, PeerId};
 use log::{debug, error};
+use rand::{seq::SliceRandom, thread_rng};
 use std::{collections::hash_map::{DefaultHasher, HashMap},
           hash::{Hash, Hasher},
           net::IpAddr,
@@ -564,6 +565,21 @@ pub fn start_gossipsub(
                 for peer in to_connect {
                     if let Err(e) = libp2p::Swarm::dial(&mut swarm, &peer) {
                         error!("Peer {} dial error {}", peer, e);
+                    }
+                }
+            }
+
+            if connected_relayers.len() > 12 {
+                let mut rng = thread_rng();
+                let to_disconnect_num = connected_relayers.len() - 6;
+                let in_mesh = swarm.gossipsub.get_mesh_relays();
+                let not_in_mesh: Vec<_> = connected_relayers
+                    .into_iter()
+                    .filter(|peer| !in_mesh.contains(peer))
+                    .collect();
+                for peer in not_in_mesh.choose_multiple(&mut rng, to_disconnect_num) {
+                    if Swarm::disconnect_peer_id(&mut swarm, peer.clone()).is_err() {
+                        error!("Peer {} disconnect error", peer);
                     }
                 }
             }

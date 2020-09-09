@@ -1219,6 +1219,7 @@ impl NetworkBehaviour for Gossipsub {
 
         self.relayers_mesh.remove(id);
         self.connected_relayers.remove(id);
+        self.included_to_relayers_mesh.remove(id);
         // remove peer from peer_topics
         let was_in = self.peer_topics.remove(id);
         debug_assert!(was_in.is_some());

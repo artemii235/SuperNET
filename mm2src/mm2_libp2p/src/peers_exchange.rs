@@ -1,9 +1,9 @@
-use crate::request_response::{Codec, Protocol};
+use crate::request_response::Codec;
 use futures::StreamExt;
 use libp2p::swarm::NetworkBehaviour;
 use libp2p::{multiaddr::Multiaddr,
-             request_response::{handler::RequestProtocol, ProtocolSupport, RequestResponse, RequestResponseConfig,
-                                RequestResponseEvent, RequestResponseMessage},
+             request_response::{handler::RequestProtocol, ProtocolName, ProtocolSupport, RequestResponse,
+                                RequestResponseConfig, RequestResponseEvent, RequestResponseMessage},
              swarm::{NetworkBehaviourAction, NetworkBehaviourEventProcess, PollParameters},
              NetworkBehaviour, PeerId};
 use log::error;
@@ -15,7 +15,20 @@ use std::{collections::{HashMap, VecDeque},
           time::Duration};
 use wasm_timer::{Instant, Interval};
 
-type PeersExchangeCodec = Codec<PeersExchangeRequest, PeersExchangeResponse>;
+#[derive(Debug, Clone)]
+pub enum PeersExchangeProtocol {
+    Version1,
+}
+
+impl ProtocolName for PeersExchangeProtocol {
+    fn protocol_name(&self) -> &[u8] {
+        match self {
+            PeersExchangeProtocol::Version1 => b"/peers-exchange/1",
+        }
+    }
+}
+
+type PeersExchangeCodec = Codec<PeersExchangeProtocol, PeersExchangeRequest, PeersExchangeResponse>;
 
 const REQUEST_PEERS_INITIAL_DELAY: u64 = 10;
 const REQUEST_PEERS_INTERVAL: u64 = 60;
@@ -71,7 +84,7 @@ pub struct PeersExchange {
 impl PeersExchange {
     pub fn new() -> Self {
         let codec = Codec::default();
-        let protocol = iter::once((Protocol::Version1, ProtocolSupport::Full));
+        let protocol = iter::once((PeersExchangeProtocol::Version1, ProtocolSupport::Full));
         let config = RequestResponseConfig::default();
         let request_response = RequestResponse::new(codec, protocol, config);
         PeersExchange {
@@ -96,6 +109,7 @@ impl PeersExchange {
         result
     }
 
+    #[allow(unused)]
     fn forget_peer(&mut self, peer: &PeerId) {
         self.known_peers.retain(|known_peer| known_peer != peer);
         self.forget_peer_addresses(peer);
@@ -111,8 +125,11 @@ impl PeersExchange {
         if !self.known_peers.contains(&peer) && !addresses.is_empty() {
             self.known_peers.push(peer.clone());
         }
+        let already_known = self.request_response.addresses_of_peer(peer);
         for address in addresses {
-            self.request_response.add_address(&peer, address);
+            if !already_known.contains(&address) {
+                self.request_response.add_address(&peer, address);
+            }
         }
     }
 
@@ -130,9 +147,10 @@ impl PeersExchange {
     }
 
     fn request_known_peers_from_random_peer(&mut self) {
+        const DEFAULT_PEERS_NUM: usize = 20;
         let mut rng = thread_rng();
         if let Some(from_peer) = self.known_peers.choose(&mut rng) {
-            let request = PeersExchangeRequest::GetKnownPeers { num: 20 };
+            let request = PeersExchangeRequest::GetKnownPeers { num: DEFAULT_PEERS_NUM };
             self.request_response.send_request(from_peer, request);
         }
     }
@@ -192,14 +210,12 @@ impl NetworkBehaviourEventProcess<RequestResponseEvent<PeersExchangeRequest, Pee
                     "Outbound failure {:?} while requesting {:?} to peer {}",
                     error, request_id, peer
                 );
-                self.forget_peer(&peer);
             },
             RequestResponseEvent::InboundFailure { peer, error, .. } => {
                 error!(
                     "Inbound failure {:?} while processing request from peer {}",
                     error, peer
                 );
-                self.forget_peer(&peer);
             },
         }
     }

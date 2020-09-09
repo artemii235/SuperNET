@@ -22,6 +22,7 @@ const MAX_BUFFER_SIZE: usize = 1024 * 1024 - 100;
 
 pub type RequestResponseReceiver = mpsc::UnboundedReceiver<(PeerId, PeerRequest, oneshot::Sender<PeerResponse>)>;
 pub type RequestResponseSender = mpsc::UnboundedSender<(PeerId, PeerRequest, oneshot::Sender<PeerResponse>)>;
+type ReqResCodec = Codec<Protocol, PeerRequest, PeerResponse>;
 
 /// Build a request-response network behaviour.
 pub fn build_request_response_behaviour() -> RequestResponseBehaviour {
@@ -63,7 +64,7 @@ pub struct RequestResponseBehaviour {
     #[behaviour(ignore)]
     events: VecDeque<RequestResponseBehaviourEvent>,
     /// The inner RequestResponse network behaviour.
-    inner: RequestResponse<Codec<PeerRequest, PeerResponse>>,
+    inner: RequestResponse<Codec<Protocol, PeerRequest, PeerResponse>>,
 }
 
 impl RequestResponseBehaviour {
@@ -88,8 +89,7 @@ impl RequestResponseBehaviour {
         &mut self,
         cx: &mut Context,
         _params: &mut impl PollParameters,
-    ) -> Poll<NetworkBehaviourAction<RequestProtocol<Codec<PeerRequest, PeerResponse>>, RequestResponseBehaviourEvent>>
-    {
+    ) -> Poll<NetworkBehaviourAction<RequestProtocol<ReqResCodec>, RequestResponseBehaviourEvent>> {
         // poll the `rx`
         match self.rx.poll_next_unpin(cx) {
             // received a request, forward it through the network and put to the `pending_requests`
@@ -173,11 +173,11 @@ impl NetworkBehaviourEventProcess<RequestResponseEvent<PeerRequest, PeerResponse
 }
 
 #[derive(Clone)]
-pub struct Codec<Req, Res> {
-    phantom: std::marker::PhantomData<(Req, Res)>,
+pub struct Codec<Proto, Req, Res> {
+    phantom: std::marker::PhantomData<(Proto, Req, Res)>,
 }
 
-impl<Req, Res> Default for Codec<Req, Res> {
+impl<Proto, Req, Res> Default for Codec<Proto, Req, Res> {
     fn default() -> Self {
         Codec {
             phantom: Default::default(),
@@ -220,11 +220,13 @@ impl ProtocolName for Protocol {
 }
 
 #[async_trait]
-impl<Req: DeserializeOwned + Serialize + Send + Sync, Res: DeserializeOwned + Serialize + Send + Sync>
-    RequestResponseCodec for Codec<Req, Res>
+impl<
+        Proto: Clone + ProtocolName + Send + Sync,
+        Req: DeserializeOwned + Serialize + Send + Sync,
+        Res: DeserializeOwned + Serialize + Send + Sync,
+    > RequestResponseCodec for Codec<Proto, Req, Res>
 {
-    // TODO make Protocol generic too
-    type Protocol = Protocol;
+    type Protocol = Proto;
     type Request = Req;
     type Response = Res;
 

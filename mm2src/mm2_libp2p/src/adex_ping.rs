@@ -9,7 +9,7 @@ use void::Void;
 
 /// Wrapper around libp2p Ping behaviour that forcefully disconnects a peer using NetworkBehaviourAction::DisconnectPeer
 /// event.
-/// Libp2p has unclear ConnectionHandlers keep alive logic so in some cases even if Ping handlers emits Close event the
+/// Libp2p has unclear ConnectionHandlers keep alive logic so in some cases even if Ping handler emits Close event the
 /// connection is kept active which is undesirable.
 #[derive(NetworkBehaviour)]
 #[behaviour(out_event = "Void")]
