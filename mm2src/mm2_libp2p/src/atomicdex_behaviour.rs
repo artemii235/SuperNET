@@ -488,7 +488,6 @@ pub fn start_gossipsub(
     my_privkey: &mut [u8],
     i_am_relay: bool,
 ) -> (UnboundedSender<AdexBehaviourCmd>, AdexEventRx, PeerId) {
-    // Create a random PeerId
     let privkey = identity::secp256k1::SecretKey::from_bytes(my_privkey).unwrap();
     let local_key = identity::Keypair::Secp256k1(privkey.into());
     let local_peer_id = PeerId::from(local_key.public());
