@@ -39,6 +39,7 @@ struct SwarmRuntime(Runtime);
 pub const PEERS_TOPIC: &str = "PEERS";
 const CONNECTED_RELAYS_CHECK_INTERVAL: Duration = Duration::from_secs(30);
 const ANNOUNCE_INTERVAL: Duration = Duration::from_secs(600);
+const ANNOUNCE_INITIAL_DELAY: Duration = Duration::from_secs(60);
 
 impl libp2p::core::Executor for &SwarmRuntime {
     fn exec(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>) { self.0.spawn(future); }
@@ -582,7 +583,7 @@ pub fn start_gossipsub(
         Instant::now() + CONNECTED_RELAYS_CHECK_INTERVAL,
         CONNECTED_RELAYS_CHECK_INTERVAL,
     );
-    let mut announce_interval = Interval::new_at(Instant::now() + ANNOUNCE_INTERVAL, ANNOUNCE_INTERVAL);
+    let mut announce_interval = Interval::new_at(Instant::now() + ANNOUNCE_INITIAL_DELAY, ANNOUNCE_INTERVAL);
     let polling_fut = poll_fn(move |cx: &mut Context| {
         loop {
             match swarm.cmd_rx.poll_next_unpin(cx) {
