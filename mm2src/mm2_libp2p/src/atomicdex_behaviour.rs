@@ -535,10 +535,15 @@ pub fn start_gossipsub(
             MessageId(s.finish().to_string())
         };
 
+        let (mesh_n_low, mesh_n, mesh_n_high) = if i_am_relay { (4, 6, 12) } else { (2, 3, 4) };
+
         // set custom gossipsub
         let gossipsub_config = GossipsubConfigBuilder::new()
             .message_id_fn(message_id_fn)
             .i_am_relay(i_am_relay)
+            .mesh_n_low(mesh_n_low)
+            .mesh_n(mesh_n)
+            .mesh_n(mesh_n_high)
             .manual_propagation()
             .max_transmit_size(1024 * 1024 - 100)
             .build();
