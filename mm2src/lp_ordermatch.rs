@@ -87,36 +87,51 @@ impl From<(new_protocol::MakerOrderCreated, Vec<u8>, String, String)> for PriceP
 }
 
 async fn process_order_keep_alive(
-    ctx: &MmArc,
+    ctx: MmArc,
     propagated_from_peer: String,
-    from_pubkey: &str,
-    keep_alive: &new_protocol::MakerOrderKeepAlive,
+    from_pubkey: String,
+    keep_alive: new_protocol::MakerOrderKeepAlive,
 ) -> bool {
     let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
-    let mut orderbook = ordermatch_ctx.orderbook.lock().await;
     let uuid = keep_alive.uuid.into();
-    if let Some(order) = orderbook.find_order_by_uuid_and_pubkey(&uuid, from_pubkey) {
+    if let Some(order) = ordermatch_ctx
+        .orderbook
+        .lock()
+        .await
+        .find_order_by_uuid_and_pubkey(&uuid, &from_pubkey)
+    {
         order.timestamp = keep_alive.timestamp;
         return true;
     }
 
     if let Some(mut order) = ordermatch_ctx.inactive_orders.lock().await.remove(&uuid) {
         order.timestamp = keep_alive.timestamp;
-        orderbook.insert_or_update_order(uuid, order);
+        ordermatch_ctx
+            .orderbook
+            .lock()
+            .await
+            .insert_or_update_order(uuid, order);
         return true;
     }
 
     log!("Couldn't find an order " [uuid] ", try request it from peers");
-    match request_order(ctx.clone(), uuid, propagated_from_peer, from_pubkey).await {
-        Ok(Some(order)) => {
-            orderbook.insert_or_update_order(uuid, order);
-            return true;
-        },
-        Ok(None) => log!("None of peers responded to the GetOrder request"),
-        Err(e) => log!("Error on GetOrder request: "(e)),
-    }
-
-    log!("Skip the order "[uuid]);
+    // TODO find a way to try to propagate a keep alive message to another peers in case we receive the requested order fast enough
+    // the problem of awaiting the request_order right in this fn is we're running on global messages processing loop
+    // that can be stuck entirely during single order request if there's any problem with requesting specific peer
+    spawn(async move {
+        match request_order(ctx, uuid, propagated_from_peer, &from_pubkey).await {
+            Ok(Some(order)) => {
+                ordermatch_ctx
+                    .orderbook
+                    .lock()
+                    .await
+                    .insert_or_update_order(uuid, order);
+            },
+            Ok(None) => log!("None of peers responded to the GetOrder request"),
+            Err(e) => log!("Error on GetOrder request: "(e)),
+        };
+        log!("Skip the order "[uuid]);
+    });
     false
 }
 
@@ -297,7 +312,7 @@ pub async fn process_msg(ctx: MmArc, _initial_topic: &str, from_peer: String, ms
                 true
             },
             new_protocol::OrdermatchMessage::MakerOrderKeepAlive(keep_alive) => {
-                process_order_keep_alive(&ctx, from_peer, &pubkey.to_hex(), &keep_alive).await
+                process_order_keep_alive(ctx, from_peer, pubkey.to_hex(), keep_alive).await
             },
             new_protocol::OrdermatchMessage::TakerRequest(taker_request) => {
                 let msg = TakerRequest::from_new_proto_and_pubkey(taker_request, pubkey.unprefixed().into());

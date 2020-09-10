@@ -1696,10 +1696,10 @@ fn test_process_order_keep_alive_requested_from_peer() {
 
     // process_order_keep_alive() should return true because an order should be requested from a peer.
     assert!(block_on(process_order_keep_alive(
-        &ctx,
+        ctx,
         peer.clone(),
-        &pubkey,
-        &keep_alive
+        pubkey.clone(),
+        keep_alive
     )));
 
     let mut orderbook = block_on(ordermatch_ctx.orderbook.lock());
@@ -1707,7 +1707,7 @@ fn test_process_order_keep_alive_requested_from_peer() {
     let actual = orderbook.find_order_by_uuid_and_pubkey(&uuid, &pubkey).unwrap();
     let expected: PricePingRequest = (order, initial_order_message, pubkey, peer).into();
 
-    // the exepcted.timestamp may be greater than actual.timestamp because of two now_ms() calls
+    // the expected.timestamp may be greater than actual.timestamp because of two now_ms() calls
     actual.timestamp = expected.timestamp;
     assert_eq!(actual, &expected);
 }
