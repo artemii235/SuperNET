@@ -421,7 +421,7 @@ type AtomicDexSwarm = ExpandedSwarm<
     <AtomicDexBehaviour as NetworkBehaviour>::ProtocolsHandler,
 >;
 
-fn maintain_connection_to_relayers(swarm: &mut AtomicDexSwarm) {
+fn maintain_connection_to_relayers(swarm: &mut AtomicDexSwarm, bootstrap_addresses: &[Multiaddr]) {
     let connected_relayers = swarm.gossipsub.connected_relayers();
     let mesh_n_low = swarm.gossipsub.get_config().mesh_n_low;
     let mesh_n = swarm.gossipsub.get_config().mesh_n;
@@ -431,9 +431,17 @@ fn maintain_connection_to_relayers(swarm: &mut AtomicDexSwarm) {
         let to_connect = swarm
             .peers_exchange
             .get_random_peers(to_connect_num, |peer| !connected_relayers.contains(peer));
-        for peer in to_connect {
-            if let Err(e) = libp2p::Swarm::dial(swarm, &peer) {
-                error!("Peer {} dial error {}", peer, e);
+        if to_connect.is_empty() {
+            for addr in bootstrap_addresses {
+                if let Err(e) = libp2p::Swarm::dial_addr(swarm, addr.clone()) {
+                    error!("Addr {} dial error {}", addr, e);
+                }
+            }
+        } else {
+            for peer in to_connect {
+                if let Err(e) = libp2p::Swarm::dial(swarm, &peer) {
+                    error!("Peer {} dial error {}", peer, e);
+                }
             }
         }
     }
@@ -516,7 +524,7 @@ pub fn start_gossipsub(
     let (cmd_tx, cmd_rx) = unbounded();
     let (event_tx, event_rx) = unbounded();
 
-    let relayers: Vec<Multiaddr> = to_dial
+    let bootstrap: Vec<Multiaddr> = to_dial
         .unwrap_or_default()
         .into_iter()
         .map(|addr| parse_relay_address(addr, port))
@@ -572,7 +580,7 @@ pub fn start_gossipsub(
     swarm.gossipsub.subscribe(Topic::new(PEERS_TOPIC.to_owned()));
     let addr = format!("/ip4/{}/tcp/{}", ip, port);
     libp2p::Swarm::listen_on(&mut swarm, addr.parse().unwrap()).unwrap();
-    for relayer in &relayers {
+    for relayer in &bootstrap {
         match libp2p::Swarm::dial_addr(&mut swarm, relayer.clone()) {
             Ok(_) => println!("Dialed {}", relayer),
             Err(e) => println!("Dial {:?} failed: {:?}", relayer, e),
@@ -608,7 +616,7 @@ pub fn start_gossipsub(
         }
 
         while let Poll::Ready(Some(())) = check_connected_relays_interval.poll_next_unpin(cx) {
-            maintain_connection_to_relayers(&mut swarm);
+            maintain_connection_to_relayers(&mut swarm, &bootstrap);
         }
         Poll::Pending
     });
