@@ -88,7 +88,8 @@ fn test_update_coin_config_success() {
             "fname": "ARPA Chain",
             // ARPA coin contains the protocol already. This coin should be skipped.
             "protocol": {
-                "ERC20": {
+                "type":"ERC20",
+                "protocol_data": {
                     "platform": "ETH",
                     "contract_address": "0xBA50933C268F567BDC86E1aC131BE072C6B0b71a"
                 }
@@ -116,7 +117,9 @@ fn test_update_coin_config_success() {
             "txversion": 4,
             "overwintered": 1,
             "mm2": 1,
-            "protocol": "UTXO",
+            "protocol": {
+                "type": "UTXO"
+            },
         },
         {
             "coin": "MORTY",
@@ -126,7 +129,9 @@ fn test_update_coin_config_success() {
             "txversion": 4,
             "overwintered": 1,
             "mm2": 1,
-            "protocol": "UTXO",
+            "protocol": {
+                "type": "UTXO"
+            },
         },
         {
             "coin": "ETH",
@@ -135,14 +140,17 @@ fn test_update_coin_config_success() {
             "rpcport": 80,
             "mm2": 1,
             "required_confirmations": 3,
-            "protocol": "ETH",
+            "protocol": {
+                "type": "ETH"
+            },
         },
         {
             "coin": "ARPA",
             "name": "arpa-chain",
             "fname": "ARPA Chain",
             "protocol": {
-                "ERC20": {
+                "type": "ERC20",
+                "protocol_data": {
                     "platform": "ETH",
                     "contract_address": "0xBA50933C268F567BDC86E1aC131BE072C6B0b71a"
                 }
@@ -158,7 +166,8 @@ fn test_update_coin_config_success() {
             "rpcport": 80,
             "mm2": 1,
             "protocol": {
-                "ERC20": {
+                "type": "ERC20",
+                "protocol_data": {
                     "platform": "ETH",
                     "contract_address": "0x996a8ae0304680f6a69b8a9d7c6e37d65ab5ab56"
                 }

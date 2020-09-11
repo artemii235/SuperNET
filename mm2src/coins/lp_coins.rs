@@ -526,6 +526,7 @@ impl CoinsContext {
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(tag = "type", content = "protocol_data")]
 pub enum CoinProtocol {
     UTXO,
     QRC20 { platform: String, contract_address: String },
