@@ -115,23 +115,20 @@ async fn process_order_keep_alive(
     }
 
     log!("Couldn't find an order " [uuid] ", try request it from peers");
-    // TODO find a way to try to propagate a keep alive message to another peers in case we receive the requested order fast enough
-    // the problem of awaiting the request_order right in this fn is we're running on global messages processing loop
-    // that can be stuck entirely during single order request if there's any problem with requesting specific peer
-    spawn(async move {
-        match request_order(ctx, uuid, propagated_from_peer, &from_pubkey).await {
-            Ok(Some(order)) => {
-                ordermatch_ctx
-                    .orderbook
-                    .lock()
-                    .await
-                    .insert_or_update_order(uuid, order);
-            },
-            Ok(None) => log!("None of peers responded to the GetOrder request"),
-            Err(e) => log!("Error on GetOrder request: "(e)),
-        };
-        log!("Skip the order "[uuid]);
-    });
+    match request_order(ctx, uuid, propagated_from_peer, &from_pubkey).await {
+        Ok(Some(order)) => {
+            ordermatch_ctx
+                .orderbook
+                .lock()
+                .await
+                .insert_or_update_order(uuid, order);
+            return true;
+        },
+        Ok(None) => log!("None of peers responded to the GetOrder request"),
+        Err(e) => log!("Error on GetOrder request: "(e)),
+    };
+    log!("Skip the order "[uuid]);
+
     false
 }
 

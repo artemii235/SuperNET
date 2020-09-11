@@ -466,17 +466,11 @@ fn announce_my_addresses(swarm: &mut AtomicDexSwarm) {
     let global_listeners: Vec<_> = Swarm::listeners(&swarm)
         .filter(|listener| {
             for protocol in listener.iter() {
-                if let Protocol::Ip4(ip) = &protocol {
-                    if ip.is_global() {
-                        return true;
-                    }
-                }
-
-                if let Protocol::Ip6(ip) = &protocol {
-                    if ip.is_global() {
-                        return true;
-                    }
-                }
+                match protocol {
+                    Protocol::Ip4(ip) => return ip.is_global(),
+                    Protocol::Ip6(ip) => return ip.is_global(),
+                    _ => (),
+                };
             }
             false
         })
@@ -551,7 +545,7 @@ pub fn start_gossipsub(
             .i_am_relay(i_am_relay)
             .mesh_n_low(mesh_n_low)
             .mesh_n(mesh_n)
-            .mesh_n(mesh_n_high)
+            .mesh_n_high(mesh_n_high)
             .manual_propagation()
             .max_transmit_size(1024 * 1024 - 100)
             .build();
