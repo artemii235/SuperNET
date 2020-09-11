@@ -27,6 +27,7 @@ use common::{block_on, double_panic_crash, safe_slurp, MM_DATETIME, MM_VERSION};
 
 use gstuff::slurp;
 
+use serde::ser::Serialize;
 use serde_json::{self as json, Value as Json};
 
 use std::env;
