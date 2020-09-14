@@ -664,6 +664,19 @@ fn fetch_boost(_target: &Target) -> PathBuf {
         }
         assert!(b2.exists());
     }
+
+    // https://github.com/KomodoPlatform/atomicDEX-API/issues/718
+    epintln!("Modify darwin.jam to fix compilation on latest MacOS");
+    let darwin_jam = boost.join("tools/build/src/tools/darwin.jam");
+    let mut darwin_jam_content = std::fs::read_to_string(&darwin_jam).unwrap();
+    let to_replace = "flags darwin.compile.c++ OPTIONS $(condition) : -fcoalesce-templates ;";
+    darwin_jam_content = darwin_jam_content.replace(to_replace, "");
+
+    let darwin_jam_tmp = darwin_jam.with_extension(".tmp");
+    std::fs::write(&darwin_jam_tmp, &darwin_jam_content).unwrap();
+    std::fs::remove_file(&darwin_jam).unwrap();
+    std::fs::rename(darwin_jam_tmp, darwin_jam).unwrap();
+
     boost
 }
 
