@@ -2788,7 +2788,7 @@ fn test_withdraw_cashaddresses() {
         "method": "withdraw",
         "coin": "BCH",
         "to": "bchtest:qr39na5d25wdeecgw3euh9fkd4ygvd4pnsury96597",
-        "amount": 0.0001,
+        "amount": 0.00001,
     }))));
 
     assert!(withdraw.0.is_success(), "BCH withdraw: {}", withdraw.1);
@@ -2820,7 +2820,7 @@ fn test_withdraw_cashaddresses() {
         "coin": "BCH",
         "tx_hex": withdraw_json["tx_hex"],
     }))));
-    assert!(send_tx.0.is_success(), "QRC20 send_raw_transaction: {}", send_tx.1);
+    assert!(send_tx.0.is_success(), "BCH send_raw_transaction: {}", send_tx.1);
     log!((send_tx.1));
 }
 
