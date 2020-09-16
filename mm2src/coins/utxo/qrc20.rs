@@ -305,7 +305,7 @@ impl UtxoArcCommonOps for Qrc20Coin {
         fee_policy: FeePolicy,
         fee: Option<ActualTxFee>,
         gas_fee: Option<u64>,
-    ) -> Result<(TransactionInputSigner, AdditionalTxData), String> {
+    ) -> Result<(TransactionInputSigner, AdditionalTxData), GenerateTransactionError> {
         utxo_common::generate_transaction(self, utxos, outputs, fee_policy, fee, gas_fee).await
     }
 
@@ -554,6 +554,7 @@ impl MarketCoinOps for Qrc20Coin {
         let function = unwrap!(ERC20_CONTRACT.function("balanceOf"));
         let params =
             unwrap!(function.encode_input(&[Token::Address(self.utxo_arc.my_address.hash.clone().take().into()),]));
+        let decimals = self.utxo_arc.decimals;
         match self.utxo_arc.rpc_client {
             UtxoRpcClientEnum::Electrum(ref electrum) => Box::new(
                 electrum
@@ -568,7 +569,7 @@ impl MarketCoinOps for Qrc20Coin {
                         Token::Uint(bal) => Ok(bal),
                         _ => Err(ERRL!("Expected Uint, got {:?}", tokens[0])),
                     })
-                    .and_then(|balance| u256_to_big_decimal(balance, 8)),
+                    .and_then(move |balance| u256_to_big_decimal(balance, decimals)),
             ),
             _ => Box::new(futures01::future::err(ERRL!("Electrum client expected"))),
         }
@@ -624,13 +625,11 @@ impl MmCoin for Qrc20Coin {
     fn is_asset_chain(&self) -> bool { utxo_common::is_asset_chain(&self.utxo_arc) }
 
     fn can_i_spend_other_payment(&self) -> Box<dyn Future<Item = (), Error = String> + Send> {
-        utxo_common::can_i_spend_other_payment()
+        // TODO
+        unimplemented!()
     }
 
-    fn wallet_only(&self) -> bool {
-        // QRC20 cannot participate in the swaps
-        true
-    }
+    fn wallet_only(&self) -> bool { false }
 
     fn withdraw(&self, req: WithdrawRequest) -> Box<dyn Future<Item = TransactionDetails, Error = String> + Send> {
         Box::new(qrc20_withdraw(self.clone(), req).boxed().compat())
@@ -694,12 +693,31 @@ async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> Result<Transac
 
     let _utxo_lock = UTXO_LOCK.lock().await;
 
+    let qrc20_balance = try_s!(coin.my_balance().compat().await);
+
     // the qrc20_amount is used only within smart contract calls
     let qrc20_amount = if req.max {
-        let balance = try_s!(coin.my_balance().compat().await);
-        try_s!(wei_from_big_decimal(&balance, coin.utxo_arc.decimals))
+        let amount = try_s!(wei_from_big_decimal(&qrc20_balance, coin.utxo_arc.decimals));
+        if amount.is_zero() {
+            return ERR!("Balance is 0");
+        }
+        amount
     } else {
-        try_s!(wei_from_big_decimal(&req.amount, coin.utxo_arc.decimals))
+        let amount = try_s!(wei_from_big_decimal(&req.amount, coin.utxo_arc.decimals));
+        if amount.is_zero() {
+            return ERR!("The amount {} is too small", req.amount);
+        }
+
+        // convert balance from big_decimal to U256 to compare it with the amount
+        let balance = try_s!(wei_from_big_decimal(&qrc20_balance, coin.utxo_arc.decimals));
+        if amount > balance {
+            return ERR!(
+                "The amount {} to withdraw is larger than balance {}",
+                req.amount,
+                qrc20_balance
+            );
+        }
+        amount
     };
 
     let (gas_limit, gas_price) = match req.fee {
@@ -737,10 +755,16 @@ async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> Result<Transac
         .ok_or(ERRL!("too large gas_limit and/or gas_price"))?;
     let fee_policy = FeePolicy::SendExact;
 
-    let (unsigned, data) = try_s!(
-        coin.generate_transaction(unspents, outputs, fee_policy, actual_tx_fee, Some(gas_fee))
-            .await
-    );
+    let (unsigned, data) = coin
+        .generate_transaction(unspents, outputs, fee_policy, actual_tx_fee, Some(gas_fee))
+        .await
+        .map_err(|e| match &e {
+            GenerateTransactionError::EmptyUtxoSet => ERRL!("Not enough {} to Pay Fee: {}", coin.platform, e),
+            GenerateTransactionError::NotSufficientBalance { description } => {
+                ERRL!("Not enough {} to Pay Fee: {}", coin.platform, description)
+            },
+            e => ERRL!("{}", e),
+        })?;
     let prev_script = Builder::build_p2pkh(&coin.utxo_arc.my_address.hash);
     let signed = try_s!(sign_tx(
         unsigned,

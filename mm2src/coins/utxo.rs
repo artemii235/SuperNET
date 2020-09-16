@@ -317,6 +317,39 @@ lazy_static! {
     pub static ref UTXO_LOCK: AsyncMutex<()> = AsyncMutex::new(());
 }
 
+#[derive(Debug)]
+pub enum GenerateTransactionError {
+    EmptyUtxoSet,
+    EmptyOutputs,
+    OutputValueLessThanDust { value: u64, dust: u64 },
+    TooLargeGasFee,
+    DeductFeeFromOutputFailed { description: String },
+    NotSufficientBalance { description: String },
+    Other(String),
+}
+
+impl std::fmt::Display for GenerateTransactionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GenerateTransactionError::EmptyUtxoSet => write!(f, "Couldn't generate tx from empty UTXOs set"),
+            GenerateTransactionError::EmptyOutputs => write!(f, "Couldn't generate tx with empty output set"),
+            GenerateTransactionError::OutputValueLessThanDust { value, dust } => {
+                write!(f, "Output value {} less than dust amount {}", value, dust)
+            },
+            GenerateTransactionError::TooLargeGasFee => write!(f, "Too large gas_fee"),
+            GenerateTransactionError::DeductFeeFromOutputFailed { description } => {
+                write!(f, "Error on deduct fee from an output: {:?}", description)
+            },
+            GenerateTransactionError::NotSufficientBalance { description } => {
+                write!(f, "Not sufficient balance: {}", description)
+            },
+            GenerateTransactionError::Other(e) => write!(f, "{}", e),
+        }
+    }
+}
+
+impl std::error::Error for GenerateTransactionError {}
+
 #[mockable]
 #[async_trait]
 pub trait UtxoArcCommonOps {
@@ -344,7 +377,7 @@ pub trait UtxoArcCommonOps {
         fee_policy: FeePolicy,
         fee: Option<ActualTxFee>,
         gas_fee: Option<u64>,
-    ) -> Result<(TransactionInputSigner, AdditionalTxData), String>;
+    ) -> Result<(TransactionInputSigner, AdditionalTxData), GenerateTransactionError>;
 
     /// Calculates interest if the coin is KMD
     /// Adds the value to existing output to my_script_pub or creates additional interest output

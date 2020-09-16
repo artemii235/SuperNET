@@ -34,10 +34,10 @@ use crate::utxo::rpc_clients::UtxoRpcClientOps;
 use crate::ValidateAddressResult;
 use common::block_on;
 
-macro_rules! true_or_err {
-    ($cond: expr, $msg: expr $(, $args:expr)*) => {
+macro_rules! true_or {
+    ($cond: expr, $etype: expr) => {
         if !$cond {
-            return ERR!($msg $(, $args)*);
+            return Err($etype);
         }
     };
 }
@@ -310,30 +310,43 @@ pub async fn generate_transaction<T>(
     fee_policy: FeePolicy,
     fee: Option<ActualTxFee>,
     gas_fee: Option<u64>,
-) -> Result<(TransactionInputSigner, AdditionalTxData), String>
+) -> Result<(TransactionInputSigner, AdditionalTxData), GenerateTransactionError>
 where
     T: AsRef<UtxoArc> + UtxoCoinCommonOps + UtxoArcCommonOps,
 {
+    macro_rules! try_other {
+        ($exp: expr) => {
+            match $exp {
+                Ok(x) => x,
+                Err(e) => {
+                    let err = format!("{}", e);
+                    return Err(GenerateTransactionError::Other(err));
+                },
+            }
+        };
+    }
+
     let dust: u64 = coin.as_ref().dust_amount;
     let lock_time = (now_ms() / 1000) as u32;
     let change_script_pubkey = Builder::build_p2pkh(&coin.as_ref().my_address.hash).to_bytes();
     let coin_tx_fee = match fee {
         Some(f) => f,
-        None => try_s!(coin.get_tx_fee().await),
+        None => try_other!(coin.get_tx_fee().await),
     };
-    true_or_err!(!utxos.is_empty(), "Couldn't generate tx from empty utxos set");
-    true_or_err!(!outputs.is_empty(), "Couldn't generate tx from empty outputs set");
+    true_or!(!utxos.is_empty(), GenerateTransactionError::EmptyUtxoSet);
+    true_or!(!outputs.is_empty(), GenerateTransactionError::EmptyOutputs);
 
     let mut sum_outputs_value = 0;
     let mut received_by_me = 0;
     for output in outputs.iter() {
         let script: Script = output.script_pubkey.clone().into();
         if script.opcodes().next() != Some(Ok(Opcode::OP_RETURN)) {
-            true_or_err!(
+            true_or!(
                 output.value >= dust,
-                "Output value {} is less than dust amount {}",
-                output.value,
-                dust
+                GenerateTransactionError::OutputValueLessThanDust {
+                    value: output.value,
+                    dust
+                }
             );
         }
         sum_outputs_value += output.value;
@@ -371,8 +384,8 @@ where
     let mut sum_inputs = 0;
     let mut tx_fee = 0;
     let min_relay_fee = if coin.as_ref().force_min_relay_fee {
-        let fee_dec = try_s!(coin.as_ref().rpc_client.get_relay_fee().compat().await);
-        Some(try_s!(sat_from_big_decimal(&fee_dec, coin.as_ref().decimals)))
+        let fee_dec = try_other!(coin.as_ref().rpc_client.get_relay_fee().compat().await);
+        Some(try_other!(sat_from_big_decimal(&fee_dec, coin.as_ref().decimals)))
     } else {
         None
     };
@@ -397,7 +410,9 @@ where
         };
 
         if let Some(gas_fee) = gas_fee {
-            tx_fee = tx_fee.checked_add(gas_fee).ok_or(ERRL!("too large gas_fee"))?;
+            tx_fee = tx_fee
+                .checked_add(gas_fee)
+                .ok_or(GenerateTransactionError::TooLargeGasFee)?;
         }
 
         match fee_policy {
@@ -445,24 +460,26 @@ where
         FeePolicy::DeductFromOutput(i) => {
             let min_output = tx_fee + dust;
             let val = tx.outputs[i].value;
-            true_or_err!(
-                val >= min_output,
-                "Output {} value {} is too small, required no less than {}",
-                i,
-                val,
-                min_output
-            );
+            true_or!(val >= min_output, GenerateTransactionError::DeductFeeFromOutputFailed {
+                description: format!(
+                    "Output {} value {} is too small, required no less than {}",
+                    i, val, min_output
+                ),
+            });
             tx.outputs[i].value -= tx_fee;
             if tx.outputs[i].script_pubkey == change_script_pubkey {
                 received_by_me -= tx_fee;
             }
         },
     };
-    true_or_err!(
+    true_or!(
         sum_inputs >= sum_outputs_value,
-        "Not sufficient balance. Couldn't collect enough value from utxos {:?} to create tx with outputs {:?}",
-        utxos,
-        tx.outputs
+        GenerateTransactionError::NotSufficientBalance {
+            description: format!(
+                "Couldn't collect enough value from utxos {:?} to create tx with outputs {:?}",
+                utxos, tx.outputs
+            )
+        }
     );
 
     let change = sum_inputs - sum_outputs_value;
@@ -484,7 +501,9 @@ where
         spent_by_me: sum_inputs,
     };
 
-    coin.calc_interest_if_required(tx, data, change_script_pubkey).await
+    Ok(try_other!(
+        coin.calc_interest_if_required(tx, data, change_script_pubkey).await
+    ))
 }
 
 /// Calculates interest if the coin is KMD

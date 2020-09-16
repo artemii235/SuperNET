@@ -3392,14 +3392,11 @@ fn test_qrc20_withdraw() {
 }
 
 #[test]
-/// Test if the setprice/buy/sell returns an error on attempt to swap QRC20
-/// Note: remove the test after the QRC20 supports swaps
-fn test_qrc20_wallet_only() {
-    let passphrase = "cMhHM3PMpMrChygR4bLF7QsTdenhWpFrrmf2UezBG3eeFsz41rtL";
+fn test_qrc20_withdraw_error() {
+    let passphrase = "album hollow help heart use bird response large lounge fat elbow coral";
     let coins = json!([
         {"coin":"QRC20","required_confirmations":0,"pubtype": 120,"p2shtype": 50,"wiftype": 128,"segwit": true,"txfee": 0,"mm2": 1,"mature_confirmations":500,
          "protocol":{"type":"QRC20","protocol_data":{"platform":"QTUM","contract_address":"0xd362e096e873eb7907e205fadc6175c6fec7bc44"}}},
-        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
     ]);
 
     let mut mm = unwrap!(MarketMakerIt::start(
@@ -3424,11 +3421,6 @@ fn test_qrc20_wallet_only() {
         mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
 
-    let _electrum = block_on(enable_electrum(&mm, "RICK", vec![
-        "electrum1.cipig.net:10017",
-        "electrum2.cipig.net:10017",
-        "electrum3.cipig.net:10017",
-    ]));
     let electrum = unwrap!(block_on(mm.rpc(json!({
         "userpass": mm.userpass,
         "method": "electrum",
@@ -3444,76 +3436,56 @@ fn test_qrc20_wallet_only() {
         electrum.1
     );
     let electrum_json: Json = json::from_str(&electrum.1).unwrap();
-    assert_eq!(
-        electrum_json["address"].as_str(),
-        Some("qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG")
-    );
+    let balance = electrum_json["balance"].as_str().unwrap();
+    assert_eq!(balance, "10");
 
-    let rc = unwrap!(block_on(mm.rpc(json!({
+    // try to transfer too low amount
+    let withdraw = unwrap!(block_on(mm.rpc(json! ({
         "userpass": mm.userpass,
-        "method": "setprice",
-        "base": "QRC20",
-        "rel": "RICK",
-        "price": 0.9,
-        "volume": "0.9",
+        "method": "withdraw",
+        "coin": "QRC20",
+        "to": "qHmJ3KA6ZAjR9wGjpFASn4gtUSeFAqdZgs",
+        "amount": 0,
     }))));
-    assert!(rc.0.is_server_error(), "setprice should have failed, but got {:?}", rc);
-    assert!(rc.1.contains("Base coin is wallet only"));
+    assert!(withdraw.0.is_server_error(), "withdraw should have failed, but got {:?}", withdraw);
+    log!([withdraw.1]);
+    assert!(withdraw.1.contains("The amount 0 is too small"));
 
-    let rc = unwrap!(block_on(mm.rpc(json!({
+    // try to transfer amount with more than 8 decimals
+    let withdraw = unwrap!(block_on(mm.rpc(json! ({
         "userpass": mm.userpass,
-        "method": "setprice",
-        "base": "RICK",
-        "rel": "QRC20",
-        "price": 0.9,
-        "volume": "0.9",
+        "method": "withdraw",
+        "coin": "QRC20",
+        "to": "qHmJ3KA6ZAjR9wGjpFASn4gtUSeFAqdZgs",
+        "amount": "0.0000000001",
     }))));
-    assert!(rc.0.is_server_error(), "setprice should have failed, but got {:?}", rc);
-    assert!(rc.1.contains("Rel coin is wallet only"));
+    assert!(withdraw.0.is_server_error(), "withdraw should have failed, but got {:?}", withdraw);
+    log!([withdraw.1]);
+    assert!(withdraw.1.contains("The amount 0.0000000001 is too small"));
 
-    let rc = unwrap!(block_on(mm.rpc(json!({
+    // try to transfer more than balance
+    let withdraw = unwrap!(block_on(mm.rpc(json! ({
         "userpass": mm.userpass,
-        "method": "buy",
-        "base": "QRC20",
-        "rel": "RICK",
-        "price": 0.9,
-        "volume": "0.9",
+        "method": "withdraw",
+        "coin": "QRC20",
+        "to": "qHmJ3KA6ZAjR9wGjpFASn4gtUSeFAqdZgs",
+        "amount": "11",
     }))));
-    assert!(rc.0.is_server_error(), "buy should have failed, but got {:?}", rc);
-    assert!(rc.1.contains("Base coin is wallet only"));
+    assert!(withdraw.0.is_server_error(), "withdraw should have failed, but got {:?}", withdraw);
+    log!([withdraw.1]);
+    assert!(withdraw.1.contains("The amount 11 to withdraw is larger than balance 10"));
 
-    let rc = unwrap!(block_on(mm.rpc(json!({
+    // try to transfer with zero QTUM balance
+    let withdraw = unwrap!(block_on(mm.rpc(json! ({
         "userpass": mm.userpass,
-        "method": "buy",
-        "base": "RICK",
-        "rel": "QRC20",
-        "price": 0.9,
-        "volume": "0.9",
+        "method": "withdraw",
+        "coin": "QRC20",
+        "to": "qHmJ3KA6ZAjR9wGjpFASn4gtUSeFAqdZgs",
+        "amount": "2",
     }))));
-    assert!(rc.0.is_server_error(), "buy should have failed, but got {:?}", rc);
-    assert!(rc.1.contains("Rel coin is wallet only"));
-
-    let rc = unwrap!(block_on(mm.rpc(json!({
-        "userpass": mm.userpass,
-        "method": "sell",
-        "base": "QRC20",
-        "rel": "RICK",
-        "price": 0.9,
-        "volume": "0.9",
-    }))));
-    assert!(rc.0.is_server_error(), "sell should have failed, but got {:?}", rc);
-    assert!(rc.1.contains("Base coin is wallet only"));
-
-    let rc = unwrap!(block_on(mm.rpc(json!({
-        "userpass": mm.userpass,
-        "method": "sell",
-        "base": "RICK",
-        "rel": "QRC20",
-        "price": 0.9,
-        "volume": "0.9",
-    }))));
-    assert!(rc.0.is_server_error(), "sell should have failed, but got {:?}", rc);
-    assert!(rc.1.contains("Rel coin is wallet only"));
+    assert!(withdraw.0.is_server_error(), "withdraw should have failed, but got {:?}", withdraw);
+    log!([withdraw.1]);
+    assert!(withdraw.1.contains("Not enough QTUM to Pay Fee: Couldn't generate tx from empty UTXOs set"));
 }
 
 #[test]
