@@ -1602,3 +1602,92 @@ fn test_qrc20_tx_details_by_hash() {
 
     assert_eq!(actual, expected);
 }
+
+#[test]
+fn test_qrc20_can_i_spend_other_payment() {
+    ElectrumClient::display_balance.mock_safe(|_, _, decimal| {
+        // required more than 12000000 (QRC20_SWAP_GAS_REQUIRED * QRC20_GAS_PRICE_DEFAULT)
+        let balance = big_decimal_from_sat(13000000, decimal);
+        MockResult::Return(Box::new(futures01::future::ok(balance)))
+    });
+
+    let conf = json!({
+        "coin":"QRC20",
+        "required_confirmations":0,
+        "pubtype":120,
+        "p2shtype":50,
+        "wiftype":128,
+        "segwit":true,
+        "mm2":1,
+        "mature_confirmations":500,
+    });
+    let req = json!({
+        "method": "electrum",
+        "servers": [{"url":"95.217.83.126:10001"}],
+    });
+    let priv_key = [
+        192, 240, 176, 226, 14, 170, 226, 96, 107, 47, 166, 243, 154, 48, 28, 243, 18, 144, 240, 1, 79, 103, 178, 42,
+        32, 161, 106, 119, 241, 227, 42, 102,
+    ];
+    let contract_address = "0xd362e096e873eb7907e205fadc6175c6fec7bc44".into();
+
+    let ctx = MmCtxBuilder::new().into_mm_arc();
+
+    let coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
+        &ctx,
+        "QRC20",
+        "QTUM",
+        &conf,
+        &req,
+        &priv_key,
+        contract_address
+    )));
+
+    let actual = coin.can_i_spend_other_payment().wait();
+    assert_eq!(actual, Ok(()));
+}
+
+#[test]
+fn test_qrc20_can_i_spend_other_payment_err() {
+    ElectrumClient::display_balance.mock_safe(|_, _, decimal| {
+        // required more than 12000000 (QRC20_SWAP_GAS_REQUIRED * QRC20_GAS_PRICE_DEFAULT)
+        let balance = big_decimal_from_sat(10000000, decimal);
+        MockResult::Return(Box::new(futures01::future::ok(balance)))
+    });
+
+    let conf = json!({
+        "coin":"QRC20",
+        "required_confirmations":0,
+        "pubtype":120,
+        "p2shtype":50,
+        "wiftype":128,
+        "segwit":true,
+        "mm2":1,
+        "mature_confirmations":500,
+    });
+    let req = json!({
+        "method": "electrum",
+        "servers": [{"url":"95.217.83.126:10001"}],
+    });
+    let priv_key = [
+        192, 240, 176, 226, 14, 170, 226, 96, 107, 47, 166, 243, 154, 48, 28, 243, 18, 144, 240, 1, 79, 103, 178, 42,
+        32, 161, 106, 119, 241, 227, 42, 102,
+    ];
+    let contract_address = "0xd362e096e873eb7907e205fadc6175c6fec7bc44".into();
+
+    let ctx = MmCtxBuilder::new().into_mm_arc();
+
+    let coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
+        &ctx,
+        "QRC20",
+        "QTUM",
+        &conf,
+        &req,
+        &priv_key,
+        contract_address
+    )));
+
+    let error = coin.can_i_spend_other_payment().wait().err().unwrap();
+    log!([error]);
+    assert!(error.contains("Base coin balance 0.1 is too low to cover gas fee, required 0.12"));
+}

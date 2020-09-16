@@ -13,8 +13,9 @@ use std::ops::Neg;
 use std::str::FromStr;
 use utxo_common::HISTORY_TOO_LARGE_ERROR;
 
-const QRC20_GAS_LIMIT_DEFAULT: u64 = 250_000;
+const QRC20_GAS_LIMIT_DEFAULT: u64 = 100_000;
 const QRC20_GAS_PRICE_DEFAULT: u64 = 40;
+const QRC20_SWAP_GAS_REQUIRED: u64 = 300_000;
 const QRC20_DUST: u64 = 0;
 const QRC20_TRANSFER_TOPIC: &str = "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 
@@ -625,11 +626,23 @@ impl MmCoin for Qrc20Coin {
     fn is_asset_chain(&self) -> bool { utxo_common::is_asset_chain(&self.utxo_arc) }
 
     fn can_i_spend_other_payment(&self) -> Box<dyn Future<Item = (), Error = String> + Send> {
-        // TODO
-        unimplemented!()
+        let decimals = self.utxo_arc.decimals;
+        Box::new(self.base_coin_balance().and_then(move |qtum_balance| {
+            let sat_balance = try_s!(wei_from_big_decimal(&qtum_balance, decimals));
+            let min_amount = QRC20_SWAP_GAS_REQUIRED * QRC20_GAS_PRICE_DEFAULT;
+            log!("sat_balance " [sat_balance] " min_amount " [min_amount]);
+            if sat_balance < min_amount.into() {
+                return ERR!(
+                    "Base coin balance {} is too low to cover gas fee, required {}",
+                    qtum_balance,
+                    big_decimal_from_sat(min_amount as i64, decimals),
+                );
+            }
+            Ok(())
+        }))
     }
 
-    fn wallet_only(&self) -> bool { false }
+    fn wallet_only(&self) -> bool { true }
 
     fn withdraw(&self, req: WithdrawRequest) -> Box<dyn Future<Item = TransactionDetails, Error = String> + Send> {
         Box::new(qrc20_withdraw(self.clone(), req).boxed().compat())
