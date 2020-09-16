@@ -3447,7 +3447,11 @@ fn test_qrc20_withdraw_error() {
         "to": "qHmJ3KA6ZAjR9wGjpFASn4gtUSeFAqdZgs",
         "amount": 0,
     }))));
-    assert!(withdraw.0.is_server_error(), "withdraw should have failed, but got {:?}", withdraw);
+    assert!(
+        withdraw.0.is_server_error(),
+        "withdraw should have failed, but got {:?}",
+        withdraw
+    );
     log!([withdraw.1]);
     assert!(withdraw.1.contains("The amount 0 is too small"));
 
@@ -3459,7 +3463,11 @@ fn test_qrc20_withdraw_error() {
         "to": "qHmJ3KA6ZAjR9wGjpFASn4gtUSeFAqdZgs",
         "amount": "0.0000000001",
     }))));
-    assert!(withdraw.0.is_server_error(), "withdraw should have failed, but got {:?}", withdraw);
+    assert!(
+        withdraw.0.is_server_error(),
+        "withdraw should have failed, but got {:?}",
+        withdraw
+    );
     log!([withdraw.1]);
     assert!(withdraw.1.contains("The amount 0.0000000001 is too small"));
 
@@ -3471,9 +3479,15 @@ fn test_qrc20_withdraw_error() {
         "to": "qHmJ3KA6ZAjR9wGjpFASn4gtUSeFAqdZgs",
         "amount": "11",
     }))));
-    assert!(withdraw.0.is_server_error(), "withdraw should have failed, but got {:?}", withdraw);
+    assert!(
+        withdraw.0.is_server_error(),
+        "withdraw should have failed, but got {:?}",
+        withdraw
+    );
     log!([withdraw.1]);
-    assert!(withdraw.1.contains("The amount 11 to withdraw is larger than balance 10"));
+    assert!(withdraw
+        .1
+        .contains("The amount 11 to withdraw is larger than balance 10"));
 
     // try to transfer with zero QTUM balance
     let withdraw = unwrap!(block_on(mm.rpc(json! ({
@@ -3483,9 +3497,15 @@ fn test_qrc20_withdraw_error() {
         "to": "qHmJ3KA6ZAjR9wGjpFASn4gtUSeFAqdZgs",
         "amount": "2",
     }))));
-    assert!(withdraw.0.is_server_error(), "withdraw should have failed, but got {:?}", withdraw);
+    assert!(
+        withdraw.0.is_server_error(),
+        "withdraw should have failed, but got {:?}",
+        withdraw
+    );
     log!([withdraw.1]);
-    assert!(withdraw.1.contains("Not enough QTUM to Pay Fee: Couldn't generate tx from empty UTXOs set"));
+    assert!(withdraw
+        .1
+        .contains("Not enough QTUM to Pay Fee: Couldn't generate tx from empty UTXOs set"));
 }
 
 #[test]
