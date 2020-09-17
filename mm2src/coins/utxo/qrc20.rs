@@ -201,9 +201,6 @@ impl Qrc20Coin {
         let function = try_s!(ERC20_CONTRACT.function(func));
         let params = try_s!(function.encode_input(tokens));
 
-        // TODO
-        log!("tokens:"[String::from_utf8(params.clone()).unwrap()]);
-
         let electrum = match self.utxo_arc.rpc_client {
             UtxoRpcClientEnum::Electrum(ref electrum) => electrum,
             _ => return ERR!("Electrum client expected"),
@@ -802,6 +799,41 @@ async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> Result<Transac
         script_pubkey,
     }];
 
+    let (signed, fee_details) = try_s!(generate_qrc20_transaction(coin.clone(), gas_limit, gas_price, outputs).await);
+
+    let received_by_me = if to_addr == coin.utxo_arc.my_address {
+        req.amount.clone()
+    } else {
+        0.into()
+    };
+    let my_balance_change = &received_by_me - &req.amount;
+    let my_address = try_s!(coin.my_address());
+    let to_address = try_s!(coin.display_address(&to_addr));
+    Ok(TransactionDetails {
+        from: vec![my_address],
+        to: vec![to_address],
+        total_amount: req.amount.clone(),
+        spent_by_me: req.amount,
+        received_by_me,
+        my_balance_change,
+        tx_hash: signed.hash().reversed().to_vec().into(),
+        tx_hex: serialize(&signed).into(),
+        fee_details: Some(fee_details.into()),
+        block_height: 0,
+        coin: coin.utxo_arc.ticker.clone(),
+        internal_id: vec![].into(),
+        timestamp: now_ms() / 1000,
+    })
+}
+
+/// Generate Qtum UTXO transaction to call QRC20 contract call such as `transfer` or `approve`.
+/// Note: lock the UTXO_LOCK mutex before this function will be called.
+async fn generate_qrc20_transaction(
+    coin: Qrc20Coin,
+    gas_limit: u64,
+    gas_price: u64,
+    outputs: Vec<TransactionOutput>,
+) -> Result<(UtxoTx, Qrc20FeeDetails), String> {
     let unspents = try_s!(coin
         .ordered_mature_unspents(&coin.utxo_arc.my_address)
         .compat()
@@ -841,29 +873,7 @@ async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> Result<Transac
         gas_price,
         total_gas_fee: utxo_common::big_decimal_from_sat(gas_fee as i64, coin.utxo_arc.decimals),
     };
-    let received_by_me = if to_addr == coin.utxo_arc.my_address {
-        req.amount.clone()
-    } else {
-        0.into()
-    };
-    let my_balance_change = &received_by_me - &req.amount;
-    let my_address = try_s!(coin.my_address());
-    let to_address = try_s!(coin.display_address(&to_addr));
-    Ok(TransactionDetails {
-        from: vec![my_address],
-        to: vec![to_address],
-        total_amount: req.amount.clone(),
-        spent_by_me: req.amount,
-        received_by_me,
-        my_balance_change,
-        tx_hash: signed.hash().reversed().to_vec().into(),
-        tx_hex: serialize(&signed).into(),
-        fee_details: Some(fee_details.into()),
-        block_height: 0,
-        coin: coin.utxo_arc.ticker.clone(),
-        internal_id: vec![].into(),
-        timestamp: now_ms() / 1000,
-    })
+    Ok((signed, fee_details))
 }
 
 async fn qrc20_tx_details_by_hash(coin: Qrc20Coin, hash: H256Json) -> Result<TransactionDetails, String> {
