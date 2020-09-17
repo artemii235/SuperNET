@@ -170,6 +170,10 @@ pub async fn qrc20_coin_from_conf_and_request(
     if let Some("enable") = req["method"].as_str() {
         return ERR!("Native mode not supported yet for QRC20");
     }
+    let swap_contract_address = match req["swap_contract_address"].as_str() {
+        Some(address) => try_s!(qrc20_addr_from_str(address)),
+        None => return ERR!("\"swap_contract_address\" field is expected"),
+    };
     let inner = try_s!(utxo_arc_from_conf_and_request(ctx, ticker, conf, req, priv_key, QRC20_DUST).await);
     match &inner.address_format {
         UtxoAddressFormat::Standard => (),
@@ -180,6 +184,7 @@ pub async fn qrc20_coin_from_conf_and_request(
         utxo_arc: inner,
         platform,
         contract_address,
+        swap_contract_address,
     })
 }
 
@@ -188,9 +193,31 @@ pub struct Qrc20Coin {
     pub utxo_arc: UtxoArc,
     pub platform: String,
     pub contract_address: H160,
+    pub swap_contract_address: H160,
 }
 
 impl Qrc20Coin {
+    async fn contract_call(&self, func: &str, tokens: &[Token]) -> Result<Vec<Token>, String> {
+        let function = try_s!(ERC20_CONTRACT.function(func));
+        let params = try_s!(function.encode_input(tokens));
+
+        // TODO
+        log!("tokens:"[String::from_utf8(params.clone()).unwrap()]);
+
+        let electrum = match self.utxo_arc.rpc_client {
+            UtxoRpcClientEnum::Electrum(ref electrum) => electrum,
+            _ => return ERR!("Electrum client expected"),
+        };
+
+        let result: ContractCallResult = try_s!(
+            electrum
+                .blockchain_contract_call(&self.contract_address.to_vec().as_slice().into(), params.into())
+                .compat()
+                .await
+        );
+        Ok(try_s!(function.decode_output(&result.execution_result.output)))
+    }
+
     fn address_from_log_topic(&self, topic: &str) -> Result<Address, String> {
         if topic.len() != 64 {
             return ERR!(
@@ -211,6 +238,41 @@ impl Qrc20Coin {
             checksum_type: utxo.checksum_type,
         })
     }
+
+    pub async fn allowance(&self, spender: H160) -> Result<U256, String> {
+        let tokens = try_s!(
+            self.contract_call("allowance", &[
+                Token::Address(qrc20_addr_from_utxo_addr(self.utxo_arc.my_address.clone())),
+                Token::Address(spender),
+            ])
+            .await
+        );
+
+        if tokens.is_empty() {
+            return ERR!(r#"Expected U256 as "allowance" result but got nothing"#);
+        }
+
+        match tokens[0] {
+            Token::Uint(number) => Ok(number),
+            _ => ERR!(r#"Expected U256 as "allowance" result but got {:?}"#, tokens),
+        }
+    }
+
+    // pub async fn approve(&self, spender: H160, amount: U256) -> Result<bool, String> {
+    //     let tokens = try_s!(
+    //         self.contract_call("approve", &[Token::Address(spender), Token::Uint(amount)])
+    //             .await
+    //     );
+    //
+    //     if tokens.is_empty() {
+    //         return ERR!(r#"Expected Bool as "approve" result but got nothing"#);
+    //     }
+    //
+    //     match tokens[0] {
+    //         Token::Bool(approved) => Ok(approved),
+    //         _ => ERR!(r#"Expected Bool as "approve" result but got {:?}"#, tokens),
+    //     }
+    // }
 }
 
 impl AsRef<UtxoArc> for Qrc20Coin {
@@ -366,8 +428,8 @@ impl UtxoArcCommonOps for Qrc20Coin {
                 return RequestTxHistoryResult::UnknownError(ERRL!("Native mode not supported"));
             },
             UtxoRpcClientEnum::Electrum(client) => {
-                let my_address = self.utxo_arc.my_address.hash.clone().take().into();
-                let contract_addr = self.contract_address.to_vec().as_slice().into();
+                let my_address = utxo_addr_into_rpc_format(self.utxo_arc.my_address.clone());
+                let contract_addr = qrc20_addr_into_rpc_format(&self.contract_address);
 
                 mm_counter!(metrics, "tx.history.request.count", 1,
                     "coin" => self.utxo_arc.ticker.clone(), "client" => "electrum", "method" => "blockchain.contract.event.get_history");
@@ -552,28 +614,7 @@ impl MarketCoinOps for Qrc20Coin {
     fn my_address(&self) -> Result<String, String> { utxo_common::my_address(self) }
 
     fn my_balance(&self) -> Box<dyn Future<Item = BigDecimal, Error = String> + Send> {
-        let function = unwrap!(ERC20_CONTRACT.function("balanceOf"));
-        let params =
-            unwrap!(function.encode_input(&[Token::Address(self.utxo_arc.my_address.hash.clone().take().into()),]));
-        let decimals = self.utxo_arc.decimals;
-        match self.utxo_arc.rpc_client {
-            UtxoRpcClientEnum::Electrum(ref electrum) => Box::new(
-                electrum
-                    .blockchain_contract_call(&self.contract_address.to_vec().as_slice().into(), params.into())
-                    .map_err(|e| ERRL!("{}", e))
-                    .and_then(move |balance: ContractCallResult| {
-                        function
-                            .decode_output(&balance.execution_result.output)
-                            .map_err(|e| ERRL!("{}", e))
-                    })
-                    .and_then(|tokens| match tokens[0] {
-                        Token::Uint(bal) => Ok(bal),
-                        _ => Err(ERRL!("Expected Uint, got {:?}", tokens[0])),
-                    })
-                    .and_then(move |balance| u256_to_big_decimal(balance, decimals)),
-            ),
-            _ => Box::new(futures01::future::err(ERRL!("Electrum client expected"))),
-        }
+        Box::new(qrc20_balance(self.clone()).boxed().compat())
     }
 
     fn base_coin_balance(&self) -> Box<dyn Future<Item = BigDecimal, Error = String> + Send> {
@@ -692,6 +733,12 @@ pub fn qrc20_addr_from_str(address: &str) -> Result<H160, String> {
     // because that function fails on some of the QRC20 contract addresses
     Ok(try_s!(json::from_str(&format!("\"{}\"", address))))
 }
+
+fn qrc20_addr_from_utxo_addr(address: Address) -> H160 { address.hash.take().into() }
+
+fn utxo_addr_into_rpc_format(address: Address) -> H160Json { address.hash.take().into() }
+
+fn qrc20_addr_into_rpc_format(address: &H160) -> H160Json { address.to_vec().as_slice().into() }
 
 async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> Result<TransactionDetails, String> {
     let to_addr = try_s!(Address::from_str(&req.to));
@@ -945,6 +992,22 @@ async fn qrc20_tx_details_by_hash(coin: Qrc20Coin, hash: H256Json) -> Result<Tra
         internal_id: vec![].into(),
         ..qtum_tx
     })
+}
+
+async fn qrc20_balance(coin: Qrc20Coin) -> Result<BigDecimal, String> {
+    let params = &[Token::Address(qrc20_addr_from_utxo_addr(
+        coin.utxo_arc.my_address.clone(),
+    ))];
+    let tokens = try_s!(coin.contract_call("balanceOf", params).await);
+
+    if tokens.is_empty() {
+        return ERR!(r#"Expected Uint as "balanceOf" result but got nothing"#);
+    }
+
+    match tokens[0] {
+        Token::Uint(bal) => u256_to_big_decimal(bal, coin.utxo_arc.decimals),
+        _ => ERR!(r#"Expected Uint as "balanceOf" result but got {:?}"#, tokens),
+    }
 }
 
 /// Serialize the `number` similar to BigEndian but in QRC20 specific format.
