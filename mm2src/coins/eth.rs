@@ -81,7 +81,7 @@ const _PAYMENT_STATE_SPENT: u8 = 2;
 const _PAYMENT_STATE_REFUNDED: u8 = 3;
 
 lazy_static! {
-    static ref SWAP_CONTRACT: Contract = unwrap!(Contract::load(SWAP_CONTRACT_ABI.as_bytes()));
+    pub static ref SWAP_CONTRACT: Contract = unwrap!(Contract::load(SWAP_CONTRACT_ABI.as_bytes()));
     pub static ref ERC20_CONTRACT: Contract = unwrap!(Contract::load(ERC20_ABI.as_bytes()));
 }
 
@@ -2379,7 +2379,7 @@ impl MmCoin for EthCoin {
     }
 }
 
-fn addr_from_raw_pubkey(pubkey: &[u8]) -> Result<Address, String> {
+pub fn addr_from_raw_pubkey(pubkey: &[u8]) -> Result<Address, String> {
     let pubkey = try_s!(PublicKey::parse_slice(pubkey, None).map_err(|e| ERRL!("{:?}", e)));
     let eth_public = Public::from(&pubkey.serialize()[1..65]);
     Ok(public_to_address(&eth_public))

@@ -1,6 +1,7 @@
 use super::*;
-use crate::eth::{u256_to_big_decimal, wei_from_big_decimal, ERC20_CONTRACT};
+use crate::eth::{addr_from_raw_pubkey, u256_to_big_decimal, wei_from_big_decimal, ERC20_CONTRACT, SWAP_CONTRACT};
 use crate::{SwapOps, TxFeeDetails, ValidateAddressResult};
+use bitcrypto::sha256;
 use common::jsonrpc_client::{JsonRpcClient, JsonRpcErrorType, JsonRpcRequest, RpcRes};
 use common::mm_metrics::MetricsArc;
 use ethabi::Token;
@@ -255,21 +256,61 @@ impl Qrc20Coin {
         }
     }
 
-    // pub async fn approve(&self, spender: H160, amount: U256) -> Result<bool, String> {
-    //     let tokens = try_s!(
-    //         self.contract_call("approve", &[Token::Address(spender), Token::Uint(amount)])
-    //             .await
-    //     );
-    //
-    //     if tokens.is_empty() {
-    //         return ERR!(r#"Expected Bool as "approve" result but got nothing"#);
-    //     }
-    //
-    //     match tokens[0] {
-    //         Token::Bool(approved) => Ok(approved),
-    //         _ => ERR!(r#"Expected Bool as "approve" result but got {:?}"#, tokens),
-    //     }
-    // }
+    /// Generate a UTXO output with a script_pubkey that calls standard QRC20 `approve` function.
+    pub fn approve_output(&self, spender: H160, amount: U256) -> Result<TransactionOutput, String> {
+        let function = try_s!(ERC20_CONTRACT.function("approve"));
+        let params = try_s!(function.encode_input(&[Token::Address(spender), Token::Uint(amount)]));
+
+        let script_pubkey = try_s!(generate_contract_call_script_pubkey(
+            &params,
+            QRC20_GAS_LIMIT_DEFAULT,
+            QRC20_GAS_PRICE_DEFAULT,
+            &self.contract_address
+        ))
+        .to_bytes();
+
+        // qtum_amount is always 0 for the QRC20, because we should pay only a fee in Qtum to send the QRC20 transaction
+        let qtum_amount = 0;
+        Ok(TransactionOutput {
+            value: qtum_amount,
+            script_pubkey,
+        })
+    }
+
+    /// Generate a UTXO output with a script_pubkey that calls EtomicSwap `erc20Payment` function.
+    pub fn erc20_payment_output(
+        &self,
+        id: Vec<u8>,
+        value: U256,
+        time_lock: u32,
+        secret_hash: &[u8],
+        receiver_addr: H160,
+    ) -> Result<TransactionOutput, String> {
+        let function = try_s!(SWAP_CONTRACT.function("erc20Payment"));
+        let params = try_s!(function.encode_input(&[
+            Token::FixedBytes(id),
+            Token::Uint(value),
+            Token::Address(self.contract_address),
+            Token::Address(receiver_addr),
+            Token::FixedBytes(secret_hash.to_vec()),
+            Token::Uint(U256::from(time_lock))
+        ]));
+
+        let script_pubkey = try_s!(generate_contract_call_script_pubkey(
+            &params, // params of the function
+            QRC20_GAS_LIMIT_DEFAULT,
+            QRC20_GAS_PRICE_DEFAULT,
+            &self.swap_contract_address, // address of the contract which function will be called
+        ))
+        .to_bytes();
+
+        // qtum_amount is always 0 for the QRC20, because we should pay only a fee in Qtum to send the QRC20 transaction
+        let qtum_amount = 0;
+        Ok(TransactionOutput {
+            value: qtum_amount,
+            script_pubkey,
+        })
+    }
 }
 
 impl AsRef<UtxoArc> for Qrc20Coin {
@@ -333,9 +374,14 @@ impl UtxoCoinCommonOps for Qrc20Coin {
 #[async_trait]
 #[allow(clippy::forget_ref, clippy::forget_copy)]
 impl UtxoArcCommonOps for Qrc20Coin {
+    /// Generate and send a transaction from the specified UTXO outputs.
+    /// Note this function locks the `UTXO_LOCK`.
     fn send_outputs_from_my_address(&self, outputs: Vec<TransactionOutput>) -> TransactionFut {
-        // TODO implement qrc20_send_outputs_from_my_address with a non-empty gas_fee
-        utxo_common::send_outputs_from_my_address(self.clone(), outputs)
+        Box::new(
+            qrc20_send_outputs_from_my_address(self.clone(), outputs)
+                .boxed()
+                .compat(),
+        )
     }
 
     fn validate_payment(
@@ -358,6 +404,7 @@ impl UtxoArcCommonOps for Qrc20Coin {
         )
     }
 
+    /// Generate UTXO transaction with specified unspent inputs and specified outputs.
     async fn generate_transaction(
         &self,
         utxos: Vec<UnspentInfo>,
@@ -488,7 +535,15 @@ impl SwapOps for Qrc20Coin {
         secret_hash: &[u8],
         amount: BigDecimal,
     ) -> TransactionFut {
-        utxo_common::send_maker_payment(self.clone(), time_lock, taker_pub, secret_hash, amount)
+        let taker_addr = try_fus!(addr_from_raw_pubkey(taker_pub));
+        let id = qrc20_swap_id(time_lock, secret_hash);
+        let value = try_fus!(wei_from_big_decimal(&amount, self.utxo_arc.decimals));
+        let secret_hash = Vec::from(secret_hash);
+        Box::new(
+            qrc20_send_hash_time_locked_payment(self.clone(), id, value, time_lock, secret_hash, taker_addr)
+                .boxed()
+                .compat(),
+        )
     }
 
     fn send_taker_payment(
@@ -725,13 +780,20 @@ impl MmCoin for Qrc20Coin {
     }
 }
 
+pub fn qrc20_swap_id(time_lock: u32, secret_hash: &[u8]) -> Vec<u8> {
+    let mut input = vec![];
+    input.extend_from_slice(&time_lock.to_le_bytes());
+    input.extend_from_slice(secret_hash);
+    sha256(&input).to_vec()
+}
+
 pub fn qrc20_addr_from_str(address: &str) -> Result<H160, String> {
     // use deserialization instead of eth::contract_addr_from_str(),
     // because that function fails on some of the QRC20 contract addresses
     Ok(try_s!(json::from_str(&format!("\"{}\"", address))))
 }
 
-fn qrc20_addr_from_utxo_addr(address: Address) -> H160 { address.hash.take().into() }
+pub fn qrc20_addr_from_utxo_addr(address: Address) -> H160 { address.hash.take().into() }
 
 fn utxo_addr_into_rpc_format(address: Address) -> H160Json { address.hash.take().into() }
 
@@ -784,7 +846,7 @@ async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> Result<Transac
     };
 
     let script_pubkey = try_s!(generate_token_transfer_script_pubkey(
-        to_addr.clone(),
+        qrc20_addr_from_utxo_addr(to_addr.clone()),
         qrc20_amount,
         gas_limit,
         gas_price,
@@ -829,6 +891,7 @@ async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> Result<Transac
 /// Generate Qtum UTXO transaction to call QRC20 contract call such as `transfer` or `approve`.
 /// Note: lock the UTXO_LOCK mutex before this function will be called.
 async fn generate_qrc20_transaction(
+    // TODO take the coin as a reference
     coin: Qrc20Coin,
     gas_limit: u64,
     gas_price: u64,
@@ -1020,6 +1083,65 @@ async fn qrc20_balance(coin: Qrc20Coin) -> Result<BigDecimal, String> {
     }
 }
 
+async fn qrc20_send_hash_time_locked_payment(
+    coin: Qrc20Coin,
+    id: Vec<u8>,
+    value: U256,
+    time_lock: u32,
+    secret_hash: Vec<u8>,
+    receiver_addr: H160,
+) -> Result<TransactionEnum, String> {
+    let allowance = try_s!(coin.allowance(coin.swap_contract_address).await);
+
+    let mut outputs = Vec::default();
+    // check if we should reset the allowance to 0 and raise this to the max available value (our balance)
+    if allowance < value {
+        let balance = try_s!(coin.my_balance().compat().await);
+        let balance = try_s!(wei_from_big_decimal(&balance, coin.utxo_arc.decimals));
+        // first reset the allowance to the 0
+        outputs.push(try_s!(coin.approve_output(coin.swap_contract_address, 0.into())));
+        // set the allowance from 0 to `balance` after the previous output will be executed
+        outputs.push(try_s!(coin.approve_output(coin.swap_contract_address, balance)));
+    }
+
+    // when this output is executed, the allowance will be sufficient allready
+    outputs.push(try_s!(coin.erc20_payment_output(
+        id,
+        value,
+        time_lock,
+        &secret_hash,
+        receiver_addr
+    )));
+
+    coin.send_outputs_from_my_address(outputs).compat().await
+}
+
+async fn qrc20_send_outputs_from_my_address(
+    coin: Qrc20Coin,
+    outputs: Vec<TransactionOutput>,
+) -> Result<TransactionEnum, String> {
+    let _utxo_lock = UTXO_LOCK.lock().await;
+
+    let (signed, _fee_details) = try_s!(
+        generate_qrc20_transaction(
+            coin.clone(),
+            QRC20_GAS_LIMIT_DEFAULT * 3,
+            QRC20_GAS_PRICE_DEFAULT,
+            outputs
+        )
+        .await
+    );
+    let tx = try_s!(
+        coin.utxo_arc
+            .rpc_client
+            .send_transaction(&signed, coin.utxo_arc.my_address.clone())
+            .compat()
+            .await
+    );
+    log!([tx]);
+    Ok(signed.into())
+}
+
 /// Serialize the `number` similar to BigEndian but in QRC20 specific format.
 fn encode_contract_number(number: i64) -> Vec<u8> {
     // | encoded number (0 - 8 bytes) |
@@ -1103,18 +1225,32 @@ fn decode_contract_number(source: &[u8]) -> Result<i64, String> {
 }
 
 fn generate_token_transfer_script_pubkey(
-    to_addr: Address,
+    to_addr: H160,
     amount: U256,
     gas_limit: u64,
     gas_price: u64,
     token_addr: &[u8],
+) -> Result<Script, String> {
+    let function = try_s!(ERC20_CONTRACT.function("transfer"));
+    let function_call = try_s!(function.encode_input(&[Token::Address(to_addr), Token::Uint(amount)]));
+
+    generate_contract_call_script_pubkey(&function_call, gas_limit, gas_price, token_addr)
+}
+
+/// Generate a script_pubkey contains a `function_call` from the specified `contract_address`.
+/// The `contract_address` can be either Token address (QRC20) or Swap contract address (EtomicSwap).
+fn generate_contract_call_script_pubkey(
+    function_call: &[u8],
+    gas_limit: u64,
+    gas_price: u64,
+    contract_address: &[u8],
 ) -> Result<Script, String> {
     if gas_limit == 0 || gas_price == 0 {
         // this is because the `contract_encode_number` will return an empty bytes
         return ERR!("gas_limit and gas_price cannot be zero");
     }
 
-    if token_addr.is_empty() {
+    if contract_address.is_empty() {
         // this is because the `push_bytes` will panic
         return ERR!("token_addr cannot be empty");
     }
@@ -1122,16 +1258,19 @@ fn generate_token_transfer_script_pubkey(
     let gas_limit = encode_contract_number(gas_limit as i64);
     let gas_price = encode_contract_number(gas_price as i64);
 
-    let function = try_s!(ERC20_CONTRACT.function("transfer"));
-    let function_call =
-        try_s!(function.encode_input(&[Token::Address(to_addr.hash.take().into()), Token::Uint(amount)]));
-
-    Ok(Builder::default()
+    let builder = Builder::default()
         .push_opcode(Opcode::OP_4)
         .push_bytes(&gas_limit)
-        .push_bytes(&gas_price)
-        .push_bytes(&function_call)
-        .push_bytes(token_addr)
+        .push_bytes(&gas_price);
+
+    // try to optimize script_pubkey length by pushing bytes
+    let builder = if function_call.len() <= 75 {
+        builder.push_bytes(function_call)
+    } else {
+        builder.push_data(function_call)
+    };
+    Ok(builder
+        .push_bytes(contract_address)
         .push_opcode(Opcode::OP_CALL)
         .into_script())
 }
@@ -1220,7 +1359,8 @@ mod qtum_tests {
         // sample QRC20 transfer from https://testnet.qtum.info/tx/51e9cec885d7eb26271f8b1434c000f6cf07aad47671268fc8d36cee9d48f6de
         // the script is a script_pubkey of one of the transaction output
         let expected: Script = "5403a02526012844a9059cbb0000000000000000000000000240b898276ad2cc0d2fe6f527e8e31104e7fde3000000000000000000000000000000000000000000000000000000003b9aca0014d362e096e873eb7907e205fadc6175c6fec7bc44c2".into();
-        let to_addr = "qHmJ3KA6ZAjR9wGjpFASn4gtUSeFAqdZgs".into();
+        let to_addr: Address = "qHmJ3KA6ZAjR9wGjpFASn4gtUSeFAqdZgs".into();
+        let to_addr = qrc20_addr_from_utxo_addr(to_addr);
         let amount: U256 = 1000000000.into();
         let gas_limit = 2_500_000;
         let gas_price = 40;
@@ -1232,6 +1372,7 @@ mod qtum_tests {
     #[test]
     fn test_generate_token_transfer_script_pubkey_err() {
         let to_addr: Address = "qHmJ3KA6ZAjR9wGjpFASn4gtUSeFAqdZgs".into();
+        let to_addr = qrc20_addr_from_utxo_addr(to_addr);
         let amount: U256 = 1000000000.into();
         let gas_limit = 2_500_000;
         let gas_price = 40;

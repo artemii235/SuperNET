@@ -3308,6 +3308,7 @@ fn qrc20_activate_electrum() {
 
 #[test]
 fn test_qrc20_withdraw() {
+    // corresponding private key: [3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144, 72, 172, 110, 180, 13, 123, 179, 10, 49]
     let passphrase = "cMhHM3PMpMrChygR4bLF7QsTdenhWpFrrmf2UezBG3eeFsz41rtL";
     let coins = json!([
         {"coin":"QRC20","required_confirmations":0,"pubtype": 120,"p2shtype": 50,"wiftype": 128,"segwit": true,"txfee": 0,"mm2": 1,"mature_confirmations":500,
