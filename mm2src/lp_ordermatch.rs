@@ -55,6 +55,16 @@ use crate::mm2::{lp_network::{broadcast_p2p_msg, request_one_peer, request_relay
                            AtomicLocktimeVersion, MakerSwap, RunMakerSwapInput, RunTakerSwapInput,
                            SwapConfirmationsSettings, TakerSwap}};
 
+#[path = "lp_ordermatch/new_protocol.rs"] mod new_protocol;
+#[path = "lp_ordermatch/order_requests_tracker.rs"]
+mod order_requests_tracker;
+use order_requests_tracker::OrderRequestsTracker;
+
+#[cfg(test)]
+#[cfg(feature = "native")]
+#[path = "ordermatch_tests.rs"]
+mod ordermatch_tests;
+
 pub const ORDERBOOK_PREFIX: TopicPrefix = "orbk";
 const MIN_ORDER_KEEP_ALIVE_INTERVAL: u64 = 20;
 const MAKER_ORDER_TIMEOUT: u64 = MIN_ORDER_KEEP_ALIVE_INTERVAL * 3;
@@ -62,6 +72,7 @@ const TAKER_ORDER_TIMEOUT: u64 = 30;
 const ORDER_MATCH_TIMEOUT: u64 = 30;
 const ORDERBOOK_REQUESTING_TIMEOUT: u64 = MIN_ORDER_KEEP_ALIVE_INTERVAL * 2;
 const INACTIVE_ORDER_TIMEOUT: u64 = 240;
+const MIN_TRADING_VOL: &str = "0.00777";
 
 impl From<(new_protocol::MakerOrderCreated, Vec<u8>, String, String)> for PricePingRequest {
     fn from(tuple: (new_protocol::MakerOrderCreated, Vec<u8>, String, String)) -> PricePingRequest {
@@ -138,6 +149,22 @@ async fn request_order(
     propagated_from_peer: String,
     from_pubkey: &str,
 ) -> Result<Option<PricePingRequest>, String> {
+    let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
+    if ordermatch_ctx
+        .order_requests_tracker
+        .lock()
+        .await
+        .limit_reached(&propagated_from_peer)
+    {
+        return ERR!("Reached requests per second limit to peer {}", propagated_from_peer);
+    }
+
+    ordermatch_ctx
+        .order_requests_tracker
+        .lock()
+        .await
+        .peer_requested(&propagated_from_peer);
+
     let get_order = OrdermatchRequest::GetOrder {
         uuid,
         from_pubkey: from_pubkey.to_string(),
@@ -573,13 +600,6 @@ impl BalanceUpdateEventHandler for BalanceUpdateOrdermatchHandler {
             .collect();
     }
 }
-
-#[cfg(test)]
-#[cfg(feature = "native")]
-#[path = "ordermatch_tests.rs"]
-mod ordermatch_tests;
-
-const MIN_TRADING_VOL: &str = "0.00777";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum TakerAction {
@@ -1472,6 +1492,7 @@ struct OrdermatchContext {
     pub my_taker_orders: AsyncMutex<HashMap<Uuid, TakerOrder>>,
     pub my_cancelled_orders: AsyncMutex<HashMap<Uuid, MakerOrder>>,
     pub orderbook: AsyncMutex<Orderbook>,
+    pub order_requests_tracker: AsyncMutex<OrderRequestsTracker>,
     pub inactive_orders: AsyncMutex<HashMap<Uuid, PricePingRequest>>,
 }
 
@@ -3172,201 +3193,5 @@ fn choose_taker_confs_and_notas(
         maker_coin_nota,
         taker_coin_confs,
         taker_coin_nota,
-    }
-}
-
-mod new_protocol {
-    use super::{MatchBy as SuperMatchBy, PricePingRequest, TakerAction};
-    use crate::mm2::lp_ordermatch::OrderConfirmationsSettings;
-    use common::mm_number::MmNumber;
-    use compact_uuid::CompactUuid;
-    use std::collections::HashSet;
-
-    #[derive(Debug, Deserialize, Serialize)]
-    #[allow(clippy::large_enum_variant)]
-    pub enum OrdermatchMessage {
-        MakerOrderCreated(MakerOrderCreated),
-        MakerOrderUpdated(MakerOrderUpdated),
-        MakerOrderKeepAlive(MakerOrderKeepAlive),
-        MakerOrderCancelled(MakerOrderCancelled),
-        TakerRequest(TakerRequest),
-        MakerReserved(MakerReserved),
-        TakerConnect(TakerConnect),
-        MakerConnected(MakerConnected),
-    }
-
-    /// Get an order using uuid and the order maker's pubkey.
-    /// Actual we expect to receive [`OrdermatchMessage::MakerOrderCreated`] that will be parsed into [`PricePingRequest`].
-    #[derive(Debug, Deserialize, Serialize)]
-    pub struct OrderInitialMessage {
-        pub initial_message: Vec<u8>,
-        pub from_peer: String,
-    }
-
-    impl From<PricePingRequest> for OrderInitialMessage {
-        fn from(order: PricePingRequest) -> Self {
-            OrderInitialMessage {
-                initial_message: order.initial_message,
-                from_peer: order.peer_id,
-            }
-        }
-    }
-
-    #[derive(Debug, Deserialize, Serialize)]
-    pub struct Orderbook {
-        pub asks: Vec<OrderInitialMessage>,
-        pub bids: Vec<OrderInitialMessage>,
-    }
-
-    impl From<MakerOrderKeepAlive> for OrdermatchMessage {
-        fn from(keep_alive: MakerOrderKeepAlive) -> Self { OrdermatchMessage::MakerOrderKeepAlive(keep_alive) }
-    }
-
-    /// MsgPack compact representation does not work with tagged enums (encoding works, but decoding fails)
-    /// This is untagged representation also using compact Uuid representation
-    #[derive(Clone, Debug, Deserialize, Serialize)]
-    pub enum MatchBy {
-        Any,
-        Orders(HashSet<CompactUuid>),
-        Pubkeys(HashSet<[u8; 32]>),
-    }
-
-    impl From<SuperMatchBy> for MatchBy {
-        fn from(match_by: SuperMatchBy) -> MatchBy {
-            match match_by {
-                SuperMatchBy::Any => MatchBy::Any,
-                SuperMatchBy::Orders(uuids) => MatchBy::Orders(uuids.into_iter().map(|uuid| uuid.into()).collect()),
-                SuperMatchBy::Pubkeys(pubkeys) => {
-                    MatchBy::Pubkeys(pubkeys.into_iter().map(|pubkey| pubkey.0).collect())
-                },
-            }
-        }
-    }
-
-    impl Into<SuperMatchBy> for MatchBy {
-        fn into(self) -> SuperMatchBy {
-            match self {
-                MatchBy::Any => SuperMatchBy::Any,
-                MatchBy::Orders(uuids) => SuperMatchBy::Orders(uuids.into_iter().map(|uuid| uuid.into()).collect()),
-                MatchBy::Pubkeys(pubkeys) => {
-                    SuperMatchBy::Pubkeys(pubkeys.into_iter().map(|pubkey| pubkey.into()).collect())
-                },
-            }
-        }
-    }
-
-    mod compact_uuid {
-        use serde::{Deserialize, Deserializer, Serialize, Serializer};
-        use std::str::FromStr;
-        use uuid::Uuid;
-
-        /// Default MsgPack encoded UUID length is 38 bytes (seems like it is encoded as string)
-        /// This wrapper is encoded to raw 16 bytes representation
-        /// Derives all traits of wrapped value
-        #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-        pub struct CompactUuid(Uuid);
-
-        impl From<Uuid> for CompactUuid {
-            fn from(uuid: Uuid) -> Self { CompactUuid(uuid) }
-        }
-
-        impl Into<Uuid> for CompactUuid {
-            fn into(self) -> Uuid { self.0 }
-        }
-
-        impl FromStr for CompactUuid {
-            type Err = uuid::parser::ParseError;
-
-            fn from_str(str: &str) -> Result<Self, Self::Err> {
-                let uuid = Uuid::parse_str(str)?;
-                Ok(uuid.into())
-            }
-        }
-
-        impl Serialize for CompactUuid {
-            fn serialize<S>(&self, s: S) -> Result<S::Ok, S::Error>
-            where
-                S: Serializer,
-            {
-                s.serialize_bytes(self.0.as_bytes())
-            }
-        }
-
-        impl<'de> Deserialize<'de> for CompactUuid {
-            fn deserialize<D>(d: D) -> Result<CompactUuid, D::Error>
-            where
-                D: Deserializer<'de>,
-            {
-                let bytes: &[u8] = Deserialize::deserialize(d)?;
-                let uuid = Uuid::from_slice(bytes)
-                    .map_err(|e| serde::de::Error::custom(format!("Uuid::from_slice error {}", e)))?;
-                Ok(uuid.into())
-            }
-        }
-    }
-
-    #[derive(Clone, Debug, Deserialize, Serialize)]
-    pub struct MakerOrderCreated {
-        pub uuid: CompactUuid,
-        pub base: String,
-        pub rel: String,
-        pub price: MmNumber,
-        pub max_volume: MmNumber,
-        pub min_volume: MmNumber,
-        pub conf_settings: OrderConfirmationsSettings,
-    }
-
-    #[derive(Debug, Deserialize, Serialize)]
-    pub struct MakerOrderKeepAlive {
-        pub uuid: CompactUuid,
-        pub timestamp: u64,
-    }
-
-    #[derive(Debug, Deserialize, Serialize)]
-    pub struct MakerOrderCancelled {
-        pub uuid: CompactUuid,
-    }
-
-    #[derive(Debug, Deserialize, Serialize)]
-    pub struct MakerOrderUpdated {
-        uuid: CompactUuid,
-        new_price: Option<MmNumber>,
-        new_max_volume: Option<MmNumber>,
-        new_min_volume: Option<MmNumber>,
-    }
-
-    #[derive(Clone, Debug, Deserialize, Serialize)]
-    pub struct TakerRequest {
-        pub base: String,
-        pub rel: String,
-        pub base_amount: MmNumber,
-        pub rel_amount: MmNumber,
-        pub action: TakerAction,
-        pub uuid: CompactUuid,
-        pub match_by: MatchBy,
-        pub conf_settings: OrderConfirmationsSettings,
-    }
-
-    #[derive(Clone, Debug, Deserialize, Serialize)]
-    pub struct MakerReserved {
-        pub base: String,
-        pub rel: String,
-        pub base_amount: MmNumber,
-        pub rel_amount: MmNumber,
-        pub taker_order_uuid: CompactUuid,
-        pub maker_order_uuid: CompactUuid,
-        pub conf_settings: OrderConfirmationsSettings,
-    }
-
-    #[derive(Clone, Debug, Deserialize, Serialize)]
-    pub struct TakerConnect {
-        pub taker_order_uuid: CompactUuid,
-        pub maker_order_uuid: CompactUuid,
-    }
-
-    #[derive(Clone, Debug, Deserialize, Serialize)]
-    pub struct MakerConnected {
-        pub taker_order_uuid: CompactUuid,
-        pub maker_order_uuid: CompactUuid,
     }
 }
