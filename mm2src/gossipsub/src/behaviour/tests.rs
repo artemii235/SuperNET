@@ -23,6 +23,7 @@
 #[cfg(test)]
 mod tests {
     use super::super::*;
+    use crate::GossipsubConfigBuilder;
 
     // helper functions for testing
 
@@ -31,10 +32,9 @@ mod tests {
     fn build_and_inject_nodes(
         peer_no: usize,
         topics: Vec<String>,
+        gs_config: GossipsubConfig,
         to_subscribe: bool,
     ) -> (Gossipsub, Vec<PeerId>, Vec<TopicHash>) {
-        // generate a default GossipsubConfig
-        let gs_config = GossipsubConfig::default();
         // create a gossipsub struct
         let mut gs: Gossipsub = Gossipsub::new(PeerId::random(), gs_config);
 
@@ -81,7 +81,7 @@ mod tests {
         // - run JOIN(topic)
 
         let subscribe_topic = vec![String::from("test_subscribe")];
-        let (gs, _, topic_hashes) = build_and_inject_nodes(20, subscribe_topic, true);
+        let (gs, _, topic_hashes) = build_and_inject_nodes(20, subscribe_topic, GossipsubConfig::default(), true);
 
         assert!(
             gs.mesh.get(&topic_hashes[0]).is_some(),
@@ -124,7 +124,7 @@ mod tests {
             .collect::<Vec<Topic>>();
 
         // subscribe to topic_strings
-        let (mut gs, _, topic_hashes) = build_and_inject_nodes(20, topic_strings, true);
+        let (mut gs, _, topic_hashes) = build_and_inject_nodes(20, topic_strings, GossipsubConfig::default(), true);
 
         for topic_hash in &topic_hashes {
             assert!(
@@ -190,7 +190,7 @@ mod tests {
             .map(|t| Topic::new(t.clone()))
             .collect::<Vec<Topic>>();
 
-        let (mut gs, _, topic_hashes) = build_and_inject_nodes(20, topic_strings, true);
+        let (mut gs, _, topic_hashes) = build_and_inject_nodes(20, topic_strings, GossipsubConfig::default(), true);
 
         // unsubscribe, then call join to invoke functionality
         assert!(
@@ -287,7 +287,8 @@ mod tests {
         // - Insert message into gs.mcache and gs.received
 
         let publish_topic = String::from("test_publish");
-        let (mut gs, _, topic_hashes) = build_and_inject_nodes(20, vec![publish_topic.clone()], true);
+        let (mut gs, _, topic_hashes) =
+            build_and_inject_nodes(20, vec![publish_topic.clone()], GossipsubConfig::default(), true);
 
         assert!(
             gs.mesh.get(&topic_hashes[0]).is_some(),
@@ -334,7 +335,8 @@ mod tests {
         // - Send publish message to fanout peers
         // - Insert message into gs.mcache and gs.received
         let fanout_topic = String::from("test_fanout");
-        let (mut gs, _, topic_hashes) = build_and_inject_nodes(20, vec![fanout_topic.clone()], true);
+        let (mut gs, _, topic_hashes) =
+            build_and_inject_nodes(20, vec![fanout_topic.clone()], GossipsubConfig::default(), true);
 
         assert!(
             gs.mesh.get(&topic_hashes[0]).is_some(),
@@ -388,8 +390,12 @@ mod tests {
     #[test]
     /// Test the gossipsub NetworkBehaviour peer connection logic.
     fn test_inject_connected() {
-        let (gs, peers, topic_hashes) =
-            build_and_inject_nodes(20, vec![String::from("topic1"), String::from("topic2")], true);
+        let (gs, peers, topic_hashes) = build_and_inject_nodes(
+            20,
+            vec![String::from("topic1"), String::from("topic2")],
+            GossipsubConfig::default(),
+            true,
+        );
 
         // check that our subscriptions are sent to each of the peers
         // collect all the SendEvents
@@ -444,7 +450,7 @@ mod tests {
             .iter()
             .map(|&t| String::from(t))
             .collect();
-        let (mut gs, peers, topic_hashes) = build_and_inject_nodes(20, topics, false);
+        let (mut gs, peers, topic_hashes) = build_and_inject_nodes(20, topics, GossipsubConfig::default(), false);
 
         // The first peer sends 3 subscriptions and 1 unsubscription
         let mut subscriptions = topic_hashes[..3]
@@ -555,7 +561,7 @@ mod tests {
     /// Tests that the correct message is sent when a peer asks for a message in our cache.
     #[test]
     fn test_handle_iwant_msg_cached() {
-        let (mut gs, peers, _) = build_and_inject_nodes(20, Vec::new(), true);
+        let (mut gs, peers, _) = build_and_inject_nodes(20, Vec::new(), GossipsubConfig::default(), true);
 
         let id = gs.config.message_id_fn;
 
@@ -590,7 +596,7 @@ mod tests {
     /// Tests that messages are sent correctly depending on the shifting of the message cache.
     #[test]
     fn test_handle_iwant_msg_cached_shifted() {
-        let (mut gs, peers, _) = build_and_inject_nodes(20, Vec::new(), true);
+        let (mut gs, peers, _) = build_and_inject_nodes(20, Vec::new(), GossipsubConfig::default(), true);
 
         let id = gs.config.message_id_fn;
         // perform 10 memshifts and check that it leaves the cache
@@ -634,7 +640,7 @@ mod tests {
     #[test]
     // tests that an event is not created when a peers asks for a message not in our cache
     fn test_handle_iwant_msg_not_cached() {
-        let (mut gs, peers, _) = build_and_inject_nodes(20, Vec::new(), true);
+        let (mut gs, peers, _) = build_and_inject_nodes(20, Vec::new(), GossipsubConfig::default(), true);
 
         let events_before = gs.events.len();
         gs.handle_iwant(&peers[7], vec![MessageId(String::from("unknown id"))]);
@@ -646,7 +652,8 @@ mod tests {
     #[test]
     // tests that an event is created when a peer shares that it has a message we want
     fn test_handle_ihave_subscribed_and_msg_not_cached() {
-        let (mut gs, peers, topic_hashes) = build_and_inject_nodes(20, vec![String::from("topic1")], true);
+        let (mut gs, peers, topic_hashes) =
+            build_and_inject_nodes(20, vec![String::from("topic1")], GossipsubConfig::default(), true);
 
         gs.handle_ihave(&peers[7], vec![(topic_hashes[0].clone(), vec![MessageId(
             String::from("unknown id"),
@@ -673,7 +680,8 @@ mod tests {
     // tests that an event is not created when a peer shares that it has a message that
     // we already have
     fn test_handle_ihave_subscribed_and_msg_cached() {
-        let (mut gs, peers, topic_hashes) = build_and_inject_nodes(20, vec![String::from("topic1")], true);
+        let (mut gs, peers, topic_hashes) =
+            build_and_inject_nodes(20, vec![String::from("topic1")], GossipsubConfig::default(), true);
 
         let msg_id = MessageId(String::from("known id"));
         gs.received.put(msg_id.clone(), ());
@@ -689,7 +697,7 @@ mod tests {
     // test that an event is not created when a peer shares that it has a message in
     // a topic that we are not subscribed to
     fn test_handle_ihave_not_subscribed() {
-        let (mut gs, peers, _) = build_and_inject_nodes(20, vec![], true);
+        let (mut gs, peers, _) = build_and_inject_nodes(20, vec![], GossipsubConfig::default(), true);
 
         let events_before = gs.events.len();
         gs.handle_ihave(&peers[7], vec![(
@@ -705,7 +713,8 @@ mod tests {
     // tests that a peer is added to our mesh when we are both subscribed
     // to the same topic
     fn test_handle_graft_is_subscribed() {
-        let (mut gs, peers, topic_hashes) = build_and_inject_nodes(20, vec![String::from("topic1")], true);
+        let (mut gs, peers, topic_hashes) =
+            build_and_inject_nodes(20, vec![String::from("topic1")], GossipsubConfig::default(), true);
 
         gs.handle_graft(&peers[7], topic_hashes.clone());
 
@@ -719,7 +728,8 @@ mod tests {
     // tests that a peer is not added to our mesh when they are subscribed to
     // a topic that we are not
     fn test_handle_graft_is_not_subscribed() {
-        let (mut gs, peers, topic_hashes) = build_and_inject_nodes(20, vec![String::from("topic1")], true);
+        let (mut gs, peers, topic_hashes) =
+            build_and_inject_nodes(20, vec![String::from("topic1")], GossipsubConfig::default(), true);
 
         gs.handle_graft(&peers[7], vec![TopicHash::from_raw(String::from("unsubscribed topic"))]);
 
@@ -737,7 +747,8 @@ mod tests {
             .map(|&t| String::from(t))
             .collect();
 
-        let (mut gs, peers, topic_hashes) = build_and_inject_nodes(20, topics.clone(), true);
+        let (mut gs, peers, topic_hashes) =
+            build_and_inject_nodes(20, topics.clone(), GossipsubConfig::default(), true);
 
         let mut their_topics = topic_hashes.clone();
         // their_topics = [topic1, topic2, topic3]
@@ -763,7 +774,8 @@ mod tests {
     #[test]
     // tests that a peer is removed from our mesh
     fn test_handle_prune_peer_in_mesh() {
-        let (mut gs, peers, topic_hashes) = build_and_inject_nodes(20, vec![String::from("topic1")], true);
+        let (mut gs, peers, topic_hashes) =
+            build_and_inject_nodes(20, vec![String::from("topic1")], GossipsubConfig::default(), true);
 
         // insert peer into our mesh for 'topic1'
         gs.mesh.insert(topic_hashes[0].clone(), peers.clone());
@@ -782,7 +794,7 @@ mod tests {
     #[test]
     fn test_maintain_relayers_mesh_n_high() {
         let peer_no = 20;
-        let (mut gs, peers, _) = build_and_inject_nodes(peer_no, vec![], false);
+        let (mut gs, peers, _) = build_and_inject_nodes(peer_no, vec![], GossipsubConfig::default(), false);
         for peer in peers {
             gs.relayers_mesh.insert(peer);
         }
@@ -793,12 +805,23 @@ mod tests {
             gs.relayers_mesh.len(),
             "Relayers mesh must contain mesh_n peers after maintenance"
         );
+        assert_eq!(gs.events.len(), 14);
+        for event in gs.events {
+            match event {
+                NetworkBehaviourAction::NotifyHandler { event, .. } => {
+                    assert_eq!(event.control_msgs, vec![
+                        GossipsubControlAction::IncludedToRelayersMesh(false)
+                    ]);
+                },
+                _ => panic!("Invalid NetworkBehaviourAction variant"),
+            }
+        }
     }
 
     #[test]
     fn test_maintain_relayers_mesh_n_low() {
         let peer_no = 20;
-        let (mut gs, peers, _) = build_and_inject_nodes(peer_no, vec![], false);
+        let (mut gs, peers, _) = build_and_inject_nodes(peer_no, vec![], GossipsubConfig::default(), false);
         for (i, peer) in peers.into_iter().enumerate() {
             if i < 3 {
                 gs.relayers_mesh.insert(peer);
@@ -813,5 +836,32 @@ mod tests {
             gs.relayers_mesh.len(),
             "Relayers mesh must contain mesh_n peers after maintenance"
         );
+        assert_eq!(gs.events.len(), 3);
+        for event in gs.events {
+            match event {
+                NetworkBehaviourAction::NotifyHandler { event, .. } => {
+                    assert_eq!(event.control_msgs, vec![
+                        GossipsubControlAction::IncludedToRelayersMesh(true)
+                    ]);
+                },
+                _ => panic!("Invalid NetworkBehaviourAction variant"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_process_included_to_relayers_mesh() {
+        let peer_no = 2;
+        let config = GossipsubConfigBuilder::default().i_am_relay(true).build();
+        let (mut gs, peers, _) = build_and_inject_nodes(peer_no, vec![], config, false);
+        for peer in &peers {
+            gs.connected_relayers.insert(peer.clone());
+        }
+
+        gs.handle_included_to_relayers_mesh(&peers[0], true);
+        assert!(gs.relayers_mesh.contains(&peers[0]));
+
+        gs.handle_included_to_relayers_mesh(&peers[0], false);
+        assert!(!gs.relayers_mesh.contains(&peers[0]));
     }
 }
