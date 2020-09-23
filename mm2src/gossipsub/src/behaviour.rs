@@ -545,11 +545,20 @@ impl Gossipsub {
                 peer_id, is_included
             );
             if is_included {
-                debug!("Adding peer {:?} to included_to_relayers_mesh", peer_id);
-                self.included_to_relayers_mesh.insert(peer_id.clone());
+                if self.connected_relayers.contains(peer_id) {
+                    debug!("Adding peer {:?} to relayers_mesh", peer_id);
+                    self.relayers_mesh.insert(peer_id.clone());
+                } else {
+                    debug!("Adding peer {:?} to included_to_relayers_mesh", peer_id);
+                    self.included_to_relayers_mesh.insert(peer_id.clone());
+                }
             } else {
-                debug!("Removing peer {:?} from included_to_relayers_mesh", peer_id);
+                debug!(
+                    "Removing peer {:?} from included_to_relayers_mesh and relayers mesh",
+                    peer_id
+                );
                 self.included_to_relayers_mesh.remove(peer_id);
+                self.relayers_mesh.remove(peer_id);
             }
         } else {
             debug!(
