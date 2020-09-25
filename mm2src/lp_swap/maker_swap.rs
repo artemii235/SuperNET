@@ -569,7 +569,7 @@ impl MakerSwap {
         };
 
         let maker_payment_wait_confirm = self.r().data.started_at + (self.r().data.lock_duration * 2) / 5;
-        let f = self.maker_coin.wait_for_confirmations(
+        let f = self.maker_coin.wait_for_swap_payment_confirmations(
             &unwrap!(self.r().maker_payment.clone()).tx_hex,
             self.r().data.maker_payment_confirmations,
             self.r().data.maker_payment_requires_nota.unwrap_or(false),
@@ -676,6 +676,7 @@ impl MakerSwap {
 
         let wait_f = self
             .taker_coin
+            // TODO replace it with wait_for_swap_payment_confirmations later
             .wait_for_confirmations(
                 &unwrap!(self.r().taker_payment.clone()).tx_hex,
                 self.r().data.taker_payment_confirmations,

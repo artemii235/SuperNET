@@ -750,6 +750,17 @@ impl SwapOps for EthCoin {
     ) -> Result<Option<FoundSwapTxSpend>, String> {
         self.search_for_swap_tx_spend(tx, search_from_block)
     }
+
+    fn wait_for_swap_payment_confirmations(
+        &self,
+        tx: &[u8],
+        confirmations: u64,
+        requires_nota: bool,
+        wait_until: u64,
+        check_every: u64,
+    ) -> Box<dyn Future<Item = (), Error = String> + Send> {
+        self.wait_for_confirmations(tx, confirmations, requires_nota, wait_until, check_every)
+    }
 }
 
 impl MarketCoinOps for EthCoin {

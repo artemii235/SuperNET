@@ -90,10 +90,6 @@ impl UtxoCoinCommonOps for QtumCoin {
 #[async_trait]
 #[allow(clippy::forget_ref, clippy::forget_copy)]
 impl UtxoArcCommonOps for QtumCoin {
-    fn send_outputs_from_my_address(&self, outputs: Vec<TransactionOutput>) -> TransactionFut {
-        utxo_common::send_outputs_from_my_address(self.clone(), outputs)
-    }
-
     fn validate_payment(
         &self,
         payment_tx: &[u8],
@@ -181,7 +177,7 @@ impl UtxoArcCommonOps for QtumCoin {
 
 impl SwapOps for QtumCoin {
     fn send_taker_fee(&self, fee_addr: &[u8], amount: BigDecimal) -> TransactionFut {
-        utxo_common::send_taker_fee(self, fee_addr, amount)
+        utxo_common::send_taker_fee(self.clone(), fee_addr, amount)
     }
 
     fn send_maker_payment(
@@ -305,6 +301,17 @@ impl SwapOps for QtumCoin {
         search_from_block: u64,
     ) -> Result<Option<FoundSwapTxSpend>, String> {
         utxo_common::search_for_swap_tx_spend_other(self, time_lock, other_pub, secret_hash, tx, search_from_block)
+    }
+
+    fn wait_for_swap_payment_confirmations(
+        &self,
+        tx: &[u8],
+        confirmations: u64,
+        requires_nota: bool,
+        wait_until: u64,
+        check_every: u64,
+    ) -> Box<dyn Future<Item = (), Error = String> + Send> {
+        self.wait_for_confirmations(tx, confirmations, requires_nota, wait_until, check_every)
     }
 }
 

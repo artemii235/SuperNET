@@ -223,6 +223,15 @@ pub trait SwapOps {
         tx: &[u8],
         search_from_block: u64,
     ) -> Result<Option<FoundSwapTxSpend>, String>;
+
+    fn wait_for_swap_payment_confirmations(
+        &self,
+        tx: &[u8],
+        confirmations: u64,
+        requires_nota: bool,
+        wait_until: u64,
+        check_every: u64,
+    ) -> Box<dyn Future<Item = (), Error = String> + Send>;
 }
 
 /// Operations that coins have independently from the MarketMaker.

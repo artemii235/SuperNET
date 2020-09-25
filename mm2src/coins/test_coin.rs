@@ -177,6 +177,17 @@ impl SwapOps for TestCoin {
     ) -> Result<Option<FoundSwapTxSpend>, String> {
         unimplemented!()
     }
+
+    fn wait_for_swap_payment_confirmations(
+        &self,
+        tx: &[u8],
+        confirmations: u64,
+        requires_nota: bool,
+        wait_until: u64,
+        check_every: u64,
+    ) -> Box<dyn Future<Item = (), Error = String> + Send> {
+        unimplemented!()
+    }
 }
 
 #[mockable]

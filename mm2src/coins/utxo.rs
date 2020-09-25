@@ -353,8 +353,6 @@ impl std::error::Error for GenerateTransactionError {}
 #[mockable]
 #[async_trait]
 pub trait UtxoArcCommonOps {
-    fn send_outputs_from_my_address(&self, outputs: Vec<TransactionOutput>) -> TransactionFut;
-
     fn validate_payment(
         &self,
         payment_tx: &[u8],

@@ -82,7 +82,11 @@ pub struct TxReceipt {
     contract_address: Option<String>,
     /// Logs generated within this transaction.
     log: Vec<LogEntry>,
-    // There are 'expected' and 'expectedMessage' fields. Skip them.
+    /// Whether corresponding contract call (specified in UTXO outputs[output_index]) was failed.
+    /// If None or Some("None") - completed, else failed.
+    excepted: Option<String>,
+    #[serde(rename = "exceptedMessage")]
+    excepted_message: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -311,6 +315,122 @@ impl Qrc20Coin {
             script_pubkey,
         })
     }
+
+    /// Generate and send a transaction from the specified UTXO outputs.
+    /// Note this function locks the `UTXO_LOCK`.
+    pub async fn send_contract_calls(
+        &self,
+        // TODO replace TransactionOutput with a ContractCallOutput
+        outputs: Vec<TransactionOutput>,
+    ) -> Result<TransactionEnum, String> {
+        let _utxo_lock = UTXO_LOCK.lock().await;
+
+        let (signed, _fee_details) = try_s!(
+            self.generate_qrc20_transaction(QRC20_GAS_LIMIT_DEFAULT, QRC20_GAS_PRICE_DEFAULT, outputs)
+                .await
+        );
+        let _tx = try_s!(
+            self.utxo_arc
+                .rpc_client
+                .send_transaction(&signed, self.utxo_arc.my_address.clone())
+                .compat()
+                .await
+        );
+        Ok(signed.into())
+    }
+
+    /// Generate Qtum UTXO transaction to call QRC20 contract call such as `transfer` or `approve`.
+    /// Note: lock the UTXO_LOCK mutex before this function will be called.
+    async fn generate_qrc20_transaction(
+        &self,
+        gas_limit: u64,
+        gas_price: u64,
+        outputs: Vec<TransactionOutput>,
+    ) -> Result<(UtxoTx, Qrc20FeeDetails), String> {
+        let unspents = try_s!(self
+            .ordered_mature_unspents(&self.utxo_arc.my_address)
+            .compat()
+            .await
+            .map_err(|e| ERRL!("{}", e)));
+
+        // None seems that the generate_transaction() should request estimated fee for Kbyte
+        let actual_tx_fee = None;
+        // We do one contract call, because of this gas_fee will be (1 * gas_limit * gas_price)
+        let gas_fee = gas_limit
+            .checked_mul(gas_price)
+            .ok_or(ERRL!("too large gas_limit and/or gas_price"))?
+            .checked_mul(outputs.len() as u64)
+            .ok_or(ERRL!("too large gas_fee"))?;
+        let fee_policy = FeePolicy::SendExact;
+
+        let (unsigned, data) = self
+            .generate_transaction(unspents, outputs, fee_policy, actual_tx_fee, Some(gas_fee))
+            .await
+            .map_err(|e| match &e {
+                GenerateTransactionError::EmptyUtxoSet => ERRL!("Not enough {} to Pay Fee: {}", self.platform, e),
+                GenerateTransactionError::NotSufficientBalance { description } => {
+                    ERRL!("Not enough {} to Pay Fee: {}", self.platform, description)
+                },
+                e => ERRL!("{}", e),
+            })?;
+        let prev_script = Builder::build_p2pkh(&self.utxo_arc.my_address.hash);
+        let signed = try_s!(sign_tx(
+            unsigned,
+            &self.utxo_arc.key_pair,
+            prev_script,
+            self.utxo_arc.signature_version,
+            self.utxo_arc.fork_id
+        ));
+        let fee_details = Qrc20FeeDetails {
+            // QRC20 fees are paid in base platform currency (in particular Qtum)
+            coin: self.platform.clone(),
+            miner_fee: utxo_common::big_decimal_from_sat(data.fee_amount as i64, self.utxo_arc.decimals),
+            gas_limit,
+            gas_price,
+            total_gas_fee: utxo_common::big_decimal_from_sat(gas_fee as i64, self.utxo_arc.decimals),
+        };
+        Ok((signed, fee_details))
+    }
+
+    /// `outputs` contains list of indexes of outputs, contract calls of which should be completed successfully.
+    async fn validate_contract_calls(&self, hash: H256Json, outputs: Vec<i64>) -> Result<(), String> {
+        let receipts = match self.utxo_arc.rpc_client {
+            UtxoRpcClientEnum::Electrum(ref rpc) => {
+                try_s!(rpc.blochchain_transaction_get_receipt(&hash).compat().await)
+            },
+            UtxoRpcClientEnum::Native(_) => return ERR!("Electrum client expected"),
+        };
+
+        if receipts.is_empty() {
+            return ERR!(
+                "blochchain.transaction.get_receipt returned empty receipts list for {:?} transaction",
+                hash
+            );
+        }
+
+        for receipt in receipts {
+            // Note contract_calls_topics is not expected to be long, we can iterate over the slice
+            if !outputs.contains(&receipt.output_index) {
+                continue;
+            }
+            match receipt.excepted {
+                Some(ex) if ex == "None" => (), // contract call was completed successfully
+                Some(ex) => {
+                    let excepted_message = receipt.excepted_message.unwrap_or_default();
+                    return ERR!(
+                        "Contract call (index {} in outputs) is excepted: {:?}, excepted message: {:?}",
+                        receipt.output_index,
+                        ex,
+                        excepted_message
+                    );
+                },
+                None => (), // contract call was completed successfully
+            }
+        }
+
+        // all of the contract calls that are expected to be completed successfully were completed successfully
+        Ok(())
+    }
 }
 
 impl AsRef<UtxoArc> for Qrc20Coin {
@@ -374,16 +494,6 @@ impl UtxoCoinCommonOps for Qrc20Coin {
 #[async_trait]
 #[allow(clippy::forget_ref, clippy::forget_copy)]
 impl UtxoArcCommonOps for Qrc20Coin {
-    /// Generate and send a transaction from the specified UTXO outputs.
-    /// Note this function locks the `UTXO_LOCK`.
-    fn send_outputs_from_my_address(&self, outputs: Vec<TransactionOutput>) -> TransactionFut {
-        Box::new(
-            qrc20_send_outputs_from_my_address(self.clone(), outputs)
-                .boxed()
-                .compat(),
-        )
-    }
-
     fn validate_payment(
         &self,
         payment_tx: &[u8],
@@ -525,7 +635,7 @@ impl UtxoArcCommonOps for Qrc20Coin {
 
 impl SwapOps for Qrc20Coin {
     fn send_taker_fee(&self, fee_addr: &[u8], amount: BigDecimal) -> TransactionFut {
-        utxo_common::send_taker_fee(self, fee_addr, amount)
+        utxo_common::send_taker_fee(self.clone(), fee_addr, amount)
     }
 
     fn send_maker_payment(
@@ -657,6 +767,29 @@ impl SwapOps for Qrc20Coin {
         search_from_block: u64,
     ) -> Result<Option<FoundSwapTxSpend>, String> {
         utxo_common::search_for_swap_tx_spend_other(self, time_lock, other_pub, secret_hash, tx, search_from_block)
+    }
+
+    fn wait_for_swap_payment_confirmations(
+        &self,
+        tx: &[u8],
+        confirmations: u64,
+        requires_nota: bool,
+        wait_until: u64,
+        check_every: u64,
+    ) -> Box<dyn Future<Item = (), Error = String> + Send> {
+        let tx = Vec::from(tx);
+        Box::new(
+            qrc20_wait_for_swap_payment_confirmations(
+                self.clone(),
+                tx,
+                confirmations,
+                requires_nota,
+                wait_until,
+                check_every,
+            )
+            .boxed()
+            .compat(),
+        )
     }
 }
 
@@ -861,7 +994,7 @@ async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> Result<Transac
         script_pubkey,
     }];
 
-    let (signed, fee_details) = try_s!(generate_qrc20_transaction(coin.clone(), gas_limit, gas_price, outputs).await);
+    let (signed, fee_details) = try_s!(coin.generate_qrc20_transaction(gas_limit, gas_price, outputs).await);
 
     let received_by_me = if to_addr == coin.utxo_arc.my_address {
         req.amount.clone()
@@ -888,58 +1021,12 @@ async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> Result<Transac
     })
 }
 
-/// Generate Qtum UTXO transaction to call QRC20 contract call such as `transfer` or `approve`.
-/// Note: lock the UTXO_LOCK mutex before this function will be called.
-async fn generate_qrc20_transaction(
-    // TODO take the coin as a reference
-    coin: Qrc20Coin,
-    gas_limit: u64,
-    gas_price: u64,
-    outputs: Vec<TransactionOutput>,
-) -> Result<(UtxoTx, Qrc20FeeDetails), String> {
-    let unspents = try_s!(coin
-        .ordered_mature_unspents(&coin.utxo_arc.my_address)
-        .compat()
-        .await
-        .map_err(|e| ERRL!("{}", e)));
-
-    // None seems that the generate_transaction() should request estimated fee for Kbyte
-    let actual_tx_fee = None;
-    let gas_fee = gas_limit
-        .checked_mul(gas_price)
-        .ok_or(ERRL!("too large gas_limit and/or gas_price"))?;
-    let fee_policy = FeePolicy::SendExact;
-
-    let (unsigned, data) = coin
-        .generate_transaction(unspents, outputs, fee_policy, actual_tx_fee, Some(gas_fee))
-        .await
-        .map_err(|e| match &e {
-            GenerateTransactionError::EmptyUtxoSet => ERRL!("Not enough {} to Pay Fee: {}", coin.platform, e),
-            GenerateTransactionError::NotSufficientBalance { description } => {
-                ERRL!("Not enough {} to Pay Fee: {}", coin.platform, description)
-            },
-            e => ERRL!("{}", e),
-        })?;
-    let prev_script = Builder::build_p2pkh(&coin.utxo_arc.my_address.hash);
-    let signed = try_s!(sign_tx(
-        unsigned,
-        &coin.utxo_arc.key_pair,
-        prev_script,
-        coin.utxo_arc.signature_version,
-        coin.utxo_arc.fork_id
-    ));
-    let fee_details = Qrc20FeeDetails {
-        // QRC20 fees are paid in base platform currency (in particular Qtum)
-        coin: coin.platform.clone(),
-        miner_fee: utxo_common::big_decimal_from_sat(data.fee_amount as i64, coin.utxo_arc.decimals),
-        gas_limit,
-        gas_price,
-        total_gas_fee: utxo_common::big_decimal_from_sat(gas_fee as i64, coin.utxo_arc.decimals),
-    };
-    Ok((signed, fee_details))
-}
-
 async fn qrc20_tx_details_by_hash(coin: Qrc20Coin, hash: H256Json) -> Result<TransactionDetails, String> {
+    // TODO it's required by maker_swap::maker_payment() temporary
+    return Ok(try_s!(
+        utxo_common::tx_details_by_hash(coin.clone(), &hash.0).compat().await
+    ));
+
     let mut receipts = match coin.as_ref().rpc_client {
         UtxoRpcClientEnum::Electrum(ref rpc) => try_s!(rpc.blochchain_transaction_get_receipt(&hash).compat().await),
         UtxoRpcClientEnum::Native(_) => return ERR!("Electrum client expected"),
@@ -1113,33 +1200,59 @@ async fn qrc20_send_hash_time_locked_payment(
         receiver_addr
     )));
 
-    coin.send_outputs_from_my_address(outputs).compat().await
+    coin.send_contract_calls(outputs).await
 }
 
-async fn qrc20_send_outputs_from_my_address(
+async fn qrc20_wait_for_swap_payment_confirmations(
     coin: Qrc20Coin,
-    outputs: Vec<TransactionOutput>,
-) -> Result<TransactionEnum, String> {
-    let _utxo_lock = UTXO_LOCK.lock().await;
-
-    let (signed, _fee_details) = try_s!(
-        generate_qrc20_transaction(
-            coin.clone(),
-            QRC20_GAS_LIMIT_DEFAULT * 3,
-            QRC20_GAS_PRICE_DEFAULT,
-            outputs
+    tx: Vec<u8>,
+    confirmations: u64,
+    requires_nota: bool,
+    wait_until: u64,
+    check_every: u64,
+) -> Result<(), String> {
+    let utxo_tx: UtxoTx = try_s!(deserialize(tx.as_slice()).map_err(|e| ERRL!("{:?}", e)));
+    let tx_hash = utxo_tx.hash().reversed().into();
+    try_s!(
+        utxo_common::wait_for_confirmations(
+            &coin.utxo_arc,
+            &tx,
+            confirmations,
+            requires_nota,
+            wait_until,
+            check_every,
         )
+        .compat()
         .await
     );
-    let tx = try_s!(
-        coin.utxo_arc
-            .rpc_client
-            .send_transaction(&signed, coin.utxo_arc.my_address.clone())
-            .compat()
-            .await
-    );
-    log!([tx]);
-    Ok(signed.into())
+
+    let payment_function = try_s!(SWAP_CONTRACT.function("erc20Payment"));
+    let payment_call_signature = payment_function.short_signature();
+
+    let mut transfer_outputs = Vec::default();
+    // get indexes of outputs whose script pubkeys are erc20Payment contract calls
+    for (idx, output) in utxo_tx.outputs.iter().enumerate() {
+        let script_pubkey: Script = output.script_pubkey.clone().into();
+        if is_contract_call(&script_pubkey) {
+            let contract_call = try_s!(extract_contract_call_from_script(&script_pubkey));
+            if contract_call.starts_with(&payment_call_signature) {
+                transfer_outputs.push(idx as i64);
+            }
+        }
+    }
+
+    if transfer_outputs.is_empty() {
+        return ERR!(
+            r#"Maker payment should contain "erc20Payment" contract call. Outputs: {:?}"#,
+            utxo_tx.outputs
+        );
+    }
+    if transfer_outputs.len() != 1 {
+        log!("Count of \"erc20Payment\" calls is {}, expected 1"[transfer_outputs.len()]);
+    }
+
+    // check if the contract transfer calls have completed successfully
+    coin.validate_contract_calls(tx_hash, transfer_outputs).await
 }
 
 /// Serialize the `number` similar to BigEndian but in QRC20 specific format.
@@ -1258,18 +1371,11 @@ fn generate_contract_call_script_pubkey(
     let gas_limit = encode_contract_number(gas_limit as i64);
     let gas_price = encode_contract_number(gas_price as i64);
 
-    let builder = Builder::default()
+    Ok(Builder::default()
         .push_opcode(Opcode::OP_4)
         .push_bytes(&gas_limit)
-        .push_bytes(&gas_price);
-
-    // try to optimize script_pubkey length by pushing bytes
-    let builder = if function_call.len() <= 75 {
-        builder.push_bytes(function_call)
-    } else {
-        builder.push_data(function_call)
-    };
-    Ok(builder
+        .push_bytes(&gas_price)
+        .push_data(function_call)
         .push_bytes(contract_address)
         .push_opcode(Opcode::OP_CALL)
         .into_script())
@@ -1280,6 +1386,15 @@ fn generate_contract_call_script_pubkey(
 enum ExtractEnum {
     GasLimit = 1,
     GasPrice = 2,
+}
+
+/// Check if a given script contains a contract call.
+/// First opcode should be OP_4 to be a contract call.
+fn is_contract_call(script: &Script) -> bool {
+    match script.iter().next() {
+        Some(Ok(instr)) => instr.opcode == Opcode::OP_4,
+        _ => false,
+    }
 }
 
 fn extract_from_script(script: &Script, extract: ExtractEnum) -> Result<u64, String> {
@@ -1306,6 +1421,31 @@ fn extract_from_script(script: &Script, extract: ExtractEnum) -> Result<u64, Str
     };
 
     Ok(number as u64)
+}
+
+fn extract_contract_call_from_script(script: &Script) -> Result<Bytes, String> {
+    const CONTRACT_CALL_IDX: usize = 3;
+    let instruction = try_s!(script
+        .iter()
+        .enumerate()
+        .find_map(|(i, instr)| {
+            match instr {
+                Ok(instr) if i == CONTRACT_CALL_IDX => Some(instr),
+                _ => None,
+            }
+        })
+        .ok_or(ERRL!("Couldn't extract {:?} from script pubkey", CONTRACT_CALL_IDX)));
+
+    match instruction.opcode {
+        Opcode::OP_PUSHDATA1 | Opcode::OP_PUSHDATA2 | Opcode::OP_PUSHDATA4 => (),
+        opcode if (1..75).contains(&(opcode as usize)) => (),
+        _ => return ERR!("Unexpected instruction's opcode {}", instruction.opcode),
+    }
+
+    instruction
+        .data
+        .ok_or(ERRL!("An empty contract call data"))
+        .map(Bytes::from)
 }
 
 #[cfg(test)]
@@ -1451,5 +1591,49 @@ mod qtum_tests {
         let expected_gas_price = 40;
         let actual = unwrap!(extract_from_script(&script, ExtractEnum::GasPrice));
         assert_eq!(actual, expected_gas_price);
+    }
+
+    #[test]
+    fn test_extract_contract_call() {
+        let script: Script = "5403a02526012844a9059cbb0000000000000000000000000240b898276ad2cc0d2fe6f527e8e31104e7fde3000000000000000000000000000000000000000000000000000000003b9aca0014d362e096e873eb7907e205fadc6175c6fec7bc44c2".into();
+
+        let to_addr: Address = "qHmJ3KA6ZAjR9wGjpFASn4gtUSeFAqdZgs".into();
+        let to_addr = qrc20_addr_from_utxo_addr(to_addr);
+        let amount: U256 = 1000000000.into();
+        let function = ERC20_CONTRACT.function("transfer").unwrap();
+        let expected = function
+            .encode_input(&[Token::Address(to_addr), Token::Uint(amount)])
+            .unwrap();
+
+        let actual = unwrap!(extract_contract_call_from_script(&script));
+        assert_eq!(actual.to_vec(), expected);
+
+        // TX b11a262380657310abf01f8abe117da2c2adf788ab1fa0fa29da4ab505fc00c0
+        let tx = unwrap!(hex::decode("01000000029ba0865fc62aac1f5f1a4aac3c9f54ff3d74211030bf6eb41e870b30297bd3fc010000006a47304402201808cbc98036ea63d32e858f776c722897d3f4b670744594deba25b69128d0ba02207b3f86f0ab6b6fa0ff581dc7be33af034c6004f3537a2f96c4ddf3ed0130defc012103693bff1b39e8b5a306810023c29b95397eb395530b106b1820ea235fd81d9ce9ffffffff63574ffa1e8edd8af8b08f3c1d8e5f33170772c38631a50ddc29c16d74c762f6020000006b483045022100db6cf963f6be56f7c6004ede74d452b2c5932eb6b12094fe67fa4ff0b6f4406e02207acff9163588a0c58fa009f5e876f90817b4006c303095d9b6425aae2922a485012103693bff1b39e8b5a306810023c29b95397eb395530b106b1820ea235fd81d9ce9ffffffff040000000000000000625403a08601012844095ea7b3000000000000000000000000ba8b71f3544b93e2f681f996da519a98ace0107a000000000000000000000000000000000000000000000000000000000000000014d362e096e873eb7907e205fadc6175c6fec7bc44c20000000000000000625403a08601012844095ea7b3000000000000000000000000ba8b71f3544b93e2f681f996da519a98ace0107a0000000000000000000000000000000000000000000000000000000001312d0014d362e096e873eb7907e205fadc6175c6fec7bc44c20000000000000000e35403a0860101284cc49b415b2a65e285b98480fd7de696e9fb5bcb68ec9468dd906c683e38cabb8f39905675fa0000000000000000000000000000000000000000000000000000000001312d00000000000000000000000000d362e096e873eb7907e205fadc6175c6fec7bc440000000000000000000000000240b898276ad2cc0d2fe6f527e8e31104e7fde30101010101010101010101010101010101010101000000000000000000000000000000000000000000000000000000000000000000000000000000005f6d80b814ba8b71f3544b93e2f681f996da519a98ace0107ac2e52fdd05000000001976a9149e032d4b0090a11dc40fe6c47601499a35d55fbb88ac82816d5f"));
+        let utxo_tx: UtxoTx = unwrap!(deserialize(tx.as_slice()));
+
+        // first output in "b11a262380657310abf01f8abe117da2c2adf788ab1fa0fa29da4ab505fc00c0"
+        // `approve` to 0 contract call
+        let expected = unwrap!(hex::decode("095ea7b3000000000000000000000000ba8b71f3544b93e2f681f996da519a98ace0107a0000000000000000000000000000000000000000000000000000000000000000"));
+        let script = utxo_tx.outputs[0].script_pubkey.clone().into();
+
+        let actual = unwrap!(extract_contract_call_from_script(&script));
+        assert_eq!(actual.to_vec(), expected);
+
+        // second output in "b11a262380657310abf01f8abe117da2c2adf788ab1fa0fa29da4ab505fc00c0"
+        // `approve` to 20000000 contract call
+        let expected = unwrap!(hex::decode("095ea7b3000000000000000000000000ba8b71f3544b93e2f681f996da519a98ace0107a0000000000000000000000000000000000000000000000000000000001312d00"));
+        let script = utxo_tx.outputs[1].script_pubkey.clone().into();
+
+        let actual = unwrap!(extract_contract_call_from_script(&script));
+        assert_eq!(actual.to_vec(), expected);
+
+        // third output in "b11a262380657310abf01f8abe117da2c2adf788ab1fa0fa29da4ab505fc00c0"
+        // `erc20Payment` 20000000 amount contract call
+        let expected = unwrap!(hex::decode("9b415b2a65e285b98480fd7de696e9fb5bcb68ec9468dd906c683e38cabb8f39905675fa0000000000000000000000000000000000000000000000000000000001312d00000000000000000000000000d362e096e873eb7907e205fadc6175c6fec7bc440000000000000000000000000240b898276ad2cc0d2fe6f527e8e31104e7fde30101010101010101010101010101010101010101000000000000000000000000000000000000000000000000000000000000000000000000000000005f6d80b8"));
+        let script = utxo_tx.outputs[2].script_pubkey.clone().into();
+
+        let actual = unwrap!(extract_contract_call_from_script(&script));
+        assert_eq!(actual.to_vec(), expected);
     }
 }

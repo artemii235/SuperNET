@@ -303,6 +303,10 @@ pub fn validate_payment(
 /// Consider sorting before calling this function
 /// Sends the change (inputs amount - outputs amount) to "my_address"
 /// Also returns additional transaction data
+///
+/// Note `gas_fee` should be enough to execute all of the contract calls within UTXO outputs.
+/// QRC20 specific: `gas_fee` should be calculated by: gas_limit * gas_price * (count of contract calls),
+/// or should be sum of gas fee of all contract calls.
 pub async fn generate_transaction<T>(
     coin: &T,
     utxos: Vec<UnspentInfo>,
@@ -353,6 +357,12 @@ where
         if output.script_pubkey == change_script_pubkey {
             received_by_me += output.value;
         }
+    }
+
+    if let Some(gas_fee) = gas_fee {
+        sum_outputs_value = sum_outputs_value
+            .checked_add(gas_fee)
+            .ok_or(GenerateTransactionError::TooLargeGasFee)?;
     }
 
     let str_d_zeel = if coin.as_ref().ticker == "NAV" {
@@ -408,12 +418,6 @@ where
                 (f * tx_size as u64) / KILO_BYTE
             },
         };
-
-        if let Some(gas_fee) = gas_fee {
-            tx_fee = tx_fee
-                .checked_add(gas_fee)
-                .ok_or(GenerateTransactionError::TooLargeGasFee)?;
-        }
 
         match fee_policy {
             FeePolicy::SendExact => {
@@ -642,9 +646,9 @@ pub fn p2sh_spending_tx(
     })
 }
 
-pub fn send_taker_fee<T>(coin: &T, fee_pub_key: &[u8], amount: BigDecimal) -> TransactionFut
+pub fn send_taker_fee<T>(coin: T, fee_pub_key: &[u8], amount: BigDecimal) -> TransactionFut
 where
-    T: AsRef<UtxoArc> + UtxoArcCommonOps,
+    T: AsRef<UtxoArc> + UtxoArcCommonOps + Send + Sync + 'static,
 {
     let address = try_fus!(address_from_raw_pubkey(
         fee_pub_key,
@@ -657,7 +661,7 @@ where
         value: amount,
         script_pubkey: Builder::build_p2pkh(&address.hash).to_bytes(),
     };
-    coin.send_outputs_from_my_address(vec![output])
+    send_outputs_from_my_address(coin, vec![output])
 }
 
 pub fn send_maker_payment<T>(
@@ -668,7 +672,7 @@ pub fn send_maker_payment<T>(
     amount: BigDecimal,
 ) -> TransactionFut
 where
-    T: AsRef<UtxoArc> + UtxoCoinCommonOps + UtxoArcCommonOps + Send + Sync + 'static,
+    T: AsRef<UtxoArc> + UtxoCoinCommonOps + UtxoArcCommonOps + Clone + Send + Sync + 'static,
 {
     let redeem_script = payment_script(
         time_lock,
@@ -692,9 +696,10 @@ where
         script_pubkey: secret_hash_op_return_script,
     };
     let send_fut = match &coin.as_ref().rpc_client {
-        UtxoRpcClientEnum::Electrum(_) => {
-            Either::A(coin.send_outputs_from_my_address(vec![htlc_out, secret_hash_op_return_out]))
-        },
+        UtxoRpcClientEnum::Electrum(_) => Either::A(send_outputs_from_my_address(coin.clone(), vec![
+            htlc_out,
+            secret_hash_op_return_out,
+        ])),
         UtxoRpcClientEnum::Native(client) => {
             let payment_addr = Address {
                 checksum_type: coin.as_ref().checksum_type,
@@ -707,7 +712,9 @@ where
                 client
                     .import_address(&addr_string, &addr_string, false)
                     .map_err(|e| ERRL!("{}", e))
-                    .and_then(move |_| coin.send_outputs_from_my_address(vec![htlc_out, secret_hash_op_return_out])),
+                    .and_then(move |_| {
+                        send_outputs_from_my_address(coin.clone(), vec![htlc_out, secret_hash_op_return_out])
+                    }),
             )
         },
     };
@@ -722,7 +729,7 @@ pub fn send_taker_payment<T>(
     amount: BigDecimal,
 ) -> TransactionFut
 where
-    T: AsRef<UtxoArc> + UtxoCoinCommonOps + UtxoArcCommonOps + Send + Sync + 'static,
+    T: AsRef<UtxoArc> + UtxoCoinCommonOps + UtxoArcCommonOps + Clone + Send + Sync + 'static,
 {
     let redeem_script = payment_script(
         time_lock,
@@ -748,9 +755,10 @@ where
         script_pubkey: secret_hash_op_return_script,
     };
     let send_fut = match &coin.as_ref().rpc_client {
-        UtxoRpcClientEnum::Electrum(_) => {
-            Either::A(coin.send_outputs_from_my_address(vec![htlc_out, secret_hash_op_return_out]))
-        },
+        UtxoRpcClientEnum::Electrum(_) => Either::A(send_outputs_from_my_address(coin.clone(), vec![
+            htlc_out,
+            secret_hash_op_return_out,
+        ])),
         UtxoRpcClientEnum::Native(client) => {
             let payment_addr = Address {
                 checksum_type: coin.as_ref().checksum_type,
@@ -763,7 +771,7 @@ where
                 client
                     .import_address(&addr_string, &addr_string, false)
                     .map_err(|e| ERRL!("{}", e))
-                    .and_then(move |_| coin.send_outputs_from_my_address(vec![htlc_out, secret_hash_op_return_out])),
+                    .and_then(move |_| send_outputs_from_my_address(coin, vec![htlc_out, secret_hash_op_return_out])),
             )
         },
     };
