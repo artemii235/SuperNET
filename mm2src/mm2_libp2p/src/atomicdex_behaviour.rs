@@ -11,6 +11,7 @@ use futures::{channel::{mpsc::{channel, Receiver, Sender},
 use lazy_static::lazy_static;
 use libp2p::swarm::{IntoProtocolsHandler, NetworkBehaviour, ProtocolsHandler};
 use libp2p::{core::{ConnectedPoint, Multiaddr, Transport},
+             floodsub::{Floodsub, FloodsubEvent, Topic as FloodsubTopic},
              identity,
              multiaddr::Protocol,
              noise,
@@ -236,6 +237,7 @@ pub struct AtomicDexBehaviour {
     spawn_fn: fn(Box<dyn Future<Output = ()> + Send + Unpin + 'static>) -> (),
     #[behaviour(ignore)]
     cmd_rx: Receiver<AdexBehaviourCmd>,
+    floodsub: Floodsub,
     gossipsub: Gossipsub,
     request_response: RequestResponseBehaviour,
     peers_exchange: PeersExchange,
@@ -583,6 +585,8 @@ pub fn start_gossipsub(
         // build a gossipsub network behaviour
         let gossipsub = Gossipsub::new(local_peer_id.clone(), gossipsub_config);
 
+        let floodsub = Floodsub::new(local_peer_id.clone());
+
         // build a request-response network behaviour
         let request_response = build_request_response_behaviour();
 
@@ -594,6 +598,7 @@ pub fn start_gossipsub(
             spawn_fn,
             cmd_rx,
             gossipsub,
+            floodsub,
             request_response,
             peers_exchange: PeersExchange::new(),
             ping,
@@ -602,7 +607,7 @@ pub fn start_gossipsub(
             .executor(Box::new(&*SWARM_RUNTIME))
             .build()
     };
-    swarm.gossipsub.subscribe(Topic::new(PEERS_TOPIC.to_owned()));
+    swarm.floodsub.subscribe(FloodsubTopic::new(PEERS_TOPIC.to_owned()));
     let addr = format!("/ip4/{}/tcp/{}", ip, port);
     libp2p::Swarm::listen_on(&mut swarm, addr.parse().unwrap()).unwrap();
     for relayer in &bootstrap {

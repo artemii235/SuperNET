@@ -14,7 +14,7 @@ env_logger = "0.7.1"
 futures = { version = "0.3.1", package = "futures", features = ["compat", "async-await"] }
 hex = "0.4.2"
 lazy_static = "1.4.0"
-libp2p = { git = "https://github.com/KomodoPlatform/rust-libp2p.git", default-features = false, features = ["dns", "mplex", "noise", "ping", "request-response", "tcp-tokio", "secp256k1", "websocket", "yamux"] }
+libp2p = { git = "https://github.com/KomodoPlatform/rust-libp2p.git", default-features = false, features = ["dns", "floodsub", "mplex", "noise", "ping", "request-response", "tcp-tokio", "secp256k1", "websocket", "yamux"] }
 libsecp256k1 = "0.3.5"
 log = "0.4.8"
 num-bigint = { version = "0.2", features = ["serde", "std"] }
