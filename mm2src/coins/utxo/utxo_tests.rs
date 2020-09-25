@@ -1,7 +1,6 @@
 use super::rpc_clients::{ElectrumProtocol, ListSinceBlockRes, NetworkInfo};
 use super::*;
-use crate::utxo::qrc20::{qrc20_addr_from_utxo_addr, qrc20_coin_from_conf_and_request, qrc20_swap_id, Qrc20Coin,
-                         Qrc20FeeDetails};
+use crate::utxo::qrc20::{qrc20_coin_from_conf_and_request, Qrc20Coin, Qrc20FeeDetails};
 use crate::utxo::rpc_clients::UtxoRpcClientOps;
 use crate::utxo::utxo_standard::{utxo_standard_coin_from_conf_and_request, UtxoStandardCoin, UTXO_STANDARD_DUST};
 use crate::{SwapOps, TxFeeDetails, WithdrawFee};

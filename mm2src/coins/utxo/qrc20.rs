@@ -392,7 +392,42 @@ impl Qrc20Coin {
         Ok((signed, fee_details))
     }
 
-    /// `outputs` contains list of indexes of outputs, contract calls of which should be completed successfully.
+    /// Validate swap payment: check if the transaction contains the `expected_swap_function`, in particular `erc20Payment`.
+    /// Also check if this contract call completed successfully.
+    async fn validate_swap_contract_call(&self, utxo_tx: &UtxoTx, expected_swap_function: &str) -> Result<(), String> {
+        let payment_function = try_s!(SWAP_CONTRACT.function(expected_swap_function));
+        let payment_call_signature = payment_function.short_signature();
+
+        let mut transfer_outputs = Vec::default();
+        // get indexes of outputs whose script pubkeys are `expected_swap_function` contract calls
+        for (idx, output) in utxo_tx.outputs.iter().enumerate() {
+            let script_pubkey: Script = output.script_pubkey.clone().into();
+            if is_contract_call(&script_pubkey) {
+                let contract_call = try_s!(extract_contract_call_from_script(&script_pubkey));
+                if contract_call.starts_with(&payment_call_signature) {
+                    transfer_outputs.push(idx as i64);
+                }
+            }
+        }
+
+        if transfer_outputs.is_empty() {
+            return ERR!(
+                "Maker payment should contain {:?} contract call. Outputs: {:?}",
+                expected_swap_function,
+                utxo_tx.outputs
+            );
+        }
+        if transfer_outputs.len() != 1 {
+            log!("Count of "[expected_swap_function]" calls is {}, expected 1"[transfer_outputs.len()]);
+        }
+
+        let tx_hash = utxo_tx.hash().reversed().into();
+        // check if the contract transfer calls have completed successfully
+        self.validate_contract_calls(tx_hash, transfer_outputs).await
+    }
+
+    /// Validate contract calls: check if the contract calls specified in `outputs` were completed successfully.
+    /// `outputs` contains list of indexes of outputs, contract calls of which we should validate.
     async fn validate_contract_calls(&self, hash: H256Json, outputs: Vec<i64>) -> Result<(), String> {
         let receipts = match self.utxo_arc.rpc_client {
             UtxoRpcClientEnum::Electrum(ref rpc) => {
@@ -1212,7 +1247,6 @@ async fn qrc20_wait_for_swap_payment_confirmations(
     check_every: u64,
 ) -> Result<(), String> {
     let utxo_tx: UtxoTx = try_s!(deserialize(tx.as_slice()).map_err(|e| ERRL!("{:?}", e)));
-    let tx_hash = utxo_tx.hash().reversed().into();
     try_s!(
         utxo_common::wait_for_confirmations(
             &coin.utxo_arc,
@@ -1225,34 +1259,7 @@ async fn qrc20_wait_for_swap_payment_confirmations(
         .compat()
         .await
     );
-
-    let payment_function = try_s!(SWAP_CONTRACT.function("erc20Payment"));
-    let payment_call_signature = payment_function.short_signature();
-
-    let mut transfer_outputs = Vec::default();
-    // get indexes of outputs whose script pubkeys are erc20Payment contract calls
-    for (idx, output) in utxo_tx.outputs.iter().enumerate() {
-        let script_pubkey: Script = output.script_pubkey.clone().into();
-        if is_contract_call(&script_pubkey) {
-            let contract_call = try_s!(extract_contract_call_from_script(&script_pubkey));
-            if contract_call.starts_with(&payment_call_signature) {
-                transfer_outputs.push(idx as i64);
-            }
-        }
-    }
-
-    if transfer_outputs.is_empty() {
-        return ERR!(
-            r#"Maker payment should contain "erc20Payment" contract call. Outputs: {:?}"#,
-            utxo_tx.outputs
-        );
-    }
-    if transfer_outputs.len() != 1 {
-        log!("Count of \"erc20Payment\" calls is {}, expected 1"[transfer_outputs.len()]);
-    }
-
-    // check if the contract transfer calls have completed successfully
-    coin.validate_contract_calls(tx_hash, transfer_outputs).await
+    coin.validate_swap_contract_call(&utxo_tx, "erc20Payment").await
 }
 
 /// Serialize the `number` similar to BigEndian but in QRC20 specific format.
