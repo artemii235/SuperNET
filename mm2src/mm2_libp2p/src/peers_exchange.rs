@@ -30,8 +30,8 @@ impl ProtocolName for PeersExchangeProtocol {
 
 type PeersExchangeCodec = Codec<PeersExchangeProtocol, PeersExchangeRequest, PeersExchangeResponse>;
 
-const REQUEST_PEERS_INITIAL_DELAY: u64 = 10;
-const REQUEST_PEERS_INTERVAL: u64 = 10;
+const REQUEST_PEERS_INITIAL_DELAY: u64 = 60;
+const REQUEST_PEERS_INTERVAL: u64 = 300;
 const MAX_PEERS: usize = 100;
 
 #[derive(Debug, Clone, Eq, Hash, PartialEq)]
