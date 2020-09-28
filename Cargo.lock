@@ -2371,7 +2371,7 @@ dependencies = [
  "libp2p-core",
  "libp2p-core-derive",
  "libp2p-dns",
- "libp2p-floodsub",
+ "libp2p-floodsub 0.22.0 (git+https://github.com/KomodoPlatform/rust-libp2p.git)",
  "libp2p-mplex",
  "libp2p-noise",
  "libp2p-ping",
@@ -2447,6 +2447,20 @@ source = "git+https://github.com/KomodoPlatform/rust-libp2p.git#2847167deae8c85d
 dependencies = [
  "cuckoofilter",
  "fnv",
+ "futures 0.3.5",
+ "libp2p-core",
+ "libp2p-swarm",
+ "prost",
+ "prost-build",
+ "rand 0.7.3",
+ "smallvec 1.4.0",
+]
+
+[[package]]
+name = "libp2p-floodsub"
+version = "0.22.0"
+dependencies = [
+ "cuckoofilter",
  "futures 0.3.5",
  "libp2p-core",
  "libp2p-swarm",
@@ -2951,6 +2965,7 @@ dependencies = [
  "hex 0.4.2",
  "lazy_static",
  "libp2p",
+ "libp2p-floodsub 0.22.0",
  "libsecp256k1 0.3.5",
  "log 0.4.11",
  "num-bigint",

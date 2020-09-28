@@ -147,6 +147,7 @@ testcontainers = { git = "https://github.com/artemii235/testcontainers-rs.git" }
 [workspace]
 members = [
   "mm2src/coins",
+  "mm2src/floodsub",
   "mm2src/mm2_libp2p",
   "mm2src/gossipsub",
 ]

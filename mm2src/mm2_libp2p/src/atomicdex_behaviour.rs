@@ -11,13 +11,13 @@ use futures::{channel::{mpsc::{channel, Receiver, Sender},
 use lazy_static::lazy_static;
 use libp2p::swarm::{IntoProtocolsHandler, NetworkBehaviour, ProtocolsHandler};
 use libp2p::{core::{ConnectedPoint, Multiaddr, Transport},
-             floodsub::{Floodsub, FloodsubEvent, Topic as FloodsubTopic},
              identity,
              multiaddr::Protocol,
              noise,
              request_response::ResponseChannel,
              swarm::{ExpandedSwarm, NetworkBehaviourEventProcess, Swarm},
              NetworkBehaviour, PeerId};
+use libp2p_floodsub::{Floodsub, FloodsubEvent, Topic as FloodsubTopic};
 use log::{debug, error, info};
 use rand::{seq::SliceRandom, thread_rng};
 use std::{collections::hash_map::{DefaultHasher, HashMap},
@@ -383,25 +383,27 @@ impl AtomicDexBehaviour {
 
     fn announce_listeners(&mut self, listeners: Vec<Multiaddr>) {
         let serialized = rmp_serde::to_vec(&listeners).expect("Vec<Multiaddr> serialization should never fail");
-        self.gossipsub.publish(&Topic::new(PEERS_TOPIC.to_owned()), serialized);
+        self.floodsub.publish(FloodsubTopic::new(PEERS_TOPIC), serialized);
     }
 }
 
 impl NetworkBehaviourEventProcess<GossipsubEvent> for AtomicDexBehaviour {
-    fn inject_event(&mut self, event: GossipsubEvent) {
-        if let GossipsubEvent::Message(propagation_source, message_id, message) = &event {
+    fn inject_event(&mut self, event: GossipsubEvent) { self.notify_on_adex_event(event.into()); }
+}
+
+impl NetworkBehaviourEventProcess<FloodsubEvent> for AtomicDexBehaviour {
+    fn inject_event(&mut self, event: FloodsubEvent) {
+        if let FloodsubEvent::Message(message) = &event {
             for topic in &message.topics {
-                if topic == &TopicHash::from_raw(PEERS_TOPIC) {
+                if topic == &FloodsubTopic::new(PEERS_TOPIC) {
                     let addresses: Vec<Multiaddr> = match rmp_serde::from_read_ref(&message.data) {
                         Ok(a) => a,
                         Err(_) => return,
                     };
                     self.peers_exchange.add_peer_addresses(&message.source, addresses);
-                    self.gossipsub.propagate_message(message_id, propagation_source);
                 }
             }
         }
-        self.notify_on_adex_event(event.into());
     }
 }
 

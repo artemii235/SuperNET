@@ -10,6 +10,7 @@ edition = "2018"
 async-trait = "0.1"
 async-std = "1.6.2"
 atomicdex-gossipsub = { path = "../gossipsub" }
+libp2p-floodsub = { path = "../floodsub" }
 env_logger = "0.7.1"
 futures = { version = "0.3.1", package = "futures", features = ["compat", "async-await"] }
 hex = "0.4.2"
