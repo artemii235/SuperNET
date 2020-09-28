@@ -1,6 +1,8 @@
 use super::rpc_clients::{ElectrumProtocol, ListSinceBlockRes, NetworkInfo};
 use super::*;
-use crate::utxo::qrc20::{qrc20_coin_from_conf_and_request, Qrc20Coin, Qrc20FeeDetails};
+use crate::utxo::qrc20::{qrc20_addr_from_str, qrc20_addr_from_utxo_addr, qrc20_coin_from_conf_and_request,
+                         CallExecutionResult, ContractCallDetails, ContractCallDetailsByType, ContractCallType,
+                         Qrc20Coin, Qrc20FeeDetails};
 use crate::utxo::rpc_clients::UtxoRpcClientOps;
 use crate::utxo::utxo_standard::{utxo_standard_coin_from_conf_and_request, UtxoStandardCoin, UTXO_STANDARD_DUST};
 use crate::{SwapOps, TxFeeDetails, WithdrawFee};
@@ -1824,4 +1826,129 @@ fn test_qrc20_wait_for_swap_payment_confirmations() {
     );
     log!("Error: "[err]);
     assert!(err.contains(r#"Maker payment should contain "erc20Payment" contract call"#));
+}
+
+#[test]
+fn test_qrc20_transaction_calls_details() {
+    let conf = json!({
+        "coin":"QRC20",
+        "required_confirmations":0,
+        "pubtype":120,
+        "p2shtype":50,
+        "wiftype":128,
+        "segwit":true,
+        "mm2":1,
+        "mature_confirmations":500,
+    });
+    let req = json!({
+        "method": "electrum",
+        "servers": [{"url":"95.217.83.126:10001"}],
+        "swap_contract_address": "0xba8b71f3544b93e2f681f996da519a98ace0107a",
+    });
+
+    let priv_key = [
+        3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144, 72,
+        172, 110, 180, 13, 123, 179, 10, 49,
+    ];
+    let contract_address = "0xd362e096e873eb7907e205fadc6175c6fec7bc44".into();
+
+    let ctx = MmCtxBuilder::new().into_mm_arc();
+    let coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
+        &ctx,
+        "QRC20",
+        "QTUM",
+        &conf,
+        &req,
+        &priv_key,
+        contract_address
+    )));
+
+    let expected = vec![
+        ContractCallDetails {
+            call_type: ContractCallType::Approve,
+            output_index: 0,
+            gas_limit: 100_000,
+            gas_price: 40,
+            gas_used: big_decimal_from_sat(30217, coin.decimals()),
+            result: CallExecutionResult::Completed(ContractCallDetailsByType::Approve),
+        },
+        ContractCallDetails {
+            call_type: ContractCallType::Approve,
+            output_index: 1,
+            gas_limit: 100_000,
+            gas_price: 40,
+            gas_used: big_decimal_from_sat(45799, coin.decimals()),
+            result: CallExecutionResult::Completed(ContractCallDetailsByType::Approve),
+        },
+        ContractCallDetails {
+            call_type: ContractCallType::Erc20Payment,
+            output_index: 2,
+            gas_limit: 100_000,
+            gas_price: 40,
+            gas_used: big_decimal_from_sat(63989, coin.decimals()),
+            result: CallExecutionResult::Completed(ContractCallDetailsByType::Erc20Payment {
+                amount: big_decimal_from_sat(20000000, coin.decimals()),
+                from: {
+                    let qtum = Address::from_str("qfkXE2cNFEwPFQqvBcqs8m9KrkNa9KV4xi").unwrap();
+                    qrc20_addr_from_utxo_addr(qtum)
+                },
+                swap_contract_address: qrc20_addr_from_str("0xba8b71f3544b93e2f681f996da519a98ace0107a").unwrap(),
+            }),
+        },
+    ];
+
+    let tx: UtxoTx = "0100000001e56b5f51c504ca927c893552d6c6cf02313c4c29a8d5d22651c3a9032d39a54e030000006b483045022100ebc9b59619cad506fe2b7deecf8036f11ec357b45879d5cbb658f64aa77e572c02206320619258d3d8f22fec8919818638c98d565a7decf761fd4f47b5f3539a4376012102cd7745ea1c03c9a1ebbcdb7ab9ee19d4e4d306f44665295d996db7c38527da6bffffffff040000000000000000625403a08601012844095ea7b3000000000000000000000000ba8b71f3544b93e2f681f996da519a98ace0107a000000000000000000000000000000000000000000000000000000000000000014d362e096e873eb7907e205fadc6175c6fec7bc44c20000000000000000625403a08601012844095ea7b3000000000000000000000000ba8b71f3544b93e2f681f996da519a98ace0107a0000000000000000000000000000000000000000000000000000000001312d0014d362e096e873eb7907e205fadc6175c6fec7bc44c20000000000000000e35403a0860101284cc49b415b2afb9d97c45e2237561c4f8a88e51eeedb0283299fb522dfc8d5d1496e2a04a7a20000000000000000000000000000000000000000000000000000000001312d00000000000000000000000000d362e096e873eb7907e205fadc6175c6fec7bc440000000000000000000000000240b898276ad2cc0d2fe6f527e8e31104e7fde30101010101010101010101010101010101010101000000000000000000000000000000000000000000000000000000000000000000000000000000005f68a61614ba8b71f3544b93e2f681f996da519a98ace0107ac270061f01000000001976a914f36e14131c70e5f15a3f92b1d7e8622a62e570d888ace0a6685f".into();
+    let actual = unwrap!(block_on(coin.transaction_calls_details(&tx)));
+    assert_eq!(actual, expected);
+
+    let expected = vec![
+        ContractCallDetails {
+            call_type: ContractCallType::Approve,
+            output_index: 0,
+            gas_limit: 100_000,
+            gas_price: 40,
+            gas_used: big_decimal_from_sat(23690, coin.decimals()),
+            result: CallExecutionResult::Failed {
+                reason: "Revert".into(),
+            },
+        },
+        ContractCallDetails {
+            call_type: ContractCallType::Erc20Payment,
+            output_index: 1,
+            gas_limit: 100_000,
+            gas_price: 40,
+            gas_used: big_decimal_from_sat(78989, coin.decimals()),
+            result: CallExecutionResult::Completed(ContractCallDetailsByType::Erc20Payment {
+                amount: big_decimal_from_sat(20000000, coin.decimals()),
+                from: {
+                    let qtum = Address::from_str("qfkXE2cNFEwPFQqvBcqs8m9KrkNa9KV4xi").unwrap();
+                    qrc20_addr_from_utxo_addr(qtum)
+                },
+                swap_contract_address: qrc20_addr_from_str("0xba8b71f3544b93e2f681f996da519a98ace0107a").unwrap(),
+            }),
+        },
+    ];
+
+    let tx: UtxoTx = "0100000003b1fcca3d7c15bb7f694b4e58b939b8835bce4d535e8441d41855d9910a33372f020000006b48304502210091342b2251d13ae0796f6ebf563bb861883d652cbee9f5606dd5bb875af84039022077a21545ff6ec69c9c4eca35e1f127a450abc4f4e60dd032724d70910d6b2835012102cd7745ea1c03c9a1ebbcdb7ab9ee19d4e4d306f44665295d996db7c38527da6bffffffff874c96188a610850d4cd2c29a7fd20e5b9eb7f6748970792a74ad189405b7d9b020000006a473044022055dc1bf716880764e9bcbe8dd3aea05f634541648ec4f5d224eba93fedc54f8002205e38b6136adc46ef8ca65c0b0e9390837e539cbb19df451e33a90e534c12da4c012102cd7745ea1c03c9a1ebbcdb7ab9ee19d4e4d306f44665295d996db7c38527da6bffffffffd52e234ead3b8a2a4718cb6fee039fa96862063fccf95149fb11f27a52bcc352010000006a4730440220527ce41324e53c99b827d3f34e7078d991abf339f24108b7e677fff1b6cf0ffa0220690fe96d4fb8f1673458bc08615b5119f354f6cd589754855fe1dba5f82653aa012102cd7745ea1c03c9a1ebbcdb7ab9ee19d4e4d306f44665295d996db7c38527da6bffffffff030000000000000000625403a08601012844095ea7b3000000000000000000000000ba8b71f3544b93e2f681f996da519a98ace0107a0000000000000000000000000000000000000000000000000000000001312d0014d362e096e873eb7907e205fadc6175c6fec7bc44c20000000000000000e35403a0860101284cc49b415b2a756dd4fe3852ea4a0378c5e984ebb5e4bfa01eca31785457d1729d5928198ef00000000000000000000000000000000000000000000000000000000001312d00000000000000000000000000d362e096e873eb7907e205fadc6175c6fec7bc440000000000000000000000000240b898276ad2cc0d2fe6f527e8e31104e7fde30101010101010101010101010101010101010101000000000000000000000000000000000000000000000000000000000000000000000000000000005f686cef14ba8b71f3544b93e2f681f996da519a98ace0107ac21082fb03000000001976a914f36e14131c70e5f15a3f92b1d7e8622a62e570d888acb86d685f".into();
+    let actual = unwrap!(block_on(coin.transaction_calls_details(&tx)));
+    assert_eq!(actual, expected);
+}
+
+/// TODO remove this test (is used to display signatures of contract functions)
+#[test]
+fn print_tx() {
+    let f = crate::eth::SWAP_CONTRACT.function("erc20Payment").unwrap();
+    let params = f.short_signature();
+    log!("erc20Payment: "[params]);
+    log!("hex(erc20Payment): "[hex::encode(params)]);
+
+    let f = crate::eth::ERC20_CONTRACT.function("transfer").unwrap();
+    let params = f.short_signature();
+    log!("transfer: "[params]);
+    log!("hex(transfer): "[hex::encode(params)]);
+
+    let f = crate::eth::ERC20_CONTRACT.function("approve").unwrap();
+    let params = f.short_signature();
+    log!("approve: "[params]);
+    log!("hex(approve): "[hex::encode(params)]);
 }

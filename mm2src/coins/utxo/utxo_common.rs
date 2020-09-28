@@ -1923,6 +1923,20 @@ pub fn big_decimal_from_sat(satoshis: i64, decimals: u8) -> BigDecimal {
     BigDecimal::from(satoshis) / BigDecimal::from(10u64.pow(decimals as u32))
 }
 
+pub fn address_from_raw_pubkey(
+    pub_key: &[u8],
+    prefix: u8,
+    t_addr_prefix: u8,
+    checksum_type: ChecksumType,
+) -> Result<Address, String> {
+    Ok(Address {
+        t_addr_prefix,
+        prefix,
+        hash: try_s!(Public::from_slice(pub_key)).address_hash(),
+        checksum_type,
+    })
+}
+
 fn payment_script(time_lock: u32, secret_hash: &[u8], pub_0: &Public, pub_1: &Public) -> Script {
     let builder = Builder::default();
     builder
@@ -1978,20 +1992,6 @@ fn p2sh_spend(
         sequence: signer.inputs[input_index].sequence,
         script_witness: vec![],
         previous_output: signer.inputs[input_index].previous_output.clone(),
-    })
-}
-
-fn address_from_raw_pubkey(
-    pub_key: &[u8],
-    prefix: u8,
-    t_addr_prefix: u8,
-    checksum_type: ChecksumType,
-) -> Result<Address, String> {
-    Ok(Address {
-        t_addr_prefix,
-        prefix,
-        hash: try_s!(Public::from_slice(pub_key)).address_hash(),
-        checksum_type,
     })
 }
 
