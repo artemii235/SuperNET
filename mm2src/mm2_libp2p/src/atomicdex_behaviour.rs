@@ -385,6 +385,10 @@ impl AtomicDexBehaviour {
         let serialized = rmp_serde::to_vec(&listeners).expect("Vec<Multiaddr> serialization should never fail");
         self.floodsub.publish(FloodsubTopic::new(PEERS_TOPIC), serialized);
     }
+
+    pub fn connected_relays_len(&self) -> usize { self.gossipsub.connected_relays_len() }
+
+    pub fn relay_mesh_len(&self) -> usize { self.gossipsub.relay_mesh_len() }
 }
 
 impl NetworkBehaviourEventProcess<GossipsubEvent> for AtomicDexBehaviour {
@@ -525,6 +529,7 @@ pub fn start_gossipsub(
     to_dial: Option<Vec<String>>,
     my_privkey: &mut [u8],
     i_am_relay: bool,
+    on_poll: impl Fn(&AtomicDexSwarm) -> () + Send + 'static,
 ) -> (Sender<AdexBehaviourCmd>, AdexEventRx, PeerId) {
     let privkey = identity::secp256k1::SecretKey::from_bytes(my_privkey).unwrap();
     let local_key = identity::Keypair::Secp256k1(privkey.into());
@@ -650,6 +655,7 @@ pub fn start_gossipsub(
         while let Poll::Ready(Some(())) = check_connected_relays_interval.poll_next_unpin(cx) {
             maintain_connection_to_relayers(&mut swarm, &bootstrap);
         }
+        on_poll(&swarm);
         Poll::Pending
     });
 

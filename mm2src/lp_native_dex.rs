@@ -544,6 +544,8 @@ pub async fn lp_init(mypubport: u16, ctx: MmArc) -> Result<(), String> {
     let seednodes: Option<Vec<String>> = try_s!(json::from_value(ctx.conf["seednodes"].clone()));
 
     let key_pair = ctx.secp256k1_key_pair.as_option().unwrap();
+
+    let ctx_on_poll = ctx.clone();
     let (cmd_tx, event_rx, peer_id) = start_gossipsub(
         myipaddr,
         mypubport,
@@ -551,6 +553,14 @@ pub async fn lp_init(mypubport: u16, ctx: MmArc) -> Result<(), String> {
         seednodes,
         &mut *key_pair.private().secret.clone(),
         i_am_seed,
+        move |swarm| {
+            mm_gauge!(
+                ctx_on_poll.metrics,
+                "p2p.connected_relays.len",
+                swarm.connected_relays_len() as i64
+            );
+            mm_gauge!(ctx_on_poll.metrics, "p2p.relay_mesh.len", swarm.relay_mesh_len() as i64);
+        },
     );
     try_s!(ctx.peer_id.pin(peer_id.to_string()));
     let p2p_context = P2PContext::new(cmd_tx);

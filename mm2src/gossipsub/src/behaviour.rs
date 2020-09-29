@@ -1058,6 +1058,8 @@ impl Gossipsub {
 
     pub fn get_relay_mesh(&self) -> Vec<PeerId> { self.relayers_mesh.iter().cloned().collect() }
 
+    pub fn relay_mesh_len(&self) -> usize { self.relayers_mesh.len() }
+
     pub fn get_all_topic_peers(&self) -> &HashMap<TopicHash, Vec<PeerId>> { &self.topic_peers }
 
     pub fn get_all_peer_topics(&self) -> &HashMap<PeerId, Vec<TopicHash>> { &self.peer_topics }
@@ -1146,6 +1148,8 @@ impl Gossipsub {
     pub fn is_relay(&self) -> bool { self.config.i_am_relay }
 
     pub fn connected_relayers(&self) -> Vec<PeerId> { self.connected_relayers.iter().cloned().collect() }
+
+    pub fn connected_relays_len(&self) -> usize { self.connected_relayers.len() }
 
     pub fn is_connected_to_addr(&self, addr: &Multiaddr) -> bool { self.connected_addresses.contains(addr) }
 }
