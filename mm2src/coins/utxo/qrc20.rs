@@ -1,6 +1,6 @@
 use super::*;
-use crate::eth::{addr_from_raw_pubkey, u256_to_big_decimal, wei_from_big_decimal, ERC20_CONTRACT, SWAP_CONTRACT};
-use crate::{SwapOps, TxFeeDetails, ValidateAddressResult};
+use crate::eth::{u256_to_big_decimal, wei_from_big_decimal, ERC20_CONTRACT, SWAP_CONTRACT};
+use crate::{SwapOps, ValidateAddressResult};
 use bitcrypto::sha256;
 use common::jsonrpc_client::{JsonRpcClient, JsonRpcErrorType, JsonRpcRequest, RpcRes};
 use common::mm_metrics::MetricsArc;
@@ -232,6 +232,20 @@ impl Qrc20Coin {
         }
     }
 
+    pub fn utxo_address_from_raw_pubkey(&self, pubkey: &[u8]) -> Result<Address, String> {
+        Ok(try_s!(utxo_common::address_from_raw_pubkey(
+            pubkey,
+            self.utxo_arc.pub_addr_prefix,
+            self.utxo_arc.pub_t_addr_prefix,
+            self.utxo_arc.checksum_type
+        )))
+    }
+
+    pub fn qrc20_address_from_raw_pubkey(&self, pubkey: &[u8]) -> Result<H160, String> {
+        let qtum_address = try_s!(self.utxo_address_from_raw_pubkey(pubkey));
+        Ok(qrc20_addr_from_utxo_addr(qtum_address))
+    }
+
     fn transfer_call_details_from_receipt(&self, receipt: &TxReceipt) -> Result<(BigDecimal, H160, H160), String> {
         fn address_from_log_topic(topic: &str) -> Result<H160, String> {
             if topic.len() != 64 {
@@ -450,77 +464,27 @@ impl Qrc20Coin {
 
     /// Validate swap payment: check if the transaction contains the `expected_swap_function`, in particular `erc20Payment`.
     /// Also check if this contract call completed successfully.
-    async fn validate_swap_contract_call(&self, utxo_tx: &UtxoTx, expected_swap_function: &str) -> Result<(), String> {
-        let payment_function = try_s!(SWAP_CONTRACT.function(expected_swap_function));
-        let payment_call_signature = payment_function.short_signature();
-
-        let mut transfer_outputs = Vec::default();
-        // get indexes of outputs whose script pubkeys are `expected_swap_function` contract calls
-        for (idx, output) in utxo_tx.outputs.iter().enumerate() {
-            let script_pubkey: Script = output.script_pubkey.clone().into();
-            if is_contract_call(&script_pubkey) {
-                let contract_call = try_s!(extract_contract_call_from_script(&script_pubkey));
-                if contract_call.starts_with(&payment_call_signature) {
-                    transfer_outputs.push(idx as i64);
-                }
-            }
+    async fn validate_swap_contract_call(
+        &self,
+        utxo_tx: &UtxoTx,
+        expected_type: ContractCallType,
+    ) -> Result<(), String> {
+        let calls = try_s!(self.transaction_calls_details(utxo_tx).await);
+        let calls: Vec<&ContractCallDetails> = calls.iter().filter(|call| call.call_type == expected_type).collect();
+        if calls.len() != 1 {
+            return ERR!("Count of {:?} calls is {}, expected 1", expected_type, calls.len());
         }
 
-        if transfer_outputs.is_empty() {
-            return ERR!(
-                "Maker payment should contain {:?} contract call. Outputs: {:?}",
-                expected_swap_function,
-                utxo_tx.outputs
-            );
+        let payment_call = calls[0];
+
+        match payment_call.result {
+            CallExecutionResult::Failed { ref reason } => ERR!(
+                "Contract call (index {} in outputs) is excepted: {:?}",
+                payment_call.output_index,
+                reason
+            ),
+            _ => Ok(()),
         }
-        if transfer_outputs.len() != 1 {
-            log!("Count of "[expected_swap_function]" calls is {}, expected 1"[transfer_outputs.len()]);
-        }
-
-        let tx_hash = utxo_tx.hash().reversed().into();
-        // check if the contract transfer calls have completed successfully
-        self.validate_contract_calls(tx_hash, transfer_outputs).await
-    }
-
-    /// Validate contract calls: check if the contract calls specified in `outputs` were completed successfully.
-    /// `outputs` contains list of indexes of outputs, contract calls of which we should validate.
-    async fn validate_contract_calls(&self, hash: H256Json, outputs: Vec<i64>) -> Result<(), String> {
-        let receipts = match self.utxo_arc.rpc_client {
-            UtxoRpcClientEnum::Electrum(ref rpc) => {
-                try_s!(rpc.blochchain_transaction_get_receipt(&hash).compat().await)
-            },
-            UtxoRpcClientEnum::Native(_) => return ERR!("Electrum client expected"),
-        };
-
-        if receipts.is_empty() {
-            return ERR!(
-                "blochchain.transaction.get_receipt returned empty receipts list for {:?} transaction",
-                hash
-            );
-        }
-
-        for receipt in receipts {
-            // Note contract_calls_topics is not expected to be long, we can iterate over the slice
-            if !outputs.contains(&receipt.output_index) {
-                continue;
-            }
-            match receipt.excepted {
-                Some(ex) if ex == "None" => (), // contract call was completed successfully
-                Some(ex) => {
-                    let excepted_message = receipt.excepted_message.unwrap_or_default();
-                    return ERR!(
-                        "Contract call (index {} in outputs) is excepted: {:?}, excepted message: {:?}",
-                        receipt.output_index,
-                        ex,
-                        excepted_message
-                    );
-                },
-                None => (), // contract call was completed successfully
-            }
-        }
-
-        // all of the contract calls that are expected to be completed successfully were completed successfully
-        Ok(())
     }
 
     pub async fn transaction_calls_details(&self, qtum_tx: &UtxoTx) -> Result<Vec<ContractCallDetails>, String> {
@@ -594,6 +558,7 @@ pub enum ContractCallType {
 }
 
 impl ContractCallType {
+    #[allow(dead_code)]
     fn as_function_name(&self) -> Result<&'static str, String> {
         match self {
             ContractCallType::Transfer => Ok("transfer"),
@@ -633,6 +598,7 @@ impl ContractCallType {
         Ok(ContractCallType::Other(signature))
     }
 
+    #[allow(dead_code)]
     fn short_signature(&self) -> Result<[u8; 4], String> {
         match self {
             ContractCallType::Transfer | ContractCallType::Approve => {
@@ -643,7 +609,7 @@ impl ContractCallType {
                 let function = try_s!(SWAP_CONTRACT.function(self.as_function_name().unwrap()));
                 Ok(function.short_signature())
             },
-            ContractCallType::Other(signature) => Ok(signature.clone()),
+            ContractCallType::Other(signature) => Ok(*signature),
         }
     }
 }
@@ -895,7 +861,7 @@ impl SwapOps for Qrc20Coin {
         secret_hash: &[u8],
         amount: BigDecimal,
     ) -> TransactionFut {
-        let taker_addr = try_fus!(addr_from_raw_pubkey(taker_pub));
+        let taker_addr = try_fus!(self.qrc20_address_from_raw_pubkey(taker_pub));
         let id = qrc20_swap_id(time_lock, secret_hash);
         let value = try_fus!(wei_from_big_decimal(&amount, self.utxo_arc.decimals));
         let secret_hash = Vec::from(secret_hash);
@@ -970,10 +936,18 @@ impl SwapOps for Qrc20Coin {
         payment_tx: &[u8],
         time_lock: u32,
         maker_pub: &[u8],
-        priv_bn_hash: &[u8],
+        secret_hash: &[u8],
         amount: BigDecimal,
     ) -> Box<dyn Future<Item = (), Error = String> + Send> {
-        unimplemented!()
+        let payment_tx: UtxoTx = try_fus!(deserialize(payment_tx).map_err(|e| ERRL!("{:?}", e)));
+        let sender = try_fus!(self.qrc20_address_from_raw_pubkey(maker_pub));
+        let secret_hash = secret_hash.to_vec();
+
+        Box::new(
+            qrc20_validate_maker_payment(self.clone(), payment_tx, time_lock, sender, secret_hash, amount)
+                .boxed()
+                .compat(),
+        )
     }
 
     fn validate_taker_payment(
@@ -1027,20 +1001,27 @@ impl SwapOps for Qrc20Coin {
         wait_until: u64,
         check_every: u64,
     ) -> Box<dyn Future<Item = (), Error = String> + Send> {
-        let tx = Vec::from(tx);
-        // TODO the same as Eth::validate_payment()
-        Box::new(
-            qrc20_wait_for_swap_payment_confirmations(
-                self.clone(),
-                tx,
-                confirmations,
-                requires_nota,
-                wait_until,
-                check_every,
-            )
-            .boxed()
-            .compat(),
-        )
+        let selfi = self.clone();
+        let utxo_tx: UtxoTx = try_fus!(deserialize(tx).map_err(|e| ERRL!("{:?}", e)));
+        let tx = tx.to_vec();
+        let fut = async move {
+            try_s!(
+                utxo_common::wait_for_confirmations(
+                    &selfi.utxo_arc,
+                    &tx,
+                    confirmations,
+                    requires_nota,
+                    wait_until,
+                    check_every,
+                )
+                .compat()
+                .await
+            );
+            selfi
+                .validate_swap_contract_call(&utxo_tx, ContractCallType::Erc20Payment)
+                .await
+        };
+        Box::new(fut.boxed().compat())
     }
 }
 
@@ -1274,9 +1255,9 @@ async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> Result<Transac
 
 async fn qrc20_tx_details_by_hash(coin: Qrc20Coin, hash: H256Json) -> Result<TransactionDetails, String> {
     // TODO it's required by maker_swap::maker_payment() temporary
-    return Ok(try_s!(
+    Ok(try_s!(
         utxo_common::tx_details_by_hash(coin.clone(), &hash.0).compat().await
-    ));
+    ))
 
     // let mut receipts = match coin.as_ref().rpc_client {
     //     UtxoRpcClientEnum::Electrum(ref rpc) => try_s!(rpc.blochchain_transaction_get_receipt(&hash).compat().await),
@@ -1454,48 +1435,119 @@ async fn qrc20_send_hash_time_locked_payment(
     coin.send_contract_calls(outputs).await
 }
 
-async fn qrc20_wait_for_swap_payment_confirmations(
-    coin: Qrc20Coin,
-    tx: Vec<u8>,
-    confirmations: u64,
-    requires_nota: bool,
-    wait_until: u64,
-    check_every: u64,
-) -> Result<(), String> {
-    let utxo_tx: UtxoTx = try_s!(deserialize(tx.as_slice()).map_err(|e| ERRL!("{:?}", e)));
-    try_s!(
-        utxo_common::wait_for_confirmations(
-            &coin.utxo_arc,
-            &tx,
-            confirmations,
-            requires_nota,
-            wait_until,
-            check_every,
-        )
-        .compat()
-        .await
-    );
-    coin.validate_swap_contract_call(&utxo_tx, "erc20Payment").await
-}
-
 async fn qrc20_validate_maker_payment(
     coin: Qrc20Coin,
-    payment_tx: Vec<u8>,
+    payment_tx: UtxoTx,
     time_lock: u32,
-    maker_pub: &[u8],
-    priv_bn_hash: &[u8],
+    sender: H160,
+    secret_hash: Vec<u8>,
     amount: BigDecimal,
 ) -> Result<(), String> {
-    let utxo_tx: UtxoTx = try_s!(deserialize(payment_tx.as_slice()).map_err(|e| ERRL!("{:?}", e)));
-    try_s!(coin.validate_swap_contract_call(&utxo_tx, "erc20Payment").await);
+    let expected_value = try_s!(wei_from_big_decimal(&amount, coin.utxo_arc.decimals));
 
-    let sender = try_s!(utxo_common::address_from_raw_pubkey(
-        maker_pub,
-        coin.utxo_arc.pub_addr_prefix,
-        coin.utxo_arc.pub_t_addr_prefix,
-        coin.utxo_arc.checksum_type
-    ));
-    unimplemented!()
+    let calls: Vec<ContractCallDetails> = try_s!(coin.transaction_calls_details(&payment_tx).await)
+        .into_iter()
+        .filter(|call| call.call_type == ContractCallType::Erc20Payment)
+        .collect();
+    if calls.len() != 1 {
+        return ERR!(
+            "Count of {:?} calls is {}, expected 1",
+            ContractCallType::Erc20Payment,
+            calls.len()
+        );
+    }
+    let call = &calls[0];
+
+    let (from, swap_contract_address) = match &call.result {
+        CallExecutionResult::Completed(ContractCallDetailsByType::Erc20Payment {
+            from,
+            swap_contract_address,
+            ..
+        }) => (from, swap_contract_address),
+        CallExecutionResult::Completed(details) => {
+            return ERR!(
+                "Internal error: expected ContractCallDetailsByType::Erc20Payment, found {:?}",
+                details
+            )
+        },
+        CallExecutionResult::Failed { reason } => {
+            return ERR!(
+                "Contract call (index {} in outputs) is excepted: {:?}",
+                call.output_index,
+                reason
+            )
+        },
+    };
+
+    if sender != *from {
+        return ERR!("Payment tx was sent from wrong address, expected {:?}", sender);
+    }
+
+    if *swap_contract_address != coin.swap_contract_address {
+        return ERR!(
+            "Payment tx was sent to wrong address, expected {:?}",
+            coin.swap_contract_address
+        );
+    }
+
+    let script_pubkey: Script = payment_tx.outputs[call.output_index as usize]
+        .script_pubkey
+        .clone()
+        .into();
+    let contract_call_bytes = try_s!(extract_contract_call_from_script(&script_pubkey));
+    let function = try_s!(SWAP_CONTRACT.function("erc20Payment"));
+    let decoded = try_s!(function.decode_input(&contract_call_bytes));
+    if decoded.len() != 6 {
+        return ERR!("Expected 6 tokens in erc20Payment call, found {}", decoded.len());
+    }
+
+    let expected = Token::Uint(expected_value);
+    if decoded[1] != expected {
+        return ERR!(
+            "Payment tx value arg {:?} is invalid, expected {:?}",
+            decoded[1],
+            expected
+        );
+    }
+
+    let expected = Token::Address(coin.contract_address);
+    if decoded[2] != expected {
+        return ERR!(
+            "Payment tx token_addr arg {:?} is invalid, expected {:?}",
+            decoded[2],
+            expected
+        );
+    }
+
+    let my_address = qrc20_addr_from_utxo_addr(coin.utxo_arc.my_address.clone());
+    let expected = Token::Address(my_address);
+    if decoded[3] != expected {
+        return ERR!(
+            "Payment tx receiver arg {:?} is invalid, expected {:?}",
+            decoded[3],
+            expected
+        );
+    }
+
+    let expected = Token::FixedBytes(secret_hash);
+    if decoded[4] != expected {
+        return ERR!(
+            "Payment tx secret_hash arg {:?} is invalid, expected {:?}",
+            decoded[4],
+            expected
+        );
+    }
+
+    let expected = Token::Uint(U256::from(time_lock));
+    if decoded[5] != expected {
+        return ERR!(
+            "Payment tx time_lock arg {:?} is invalid, expected {:?}",
+            decoded[5],
+            expected,
+        );
+    }
+
+    Ok(())
 }
 
 /// Serialize the `number` similar to BigEndian but in QRC20 specific format.

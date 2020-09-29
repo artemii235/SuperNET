@@ -1731,7 +1731,7 @@ fn test_qrc20_send_maker_payment() {
     )));
 
     let timelock = (now_ms() / 1000) as u32 - 200;
-    let taker_pub = hex::decode("02cd7745ea1c03c9a1ebbcdb7ab9ee19d4e4d306f44665295d996db7c38527da6b").unwrap();
+    let taker_pub = hex::decode("022b00078841f37b5d30a6a1defb82b3af4d4e2d24dd4204d41f0c9ce1e875de1a").unwrap();
     let secret_hash = &[1; 20];
     let amount = BigDecimal::from_str("0.2").unwrap();
     let payment = coin
@@ -1825,7 +1825,7 @@ fn test_qrc20_wait_for_swap_payment_confirmations() {
         "Expected an error"
     );
     log!("Error: "[err]);
-    assert!(err.contains(r#"Maker payment should contain "erc20Payment" contract call"#));
+    assert!(err.contains(r#"Count of Erc20Payment calls is 0, expected 1"#));
 }
 
 #[test]
@@ -1932,6 +1932,89 @@ fn test_qrc20_transaction_calls_details() {
     let tx: UtxoTx = "0100000003b1fcca3d7c15bb7f694b4e58b939b8835bce4d535e8441d41855d9910a33372f020000006b48304502210091342b2251d13ae0796f6ebf563bb861883d652cbee9f5606dd5bb875af84039022077a21545ff6ec69c9c4eca35e1f127a450abc4f4e60dd032724d70910d6b2835012102cd7745ea1c03c9a1ebbcdb7ab9ee19d4e4d306f44665295d996db7c38527da6bffffffff874c96188a610850d4cd2c29a7fd20e5b9eb7f6748970792a74ad189405b7d9b020000006a473044022055dc1bf716880764e9bcbe8dd3aea05f634541648ec4f5d224eba93fedc54f8002205e38b6136adc46ef8ca65c0b0e9390837e539cbb19df451e33a90e534c12da4c012102cd7745ea1c03c9a1ebbcdb7ab9ee19d4e4d306f44665295d996db7c38527da6bffffffffd52e234ead3b8a2a4718cb6fee039fa96862063fccf95149fb11f27a52bcc352010000006a4730440220527ce41324e53c99b827d3f34e7078d991abf339f24108b7e677fff1b6cf0ffa0220690fe96d4fb8f1673458bc08615b5119f354f6cd589754855fe1dba5f82653aa012102cd7745ea1c03c9a1ebbcdb7ab9ee19d4e4d306f44665295d996db7c38527da6bffffffff030000000000000000625403a08601012844095ea7b3000000000000000000000000ba8b71f3544b93e2f681f996da519a98ace0107a0000000000000000000000000000000000000000000000000000000001312d0014d362e096e873eb7907e205fadc6175c6fec7bc44c20000000000000000e35403a0860101284cc49b415b2a756dd4fe3852ea4a0378c5e984ebb5e4bfa01eca31785457d1729d5928198ef00000000000000000000000000000000000000000000000000000000001312d00000000000000000000000000d362e096e873eb7907e205fadc6175c6fec7bc440000000000000000000000000240b898276ad2cc0d2fe6f527e8e31104e7fde30101010101010101010101010101010101010101000000000000000000000000000000000000000000000000000000000000000000000000000000005f686cef14ba8b71f3544b93e2f681f996da519a98ace0107ac21082fb03000000001976a914f36e14131c70e5f15a3f92b1d7e8622a62e570d888acb86d685f".into();
     let actual = unwrap!(block_on(coin.transaction_calls_details(&tx)));
     assert_eq!(actual, expected);
+}
+
+#[test]
+fn test_qrc20_validate_maker_payment() {
+    let conf = json!({
+        "coin":"QRC20",
+        "required_confirmations":0,
+        "pubtype":120,
+        "p2shtype":50,
+        "wiftype":128,
+        "segwit":true,
+        "mm2":1,
+        "mature_confirmations":500,
+    });
+    let req = json!({
+        "method": "electrum",
+        "servers": [{"url":"95.217.83.126:10001"}],
+        "swap_contract_address": "0xba8b71f3544b93e2f681f996da519a98ace0107a",
+    });
+
+    // this priv_key corresponds to "taker_passphrase" passphrase
+    let priv_key = [
+        24, 181, 194, 193, 18, 152, 142, 168, 71, 73, 70, 244, 9, 101, 92, 168, 243, 61, 132, 48, 25, 39, 103, 92, 29,
+        17, 11, 29, 113, 235, 48, 70,
+    ];
+    let contract_address = "0xd362e096e873eb7907e205fadc6175c6fec7bc44".into();
+
+    let ctx = MmCtxBuilder::new().into_mm_arc();
+    let coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
+        &ctx,
+        "QRC20",
+        "QTUM",
+        &conf,
+        &req,
+        &priv_key,
+        contract_address
+    )));
+
+    assert_eq!(coin.utxo_arc.my_address, "qUX9FGHubczidVjWPCUWuwCUJWpkAtGCgf".into());
+
+    // tx_hash: 016a59dd2b181b3906b0f0333d5c7561dacb332dc99ac39679a591e523f2c49a
+    let payment_tx = hex::decode("010000000194448324c14fc6b78c7a52c59debe3240fc392019dbd6f1457422e3308ce1e75010000006b483045022100800a4956a30a36708536d98e8ea55a3d0983b963af6c924f60241616e2ff056d0220239e622f8ec8f1a0f5ef0fc93ff094a8e6b5aab964a62bed680b17bf6a848aac012103693bff1b39e8b5a306810023c29b95397eb395530b106b1820ea235fd81d9ce9ffffffff020000000000000000e35403a0860101284cc49b415b2a0c692f2ec8ebab181a79e31b7baab30fef0902e57f901c47a342643eeafa6b510000000000000000000000000000000000000000000000000000000001312d00000000000000000000000000d362e096e873eb7907e205fadc6175c6fec7bc44000000000000000000000000783cf0be521101942da509846ea476e683aad8320101010101010101010101010101010101010101000000000000000000000000000000000000000000000000000000000000000000000000000000005f72ec7514ba8b71f3544b93e2f681f996da519a98ace0107ac201319302000000001976a9149e032d4b0090a11dc40fe6c47601499a35d55fbb88ac40ed725f").unwrap();
+    let time_lock = 1601367157;
+    // pubkey of "cMhHM3PMpMrChygR4bLF7QsTdenhWpFrrmf2UezBG3eeFsz41rtL" passphrase
+    let maker_pub = hex::decode("03693bff1b39e8b5a306810023c29b95397eb395530b106b1820ea235fd81d9ce9").unwrap();
+    let secret_hash = &[1; 20];
+    let amount = BigDecimal::from_str("0.2").unwrap();
+
+    unwrap!(coin
+        .validate_maker_payment(&payment_tx, time_lock, &maker_pub, secret_hash, amount.clone())
+        .wait());
+
+    let maker_pub_dif = hex::decode("022b00078841f37b5d30a6a1defb82b3af4d4e2d24dd4204d41f0c9ce1e875de1a").unwrap();
+    let error = unwrap!(coin
+        .validate_maker_payment(&payment_tx, time_lock, &maker_pub_dif, secret_hash, amount.clone())
+        .wait()
+        .err());
+    log!("error: "[error]);
+    assert!(error.contains("Payment tx was sent from wrong address"));
+
+    let amount_dif = BigDecimal::from_str("0.3").unwrap();
+    let error = unwrap!(coin
+        .validate_maker_payment(&payment_tx, time_lock, &maker_pub, secret_hash, amount_dif)
+        .wait()
+        .err());
+    log!("error: "[error]);
+    assert!(error.contains("Payment tx value arg") && error.contains("is invalid"));
+
+    let secret_hash_dif = &[2; 20];
+    let error = unwrap!(coin
+        .validate_maker_payment(&payment_tx, time_lock, &maker_pub, secret_hash_dif, amount.clone())
+        .wait()
+        .err());
+    log!("error: "[error]);
+    assert!(error.contains("Payment tx secret_hash arg") && error.contains("is invalid"));
+
+    let time_lock_dif = 123;
+    let error = unwrap!(coin
+        .validate_maker_payment(&payment_tx, time_lock_dif, &maker_pub, secret_hash, amount)
+        .wait()
+        .err());
+    log!("error: "[error]);
+    assert!(error.contains("Payment tx time_lock arg") && error.contains("is invalid"));
 }
 
 /// TODO remove this test (is used to display signatures of contract functions)
