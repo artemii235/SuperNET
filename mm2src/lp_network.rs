@@ -248,7 +248,11 @@ pub async fn request_one_peer<T: de::DeserializeOwned>(
     req: P2PRequest,
     peer: String,
 ) -> Result<Option<(T, PublicKey)>, String> {
-    let mut responses = try_s!(request_peers::<T>(ctx, req, vec![peer]).await);
+    let metrics_sink = ctx.metrics.sink().expect("Metrics sink is not available");
+    let start = metrics_sink.now();
+    let mut responses = try_s!(request_peers::<T>(ctx.clone(), req, vec![peer.clone()]).await);
+    let end = metrics_sink.now();
+    mm_timing!(ctx.metrics, "peer.outgoing_request.timing", start, end, "peer" => peer);
     if responses.len() != 1 {
         return ERR!("Expected 1 response, found {}", responses.len());
     }

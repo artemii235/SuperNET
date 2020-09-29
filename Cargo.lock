@@ -2922,6 +2922,7 @@ dependencies = [
  "lazy_static",
  "libc",
  "libsecp256k1 0.2.2",
+ "metrics",
  "mm2-libp2p",
  "mocktopus",
  "num-rational",
