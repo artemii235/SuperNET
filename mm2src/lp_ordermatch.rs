@@ -1348,40 +1348,26 @@ impl Into<new_protocol::OrdermatchMessage> for MakerConnected {
     }
 }
 
-async fn broadcast_maker_keep_alives(ctx: &MmArc, keep_alives_sent_at: &mut HashMap<Uuid, u64>) {
-    let now = now_ms();
-    let ordermatch_ctx: Arc<OrdermatchContext> = OrdermatchContext::from_ctx(&ctx).unwrap();
-    let mut my_maker_orders = ordermatch_ctx.my_maker_orders.lock().await;
-    let mut broadcast_num = 0;
-    let max_broadcast_num = my_maker_orders.len() / 20;
-    for order in my_maker_orders.values_mut() {
-        if now < order.created_at + MIN_ORDER_KEEP_ALIVE_INTERVAL * 1000 {
-            continue;
-        }
-
-        match keep_alives_sent_at.entry(order.uuid) {
-            Entry::Occupied(mut e) => {
-                if now < e.get() + MIN_ORDER_KEEP_ALIVE_INTERVAL * 1000 {
-                    continue;
-                }
-                *e.get_mut() = now;
-                let topic = orderbook_topic(&order.base, &order.rel);
-                let msg = new_protocol::MakerOrderKeepAlive {
-                    uuid: order.uuid.into(),
-                    timestamp: now / 1000,
-                };
-                process_my_order_keep_alive(ctx, &msg).await;
-                broadcast_ordermatch_message(ctx, topic, msg.into());
-            },
-            Entry::Vacant(e) => {
-                e.insert(now);
-                maker_order_created_p2p_notify(ctx.clone(), order).await;
-            },
-        }
-
-        broadcast_num += 1;
-        if broadcast_num >= max_broadcast_num {
-            break;
+pub async fn broadcast_maker_keep_alives_loop(ctx: MmArc) {
+    let interval = MIN_ORDER_KEEP_ALIVE_INTERVAL as f64;
+    while !ctx.is_stopping() {
+        let ordermatch_ctx: Arc<OrdermatchContext> = OrdermatchContext::from_ctx(&ctx).unwrap();
+        let to_keep_alive: Vec<_> = ordermatch_ctx
+            .my_maker_orders
+            .lock()
+            .await
+            .iter()
+            .map(|(uuid, order)| (*uuid, orderbook_topic(&order.base, &order.rel)))
+            .collect();
+        let to_sleep = interval / to_keep_alive.len() as f64;
+        for (uuid, topic) in to_keep_alive {
+            Timer::sleep(to_sleep).await;
+            let msg = new_protocol::MakerOrderKeepAlive {
+                uuid: uuid.into(),
+                timestamp: now_ms() / 1000,
+            };
+            process_my_order_keep_alive(&ctx, &msg).await;
+            broadcast_ordermatch_message(&ctx, topic, msg.into());
         }
     }
 }
@@ -1655,7 +1641,6 @@ fn lp_connected_alice(ctx: MmArc, taker_request: TakerRequest, taker_match: Take
 }
 
 pub async fn lp_ordermatch_loop(ctx: MmArc) {
-    let mut keep_alives_sent_at = HashMap::new();
     loop {
         if ctx.is_stopping() {
             break;
@@ -1718,8 +1703,6 @@ pub async fn lp_ordermatch_loop(ctx: MmArc) {
                 maker_order_cancelled_p2p_notify(ctx.clone(), &order).await;
             }
         }
-
-        broadcast_maker_keep_alives(&ctx, &mut keep_alives_sent_at).await;
 
         {
             // remove "timed out" orders from inactive_orders

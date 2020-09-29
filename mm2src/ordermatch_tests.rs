@@ -1342,6 +1342,7 @@ fn test_choose_taker_confs_settings_sell_action() {
 
 fn make_ctx_for_tests() -> (MmArc, String, [u8; 32]) {
     let ctx = MmArc(Arc::new(MmCtx::default()));
+    ctx.init_metrics().unwrap();
     ctx.secp256k1_key_pair
         .pin(key_pair_from_seed("passphrase").unwrap())
         .unwrap();
