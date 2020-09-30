@@ -2140,4 +2140,9 @@ fn print_tx() {
     let params = f.short_signature();
     log!("approve: "[params]);
     log!("hex(approve): "[hex::encode(params)]);
+
+    let f = crate::eth::SWAP_CONTRACT.function("receiverSpend").unwrap();
+    let params = f.short_signature();
+    log!("receiverSpend: "[params]);
+    log!("hex(receiverSpend): "[hex::encode(params)]);
 }

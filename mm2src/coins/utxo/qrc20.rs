@@ -331,6 +331,14 @@ impl Qrc20Coin {
                     swap_contract_address,
                 })
             },
+            ContractCallType::ReceiverSpend => {
+                let (amount, swap_contract_address, to) = try_s!(self.transfer_call_details_from_receipt(receipt));
+                Ok(ContractCallDetailsByType::ReceiverSpend {
+                    amount,
+                    swap_contract_address,
+                    to,
+                })
+            },
             ContractCallType::Approve => Ok(ContractCallDetailsByType::Approve),
             ContractCallType::Other(_) => Ok(ContractCallDetailsByType::Other),
         }
@@ -629,6 +637,7 @@ pub enum ContractCallType {
     Transfer,
     Approve,
     Erc20Payment,
+    ReceiverSpend,
     /// Contains a short function signature.
     Other([u8; 4]),
 }
@@ -640,6 +649,7 @@ impl ContractCallType {
             ContractCallType::Transfer => Ok("transfer"),
             ContractCallType::Approve => Ok("approve"),
             ContractCallType::Erc20Payment => Ok("erc20Payment"),
+            ContractCallType::ReceiverSpend => Ok("receiverSpend"),
             ContractCallType::Other(sig) => ERR!("Unexpected call type with signature {:?}", sig),
         }
     }
@@ -669,6 +679,12 @@ impl ContractCallType {
             return Ok(ContractCallType::Erc20Payment);
         }
 
+        // Result of (ContractCallType::ReceiverSpend).short_signature()
+        // in hex: 02ed292b
+        if script.starts_with(&[2, 237, 41, 43]) {
+            return Ok(ContractCallType::ReceiverSpend);
+        }
+
         let mut signature = [0; 4];
         signature.clone_from_slice(&script[0..4]);
         Ok(ContractCallType::Other(signature))
@@ -681,7 +697,7 @@ impl ContractCallType {
                 let function = try_s!(ERC20_CONTRACT.function(self.as_function_name().unwrap()));
                 Ok(function.short_signature())
             },
-            ContractCallType::Erc20Payment => {
+            ContractCallType::Erc20Payment | ContractCallType::ReceiverSpend => {
                 let function = try_s!(SWAP_CONTRACT.function(self.as_function_name().unwrap()));
                 Ok(function.short_signature())
             },
@@ -715,12 +731,17 @@ pub enum ContractCallDetailsByType {
         from: H160,
         to: H160,
     },
-    /// TODO expand if it's necessary
+    /// Expand if it's necessary.
     Approve,
     Erc20Payment {
         amount: BigDecimal,
         from: H160,
         swap_contract_address: H160,
+    },
+    ReceiverSpend {
+        amount: BigDecimal,
+        swap_contract_address: H160,
+        to: H160,
     },
     Other,
 }
