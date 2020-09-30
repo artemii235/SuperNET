@@ -1,5 +1,5 @@
 use super::*;
-use crate::eth::{u256_to_big_decimal, wei_from_big_decimal, ERC20_CONTRACT, SWAP_CONTRACT};
+use crate::eth::{u256_to_big_decimal, wei_from_big_decimal, ERC20_CONTRACT, PAYMENT_STATE_SENT, SWAP_CONTRACT};
 use crate::{SwapOps, ValidateAddressResult};
 use bitcrypto::sha256;
 use common::jsonrpc_client::{JsonRpcClient, JsonRpcErrorType, JsonRpcRequest, RpcRes};
@@ -203,9 +203,34 @@ pub struct Qrc20Coin {
     pub swap_contract_address: H160,
 }
 
+enum RpcContractCallType {
+    /// Erc20 function.
+    BalanceOf,
+    /// Erc20 function.
+    Allowance,
+    /// EtomicSwap function.
+    Payments,
+}
+
 impl Qrc20Coin {
-    async fn contract_call(&self, func: &str, tokens: &[Token]) -> Result<Vec<Token>, String> {
-        let function = try_s!(ERC20_CONTRACT.function(func));
+    async fn rpc_contract_call(&self, func: RpcContractCallType, tokens: &[Token]) -> Result<Vec<Token>, String> {
+        let (function, contract_addr) = match func {
+            RpcContractCallType::BalanceOf => {
+                let function = try_s!(ERC20_CONTRACT.function("balanceOf"));
+                let contract_addr: H160Json = self.contract_address.to_vec().as_slice().into();
+                (function, contract_addr)
+            },
+            RpcContractCallType::Allowance => {
+                let function = try_s!(ERC20_CONTRACT.function("allowance"));
+                let contract_addr: H160Json = self.contract_address.to_vec().as_slice().into();
+                (function, contract_addr)
+            },
+            RpcContractCallType::Payments => {
+                let function = try_s!(SWAP_CONTRACT.function("payments"));
+                let contract_addr: H160Json = self.swap_contract_address.to_vec().as_slice().into();
+                (function, contract_addr)
+            },
+        };
         let params = try_s!(function.encode_input(tokens));
 
         let electrum = match self.utxo_arc.rpc_client {
@@ -215,7 +240,7 @@ impl Qrc20Coin {
 
         let result: ContractCallResult = try_s!(
             electrum
-                .blockchain_contract_call(&self.contract_address.to_vec().as_slice().into(), params.into())
+                .blockchain_contract_call(&contract_addr, params.into())
                 .compat()
                 .await
         );
@@ -313,7 +338,7 @@ impl Qrc20Coin {
 
     pub async fn allowance(&self, spender: H160) -> Result<U256, String> {
         let tokens = try_s!(
-            self.contract_call("allowance", &[
+            self.rpc_contract_call(RpcContractCallType::Allowance, &[
                 Token::Address(qrc20_addr_from_utxo_addr(self.utxo_arc.my_address.clone())),
                 Token::Address(spender),
             ])
@@ -327,6 +352,24 @@ impl Qrc20Coin {
         match tokens[0] {
             Token::Uint(number) => Ok(number),
             _ => ERR!(r#"Expected U256 as "allowance" result but got {:?}"#, tokens),
+        }
+    }
+
+    pub async fn payment_status(&self, swap_id: Vec<u8>) -> Result<U256, String> {
+        let decoded = try_s!(
+            self.rpc_contract_call(RpcContractCallType::Payments, &[Token::FixedBytes(swap_id)])
+                .await
+        );
+        if decoded.len() < 3 {
+            return ERR!(
+                "Expected at least 3 tokens in \"payments\" call, found {}",
+                decoded.len()
+            );
+        }
+
+        match decoded[2] {
+            Token::Uint(state) => Ok(state),
+            _ => ERR!("Payment status must be uint, got {:?}", decoded[2]),
         }
     }
 
@@ -368,6 +411,39 @@ impl Qrc20Coin {
             Token::Address(receiver_addr),
             Token::FixedBytes(secret_hash.to_vec()),
             Token::Uint(U256::from(time_lock))
+        ]));
+
+        let script_pubkey = try_s!(generate_contract_call_script_pubkey(
+            &params, // params of the function
+            QRC20_GAS_LIMIT_DEFAULT,
+            QRC20_GAS_PRICE_DEFAULT,
+            &self.swap_contract_address, // address of the contract which function will be called
+        ))
+        .to_bytes();
+
+        // qtum_amount is always 0 for the QRC20, because we should pay only a fee in Qtum to send the QRC20 transaction
+        let qtum_amount = 0;
+        Ok(TransactionOutput {
+            value: qtum_amount,
+            script_pubkey,
+        })
+    }
+
+    /// Generate a UTXO output with a script_pubkey that calls EtomicSwap `receiverSpend` function.
+    pub fn receiver_spend_output(
+        &self,
+        id: Vec<u8>,
+        value: U256,
+        secret: Vec<u8>,
+        sender_addr: H160,
+    ) -> Result<TransactionOutput, String> {
+        let function = try_s!(SWAP_CONTRACT.function("receiverSpend"));
+        let params = try_s!(function.encode_input(&[
+            Token::FixedBytes(id),
+            Token::Uint(value),
+            Token::FixedBytes(secret),
+            Token::Address(self.contract_address),
+            Token::Address(sender_addr)
         ]));
 
         let script_pubkey = try_s!(generate_contract_call_script_pubkey(
@@ -895,11 +971,16 @@ impl SwapOps for Qrc20Coin {
     fn send_taker_spends_maker_payment(
         &self,
         maker_payment_tx: &[u8],
-        time_lock: u32,
-        maker_pub: &[u8],
+        _time_lock: u32,
+        _maker_pub: &[u8],
         secret: &[u8],
     ) -> TransactionFut {
-        utxo_common::send_taker_spends_maker_payment(self.clone(), maker_payment_tx, time_lock, maker_pub, secret)
+        let payment_tx: UtxoTx = try_fus!(deserialize(maker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
+        Box::new(
+            qrc20_spend_hash_time_locked_payment(self.clone(), payment_tx, secret.to_vec())
+                .boxed()
+                .compat(),
+        )
     }
 
     fn send_taker_refunds_payment(
@@ -1390,7 +1471,7 @@ async fn qrc20_balance(coin: Qrc20Coin) -> Result<BigDecimal, String> {
     let params = &[Token::Address(qrc20_addr_from_utxo_addr(
         coin.utxo_arc.my_address.clone(),
     ))];
-    let tokens = try_s!(coin.contract_call("balanceOf", params).await);
+    let tokens = try_s!(coin.rpc_contract_call(RpcContractCallType::BalanceOf, params).await);
 
     if tokens.is_empty() {
         return ERR!(r#"Expected Uint as "balanceOf" result but got nothing"#);
@@ -1417,8 +1498,10 @@ async fn qrc20_send_hash_time_locked_payment(
     if allowance < value {
         let balance = try_s!(coin.my_balance().compat().await);
         let balance = try_s!(wei_from_big_decimal(&balance, coin.utxo_arc.decimals));
-        // first reset the allowance to the 0
-        outputs.push(try_s!(coin.approve_output(coin.swap_contract_address, 0.into())));
+        if allowance > U256::zero() {
+            // first reset the allowance to the 0
+            outputs.push(try_s!(coin.approve_output(coin.swap_contract_address, 0.into())));
+        }
         // set the allowance from 0 to `balance` after the previous output will be executed
         outputs.push(try_s!(coin.approve_output(coin.swap_contract_address, balance)));
     }
@@ -1433,6 +1516,72 @@ async fn qrc20_send_hash_time_locked_payment(
     )));
 
     coin.send_contract_calls(outputs).await
+}
+
+async fn qrc20_spend_hash_time_locked_payment(
+    coin: Qrc20Coin,
+    payment_tx: UtxoTx,
+    secret: Vec<u8>,
+) -> Result<TransactionEnum, String> {
+    let calls: Vec<ContractCallDetails> = try_s!(coin.transaction_calls_details(&payment_tx).await)
+        .into_iter()
+        .filter(|call| call.call_type == ContractCallType::Erc20Payment)
+        .collect();
+    if calls.len() != 1 {
+        return ERR!(
+            "Count of {:?} calls is {}, expected 1",
+            ContractCallType::Erc20Payment,
+            calls.len()
+        );
+    }
+    let call = &calls[0];
+
+    let from = match &call.result {
+        CallExecutionResult::Completed(ContractCallDetailsByType::Erc20Payment { from, .. }) => *from,
+        CallExecutionResult::Completed(details) => {
+            return ERR!(
+                "Internal error: Transaction must be validated already, but found {:?} instead of Erc20Payment",
+                details
+            )
+        },
+        CallExecutionResult::Failed { reason } => {
+            return ERR!(
+                "Internal error: Transaction must be validated already, but Erc20Payment is excepted: {:?}",
+                reason
+            )
+        },
+    };
+
+    let script_pubkey: Script = payment_tx.outputs[call.output_index as usize]
+        .script_pubkey
+        .clone()
+        .into();
+    let contract_call_bytes = try_s!(extract_contract_call_from_script(&script_pubkey));
+
+    let payment_func = try_s!(SWAP_CONTRACT.function("erc20Payment"));
+    let decoded = try_s!(payment_func.decode_input(&contract_call_bytes));
+    if decoded.len() != 6 {
+        return ERR!("Expected 6 tokens in erc20Payment call, found {}", decoded.len());
+    }
+
+    let swap_id = match decoded[0] {
+        Token::FixedBytes(ref id) => id.clone(),
+        _ => return ERR!("Payment tx id arg {:?} is invalid", decoded[0]),
+    };
+
+    let value = match decoded[1] {
+        Token::Uint(ref value) => value,
+        _ => return ERR!("Payment tx value arg {:?} is invalid", decoded[1]),
+    };
+
+    let status = try_s!(coin.payment_status(swap_id.clone()).await);
+    if status != PAYMENT_STATE_SENT.into() {
+        let tx_hash: H256Json = payment_tx.hash().reversed().into();
+        return ERR!("Payment {:?} state is not PAYMENT_STATE_SENT, got {}", tx_hash, status);
+    }
+
+    let spend_output = try_s!(coin.receiver_spend_output(swap_id, *value, secret, from));
+    coin.send_contract_calls(vec![spend_output]).await
 }
 
 async fn qrc20_validate_maker_payment(

@@ -76,7 +76,7 @@ const ERC20_ABI: &str = r#"[{"constant":true,"inputs":[],"name":"name","outputs"
 
 /// Payment states from etomic swap smart contract: https://github.com/artemii235/etomic-swap/blob/master/contracts/EtomicSwap.sol#L5
 const PAYMENT_STATE_UNINITIALIZED: u8 = 0;
-const PAYMENT_STATE_SENT: u8 = 1;
+pub const PAYMENT_STATE_SENT: u8 = 1;
 const _PAYMENT_STATE_SPENT: u8 = 2;
 const _PAYMENT_STATE_REFUNDED: u8 = 3;
 
