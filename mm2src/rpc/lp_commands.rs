@@ -277,6 +277,15 @@ pub async fn get_relay_mesh(ctx: MmArc) -> Result<Response<Vec<u8>>, String> {
     Ok(try_s!(Response::builder().body(res)))
 }
 
+pub async fn get_my_peer_id(ctx: MmArc) -> Result<Response<Vec<u8>>, String> {
+    let peer_id = try_s!(ctx.peer_id.ok_or("Peer ID is not initialized"));
+    let result = json!({
+        "result": peer_id,
+    });
+    let res = try_s!(json::to_vec(&result));
+    Ok(try_s!(Response::builder().body(res)))
+}
+
 // AP: Inventory is not documented and not used as of now, commented out
 /*
 pub fn inventory (ctx: MmArc, req: Json) -> HyRes {

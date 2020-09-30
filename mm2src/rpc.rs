@@ -141,6 +141,7 @@ pub fn dispatcher(req: Json, ctx: MmArc) -> DispatcherRes {
         "get_gossip_mesh" => hyres(get_gossip_mesh(ctx)),
         "get_gossip_peer_topics" => hyres(get_gossip_peer_topics(ctx)),
         "get_gossip_topic_peers" => hyres(get_gossip_topic_peers(ctx)),
+        "get_my_peer_id" => hyres(get_my_peer_id(ctx)),
         "get_peers_info" => hyres(get_peers_info(ctx)),
         "get_relay_mesh" => hyres(get_relay_mesh(ctx)),
         "get_trade_fee" => hyres(get_trade_fee(ctx, req)),
