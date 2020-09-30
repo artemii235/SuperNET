@@ -30,7 +30,7 @@ impl Node {
         let mut priv_key = secret.serialize();
 
         let (cmd_tx, mut event_rx, peer_id) =
-            start_gossipsub(my_address, port, spawn_boxed, seednodes, &mut priv_key, true);
+            start_gossipsub(my_address, port, spawn_boxed, seednodes, &mut priv_key, true, |_| {});
 
         // spawn a response future
         let cmd_tx_fut = cmd_tx.clone();

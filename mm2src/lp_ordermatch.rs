@@ -266,14 +266,18 @@ async fn request_and_fill_orderbook(
     Ok(())
 }
 
-async fn process_my_order_keep_alive(ctx: &MmArc, keep_alive: &new_protocol::MakerOrderKeepAlive) {
+/// Processes keep alive message of our own node, returns whether operation was successful (order exists)
+async fn process_my_order_keep_alive(ctx: &MmArc, keep_alive: &new_protocol::MakerOrderKeepAlive) -> bool {
     let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
     let mut orderbook = ordermatch_ctx.orderbook.lock().await;
 
     let uuid = keep_alive.uuid.into();
     if let Some(mut order) = orderbook.find_order_by_uuid(&uuid) {
         order.timestamp = keep_alive.timestamp;
+        return true;
     }
+
+    false
 }
 
 /// Insert or update an order `req`.
@@ -1366,8 +1370,13 @@ pub async fn broadcast_maker_keep_alives_loop(ctx: MmArc) {
                 uuid: uuid.into(),
                 timestamp: now_ms() / 1000,
             };
-            process_my_order_keep_alive(&ctx, &msg).await;
-            broadcast_ordermatch_message(&ctx, topic, msg.into());
+            if process_my_order_keep_alive(&ctx, &msg).await {
+                broadcast_ordermatch_message(&ctx, topic, msg.into());
+            } else {
+                if let Some(order) = ordermatch_ctx.my_maker_orders.lock().await.get(&uuid) {
+                    maker_order_created_p2p_notify(ctx.clone(), order).await;
+                }
+            }
         }
     }
 }

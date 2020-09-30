@@ -31,6 +31,7 @@ use log::{debug, error, info, trace, warn};
 use lru::LruCache;
 use rand;
 use rand::{seq::SliceRandom, thread_rng};
+use smallvec::SmallVec;
 use std::{collections::{HashMap, HashSet, VecDeque},
           iter,
           sync::Arc,
@@ -80,9 +81,10 @@ pub struct Gossipsub {
     /// Message cache for the last few heartbeats.
     mcache: MessageCache,
 
-    // We keep track of the messages we received (in the format `string(source ID, seq_no)`) so that
-    // we don't dispatch the same message twice if we receive it twice on the network.
-    received: LruCache<MessageId, ()>,
+    /// We keep track of the messages we received (in the format `string(source ID, seq_no)`) so that
+    /// we don't dispatch the same message twice if we receive it twice on the network.
+    /// Also store the peers from which message was received so we don't manually propagate already known message to them
+    received: LruCache<MessageId, SmallVec<[PeerId; 12]>>,
 
     /// Heartbeat interval stream.
     heartbeat: Interval,
@@ -279,7 +281,7 @@ impl Gossipsub {
         // add published message to our received caches
         let msg_id = (self.config.message_id_fn)(&message);
         self.mcache.put(message.clone());
-        self.received.put(msg_id.clone(), ());
+        self.received.put(msg_id.clone(), SmallVec::from_elem(local_peer_id, 1));
 
         debug!("Published message: {:?}", msg_id);
 
@@ -578,11 +580,17 @@ impl Gossipsub {
     fn handle_received_message(&mut self, msg: GossipsubMessage, propagation_source: &PeerId) {
         let msg_id = (self.config.message_id_fn)(&msg);
         debug!("Handling message: {:?} from peer: {:?}", msg_id, propagation_source);
-        if self.received.put(msg_id.clone(), ()).is_some() {
-            debug!("Message already received, ignoring. Message: {:?}", msg_id);
-            return;
+        match self.received.get_mut(&msg_id) {
+            Some(peers) => {
+                debug!("Message already received, ignoring. Message: {:?}", msg_id);
+                peers.push(propagation_source.clone());
+                return;
+            },
+            None => {
+                self.received
+                    .put(msg_id.clone(), SmallVec::from_elem(propagation_source.clone(), 1));
+            },
         }
-
         // add to the memcache
         self.mcache.put(msg.clone());
 
@@ -929,6 +937,12 @@ impl Gossipsub {
             });
 
             for peer in recipient_peers.iter() {
+                if let Some(received_from_peers) = self.received.get(&msg_id) {
+                    if received_from_peers.contains(peer) {
+                        continue;
+                    }
+                }
+
                 debug!("Sending message: {:?} to peer {:?}", msg_id, peer);
                 self.events.push_back(NetworkBehaviourAction::NotifyHandler {
                     peer_id: peer.clone(),
@@ -947,6 +961,12 @@ impl Gossipsub {
             });
 
             for relayer in self.relayers_mesh.iter() {
+                if let Some(received_from_peers) = self.received.get(&msg_id) {
+                    if received_from_peers.contains(relayer) {
+                        continue;
+                    }
+                }
+
                 if relayer != source {
                     debug!("Sending message: {:?} to relayer {:?}", msg_id, relayer);
                     self.events.push_back(NetworkBehaviourAction::NotifyHandler {
