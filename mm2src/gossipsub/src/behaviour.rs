@@ -32,6 +32,7 @@ use lru::LruCache;
 use rand;
 use rand::{seq::SliceRandom, thread_rng};
 use smallvec::SmallVec;
+use std::time::Duration;
 use std::{collections::{HashMap, HashSet, VecDeque},
           iter,
           sync::Arc,
@@ -89,6 +90,9 @@ pub struct Gossipsub {
     /// Heartbeat interval stream.
     heartbeat: Interval,
 
+    /// Relay mesh maintenance interval stream.
+    relay_mesh_maintenance_interval: Interval,
+
     peer_connections: HashMap<PeerId, Vec<ConnectedPoint>>,
 
     connected_addresses: Vec<Multiaddr>,
@@ -118,10 +122,14 @@ impl Gossipsub {
                 gs_config.history_length,
                 gs_config.message_id_fn,
             ),
-            received: LruCache::new(256), // keep track of the last 256 messages
+            received: LruCache::new(1024), // keep track of the last 1024 messages
             heartbeat: Interval::new_at(
                 Instant::now() + gs_config.heartbeat_initial_delay,
                 gs_config.heartbeat_interval,
+            ),
+            relay_mesh_maintenance_interval: Interval::new_at(
+                Instant::now() + Duration::from_secs(60),
+                Duration::from_secs(60),
             ),
             peer_connections: HashMap::new(),
             connected_relayers: HashSet::new(),
@@ -265,7 +273,7 @@ impl Gossipsub {
                 } else {
                     // we have no fanout peers, select mesh_n of them and add them to the fanout
                     let mesh_n = self.config.mesh_n;
-                    let new_peers = Self::get_random_peers(&self.topic_peers, &topic_hash, mesh_n, { |_| true });
+                    let new_peers = Self::get_random_peers(&self.topic_peers, &topic_hash, mesh_n, |_| true);
                     // add the new peers to the fanout and recipient peers
                     self.fanout.insert(topic_hash.clone(), new_peers.clone());
                     for peer in new_peers {
@@ -809,7 +817,6 @@ impl Gossipsub {
         // piggyback pooled control messages
         self.flush_control_pool();
 
-        self.maintain_relayers_mesh();
         // shift the memcache
         self.mcache.shift();
         debug!("Completed Heartbeat");
@@ -1394,6 +1401,10 @@ impl NetworkBehaviour for Gossipsub {
 
         while let Poll::Ready(Some(())) = self.heartbeat.poll_next_unpin(cx) {
             self.heartbeat();
+        }
+
+        while let Poll::Ready(Some(())) = self.relay_mesh_maintenance_interval.poll_next_unpin(cx) {
+            self.maintain_relayers_mesh();
         }
 
         Poll::Pending

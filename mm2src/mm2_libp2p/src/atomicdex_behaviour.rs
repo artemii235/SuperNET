@@ -452,7 +452,8 @@ fn maintain_connection_to_relayers(swarm: &mut AtomicDexSwarm, bootstrap_address
     let connected_relayers = swarm.gossipsub.connected_relayers();
     let mesh_n_low = swarm.gossipsub.get_config().mesh_n_low;
     let mesh_n = swarm.gossipsub.get_config().mesh_n;
-    let mesh_n_high = swarm.gossipsub.get_config().mesh_n_high;
+    // allow 2 * mesh_n_high connections to other nodes
+    let max_n = swarm.gossipsub.get_config().mesh_n_high * 2;
     if connected_relayers.len() < mesh_n_low {
         let to_connect_num = mesh_n - connected_relayers.len();
         let to_connect = swarm
@@ -480,9 +481,9 @@ fn maintain_connection_to_relayers(swarm: &mut AtomicDexSwarm, bootstrap_address
         }
     }
 
-    if connected_relayers.len() > mesh_n_high {
+    if connected_relayers.len() > max_n {
         let mut rng = thread_rng();
-        let to_disconnect_num = connected_relayers.len() - mesh_n;
+        let to_disconnect_num = connected_relayers.len() - max_n;
         let relayers_mesh = swarm.gossipsub.get_relay_mesh();
         let not_in_mesh: Vec<_> = connected_relayers
             .iter()
@@ -551,7 +552,7 @@ pub fn start_gossipsub(
     let transport = transport
         .upgrade(libp2p::core::upgrade::Version::V1)
         .authenticate(noise::NoiseConfig::xx(noise_keys).into_authenticated())
-        .multiplex(libp2p::yamux::Config::default())
+        .multiplex(libp2p::mplex::MplexConfig::default())
         .map(|(peer, muxer), _| (peer, libp2p::core::muxing::StreamMuxerBox::new(muxer)))
         .timeout(std::time::Duration::from_secs(20));
 

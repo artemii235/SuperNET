@@ -40,7 +40,7 @@ jobs:
           echo 2.0.$(Build.BuildId)_$(Build.SourceBranchName)_$(COMMIT_HASH)_$(Agent.OS)_Release > MM_VERSION
           cat MM_VERSION
           touch mm2src/common/build.rs
-          cargo build --features native --release
+          cargo +nightly build --features native --release
         displayName: 'Build MM2 Debug'
       # Explicit --test-threads=16 makes testing process slightly faster on agents that have <16 CPU cores.
       - bash: |
