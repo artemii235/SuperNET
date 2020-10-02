@@ -444,6 +444,39 @@ impl Qrc20Coin {
         })
     }
 
+    pub fn sender_refund_output(
+        &self,
+        id: Vec<u8>,
+        value: U256,
+        secret_hash: Vec<u8>,
+        receiver: H160,
+    ) -> Result<TransactionOutput, String> {
+        let function = try_s!(SWAP_CONTRACT.function("senderRefund"));
+
+        let params = try_s!(function.encode_input(&[
+            Token::FixedBytes(id),
+            Token::Uint(value),
+            Token::FixedBytes(secret_hash),
+            Token::Address(self.contract_address),
+            Token::Address(receiver)
+        ]));
+
+        let script_pubkey = try_s!(generate_contract_call_script_pubkey(
+            &params, // params of the function
+            QRC20_GAS_LIMIT_DEFAULT,
+            QRC20_GAS_PRICE_DEFAULT,
+            &self.swap_contract_address, // address of the contract which function will be called
+        ))
+        .to_bytes();
+
+        // qtum_amount is always 0 for the QRC20, because we should pay only a fee in Qtum to send the QRC20 transaction
+        let qtum_amount = 0;
+        Ok(TransactionOutput {
+            value: qtum_amount,
+            script_pubkey,
+        })
+    }
+
     /// Generate and send a transaction from the specified UTXO outputs.
     /// Note this function locks the `UTXO_LOCK`.
     pub async fn send_contract_calls(
@@ -980,11 +1013,16 @@ impl SwapOps for Qrc20Coin {
     fn send_maker_refunds_payment(
         &self,
         maker_payment_tx: &[u8],
-        time_lock: u32,
-        taker_pub: &[u8],
-        secret_hash: &[u8],
+        _time_lock: u32,
+        _taker_pub: &[u8],
+        _secret_hash: &[u8],
     ) -> TransactionFut {
-        utxo_common::send_maker_refunds_payment(self.clone(), maker_payment_tx, time_lock, taker_pub, secret_hash)
+        let payment_tx: UtxoTx = try_fus!(deserialize(maker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
+        Box::new(
+            qrc20_refund_hash_time_locked_payment(self.clone(), payment_tx)
+                .boxed()
+                .compat(),
+        )
     }
 
     fn validate_fee(
@@ -1566,6 +1604,24 @@ async fn qrc20_spend_hash_time_locked_payment(
 
     let spend_output = try_s!(coin.receiver_spend_output(swap_id, value, secret, sender));
     coin.send_contract_calls(vec![spend_output]).await
+}
+
+async fn qrc20_refund_hash_time_locked_payment(coin: Qrc20Coin, payment_tx: UtxoTx) -> Result<TransactionEnum, String> {
+    let Erc20PaymentDetails {
+        swap_id,
+        value,
+        receiver,
+        secret_hash,
+        ..
+    } = try_s!(coin.erc20_payment_details_from_tx(&payment_tx).await);
+
+    let status = try_s!(coin.payment_status(swap_id.clone()).await);
+    if status != PAYMENT_STATE_SENT.into() {
+        return ERR!("Payment state is not PAYMENT_STATE_SENT, got {}", status);
+    }
+
+    let refund_output = try_s!(coin.sender_refund_output(swap_id, value, secret_hash, receiver));
+    coin.send_contract_calls(vec![refund_output]).await
 }
 
 async fn qrc20_validate_maker_payment(
