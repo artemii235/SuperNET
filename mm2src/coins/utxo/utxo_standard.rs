@@ -276,9 +276,19 @@ impl SwapOps for UtxoStandardCoin {
         time_lock: u32,
         other_pub: &[u8],
         secret_hash: &[u8],
-        search_from_block: u64,
+        _search_from_block: u64,
     ) -> Box<dyn Future<Item = Option<TransactionEnum>, Error = String> + Send> {
-        utxo_common::check_if_my_payment_sent(self.clone(), time_lock, other_pub, secret_hash, search_from_block)
+        utxo_common::check_if_my_payment_sent(self.clone(), time_lock, other_pub, secret_hash)
+    }
+
+    fn check_if_my_payment_completed(
+        &self,
+        _payment_tx: &[u8],
+        time_lock: u32,
+        other_pub: &[u8],
+        secret_hash: &[u8],
+    ) -> Box<dyn Future<Item = (), Error = String> + Send> {
+        utxo_common::check_if_my_payment_completed(self.clone(), time_lock, other_pub, secret_hash)
     }
 
     fn search_for_swap_tx_spend_my(
@@ -301,17 +311,6 @@ impl SwapOps for UtxoStandardCoin {
         search_from_block: u64,
     ) -> Result<Option<FoundSwapTxSpend>, String> {
         utxo_common::search_for_swap_tx_spend_other(self, time_lock, other_pub, secret_hash, tx, search_from_block)
-    }
-
-    fn wait_for_swap_payment_confirmations(
-        &self,
-        tx: &[u8],
-        confirmations: u64,
-        requires_nota: bool,
-        wait_until: u64,
-        check_every: u64,
-    ) -> Box<dyn Future<Item = (), Error = String> + Send> {
-        self.wait_for_confirmations(tx, confirmations, requires_nota, wait_until, check_every)
     }
 }
 

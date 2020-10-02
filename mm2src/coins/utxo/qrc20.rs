@@ -515,6 +515,8 @@ impl Qrc20Coin {
         Ok((signed, fee_details))
     }
 
+    /// Get `erc20Payment` contract call details.
+    /// Note returns an error if the contract call was excepted.
     async fn erc20_payment_details_from_tx(&self, qtum_tx: &UtxoTx) -> Result<Erc20PaymentDetails, String> {
         let tx_hash: H256Json = qtum_tx.hash().reversed().into();
         let receipts = match self.utxo_arc.rpc_client {
@@ -583,14 +585,17 @@ impl Qrc20Coin {
                 None => return ERR!("Couldn't find 'timelock' in erc20Payment call"),
             };
 
-            let excepted = match receipt.excepted.clone() {
-                Some(ex) if ex == "None" || ex == "none" => None,
-                Some(ex) => match receipt.excepted_message {
-                    Some(ref msg) => Some(format!("{}: {}", ex, msg)),
-                    None => Some(ex),
+            // check if the contract call was excepted
+            match receipt.excepted.clone() {
+                Some(ex) if ex != "None" && ex != "none" => {
+                    let msg = match receipt.excepted_message {
+                        Some(m) => format!(": {}", m),
+                        None => String::default(),
+                    };
+                    return ERR!("'erc20Payment' payment failed with an error: {}{}", ex, msg);
                 },
-                None => None,
-            };
+                _ => (),
+            }
 
             let (_amount, sender, swap_contract_address) = try_s!(self.transfer_call_details_from_receipt(&receipt));
             return Ok(Erc20PaymentDetails {
@@ -603,7 +608,6 @@ impl Qrc20Coin {
                 receiver,
                 secret_hash,
                 timelock,
-                excepted,
             });
         }
         ERR!("Couldn't find erc20Payment contract call in {:?} tx", tx_hash)
@@ -685,7 +689,7 @@ impl ContractCallType {
     }
 }
 
-/// These variants contain values extracted from an output's script_pubkey.
+/// These variants contain values obtained from an [`TransactionOutput::script_pubkey`] and [`TxReceipt::logs`].
 #[derive(Debug, Eq, PartialEq)]
 pub struct Erc20PaymentDetails {
     pub output_index: i64,
@@ -697,8 +701,6 @@ pub struct Erc20PaymentDetails {
     pub receiver: H160,
     pub secret_hash: Vec<u8>,
     pub timelock: U256,
-    /// Reason if the `erc20Payment` was failed else None,
-    pub excepted: Option<String>,
 }
 
 impl AsRef<UtxoArc> for Qrc20Coin {
@@ -917,6 +919,7 @@ impl SwapOps for Qrc20Coin {
         let id = qrc20_swap_id(time_lock, secret_hash);
         let value = try_fus!(wei_from_big_decimal(&amount, self.utxo_arc.decimals));
         let secret_hash = Vec::from(secret_hash);
+        // TODO replace with async {}
         Box::new(
             qrc20_send_hash_time_locked_payment(self.clone(), id, value, time_lock, secret_hash, taker_addr)
                 .boxed()
@@ -1023,9 +1026,32 @@ impl SwapOps for Qrc20Coin {
         time_lock: u32,
         other_pub: &[u8],
         secret_hash: &[u8],
-        search_from_block: u64,
+        _search_from_block: u64,
     ) -> Box<dyn Future<Item = Option<TransactionEnum>, Error = String> + Send> {
-        utxo_common::check_if_my_payment_sent(self.clone(), time_lock, other_pub, secret_hash, search_from_block)
+        utxo_common::check_if_my_payment_sent(self.clone(), time_lock, other_pub, secret_hash)
+    }
+
+    fn check_if_my_payment_completed(
+        &self,
+        payment_tx: &[u8],
+        _time_lock: u32,
+        _other_pub: &[u8],
+        _secret_hash: &[u8],
+    ) -> Box<dyn Future<Item = (), Error = String> + Send> {
+        let payment_tx: UtxoTx = try_fus!(deserialize(payment_tx).map_err(|e| ERRL!("{:?}", e)));
+        let selfi = self.clone();
+        let fut = async move {
+            let Erc20PaymentDetails { swap_id, .. } = try_s!(selfi.erc20_payment_details_from_tx(&payment_tx).await);
+
+            let status = try_s!(selfi.payment_status(swap_id.clone()).await);
+            if status != PAYMENT_STATE_SENT.into() {
+                return ERR!("Payment state is not PAYMENT_STATE_SENT, got {}", status);
+            }
+
+            Ok(())
+        };
+
+        Box::new(fut.boxed().compat())
     }
 
     fn search_for_swap_tx_spend_my(
@@ -1048,17 +1074,6 @@ impl SwapOps for Qrc20Coin {
         search_from_block: u64,
     ) -> Result<Option<FoundSwapTxSpend>, String> {
         utxo_common::search_for_swap_tx_spend_other(self, time_lock, other_pub, secret_hash, tx, search_from_block)
-    }
-
-    fn wait_for_swap_payment_confirmations(
-        &self,
-        _tx: &[u8],
-        _confirmations: u64,
-        _requires_nota: bool,
-        _wait_until: u64,
-        _check_every: u64,
-    ) -> Box<dyn Future<Item = (), Error = String> + Send> {
-        unimplemented!()
     }
 }
 
@@ -1480,20 +1495,12 @@ async fn qrc20_spend_hash_time_locked_payment(
     secret: Vec<u8>,
 ) -> Result<TransactionEnum, String> {
     let Erc20PaymentDetails {
-        swap_id,
-        value,
-        sender,
-        excepted,
-        ..
+        swap_id, value, sender, ..
     } = try_s!(coin.erc20_payment_details_from_tx(&payment_tx).await);
-    if let Some(ex) = excepted {
-        return ERR!("Swap payment failed with error: {}", ex);
-    }
 
     let status = try_s!(coin.payment_status(swap_id.clone()).await);
     if status != PAYMENT_STATE_SENT.into() {
-        let tx_hash: H256Json = payment_tx.hash().reversed().into();
-        return ERR!("Payment {:?} state is not PAYMENT_STATE_SENT, got {}", tx_hash, status);
+        return ERR!("Payment state is not PAYMENT_STATE_SENT, got {}", status);
     }
 
     let spend_output = try_s!(coin.receiver_spend_output(swap_id, value, secret, sender));
@@ -1509,9 +1516,6 @@ async fn qrc20_validate_maker_payment(
     amount: BigDecimal,
 ) -> Result<(), String> {
     let erc20_payment = try_s!(coin.erc20_payment_details_from_tx(&payment_tx).await);
-    if let Some(ex) = erc20_payment.excepted {
-        return ERR!("Maker payment failed with error: {}", ex);
-    }
 
     if sender != erc20_payment.sender {
         return ERR!("Payment tx was sent from wrong address, expected {:?}", sender);

@@ -1051,7 +1051,6 @@ pub fn check_if_my_payment_sent<T>(
     time_lock: u32,
     other_pub: &[u8],
     secret_hash: &[u8],
-    _from_block: u64,
 ) -> Box<dyn Future<Item = Option<TransactionEnum>, Error = String> + Send>
 where
     T: AsRef<UtxoArc> + UtxoCoinCommonOps + Send + Sync + 'static,
@@ -1099,6 +1098,24 @@ where
         }
     };
     Box::new(fut.boxed().compat())
+}
+
+pub fn check_if_my_payment_completed<T>(
+    coin: T,
+    time_lock: u32,
+    other_pub: &[u8],
+    secret_hash: &[u8],
+) -> Box<dyn Future<Item = (), Error = String> + Send>
+where
+    T: AsRef<UtxoArc> + UtxoCoinCommonOps + Send + Sync + 'static,
+{
+    let fut = check_if_my_payment_sent(coin, time_lock, other_pub, secret_hash).and_then(|tx| {
+        if tx.is_none() {
+            return ERR!("Couldn't find the payment on blockchain");
+        }
+        Ok(())
+    });
+    Box::new(fut)
 }
 
 pub fn search_for_swap_tx_spend_my<T>(

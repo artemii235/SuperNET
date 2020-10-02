@@ -1751,12 +1751,12 @@ fn test_qrc20_send_maker_payment() {
     let wait_until = (now_ms() / 1000) + 240; // timeout if test takes more than 240 seconds to run
     let check_every = 1;
     unwrap!(coin
-        .wait_for_swap_payment_confirmations(&tx_hex, confirmations, requires_nota, wait_until, check_every)
+        .wait_for_confirmations(&tx_hex, confirmations, requires_nota, wait_until, check_every)
         .wait());
 }
 
 #[test]
-fn test_qrc20_wait_for_swap_payment_confirmations() {
+fn test_qrc20_check_if_my_payment_completed() {
     let conf = json!({
         "coin":"QRC20",
         "required_confirmations":0,
@@ -1793,12 +1793,11 @@ fn test_qrc20_wait_for_swap_payment_confirmations() {
     // tx 35e03bc529528a853ee75dde28f27eec8ed7b152b6af7ab6dfa5d55ea46f25ac
     let tx_hex = hex::decode("0100000003b1fcca3d7c15bb7f694b4e58b939b8835bce4d535e8441d41855d9910a33372f020000006b48304502210091342b2251d13ae0796f6ebf563bb861883d652cbee9f5606dd5bb875af84039022077a21545ff6ec69c9c4eca35e1f127a450abc4f4e60dd032724d70910d6b2835012102cd7745ea1c03c9a1ebbcdb7ab9ee19d4e4d306f44665295d996db7c38527da6bffffffff874c96188a610850d4cd2c29a7fd20e5b9eb7f6748970792a74ad189405b7d9b020000006a473044022055dc1bf716880764e9bcbe8dd3aea05f634541648ec4f5d224eba93fedc54f8002205e38b6136adc46ef8ca65c0b0e9390837e539cbb19df451e33a90e534c12da4c012102cd7745ea1c03c9a1ebbcdb7ab9ee19d4e4d306f44665295d996db7c38527da6bffffffffd52e234ead3b8a2a4718cb6fee039fa96862063fccf95149fb11f27a52bcc352010000006a4730440220527ce41324e53c99b827d3f34e7078d991abf339f24108b7e677fff1b6cf0ffa0220690fe96d4fb8f1673458bc08615b5119f354f6cd589754855fe1dba5f82653aa012102cd7745ea1c03c9a1ebbcdb7ab9ee19d4e4d306f44665295d996db7c38527da6bffffffff030000000000000000625403a08601012844095ea7b3000000000000000000000000ba8b71f3544b93e2f681f996da519a98ace0107a0000000000000000000000000000000000000000000000000000000001312d0014d362e096e873eb7907e205fadc6175c6fec7bc44c20000000000000000e35403a0860101284cc49b415b2a756dd4fe3852ea4a0378c5e984ebb5e4bfa01eca31785457d1729d5928198ef00000000000000000000000000000000000000000000000000000000001312d00000000000000000000000000d362e096e873eb7907e205fadc6175c6fec7bc440000000000000000000000000240b898276ad2cc0d2fe6f527e8e31104e7fde30101010101010101010101010101010101010101000000000000000000000000000000000000000000000000000000000000000000000000000000005f686cef14ba8b71f3544b93e2f681f996da519a98ace0107ac21082fb03000000001976a914f36e14131c70e5f15a3f92b1d7e8622a62e570d888acb86d685f").unwrap();
     let confirmations = 1;
-    let requires_nota = false;
-    // the transaction is mined already
-    let wait_until = (now_ms() / 1000) + 1; // timeout if test takes more than 1 second to run
-    let check_every = 1;
+    let timelock = 0; // ignored
+    let other_pub = &[0]; // ignored
+    let secret_hash = &[1; 20]; // ignored
     unwrap!(
-        coin.wait_for_swap_payment_confirmations(&tx_hex, confirmations, requires_nota, wait_until, check_every)
+        coin.check_if_my_payment_completed(&tx_hex, timelock, other_pub, secret_hash)
             .wait(),
         r#"Actually "erc20Payment" hasn't been failed, only "approve" call"#
     );
@@ -1806,24 +1805,24 @@ fn test_qrc20_wait_for_swap_payment_confirmations() {
     // tx c2d4e7f21b98e7ff171718ebebfd9b8e6bb294b1ed6a5ab941d2b49db1d66042
     let tx_hex = hex::decode("0100000001f19600483e8e927df7d717ed1797c2bcd14d526a670de00a702ab04fe16b366b030000006b483045022100d1f4a8fc5d42b6c54916f47f80bb47242813a6a25819349dc1625ea93b1659ee022043ec57748244b341dbb764275cc13b6425d8737aad56dac0aeab97b192263ed2012103693bff1b39e8b5a306810023c29b95397eb395530b106b1820ea235fd81d9ce9ffffffff040000000000000000625403a08601012844095ea7b3000000000000000000000000ba8b71f3544b93e2f681f996da519a98ace0107a000000000000000000000000000000000000000000000000000000000000000014d362e096e873eb7907e205fadc6175c6fec7bc44c20000000000000000625403a08601012844095ea7b3000000000000000000000000ba8b71f3544b93e2f681f996da519a98ace0107a0000000000000000000000000000000000000000000000000000000001312d0014d362e096e873eb7907e205fadc6175c6fec7bc44c20000000000000000e35403a0860101284cc49b415b2a90912129915cbfc9e57f3779110c968f83f7efa3c6445fbbc7bd4bb93f20e888000000000000000000000000000000000000000000000000000000000bebc200000000000000000000000000d362e096e873eb7907e205fadc6175c6fec7bc440000000000000000000000000240b898276ad2cc0d2fe6f527e8e31104e7fde30101010101010101010101010101010101010101000000000000000000000000000000000000000000000000000000000000000000000000000000005f6c4efe14ba8b71f3544b93e2f681f996da519a98ace0107ac2ccd80a01000000001976a9149e032d4b0090a11dc40fe6c47601499a35d55fbb88acc94f6c5f").unwrap();
     let err = unwrap!(
-        coin.wait_for_swap_payment_confirmations(&tx_hex, confirmations, requires_nota, wait_until, check_every)
+        coin.check_if_my_payment_completed(&tx_hex, timelock, other_pub, secret_hash)
             .wait()
             .err(),
         "Expected an error"
     );
     log!("Error: "[err]);
-    assert!(err.contains(r#"Contract call (index 2 in outputs) is excepted: "Revert""#));
+    assert!(err.contains("'erc20Payment' payment failed with an error: Revert"));
 
     // QTUM tx 8a51f0ffd45f34974de50f07c5bf2f0949da4e88433f8f75191953a442cf9310 without any contract call
     let tx_hex = hex::decode("020000000113640281c9332caeddd02a8dd0d784809e1ad87bda3c972d89d5ae41f5494b85010000006a47304402207c5c904a93310b8672f4ecdbab356b65dd869a426e92f1064a567be7ccfc61ff02203e4173b9467127f7de4682513a21efb5980e66dbed4da91dff46534b8e77c7ef012102baefe72b3591de2070c0da3853226b00f082d72daa417688b61cb18c1d543d1afeffffff020001b2c4000000001976a9149e032d4b0090a11dc40fe6c47601499a35d55fbb88acbc4dd20c2f0000001976a9144208fa7be80dcf972f767194ad365950495064a488ac76e70800").unwrap();
     let err = unwrap!(
-        coin.wait_for_swap_payment_confirmations(&tx_hex, confirmations, requires_nota, wait_until, check_every)
+        coin.check_if_my_payment_completed(&tx_hex, timelock, other_pub, secret_hash)
             .wait()
             .err(),
         "Expected an error"
     );
     log!("Error: "[err]);
-    assert!(err.contains(r#"Count of Erc20Payment calls is 0, expected 1"#));
+    assert!(err.contains("Couldn't find erc20Payment contract call"));
 }
 
 #[test]
