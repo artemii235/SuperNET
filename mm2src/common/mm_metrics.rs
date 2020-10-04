@@ -71,7 +71,7 @@ macro_rules! mm_timing {
 #[cfg(feature = "native")]
 pub mod prometheus {
     use super::*;
-    use crate::wio::CORE;
+    use crate::wio::CORE01;
     use futures::compat::Future01CompatExt;
     use futures::future::FutureExt;
     use futures01::{self, future, Future};
@@ -102,7 +102,7 @@ pub mod prometheus {
 
         let server = try_s!(Server::try_bind(&address))
             .http1_half_close(false) // https://github.com/hyperium/hyper/issues/1764
-            .executor(try_s!(CORE.lock()).executor())
+            .executor(CORE01.executor())
             .serve(make_svc)
             .with_graceful_shutdown(shutdown_detector);
 

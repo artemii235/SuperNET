@@ -661,13 +661,19 @@ pub mod wio {
     use std::sync::Mutex;
     use std::thread::JoinHandle;
     use std::time::Duration;
-    use tokio::runtime::Runtime;
+    use tokio01::runtime::Runtime as Runtime01;
+    use tokio02::runtime::Runtime as Runtime02;
 
-    fn start_core_thread() -> Runtime { unwrap!(tokio::runtime::Builder::new().build()) }
+    fn start_core_thread02() -> Runtime02 { unwrap!(Runtime02::new()) }
+
+    fn start_core_thread01() -> Runtime01 { unwrap!(Runtime01::new()) }
 
     lazy_static! {
         /// Shared asynchronous reactor.
-        pub static ref CORE: Mutex<Runtime> = Mutex::new (start_core_thread());
+        pub static ref CORE01: Runtime01 = start_core_thread01();
+
+        /// Shared asynchronous reactor.
+        pub static ref CORE: Runtime02 = start_core_thread02();
         /// Shared CPU pool to run intensive/sleeping requests on a separate thread.
         ///
         /// Deprecated, prefer the futures 0.3 `POOL` instead.
@@ -694,10 +700,13 @@ pub mod wio {
         E: Send + 'static,
     {
         let (sx, rx) = oneshot::channel();
-        unwrap!(CORE.lock()).spawn(f.then(move |fr: Result<R, E>| -> Result<(), ()> {
-            let _ = sx.send(fr);
-            Ok(())
-        }));
+        CORE.spawn(
+            f.then(move |fr: Result<R, E>| -> Result<(), ()> {
+                let _ = sx.send(fr);
+                Ok(())
+            })
+            .compat(),
+        );
         rx
     }
 
@@ -796,7 +805,7 @@ pub mod wio {
             let dns_threads = 2;
             let https = HttpsConnector::new(dns_threads).unwrap();
             Client::builder()
-                .executor (unwrap! (CORE.lock()) .executor())
+                .executor (CORE01.executor())
                 // Hyper had a lot of Keep-Alive bugs over the years and I suspect
                 // that with the shared client we might be getting errno 10054
                 // due to a closed Keep-Alive connection mismanagement.
@@ -888,16 +897,13 @@ pub mod wio {
 pub mod executor {
     use futures::task::Context;
     use futures::task::Poll as Poll03;
-    use futures::{Future as Future03, FutureExt, TryFutureExt};
+    use futures::Future as Future03;
     use gstuff::now_float;
     use std::pin::Pin;
     use std::thread;
     use std::time::Duration;
 
-    pub fn spawn(future: impl Future03<Output = ()> + Send + 'static) {
-        let f = future.unit_error().boxed().compat();
-        unwrap!(crate::wio::CORE.lock()).spawn(f);
-    }
+    pub fn spawn(future: impl Future03<Output = ()> + Send + 'static) { crate::wio::CORE.spawn(future); }
 
     pub fn spawn_boxed(future: Box<dyn Future03<Output = ()> + Send + Unpin + 'static>) { spawn(future); }
 

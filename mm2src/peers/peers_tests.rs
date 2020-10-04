@@ -6,6 +6,7 @@ use common::privkey::key_pair_from_seed;
 #[cfg(feature = "native")] use common::wio::{drive, CORE};
 use common::{block_on, now_float, small_rng};
 use crdts::CmRDT;
+use futures::compat::Future01CompatExt;
 use futures::future::{select, Either};
 use futures01::Future;
 use rand::{self, Rng, RngCore};
@@ -157,7 +158,7 @@ pub fn peers_http_fallback_recv() {
     let ctx = MmCtxBuilder::new().into_mm_arc();
     let addr = SocketAddr::new(unwrap!("127.0.0.1".parse()), 30204);
     let server = unwrap!(super::http_fallback::new_http_fallback(ctx.weak(), addr));
-    unwrap!(CORE.lock()).spawn(server);
+    CORE.spawn(server.compat());
 
     block_on(peers_exchange(json! ({
         "http-fallback": "on",
@@ -265,7 +266,7 @@ pub fn peers_http_fallback_kv() {
     let ctx = MmCtxBuilder::new().into_mm_arc();
     let addr = SocketAddr::new(unwrap!("127.0.0.1".parse()), 30205);
     let server = unwrap!(super::http_fallback::new_http_fallback(ctx.weak(), addr));
-    unwrap!(CORE.lock()).spawn(server);
+    CORE.spawn(server.compat());
 
     // Wait for the HTTP server to start.
     thread::sleep(Duration::from_millis(20));

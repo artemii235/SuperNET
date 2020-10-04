@@ -2913,6 +2913,7 @@ name = "mm2"
 version = "0.1.0"
 dependencies = [
  "async-std",
+ "async-trait",
  "atomic 0.4.6",
  "bigdecimal",
  "bitcrypto",

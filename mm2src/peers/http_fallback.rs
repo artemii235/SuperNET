@@ -3,6 +3,7 @@ use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use crc::crc64::checksum_ecma;
 use crdts::{CmRDT, CvRDT, Map, Orswot};
 use either::Either;
+use futures::compat::Future01CompatExt;
 use futures::future::FutureExt;
 use futures01::{self, future, Async, Future};
 use gstuff::{binprint, netstring, now_float};
@@ -28,7 +29,7 @@ use zstd_sys::{ZSTD_CDict, ZSTD_DDict, ZSTD_compressBound, ZSTD_compress_usingCD
 
 use common::mm_ctx::{from_ctx, MmArc, MmWeak};
 use common::wio::slurp_req;
-#[cfg(feature = "native")] use common::wio::CORE;
+#[cfg(feature = "native")] use common::wio::{CORE, CORE01};
 use common::{bits256, rpc_response, HyRes};
 
 /// Data belonging to the server side of this module and owned by the MM2 instance.  
@@ -329,7 +330,7 @@ pub fn new_http_fallback(
 
     let server = try_s!(Server::try_bind(&addr))
         .http1_half_close(false) // https://github.com/hyperium/hyper/issues/1764
-        .executor(try_s!(CORE.lock()).executor())
+        .executor(CORE01.executor())
         .serve(make_svc);
     let server = server.with_graceful_shutdown(shutdown_detector);
     let server = server.then(|r| {
@@ -573,7 +574,7 @@ pub fn hf_transmit(
             };
             Ok(())
         });
-        unwrap!(CORE.lock()).spawn(merge_f);
+        CORE.spawn(merge_f.compat());
         track.last_store = now;
     }
 

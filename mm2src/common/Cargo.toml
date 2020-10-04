@@ -6,7 +6,7 @@ edition = "2018"
 
 [features]
 native = [
-  "hyper", "hyper-rustls", "libc", "ring", "tokio", "tokio-core"
+  "hyper", "hyper-rustls", "libc", "ring", "tokio01", "tokio02", "tokio-core"
 ]
 
 w-bindgen = ["wasm-bindgen", "web-sys"]
@@ -67,7 +67,8 @@ serde_bytes = "0.11"
 serde_derive = "1"
 serde_json = { version = "1.0", features = ["preserve_order"] }
 term = "0.5"
-tokio = { version = "0.1", optional = true }
+tokio01 = { version = "0.1", package = "tokio", optional = true }
+tokio02 = { version = "0.2.22", package = "tokio", features = ["io-util", "rt-threaded", "stream", "tcp"], optional = true }
 tokio-core = { version = "0.1", optional = true }
 unwrap = "1.2"
 uuid = { version = "0.7", features = ["serde", "v4"] }
@@ -99,6 +100,6 @@ num_cpus = "1.10"
 regex = "1"
 sysinfo = "0.9"
 tar = "0.4"
-tokio = "0.2"
+tokio02 = { version = "0.2.22", package = "tokio" }
 unwrap = "1.2.1"
 winapi = "0.3"

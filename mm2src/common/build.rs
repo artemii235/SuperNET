@@ -445,7 +445,7 @@ fn hget(url: &str, to: PathBuf) {
     }
 
     let request = unwrap!(Request::builder().uri(url).body(Body::empty()));
-    tokio::runtime::Runtime::new()
+    tokio02::runtime::Runtime::new()
         .unwrap()
         .block_on(rec(client, request, to))
 }

@@ -23,7 +23,7 @@ use bitcrypto::sha256;
 use common::custom_futures::TimedAsyncMutex;
 use common::executor::Timer;
 use common::mm_ctx::{MmArc, MmWeak};
-use common::{now_ms, slurp_url, small_rng};
+use common::{block_on, now_ms, slurp_url, small_rng};
 use ethabi::{Contract, Token};
 use ethcore_transaction::{Action, Transaction as UnSignedEthTx, UnverifiedTransaction};
 use ethereum_types::{Address, H160, U256};
@@ -1540,7 +1540,7 @@ impl EthCoin {
             };
             {
                 let coins_ctx = unwrap!(CoinsContext::from_ctx(&ctx));
-                let coins = unwrap!(coins_ctx.coins.spinlock(77));
+                let coins = block_on(coins_ctx.coins.lock());
                 if !coins.contains_key(&self.ticker) {
                     ctx.log.log("", &[&"tx_history", &self.ticker], "Loop stopped");
                     break;
@@ -1889,7 +1889,7 @@ impl EthCoin {
             };
             {
                 let coins_ctx = unwrap!(CoinsContext::from_ctx(&ctx));
-                let coins = unwrap!(coins_ctx.coins.spinlock(77));
+                let coins = block_on(coins_ctx.coins.lock());
                 if !coins.contains_key(&self.ticker) {
                     ctx.log.log("", &[&"tx_history", &self.ticker], "Loop stopped");
                     break;

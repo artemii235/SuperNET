@@ -31,13 +31,14 @@
 #[macro_use] extern crate serde_json;
 #[macro_use] extern crate unwrap;
 
+use async_trait::async_trait;
 use bigdecimal::BigDecimal;
-use common::duplex_mutex::DuplexMutex;
 use common::executor::{spawn, Timer};
 use common::mm_ctx::{from_ctx, MmArc};
 use common::mm_metrics::MetricsWeak;
-use common::{rpc_err_response, rpc_response, HyRes};
+use common::{block_on, rpc_err_response, rpc_response, HyRes};
 use futures::compat::Future01CompatExt;
+use futures::lock::Mutex as AsyncMutex;
 use futures01::Future;
 use gstuff::slurp;
 use http::Response;
@@ -510,23 +511,24 @@ impl Deref for MmCoinEnum {
     }
 }
 
+#[async_trait]
 pub trait BalanceUpdateEventHandler {
-    fn balance_updated(&self, ticker: &str, new_balance: &BigDecimal);
+    async fn balance_updated(&self, ticker: &str, new_balance: &BigDecimal);
 }
 
 struct CoinsContext {
     /// A map from a currency ticker symbol to the corresponding coin.
     /// Similar to `LP_coins`.
-    coins: DuplexMutex<HashMap<String, MmCoinEnum>>,
-    balance_update_handlers: DuplexMutex<Vec<Box<dyn BalanceUpdateEventHandler + Send + Sync>>>,
+    coins: AsyncMutex<HashMap<String, MmCoinEnum>>,
+    balance_update_handlers: AsyncMutex<Vec<Box<dyn BalanceUpdateEventHandler + Send + Sync>>>,
 }
 impl CoinsContext {
     /// Obtains a reference to this crate context, creating it if necessary.
     fn from_ctx(ctx: &MmArc) -> Result<Arc<CoinsContext>, String> {
         Ok(try_s!(from_ctx(&ctx.coins_ctx, move || {
             Ok(CoinsContext {
-                coins: DuplexMutex::new(HashMap::new()),
-                balance_update_handlers: DuplexMutex::new(vec![]),
+                coins: AsyncMutex::new(HashMap::new()),
+                balance_update_handlers: AsyncMutex::new(vec![]),
             })
         })))
     }
@@ -656,10 +658,11 @@ impl RpcTransportEventHandler for CoinTransportMetrics {
     }
 }
 
+#[async_trait]
 impl BalanceUpdateEventHandler for CoinsContext {
-    fn balance_updated(&self, ticker: &str, new_balance: &BigDecimal) {
-        for sub in unwrap!(self.balance_update_handlers.spinlock(100)).iter() {
-            sub.balance_updated(ticker, new_balance)
+    async fn balance_updated(&self, ticker: &str, new_balance: &BigDecimal) {
+        for sub in self.balance_update_handlers.lock().await.iter() {
+            sub.balance_updated(ticker, new_balance).await
         }
     }
 }
@@ -674,7 +677,7 @@ impl BalanceUpdateEventHandler for CoinsContext {
 pub async fn lp_coininit(ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoinEnum, String> {
     let cctx = try_s!(CoinsContext::from_ctx(ctx));
     {
-        let coins = try_s!(cctx.coins.sleeplock(77).await);
+        let coins = cctx.coins.lock().await;
         if coins.get(ticker).is_some() {
             return ERR!("Coin {} already initialized", ticker);
         }
@@ -738,7 +741,7 @@ pub async fn lp_coininit(ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoin
     // activated concurrently which results in long activation time: https://github.com/KomodoPlatform/atomicDEX/issues/24
     // So I'm leaving the possibility of race condition intentionally in favor of faster concurrent activation.
     // Should consider refactoring: maybe extract the RPC client initialization part from coin init functions.
-    let mut coins = try_s!(cctx.coins.sleeplock(77).await);
+    let mut coins = cctx.coins.lock().await;
     match coins.raw_entry_mut().from_key(ticker) {
         RawEntryMut::Occupied(_oe) => return ERR!("Coin {} already initialized", ticker),
         RawEntryMut::Vacant(ve) => ve.insert(ticker.to_string(), coin.clone()),
@@ -771,14 +774,14 @@ pub async fn lp_coininit(ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoin
 /// NB: Returns only the enabled (aka active) coins.
 pub fn lp_coinfind(ctx: &MmArc, ticker: &str) -> Result<Option<MmCoinEnum>, String> {
     let cctx = try_s!(CoinsContext::from_ctx(ctx));
-    let coins = try_s!(cctx.coins.spinlock(77));
+    let coins = block_on(cctx.coins.lock());
     Ok(coins.get(ticker).cloned())
 }
 
 /// NB: Returns only the enabled (aka active) coins.
 pub async fn lp_coinfindᵃ(ctx: &MmArc, ticker: &str) -> Result<Option<MmCoinEnum>, String> {
     let cctx = try_s!(CoinsContext::from_ctx(ctx));
-    let coins = try_s!(cctx.coins.sleeplock(77).await);
+    let coins = cctx.coins.lock().await;
     Ok(coins.get(ticker).cloned())
 }
 
@@ -992,7 +995,7 @@ struct EnabledCoin {
 
 pub async fn get_enabled_coins(ctx: MmArc) -> Result<Response<Vec<u8>>, String> {
     let coins_ctx: Arc<CoinsContext> = try_s!(CoinsContext::from_ctx(&ctx));
-    let coins = try_s!(coins_ctx.coins.sleeplock(77).await);
+    let coins = coins_ctx.coins.lock().await;
     let enabled_coins: Vec<_> = try_s!(coins
         .iter()
         .map(|(ticker, coin)| {
@@ -1008,9 +1011,9 @@ pub async fn get_enabled_coins(ctx: MmArc) -> Result<Response<Vec<u8>>, String> 
     Ok(try_s!(Response::builder().body(res)))
 }
 
-pub fn disable_coin(ctx: &MmArc, ticker: &str) -> Result<(), String> {
+pub async fn disable_coin(ctx: &MmArc, ticker: &str) -> Result<(), String> {
     let coins_ctx = try_s!(CoinsContext::from_ctx(&ctx));
-    let mut coins = try_s!(coins_ctx.coins.spinlock(77));
+    let mut coins = coins_ctx.coins.lock().await;
     match coins.remove(ticker) {
         Some(_) => Ok(()),
         None => ERR!("{} is disabled already", ticker),
@@ -1091,7 +1094,7 @@ pub async fn check_balance_update_loop(ctx: MmArc, ticker: String) {
                 };
                 if Some(&balance) != current_balance.as_ref() {
                     let coins_ctx = unwrap!(CoinsContext::from_ctx(&ctx));
-                    coins_ctx.balance_updated(&ticker, &balance);
+                    coins_ctx.balance_updated(&ticker, &balance).await;
                     current_balance = Some(balance);
                 }
             },
@@ -1101,9 +1104,9 @@ pub async fn check_balance_update_loop(ctx: MmArc, ticker: String) {
     }
 }
 
-pub fn register_balance_update_handler(ctx: MmArc, handler: Box<dyn BalanceUpdateEventHandler + Send + Sync>) {
+pub async fn register_balance_update_handler(ctx: MmArc, handler: Box<dyn BalanceUpdateEventHandler + Send + Sync>) {
     let coins_ctx = unwrap!(CoinsContext::from_ctx(&ctx));
-    unwrap!(coins_ctx.balance_update_handlers.spinlock(100)).push(handler);
+    coins_ctx.balance_update_handlers.lock().await.push(handler);
 }
 
 pub fn update_coins_config(mut config: Json) -> Result<Json, String> {

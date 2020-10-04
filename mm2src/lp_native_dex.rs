@@ -578,7 +578,7 @@ pub async fn lp_init(mypubport: u16, ctx: MmArc) -> Result<(), String> {
 
     // try_s!(lp_initpeers(&ctx, netid, seednodes).await);
     let balance_update_ordermatch_handler = BalanceUpdateOrdermatchHandler::new(ctx.clone());
-    register_balance_update_handler(ctx.clone(), Box::new(balance_update_ordermatch_handler));
+    register_balance_update_handler(ctx.clone(), Box::new(balance_update_ordermatch_handler)).await;
 
     try_s!(ctx.initialized.pin(true));
 

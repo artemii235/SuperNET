@@ -340,10 +340,11 @@ pub extern "C" fn spawn_rpc(ctx_h: u32) {
                 },
             };
 
-            unwrap!(CORE.lock()).spawn(
+            CORE.spawn(
                 HTTP.serve_connection(socket, RpcService { ctx_h, client })
                     .map(|_| ())
-                    .map_err(|err| log! ({"spawn_rpc] HTTP error: {}", err})),
+                    .map_err(|err| log! ({"spawn_rpc] HTTP error: {}", err}))
+                    .compat(),
             );
             Ok(())
         })
@@ -352,7 +353,7 @@ pub extern "C" fn spawn_rpc(ctx_h: u32) {
     // Finish the server `Future` when `shutdown_rx` fires.
 
     let (shutdown_tx, shutdown_rx) = futures01::sync::oneshot::channel::<()>();
-    let server = server.select2(shutdown_rx).then(|_| Ok(()));
+    let server = server.select2(shutdown_rx).then(|_| -> Result<(), ()> { Ok(()) });
     let mut shutdown_tx = Some(shutdown_tx);
     ctx.on_stop(Box::new(move || {
         if let Some(shutdown_tx) = shutdown_tx.take() {
@@ -367,11 +368,11 @@ pub extern "C" fn spawn_rpc(ctx_h: u32) {
     }));
 
     let rpc_ip_port = unwrap!(ctx.rpc_ip_port());
-    unwrap!(CORE.lock()).spawn({
+    CORE.spawn({
         log!(">>>>>>>>>> DEX stats " (rpc_ip_port.ip())":"(rpc_ip_port.port()) " \
                 DEX stats API enabled at unixtime." (gstuff::now_ms() / 1000) " <<<<<<<<<");
         let _ = ctx.rpc_started.pin(true);
-        server
+        server.compat()
     });
 }
 

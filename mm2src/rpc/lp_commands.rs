@@ -67,7 +67,7 @@ pub async fn disable_coin(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, St
             .map_err(|e| ERRL!("{}", e));
     }
 
-    try_s!(disable_coin_impl(&ctx, &ticker));
+    try_s!(disable_coin_impl(&ctx, &ticker).await);
     let res = json!({
         "result": {
             "coin": ticker,

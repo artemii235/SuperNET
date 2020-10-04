@@ -20,6 +20,7 @@
 #![allow(uncommon_codepoints)]
 #![cfg_attr(not(feature = "native"), allow(dead_code))]
 
+use async_trait::async_trait;
 use bigdecimal::BigDecimal;
 use bitcrypto::sha256;
 use coins::utxo::{compressed_pub_key_from_priv_raw, ChecksumType};
@@ -577,18 +578,20 @@ impl BalanceUpdateOrdermatchHandler {
     pub fn new(ctx: MmArc) -> Self { BalanceUpdateOrdermatchHandler { ctx } }
 }
 
+#[async_trait]
 impl BalanceUpdateEventHandler for BalanceUpdateOrdermatchHandler {
-    fn balance_updated(&self, ticker: &str, new_balance: &BigDecimal) {
+    async fn balance_updated(&self, ticker: &str, new_balance: &BigDecimal) {
         let new_balance = MmNumber::from(new_balance.clone());
         let ordermatch_ctx = unwrap!(OrdermatchContext::from_ctx(&self.ctx));
-        let mut maker_orders = block_on(ordermatch_ctx.my_maker_orders.lock());
+        let mut maker_orders = ordermatch_ctx.my_maker_orders.lock().await;
         *maker_orders = maker_orders
             .drain()
             .filter_map(|(uuid, mut order)| {
                 if order.base == *ticker {
                     if new_balance < MmNumber::from(MIN_TRADING_VOL) {
                         order.max_base_vol = 0.into();
-                        block_on(maker_order_cancelled_p2p_notify(self.ctx.clone(), &order));
+                        let ctx = self.ctx.clone();
+                        spawn(async move { maker_order_cancelled_p2p_notify(ctx, &order).await });
                         None
                     } else if new_balance < order.max_base_vol {
                         order.max_base_vol = new_balance.clone();
@@ -1650,21 +1653,24 @@ fn lp_connected_alice(ctx: MmArc, taker_request: TakerRequest, taker_match: Take
 }
 
 pub async fn lp_ordermatch_loop(ctx: MmArc) {
+    let mut iterations = 0i32;
     loop {
         if ctx.is_stopping() {
             break;
         }
+        log!("Iteration "(iterations));
         let ordermatch_ctx = unwrap!(OrdermatchContext::from_ctx(&ctx));
         {
             let mut my_taker_orders = ordermatch_ctx.my_taker_orders.lock().await;
             let mut my_maker_orders = ordermatch_ctx.my_maker_orders.lock().await;
             let _my_cancelled_orders = ordermatch_ctx.my_cancelled_orders.lock().await;
+            let mut uuids_to_delete = Vec::new();
             // transform the timed out and unmatched GTC taker orders to maker
             *my_taker_orders = my_taker_orders
                 .drain()
                 .filter_map(|(uuid, order)| {
                     if order.created_at + TAKER_ORDER_TIMEOUT * 1000 < now_ms() {
-                        delete_my_taker_order(&ctx, &order);
+                        uuids_to_delete.push(uuid);
                         if order.matches.is_empty() && order.order_type == OrderType::GoodTillCancelled {
                             let maker_order: MakerOrder = order.into();
                             spawn({
@@ -1682,6 +1688,9 @@ pub async fn lp_ordermatch_loop(ctx: MmArc) {
                     }
                 })
                 .collect();
+            for uuid in uuids_to_delete {
+                // delete_my_taker_order(&ctx, &uuid);
+            }
             // remove timed out unfinished matches to unlock the reserved amount
             my_maker_orders.iter_mut().for_each(|(_, order)| {
                 order.matches = order
@@ -1749,6 +1758,7 @@ pub async fn lp_ordermatch_loop(ctx: MmArc) {
         }
 
         Timer::sleep(0.777).await;
+        iterations += 1;
     }
 }
 
@@ -1824,7 +1834,7 @@ async fn process_maker_connected(ctx: MmArc, from_pubkey: H256Json, connected: M
     // alice
     lp_connected_alice(ctx.clone(), my_order_entry.get().request.clone(), order_match.clone());
     // remove the matched order immediately
-    delete_my_taker_order(&ctx, &my_order_entry.get());
+    delete_my_taker_order(&ctx, &my_order_entry.get().request.uuid);
     my_order_entry.remove();
 }
 
@@ -1846,11 +1856,11 @@ async fn process_taker_request(ctx: MmArc, taker_request: TakerRequest) {
 
     for (uuid, order) in my_orders.iter_mut() {
         if let OrderMatchResult::Matched((base_amount, rel_amount)) = match_order_and_request(order, &taker_request) {
-            let base_coin = match lp_coinfind(&ctx, &order.base) {
+            let base_coin = match lp_coinfindᵃ(&ctx, &order.base).await {
                 Ok(Some(c)) => c,
                 _ => return, // attempt to match with deactivated coin
             };
-            let rel_coin = match lp_coinfind(&ctx, &order.rel) {
+            let rel_coin = match lp_coinfindᵃ(&ctx, &order.rel).await {
                 Ok(Some(c)) => c,
                 _ => return, // attempt to match with deactivated coin
             };
@@ -2579,7 +2589,7 @@ pub async fn cancel_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, St
                 return ERR!("Order {} is being matched now, can't cancel", req.uuid);
             }
             let order = order.remove();
-            delete_my_taker_order(&ctx, &order);
+            delete_my_taker_order(&ctx, &order.request.uuid);
             let res = json!({
                 "result": "success"
             });
@@ -2691,8 +2701,8 @@ fn delete_my_maker_order(ctx: &MmArc, order: &MakerOrder) {
 }
 
 #[cfg_attr(test, mockable)]
-fn delete_my_taker_order(ctx: &MmArc, order: &TakerOrder) {
-    let path = my_taker_order_file_path(ctx, &order.request.uuid);
+fn delete_my_taker_order(ctx: &MmArc, uuid: &Uuid) {
+    let path = my_taker_order_file_path(ctx, uuid);
     match remove_file(&path) {
         Ok(_) => (),
         Err(e) => log!("Warning, could not remove order file " (path.display()) ", error " (e)),
@@ -2768,7 +2778,7 @@ pub async fn cancel_orders_by(ctx: &MmArc, cancel_by: CancelBy) -> Result<(Vec<U
         ($e: expr, $uuid: ident, $order: ident) => {
             if $e {
                 if $order.is_cancellable() {
-                    delete_my_taker_order(&ctx, &$order);
+                    delete_my_taker_order(&ctx, &$order.request.uuid);
                     cancelled.push($uuid);
                     None
                 } else {

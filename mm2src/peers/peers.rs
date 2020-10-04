@@ -2168,7 +2168,7 @@ pub extern "C" fn start_helpers() -> i32 {
             unwrap!(ctx.ffi_handle.pin(port as u32));
             mm_ctx_ffi.insert(port as u32, ctx.weak());
             let _leak = Arc::into_raw(ctx.0);
-            unwrap!(common::wio::CORE.lock()).spawn(server); // Keep running the server indefinitely.
+            common::wio::CORE.spawn(server.compat()); // Keep running the server indefinitely.
             return port as i32;
         }
     }
