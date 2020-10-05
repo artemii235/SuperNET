@@ -13,11 +13,11 @@ default-run = "mm2"
 [features]
 native = [
   "hyper", "tokio-core", "dirs",
-  "common/native", "peers/native", "coins/native", # "portfolio/native"
+  "common/native", "coins/native", # "portfolio/native"
 ]
 w-bindgen = [
   "js-sys", "wasm-bindgen", "wasm-bindgen-futures", "wasm-bindgen-test", "web-sys",
-  "coins/w-bindgen", "common/w-bindgen", "peers/w-bindgen"
+  "coins/w-bindgen", "common/w-bindgen"
 ]
 
 [[bin]]
@@ -101,7 +101,6 @@ num-rational = { version = "0.2", features = ["serde", "bigint", "bigint-std"] }
 num-traits = "0.2"
 rpc = { git = "https://github.com/artemii235/parity-bitcoin.git" }
 parking_lot = { version = "0.11", features = ["nightly"] }
-peers = { path = "mm2src/peers" }
 # AP: portfolio RPCs are not documented and not used as of now
 # so the crate is disabled to speed up the entire removal of C code
 # portfolio = { path = "mm2src/portfolio" }

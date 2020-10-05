@@ -22,11 +22,7 @@
 #![cfg_attr(not(feature = "native"), allow(unused_variables))]
 
 use coins::register_balance_update_handler;
-use futures::compat::Future01CompatExt;
-use futures::future::FutureExt;
-use futures01::sync::oneshot::Sender;
 use futures01::Future;
-use http::StatusCode;
 use mm2_libp2p::start_gossipsub;
 use rand::rngs::SmallRng;
 use rand::{random, Rng, SeedableRng};
@@ -34,7 +30,7 @@ use serde_json::{self as json, Value as Json};
 use std::ffi::CString;
 use std::fs;
 use std::io::{Read, Write};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr};
 use std::os::raw::c_char;
 use std::path::Path;
 use std::str;
@@ -324,65 +320,33 @@ pub unsafe fn lp_passphrase_init(ctx: &MmArc) -> Result<(), String> {
 ///
 /// Also the port of the HTTP fallback server is returned.
 #[cfg(feature = "native")]
-fn test_ip(ctx: &MmArc, ip: IpAddr) -> Result<(Sender<()>, u16), String> {
-    use peers::http_fallback::new_http_fallback;
-
-    // NB: The `bind` just always works on certain operating systems.
-    // To actually check the address we should try communicating on it.
-    // Reusing the HTTP fallback server for that.
-
-    let i_am_seed = ctx.conf["i_am_seed"].as_bool().unwrap_or(false);
+fn test_ip(ctx: &MmArc, ip: IpAddr) -> Result<(), String> {
     let netid = ctx.netid();
 
-    let (server, port) = if i_am_seed {
-        // NB: We might need special permissions to bind on 80.
-        // HTTP fallback should work on that port though
-        // in order to function with those providers which only allow the usual traffic.
-        let port = 80;
-        (try_s!(new_http_fallback(ctx.weak(), SocketAddr::new(ip, port))), port)
-    } else {
-        // Try a few pseudo-random ports.
-        // `netid` is used as the seed in order for the port selection to be determenistic,
-        // similar to how the port selection and probing worked before (since MM1)
-        // and in order to reduce the likehood of *unexpected* port conflicts.
-        let mut attempts_left = 9;
-        let mut rng = SmallRng::seed_from_u64(netid as u64);
-        loop {
-            if attempts_left < 1 {
-                return ERR!("Out of attempts");
-            }
-            attempts_left -= 1;
-            // TODO: Avoid `mypubport`.
-            let port = rng.gen_range(1111, 65535);
-            log! ("test_ip] Trying to listen on " (ip) ':' (port));
-            match new_http_fallback(ctx.weak(), SocketAddr::new(ip, port)) {
-                Ok(s) => break (s, port),
-                Err(err) => {
-                    if attempts_left == 0 {
-                        return ERR!("{}", err);
-                    }
-                    continue;
-                },
-            }
+    // Try a few pseudo-random ports.
+    // `netid` is used as the seed in order for the port selection to be determenistic,
+    // similar to how the port selection and probing worked before (since MM1)
+    // and in order to reduce the likehood of *unexpected* port conflicts.
+    let mut attempts_left = 9;
+    let mut rng = SmallRng::seed_from_u64(netid as u64);
+    loop {
+        if attempts_left < 1 {
+            break ERR!("Out of attempts");
         }
-    };
-
-    // Finish the server `Future` when `shutdown_rx` fires.
-    let (shutdown_tx, shutdown_rx) = futures01::sync::oneshot::channel::<()>();
-    let server = server.select2(shutdown_rx).then(|_| Ok(()));
-    spawn(server.compat().map(|_: Result<(), ()>| ()));
-
-    let url = fomat! ("http://" if ip.is_unspecified() {"127.0.0.1"} else {(ip)} ":" (port) "/test_ip");
-    log!("test_ip] Checking "(url));
-    let rc = slurp_url(&url).wait();
-    let (status, _h, body) = try_s!(rc);
-    if status != StatusCode::OK {
-        return ERR!("Status not OK");
+        attempts_left -= 1;
+        // TODO: Avoid `mypubport`.
+        let port = rng.gen_range(1111, 65535);
+        log! ("test_ip] Trying to bind on " (ip) ':' (port));
+        match std::net::TcpListener::bind((ip, port)) {
+            Ok(_) => break Ok(()),
+            Err(err) => {
+                if attempts_left == 0 {
+                    break ERR!("{}", err);
+                }
+                continue;
+            },
+        }
     }
-    if body != b"k" {
-        return ERR!("body not k");
-    }
-    Ok((shutdown_tx, port))
 }
 
 #[cfg(not(feature = "native"))]
@@ -412,10 +376,6 @@ pub async fn lp_init(mypubport: u16, ctx: MmArc) -> Result<(), String> {
     }
 
     let i_am_seed = ctx.conf["i_am_seed"].as_bool().unwrap_or(false);
-    let _netid = ctx.netid();
-
-    // Keeps HTTP fallback server alive until `lp_init` exits.
-    let mut _hf_shutdown;
 
     let myipaddr: IpAddr = if Path::new("myipaddr").exists() {
         match fs::File::open("myipaddr") {
@@ -430,26 +390,7 @@ pub async fn lp_init(mypubport: u16, ctx: MmArc) -> Result<(), String> {
         }
     } else if !ctx.conf["myipaddr"].is_null() {
         let s = try_s!(ctx.conf["myipaddr"].as_str().ok_or("'myipaddr' is not a string"));
-        let ip = try_s!(simple_ip_extractor(s));
-
-        match test_ip(&ctx, ip) {
-            Ok((hf_shutdown, hf_port)) => {
-                ctx.log.log(
-                    "🙂",
-                    &[&"myipaddr"],
-                    &fomat! (
-                    "IP " (ip) " works and we can bind on it (port " (hf_port) ")."),
-                );
-                if i_am_seed {
-                    _hf_shutdown = hf_shutdown
-                }
-            },
-            Err(err) => ctx
-                .log
-                .log("🤒", &[&"myipaddr"], &fomat! ("Can't bind on " (ip) "! " (err))),
-        };
-
-        ip
+        try_s!(simple_ip_extractor(s))
     } else {
         // Detect the real IP address.
         //
@@ -501,17 +442,14 @@ pub async fn lp_init(mypubport: u16, ctx: MmArc) -> Result<(), String> {
             // If we're not behind a NAT then the bind will likely suceed.
             // If the bind fails then emit a user-visible warning and fall back to 0.0.0.0.
             match test_ip(&ctx, ip) {
-                Ok((hf_shutdown, hf_port)) => {
+                Ok(_) => {
                     ctx.log.log(
                         "🙂",
                         &[&"myipaddr"],
                         &fomat! (
-                        "We've detected an external IP " (ip) " and we can bind on it (port " (hf_port) ")"
+                        "We've detected an external IP " (ip) " and we can bind on it"
                         ", so probably a dedicated IP."),
                     );
-                    if i_am_seed {
-                        _hf_shutdown = hf_shutdown
-                    }
                     break ip;
                 },
                 Err(err) => log! ("IP " (ip) " doesn't check: " (err)),

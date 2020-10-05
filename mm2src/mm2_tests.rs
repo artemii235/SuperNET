@@ -17,7 +17,6 @@ use http::StatusCode;
 #[cfg(feature = "native")]
 use hyper::header::ACCESS_CONTROL_ALLOW_ORIGIN;
 use num_rational::BigRational;
-use peers;
 use serde_json::{self as json, Value as Json};
 use std::collections::HashMap;
 use std::convert::identity;
@@ -380,20 +379,6 @@ fn log_test_status() { common::log::tests::test_status() }
 
 #[test]
 fn log_test_printed_dashboard() { common::log::tests::test_printed_dashboard() }
-
-#[test]
-fn peers_dht() { block_on(peers::peers_tests::peers_dht()) }
-
-#[test]
-#[ignore]
-#[cfg(feature = "native")]
-fn peers_direct_send() { peers::peers_tests::peers_direct_send() }
-
-#[test]
-fn peers_http_fallback_recv() { peers::peers_tests::peers_http_fallback_recv() }
-
-#[test]
-fn peers_http_fallback_kv() { peers::peers_tests::peers_http_fallback_kv() }
 
 #[test]
 #[cfg(feature = "native")]

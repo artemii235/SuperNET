@@ -16,7 +16,6 @@
 
 #[path = "mm2.rs"] mod mm2;
 
-use crate::common::block_on;
 #[cfg(feature = "native")] use crate::common::log::LOG_OUTPUT;
 use crate::common::mm_ctx::MmArc;
 use futures01::Future;
@@ -192,21 +191,6 @@ pub extern "C" fn mm2_test(torch: i32, log_cb: extern "C" fn(line: *const c_char
     let rc = catch_unwind(|| {
         log!("mm2_test] test_status…");
         common::log::tests::test_status();
-
-        log!("mm2_test] peers_dht…");
-        block_on(peers::peers_tests::peers_dht());
-
-        #[cfg(feature = "native")]
-        {
-            log!("mm2_test] peers_direct_send…");
-            peers::peers_tests::peers_direct_send();
-        }
-
-        log!("mm2_test] peers_http_fallback_kv…");
-        peers::peers_tests::peers_http_fallback_kv();
-
-        log!("mm2_test] peers_http_fallback_recv…");
-        peers::peers_tests::peers_http_fallback_recv();
     });
 
     if let Err(err) = rc {
