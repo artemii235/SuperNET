@@ -386,16 +386,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf1de2fe8c75bc145a2f577add951f8134889b4795d47466a54a5c846d691693"
 
 [[package]]
-name = "bitvec"
-version = "0.17.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41262f11d771fd4a61aa3ce019fca363b4b6c282fca9da2a31186d3965a47a5c"
-dependencies = [
- "either",
- "radium",
-]
-
-[[package]]
 name = "blake2"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -601,9 +591,6 @@ name = "cc"
 version = "1.0.54"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7bbb73db36c1246e9034e307d0fba23f9a2e251faa47ade70c1bd252220c8311"
-dependencies = [
- "jobserver",
-]
 
 [[package]]
 name = "cexpr"
@@ -802,7 +789,7 @@ dependencies = [
  "hyper 0.13.6",
  "hyper-rustls",
  "hyper-tls",
- "itertools 0.8.2",
+ "itertools",
  "keys",
  "lazy_static",
  "libc",
@@ -922,18 +909,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba125de2af0df55319f41944744ad91c71113bf74a4646efff39afe1f6842db1"
 dependencies = [
  "cfg-if",
-]
-
-[[package]]
-name = "crdts"
-version = "4.1.0"
-source = "git+https://github.com/rust-crdt/rust-crdt#46da624ac7f8672692bffb8d1cc489ed40a4b3aa"
-dependencies = [
- "bitvec",
- "num-bigint",
- "quickcheck",
- "rand 0.7.3",
- "serde",
 ]
 
 [[package]]
@@ -1421,15 +1396,6 @@ dependencies = [
  "libc",
  "libz-sys",
  "miniz_oxide 0.4.0",
-]
-
-[[package]]
-name = "float-cmp"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e1267f4ac4f343772758f7b1bdcbe767c218bbab93bb432acbf5162bbf85a6c4"
-dependencies = [
- "num-traits 0.2.12",
 ]
 
 [[package]]
@@ -2225,27 +2191,9 @@ checksum = "47be2f14c678be2fdcab04ab1171db51b2762ce6f0a8ee87c8dd4a04ed216135"
 
 [[package]]
 name = "itertools"
-version = "0.7.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d47946d458e94a1b7bcabbf6521ea7c037062c81f534615abcad76e84d4970d"
-dependencies = [
- "either",
-]
-
-[[package]]
-name = "itertools"
 version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f56a2d0bc861f9165be4eb3442afd3c236d8a98afd426f65d92324ae1091a484"
-dependencies = [
- "either",
-]
-
-[[package]]
-name = "itertools"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "284f18f85651fe11e8a991b2adb42cb078325c996ed026d994719efcfca1d54b"
 dependencies = [
  "either",
 ]
@@ -2255,15 +2203,6 @@ name = "itoa"
 version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc6f3ad7b9d11a0c00842ff8de1b60ee58661048eb8049ed33c73594f359d7e6"
-
-[[package]]
-name = "jobserver"
-version = "0.1.21"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c71313ebb9439f74b00d9d2dcec36440beaf57a6aa0623068441dd7cd81a7f2"
-dependencies = [
- "libc",
-]
 
 [[package]]
 name = "js-sys"
@@ -2949,7 +2888,6 @@ dependencies = [
  "num-rational",
  "num-traits 0.2.12",
  "parking_lot 0.11.0",
- "peers",
  "primitives",
  "rand 0.4.6",
  "rand 0.7.3",
@@ -3352,44 +3290,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19b17cddbe7ec3f8bc800887bab5e717348c95ea2ca0b1bf0837fb964dc67099"
 
 [[package]]
-name = "peers"
-version = "0.1.0"
-dependencies = [
- "arrayref",
- "atomic 0.4.6",
- "base64 0.10.1",
- "byteorder 1.3.4",
- "bytes 0.4.12",
- "common",
- "crc",
- "crdts",
- "crossbeam",
- "dirs 1.0.5",
- "either",
- "float-cmp",
- "fomat-macros 0.2.1",
- "futures 0.1.29",
- "futures-preview",
- "gstuff",
- "http 0.1.21",
- "http-body 0.1.0",
- "hyper 0.12.35",
- "itertools 0.7.11",
- "lazy_static",
- "libc",
- "rand 0.7.3",
- "serde",
- "serde_bencode",
- "serde_bytes 0.11.5",
- "serde_derive",
- "serde_json",
- "tokio-core",
- "unwrap",
- "wasm-bindgen",
- "zstd-sys",
-]
-
-[[package]]
 name = "percent-encoding"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3541,7 +3441,7 @@ checksum = "02b10678c913ecbd69350e8535c3aef91a8676c0773fc1d7b95cdd196d7f2f26"
 dependencies = [
  "bytes 0.5.6",
  "heck",
- "itertools 0.8.2",
+ "itertools",
  "log 0.4.11",
  "multimap",
  "petgraph",
@@ -3558,7 +3458,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "537aa19b95acde10a12fec4301466386f757403de4cd4e5b4fa78fb5ecb18f72"
 dependencies = [
  "anyhow",
- "itertools 0.8.2",
+ "itertools",
  "proc-macro2 1.0.18",
  "quote 1.0.7",
  "syn 1.0.33",
@@ -3645,12 +3545,6 @@ checksum = "aa563d17ecb180e500da1cfd2b028310ac758de548efdd203e18f283af693f37"
 dependencies = [
  "proc-macro2 1.0.18",
 ]
-
-[[package]]
-name = "radium"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "def50a86306165861203e7f84ecffbbdfdea79f0e51039b33de1e952358c47ac"
 
 [[package]]
 name = "rand"
@@ -5614,18 +5508,6 @@ dependencies = [
  "quote 1.0.7",
  "syn 1.0.33",
  "synstructure",
-]
-
-[[package]]
-name = "zstd-sys"
-version = "1.4.17+zstd.1.4.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b89249644df056b522696b1bb9e7c18c87e8ffa3e2f0dc3b0155875d6498f01b"
-dependencies = [
- "cc",
- "glob 0.3.0",
- "itertools 0.9.0",
- "libc",
 ]
 
 [[patch.unused]]

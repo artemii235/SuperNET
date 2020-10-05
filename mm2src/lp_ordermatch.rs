@@ -1653,12 +1653,10 @@ fn lp_connected_alice(ctx: MmArc, taker_request: TakerRequest, taker_match: Take
 }
 
 pub async fn lp_ordermatch_loop(ctx: MmArc) {
-    let mut iterations = 0i32;
     loop {
         if ctx.is_stopping() {
             break;
         }
-        log!("Iteration "(iterations));
         let ordermatch_ctx = unwrap!(OrdermatchContext::from_ctx(&ctx));
         {
             let mut my_taker_orders = ordermatch_ctx.my_taker_orders.lock().await;
@@ -1689,15 +1687,13 @@ pub async fn lp_ordermatch_loop(ctx: MmArc) {
                 .collect();
             // remove timed out unfinished matches to unlock the reserved amount
             my_maker_orders.iter_mut().for_each(|(_, order)| {
-                order.matches = order
-                    .matches
-                    .drain()
-                    .filter(|(_, order_match)| {
-                        order_match.last_updated + ORDER_MATCH_TIMEOUT * 1000 > now_ms()
-                            || order_match.connected.is_some()
-                    })
-                    .collect();
-                save_my_maker_order(&ctx, order);
+                let old_len = order.matches.len();
+                order.matches.retain(
+                    order_match.last_updated + ORDER_MATCH_TIMEOUT * 1000 > now_ms() || order_match.connected.is_some(),
+                );
+                if old_len != order.matches.len() {
+                    save_my_maker_order(&ctx, order);
+                }
             });
             let mut cancelled = vec![];
             *my_maker_orders = my_maker_orders
@@ -1754,7 +1750,6 @@ pub async fn lp_ordermatch_loop(ctx: MmArc) {
         }
 
         Timer::sleep(0.777).await;
-        iterations += 1;
     }
 }
 
