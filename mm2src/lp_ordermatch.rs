@@ -1664,13 +1664,12 @@ pub async fn lp_ordermatch_loop(ctx: MmArc) {
             let mut my_taker_orders = ordermatch_ctx.my_taker_orders.lock().await;
             let mut my_maker_orders = ordermatch_ctx.my_maker_orders.lock().await;
             let _my_cancelled_orders = ordermatch_ctx.my_cancelled_orders.lock().await;
-            let mut uuids_to_delete = Vec::new();
             // transform the timed out and unmatched GTC taker orders to maker
             *my_taker_orders = my_taker_orders
                 .drain()
                 .filter_map(|(uuid, order)| {
                     if order.created_at + TAKER_ORDER_TIMEOUT * 1000 < now_ms() {
-                        uuids_to_delete.push(uuid);
+                        delete_my_taker_order(&ctx, &uuid);
                         if order.matches.is_empty() && order.order_type == OrderType::GoodTillCancelled {
                             let maker_order: MakerOrder = order.into();
                             spawn({
@@ -1688,9 +1687,6 @@ pub async fn lp_ordermatch_loop(ctx: MmArc) {
                     }
                 })
                 .collect();
-            for uuid in uuids_to_delete {
-                // delete_my_taker_order(&ctx, &uuid);
-            }
             // remove timed out unfinished matches to unlock the reserved amount
             my_maker_orders.iter_mut().for_each(|(_, order)| {
                 order.matches = order

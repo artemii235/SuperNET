@@ -40,7 +40,11 @@ use std::path::Path;
 use std::str;
 use std::str::from_utf8;
 
-use crate::common::executor::{spawn, spawn_boxed, Timer};
+use crate::common::{
+    block_on,
+    executor::{spawn, spawn_boxed, Timer},
+    wio::CORE,
+};
 #[cfg(feature = "native")] use crate::common::lp;
 use crate::common::mm_ctx::{MmArc, MmCtx};
 use crate::common::privkey::key_pair_from_seed;
@@ -592,7 +596,9 @@ pub async fn lp_init(mypubport: u16, ctx: MmArc) -> Result<(), String> {
     }
 
     let ctxʹ = ctx.clone();
-    spawn(async move { lp_ordermatch_loop(ctxʹ).await });
+    CORE.enter(move || {
+        tokio::task::spawn_blocking(move || block_on(lp_ordermatch_loop(ctxʹ)));
+    });
 
     let ctxʹ = ctx.clone();
     spawn(async move { broadcast_maker_keep_alives_loop(ctxʹ).await });
