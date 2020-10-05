@@ -1688,9 +1688,9 @@ pub async fn lp_ordermatch_loop(ctx: MmArc) {
             // remove timed out unfinished matches to unlock the reserved amount
             my_maker_orders.iter_mut().for_each(|(_, order)| {
                 let old_len = order.matches.len();
-                order.matches.retain(
-                    order_match.last_updated + ORDER_MATCH_TIMEOUT * 1000 > now_ms() || order_match.connected.is_some(),
-                );
+                order.matches.retain(|_, order_match| {
+                    order_match.last_updated + ORDER_MATCH_TIMEOUT * 1000 > now_ms() || order_match.connected.is_some()
+                });
                 if old_len != order.matches.len() {
                     save_my_maker_order(&ctx, order);
                 }
