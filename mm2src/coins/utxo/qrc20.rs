@@ -997,7 +997,12 @@ impl SwapOps for Qrc20Coin {
         maker_pub: &[u8],
         secret_hash: &[u8],
     ) -> TransactionFut {
-        unimplemented!()
+        let payment_tx: UtxoTx = try_fus!(deserialize(taker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
+        Box::new(
+            qrc20_refund_hash_time_locked_payment(self.clone(), payment_tx)
+                .boxed()
+                .compat(),
+        )
     }
 
     fn send_maker_refunds_payment(
