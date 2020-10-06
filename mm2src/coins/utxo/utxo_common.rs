@@ -230,74 +230,6 @@ where
     Box::new(fut.boxed().compat().map(|tx| tx.into()))
 }
 
-pub fn validate_payment(
-    coin: UtxoArc,
-    payment_tx: &[u8],
-    time_lock: u32,
-    first_pub0: &Public,
-    second_pub0: &Public,
-    priv_bn_hash: &[u8],
-    amount: BigDecimal,
-) -> Box<dyn Future<Item = (), Error = String> + Send> {
-    let tx: UtxoTx = try_fus!(deserialize(payment_tx).map_err(|e| ERRL!("{:?}", e)));
-    let amount = try_fus!(sat_from_big_decimal(&amount, coin.decimals));
-
-    let expected_redeem = payment_script(
-        time_lock,
-        priv_bn_hash,
-        &try_fus!(Public::from_slice(first_pub0)),
-        &try_fus!(Public::from_slice(second_pub0)),
-    );
-    let fut = async move {
-        let mut attempts = 0;
-        loop {
-            let tx_from_rpc = match coin
-                .rpc_client
-                .get_transaction_bytes(tx.hash().reversed().into())
-                .compat()
-                .await
-            {
-                Ok(t) => t,
-                Err(e) => {
-                    if attempts > 2 {
-                        return ERR!(
-                            "Got error {:?} after 3 attempts of getting tx {:?} from RPC",
-                            e,
-                            tx.tx_hash()
-                        );
-                    };
-                    attempts += 1;
-                    log!("Error " [e] " getting the tx " [tx.tx_hash()] " from rpc");
-                    Timer::sleep(10.).await;
-                    continue;
-                },
-            };
-            if serialize(&tx).take() != tx_from_rpc.0 {
-                return ERR!(
-                    "Provided payment tx {:?} doesn't match tx data from rpc {:?}",
-                    tx,
-                    tx_from_rpc
-                );
-            }
-
-            let expected_output = TransactionOutput {
-                value: amount,
-                script_pubkey: Builder::build_p2sh(&dhash160(&expected_redeem)).into(),
-            };
-
-            if tx.outputs[0] != expected_output {
-                return ERR!(
-                    "Provided payment tx output doesn't match expected {:?} {:?}",
-                    tx.outputs[0],
-                    expected_output
-                );
-            }
-            return Ok(());
-        }
-    };
-    Box::new(fut.boxed().compat())
-}
-
 /// Generates unsigned transaction (TransactionInputSigner) from specified utxos and outputs.
 /// This function expects that utxos are sorted by amounts in ascending order
 /// Consider sorting before calling this function
@@ -1004,43 +936,41 @@ pub fn validate_fee(
     Box::new(fut.boxed().compat())
 }
 
-pub fn validate_maker_payment<T>(
-    coin: &T,
+pub fn validate_maker_payment(
+    coin: &UtxoArc,
     payment_tx: &[u8],
     time_lock: u32,
     maker_pub: &[u8],
     priv_bn_hash: &[u8],
     amount: BigDecimal,
-) -> Box<dyn Future<Item = (), Error = String> + Send>
-where
-    T: AsRef<UtxoArc> + UtxoArcCommonOps,
-{
-    coin.validate_payment(
+) -> Box<dyn Future<Item = (), Error = String> + Send> {
+    let my_public = coin.key_pair.public();
+    validate_payment(
+        coin.clone(),
         payment_tx,
         time_lock,
         &try_fus!(Public::from_slice(maker_pub)),
-        coin.as_ref().key_pair.public(),
+        my_public,
         priv_bn_hash,
         amount,
     )
 }
 
-pub fn validate_taker_payment<T>(
-    coin: &T,
+pub fn validate_taker_payment(
+    coin: &UtxoArc,
     payment_tx: &[u8],
     time_lock: u32,
     taker_pub: &[u8],
     priv_bn_hash: &[u8],
     amount: BigDecimal,
-) -> Box<dyn Future<Item = (), Error = String> + Send>
-where
-    T: AsRef<UtxoArc> + UtxoArcCommonOps,
-{
-    coin.validate_payment(
+) -> Box<dyn Future<Item = (), Error = String> + Send> {
+    let my_public = coin.key_pair.public();
+    validate_payment(
+        coin.clone(),
         payment_tx,
         time_lock,
         &try_fus!(Public::from_slice(taker_pub)),
-        coin.as_ref().key_pair.public(),
+        my_public,
         priv_bn_hash,
         amount,
     )
@@ -1952,6 +1882,74 @@ pub fn address_from_raw_pubkey(
         hash: try_s!(Public::from_slice(pub_key)).address_hash(),
         checksum_type,
     })
+}
+
+fn validate_payment(
+    coin: UtxoArc,
+    payment_tx: &[u8],
+    time_lock: u32,
+    first_pub0: &Public,
+    second_pub0: &Public,
+    priv_bn_hash: &[u8],
+    amount: BigDecimal,
+) -> Box<dyn Future<Item = (), Error = String> + Send> {
+    let tx: UtxoTx = try_fus!(deserialize(payment_tx).map_err(|e| ERRL!("{:?}", e)));
+    let amount = try_fus!(sat_from_big_decimal(&amount, coin.decimals));
+
+    let expected_redeem = payment_script(
+        time_lock,
+        priv_bn_hash,
+        &try_fus!(Public::from_slice(first_pub0)),
+        &try_fus!(Public::from_slice(second_pub0)),
+    );
+    let fut = async move {
+        let mut attempts = 0;
+        loop {
+            let tx_from_rpc = match coin
+                .rpc_client
+                .get_transaction_bytes(tx.hash().reversed().into())
+                .compat()
+                .await
+            {
+                Ok(t) => t,
+                Err(e) => {
+                    if attempts > 2 {
+                        return ERR!(
+                            "Got error {:?} after 3 attempts of getting tx {:?} from RPC",
+                            e,
+                            tx.tx_hash()
+                        );
+                    };
+                    attempts += 1;
+                    log!("Error " [e] " getting the tx " [tx.tx_hash()] " from rpc");
+                    Timer::sleep(10.).await;
+                    continue;
+                },
+            };
+            if serialize(&tx).take() != tx_from_rpc.0 {
+                return ERR!(
+                    "Provided payment tx {:?} doesn't match tx data from rpc {:?}",
+                    tx,
+                    tx_from_rpc
+                );
+            }
+
+            let expected_output = TransactionOutput {
+                value: amount,
+                script_pubkey: Builder::build_p2sh(&dhash160(&expected_redeem)).into(),
+            };
+
+            if tx.outputs[0] != expected_output {
+                return ERR!(
+                    "Provided payment tx output doesn't match expected {:?} {:?}",
+                    tx.outputs[0],
+                    expected_output
+                );
+            }
+            return Ok(());
+        }
+    };
+    Box::new(fut.boxed().compat())
 }
 
 fn payment_script(time_lock: u32, secret_hash: &[u8], pub_0: &Public, pub_1: &Public) -> Script {

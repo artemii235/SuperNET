@@ -90,26 +90,6 @@ impl UtxoCoinCommonOps for QtumCoin {
 #[async_trait]
 #[allow(clippy::forget_ref, clippy::forget_copy)]
 impl UtxoArcCommonOps for QtumCoin {
-    fn validate_payment(
-        &self,
-        payment_tx: &[u8],
-        time_lock: u32,
-        first_pub0: &Public,
-        second_pub0: &Public,
-        priv_bn_hash: &[u8],
-        amount: BigDecimal,
-    ) -> Box<dyn Future<Item = (), Error = String> + Send> {
-        utxo_common::validate_payment(
-            self.utxo_arc.clone(),
-            payment_tx,
-            time_lock,
-            first_pub0,
-            second_pub0,
-            priv_bn_hash,
-            amount,
-        )
-    }
-
     async fn generate_transaction(
         &self,
         utxos: Vec<UnspentInfo>,
@@ -257,7 +237,7 @@ impl SwapOps for QtumCoin {
         priv_bn_hash: &[u8],
         amount: BigDecimal,
     ) -> Box<dyn Future<Item = (), Error = String> + Send> {
-        utxo_common::validate_maker_payment(self, payment_tx, time_lock, maker_pub, priv_bn_hash, amount)
+        utxo_common::validate_maker_payment(&self.utxo_arc, payment_tx, time_lock, maker_pub, priv_bn_hash, amount)
     }
 
     fn validate_taker_payment(
@@ -268,7 +248,7 @@ impl SwapOps for QtumCoin {
         priv_bn_hash: &[u8],
         amount: BigDecimal,
     ) -> Box<dyn Future<Item = (), Error = String> + Send> {
-        utxo_common::validate_taker_payment(self, payment_tx, time_lock, taker_pub, priv_bn_hash, amount)
+        utxo_common::validate_taker_payment(&self.utxo_arc, payment_tx, time_lock, taker_pub, priv_bn_hash, amount)
     }
 
     fn check_if_my_payment_sent(

@@ -582,6 +582,18 @@ impl Qrc20Coin {
                 continue;
             }
 
+            // check if the contract call was excepted
+            match receipt.excepted.clone() {
+                Some(ex) if ex != "None" && ex != "none" => {
+                    let msg = match receipt.excepted_message {
+                        Some(m) => format!(": {}", m),
+                        None => String::default(),
+                    };
+                    return ERR!("'erc20Payment' payment failed with an error: {}{}", ex, msg);
+                },
+                _ => (),
+            }
+
             let function = try_s!(SWAP_CONTRACT.function("erc20Payment"));
             let decoded = try_s!(function.decode_input(&contract_call_bytes));
 
@@ -622,18 +634,6 @@ impl Qrc20Coin {
                 Some(token) => return ERR!("Payment tx 'timelock' arg is invalid, found {:?}", token),
                 None => return ERR!("Couldn't find 'timelock' in erc20Payment call"),
             };
-
-            // check if the contract call was excepted
-            match receipt.excepted.clone() {
-                Some(ex) if ex != "None" && ex != "none" => {
-                    let msg = match receipt.excepted_message {
-                        Some(m) => format!(": {}", m),
-                        None => String::default(),
-                    };
-                    return ERR!("'erc20Payment' payment failed with an error: {}{}", ex, msg);
-                },
-                _ => (),
-            }
 
             let (_amount, sender, swap_contract_address) = try_s!(self.transfer_call_details_from_receipt(&receipt));
             return Ok(Erc20PaymentDetails {
@@ -802,26 +802,6 @@ impl UtxoCoinCommonOps for Qrc20Coin {
 #[async_trait]
 #[allow(clippy::forget_ref, clippy::forget_copy)]
 impl UtxoArcCommonOps for Qrc20Coin {
-    fn validate_payment(
-        &self,
-        payment_tx: &[u8],
-        time_lock: u32,
-        first_pub0: &Public,
-        second_pub0: &Public,
-        priv_bn_hash: &[u8],
-        amount: BigDecimal,
-    ) -> Box<dyn Future<Item = (), Error = String> + Send> {
-        utxo_common::validate_payment(
-            self.utxo_arc.clone(),
-            payment_tx,
-            time_lock,
-            first_pub0,
-            second_pub0,
-            priv_bn_hash,
-            amount,
-        )
-    }
-
     /// Generate UTXO transaction with specified unspent inputs and specified outputs.
     async fn generate_transaction(
         &self,
@@ -969,17 +949,30 @@ impl SwapOps for Qrc20Coin {
         secret_hash: &[u8],
         amount: BigDecimal,
     ) -> TransactionFut {
-        utxo_common::send_taker_payment(self.clone(), time_lock, maker_pub, secret_hash, amount)
+        let maker_addr = try_fus!(self.qrc20_address_from_raw_pubkey(maker_pub));
+        let id = qrc20_swap_id(time_lock, secret_hash);
+        let value = try_fus!(wei_from_big_decimal(&amount, self.utxo_arc.decimals));
+        let secret_hash = Vec::from(secret_hash);
+        Box::new(
+            qrc20_send_hash_time_locked_payment(self.clone(), id, value, time_lock, secret_hash, maker_addr)
+                .boxed()
+                .compat(),
+        )
     }
 
     fn send_maker_spends_taker_payment(
         &self,
         taker_payment_tx: &[u8],
-        time_lock: u32,
-        taker_pub: &[u8],
+        _time_lock: u32,
+        _taker_pub: &[u8],
         secret: &[u8],
     ) -> TransactionFut {
-        unimplemented!()
+        let payment_tx: UtxoTx = try_fus!(deserialize(taker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
+        Box::new(
+            qrc20_spend_hash_time_locked_payment(self.clone(), payment_tx, secret.to_vec())
+                .boxed()
+                .compat(),
+        )
     }
 
     fn send_taker_spends_maker_payment(
@@ -1055,10 +1048,18 @@ impl SwapOps for Qrc20Coin {
         payment_tx: &[u8],
         time_lock: u32,
         taker_pub: &[u8],
-        priv_bn_hash: &[u8],
+        secret_hash: &[u8],
         amount: BigDecimal,
     ) -> Box<dyn Future<Item = (), Error = String> + Send> {
-        unimplemented!()
+        let payment_tx: UtxoTx = try_fus!(deserialize(payment_tx).map_err(|e| ERRL!("{:?}", e)));
+        let sender = try_fus!(self.qrc20_address_from_raw_pubkey(taker_pub));
+        let secret_hash = secret_hash.to_vec();
+
+        Box::new(
+            qrc20_validate_maker_payment(self.clone(), payment_tx, time_lock, sender, secret_hash, amount)
+                .boxed()
+                .compat(),
+        )
     }
 
     fn check_if_my_payment_sent(

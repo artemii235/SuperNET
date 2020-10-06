@@ -353,16 +353,6 @@ impl std::error::Error for GenerateTransactionError {}
 #[mockable]
 #[async_trait]
 pub trait UtxoArcCommonOps {
-    fn validate_payment(
-        &self,
-        payment_tx: &[u8],
-        time_lock: u32,
-        first_pub0: &Public,
-        second_pub0: &Public,
-        priv_bn_hash: &[u8],
-        amount: BigDecimal,
-    ) -> Box<dyn Future<Item = (), Error = String> + Send>;
-
     /// Generates unsigned transaction (TransactionInputSigner) from specified utxos and outputs.
     /// This function expects that utxos are sorted by amounts in ascending order
     /// Consider sorting before calling this function

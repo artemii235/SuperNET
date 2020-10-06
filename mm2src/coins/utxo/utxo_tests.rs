@@ -1935,9 +1935,9 @@ fn test_taker_spends_maker_payment() {
     ];
     let contract_address = "0xd362e096e873eb7907e205fadc6175c6fec7bc44".into();
 
-    let ctx_alice = MmCtxBuilder::new().into_mm_arc();
-    let coin_alice = unwrap!(block_on(qrc20_coin_from_conf_and_request(
-        &ctx_alice,
+    let maker_ctx = MmCtxBuilder::new().into_mm_arc();
+    let maker_coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
+        &maker_ctx,
         "QRC20",
         "QTUM",
         &conf,
@@ -1952,9 +1952,9 @@ fn test_taker_spends_maker_payment() {
         17, 11, 29, 113, 235, 48, 70,
     ];
 
-    let ctx_bob = MmCtxBuilder::new().into_mm_arc();
-    let coin_bob = unwrap!(block_on(qrc20_coin_from_conf_and_request(
-        &ctx_bob,
+    let taker_ctx = MmCtxBuilder::new().into_mm_arc();
+    let taker_coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
+        &taker_ctx,
         "QRC20",
         "QTUM",
         &conf,
@@ -1963,15 +1963,17 @@ fn test_taker_spends_maker_payment() {
         contract_address
     )));
 
-    let bob_balance = coin_bob.my_balance().wait().unwrap();
+    let bob_balance = taker_coin.my_balance().wait().unwrap();
 
     let timelock = (now_ms() / 1000) as u32 - 200;
     // pubkey of "taker_passphrase" passphrase and qUX9FGHubczidVjWPCUWuwCUJWpkAtGCgf address
     let taker_pub = hex::decode("022b00078841f37b5d30a6a1defb82b3af4d4e2d24dd4204d41f0c9ce1e875de1a").unwrap();
+    // pubkey of "cMhHM3PMpMrChygR4bLF7QsTdenhWpFrrmf2UezBG3eeFsz41rtL" passphrase
+    let maker_pub = hex::decode("03693bff1b39e8b5a306810023c29b95397eb395530b106b1820ea235fd81d9ce9").unwrap();
     let secret = &[1; 32];
     let secret_hash = &*dhash160(secret);
     let amount = BigDecimal::from_str("0.2").unwrap();
-    let payment = coin_alice
+    let payment = maker_coin
         .send_maker_payment(timelock, &taker_pub, secret_hash, amount.clone())
         .wait()
         .unwrap();
@@ -1988,14 +1990,15 @@ fn test_taker_spends_maker_payment() {
     let requires_nota = false;
     let wait_until = (now_ms() / 1000) + 320; // timeout if test takes more than 240 seconds to run
     let check_every = 1;
-    unwrap!(coin_bob
+    unwrap!(taker_coin
         .wait_for_confirmations(&tx_hex, confirmations, requires_nota, wait_until, check_every)
         .wait());
 
-    // pubkey of "cMhHM3PMpMrChygR4bLF7QsTdenhWpFrrmf2UezBG3eeFsz41rtL" passphrase and qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG address
-    let maker_pub = hex::decode("03693bff1b39e8b5a306810023c29b95397eb395530b106b1820ea235fd81d9ce9").unwrap();
+    unwrap!(taker_coin
+        .validate_maker_payment(&tx_hex, timelock, &maker_pub, secret_hash, amount.clone())
+        .wait());
 
-    let spend = unwrap!(coin_bob
+    let spend = unwrap!(taker_coin
         .send_taker_spends_maker_payment(&tx_hex, timelock, &maker_pub, secret)
         .wait());
     let spend_tx = match spend {
@@ -2007,12 +2010,121 @@ fn test_taker_spends_maker_payment() {
     log!("Taker spends tx: "[spend_tx_hash]);
     let spend_tx_hex = serialize(&spend_tx);
     let wait_until = (now_ms() / 1000) + 240; // timeout if test takes more than 240 seconds to run
-    unwrap!(coin_bob
+    unwrap!(taker_coin
         .wait_for_confirmations(&spend_tx_hex, confirmations, requires_nota, wait_until, check_every)
         .wait());
 
-    let bob_new_balance = coin_bob.my_balance().wait().unwrap();
+    let bob_new_balance = taker_coin.my_balance().wait().unwrap();
     assert_eq!(bob_balance + amount, bob_new_balance);
+}
+
+#[test]
+#[ignore]
+fn test_maker_spends_taker_payment() {
+    let conf = json!({
+        "coin":"QRC20",
+        "required_confirmations":0,
+        "pubtype":120,
+        "p2shtype":50,
+        "wiftype":128,
+        "segwit":true,
+        "mm2":1,
+        "mature_confirmations":500,
+    });
+    let req = json!({
+        "method": "electrum",
+        "servers": [{"url":"95.217.83.126:10001"}],
+        "swap_contract_address": "0xba8b71f3544b93e2f681f996da519a98ace0107a",
+    });
+
+    // priv_key of qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG
+    let priv_key = [
+        3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144, 72,
+        172, 110, 180, 13, 123, 179, 10, 49,
+    ];
+    let contract_address = "0xd362e096e873eb7907e205fadc6175c6fec7bc44".into();
+
+    let maker_ctx = MmCtxBuilder::new().into_mm_arc();
+    let maker_coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
+        &maker_ctx,
+        "QRC20",
+        "QTUM",
+        &conf,
+        &req,
+        &priv_key,
+        contract_address
+    )));
+
+    // priv_key of qUX9FGHubczidVjWPCUWuwCUJWpkAtGCgf
+    let priv_key = [
+        24, 181, 194, 193, 18, 152, 142, 168, 71, 73, 70, 244, 9, 101, 92, 168, 243, 61, 132, 48, 25, 39, 103, 92, 29,
+        17, 11, 29, 113, 235, 48, 70,
+    ];
+
+    let taker_ctx = MmCtxBuilder::new().into_mm_arc();
+    let taker_coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
+        &taker_ctx,
+        "QRC20",
+        "QTUM",
+        &conf,
+        &req,
+        &priv_key,
+        contract_address
+    )));
+
+    let maker_balance = maker_coin.my_balance().wait().unwrap();
+
+    let timelock = (now_ms() / 1000) as u32 - 200;
+    // pubkey of "taker_passphrase" passphrase and qUX9FGHubczidVjWPCUWuwCUJWpkAtGCgf address
+    let taker_pub = hex::decode("022b00078841f37b5d30a6a1defb82b3af4d4e2d24dd4204d41f0c9ce1e875de1a").unwrap();
+    // pubkey of "cMhHM3PMpMrChygR4bLF7QsTdenhWpFrrmf2UezBG3eeFsz41rtL" passphrase
+    let maker_pub = hex::decode("03693bff1b39e8b5a306810023c29b95397eb395530b106b1820ea235fd81d9ce9").unwrap();
+    let secret = &[1; 32];
+    let secret_hash = &*dhash160(secret);
+    let amount = BigDecimal::from_str("0.2").unwrap();
+    let payment = taker_coin
+        .send_taker_payment(timelock, &maker_pub, secret_hash, amount.clone())
+        .wait()
+        .unwrap();
+    let tx = match payment {
+        TransactionEnum::UtxoTx(tx) => tx,
+        _ => panic!("Expected UtxoTx"),
+    };
+
+    let payment_tx_hash: H256Json = tx.hash().reversed().into();
+    log!("Maker payment: "[payment_tx_hash]);
+    let tx_hex = serialize(&tx);
+
+    let confirmations = 1;
+    let requires_nota = false;
+    let wait_until = (now_ms() / 1000) + 320; // timeout if test takes more than 240 seconds to run
+    let check_every = 1;
+    unwrap!(maker_coin
+        .wait_for_confirmations(&tx_hex, confirmations, requires_nota, wait_until, check_every)
+        .wait());
+
+    unwrap!(maker_coin
+        .validate_taker_payment(&tx_hex, timelock, &taker_pub, secret_hash, amount.clone())
+        .wait());
+
+    let spend = unwrap!(maker_coin
+        .send_maker_spends_taker_payment(&tx_hex, timelock, &taker_pub, secret)
+        .wait());
+    let spend_tx = match spend {
+        TransactionEnum::UtxoTx(tx) => tx,
+        _ => panic!("Expected UtxoTx"),
+    };
+
+    let spend_tx_hash: H256Json = spend_tx.hash().reversed().into();
+    log!("Taker spends tx: "[spend_tx_hash]);
+    let spend_tx_hex = serialize(&spend_tx);
+    let wait_until = (now_ms() / 1000) + 240; // timeout if test takes more than 240 seconds to run
+    unwrap!(maker_coin
+        .wait_for_confirmations(&spend_tx_hex, confirmations, requires_nota, wait_until, check_every)
+        .wait());
+
+    let maker_new_balance = maker_coin.my_balance().wait().unwrap();
+    assert_eq!(maker_balance + amount, maker_new_balance);
 }
 
 #[test]
