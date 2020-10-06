@@ -1366,18 +1366,22 @@ pub async fn broadcast_maker_keep_alives_loop(ctx: MmArc) {
             .iter()
             .map(|(uuid, order)| (*uuid, orderbook_topic(&order.base, &order.rel)))
             .collect();
-        let to_sleep = interval / to_keep_alive.len() as f64;
-        for (uuid, topic) in to_keep_alive {
-            Timer::sleep(to_sleep).await;
-            let msg = new_protocol::MakerOrderKeepAlive {
-                uuid: uuid.into(),
-                timestamp: now_ms() / 1000,
-            };
-            if process_my_order_keep_alive(&ctx, &msg).await {
-                broadcast_ordermatch_message(&ctx, topic, msg.into());
-            } else {
-                if let Some(order) = ordermatch_ctx.my_maker_orders.lock().await.get(&uuid) {
-                    maker_order_created_p2p_notify(ctx.clone(), order).await;
+        if to_keep_alive.is_empty() {
+            Timer::sleep(interval).await;
+        } else {
+            let to_sleep = interval / to_keep_alive.len() as f64;
+            for (uuid, topic) in to_keep_alive {
+                Timer::sleep(to_sleep).await;
+                let msg = new_protocol::MakerOrderKeepAlive {
+                    uuid: uuid.into(),
+                    timestamp: now_ms() / 1000,
+                };
+                if process_my_order_keep_alive(&ctx, &msg).await {
+                    broadcast_ordermatch_message(&ctx, topic, msg.into());
+                } else {
+                    if let Some(order) = ordermatch_ctx.my_maker_orders.lock().await.get(&uuid) {
+                        maker_order_created_p2p_notify(ctx.clone(), order).await;
+                    }
                 }
             }
         }
