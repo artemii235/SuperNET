@@ -553,12 +553,14 @@ async fn maker_order_created_p2p_notify(ctx: MmArc, order: &MakerOrder) {
 }
 
 fn maker_order_updated_p2p_notify(ctx: MmArc, _order: &MakerOrder) {
+    /*
     spawn(async move {
         if let Err(e) = broadcast_my_maker_orders(&ctx).await {
             ctx.log
                 .log("", &[&"broadcast_my_maker_orders"], &format!("error {}", e));
         };
     });
+    */
 }
 
 async fn maker_order_cancelled_p2p_notify(ctx: MmArc, order: &MakerOrder) {
@@ -1674,14 +1676,14 @@ pub async fn lp_ordermatch_loop(ctx: MmArc) {
                         delete_my_taker_order(&ctx, &uuid);
                         if order.matches.is_empty() && order.order_type == OrderType::GoodTillCancelled {
                             let maker_order: MakerOrder = order.into();
+                            my_maker_orders.insert(uuid, maker_order.clone());
+                            save_my_maker_order(&ctx, &maker_order);
                             spawn({
-                                let maker_order = maker_order.clone();
                                 let ctx = ctx.clone();
                                 async move {
                                     maker_order_created_p2p_notify(ctx, &maker_order).await;
                                 }
                             });
-                            my_maker_orders.insert(uuid, maker_order);
                         }
                         None
                     } else {
@@ -2666,7 +2668,7 @@ pub fn my_maker_orders_dir(ctx: &MmArc) -> PathBuf { ctx.dbdir().join("ORDERS").
 
 fn my_taker_orders_dir(ctx: &MmArc) -> PathBuf { ctx.dbdir().join("ORDERS").join("MY").join("TAKER") }
 
-fn my_maker_order_file_path(ctx: &MmArc, uuid: &Uuid) -> PathBuf {
+pub fn my_maker_order_file_path(ctx: &MmArc, uuid: &Uuid) -> PathBuf {
     my_maker_orders_dir(ctx).join(format!("{}.json", uuid))
 }
 
