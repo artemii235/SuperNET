@@ -830,11 +830,12 @@ impl TakerSwap {
             },
         };
 
+        let wait_duration = self.r().data.lock_duration / 3;
         let payload = match recv!(
             self,
             sending_f,
             "maker-payment",
-            180,
+            wait_duration,
             -1005,
             FixedValidator::AnythingGoes
         ) {

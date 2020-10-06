@@ -942,9 +942,7 @@ impl UtxoArcCommonOps for Qrc20Coin {
 }
 
 impl SwapOps for Qrc20Coin {
-    fn send_taker_fee(&self, fee_addr: &[u8], amount: BigDecimal) -> TransactionFut {
-        utxo_common::send_taker_fee(self.clone(), fee_addr, amount)
-    }
+    fn send_taker_fee(&self, fee_addr: &[u8], amount: BigDecimal) -> TransactionFut { unimplemented!() }
 
     fn send_maker_payment(
         &self,
@@ -957,7 +955,6 @@ impl SwapOps for Qrc20Coin {
         let id = qrc20_swap_id(time_lock, secret_hash);
         let value = try_fus!(wei_from_big_decimal(&amount, self.utxo_arc.decimals));
         let secret_hash = Vec::from(secret_hash);
-        // TODO replace with async {}
         Box::new(
             qrc20_send_hash_time_locked_payment(self.clone(), id, value, time_lock, secret_hash, taker_addr)
                 .boxed()
@@ -982,7 +979,7 @@ impl SwapOps for Qrc20Coin {
         taker_pub: &[u8],
         secret: &[u8],
     ) -> TransactionFut {
-        utxo_common::send_maker_spends_taker_payment(self.clone(), taker_payment_tx, time_lock, taker_pub, secret)
+        unimplemented!()
     }
 
     fn send_taker_spends_maker_payment(
@@ -1007,7 +1004,7 @@ impl SwapOps for Qrc20Coin {
         maker_pub: &[u8],
         secret_hash: &[u8],
     ) -> TransactionFut {
-        utxo_common::send_taker_refunds_payment(self.clone(), taker_payment_tx, time_lock, maker_pub, secret_hash)
+        unimplemented!()
     }
 
     fn send_maker_refunds_payment(
@@ -1031,7 +1028,7 @@ impl SwapOps for Qrc20Coin {
         fee_addr: &[u8],
         amount: &BigDecimal,
     ) -> Box<dyn Future<Item = (), Error = String> + Send> {
-        utxo_common::validate_fee(self.utxo_arc.clone(), fee_tx, fee_addr, amount)
+        unimplemented!()
     }
 
     fn validate_maker_payment(
@@ -1061,7 +1058,7 @@ impl SwapOps for Qrc20Coin {
         priv_bn_hash: &[u8],
         amount: BigDecimal,
     ) -> Box<dyn Future<Item = (), Error = String> + Send> {
-        utxo_common::validate_taker_payment(self, payment_tx, time_lock, taker_pub, priv_bn_hash, amount)
+        unimplemented!()
     }
 
     fn check_if_my_payment_sent(
@@ -1161,7 +1158,7 @@ impl SwapOps for Qrc20Coin {
         tx: &[u8],
         search_from_block: u64,
     ) -> Result<Option<FoundSwapTxSpend>, String> {
-        utxo_common::search_for_swap_tx_spend_my(self, time_lock, other_pub, secret_hash, tx, search_from_block)
+        unimplemented!()
     }
 
     fn search_for_swap_tx_spend_other(
@@ -1172,7 +1169,7 @@ impl SwapOps for Qrc20Coin {
         tx: &[u8],
         search_from_block: u64,
     ) -> Result<Option<FoundSwapTxSpend>, String> {
-        utxo_common::search_for_swap_tx_spend_other(self, time_lock, other_pub, secret_hash, tx, search_from_block)
+        unimplemented!()
     }
 }
 
@@ -1251,7 +1248,7 @@ impl MmCoin for Qrc20Coin {
         }))
     }
 
-    fn wallet_only(&self) -> bool { true }
+    fn wallet_only(&self) -> bool { false }
 
     fn withdraw(&self, req: WithdrawRequest) -> Box<dyn Future<Item = TransactionDetails, Error = String> + Send> {
         Box::new(qrc20_withdraw(self.clone(), req).boxed().compat())
