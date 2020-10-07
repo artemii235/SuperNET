@@ -66,6 +66,7 @@ use common::{bits256, block_on,
              mm_ctx::{from_ctx, MmArc},
              mm_number::MmNumber,
              now_ms, read_dir, rpc_response, slurp, write, HyRes};
+use futures::future::{abortable, AbortHandle, TryFutureExt};
 use http::Response;
 use mm2_libp2p::{decode_signed, encode_and_sign, pub_sub_topic, TopicPrefix};
 use primitives::hash::{H160, H256, H264};
@@ -81,7 +82,7 @@ use uuid::Uuid;
 
 pub const SWAP_PREFIX: TopicPrefix = "swap";
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum SwapMsg {
     Negotiation(NegotiationDataMsg),
     NegotiationReply(NegotiationDataMsg),
@@ -111,7 +112,29 @@ impl SwapMsgStore {
     }
 }
 
-pub fn broadcast_message(ctx: &MmArc, topic: String, msg: SwapMsg) {
+/// The AbortHandle that aborts on drop
+pub struct AbortOnDropHandle(AbortHandle);
+
+impl Drop for AbortOnDropHandle {
+    fn drop(&mut self) { self.0.abort(); }
+}
+
+/// Spawns the loop that broadcasts message every `interval` seconds returning the AbortOnDropHandle
+/// to stop it
+pub fn broadcast_swap_message_every(ctx: MmArc, topic: String, msg: SwapMsg, interval: f64) -> AbortOnDropHandle {
+    let fut = async move {
+        loop {
+            broadcast_swap_message(&ctx, topic.clone(), msg.clone());
+            Timer::sleep(interval).await;
+        }
+    };
+    let (abortable, abort_handle) = abortable(fut);
+    spawn(abortable.unwrap_or_else(|_| ()));
+    AbortOnDropHandle(abort_handle)
+}
+
+/// Broadcast the swap message once
+pub fn broadcast_swap_message(ctx: &MmArc, topic: String, msg: SwapMsg) {
     let key_pair = ctx.secp256k1_key_pair.or(&&|| panic!());
     let encoded_msg = encode_and_sign(&msg, &*key_pair.private().secret).unwrap();
     broadcast_p2p_msg(ctx, topic, encoded_msg);
@@ -515,7 +538,7 @@ pub fn dex_fee_amount(base: &str, rel: &str, trade_amount: &MmNumber) -> MmNumbe
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct NegotiationDataMsg {
     started_at: u64,
     payment_locktime: u64,

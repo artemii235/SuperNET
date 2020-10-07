@@ -2,7 +2,6 @@
 #![cfg_attr(not(feature = "native"), allow(unused_variables))]
 
 use super::lp_main;
-use crate::mm2::lp_ordermatch::my_maker_order_file_path;
 use bigdecimal::BigDecimal;
 #[cfg(not(feature = "native"))] use common::call_back;
 use common::executor::Timer;
