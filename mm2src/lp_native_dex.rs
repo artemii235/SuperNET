@@ -26,7 +26,7 @@ use futures01::Future;
 use mm2_libp2p::start_gossipsub;
 use rand::rngs::SmallRng;
 use rand::{random, Rng, SeedableRng};
-use serde_json::{self as json, Value as Json};
+use serde_json::{self as json};
 use std::ffi::CString;
 use std::fs;
 use std::io::{Read, Write};
@@ -36,36 +36,16 @@ use std::path::Path;
 use std::str;
 use std::str::from_utf8;
 
+use crate::common::executor::{spawn, spawn_boxed, Timer};
 #[cfg(feature = "native")] use crate::common::lp;
 use crate::common::mm_ctx::{MmArc, MmCtx};
 use crate::common::privkey::key_pair_from_seed;
-use crate::common::{block_on,
-                    executor::{spawn, spawn_boxed, Timer},
-                    wio::CORE};
 use crate::common::{slurp_url, MM_DATETIME, MM_VERSION};
 use crate::mm2::lp_network::{p2p_event_process_loop, P2PContext};
-use crate::mm2::lp_ordermatch::{broadcast_maker_keep_alives_loop, lp_ordermatch_loop, lp_trade_command,
-                                migrate_saved_orders, orders_kick_start, BalanceUpdateOrdermatchHandler};
+use crate::mm2::lp_ordermatch::{broadcast_maker_keep_alives_loop, lp_ordermatch_loop, migrate_saved_orders,
+                                orders_kick_start, BalanceUpdateOrdermatchHandler};
 use crate::mm2::lp_swap::{running_swaps_num, swap_kick_starts};
 use crate::mm2::rpc::spawn_rpc;
-
-/// Process a previously queued command that wasn't handled by the RPC `dispatcher`.  
-/// NB: It might be preferable to port more commands into the RPC `dispatcher`, rather than `lp_command_process`, because:  
-/// 1) It allows us to more easily test such commands through the local HTTP endpoint;  
-/// 2) It allows the command handler to run asynchronously and use more time wihtout slowing down the queue loop;  
-/// 3) By being present in the `dispatcher` table the commands are easier to find and to be accounted for;  
-/// 4) No need for `unsafe`, `CJSON` and `*mut c_char` there.
-#[allow(dead_code)]
-pub fn lp_command_process(ctx: MmArc, json: Json) {
-    if !json["result"].is_null() || !json["error"].is_null() {
-        return;
-    }
-
-    if std::env::var("LOG_COMMANDS").is_ok() {
-        log!("Got command: "[json]);
-    }
-    lp_trade_command(ctx, json);
-}
 
 // TODO: Use MM2-nightly seed nodes.
 //       MM1 nodes no longer compatible due to the UTXO reforms in particular.

@@ -672,6 +672,20 @@ impl TakerRequest {
             conf_settings: Some(message.conf_settings),
         }
     }
+
+    fn can_match_with_maker_pubkey(&self, maker_pubkey: &H256Json) -> bool {
+        match &self.match_by {
+            MatchBy::Pubkeys(pubkeys) => pubkeys.contains(maker_pubkey),
+            _ => true,
+        }
+    }
+
+    fn can_match_with_uuid(&self, uuid: &Uuid) -> bool {
+        match &self.match_by {
+            MatchBy::Orders(uuids) => uuids.contains(uuid),
+            _ => true,
+        }
+    }
 }
 
 impl Into<new_protocol::OrdermatchMessage> for TakerRequest {
@@ -1196,6 +1210,46 @@ impl MakerOrder {
             }
         }
         false
+    }
+
+    fn match_with_request(&self, taker: &TakerRequest) -> OrderMatchResult {
+        let taker_base_amount: MmNumber = taker.get_base_amount();
+        let taker_rel_amount: MmNumber = taker.get_rel_amount();
+
+        match taker.action {
+            TakerAction::Buy => {
+                if self.base == taker.base
+                    && self.rel == taker.rel
+                    && taker_base_amount <= self.available_amount()
+                    && taker_base_amount >= self.min_base_vol
+                {
+                    let taker_price = &taker_rel_amount / &taker_base_amount;
+                    if taker_price >= self.price {
+                        OrderMatchResult::Matched((taker_base_amount.clone(), &taker_base_amount * &self.price))
+                    } else {
+                        OrderMatchResult::NotMatched
+                    }
+                } else {
+                    OrderMatchResult::NotMatched
+                }
+            },
+            TakerAction::Sell => {
+                if self.base == taker.rel
+                    && self.rel == taker.base
+                    && taker_rel_amount <= self.available_amount()
+                    && taker_rel_amount >= self.min_base_vol
+                {
+                    let taker_price = &taker_base_amount / &taker_rel_amount;
+                    if taker_price >= self.price {
+                        OrderMatchResult::Matched((&taker_base_amount / &self.price, taker_base_amount))
+                    } else {
+                        OrderMatchResult::NotMatched
+                    }
+                } else {
+                    OrderMatchResult::NotMatched
+                }
+            },
+        }
     }
 }
 
@@ -1836,23 +1890,31 @@ async fn process_maker_connected(ctx: MmArc, from_pubkey: H256Json, connected: M
 }
 
 async fn process_taker_request(ctx: MmArc, taker_request: TakerRequest) {
+    log!({"Processing request {:?}", taker_request});
+
     if is_pubkey_banned(&ctx, &taker_request.sender_pubkey) {
         log!("Sender pubkey " [taker_request.sender_pubkey] " is banned");
         return;
     }
 
-    let our_public_id = unwrap!(ctx.public_id());
-    if our_public_id.bytes == taker_request.dest_pub_key.0 {
+    let our_public_id: H256Json = unwrap!(ctx.public_id()).bytes.into();
+    if our_public_id == taker_request.dest_pub_key {
         log!("Skip the request originating from our pubkey");
         return;
     }
 
-    println!("Processing request {:?}", taker_request);
+    if !taker_request.can_match_with_maker_pubkey(&our_public_id) {
+        return;
+    }
+
     let ordermatch_ctx = unwrap!(OrdermatchContext::from_ctx(&ctx));
     let mut my_orders = ordermatch_ctx.my_maker_orders.lock().await;
+    let filtered = my_orders
+        .iter_mut()
+        .filter(|(uuid, _)| taker_request.can_match_with_uuid(uuid));
 
-    for (uuid, order) in my_orders.iter_mut() {
-        if let OrderMatchResult::Matched((base_amount, rel_amount)) = match_order_and_request(order, &taker_request) {
+    for (uuid, order) in filtered {
+        if let OrderMatchResult::Matched((base_amount, rel_amount)) = order.match_with_request(&taker_request) {
             let base_coin = match lp_coinfindᵃ(&ctx, &order.base).await {
                 Ok(Some(c)) => c,
                 _ => return, // attempt to match with deactivated coin
@@ -1865,7 +1927,7 @@ async fn process_taker_request(ctx: MmArc, taker_request: TakerRequest) {
             if !order.matches.contains_key(&taker_request.uuid) {
                 let reserved = MakerReserved {
                     dest_pub_key: taker_request.sender_pubkey.clone(),
-                    sender_pubkey: our_public_id.bytes.into(),
+                    sender_pubkey: our_public_id,
                     base: order.base.clone(),
                     base_amount: base_amount.clone().into(),
                     base_amount_rat: Some(base_amount.into()),
@@ -1885,7 +1947,7 @@ async fn process_taker_request(ctx: MmArc, taker_request: TakerRequest) {
                     }),
                 };
                 let topic = orderbook_topic(&order.base, &order.rel);
-                println!("Request matched sending reserved {:?}", reserved);
+                log!({"Request matched sending reserved {:?}", reserved});
                 broadcast_ordermatch_message(&ctx, topic, reserved.clone().into());
                 let maker_match = MakerMatch {
                     request: taker_request,
@@ -1945,46 +2007,6 @@ async fn process_taker_connect(ctx: MmArc, sender_pubkey: H256Json, connect_msg:
         my_order.started_swaps.push(order_match.request.uuid);
         lp_connect_start_bob(ctx.clone(), order_match.clone(), my_order.clone());
         save_my_maker_order(&ctx, &my_order);
-    }
-}
-
-pub fn lp_trade_command(ctx: MmArc, json: Json) {
-    let method = json["method"].as_str();
-    match method {
-        Some("reserved") => {
-            let reserved_msg: MakerReserved = match json::from_value(json) {
-                Ok(r) => r,
-                Err(_) => return,
-            };
-            block_on(process_maker_reserved(ctx, reserved_msg));
-        },
-        Some("connected") => {
-            let connected: MakerConnected = match json::from_value(json.clone()) {
-                Ok(c) => c,
-                Err(_) => return,
-            };
-            block_on(process_maker_connected(ctx, connected.sender_pubkey.clone(), connected));
-        },
-        // bob
-        Some("request") => {
-            let taker_request: TakerRequest = match json::from_value(json.clone()) {
-                Ok(r) => r,
-                Err(_) => return,
-            };
-            block_on(process_taker_request(ctx, taker_request));
-        },
-        Some("connect") => {
-            let connect_msg: TakerConnect = match json::from_value(json.clone()) {
-                Ok(m) => m,
-                Err(_) => return,
-            };
-            block_on(process_taker_connect(
-                ctx,
-                connect_msg.sender_pubkey.clone(),
-                connect_msg,
-            ));
-        },
-        _ => (),
     }
 }
 
@@ -2468,47 +2490,6 @@ enum OrderMatchResult {
     Matched((MmNumber, MmNumber)),
     /// Orders didn't match
     NotMatched,
-}
-
-/// Attempts to match the Maker's order and Taker's request
-fn match_order_and_request(maker: &MakerOrder, taker: &TakerRequest) -> OrderMatchResult {
-    let taker_base_amount: MmNumber = taker.get_base_amount();
-    let taker_rel_amount: MmNumber = taker.get_rel_amount();
-
-    match taker.action {
-        TakerAction::Buy => {
-            if maker.base == taker.base
-                && maker.rel == taker.rel
-                && taker_base_amount <= maker.available_amount()
-                && taker_base_amount >= maker.min_base_vol
-            {
-                let taker_price = &taker_rel_amount / &taker_base_amount;
-                if taker_price >= maker.price {
-                    OrderMatchResult::Matched((taker_base_amount.clone(), &taker_base_amount * &maker.price))
-                } else {
-                    OrderMatchResult::NotMatched
-                }
-            } else {
-                OrderMatchResult::NotMatched
-            }
-        },
-        TakerAction::Sell => {
-            if maker.base == taker.rel
-                && maker.rel == taker.base
-                && taker_rel_amount <= maker.available_amount()
-                && taker_rel_amount >= maker.min_base_vol
-            {
-                let taker_price = &taker_base_amount / &taker_rel_amount;
-                if taker_price >= maker.price {
-                    OrderMatchResult::Matched((&taker_base_amount / &maker.price, taker_base_amount))
-                } else {
-                    OrderMatchResult::NotMatched
-                }
-            } else {
-                OrderMatchResult::NotMatched
-            }
-        },
-    }
 }
 
 #[derive(Deserialize)]
