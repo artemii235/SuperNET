@@ -1,6 +1,6 @@
 use super::rpc_clients::{ElectrumProtocol, ListSinceBlockRes, NetworkInfo};
 use super::*;
-use crate::utxo::qrc20::{qrc20_coin_from_conf_and_request, Qrc20Coin, Qrc20FeeDetails};
+use crate::utxo::qrc20::{qrc20_addr_from_utxo_addr, qrc20_coin_from_conf_and_request, Qrc20Coin, Qrc20FeeDetails};
 use crate::utxo::rpc_clients::UtxoRpcClientOps;
 use crate::utxo::utxo_standard::{utxo_standard_coin_from_conf_and_request, UtxoStandardCoin, UTXO_STANDARD_DUST};
 use crate::{SwapOps, TxFeeDetails, WithdrawFee};
@@ -9,6 +9,7 @@ use chain::OutPoint;
 use common::mm_ctx::MmCtxBuilder;
 use common::privkey::key_pair_from_seed;
 use common::{block_on, OrdRange};
+use ethereum_types::U256;
 use futures::future::join_all;
 use gstuff::now_ms;
 use mocktopus::mocking::*;
@@ -727,6 +728,7 @@ fn test_withdraw_impl_sat_per_kb_fee_max() {
     assert_eq!(expected, tx_details.fee_details);
 }
 
+/// TODO fix this test
 #[test]
 fn test_qrc20_withdraw_impl_fee_details() {
     Qrc20Coin::ordered_mature_unspents.mock_safe(|_, _| {
@@ -754,6 +756,7 @@ fn test_qrc20_withdraw_impl_fee_details() {
     let req = json!({
         "method": "electrum",
         "servers": [{"url":"95.217.83.126:10001"}],
+        "swap_contract_address": "0xba8b71f3544b93e2f681f996da519a98ace0107a",
     });
     let priv_key = [
         3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144, 72,
@@ -796,7 +799,7 @@ fn test_qrc20_withdraw_impl_fee_details() {
         // (gas_limit * gas_price) from satoshi in Qtum
         "total_gas_fee": "1",
     })));
-    assert_eq!(Some(TxFeeDetails::Qrc20(expected)), tx_details.fee_details);
+    assert_eq!(tx_details.fee_details, Some(TxFeeDetails::Qrc20(expected)));
 }
 
 #[test]
@@ -1548,6 +1551,7 @@ fn test_qrc20_tx_details_by_hash() {
     let req = json!({
         "method": "electrum",
         "servers": [{"url":"95.217.83.126:10001"}],
+        "swap_contract_address": "0xba8b71f3544b93e2f681f996da519a98ace0107a",
     });
     let priv_key = [
         192, 240, 176, 226, 14, 170, 226, 96, 107, 47, 166, 243, 154, 48, 28, 243, 18, 144, 240, 1, 79, 103, 178, 42,
@@ -1624,6 +1628,7 @@ fn test_qrc20_can_i_spend_other_payment() {
     let req = json!({
         "method": "electrum",
         "servers": [{"url":"95.217.83.126:10001"}],
+        "swap_contract_address": "0xba8b71f3544b93e2f681f996da519a98ace0107a",
     });
     let priv_key = [
         192, 240, 176, 226, 14, 170, 226, 96, 107, 47, 166, 243, 154, 48, 28, 243, 18, 144, 240, 1, 79, 103, 178, 42,
@@ -1668,6 +1673,7 @@ fn test_qrc20_can_i_spend_other_payment_err() {
     let req = json!({
         "method": "electrum",
         "servers": [{"url":"95.217.83.126:10001"}],
+        "swap_contract_address": "0xba8b71f3544b93e2f681f996da519a98ace0107a",
     });
     let priv_key = [
         192, 240, 176, 226, 14, 170, 226, 96, 107, 47, 166, 243, 154, 48, 28, 243, 18, 144, 240, 1, 79, 103, 178, 42,
@@ -2358,6 +2364,202 @@ fn test_qrc20_check_if_my_payment_sent() {
         .check_if_my_payment_sent(time_lock_dif, &maker_pub, secret_hash, search_from_block)
         .wait());
     assert_eq!(tx, None);
+}
+
+#[test]
+fn test_qrc20_send_taker_fee() {
+    let conf = json!({
+        "coin":"QRC20",
+        "required_confirmations":0,
+        "pubtype":120,
+        "p2shtype":50,
+        "wiftype":128,
+        "segwit":true,
+        "mm2":1,
+        "mature_confirmations":500,
+    });
+    let req = json!({
+        "method": "electrum",
+        "servers": [{"url":"95.217.83.126:10001"}],
+        "swap_contract_address": "0xba8b71f3544b93e2f681f996da519a98ace0107a",
+    });
+
+    // priv_key of qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG
+    let priv_key = [
+        3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144, 72,
+        172, 110, 180, 13, 123, 179, 10, 49,
+    ];
+    let contract_address = "0xd362e096e873eb7907e205fadc6175c6fec7bc44".into();
+
+    let ctx = MmCtxBuilder::new().into_mm_arc();
+    let coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
+        &ctx,
+        "QRC20",
+        "QTUM",
+        &conf,
+        &req,
+        &priv_key,
+        contract_address
+    )));
+
+    let fee_addr_pub_key = hex::decode("03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc06").unwrap();
+    let amount = BigDecimal::from_str("0.01").unwrap();
+    let tx = unwrap!(coin.send_taker_fee(&fee_addr_pub_key, amount.clone()).wait());
+    let tx_hash: H256Json = match tx {
+        TransactionEnum::UtxoTx(ref tx) => tx.hash().reversed().into(),
+        _ => panic!("Expected UtxoTx"),
+    };
+    log!("Fee tx "[tx_hash]);
+
+    let result = coin.validate_fee(&tx, &fee_addr_pub_key, &amount).wait();
+    assert_eq!(result, Ok(()));
+}
+
+#[test]
+fn test_qrc20_validate_fee() {
+    let conf = json!({
+        "coin":"QRC20",
+        "required_confirmations":0,
+        "pubtype":120,
+        "p2shtype":50,
+        "wiftype":128,
+        "segwit":true,
+        "mm2":1,
+        "mature_confirmations":500,
+    });
+    let req = json!({
+        "method": "electrum",
+        "servers": [{"url":"95.217.83.126:10001"}],
+        "swap_contract_address": "0xba8b71f3544b93e2f681f996da519a98ace0107a",
+    });
+
+    // priv_key of qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG
+    let priv_key = [
+        3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144, 72,
+        172, 110, 180, 13, 123, 179, 10, 49,
+    ];
+    let contract_address = "0xd362e096e873eb7907e205fadc6175c6fec7bc44".into();
+
+    let ctx = MmCtxBuilder::new().into_mm_arc();
+    let coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
+        &ctx,
+        "QRC20",
+        "QTUM",
+        &conf,
+        &req,
+        &priv_key,
+        contract_address
+    )));
+
+    // QRC20 transfer tx "f97d3a43dbea0993f1b7a6a299377d4ee164c84935a1eb7d835f70c9429e6a1d"
+    let tx = TransactionEnum::UtxoTx("010000000160fd74b5714172f285db2b36f0b391cd6883e7291441631c8b18f165b0a4635d020000006a47304402205d409e141111adbc4f185ae856997730de935ac30a0d2b1ccb5a6c4903db8171022024fc59bbcfdbba283556d7eeee4832167301dc8e8ad9739b7865f67b9676b226012103693bff1b39e8b5a306810023c29b95397eb395530b106b1820ea235fd81d9ce9ffffffff020000000000000000625403a08601012844a9059cbb000000000000000000000000ca1e04745e8ca0c60d8c5881531d51bec470743f00000000000000000000000000000000000000000000000000000000000f424014d362e096e873eb7907e205fadc6175c6fec7bc44c200ada205000000001976a9149e032d4b0090a11dc40fe6c47601499a35d55fbb88acfe967d5f".into());
+
+    let fee_addr = hex::decode("03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc06").unwrap();
+    let amount = BigDecimal::from_str("0.01").unwrap();
+
+    let result = coin.validate_fee(&tx, &fee_addr, &amount).wait();
+    assert_eq!(result, Ok(()));
+
+    let fee_addr_dif = hex::decode("03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc05").unwrap();
+    let err = coin
+        .validate_fee(&tx, &fee_addr_dif, &amount)
+        .wait()
+        .err()
+        .expect("Expected an error");
+    log!("error: "[err]);
+    assert!(err.contains("QRC20 Fee tx was sent to wrong address"));
+
+    let amount_dif = BigDecimal::from_str("0.02").unwrap();
+    let err = coin
+        .validate_fee(&tx, &fee_addr, &amount_dif)
+        .wait()
+        .err()
+        .expect("Expected an error");
+    log!("error: "[err]);
+    assert!(err.contains("QRC20 Fee tx value 0.01 is less than expected 0.02"));
+
+    // QTUM tx "8a51f0ffd45f34974de50f07c5bf2f0949da4e88433f8f75191953a442cf9310"
+    let tx = TransactionEnum::UtxoTx("020000000113640281c9332caeddd02a8dd0d784809e1ad87bda3c972d89d5ae41f5494b85010000006a47304402207c5c904a93310b8672f4ecdbab356b65dd869a426e92f1064a567be7ccfc61ff02203e4173b9467127f7de4682513a21efb5980e66dbed4da91dff46534b8e77c7ef012102baefe72b3591de2070c0da3853226b00f082d72daa417688b61cb18c1d543d1afeffffff020001b2c4000000001976a9149e032d4b0090a11dc40fe6c47601499a35d55fbb88acbc4dd20c2f0000001976a9144208fa7be80dcf972f767194ad365950495064a488ac76e70800".into());
+    let err = coin
+        .validate_fee(&tx, &fee_addr, &amount)
+        .wait()
+        .err()
+        .expect("Expected an error");
+    log!("error: "[err]);
+    assert!(err.contains("Expected 'transfer' contract call"));
+}
+
+#[test]
+fn test_qrc20_generate_token_transfer_script_pubkey() {
+    let conf = json!({
+        "coin":"QRC20",
+        "required_confirmations":0,
+        "pubtype":120,
+        "p2shtype":50,
+        "wiftype":128,
+        "segwit":true,
+        "mm2":1,
+        "mature_confirmations":500,
+    });
+    let req = json!({
+        "method": "electrum",
+        "servers": [{"url":"95.217.83.126:10001"}],
+        "swap_contract_address": "0xba8b71f3544b93e2f681f996da519a98ace0107a",
+    });
+
+    // priv_key of qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG
+    let priv_key = [
+        3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144, 72,
+        172, 110, 180, 13, 123, 179, 10, 49,
+    ];
+    let contract_address = "0xd362e096e873eb7907e205fadc6175c6fec7bc44".into();
+
+    let ctx = MmCtxBuilder::new().into_mm_arc();
+    let coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
+        &ctx,
+        "QRC20",
+        "QTUM",
+        &conf,
+        &req,
+        &priv_key,
+        contract_address
+    )));
+
+    // sample QRC20 transfer from https://testnet.qtum.info/tx/51e9cec885d7eb26271f8b1434c000f6cf07aad47671268fc8d36cee9d48f6de
+    // the script is a script_pubkey of one of the transaction output
+    let expected_script: Script = "5403a02526012844a9059cbb0000000000000000000000000240b898276ad2cc0d2fe6f527e8e31104e7fde3000000000000000000000000000000000000000000000000000000003b9aca0014d362e096e873eb7907e205fadc6175c6fec7bc44c2".into();
+    let expected = TransactionOutput {
+        value: 0,
+        script_pubkey: expected_script.to_bytes(),
+    };
+
+    let to_addr: Address = "qHmJ3KA6ZAjR9wGjpFASn4gtUSeFAqdZgs".into();
+    let to_addr = qrc20_addr_from_utxo_addr(to_addr);
+    let amount: U256 = 1000000000.into();
+    let gas_limit = 2_500_000;
+    let gas_price = 40;
+    let actual = coin
+        .transfer_output(to_addr.clone(), amount, gas_limit, gas_price)
+        .unwrap();
+    assert_eq!(expected, actual);
+
+    assert!(coin
+        .transfer_output(
+            to_addr.clone(),
+            amount,
+            0, // gas_limit cannot be zero
+            gas_price,
+        )
+        .is_err());
+
+    assert!(coin
+        .transfer_output(
+            to_addr.clone(),
+            amount,
+            gas_limit,
+            0, // gas_price cannot be zero
+        )
+        .is_err());
 }
 
 /// TODO remove this test (is used to display signatures of contract functions)

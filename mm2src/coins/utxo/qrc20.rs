@@ -276,6 +276,7 @@ impl Qrc20Coin {
         Ok(qrc20_addr_from_utxo_addr(qtum_address))
     }
 
+    /// Get `Transfer` event details from [`TxReceipt::logs`].
     fn transfer_call_details_from_receipt(&self, receipt: &TxReceipt) -> Result<(BigDecimal, H160, H160), String> {
         fn address_from_log_topic(topic: &str) -> Result<H160, String> {
             if topic.len() != 64 {
@@ -318,6 +319,38 @@ impl Qrc20Coin {
         Ok((amount, from, to))
     }
 
+    /// Get `transfer` contract call details from script pubkey.
+    fn transfer_call_details_from_script_pubkey(&self, script_pubkey: &Script) -> Result<(H160, BigDecimal), String> {
+        if !is_contract_call(&script_pubkey) {
+            return ERR!("Expected 'transfer' contract call");
+        }
+
+        let contract_call_bytes = try_s!(extract_contract_call_from_script(&script_pubkey));
+        let call_type = try_s!(ContractCallType::from_script_pubkey(&contract_call_bytes));
+        if call_type != ContractCallType::Transfer {
+            return ERR!("Expected 'transfer' contract call");
+        }
+
+        let function = try_s!(ERC20_CONTRACT.function("transfer"));
+        let decoded = try_s!(function.decode_input(&contract_call_bytes));
+        let mut decoded = decoded.into_iter();
+
+        let receiver = match decoded.next() {
+            Some(Token::Address(addr)) => addr,
+            Some(token) => return ERR!("Transfer 'receiver' arg is invalid, found {:?}", token),
+            None => return ERR!("Couldn't find 'receiver' in 'transfer' call"),
+        };
+
+        let value = match decoded.next() {
+            Some(Token::Uint(value)) => value,
+            Some(token) => return ERR!("Transfer 'value' arg is invalid, found {:?}", token),
+            None => return ERR!("Couldn't find 'value' in 'transfer' call"),
+        };
+        let value = try_s!(u256_to_big_decimal(value, self.decimals()));
+
+        Ok((receiver, value))
+    }
+
     pub async fn allowance(&self, spender: H160) -> Result<U256, String> {
         let tokens = try_s!(
             self.rpc_contract_call(RpcContractCallType::Allowance, &[
@@ -353,6 +386,32 @@ impl Qrc20Coin {
             Token::Uint(state) => Ok(state),
             _ => ERR!("Payment status must be uint, got {:?}", decoded[2]),
         }
+    }
+
+    pub fn transfer_output(
+        &self,
+        to_addr: H160,
+        amount: U256,
+        gas_limit: u64,
+        gas_price: u64,
+    ) -> Result<TransactionOutput, String> {
+        let function = try_s!(ERC20_CONTRACT.function("transfer"));
+        let params = try_s!(function.encode_input(&[Token::Address(to_addr), Token::Uint(amount)]));
+
+        let script_pubkey = try_s!(generate_contract_call_script_pubkey(
+            &params,
+            gas_limit,
+            gas_price,
+            &self.contract_address,
+        ))
+        .to_bytes();
+
+        // qtum_amount is always 0 for the QRC20, because we should pay only a fee in Qtum to send the QRC20 transaction
+        let qtum_amount = 0;
+        Ok(TransactionOutput {
+            value: qtum_amount,
+            script_pubkey,
+        })
     }
 
     /// Generate a UTXO output with a script_pubkey that calls standard QRC20 `approve` function.
@@ -922,7 +981,18 @@ impl UtxoArcCommonOps for Qrc20Coin {
 }
 
 impl SwapOps for Qrc20Coin {
-    fn send_taker_fee(&self, fee_addr: &[u8], amount: BigDecimal) -> TransactionFut { unimplemented!() }
+    fn send_taker_fee(&self, fee_addr: &[u8], amount: BigDecimal) -> TransactionFut {
+        let to_address = try_fus!(self.qrc20_address_from_raw_pubkey(fee_addr));
+        let amount = try_fus!(wei_from_big_decimal(&amount, self.utxo_arc.decimals));
+        let transfer_output =
+            try_fus!(self.transfer_output(to_address, amount, QRC20_GAS_LIMIT_DEFAULT, QRC20_GAS_PRICE_DEFAULT));
+        let outputs = vec![transfer_output];
+
+        let selfi = self.clone();
+        let fut = async move { selfi.send_contract_calls(outputs).await };
+
+        Box::new(fut.boxed().compat())
+    }
 
     fn send_maker_payment(
         &self,
@@ -993,9 +1063,9 @@ impl SwapOps for Qrc20Coin {
     fn send_taker_refunds_payment(
         &self,
         taker_payment_tx: &[u8],
-        time_lock: u32,
-        maker_pub: &[u8],
-        secret_hash: &[u8],
+        _time_lock: u32,
+        _maker_pub: &[u8],
+        _secret_hash: &[u8],
     ) -> TransactionFut {
         let payment_tx: UtxoTx = try_fus!(deserialize(taker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
         Box::new(
@@ -1026,7 +1096,58 @@ impl SwapOps for Qrc20Coin {
         fee_addr: &[u8],
         amount: &BigDecimal,
     ) -> Box<dyn Future<Item = (), Error = String> + Send> {
-        unimplemented!()
+        let fee_tx_hash: H256Json = match fee_tx {
+            TransactionEnum::UtxoTx(tx) => tx.hash().reversed().into(),
+            _ => panic!("Unexpected TransactionEnum"),
+        };
+        let fee_addr = try_fus!(self.qrc20_address_from_raw_pubkey(fee_addr));
+        let expected_value = amount.clone();
+
+        let selfi = self.clone();
+        let fut = async move {
+            let verbose_tx = match selfi.utxo_arc.rpc_client {
+                UtxoRpcClientEnum::Electrum(ref rpc) => try_s!(rpc.get_verbose_transaction(fee_tx_hash).compat().await),
+                UtxoRpcClientEnum::Native(_) => return ERR!("Electrum client expected"),
+            };
+            let qtum_tx: UtxoTx = try_s!(deserialize(verbose_tx.hex.as_slice()).map_err(|e| ERRL!("{:?}", e)));
+
+            // The transaction could not being mined, just check the transfer tokens.
+            let output = qtum_tx
+                .outputs
+                .first()
+                .ok_or(ERRL!("Provided dex fee tx {:?} has no outputs", qtum_tx))?;
+            let script_pubkey: Script = output.script_pubkey.clone().into();
+
+            let (receiver, value) = match selfi.transfer_call_details_from_script_pubkey(&script_pubkey) {
+                Ok((rec, val)) => (rec, val),
+                Err(e) => return ERR!("Provided dex fee tx {:?} is incorrect: {}", qtum_tx, e),
+            };
+
+            if receiver != fee_addr {
+                return ERR!(
+                    "QRC20 Fee tx was sent to wrong address {:?}, expected {:?}",
+                    receiver,
+                    fee_addr
+                );
+            }
+
+            if value < expected_value {
+                return ERR!("QRC20 Fee tx value {} is less than expected {}", value, expected_value);
+            }
+
+            let token_addr = try_s!(extract_token_addr_from_script(&script_pubkey));
+            if token_addr != selfi.contract_address {
+                return ERR!(
+                    "QRC20 Fee tx {:?} called wrong smart contract, expected {:?}",
+                    qtum_tx,
+                    selfi.contract_address
+                );
+            }
+
+            Ok(())
+        };
+
+        Box::new(fut.boxed().compat())
     }
 
     fn validate_maker_payment(
@@ -1364,21 +1485,13 @@ async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> Result<Transac
         None => (QRC20_GAS_LIMIT_DEFAULT, QRC20_GAS_PRICE_DEFAULT),
     };
 
-    let script_pubkey = try_s!(generate_token_transfer_script_pubkey(
+    let transfer_output = try_s!(coin.transfer_output(
         qrc20_addr_from_utxo_addr(to_addr.clone()),
         qrc20_amount,
         gas_limit,
-        gas_price,
-        &coin.contract_address
-    ))
-    .to_bytes();
-
-    // qtum_amount is always 0 for the QRC20, because we should pay only a fee in Qtum to send the QRC20 transaction
-    let qtum_amount = 0u64;
-    let outputs = vec![TransactionOutput {
-        value: qtum_amount,
-        script_pubkey,
-    }];
+        gas_price
+    ));
+    let outputs = vec![transfer_output];
 
     let (signed, fee_details) = try_s!(coin.generate_qrc20_transaction(gas_limit, gas_price, outputs).await);
 
@@ -1777,19 +1890,6 @@ fn decode_contract_number(source: &[u8]) -> Result<i64, String> {
     }
 }
 
-fn generate_token_transfer_script_pubkey(
-    to_addr: H160,
-    amount: U256,
-    gas_limit: u64,
-    gas_price: u64,
-    token_addr: &[u8],
-) -> Result<Script, String> {
-    let function = try_s!(ERC20_CONTRACT.function("transfer"));
-    let function_call = try_s!(function.encode_input(&[Token::Address(to_addr), Token::Uint(amount)]));
-
-    generate_contract_call_script_pubkey(&function_call, gas_limit, gas_price, token_addr)
-}
-
 /// Generate a script_pubkey contains a `function_call` from the specified `contract_address`.
 /// The `contract_address` can be either Token address (QRC20) or Swap contract address (EtomicSwap).
 fn generate_contract_call_script_pubkey(
@@ -1821,7 +1921,8 @@ fn generate_contract_call_script_pubkey(
         .into_script())
 }
 
-/// The `extract_gas_limit_from_script_pubkey` helper.
+/// The `extract_gas_from_script_pubkey` helper.
+/// TODO rename to `ExtractGasEnum`
 #[derive(Clone, Copy, Debug)]
 enum ExtractEnum {
     GasLimit = 1,
@@ -1865,18 +1966,14 @@ fn try_get_swap_id_from_tx(tx: &UtxoTx) -> Result<Option<Vec<u8>>, String> {
     Ok(None)
 }
 
+/// TODO rename to `extract_gas_from_script`
 fn extract_from_script(script: &Script, extract: ExtractEnum) -> Result<u64, String> {
-    let instruction = try_s!(script
+    let instruction = script
         .iter()
         .enumerate()
-        .find_map(|(i, instr)| {
-            if i == extract as usize {
-                Some(instr.unwrap())
-            } else {
-                None
-            }
-        })
-        .ok_or(ERRL!("Couldn't extract {:?} from script pubkey", extract)));
+        .find_map(|(i, instr)| if i == extract as usize { Some(instr) } else { None })
+        .ok_or(ERRL!("Couldn't extract {:?} from script pubkey", extract as usize))?
+        .map_err(|e| ERRL!("Error on extract {:?} from pubkey: {}", extract, e))?;
 
     let opcode = instruction.opcode as usize;
     if !(1..75).contains(&opcode) {
@@ -1893,16 +1990,12 @@ fn extract_from_script(script: &Script, extract: ExtractEnum) -> Result<u64, Str
 
 fn extract_contract_call_from_script(script: &Script) -> Result<Vec<u8>, String> {
     const CONTRACT_CALL_IDX: usize = 3;
-    let instruction = try_s!(script
+    let instruction = script
         .iter()
         .enumerate()
-        .find_map(|(i, instr)| {
-            match instr {
-                Ok(instr) if i == CONTRACT_CALL_IDX => Some(instr),
-                _ => None,
-            }
-        })
-        .ok_or(ERRL!("Couldn't extract {:?} from script pubkey", CONTRACT_CALL_IDX)));
+        .find_map(|(i, instr)| if i == CONTRACT_CALL_IDX { Some(instr) } else { None })
+        .ok_or(ERRL!("Couldn't extract 'contract_params' from script pubkey"))?
+        .map_err(|e| ERRL!("Error on extract 'contract_params' from pubkey: {}", e))?;
 
     match instruction.opcode {
         Opcode::OP_PUSHDATA1 | Opcode::OP_PUSHDATA2 | Opcode::OP_PUSHDATA4 => (),
@@ -1914,6 +2007,23 @@ fn extract_contract_call_from_script(script: &Script) -> Result<Vec<u8>, String>
         .data
         .ok_or(ERRL!("An empty contract call data"))
         .map(Vec::from)
+}
+
+fn extract_token_addr_from_script(script: &Script) -> Result<H160, String> {
+    const TOKEN_ADDRESS_IDX: usize = 4;
+    let instruction = script
+        .iter()
+        .enumerate()
+        .find_map(|(i, instr)| if i == TOKEN_ADDRESS_IDX { Some(instr) } else { None })
+        .ok_or(ERRL!("Couldn't extract 'token_address' from script pubkey"))?
+        .map_err(|e| ERRL!("Error on extract 'token_address' from pubkey: {}", e))?;
+
+    match instruction.opcode {
+        opcode if (1..75).contains(&(opcode as usize)) => (),
+        _ => return ERR!("Unexpected instruction's opcode {}", instruction.opcode),
+    }
+
+    Ok(instruction.data.ok_or(ERRL!("An empty contract call data"))?.into())
 }
 
 #[cfg(test)]
@@ -1960,58 +2070,6 @@ mod qtum_tests {
         };
         let balance = u256_to_big_decimal(balance, 8).unwrap();
         assert_eq!(balance, "139.00000".parse().unwrap());
-    }
-
-    #[test]
-    fn test_generate_token_transfer_script_pubkey() {
-        // sample QRC20 transfer from https://testnet.qtum.info/tx/51e9cec885d7eb26271f8b1434c000f6cf07aad47671268fc8d36cee9d48f6de
-        // the script is a script_pubkey of one of the transaction output
-        let expected: Script = "5403a02526012844a9059cbb0000000000000000000000000240b898276ad2cc0d2fe6f527e8e31104e7fde3000000000000000000000000000000000000000000000000000000003b9aca0014d362e096e873eb7907e205fadc6175c6fec7bc44c2".into();
-        let to_addr: Address = "qHmJ3KA6ZAjR9wGjpFASn4gtUSeFAqdZgs".into();
-        let to_addr = qrc20_addr_from_utxo_addr(to_addr);
-        let amount: U256 = 1000000000.into();
-        let gas_limit = 2_500_000;
-        let gas_price = 40;
-        let token_addr = hex::decode("d362e096e873eb7907e205fadc6175c6fec7bc44").unwrap();
-        let actual = generate_token_transfer_script_pubkey(to_addr, amount, gas_limit, gas_price, &token_addr).unwrap();
-        assert_eq!(expected, actual);
-    }
-
-    #[test]
-    fn test_generate_token_transfer_script_pubkey_err() {
-        let to_addr: Address = "qHmJ3KA6ZAjR9wGjpFASn4gtUSeFAqdZgs".into();
-        let to_addr = qrc20_addr_from_utxo_addr(to_addr);
-        let amount: U256 = 1000000000.into();
-        let gas_limit = 2_500_000;
-        let gas_price = 40;
-        let token_addr = hex::decode("d362e096e873eb7907e205fadc6175c6fec7bc44").unwrap();
-
-        assert!(generate_token_transfer_script_pubkey(
-            to_addr.clone(),
-            amount,
-            0, // gas_limit cannot be zero
-            gas_price,
-            &token_addr,
-        )
-        .is_err());
-
-        assert!(generate_token_transfer_script_pubkey(
-            to_addr.clone(),
-            amount,
-            gas_limit,
-            0, // gas_price cannot be zero
-            &token_addr,
-        )
-        .is_err());
-
-        assert!(generate_token_transfer_script_pubkey(
-            to_addr,
-            amount,
-            gas_limit,
-            gas_price,
-            &[], // token_addr cannot be empty
-        )
-        .is_err());
     }
 
     #[test]
@@ -2102,6 +2160,15 @@ mod qtum_tests {
         let script = utxo_tx.outputs[2].script_pubkey.clone().into();
 
         let actual = unwrap!(extract_contract_call_from_script(&script));
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn extract_token_addr() {
+        let script: Script = "5403a02526012844a9059cbb0000000000000000000000000240b898276ad2cc0d2fe6f527e8e31104e7fde3000000000000000000000000000000000000000000000000000000003b9aca0014d362e096e873eb7907e205fadc6175c6fec7bc44c2".into();
+        let expected = qrc20_addr_from_str("0xd362e096e873eb7907e205fadc6175c6fec7bc44").unwrap();
+
+        let actual = unwrap!(extract_token_addr_from_script(&script));
         assert_eq!(actual, expected);
     }
 }
