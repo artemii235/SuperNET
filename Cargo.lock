@@ -735,7 +735,7 @@ dependencies = [
  "rlp",
  "rpc",
  "rust-ini",
- "rustls 0.17.0",
+ "rustls 0.18.1",
  "script",
  "serde",
  "serde_derive",
@@ -743,9 +743,8 @@ dependencies = [
  "serialization",
  "sha2 0.8.2",
  "sha3",
- "tokio 0.1.22",
- "tokio-io",
- "tokio-tcp",
+ "tokio 0.2.22",
+ "tokio-rustls 0.14.1",
  "unwrap",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -2109,7 +2108,7 @@ dependencies = [
  "rustls 0.17.0",
  "rustls-native-certs",
  "tokio 0.2.22",
- "tokio-rustls",
+ "tokio-rustls 0.13.1",
  "webpki",
 ]
 
@@ -4855,6 +4854,18 @@ checksum = "15cb62a0d2770787abc96e99c1cd98fcf17f94959f3af63ca85bdfb203f051b4"
 dependencies = [
  "futures-core",
  "rustls 0.17.0",
+ "tokio 0.2.22",
+ "webpki",
+]
+
+[[package]]
+name = "tokio-rustls"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e12831b255bcfa39dc0436b01e19fea231a37db570686c06ee72c423479f889a"
+dependencies = [
+ "futures-core",
+ "rustls 0.18.1",
  "tokio 0.2.22",
  "webpki",
 ]

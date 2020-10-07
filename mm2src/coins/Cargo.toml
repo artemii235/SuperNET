@@ -5,7 +5,7 @@ edition = "2018"
 
 [features]
 native = [
-  "dirs", "rust-ini", "rustls", "tokio", "tokio-io", "tokio-tcp", "webpki-roots",
+  "dirs", "rust-ini", "rustls", "tokio-rustls", "tokio", "webpki-roots",
   "common/native"
 ]
 
@@ -53,7 +53,7 @@ rand = { version = "0.7", features = ["std", "small_rng"] }
 rlp = { git = "https://github.com/artemii235/parity-common" }
 rpc = { git = "https://github.com/artemii235/parity-bitcoin.git" }
 rust-ini = { version = "0.13", optional = true }
-rustls = { version = "0.17", features = ["dangerous_configuration"], optional = true }
+rustls = { version = "0.18", features = ["dangerous_configuration"], optional = true }
 script = { git = "https://github.com/artemii235/parity-bitcoin.git" }
 serde = "1.0"
 serde_derive = "1.0"
@@ -61,10 +61,8 @@ serde_json = { version = "1.0", features = ["preserve_order"] }
 serialization = { git = "https://github.com/artemii235/parity-bitcoin.git" }
 sha2 = "0.8"
 sha3 = "0.8"
-tokio = { version = "0.1", optional = true }
-tokio-io = { version = "0.1.10"  , optional = true }
-# tokio-rustls = { version = "=0.9.1", optional = true }
-tokio-tcp = { version = "0.1.4" , optional = true }
+tokio = { version = "0.2", optional = true }
+tokio-rustls = { version = "0.14.1", optional = true }
 unwrap = "1.2"
 # One of web3 dependencies is the old `tokio-uds 0.1.7` which fails cross-compiling to ARM.
 # We don't need the default web3 features at all since we added our own web3 transport using shared HYPER instance.

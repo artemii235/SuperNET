@@ -16,12 +16,12 @@ use futures::channel::oneshot as async_oneshot;
 #[cfg(not(feature = "native"))]
 use futures::channel::oneshot::Sender as ShotSender;
 use futures::compat::Future01CompatExt;
-use futures::future::{select as select_func, FutureExt, TryFutureExt};
+use futures::future::{select as select_func, Either, FutureExt, TryFutureExt};
 use futures::lock::Mutex as AsyncMutex;
 use futures::select;
 use futures01::future::{loop_fn, select_ok, Loop};
 use futures01::sync::{mpsc, oneshot};
-use futures01::{Future, Poll, Sink, Stream};
+use futures01::{Future, Sink, Stream};
 use futures_timer::{Delay, FutureExt as FutureTimerExt};
 use gstuff::{now_float, now_ms};
 use http::header::AUTHORIZATION;
@@ -30,8 +30,7 @@ use http::{Request, StatusCode};
 use keys::Address;
 #[cfg(test)] use mocktopus::macros::*;
 use rpc::v1::types::{Bytes as BytesJson, Transaction as RpcTransaction, VerboseBlockClient, H256 as H256Json};
-#[cfg(feature = "native")]
-// use rustls::{self};
+#[cfg(feature = "native")] use rustls::{self};
 use script::Builder;
 use serde_json::{self as json, Value as Json};
 use serialization::{deserialize, serialize, CompactInteger, Reader};
@@ -47,16 +46,12 @@ use std::ops::Deref;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::Arc;
 use std::time::Duration;
-#[cfg(feature = "native")] use tokio::codec::{Decoder, Encoder};
-#[cfg(feature = "native")] use tokio_io::{AsyncRead, AsyncWrite};
-// #[cfg(feature = "native")]
-// use tokio_rustls::{TlsConnector, TlsStream};
-// #[cfg(feature = "native")]
-// use tokio_rustls::webpki::DNSNameRef;
-#[cfg(feature = "native")] use tokio_tcp::TcpStream;
-// #[cfg(feature = "native")] use webpki_roots::TLS_SERVER_ROOTS;
+#[cfg(feature = "native")] use tokio::net::TcpStream;
+#[cfg(feature = "native")] use tokio_rustls::webpki::DNSNameRef;
+#[cfg(feature = "native")]
+use tokio_rustls::{TlsConnector, TlsStream};
+#[cfg(feature = "native")] use webpki_roots::TLS_SERVER_ROOTS;
 
-/*
 /// Skips the server certificate verification on TLS connection
 pub struct NoCertificateVerification {}
 
@@ -72,7 +67,6 @@ impl rustls::ServerCertVerifier for NoCertificateVerification {
         Ok(rustls::ServerCertVerified::assertion())
     }
 }
-*/
 
 #[derive(Debug)]
 pub enum UtxoRpcClientEnum {
@@ -879,18 +873,16 @@ pub fn spawn_electrum(
             let uri: Uri = try_s!(req.url.parse());
             let host = try_s!(uri.host().ok_or(ERRL!("Couldn't retrieve host from addr {}", req.url)));
 
-            /*
             #[cfg(feature = "native")]
             fn check(host: &str) -> Result<(), String> {
                 DNSNameRef::try_from_ascii_str(host)
                     .map(|_| ())
                     .map_err(|e| fomat!([e]))
             }
-            */
             #[cfg(not(feature = "native"))]
             fn check(_host: &str) -> Result<(), String> { Ok(()) }
 
-            // try_s!(check(host));
+            try_s!(check(host));
 
             ElectrumConfig::SSL {
                 dns_name: host.into(),
@@ -1615,7 +1607,7 @@ macro_rules! try_loop {
 #[allow(dead_code)]
 enum ElectrumStream {
     Tcp(TcpStream),
-    Tls(TcpStream),
+    Tls(TlsStream<TcpStream>),
 }
 
 #[cfg(feature = "native")]
@@ -1623,47 +1615,7 @@ impl AsRef<TcpStream> for ElectrumStream {
     fn as_ref(&self) -> &TcpStream {
         match self {
             ElectrumStream::Tcp(stream) => stream,
-            ElectrumStream::Tls(stream) => stream,
-        }
-    }
-}
-
-#[cfg(feature = "native")]
-impl std::io::Read for ElectrumStream {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        match self {
-            ElectrumStream::Tcp(stream) => stream.read(buf),
-            ElectrumStream::Tls(stream) => stream.read(buf),
-        }
-    }
-}
-
-#[cfg(feature = "native")]
-impl AsyncRead for ElectrumStream {}
-
-#[cfg(feature = "native")]
-impl std::io::Write for ElectrumStream {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        match self {
-            ElectrumStream::Tcp(stream) => stream.write(buf),
-            ElectrumStream::Tls(stream) => stream.write(buf),
-        }
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        match self {
-            ElectrumStream::Tcp(stream) => stream.flush(),
-            ElectrumStream::Tls(stream) => stream.flush(),
-        }
-    }
-}
-
-#[cfg(feature = "native")]
-impl AsyncWrite for ElectrumStream {
-    fn shutdown(&mut self) -> Poll<(), std::io::Error> {
-        match self {
-            ElectrumStream::Tcp(stream) => stream.shutdown(),
-            ElectrumStream::Tls(stream) => stream.shutdown(),
+            ElectrumStream::Tls(stream) => stream.get_ref().0,
         }
     }
 }
@@ -1701,11 +1653,12 @@ async fn connect_loop(
         let socket_addr = try_loop!(addr_to_socket_addr(&addr), addr, delay);
 
         let connect_f = match config.clone() {
-            ElectrumConfig::TCP => TcpStream::connect(&socket_addr).map(ElectrumStream::Tcp),
-            ElectrumConfig::SSL { .. } => {
-                unimplemented!()
-                /*
-                let mut ssl_config = ClientConfig::new();
+            ElectrumConfig::TCP => Either::Left(TcpStream::connect(&socket_addr).map_ok(ElectrumStream::Tcp)),
+            ElectrumConfig::SSL {
+                dns_name,
+                skip_validation,
+            } => {
+                let mut ssl_config = rustls::ClientConfig::new();
                 ssl_config.root_store.add_server_trust_anchors(&TLS_SERVER_ROOTS);
                 if skip_validation {
                     ssl_config
@@ -1714,16 +1667,15 @@ async fn connect_loop(
                 }
                 let tls_connector = TlsConnector::from(Arc::new(ssl_config));
 
-                Either::B(TcpStream::connect(&socket_addr).and_then(move |stream| {
+                Either::Right(TcpStream::connect(&socket_addr).and_then(move |stream| {
                     // Can use `unwrap` cause `dns_name` is pre-checked.
                     let dns = unwrap!(DNSNameRef::try_from_ascii_str(&dns_name).map_err(|e| fomat!([e])));
-                    tls_connector.connect(dns, stream).map(ElectrumStream::Tls)
+                    tls_connector.connect(dns, stream).map_ok(ElectrumStream::Tls)
                 }))
-                */
             },
         };
 
-        let stream = try_loop!(connect_f.compat().await, addr, delay);
+        let stream = try_loop!(connect_f.await, addr, delay);
         try_loop!(stream.as_ref().set_nodelay(true), addr, delay);
         // reset the delay if we've connected successfully
         delay = 0;
@@ -1739,7 +1691,7 @@ async fn connect_loop(
             event_handlers.on_outgoing_request(&data);
         });
 
-        let (sink, stream) = Bytes.framed(stream).split();
+        let (sink, stream) = stream.into_split();
         let mut recv_f = stream
             .for_each(|chunk| {
                 // measure the length of each sent packet
@@ -1831,38 +1783,6 @@ fn electrum_connect(
     _event_handlers: Vec<RpcTransportEventHandlerShared>,
 ) -> ElectrumConnection {
     unimplemented!()
-}
-
-/// A simple `Codec` implementation that reads buffer until \n according to Electrum protocol specification:
-/// https://electrumx.readthedocs.io/en/latest/protocol-basics.html#message-stream
-///
-/// Implementation adopted from https://github.com/tokio-rs/tokio/blob/master/examples/connect.rs#L84
-pub struct Bytes;
-
-#[cfg(feature = "native")]
-impl Decoder for Bytes {
-    type Item = BytesMut;
-    type Error = io::Error;
-
-    fn decode(&mut self, buf: &mut BytesMut) -> io::Result<Option<BytesMut>> {
-        let len = buf.len();
-        if len > 0 && buf[len - 1] == b'\n' {
-            Ok(Some(buf.split_to(len)))
-        } else {
-            Ok(None)
-        }
-    }
-}
-
-#[cfg(feature = "native")]
-impl Encoder for Bytes {
-    type Item = Vec<u8>;
-    type Error = io::Error;
-
-    fn encode(&mut self, data: Vec<u8>, buf: &mut BytesMut) -> io::Result<()> {
-        buf.extend_from_slice(&data);
-        Ok(())
-    }
 }
 
 fn electrum_request(
