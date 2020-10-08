@@ -4,7 +4,6 @@
 
 use crate::{RpcTransportEventHandler, RpcTransportEventHandlerShared};
 use bigdecimal::BigDecimal;
-use bytes::BytesMut;
 use chain::{BlockHeader, OutPoint, Transaction as UtxoTx};
 use common::custom_futures::{join_all_sequential, select_ok_sequential};
 use common::executor::{spawn, Timer};
@@ -15,10 +14,11 @@ use common::{median, OrdRange, StringError};
 use futures::channel::oneshot as async_oneshot;
 #[cfg(not(feature = "native"))]
 use futures::channel::oneshot::Sender as ShotSender;
-use futures::compat::Future01CompatExt;
+use futures::compat::{Future01CompatExt, Stream01CompatExt};
 use futures::future::{select as select_func, Either, FutureExt, TryFutureExt};
+use futures::io::Error;
 use futures::lock::Mutex as AsyncMutex;
-use futures::select;
+use futures::{select, StreamExt};
 use futures01::future::{loop_fn, select_ok, Loop};
 use futures01::sync::{mpsc, oneshot};
 use futures01::{Future, Sink, Stream};
@@ -43,13 +43,17 @@ use std::net::{SocketAddr, ToSocketAddrs};
 use std::num::NonZeroU64;
 use std::ops::Deref;
 #[cfg(not(feature = "native"))] use std::os::raw::c_char;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::Duration;
+#[cfg(feature = "native")]
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 #[cfg(feature = "native")] use tokio::net::TcpStream;
 #[cfg(feature = "native")] use tokio_rustls::webpki::DNSNameRef;
 #[cfg(feature = "native")]
-use tokio_rustls::{TlsConnector, TlsStream};
+use tokio_rustls::{client::TlsStream, TlsConnector};
 #[cfg(feature = "native")] use webpki_roots::TLS_SERVER_ROOTS;
 
 /// Skips the server certificate verification on TLS connection
@@ -1521,7 +1525,7 @@ fn rx_to_stream(rx: mpsc::Receiver<Vec<u8>>) -> impl Stream<Item = Vec<u8>, Erro
 }
 
 async fn electrum_process_chunk(
-    chunk: BytesMut,
+    chunk: &[u8],
     arc: Arc<AsyncMutex<HashMap<String, async_oneshot::Sender<JsonRpcResponse>>>>,
 ) {
     // we should split the received chunk because we can get several responses in 1 chunk.
@@ -1620,17 +1624,47 @@ impl AsRef<TcpStream> for ElectrumStream {
     }
 }
 
+impl AsyncRead for ElectrumStream {
+    fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
+        match self.get_mut() {
+            ElectrumStream::Tcp(ref mut stream) => AsyncRead::poll_read(Pin::new(stream), cx, buf),
+            ElectrumStream::Tls(ref mut stream) => AsyncRead::poll_read(Pin::new(stream), cx, buf),
+        }
+    }
+}
+
+impl AsyncWrite for ElectrumStream {
+    fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+        match self.get_mut() {
+            ElectrumStream::Tcp(ref mut stream) => AsyncWrite::poll_write(Pin::new(stream), cx, buf),
+            ElectrumStream::Tls(ref mut stream) => AsyncWrite::poll_write(Pin::new(stream), cx, buf),
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
+        match self.get_mut() {
+            ElectrumStream::Tcp(ref mut stream) => AsyncWrite::poll_flush(Pin::new(stream), cx),
+            ElectrumStream::Tls(ref mut stream) => AsyncWrite::poll_flush(Pin::new(stream), cx),
+        }
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
+        match self.get_mut() {
+            ElectrumStream::Tcp(ref mut stream) => AsyncWrite::poll_shutdown(Pin::new(stream), cx),
+            ElectrumStream::Tls(ref mut stream) => AsyncWrite::poll_shutdown(Pin::new(stream), cx),
+        }
+    }
+}
+
 const ELECTRUM_TIMEOUT: u64 = 60;
 
-async fn electrum_last_chunk_loop(last_chunk: Arc<AtomicU64>) -> Result<(), String> {
+async fn electrum_last_chunk_loop(last_chunk: Arc<AtomicU64>) {
     loop {
         Timer::sleep(ELECTRUM_TIMEOUT as f64).await;
         let last = (last_chunk.load(AtomicOrdering::Relaxed) / 1000) as f64;
         if now_float() - last > ELECTRUM_TIMEOUT as f64 {
-            break ERR!(
-                "Didn't receive any data since {}. Shutting down the connection.",
-                last as i64
-            );
+            log!("Didn't receive any data since " (last as i64) ". Shutting down the connection.");
+            break;
         }
     }
 }
@@ -1691,44 +1725,62 @@ async fn connect_loop(
             event_handlers.on_outgoing_request(&data);
         });
 
-        let (sink, stream) = stream.into_split();
-        let mut recv_f = stream
-            .for_each(|chunk| {
-                // measure the length of each sent packet
-                event_handlers.on_incoming_response(&chunk);
+        let (read, mut write) = tokio::io::split(stream);
+        let recv_f = {
+            let addr = addr.clone();
+            let responses = responses.clone();
+            async move {
+                let mut buffer = String::with_capacity(1024);
+                let mut buf_reader = BufReader::new(read);
+                loop {
+                    match buf_reader.read_line(&mut buffer).await {
+                        Ok(c) => {
+                            if c == 0 {
+                                log!("EOF from"(addr));
+                                break;
+                            }
+                        },
+                        Err(e) => {
+                            log!("Error on read "(e) " from "(addr));
+                            break;
+                        },
+                    };
+                    last_chunk.store(now_ms(), AtomicOrdering::Relaxed);
+                    electrum_process_chunk(buffer.as_bytes(), responses.clone()).await;
+                    buffer.clear();
+                }
+            }
+        };
+        let mut recv_f = Box::pin(recv_f).fuse();
 
-                last_chunk.store(now_ms(), AtomicOrdering::Relaxed);
-                electrum_process_chunk(chunk, responses.clone())
-                    .unit_error()
-                    .boxed()
-                    .compat()
-                    .then(|_| Ok(()))
-            })
-            .compat()
-            .fuse();
-
-        // this forwards the messages from rx to sink (write) part of tcp stream
-        let mut send_f = sink.send_all(rx).compat().fuse();
-        macro_rules! reset_tx_and_continue {
-            ($e: expr) => { match $e {
-                    Ok(_) => {
-                        log!([addr] " stopped with Ok");
-                        *connection_tx.lock().await = None;
-                        continue;
-                    },
-                    Err(e) => {
-                        log!([addr] " error " [e]);
-                        *connection_tx.lock().await = None;
-                        continue;
+        let send_f = {
+            let addr = addr.clone();
+            let mut rx = rx.compat();
+            async move {
+                loop {
+                    let msg = match rx.next().await {
+                        Some(Ok(bytes)) => bytes,
+                        _ => break,
+                    };
+                    if let Err(e) = write.write_all(&msg).await {
+                        log!("Write error "(e) " to " (addr));
                     }
                 }
             }
+        };
+        let mut send_f = Box::pin(send_f).fuse();
+        macro_rules! reset_tx_and_continue {
+            () => {
+                log!([addr] " connection dropped");
+                *connection_tx.lock().await = None;
+                continue;
+            };
         }
 
         select! {
-            last_chunk = last_chunk_f => reset_tx_and_continue!(last_chunk),
-            recv = recv_f => reset_tx_and_continue!(recv),
-            send = send_f => reset_tx_and_continue!(send),
+            last_chunk = last_chunk_f => { reset_tx_and_continue!(); },
+            recv = recv_f => { reset_tx_and_continue!(); },
+            send = send_f => { reset_tx_and_continue!(); },
         }
     }
 }
