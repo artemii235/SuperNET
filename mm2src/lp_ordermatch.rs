@@ -22,23 +22,20 @@
 
 use async_trait::async_trait;
 use bigdecimal::BigDecimal;
-use bitcrypto::sha256;
 use coins::utxo::{compressed_pub_key_from_priv_raw, ChecksumType};
-use coins::{lp_coinfind, lp_coinfindᵃ, BalanceUpdateEventHandler, MmCoinEnum};
+use coins::{lp_coinfindᵃ, BalanceUpdateEventHandler, MmCoinEnum};
 use common::executor::{spawn, Timer};
 use common::mm_ctx::{from_ctx, MmArc, MmWeak};
-use common::mm_number::{from_dec_to_ratio, from_ratio_to_dec, Fraction, MmNumber};
+use common::mm_number::{from_dec_to_ratio, Fraction, MmNumber};
 use common::{bits256, block_on, json_dir_entries, new_uuid, now_ms, remove_file, write};
 use either::Either;
 use futures::{compat::Future01CompatExt, lock::Mutex as AsyncMutex};
 use gstuff::slurp;
 use http::Response;
-use keys::{Public, Signature};
 use mm2_libp2p::{decode_signed, encode_and_sign, pub_sub_topic, PublicKey, TopicPrefix, TOPIC_SEPARATOR};
 #[cfg(test)] use mocktopus::macros::*;
 use num_rational::BigRational;
 use num_traits::identities::Zero;
-use primitives::hash::H256;
 use rpc::v1::types::H256 as H256Json;
 use serde_json::{self as json, Value as Json};
 use std::collections::hash_map::{Entry, HashMap};
@@ -2148,17 +2145,6 @@ pub async fn lp_auto_buy(
     Ok(result)
 }
 
-fn price_ping_sig_hash(timestamp: u32, pubsecp: &[u8], pubkey: &[u8], base: &[u8], rel: &[u8], price64: u64) -> H256 {
-    let mut input = vec![];
-    input.extend_from_slice(&timestamp.to_le_bytes());
-    input.extend_from_slice(pubsecp);
-    input.extend_from_slice(pubkey);
-    input.extend_from_slice(base);
-    input.extend_from_slice(rel);
-    input.extend_from_slice(&price64.to_le_bytes());
-    sha256(&input)
-}
-
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 struct PricePingRequest {
     method: String,
@@ -2181,54 +2167,6 @@ struct PricePingRequest {
 }
 
 impl PricePingRequest {
-    fn new(ctx: &MmArc, order: &MakerOrder, balance: BigDecimal) -> Result<PricePingRequest, String> {
-        let public_id = try_s!(ctx.public_id());
-        // not used anywhere
-        let price64 = 0;
-        let timestamp = now_ms() / 1000;
-        let sig_hash = price_ping_sig_hash(
-            timestamp as u32,
-            &**ctx.secp256k1_key_pair().public(),
-            &public_id.bytes,
-            order.base.as_bytes(),
-            order.rel.as_bytes(),
-            price64,
-        );
-
-        let sig = try_s!(ctx.secp256k1_key_pair().private().sign(&sig_hash));
-
-        let available_amount: BigRational = order.available_amount().into();
-        let min_amount = BigRational::new(777.into(), 100_000.into());
-        let max_volume = if available_amount > min_amount {
-            let my_balance = from_dec_to_ratio(balance);
-            if available_amount <= my_balance && available_amount > BigRational::from_integer(0.into()) {
-                available_amount
-            } else {
-                my_balance
-            }
-        } else {
-            BigRational::from_integer(0.into())
-        };
-
-        Ok(PricePingRequest {
-            method: "postprice".into(),
-            pubkey: hex::encode(&public_id.bytes),
-            base: order.base.clone(),
-            rel: order.rel.clone(),
-            price64: price64.to_string(),
-            price: order.price.to_decimal(),
-            price_rat: Some(order.price.clone()),
-            timestamp,
-            pubsecp: hex::encode(&**ctx.secp256k1_key_pair().public()),
-            sig: hex::encode(&*sig),
-            balance: from_ratio_to_dec(&max_volume),
-            balance_rat: Some(max_volume.into()),
-            uuid: Some(order.uuid),
-            peer_id: ctx.peer_id.or(&|| panic!()).clone(),
-            initial_message: vec![],
-        })
-    }
-
     fn from_initial_msg(initial_message: Vec<u8>, from_peer: String) -> Result<PricePingRequest, String> {
         let (message, _sig, pubkey) = try_s!(decode_signed::<new_protocol::OrdermatchMessage>(&initial_message));
         let order = match message {
@@ -2245,59 +2183,6 @@ impl PricePingRequest {
             .into();
         Ok(req)
     }
-}
-
-pub async fn lp_post_price_recv(ctx: &MmArc, req: Json) -> Result<(), String> {
-    let req: PricePingRequest = try_s!(json::from_value(req));
-    let signature: Signature = try_s!(req.sig.parse());
-    let pubkey_bytes = try_s!(hex::decode(&req.pubsecp));
-    // return success response to avoid excessive logging of
-    // RPC error response: lp_ordermatch:852] sender pubkey 03eb26aab2e22fd2507042d1c472b3f973d629d295d391faf7b68ac5b85197ec80 is banned""
-    // messages
-    if is_pubkey_banned(ctx, &H256Json::from(&pubkey_bytes[1..])) {
-        return ERR!("sender pubkey {} is banned", req.pubsecp);
-    }
-    let pub_secp = try_s!(Public::from_slice(&pubkey_bytes));
-    let pubkey = try_s!(hex::decode(&req.pubkey));
-    let sig_hash = price_ping_sig_hash(
-        req.timestamp as u32,
-        &*pub_secp,
-        &pubkey,
-        req.base.as_bytes(),
-        req.rel.as_bytes(),
-        try_s!(req.price64.parse()),
-    );
-    let sig_check = try_s!(pub_secp.verify(&sig_hash, &signature));
-    if sig_check {
-        // identify the order by first 16 bytes of node pubkey to keep backwards-compatibility
-        // TODO remove this when all nodes are updated
-        let mut bytes = [0; 16];
-        bytes.copy_from_slice(&pubkey[..16]);
-        let uuid = req.uuid.unwrap_or_else(|| Uuid::from_bytes(bytes));
-        let ordermatch_ctx: Arc<OrdermatchContext> = try_s!(OrdermatchContext::from_ctx(ctx));
-        let mut orderbook = ordermatch_ctx.orderbook.lock().await;
-        orderbook.insert_or_update_order(uuid, req);
-        Ok(())
-    } else {
-        ERR!("price ping invalid signature")
-    }
-}
-
-fn lp_send_price_ping(req: &PricePingRequest, ctx: &MmArc) -> Result<(), String> {
-    let req_value = try_s!(json::to_value(req));
-    let ctxʹ = ctx.clone();
-    ctx.broadcast_p2p_msg(orderbook_topic(&req.base, &req.rel), try_s!(json::to_vec(&req_value)));
-
-    // TODO this is required to process the set price message on our own node, it's the easiest way now
-    //      there might be a better way of doing this so we should consider refactoring
-    spawn(async move {
-        let rc = lp_post_price_recv(&ctxʹ, req_value).await;
-        if let Err(err) = rc {
-            log!("!lp_post_price_recv: "(err))
-        }
-    });
-
-    Ok(())
 }
 
 fn one() -> u8 { 1 }
@@ -2376,6 +2261,7 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
     let new_order = try_s!(builder.build());
     let request_orderbook = false;
     try_s!(subscribe_to_orderbook_topic(&ctx, &new_order.base, &new_order.rel, request_orderbook).await);
+    save_my_maker_order(&ctx, &new_order);
     maker_order_created_p2p_notify(ctx.clone(), &new_order).await;
 
     let ordermatch_ctx = try_s!(OrdermatchContext::from_ctx(&ctx));
@@ -2406,81 +2292,6 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
     let res = try_s!(json::to_vec(&json!({ "result": new_order })));
     my_orders.insert(new_order.uuid, new_order);
     Ok(try_s!(Response::builder().body(res)))
-}
-
-pub async fn broadcast_my_maker_orders(ctx: &MmArc) -> Result<(), String> {
-    let ordermatch_ctx = try_s!(OrdermatchContext::from_ctx(ctx));
-    let my_orders = ordermatch_ctx.my_maker_orders.lock().await.clone();
-    for (_, order) in my_orders {
-        let base_coin = match try_s!(lp_coinfindᵃ(ctx, &order.base).await) {
-            Some(coin) => coin,
-            None => {
-                ctx.log.log(
-                    "",
-                    &[&"broadcast_my_maker_orders", &order.base, &order.rel],
-                    "base coin is not active yet",
-                );
-                continue;
-            },
-        };
-
-        let _rel_coin = match try_s!(lp_coinfindᵃ(ctx, &order.rel).await) {
-            Some(coin) => coin,
-            None => {
-                ctx.log.log(
-                    "",
-                    &[&"broadcast_my_maker_orders", &order.base, &order.rel],
-                    "rel coin is not active yet",
-                );
-                continue;
-            },
-        };
-
-        let balance = match base_coin.my_balance().compat().await {
-            Ok(b) => b,
-            Err(e) => {
-                ctx.log.log(
-                    "",
-                    &[&"broadcast_my_maker_orders", &order.base, &order.rel],
-                    &format!("failed to get balance of base coin: {}", e),
-                );
-                continue;
-            },
-        };
-
-        if balance >= MIN_TRADING_VOL.parse().unwrap() {
-            let ping = match PricePingRequest::new(ctx, &order, balance) {
-                Ok(p) => p,
-                Err(e) => {
-                    ctx.log.log(
-                        "",
-                        &[&"broadcast_my_maker_orders", &order.base, &order.rel],
-                        &format!("ping request creation failed {}", e),
-                    );
-                    continue;
-                },
-            };
-
-            if let Err(e) = lp_send_price_ping(&ping, ctx) {
-                ctx.log.log(
-                    "",
-                    &[&"broadcast_my_maker_orders", &order.base, &order.rel],
-                    &format!("ping request send failed {}", e),
-                );
-                continue;
-            }
-        } else {
-            // cancel the order if available balance is lower than MIN_TRADING_VOL
-            let order = ordermatch_ctx.my_maker_orders.lock().await.remove(&order.uuid);
-            if let Some(mut order) = order {
-                // TODO cancelling means setting volume to 0 as of now, should refactor
-                order.max_base_vol = 0.into();
-                maker_order_cancelled_p2p_notify(ctx.clone(), &order).await;
-            }
-        }
-    }
-
-    Ok(())
 }
 
 /// Result of match_order_and_request function
