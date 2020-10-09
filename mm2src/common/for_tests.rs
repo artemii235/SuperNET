@@ -2,6 +2,7 @@
 
 #![cfg_attr(not(feature = "native"), allow(unused_variables))]
 
+use crate::block_on;
 use bytes::Bytes;
 use chrono::{Local, TimeZone};
 use futures::channel::oneshot::channel;
@@ -342,7 +343,7 @@ impl MarketMakerIt {
         let request = try_s!(Request::builder().method("POST").uri(uri).body(payload));
         #[cfg(feature = "native")]
         {
-            let (status, headers, body) = try_s!(slurp_req(request).wait());
+            let (status, headers, body) = try_s!(block_on(slurp_req(request)));
             Ok((status, try_s!(from_utf8(&body)).trim().into(), headers))
         }
         #[cfg(not(feature = "native"))]
@@ -362,7 +363,7 @@ impl MarketMakerIt {
     pub fn rpc_str(&self, payload: &'static str) -> Result<(StatusCode, String, HeaderMap), String> {
         let uri = format!("http://{}:7783", self.ip);
         let request = try_s!(Request::builder().method("POST").uri(uri).body(payload.into()));
-        let (status, headers, body) = try_s!(slurp_req(request).wait());
+        let (status, headers, body) = try_s!(block_on(slurp_req(request)));
         Ok((status, try_s!(from_utf8(&body)).trim().into(), headers))
     }
 

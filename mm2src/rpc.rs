@@ -23,14 +23,13 @@
 use bytes::Bytes;
 use coins::{convert_address, get_enabled_coins, get_trade_fee, kmd_rewards_info, my_tx_history, send_raw_transaction,
             set_required_confirmations, set_requires_notarization, show_priv_key, validate_address, withdraw};
-use common::lift_body::LiftBody;
 use common::mm_ctx::MmArc;
 #[cfg(feature = "native")]
 use common::wio::{CORE, CPUPOOL, HTTP};
 use common::{err_to_rpc_json_string, err_tp_rpc_json, HyRes};
 use futures::compat::{Compat, Future01CompatExt};
-use futures::future::{join_all, FutureExt, TryFutureExt};
-use futures01::{self, Future, Stream};
+use futures::future::{join_all, Future, FutureExt, TryFutureExt};
+use futures01::{self, Stream};
 use gstuff;
 use http::header::{HeaderValue, ACCESS_CONTROL_ALLOW_ORIGIN};
 use http::request::Parts;
@@ -39,7 +38,7 @@ use http::{Method, Request, Response};
 use serde_json::{self as json, Value as Json};
 use std::future::Future as Future03;
 use std::net::SocketAddr;
-#[cfg(feature = "native")] use tokio_core::net::TcpListener;
+use std::pin::Pin;
 
 use crate::mm2::lp_ordermatch::{buy, cancel_all_orders, cancel_order, my_orders, order_status, orderbook, sell,
                                 set_price};
@@ -48,6 +47,7 @@ use crate::mm2::lp_swap::{coins_needed_for_kick_start, import_swaps, list_banned
 
 #[path = "rpc/lp_commands.rs"] pub mod lp_commands;
 use self::lp_commands::*;
+use futures::task::{Context, Poll};
 
 /// Lists the RPC method not requiring the "userpass" authentication.  
 /// None is also public to skip auth and display proper error in case of method is missing
@@ -197,7 +197,7 @@ pub fn dispatcher(req: Json, ctx: MmArc) -> DispatcherRes {
     })
 }
 
-type RpcRes = Box<dyn Future<Item = Response<LiftBody<Vec<u8>>>, Error = String> + Send>;
+type RpcRes = Pin<Box<dyn Future<Output = Result<Response<Vec<u8>>, http::Error>> + Send>>;
 
 async fn rpc_serviceʹ(
     ctx: MmArc,
@@ -255,7 +255,7 @@ async fn process_single_request(ctx: MmArc, req: Json, client: SocketAddr) -> Re
 }
 
 #[cfg(feature = "native")]
-async fn rpc_service(req: Request<hyper::Body>, ctx_h: u32, client: SocketAddr) -> Response<LiftBody<Vec<u8>>> {
+async fn rpc_service(req: Request<hyper::Body>, ctx_h: u32, client: SocketAddr) -> Response<Vec<u8>> {
     macro_rules! try_sf {
         ($value: expr) => {
             match $value {
@@ -263,9 +263,7 @@ async fn rpc_service(req: Request<hyper::Body>, ctx_h: u32, client: SocketAddr) 
                 Err(err) => {
                     log!("RPC error response: "(err));
                     let ebody = err_to_rpc_json_string(&fomat!((err)));
-                    return unwrap!(Response::builder()
-                        .status(500)
-                        .body(LiftBody::from(Vec::from(ebody))));
+                    return unwrap!(Response::builder().status(500).body(Vec::from(ebody)));
                 },
             }
         };
@@ -295,24 +293,25 @@ async fn rpc_service(req: Request<hyper::Body>, ctx_h: u32, client: SocketAddr) 
             return unwrap!(Response::builder()
                 .status(500)
                 .header(ACCESS_CONTROL_ALLOW_ORIGIN, rpc_cors)
-                .body(LiftBody::from(Vec::from(ebody))));
+                .body(Vec::from(ebody)));
         },
     };
     parts.headers.insert(ACCESS_CONTROL_ALLOW_ORIGIN, rpc_cors);
-    Response::from_parts(parts, LiftBody::from(body))
+    Response::from_parts(parts, body)
 }
 
 #[cfg(feature = "native")]
-impl Service for RpcService {
-    type ReqBody = hyper::Body;
-    type ResBody = LiftBody<Vec<u8>>;
-    type Error = String;
-    type Future = RpcRes;
+impl Service<Request<Vec<u8>>> for RpcService {
+    type Response = Response<Vec<u8>>;
+    type Error = http::Error;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>>>>;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> { Poll::Ready(Ok(())) }
 
     fn call(&mut self, req: Request<hyper::Body>) -> Self::Future {
         let f = rpc_service(req, self.ctx_h, self.client);
         let f = Compat::new(Box::pin(f.map(|r| -> Result<_, String> { Ok(r) })));
-        Box::new(f)
+        Box::pin(f)
     }
 }
 

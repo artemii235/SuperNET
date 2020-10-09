@@ -31,14 +31,15 @@ crossbeam = "0.7"
 findshlibs = "0.5"
 fomat-macros = "0.2"
 futures01 = { version = "0.1", package = "futures" }
-futures = { version = "0.3.1", package = "futures", features = ["compat", "async-await"] }
+futures = { version = "0.3", package = "futures", features = ["compat", "async-await"] }
+futures-util = { version = "0.3", default-features = false }
 futures-cpupool = "0.1"
 gstuff = { version = "0.6", features = ["nightly"] }
 hdrhistogram = "7.0"
 hex = "0.3.2"
-http = "0.1"
+http = "0.2"
 http-body = "0.1"
-hyper = { version = "0.12", optional = true }
+hyper = { version = "0.13", optional = true }
 hyper-tls = { version = "0.3" }
 hyper-rustls = { version = "0.20", optional = true }
 itertools = "0.8"

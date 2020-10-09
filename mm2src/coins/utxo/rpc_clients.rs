@@ -1627,8 +1627,8 @@ impl AsRef<TcpStream> for ElectrumStream {
 impl AsyncRead for ElectrumStream {
     fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
         match self.get_mut() {
-            ElectrumStream::Tcp(ref mut stream) => AsyncRead::poll_read(Pin::new(stream), cx, buf),
-            ElectrumStream::Tls(ref mut stream) => AsyncRead::poll_read(Pin::new(stream), cx, buf),
+            ElectrumStream::Tcp(stream) => AsyncRead::poll_read(Pin::new(stream), cx, buf),
+            ElectrumStream::Tls(stream) => AsyncRead::poll_read(Pin::new(stream), cx, buf),
         }
     }
 }
@@ -1636,22 +1636,22 @@ impl AsyncRead for ElectrumStream {
 impl AsyncWrite for ElectrumStream {
     fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
         match self.get_mut() {
-            ElectrumStream::Tcp(ref mut stream) => AsyncWrite::poll_write(Pin::new(stream), cx, buf),
-            ElectrumStream::Tls(ref mut stream) => AsyncWrite::poll_write(Pin::new(stream), cx, buf),
+            ElectrumStream::Tcp(stream) => AsyncWrite::poll_write(Pin::new(stream), cx, buf),
+            ElectrumStream::Tls(stream) => AsyncWrite::poll_write(Pin::new(stream), cx, buf),
         }
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
         match self.get_mut() {
-            ElectrumStream::Tcp(ref mut stream) => AsyncWrite::poll_flush(Pin::new(stream), cx),
-            ElectrumStream::Tls(ref mut stream) => AsyncWrite::poll_flush(Pin::new(stream), cx),
+            ElectrumStream::Tcp(stream) => AsyncWrite::poll_flush(Pin::new(stream), cx),
+            ElectrumStream::Tls(stream) => AsyncWrite::poll_flush(Pin::new(stream), cx),
         }
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
         match self.get_mut() {
-            ElectrumStream::Tcp(ref mut stream) => AsyncWrite::poll_shutdown(Pin::new(stream), cx),
-            ElectrumStream::Tls(ref mut stream) => AsyncWrite::poll_shutdown(Pin::new(stream), cx),
+            ElectrumStream::Tcp(stream) => AsyncWrite::poll_shutdown(Pin::new(stream), cx),
+            ElectrumStream::Tls(stream) => AsyncWrite::poll_shutdown(Pin::new(stream), cx),
         }
     }
 }

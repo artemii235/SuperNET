@@ -77,7 +77,6 @@ pub mod mm_number;
 pub mod privkey;
 pub mod seri;
 
-#[cfg(feature = "native")] pub mod lift_body;
 #[cfg(not(feature = "native"))]
 pub mod lift_body {
     #[derive(Debug)]
@@ -96,6 +95,7 @@ use futures::task::Waker;
 #[cfg(not(feature = "native"))]
 use futures::task::{Context, Poll as Poll03};
 use futures01::{future, task::Task, Future};
+use futures_util::{TryFutureExt, TryStreamExt};
 use gstuff::binprint;
 use hex::FromHex;
 use http::header::{HeaderValue, CONTENT_TYPE};
@@ -551,7 +551,7 @@ pub fn is_a_test_drill() -> bool {
     true
 }
 
-pub type SlurpFut = Box<dyn Future<Item = (StatusCode, HeaderMap, Vec<u8>), Error = String> + Send + 'static>;
+pub type SlurpRes = Result<(StatusCode, HeaderMap, Vec<u8>), String>;
 
 /// RPC response, returned by the RPC handlers.  
 /// NB: By default the future is executed on the shared asynchronous reactor (`CORE`),
@@ -640,21 +640,20 @@ pub mod wio {
 
 #[cfg(feature = "native")]
 pub mod wio {
-    use crate::lift_body::LiftBody;
-    use crate::SlurpFut;
+    use crate::SlurpRes;
     use bytes::Bytes;
     use futures::compat::Future01CompatExt;
     use futures::executor::ThreadPool;
+    use futures::StreamExt;
     use futures01::sync::oneshot::{self, Receiver};
     use futures01::{Async, Future, Poll};
     use futures_cpupool::CpuPool;
     use gstuff::{duration_to_float, now_float};
     use http::{HeaderMap, Method, Request, StatusCode};
     use hyper::client::HttpConnector;
-    use hyper::rt::Stream;
     use hyper::server::conn::Http;
-    use hyper::Client;
-    use hyper_tls::HttpsConnector;
+    use hyper::{Body, Client};
+    use hyper_rustls::HttpsConnector;
     use serde_bencode::de::from_bytes as bdecode;
     use serde_bencode::ser::to_bytes as bencode;
     use std::fmt;
@@ -801,7 +800,7 @@ pub mod wio {
 
     lazy_static! {
         /// NB: With a shared client there is a possibility that keep-alive connections will be reused.
-        pub static ref HYPER: Client<HttpsConnector<HttpConnector>, LiftBody<Vec<u8>>> = {
+        pub static ref HYPER: Client<HttpsConnector<HttpConnector>> = {
             let dns_threads = 2;
             let https = HttpsConnector::new(dns_threads).unwrap();
             Client::builder()
@@ -822,47 +821,32 @@ pub mod wio {
     }
 
     /// Executes a Hyper request, returning the response status, headers and body.
-    pub fn slurp_req(request: Request<Vec<u8>>) -> SlurpFut {
+    pub async fn slurp_req(request: Request<Vec<u8>>) -> SlurpRes {
         let (head, body) = request.into_parts();
-        let request = Request::from_parts(head, LiftBody::from(body));
+        let request = Request::from_parts(head, Body::from(body));
 
         let uri = fomat!((request.uri()));
         let request_f = HYPER.request(request);
-        let response_f = request_f.then(move |res| -> SlurpFut {
-            // Can fail with:
-            // "an IO error occurred: An existing connection was forcibly closed by the remote host. (os error 10054)" (on Windows)
-            // "an error occurred trying to connect: No connection could be made because the target machine actively refused it. (os error 10061)"
-            // "an error occurred trying to connect: Connection refused (os error 111)"
-            let res = match res {
-                Ok(r) => r,
-                Err(err) => return Box::new(futures01::future::err(ERRL!("Error accessing '{}': {}", uri, err))),
-            };
-            let status = res.status();
-            let headers = res.headers().clone();
-            let body = res.into_body();
-            let body_f = body.concat2();
-            let combined_f = body_f.then(move |body| -> Result<(StatusCode, HeaderMap, Vec<u8>), String> {
-                let body = try_s!(body);
-                Ok((status, headers, body.to_vec()))
-            });
-            Box::new(combined_f)
-        });
-        Box::new(drive_s(response_f))
+        let response = try_s!(request_f.await);
+        let status = response.status();
+        let headers = response.headers().clone();
+        let body = try_s!(response.body_mut().try_concat().await);
+        Ok((status, headers, body.to_vec()))
     }
 
     pub async fn slurp_reqʹ(request: Request<Vec<u8>>) -> Result<(StatusCode, HeaderMap, Vec<u8>), String> {
-        slurp_req(request).compat().await
+        slurp_req(request).await
     }
 
     pub async fn slurp_reqʰ(req: Bytes) -> Result<Vec<u8>, String> {
         let hhreq: super::HostedHttpRequest = try_s!(bdecode(&req));
         //log! ("slurp_reqʰ] " [=hhreq]);
 
-        let mut req = Request::builder();
-        req.method(try_s!(Method::from_bytes(hhreq.method.as_bytes())));
-        req.uri(hhreq.uri);
+        let mut req = Request::builder()
+            .method(try_s!(Method::from_bytes(hhreq.method.as_bytes())))
+            .uri(hhreq.uri);
         for (n, v) in hhreq.headers {
-            req.header(&n[..], &v[..]);
+            req = req.header(&n[..], &v[..]);
         }
         let req = try_s!(req.body(hhreq.body));
 
@@ -1032,7 +1016,9 @@ macro_rules! try_h {
 }
 
 /// Executes a GET request, returning the response status, headers and body.
-pub fn slurp_url(url: &str) -> SlurpFut { wio::slurp_req(try_fus!(Request::builder().uri(url).body(Vec::new()))) }
+pub async fn slurp_url(url: &str) -> SlurpRes {
+    wio::slurp_req(try_s!(Request::builder().uri(url).body(Vec::new()))).await
+}
 
 #[test]
 #[ignore]
@@ -1042,16 +1028,13 @@ fn test_slurp_req() {
 }
 
 /// Fetch URL by HTTPS and parse JSON response
-pub fn fetch_json<T>(url: &str) -> Box<dyn Future<Item = T, Error = String>>
+pub async fn fetch_json<T>(url: &str) -> Result<T, String>
 where
     T: serde::de::DeserializeOwned + Send + 'static,
 {
-    Box::new(slurp_url(url).and_then(|result| {
-        // try to parse as json with serde_json
-        let result = try_s!(serde_json::from_slice(&result.2));
-
-        Ok(result)
-    }))
+    let result = try_s!(slurp_url(url).await);
+    let result = try_s!(serde_json::from_slice(&result.2));
+    Ok(result)
 }
 
 /// Send POST JSON HTTPS request and parse response
