@@ -659,21 +659,15 @@ pub mod wio {
     use std::sync::Mutex;
     use std::thread::JoinHandle;
     use std::time::Duration;
-    use tokio01::runtime::Runtime as Runtime01;
-    use tokio02::runtime::Runtime as Runtime02;
+    use tokio::runtime::Runtime;
 
-    fn start_core_thread02() -> MM2Runtime { MM2Runtime(unwrap!(Runtime02::new())) }
+    fn start_core_thread() -> MM2Runtime { MM2Runtime(unwrap!(Runtime::new())) }
 
-    fn start_core_thread01() -> Runtime01 { unwrap!(Runtime01::new()) }
-
-    pub struct MM2Runtime(pub Runtime02);
+    pub struct MM2Runtime(pub Runtime);
 
     lazy_static! {
         /// Shared asynchronous reactor.
-        pub static ref CORE01: Runtime01 = start_core_thread01();
-
-        /// Shared asynchronous reactor.
-        pub static ref CORE: MM2Runtime = start_core_thread02();
+        pub static ref CORE: MM2Runtime = start_core_thread();
         /// Shared CPU pool to run intensive/sleeping requests on a separate thread.
         ///
         /// Deprecated, prefer the futures 0.3 `POOL` instead.
