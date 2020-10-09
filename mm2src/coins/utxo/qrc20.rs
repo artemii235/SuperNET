@@ -5,6 +5,7 @@ use crate::utxo::rpc_clients::UtxoRpcClientOps;
 use crate::{SwapOps, ValidateAddressResult};
 use bitcrypto::sha256;
 use common::block_on;
+use common::executor::Timer;
 use common::jsonrpc_client::{JsonRpcClient, JsonRpcErrorType, JsonRpcRequest, RpcRes};
 use common::mm_metrics::MetricsArc;
 use ethabi::{Function, Token};
@@ -1410,7 +1411,38 @@ impl MarketCoinOps for Qrc20Coin {
     }
 
     fn wait_for_tx_spend(&self, transaction: &[u8], wait_until: u64, from_block: u64) -> TransactionFut {
-        unimplemented!()
+        let selfi = self.clone();
+        let tx: UtxoTx = try_fus!(deserialize(transaction).map_err(|e| ERRL!("{:?}", e)));
+        let fut = async move {
+            let Erc20PaymentDetails { swap_id, receiver, .. } = try_s!(selfi.erc20_payment_details_from_tx(&tx).await);
+            loop {
+                // Try to find a 'receiverSpend' contract call.
+                // This means that we should request a transaction history for the possible spender of our payment - [`Erc20PaymentDetails::receiver`].
+                let found = try_s!(
+                    selfi
+                        .search_swap_tx_by_call_type_and_swap_id(
+                            &ContractCallType::ReceiverSpend,
+                            &swap_id,
+                            &receiver,
+                            from_block,
+                        )
+                        .await
+                );
+                if let Some(spent_tx) = found {
+                    return Ok(TransactionEnum::UtxoTx(spent_tx));
+                }
+
+                if now_ms() / 1000 > wait_until {
+                    return ERR!(
+                        "Waited too long until {} for transaction {:?} to be spent ",
+                        wait_until,
+                        tx
+                    );
+                }
+                Timer::sleep(10.).await;
+            }
+        };
+        Box::new(fut.boxed().compat())
     }
 
     fn tx_enum_from_bytes(&self, bytes: &[u8]) -> Result<TransactionEnum, String> {
