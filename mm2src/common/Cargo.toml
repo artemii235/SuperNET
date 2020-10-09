@@ -32,7 +32,6 @@ findshlibs = "0.5"
 fomat-macros = "0.2"
 futures01 = { version = "0.1", package = "futures" }
 futures = { version = "0.3", package = "futures", features = ["compat", "async-await"] }
-futures-util = { version = "0.3", default-features = false }
 futures-cpupool = "0.1"
 gstuff = { version = "0.6", features = ["nightly"] }
 hdrhistogram = "7.0"

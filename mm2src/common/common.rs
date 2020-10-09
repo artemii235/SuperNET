@@ -95,7 +95,6 @@ use futures::task::Waker;
 #[cfg(not(feature = "native"))]
 use futures::task::{Context, Poll as Poll03};
 use futures01::{future, task::Task, Future};
-use futures_util::{TryFutureExt, TryStreamExt};
 use gstuff::binprint;
 use hex::FromHex;
 use http::header::{HeaderValue, CONTENT_TYPE};
@@ -830,8 +829,15 @@ pub mod wio {
         let response = try_s!(request_f.await);
         let status = response.status();
         let headers = response.headers().clone();
-        let body = try_s!(response.body_mut().try_concat().await);
-        Ok((status, headers, body.to_vec()))
+        let mut body = response.into_body();
+        let mut output = Vec::new();
+
+        while let Some(chunk) = body.next().await {
+            let bytes = try_s!(chunk);
+            // Append this chunk to the vector.
+            output.extend(&bytes[..]);
+        }
+        Ok((status, headers, output))
     }
 
     pub async fn slurp_reqʹ(request: Request<Vec<u8>>) -> Result<(StatusCode, HeaderMap, Vec<u8>), String> {
