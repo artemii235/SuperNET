@@ -1,5 +1,4 @@
 use bytes::Bytes;
-use futures::compat::Compat;
 use gstuff::Constructible;
 #[cfg(not(feature = "native"))] use http::Response;
 use keys::{DisplayLayout, KeyPair, Private};
@@ -448,9 +447,8 @@ impl MmArc {
                 Timer::sleep(0.5).await
             }
 
-            Ok::<_, ()>(())
+            ()
         };
-        let shutdown_detector = Compat::new(Box::pin(shutdown_detector));
 
         prometheus::spawn_prometheus_exporter(self.metrics.weak(), address, shutdown_detector, credentials)
     }

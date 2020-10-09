@@ -643,7 +643,6 @@ pub mod wio {
     use bytes::Bytes;
     use futures::compat::Future01CompatExt;
     use futures::executor::ThreadPool;
-    use futures::StreamExt;
     use futures01::sync::oneshot::{self, Receiver};
     use futures01::{Async, Future, Poll};
     use futures_cpupool::CpuPool;
@@ -656,22 +655,25 @@ pub mod wio {
     use serde_bencode::de::from_bytes as bdecode;
     use serde_bencode::ser::to_bytes as bencode;
     use std::fmt;
+    use std::pin::Pin;
     use std::sync::Mutex;
     use std::thread::JoinHandle;
     use std::time::Duration;
     use tokio01::runtime::Runtime as Runtime01;
     use tokio02::runtime::Runtime as Runtime02;
 
-    fn start_core_thread02() -> Runtime02 { unwrap!(Runtime02::new()) }
+    fn start_core_thread02() -> MM2Runtime { MM2Runtime(unwrap!(Runtime02::new())) }
 
     fn start_core_thread01() -> Runtime01 { unwrap!(Runtime01::new()) }
+
+    pub struct MM2Runtime(pub Runtime02);
 
     lazy_static! {
         /// Shared asynchronous reactor.
         pub static ref CORE01: Runtime01 = start_core_thread01();
 
         /// Shared asynchronous reactor.
-        pub static ref CORE: Runtime02 = start_core_thread02();
+        pub static ref CORE: MM2Runtime = start_core_thread02();
         /// Shared CPU pool to run intensive/sleeping requests on a separate thread.
         ///
         /// Deprecated, prefer the futures 0.3 `POOL` instead.
@@ -683,6 +685,11 @@ pub mod wio {
             .create(), "!ThreadPool"));
         /// Shared HTTP server.
         pub static ref HTTP: Http = Http::new();
+    }
+
+    pub type BoxSendFuture = Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
+    impl<Fut: std::future::Future<Output = ()> + Send + 'static> hyper::rt::Executor<Fut> for &MM2Runtime {
+        fn execute(&self, fut: Fut) { self.0.spawn(fut); }
     }
 
     /// With a shared reactor drives the future `f` to completion.
@@ -698,13 +705,28 @@ pub mod wio {
         E: Send + 'static,
     {
         let (sx, rx) = oneshot::channel();
-        CORE.spawn(
+        CORE.0.spawn(
             f.then(move |fr: Result<R, E>| -> Result<(), ()> {
                 let _ = sx.send(fr);
                 Ok(())
             })
             .compat(),
         );
+        rx
+    }
+
+    pub fn drive03<F, O>(f: F) -> futures::channel::oneshot::Receiver<O>
+    where
+        F: std::future::Future<Output = O> + Send + 'static,
+        O: Send + 'static,
+    {
+        let (sx, rx) = futures::channel::oneshot::channel();
+        CORE.0.spawn(async move {
+            let res = f.await;
+            if let Err(_) = sx.send(res) {
+                log!("drive03 receiver is dropped");
+            };
+        });
         rx
     }
 
@@ -800,10 +822,9 @@ pub mod wio {
     lazy_static! {
         /// NB: With a shared client there is a possibility that keep-alive connections will be reused.
         pub static ref HYPER: Client<HttpsConnector<HttpConnector>> = {
-            let dns_threads = 2;
-            let https = HttpsConnector::new(dns_threads).unwrap();
+            let https = HttpsConnector::new();
             Client::builder()
-                .executor (CORE01.executor())
+                .executor(&*CORE)
                 // Hyper had a lot of Keep-Alive bugs over the years and I suspect
                 // that with the shared client we might be getting errno 10054
                 // due to a closed Keep-Alive connection mismanagement.
@@ -814,7 +835,7 @@ pub mod wio {
                 // ourselves with a custom connector or something).
                 // Performance of Keep-Alive in the Hyper client is questionable as well,
                 // should measure it on a case-by-case basis when we need it.
-                .keep_alive (false)
+                .pool_max_idle_per_host(0)
                 .build (https)
         };
     }
@@ -826,18 +847,12 @@ pub mod wio {
 
         let uri = fomat!((request.uri()));
         let request_f = HYPER.request(request);
-        let response = try_s!(request_f.await);
+        let response = try_s!(try_s!(drive03(request_f).await));
         let status = response.status();
         let headers = response.headers().clone();
-        let mut body = response.into_body();
-        let mut output = Vec::new();
-
-        while let Some(chunk) = body.next().await {
-            let bytes = try_s!(chunk);
-            // Append this chunk to the vector.
-            output.extend(&bytes[..]);
-        }
-        Ok((status, headers, output))
+        let body = response.into_body();
+        let output = try_s!(hyper::body::to_bytes(body).await);
+        Ok((status, headers, output.to_vec()))
     }
 
     pub async fn slurp_reqʹ(request: Request<Vec<u8>>) -> Result<(StatusCode, HeaderMap, Vec<u8>), String> {
@@ -893,7 +908,7 @@ pub mod executor {
     use std::thread;
     use std::time::Duration;
 
-    pub fn spawn(future: impl Future03<Output = ()> + Send + 'static) { crate::wio::CORE.spawn(future); }
+    pub fn spawn(future: impl Future03<Output = ()> + Send + 'static) { crate::wio::CORE.0.spawn(future); }
 
     pub fn spawn_boxed(future: Box<dyn Future03<Output = ()> + Send + Unpin + 'static>) { spawn(future); }
 
@@ -1027,9 +1042,8 @@ pub async fn slurp_url(url: &str) -> SlurpRes {
 }
 
 #[test]
-#[ignore]
 fn test_slurp_req() {
-    let (status, headers, body) = unwrap!(slurp_url("https://httpbin.org/get").wait());
+    let (status, headers, body) = unwrap!(block_on(slurp_url("https://httpbin.org/get")));
     assert!(status.is_success(), format!("{:?} {:?} {:?}", status, headers, body));
 }
 
@@ -1044,22 +1058,19 @@ where
 }
 
 /// Send POST JSON HTTPS request and parse response
-pub fn post_json<T>(url: &str, json: String) -> Box<dyn Future<Item = T, Error = String>>
+pub async fn post_json<T>(url: &str, json: String) -> Result<T, String>
 where
     T: serde::de::DeserializeOwned + Send + 'static,
 {
-    let request = try_fus!(Request::builder()
+    let request = try_s!(Request::builder()
         .method("POST")
         .uri(url)
         .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
         .body(json.into()));
 
-    Box::new(wio::slurp_req(request).and_then(|result| {
-        // try to parse as json with serde_json
-        let result = try_s!(serde_json::from_slice(&result.2));
-
-        Ok(result)
-    }))
+    let result = try_s!(wio::slurp_req(request).await);
+    let result = try_s!(serde_json::from_slice(&result.2));
+    Ok(result)
 }
 
 /// Wraps a JSON string into the `HyRes` RPC response future.

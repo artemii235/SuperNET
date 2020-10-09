@@ -387,8 +387,8 @@ impl JsonRpcClient for NativeClientImpl {
             .body(Vec::from(request_body)));
 
         let event_handles = self.event_handlers.clone();
-        Box::new(
-            slurp_req(http_request).then(move |result| -> Result<(JsonRpcRemoteAddr, JsonRpcResponse), String> {
+        Box::new(slurp_req(http_request).boxed().compat().then(
+            move |result| -> Result<(JsonRpcRemoteAddr, JsonRpcResponse), String> {
                 let res = try_s!(result);
                 // measure now only body length, because the `hyper` crate doesn't allow to get total HTTP packet length
                 event_handles.on_incoming_response(&res.2);
@@ -406,8 +406,8 @@ impl JsonRpcClient for NativeClientImpl {
 
                 let response = try_s!(json::from_str(body));
                 Ok((uri.into(), response))
-            }),
-        )
+            },
+        ))
     }
 }
 

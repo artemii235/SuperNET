@@ -2488,7 +2488,9 @@ impl GasStationData {
     }
 
     fn get_gas_price(uri: &str) -> Box<dyn Future<Item = U256, Error = String> + Send> {
-        Box::new(slurp_url(uri).and_then(|res| -> Result<U256, String> {
+        let uri = uri.to_owned();
+        let fut = async move { slurp_url(&uri).await };
+        Box::new(fut.boxed().compat().and_then(|res| -> Result<U256, String> {
             if res.0 != StatusCode::OK {
                 return ERR!("Gas price request failed with status code {}", res.0);
             }

@@ -7,7 +7,6 @@ use bytes::Bytes;
 use chrono::{Local, TimeZone};
 use futures::channel::oneshot::channel;
 use futures::task::SpawnExt;
-#[cfg(feature = "native")] use futures01::Future;
 use gstuff::ISATTY;
 use http::{HeaderMap, Request, StatusCode};
 use rand::Rng;
@@ -343,7 +342,7 @@ impl MarketMakerIt {
         let request = try_s!(Request::builder().method("POST").uri(uri).body(payload));
         #[cfg(feature = "native")]
         {
-            let (status, headers, body) = try_s!(block_on(slurp_req(request)));
+            let (status, headers, body) = try_s!(slurp_req(request).await);
             Ok((status, try_s!(from_utf8(&body)).trim().into(), headers))
         }
         #[cfg(not(feature = "native"))]

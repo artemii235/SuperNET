@@ -22,7 +22,6 @@
 #![cfg_attr(not(feature = "native"), allow(unused_variables))]
 
 use coins::register_balance_update_handler;
-use futures01::Future;
 use mm2_libp2p::start_gossipsub;
 use rand::rngs::SmallRng;
 use rand::{random, Rng, SeedableRng};
@@ -390,7 +389,7 @@ pub async fn lp_init(mypubport: u16, ctx: MmArc) -> Result<(), String> {
                 None => return ERR!("Can't fetch the real IP"),
             };
             log! ({"lp_init] Trying to fetch the real IP from '{}' ...", url});
-            let (status, _headers, ip) = match slurp_url(url).wait() {
+            let (status, _headers, ip) = match slurp_url(url).await {
                 Ok(t) => t,
                 Err(err) => {
                     log! ({"lp_init] Failed to fetch IP from '{}': {}", url, err});

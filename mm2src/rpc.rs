@@ -20,25 +20,22 @@
 #![cfg_attr(not(feature = "native"), allow(unused_imports))]
 #![cfg_attr(not(feature = "native"), allow(dead_code))]
 
-use bytes::Bytes;
 use coins::{convert_address, get_enabled_coins, get_trade_fee, kmd_rewards_info, my_tx_history, send_raw_transaction,
             set_required_confirmations, set_requires_notarization, show_priv_key, validate_address, withdraw};
 use common::mm_ctx::MmArc;
 #[cfg(feature = "native")]
 use common::wio::{CORE, CPUPOOL, HTTP};
 use common::{err_to_rpc_json_string, err_tp_rpc_json, HyRes};
-use futures::compat::{Compat, Future01CompatExt};
+use futures::compat::Future01CompatExt;
 use futures::future::{join_all, Future, FutureExt, TryFutureExt};
-use futures01::{self, Stream};
 use gstuff;
 use http::header::{HeaderValue, ACCESS_CONTROL_ALLOW_ORIGIN};
 use http::request::Parts;
 use http::{Method, Request, Response};
-#[cfg(feature = "native")] use hyper::{self, service::Service};
+#[cfg(feature = "native")] use hyper::{self, Server};
 use serde_json::{self as json, Value as Json};
 use std::future::Future as Future03;
 use std::net::SocketAddr;
-use std::pin::Pin;
 
 use crate::mm2::lp_ordermatch::{buy, cancel_all_orders, cancel_order, my_orders, order_status, orderbook, sell,
                                 set_price};
@@ -47,7 +44,7 @@ use crate::mm2::lp_swap::{coins_needed_for_kick_start, import_swaps, list_banned
 
 #[path = "rpc/lp_commands.rs"] pub mod lp_commands;
 use self::lp_commands::*;
-use futures::task::{Context, Poll};
+use hyper::Body;
 
 /// Lists the RPC method not requiring the "userpass" authentication.  
 /// None is also public to skip auth and display proper error in case of method is missing
@@ -79,13 +76,6 @@ macro_rules! unwrap_or_err_response {
             Err(err) => return rpc_err_response(500, &ERRL!("{}", err)),
         }
     };
-}
-
-struct RpcService {
-    /// Allows us to get the `MmCtx` if it is still around.
-    ctx_h: u32,
-    /// The IP and port from whence the request is coming from.
-    client: SocketAddr,
 }
 
 fn auth(json: &Json, ctx: &MmArc) -> Result<(), &'static str> {
@@ -197,19 +187,12 @@ pub fn dispatcher(req: Json, ctx: MmArc) -> DispatcherRes {
     })
 }
 
-type RpcRes = Pin<Box<dyn Future<Output = Result<Response<Vec<u8>>, http::Error>> + Send>>;
-
-async fn rpc_serviceʹ(
-    ctx: MmArc,
-    req: Parts,
-    reqᵇ: Box<dyn Stream<Item = Bytes, Error = String> + Send>,
-    client: SocketAddr,
-) -> Result<Response<Vec<u8>>, String> {
+async fn rpc_serviceʹ(ctx: MmArc, req: Parts, reqᵇ: Body, client: SocketAddr) -> Result<Response<Vec<u8>>, String> {
     if req.method != Method::POST {
         return ERR!("Only POST requests are supported!");
     }
 
-    let reqᵇ = try_s!(reqᵇ.concat2().compat().await);
+    let reqᵇ = try_s!(hyper::body::to_bytes(reqᵇ).await);
     let reqʲ: Json = try_s!(json::from_slice(&reqᵇ));
     match reqʲ.as_array() {
         Some(requests) => {
@@ -255,7 +238,7 @@ async fn process_single_request(ctx: MmArc, req: Json, client: SocketAddr) -> Re
 }
 
 #[cfg(feature = "native")]
-async fn rpc_service(req: Request<hyper::Body>, ctx_h: u32, client: SocketAddr) -> Response<Vec<u8>> {
+async fn rpc_service(req: Request<Body>, ctx_h: u32, client: SocketAddr) -> Response<Body> {
     macro_rules! try_sf {
         ($value: expr) => {
             match $value {
@@ -263,7 +246,7 @@ async fn rpc_service(req: Request<hyper::Body>, ctx_h: u32, client: SocketAddr) 
                 Err(err) => {
                     log!("RPC error response: "(err));
                     let ebody = err_to_rpc_json_string(&fomat!((err)));
-                    return unwrap!(Response::builder().status(500).body(Vec::from(ebody)));
+                    return unwrap!(Response::builder().status(500).body(Body::from(ebody)));
                 },
             }
         };
@@ -278,13 +261,6 @@ async fn rpc_service(req: Request<hyper::Body>, ctx_h: u32, client: SocketAddr) 
 
     // Convert the native Hyper stream into a portable stream of `Bytes`.
     let (req, reqᵇ) = req.into_parts();
-    let reqᵇ = Box::new(reqᵇ.then(|chunk| -> Result<Bytes, String> {
-        match chunk {
-            Ok(c) => Ok(c.into_bytes()),
-            Err(err) => Err(fomat!((err))),
-        }
-    }));
-
     let (mut parts, body) = match rpc_serviceʹ(ctx, req, reqᵇ, client).await {
         Ok(r) => r.into_parts(),
         Err(err) => {
@@ -293,30 +269,19 @@ async fn rpc_service(req: Request<hyper::Body>, ctx_h: u32, client: SocketAddr) 
             return unwrap!(Response::builder()
                 .status(500)
                 .header(ACCESS_CONTROL_ALLOW_ORIGIN, rpc_cors)
-                .body(Vec::from(ebody)));
+                .body(Body::from(ebody)));
         },
     };
     parts.headers.insert(ACCESS_CONTROL_ALLOW_ORIGIN, rpc_cors);
-    Response::from_parts(parts, body)
-}
-
-#[cfg(feature = "native")]
-impl Service<Request<Vec<u8>>> for RpcService {
-    type Response = Response<Vec<u8>>;
-    type Error = http::Error;
-    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>>>>;
-
-    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> { Poll::Ready(Ok(())) }
-
-    fn call(&mut self, req: Request<hyper::Body>) -> Self::Future {
-        let f = rpc_service(req, self.ctx_h, self.client);
-        let f = Compat::new(Box::pin(f.map(|r| -> Result<_, String> { Ok(r) })));
-        Box::pin(f)
-    }
+    Response::from_parts(parts, Body::from(body))
 }
 
 #[cfg(feature = "native")]
 pub extern "C" fn spawn_rpc(ctx_h: u32) {
+    use hyper::server::conn::AddrStream;
+    use hyper::service::{make_service_fn, service_fn};
+    use std::convert::Infallible;
+
     // NB: We need to manually handle the incoming connections in order to get the remote IP address,
     // cf. https://github.com/hyperium/hyper/issues/1410#issuecomment-419510220.
     // Although if the ability to access the remote IP address is solved by the Hyper in the future
@@ -326,52 +291,51 @@ pub extern "C" fn spawn_rpc(ctx_h: u32) {
     let ctx = unwrap!(MmArc::from_ffi_handle(ctx_h), "No context");
 
     let rpc_ip_port = unwrap!(ctx.rpc_ip_port());
-    let listener = unwrap!(TcpListener::bind2(&rpc_ip_port), "Can't bind on {}", rpc_ip_port);
-
-    let server = listener
-        .incoming()
-        .for_each(move |(socket, _my_sock)| {
-            let client = match socket.peer_addr() {
-                Ok(addr) => addr,
-                Err(err) => {
-                    log! ({"spawn_rpc] No peer_addr: {}", err});
-                    return Ok(());
-                },
-            };
-
-            CORE.spawn(
-                HTTP.serve_connection(socket, RpcService { ctx_h, client })
-                    .map(|_| ())
-                    .map_err(|err| log! ({"spawn_rpc] HTTP error: {}", err}))
-                    .compat(),
-            );
-            Ok(())
-        })
-        .map_err(|err| log! ({"spawn_rpc] accept error: {}", err}));
-
-    // Finish the server `Future` when `shutdown_rx` fires.
-
-    let (shutdown_tx, shutdown_rx) = futures01::sync::oneshot::channel::<()>();
-    let server = server.select2(shutdown_rx).then(|_| -> Result<(), ()> { Ok(()) });
-    let mut shutdown_tx = Some(shutdown_tx);
-    ctx.on_stop(Box::new(move || {
-        if let Some(shutdown_tx) = shutdown_tx.take() {
-            log!("on_stop] firing shutdown_tx!");
-            if shutdown_tx.send(()).is_err() {
-                log!("on_stop] Warning, shutdown_tx already closed")
+    CORE.0.enter(|| {
+        let server = unwrap!(Server::try_bind(&rpc_ip_port), "Can't bind on {}", rpc_ip_port);
+        let make_svc = make_service_fn(move |socket: &AddrStream| {
+            let remote_addr = socket.remote_addr();
+            async move {
+                Ok::<_, Infallible>(service_fn(move |req: Request<Body>| async move {
+                    let res = rpc_service(req, ctx_h, remote_addr).await;
+                    Ok::<_, Infallible>(res)
+                }))
             }
-            Ok(())
-        } else {
-            ERR!("on_stop callback called twice!")
-        }
-    }));
+        });
 
-    let rpc_ip_port = unwrap!(ctx.rpc_ip_port());
-    CORE.spawn({
-        log!(">>>>>>>>>> DEX stats " (rpc_ip_port.ip())":"(rpc_ip_port.port()) " \
+        let (shutdown_tx, shutdown_rx) = futures::channel::oneshot::channel::<()>();
+        let mut shutdown_tx = Some(shutdown_tx);
+        ctx.on_stop(Box::new(move || {
+            if let Some(shutdown_tx) = shutdown_tx.take() {
+                log!("on_stop] firing shutdown_tx!");
+                if shutdown_tx.send(()).is_err() {
+                    log!("on_stop] Warning, shutdown_tx already closed")
+                }
+                Ok(())
+            } else {
+                ERR!("on_stop callback called twice!")
+            }
+        }));
+
+        let server = server
+            .http1_half_close(false)
+            .serve(make_svc)
+            .with_graceful_shutdown(shutdown_rx.then(|_| futures::future::ready(())));
+
+        let server = server.then(|r| {
+            if let Err(err) = r {
+                log!((err));
+            };
+            futures::future::ready(())
+        });
+
+        let rpc_ip_port = unwrap!(ctx.rpc_ip_port());
+        CORE.0.spawn({
+            log!(">>>>>>>>>> DEX stats " (rpc_ip_port.ip())":"(rpc_ip_port.port()) " \
                 DEX stats API enabled at unixtime." (gstuff::now_ms() / 1000) " <<<<<<<<<");
-        let _ = ctx.rpc_started.pin(true);
-        server.compat()
+            let _ = ctx.rpc_started.pin(true);
+            server
+        });
     });
 }
 
