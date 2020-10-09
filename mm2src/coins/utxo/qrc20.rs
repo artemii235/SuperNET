@@ -7,7 +7,7 @@ use bitcrypto::sha256;
 use common::block_on;
 use common::jsonrpc_client::{JsonRpcClient, JsonRpcErrorType, JsonRpcRequest, RpcRes};
 use common::mm_metrics::MetricsArc;
-use ethabi::Token;
+use ethabi::{Function, Token};
 use ethereum_types::{H160, U256};
 use futures::{FutureExt, TryFutureExt};
 use gstuff::now_ms;
@@ -328,8 +328,9 @@ impl Qrc20Coin {
 
         let contract_call_bytes = try_s!(extract_contract_call_from_script(&script_pubkey));
         let call_type = try_s!(ContractCallType::from_script_pubkey(&contract_call_bytes));
-        if call_type != ContractCallType::Transfer {
-            return ERR!("Expected 'transfer' contract call");
+        match call_type {
+            Some(ContractCallType::Transfer) => (),
+            _ => return ERR!("Expected 'transfer' contract call"),
         }
 
         let function = try_s!(ERC20_CONTRACT.function("transfer"));
@@ -636,9 +637,9 @@ impl Qrc20Coin {
             let contract_call_bytes = try_s!(extract_contract_call_from_script(&script_pubkey));
 
             let call_type = try_s!(ContractCallType::from_script_pubkey(&contract_call_bytes));
-            if call_type != ContractCallType::Erc20Payment {
-                // skip non-erc20Payment contract calls
-                continue;
+            match call_type {
+                Some(ContractCallType::Erc20Payment) => (),
+                _ => continue, // skip non-erc20Payment contract calls
             }
 
             // check if the contract call was excepted
@@ -716,7 +717,7 @@ impl Qrc20Coin {
     async fn search_swap_tx_by_call_type_and_swap_id(
         &self,
         expected_call_type: &ContractCallType,
-        expected_swap_id: &Vec<u8>,
+        expected_swap_id: &[u8],
         sender: &H160,
         search_from_block: u64,
     ) -> Result<Option<UtxoTx>, String> {
@@ -724,7 +725,7 @@ impl Qrc20Coin {
         /// Note returns fatal error only.
         fn try_find_contract_call(
             tx: &UtxoTx,
-            expected_swap_id: &Vec<u8>,
+            expected_swap_id: &[u8],
             expected_call_type: &ContractCallType,
         ) -> Result<Option<usize>, String> {
             let tx_hash: H256Json = tx.hash().reversed().into();
@@ -744,7 +745,8 @@ impl Qrc20Coin {
                 };
 
                 let call_type = match ContractCallType::from_script_pubkey(&contract_call_bytes) {
-                    Ok(t) => t,
+                    Ok(Some(t)) => t,
+                    Ok(None) => continue, // unknown contract call type
                     Err(e) => {
                         log!([e]);
                         continue;
@@ -755,8 +757,7 @@ impl Qrc20Coin {
                     continue;
                 }
 
-                // TODO remove ContractCallType::Other to avoid the unwrap()
-                let function = try_s!(SWAP_CONTRACT.function(call_type.as_function_name().unwrap()));
+                let function = call_type.as_function();
                 let decoded = try_s!(function.decode_input(&contract_call_bytes));
 
                 // swap_id is the first in all of the EtomicSwap contract methods
@@ -772,7 +773,7 @@ impl Qrc20Coin {
                     },
                 };
 
-                if swap_id == *expected_swap_id {
+                if swap_id == expected_swap_id {
                     return Ok(Some(output_index));
                 }
             }
@@ -828,33 +829,34 @@ impl Qrc20Coin {
     }
 }
 
-/// TODO remove Other variant
 #[derive(Debug, Eq, PartialEq)]
 pub enum ContractCallType {
     Transfer,
-    Approve,
     Erc20Payment,
     ReceiverSpend,
     SenderRefund,
-    /// Contains a short function signature.
-    Other([u8; 4]),
 }
 
 impl ContractCallType {
-    fn as_function_name(&self) -> Result<&'static str, String> {
+    fn as_function_name(&self) -> &'static str {
         match self {
-            ContractCallType::Transfer => Ok("transfer"),
-            ContractCallType::Approve => Ok("approve"),
-            ContractCallType::Erc20Payment => Ok("erc20Payment"),
-            ContractCallType::ReceiverSpend => Ok("receiverSpend"),
-            ContractCallType::SenderRefund => Ok("senderRefund"),
-            ContractCallType::Other(sig) => ERR!("Unexpected call type with signature {:?}", sig),
+            ContractCallType::Transfer => "transfer",
+            ContractCallType::Erc20Payment => "erc20Payment",
+            ContractCallType::ReceiverSpend => "receiverSpend",
+            ContractCallType::SenderRefund => "senderRefund",
         }
     }
-}
 
-impl ContractCallType {
-    fn from_script_pubkey(script: &[u8]) -> Result<ContractCallType, String> {
+    fn as_function(&self) -> &'static Function {
+        match self {
+            ContractCallType::Transfer => unwrap!(ERC20_CONTRACT.function(self.as_function_name())),
+            ContractCallType::Erc20Payment | ContractCallType::ReceiverSpend | ContractCallType::SenderRefund => {
+                unwrap!(SWAP_CONTRACT.function(self.as_function_name()))
+            },
+        }
+    }
+
+    fn from_script_pubkey(script: &[u8]) -> Result<Option<ContractCallType>, String> {
         if script.len() < 4 {
             return ERR!("Length of the script pubkey less than 4: {:?}", script);
         }
@@ -862,52 +864,32 @@ impl ContractCallType {
         // Result of (ContractCallType::Transfer).short_signature()
         // in hex: a9059cbb
         if script.starts_with(&[169, 5, 156, 187]) {
-            return Ok(ContractCallType::Transfer);
-        }
-
-        // Result of (ContractCallType::Approve).short_signature()
-        // in hex: 095ea7b3
-        if script.starts_with(&[9, 94, 167, 179]) {
-            return Ok(ContractCallType::Approve);
+            return Ok(Some(ContractCallType::Transfer));
         }
 
         // Result of (ContractCallType::Erc20Payment).short_signature()
         // in hex: 9b415b2a
         if script.starts_with(&[155, 65, 91, 42]) {
-            return Ok(ContractCallType::Erc20Payment);
+            return Ok(Some(ContractCallType::Erc20Payment));
         }
 
         // Result of (ContractCallType::ReceiverSpend).short_signature()
         // in hex: 02ed292b
         if script.starts_with(&[2, 237, 41, 43]) {
-            return Ok(ContractCallType::ReceiverSpend);
+            return Ok(Some(ContractCallType::ReceiverSpend));
         }
 
         // Result of (ContractCallType::SenderRefund).short_signature()
         // in hex: 46fc0294
         if script.starts_with(&[70, 252, 2, 148]) {
-            return Ok(ContractCallType::SenderRefund);
+            return Ok(Some(ContractCallType::SenderRefund));
         }
 
-        let mut signature = [0; 4];
-        signature.clone_from_slice(&script[0..4]);
-        Ok(ContractCallType::Other(signature))
+        Ok(None)
     }
 
     #[allow(dead_code)]
-    fn short_signature(&self) -> Result<[u8; 4], String> {
-        match self {
-            ContractCallType::Transfer | ContractCallType::Approve => {
-                let function = try_s!(ERC20_CONTRACT.function(self.as_function_name().unwrap()));
-                Ok(function.short_signature())
-            },
-            ContractCallType::Erc20Payment | ContractCallType::ReceiverSpend | ContractCallType::SenderRefund => {
-                let function = try_s!(SWAP_CONTRACT.function(self.as_function_name().unwrap()));
-                Ok(function.short_signature())
-            },
-            ContractCallType::Other(signature) => Ok(*signature),
-        }
-    }
+    fn short_signature(&self) -> [u8; 4] { self.as_function().short_signature() }
 }
 
 /// These variants contain values obtained from an [`TransactionOutput::script_pubkey`] and [`TxReceipt::logs`].
@@ -939,27 +921,6 @@ impl UtxoCoinCommonOps for Qrc20Coin {
     }
 
     fn denominate_satoshis(&self, satoshi: i64) -> f64 { utxo_common::denominate_satoshis(&self.utxo_arc, satoshi) }
-
-    /// TODO remove this
-    fn search_for_swap_tx_spend(
-        &self,
-        time_lock: u32,
-        first_pub: &Public,
-        second_pub: &Public,
-        secret_hash: &[u8],
-        tx: &[u8],
-        search_from_block: u64,
-    ) -> Result<Option<FoundSwapTxSpend>, String> {
-        utxo_common::search_for_swap_tx_spend(
-            &self.utxo_arc,
-            time_lock,
-            first_pub,
-            second_pub,
-            secret_hash,
-            tx,
-            search_from_block,
-        )
-    }
 
     fn my_public_key(&self) -> &Public { self.utxo_arc.key_pair.public() }
 
@@ -1402,7 +1363,23 @@ impl MarketCoinOps for Qrc20Coin {
     fn my_address(&self) -> Result<String, String> { utxo_common::my_address(self) }
 
     fn my_balance(&self) -> Box<dyn Future<Item = BigDecimal, Error = String> + Send> {
-        Box::new(qrc20_balance(self.clone()).boxed().compat())
+        let my_address = qrc20_addr_from_utxo_addr(self.utxo_arc.my_address.clone());
+        let selfi = self.clone();
+        let fut = async move {
+            let params = &[Token::Address(my_address)];
+            let tokens = try_s!(selfi.rpc_contract_call(RpcContractCallType::BalanceOf, params).await);
+
+            if tokens.is_empty() {
+                return ERR!(r#"Expected Uint as "balanceOf" result but got nothing"#);
+            }
+
+            match tokens[0] {
+                Token::Uint(bal) => u256_to_big_decimal(bal, selfi.utxo_arc.decimals),
+                _ => ERR!(r#"Expected Uint as "balanceOf" result but got {:?}"#, tokens),
+            }
+        };
+
+        Box::new(fut.boxed().compat())
     }
 
     fn base_coin_balance(&self) -> Box<dyn Future<Item = BigDecimal, Error = String> + Send> {
@@ -1617,7 +1594,7 @@ async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> Result<Transac
 }
 
 async fn qrc20_tx_details_by_hash(coin: Qrc20Coin, hash: H256Json) -> Result<TransactionDetails, String> {
-    // TODO it's required by maker_swap::maker_payment() temporary
+    // TODO temporary
     Ok(try_s!(
         utxo_common::tx_details_by_hash(coin.clone(), &hash.0).compat().await
     ))
@@ -1747,23 +1724,6 @@ async fn qrc20_tx_details_by_hash(coin: Qrc20Coin, hash: H256Json) -> Result<Tra
     //     internal_id: vec![].into(),
     //     ..qtum_tx
     // })
-}
-
-// TODO replace to impl Qrc20Coin
-async fn qrc20_balance(coin: Qrc20Coin) -> Result<BigDecimal, String> {
-    let params = &[Token::Address(qrc20_addr_from_utxo_addr(
-        coin.utxo_arc.my_address.clone(),
-    ))];
-    let tokens = try_s!(coin.rpc_contract_call(RpcContractCallType::BalanceOf, params).await);
-
-    if tokens.is_empty() {
-        return ERR!(r#"Expected Uint as "balanceOf" result but got nothing"#);
-    }
-
-    match tokens[0] {
-        Token::Uint(bal) => u256_to_big_decimal(bal, coin.utxo_arc.decimals),
-        _ => ERR!(r#"Expected Uint as "balanceOf" result but got {:?}"#, tokens),
-    }
 }
 
 async fn qrc20_send_hash_time_locked_payment(

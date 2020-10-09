@@ -45,26 +45,6 @@ impl UtxoCoinCommonOps for UtxoStandardCoin {
 
     fn denominate_satoshis(&self, satoshi: i64) -> f64 { utxo_common::denominate_satoshis(&self.utxo_arc, satoshi) }
 
-    fn search_for_swap_tx_spend(
-        &self,
-        time_lock: u32,
-        first_pub: &Public,
-        second_pub: &Public,
-        secret_hash: &[u8],
-        tx: &[u8],
-        search_from_block: u64,
-    ) -> Result<Option<FoundSwapTxSpend>, String> {
-        utxo_common::search_for_swap_tx_spend(
-            &self.utxo_arc,
-            time_lock,
-            first_pub,
-            second_pub,
-            secret_hash,
-            tx,
-            search_from_block,
-        )
-    }
-
     fn my_public_key(&self) -> &Public { self.utxo_arc.key_pair.public() }
 
     fn display_address(&self, address: &Address) -> Result<String, String> {

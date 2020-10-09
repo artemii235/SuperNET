@@ -118,51 +118,6 @@ where
     coin.my_balance()
 }
 
-pub fn search_for_swap_tx_spend(
-    coin: &UtxoCoinFields,
-    time_lock: u32,
-    first_pub: &Public,
-    second_pub: &Public,
-    secret_hash: &[u8],
-    tx: &[u8],
-    search_from_block: u64,
-) -> Result<Option<FoundSwapTxSpend>, String> {
-    let tx: UtxoTx = try_s!(deserialize(tx).map_err(|e| ERRL!("{:?}", e)));
-    let script = payment_script(time_lock, secret_hash, first_pub, second_pub);
-    let expected_script_pubkey = Builder::build_p2sh(&dhash160(&script)).to_bytes();
-    if tx.outputs[0].script_pubkey != expected_script_pubkey {
-        return ERR!(
-            "Transaction {:?} output 0 script_pubkey doesn't match expected {:?}",
-            tx,
-            expected_script_pubkey
-        );
-    }
-
-    let spend = try_s!(coin.rpc_client.find_output_spend(&tx, 0, search_from_block).wait());
-    match spend {
-        Some(tx) => {
-            let script: Script = tx.inputs[0].script_sig.clone().into();
-            if let Some(Ok(ref i)) = script.iter().nth(2) {
-                if i.opcode == Opcode::OP_0 {
-                    return Ok(Some(FoundSwapTxSpend::Spent(tx.into())));
-                }
-            }
-
-            if let Some(Ok(ref i)) = script.iter().nth(1) {
-                if i.opcode == Opcode::OP_1 {
-                    return Ok(Some(FoundSwapTxSpend::Refunded(tx.into())));
-                }
-            }
-
-            ERR!(
-                "Couldn't find required instruction in script_sig of input 0 of tx {:?}",
-                tx
-            )
-        },
-        None => Ok(None),
-    }
-}
-
 pub fn display_address(coin: &UtxoCoinFields, address: &Address) -> Result<String, String> {
     match &coin.address_format {
         UtxoAddressFormat::Standard => Ok(address.to_string()),
@@ -1059,7 +1014,8 @@ pub fn search_for_swap_tx_spend_my<T>(
 where
     T: AsRef<UtxoArc> + UtxoCoinCommonOps,
 {
-    coin.search_for_swap_tx_spend(
+    search_for_swap_tx_spend(
+        coin.as_ref(),
         time_lock,
         coin.as_ref().key_pair.public(),
         &try_s!(Public::from_slice(other_pub)),
@@ -1080,7 +1036,8 @@ pub fn search_for_swap_tx_spend_other<T>(
 where
     T: AsRef<UtxoArc> + UtxoCoinCommonOps,
 {
-    coin.search_for_swap_tx_spend(
+    search_for_swap_tx_spend(
+        coin.as_ref(),
         time_lock,
         &try_s!(Public::from_slice(other_pub)),
         coin.as_ref().key_pair.public(),
@@ -1950,6 +1907,51 @@ fn validate_payment(
         }
     };
     Box::new(fut.boxed().compat())
+}
+
+fn search_for_swap_tx_spend(
+    coin: &UtxoCoinFields,
+    time_lock: u32,
+    first_pub: &Public,
+    second_pub: &Public,
+    secret_hash: &[u8],
+    tx: &[u8],
+    search_from_block: u64,
+) -> Result<Option<FoundSwapTxSpend>, String> {
+    let tx: UtxoTx = try_s!(deserialize(tx).map_err(|e| ERRL!("{:?}", e)));
+    let script = payment_script(time_lock, secret_hash, first_pub, second_pub);
+    let expected_script_pubkey = Builder::build_p2sh(&dhash160(&script)).to_bytes();
+    if tx.outputs[0].script_pubkey != expected_script_pubkey {
+        return ERR!(
+            "Transaction {:?} output 0 script_pubkey doesn't match expected {:?}",
+            tx,
+            expected_script_pubkey
+        );
+    }
+
+    let spend = try_s!(coin.rpc_client.find_output_spend(&tx, 0, search_from_block).wait());
+    match spend {
+        Some(tx) => {
+            let script: Script = tx.inputs[0].script_sig.clone().into();
+            if let Some(Ok(ref i)) = script.iter().nth(2) {
+                if i.opcode == Opcode::OP_0 {
+                    return Ok(Some(FoundSwapTxSpend::Spent(tx.into())));
+                }
+            }
+
+            if let Some(Ok(ref i)) = script.iter().nth(1) {
+                if i.opcode == Opcode::OP_1 {
+                    return Ok(Some(FoundSwapTxSpend::Refunded(tx.into())));
+                }
+            }
+
+            ERR!(
+                "Couldn't find required instruction in script_sig of input 0 of tx {:?}",
+                tx
+            )
+        },
+        None => Ok(None),
+    }
 }
 
 fn payment_script(time_lock: u32, secret_hash: &[u8], pub_0: &Public, pub_1: &Public) -> Script {
