@@ -125,6 +125,36 @@ fn utxo_coin_for_test(rpc_client: UtxoRpcClientEnum, force_seed: Option<&str>) -
     utxo_coin_from_fields(utxo_coin_fields_for_test(rpc_client, force_seed))
 }
 
+fn qrc20_coin_for_test(priv_key: &[u8]) -> (MmArc, Qrc20Coin) {
+    let conf = json!({
+        "coin":"QRC20",
+        "required_confirmations":0,
+        "pubtype":120,
+        "p2shtype":50,
+        "wiftype":128,
+        "segwit":true,
+        "mm2":1,
+        "mature_confirmations":500,
+    });
+    let req = json!({
+        "method": "electrum",
+        "servers": [{"url":"95.217.83.126:10001"}],
+        "swap_contract_address": "0xba8b71f3544b93e2f681f996da519a98ace0107a",
+    });
+    let contract_address = "0xd362e096e873eb7907e205fadc6175c6fec7bc44".into();
+    let ctx = MmCtxBuilder::new().into_mm_arc();
+    let coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
+        &ctx,
+        "QRC20",
+        "QTUM",
+        &conf,
+        &req,
+        priv_key,
+        contract_address
+    )));
+    (ctx, coin)
+}
+
 #[test]
 fn test_extract_secret() {
     let client = electrum_client_for_test(&["electrum1.cipig.net:10017"]);
@@ -748,38 +778,12 @@ fn test_qrc20_withdraw_impl_fee_details() {
         MockResult::Return(Box::new(futures01::future::ok(unspents)))
     });
 
-    let conf = json!({
-        "coin":"QRC20",
-        "required_confirmations":0,
-        "pubtype":120,
-        "p2shtype":50,
-        "wiftype":128,
-        "segwit":true,
-        "mm2":1,
-        "mature_confirmations":500,
-    });
-    let req = json!({
-        "method": "electrum",
-        "servers": [{"url":"95.217.83.126:10001"}],
-        "swap_contract_address": "0xba8b71f3544b93e2f681f996da519a98ace0107a",
-    });
+    // priv_key of qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG
     let priv_key = [
         3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144, 72,
         172, 110, 180, 13, 123, 179, 10, 49,
     ];
-    let contract_address = "0xd362e096e873eb7907e205fadc6175c6fec7bc44".into();
-
-    let ctx = MmCtxBuilder::new().into_mm_arc();
-
-    let coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
-        &ctx,
-        "QRC20",
-        "QTUM",
-        &conf,
-        &req,
-        &priv_key,
-        contract_address
-    )));
+    let (_ctx, coin) = qrc20_coin_for_test(&priv_key);
 
     let withdraw_req = WithdrawRequest {
         amount: 10.into(),
@@ -1543,38 +1547,11 @@ fn test_tx_history_path_colon_should_be_escaped_for_cash_address() {
 
 #[test]
 fn test_qrc20_tx_details_by_hash() {
-    let conf = json!({
-        "coin":"QRC20",
-        "required_confirmations":0,
-        "pubtype":120,
-        "p2shtype":50,
-        "wiftype":128,
-        "segwit":true,
-        "mm2":1,
-        "mature_confirmations":500,
-    });
-    let req = json!({
-        "method": "electrum",
-        "servers": [{"url":"95.217.83.126:10001"}],
-        "swap_contract_address": "0xba8b71f3544b93e2f681f996da519a98ace0107a",
-    });
     let priv_key = [
         192, 240, 176, 226, 14, 170, 226, 96, 107, 47, 166, 243, 154, 48, 28, 243, 18, 144, 240, 1, 79, 103, 178, 42,
         32, 161, 106, 119, 241, 227, 42, 102,
     ];
-    let contract_address = "0xd362e096e873eb7907e205fadc6175c6fec7bc44".into();
-
-    let ctx = MmCtxBuilder::new().into_mm_arc();
-
-    let coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
-        &ctx,
-        "QRC20",
-        "QTUM",
-        &conf,
-        &req,
-        &priv_key,
-        contract_address
-    )));
+    let (_ctx, coin) = qrc20_coin_for_test(&priv_key);
 
     let expected = json!({
         "tx_hex":"0100000001fcaaf1343a392cc96c93ac6f5e84399a69cf52c29ac70254f17ac484169110b7000000006a47304402201b31345c1f377b2a19603d922796726940e4c8068e64e21d551534799ffacaf002207d382f49c9c069dcdd18c90a51687a346a99857ce8b82b91a6cb1ee391811aee012102cd7745ea1c03c9a1ebbcdb7ab9ee19d4e4d306f44665295d996db7c38527da6bffffffff020000000000000000625403a02526012844a9059cbb0000000000000000000000009e032d4b0090a11dc40fe6c47601499a35d55fbb0000000000000000000000000000000000000000000000000000000011e1a30014d362e096e873eb7907e205fadc6175c6fec7bc44c23540a753010000001976a914f36e14131c70e5f15a3f92b1d7e8622a62e570d888ac13f9ff5e",
@@ -1620,38 +1597,11 @@ fn test_qrc20_can_i_spend_other_payment() {
         MockResult::Return(Box::new(futures01::future::ok(balance)))
     });
 
-    let conf = json!({
-        "coin":"QRC20",
-        "required_confirmations":0,
-        "pubtype":120,
-        "p2shtype":50,
-        "wiftype":128,
-        "segwit":true,
-        "mm2":1,
-        "mature_confirmations":500,
-    });
-    let req = json!({
-        "method": "electrum",
-        "servers": [{"url":"95.217.83.126:10001"}],
-        "swap_contract_address": "0xba8b71f3544b93e2f681f996da519a98ace0107a",
-    });
     let priv_key = [
         192, 240, 176, 226, 14, 170, 226, 96, 107, 47, 166, 243, 154, 48, 28, 243, 18, 144, 240, 1, 79, 103, 178, 42,
         32, 161, 106, 119, 241, 227, 42, 102,
     ];
-    let contract_address = "0xd362e096e873eb7907e205fadc6175c6fec7bc44".into();
-
-    let ctx = MmCtxBuilder::new().into_mm_arc();
-
-    let coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
-        &ctx,
-        "QRC20",
-        "QTUM",
-        &conf,
-        &req,
-        &priv_key,
-        contract_address
-    )));
+    let (_ctx, coin) = qrc20_coin_for_test(&priv_key);
 
     let actual = coin.can_i_spend_other_payment().wait();
     assert_eq!(actual, Ok(()));
@@ -1665,38 +1615,11 @@ fn test_qrc20_can_i_spend_other_payment_err() {
         MockResult::Return(Box::new(futures01::future::ok(balance)))
     });
 
-    let conf = json!({
-        "coin":"QRC20",
-        "required_confirmations":0,
-        "pubtype":120,
-        "p2shtype":50,
-        "wiftype":128,
-        "segwit":true,
-        "mm2":1,
-        "mature_confirmations":500,
-    });
-    let req = json!({
-        "method": "electrum",
-        "servers": [{"url":"95.217.83.126:10001"}],
-        "swap_contract_address": "0xba8b71f3544b93e2f681f996da519a98ace0107a",
-    });
     let priv_key = [
         192, 240, 176, 226, 14, 170, 226, 96, 107, 47, 166, 243, 154, 48, 28, 243, 18, 144, 240, 1, 79, 103, 178, 42,
         32, 161, 106, 119, 241, 227, 42, 102,
     ];
-    let contract_address = "0xd362e096e873eb7907e205fadc6175c6fec7bc44".into();
-
-    let ctx = MmCtxBuilder::new().into_mm_arc();
-
-    let coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
-        &ctx,
-        "QRC20",
-        "QTUM",
-        &conf,
-        &req,
-        &priv_key,
-        contract_address
-    )));
+    let (_ctx, coin) = qrc20_coin_for_test(&priv_key);
 
     let error = coin.can_i_spend_other_payment().wait().err().unwrap();
     log!([error]);
@@ -1706,38 +1629,12 @@ fn test_qrc20_can_i_spend_other_payment_err() {
 #[test]
 #[ignore]
 fn test_qrc20_send_maker_payment() {
-    let conf = json!({
-        "coin":"QRC20",
-        "required_confirmations":0,
-        "pubtype":120,
-        "p2shtype":50,
-        "wiftype":128,
-        "segwit":true,
-        "mm2":1,
-        "mature_confirmations":500,
-    });
-    let req = json!({
-        "method": "electrum",
-        "servers": [{"url":"95.217.83.126:10001"}],
-        "swap_contract_address": "0xba8b71f3544b93e2f681f996da519a98ace0107a",
-    });
-
+    // priv_key of qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG
     let priv_key = [
         3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144, 72,
         172, 110, 180, 13, 123, 179, 10, 49,
     ];
-    let contract_address = "0xd362e096e873eb7907e205fadc6175c6fec7bc44".into();
-
-    let ctx = MmCtxBuilder::new().into_mm_arc();
-    let coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
-        &ctx,
-        "QRC20",
-        "QTUM",
-        &conf,
-        &req,
-        &priv_key,
-        contract_address
-    )));
+    let (_ctx, coin) = qrc20_coin_for_test(&priv_key);
 
     let timelock = (now_ms() / 1000) as u32 - 200;
     let taker_pub = hex::decode("022b00078841f37b5d30a6a1defb82b3af4d4e2d24dd4204d41f0c9ce1e875de1a").unwrap();
@@ -1768,38 +1665,12 @@ fn test_qrc20_send_maker_payment() {
 
 #[test]
 fn test_qrc20_check_if_my_payment_completed() {
-    let conf = json!({
-        "coin":"QRC20",
-        "required_confirmations":0,
-        "pubtype":120,
-        "p2shtype":50,
-        "wiftype":128,
-        "segwit":true,
-        "mm2":1,
-        "mature_confirmations":500,
-    });
-    let req = json!({
-        "method": "electrum",
-        "servers": [{"url":"95.217.83.126:10001"}],
-        "swap_contract_address": "0xba8b71f3544b93e2f681f996da519a98ace0107a",
-    });
-
+    // priv_key of qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG
     let priv_key = [
         3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144, 72,
         172, 110, 180, 13, 123, 179, 10, 49,
     ];
-    let contract_address = "0xd362e096e873eb7907e205fadc6175c6fec7bc44".into();
-
-    let ctx = MmCtxBuilder::new().into_mm_arc();
-    let coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
-        &ctx,
-        "QRC20",
-        "QTUM",
-        &conf,
-        &req,
-        &priv_key,
-        contract_address
-    )));
+    let (_ctx, coin) = qrc20_coin_for_test(&priv_key);
 
     // tx 35e03bc529528a853ee75dde28f27eec8ed7b152b6af7ab6dfa5d55ea46f25ac
     let tx_hex = hex::decode("0100000003b1fcca3d7c15bb7f694b4e58b939b8835bce4d535e8441d41855d9910a33372f020000006b48304502210091342b2251d13ae0796f6ebf563bb861883d652cbee9f5606dd5bb875af84039022077a21545ff6ec69c9c4eca35e1f127a450abc4f4e60dd032724d70910d6b2835012102cd7745ea1c03c9a1ebbcdb7ab9ee19d4e4d306f44665295d996db7c38527da6bffffffff874c96188a610850d4cd2c29a7fd20e5b9eb7f6748970792a74ad189405b7d9b020000006a473044022055dc1bf716880764e9bcbe8dd3aea05f634541648ec4f5d224eba93fedc54f8002205e38b6136adc46ef8ca65c0b0e9390837e539cbb19df451e33a90e534c12da4c012102cd7745ea1c03c9a1ebbcdb7ab9ee19d4e4d306f44665295d996db7c38527da6bffffffffd52e234ead3b8a2a4718cb6fee039fa96862063fccf95149fb11f27a52bcc352010000006a4730440220527ce41324e53c99b827d3f34e7078d991abf339f24108b7e677fff1b6cf0ffa0220690fe96d4fb8f1673458bc08615b5119f354f6cd589754855fe1dba5f82653aa012102cd7745ea1c03c9a1ebbcdb7ab9ee19d4e4d306f44665295d996db7c38527da6bffffffff030000000000000000625403a08601012844095ea7b3000000000000000000000000ba8b71f3544b93e2f681f996da519a98ace0107a0000000000000000000000000000000000000000000000000000000001312d0014d362e096e873eb7907e205fadc6175c6fec7bc44c20000000000000000e35403a0860101284cc49b415b2a756dd4fe3852ea4a0378c5e984ebb5e4bfa01eca31785457d1729d5928198ef00000000000000000000000000000000000000000000000000000000001312d00000000000000000000000000d362e096e873eb7907e205fadc6175c6fec7bc440000000000000000000000000240b898276ad2cc0d2fe6f527e8e31104e7fde30101010101010101010101010101010101010101000000000000000000000000000000000000000000000000000000000000000000000000000000005f686cef14ba8b71f3544b93e2f681f996da519a98ace0107ac21082fb03000000001976a914f36e14131c70e5f15a3f92b1d7e8622a62e570d888acb86d685f").unwrap();
@@ -1837,39 +1708,12 @@ fn test_qrc20_check_if_my_payment_completed() {
 
 #[test]
 fn test_qrc20_validate_maker_payment() {
-    let conf = json!({
-        "coin":"QRC20",
-        "required_confirmations":0,
-        "pubtype":120,
-        "p2shtype":50,
-        "wiftype":128,
-        "segwit":true,
-        "mm2":1,
-        "mature_confirmations":500,
-    });
-    let req = json!({
-        "method": "electrum",
-        "servers": [{"url":"95.217.83.126:10001"}],
-        "swap_contract_address": "0xba8b71f3544b93e2f681f996da519a98ace0107a",
-    });
-
     // this priv_key corresponds to "taker_passphrase" passphrase
     let priv_key = [
         24, 181, 194, 193, 18, 152, 142, 168, 71, 73, 70, 244, 9, 101, 92, 168, 243, 61, 132, 48, 25, 39, 103, 92, 29,
         17, 11, 29, 113, 235, 48, 70,
     ];
-    let contract_address = "0xd362e096e873eb7907e205fadc6175c6fec7bc44".into();
-
-    let ctx = MmCtxBuilder::new().into_mm_arc();
-    let coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
-        &ctx,
-        "QRC20",
-        "QTUM",
-        &conf,
-        &req,
-        &priv_key,
-        contract_address
-    )));
+    let (_ctx, coin) = qrc20_coin_for_test(&priv_key);
 
     assert_eq!(coin.utxo_arc.my_address, "qUX9FGHubczidVjWPCUWuwCUJWpkAtGCgf".into());
 
@@ -1923,56 +1767,19 @@ fn test_qrc20_validate_maker_payment() {
 #[test]
 #[ignore]
 fn test_taker_spends_maker_payment() {
-    let conf = json!({
-        "coin":"QRC20",
-        "required_confirmations":0,
-        "pubtype":120,
-        "p2shtype":50,
-        "wiftype":128,
-        "segwit":true,
-        "mm2":1,
-        "mature_confirmations":500,
-    });
-    let req = json!({
-        "method": "electrum",
-        "servers": [{"url":"95.217.83.126:10001"}],
-        "swap_contract_address": "0xba8b71f3544b93e2f681f996da519a98ace0107a",
-    });
-
     // priv_key of qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG
     let priv_key = [
         3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144, 72,
         172, 110, 180, 13, 123, 179, 10, 49,
     ];
-    let contract_address = "0xd362e096e873eb7907e205fadc6175c6fec7bc44".into();
-
-    let maker_ctx = MmCtxBuilder::new().into_mm_arc();
-    let maker_coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
-        &maker_ctx,
-        "QRC20",
-        "QTUM",
-        &conf,
-        &req,
-        &priv_key,
-        contract_address
-    )));
+    let (_ctx, maker_coin) = qrc20_coin_for_test(&priv_key);
 
     // priv_key of qUX9FGHubczidVjWPCUWuwCUJWpkAtGCgf
     let priv_key = [
         24, 181, 194, 193, 18, 152, 142, 168, 71, 73, 70, 244, 9, 101, 92, 168, 243, 61, 132, 48, 25, 39, 103, 92, 29,
         17, 11, 29, 113, 235, 48, 70,
     ];
-
-    let taker_ctx = MmCtxBuilder::new().into_mm_arc();
-    let taker_coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
-        &taker_ctx,
-        "QRC20",
-        "QTUM",
-        &conf,
-        &req,
-        &priv_key,
-        contract_address
-    )));
+    let (_ctx, taker_coin) = qrc20_coin_for_test(&priv_key);
 
     let bob_balance = taker_coin.my_balance().wait().unwrap();
 
@@ -2032,56 +1839,19 @@ fn test_taker_spends_maker_payment() {
 #[test]
 #[ignore]
 fn test_maker_spends_taker_payment() {
-    let conf = json!({
-        "coin":"QRC20",
-        "required_confirmations":0,
-        "pubtype":120,
-        "p2shtype":50,
-        "wiftype":128,
-        "segwit":true,
-        "mm2":1,
-        "mature_confirmations":500,
-    });
-    let req = json!({
-        "method": "electrum",
-        "servers": [{"url":"95.217.83.126:10001"}],
-        "swap_contract_address": "0xba8b71f3544b93e2f681f996da519a98ace0107a",
-    });
-
     // priv_key of qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG
     let priv_key = [
         3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144, 72,
         172, 110, 180, 13, 123, 179, 10, 49,
     ];
-    let contract_address = "0xd362e096e873eb7907e205fadc6175c6fec7bc44".into();
-
-    let maker_ctx = MmCtxBuilder::new().into_mm_arc();
-    let maker_coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
-        &maker_ctx,
-        "QRC20",
-        "QTUM",
-        &conf,
-        &req,
-        &priv_key,
-        contract_address
-    )));
+    let (_ctx, maker_coin) = qrc20_coin_for_test(&priv_key);
 
     // priv_key of qUX9FGHubczidVjWPCUWuwCUJWpkAtGCgf
     let priv_key = [
         24, 181, 194, 193, 18, 152, 142, 168, 71, 73, 70, 244, 9, 101, 92, 168, 243, 61, 132, 48, 25, 39, 103, 92, 29,
         17, 11, 29, 113, 235, 48, 70,
     ];
-
-    let taker_ctx = MmCtxBuilder::new().into_mm_arc();
-    let taker_coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
-        &taker_ctx,
-        "QRC20",
-        "QTUM",
-        &conf,
-        &req,
-        &priv_key,
-        contract_address
-    )));
+    let (_ctx, taker_coin) = qrc20_coin_for_test(&priv_key);
 
     let maker_balance = maker_coin.my_balance().wait().unwrap();
 
@@ -2141,39 +1911,12 @@ fn test_maker_spends_taker_payment() {
 #[test]
 #[ignore]
 fn test_maker_refunds_payment() {
-    let conf = json!({
-        "coin":"QRC20",
-        "required_confirmations":0,
-        "pubtype":120,
-        "p2shtype":50,
-        "wiftype":128,
-        "segwit":true,
-        "mm2":1,
-        "mature_confirmations":500,
-    });
-    let req = json!({
-        "method": "electrum",
-        "servers": [{"url":"95.217.83.126:10001"}],
-        "swap_contract_address": "0xba8b71f3544b93e2f681f996da519a98ace0107a",
-    });
-
     // priv_key of qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG
     let priv_key = [
         3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144, 72,
         172, 110, 180, 13, 123, 179, 10, 49,
     ];
-    let contract_address = "0xd362e096e873eb7907e205fadc6175c6fec7bc44".into();
-
-    let ctx = MmCtxBuilder::new().into_mm_arc();
-    let coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
-        &ctx,
-        "QRC20",
-        "QTUM",
-        &conf,
-        &req,
-        &priv_key,
-        contract_address
-    )));
+    let (_ctx, coin) = qrc20_coin_for_test(&priv_key);
 
     let expected_balance = unwrap!(coin.my_balance().wait());
 
@@ -2229,39 +1972,12 @@ fn test_maker_refunds_payment() {
 #[test]
 #[ignore]
 fn test_taker_refunds_payment() {
-    let conf = json!({
-        "coin":"QRC20",
-        "required_confirmations":0,
-        "pubtype":120,
-        "p2shtype":50,
-        "wiftype":128,
-        "segwit":true,
-        "mm2":1,
-        "mature_confirmations":500,
-    });
-    let req = json!({
-        "method": "electrum",
-        "servers": [{"url":"95.217.83.126:10001"}],
-        "swap_contract_address": "0xba8b71f3544b93e2f681f996da519a98ace0107a",
-    });
-
     // priv_key of qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG
     let priv_key = [
         3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144, 72,
         172, 110, 180, 13, 123, 179, 10, 49,
     ];
-    let contract_address = "0xd362e096e873eb7907e205fadc6175c6fec7bc44".into();
-
-    let ctx = MmCtxBuilder::new().into_mm_arc();
-    let coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
-        &ctx,
-        "QRC20",
-        "QTUM",
-        &conf,
-        &req,
-        &priv_key,
-        contract_address
-    )));
+    let (_ctx, coin) = qrc20_coin_for_test(&priv_key);
 
     let expected_balance = unwrap!(coin.my_balance().wait());
 
@@ -2316,39 +2032,12 @@ fn test_taker_refunds_payment() {
 
 #[test]
 fn test_qrc20_check_if_my_payment_sent() {
-    let conf = json!({
-        "coin":"QRC20",
-        "required_confirmations":0,
-        "pubtype":120,
-        "p2shtype":50,
-        "wiftype":128,
-        "segwit":true,
-        "mm2":1,
-        "mature_confirmations":500,
-    });
-    let req = json!({
-        "method": "electrum",
-        "servers": [{"url":"95.217.83.126:10001"}],
-        "swap_contract_address": "0xba8b71f3544b93e2f681f996da519a98ace0107a",
-    });
-
     // priv_key of qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG
     let priv_key = [
         3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144, 72,
         172, 110, 180, 13, 123, 179, 10, 49,
     ];
-    let contract_address = "0xd362e096e873eb7907e205fadc6175c6fec7bc44".into();
-
-    let ctx = MmCtxBuilder::new().into_mm_arc();
-    let coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
-        &ctx,
-        "QRC20",
-        "QTUM",
-        &conf,
-        &req,
-        &priv_key,
-        contract_address
-    )));
+    let (_ctx, coin) = qrc20_coin_for_test(&priv_key);
 
     let time_lock = 1601367157;
     // pubkey of "cMhHM3PMpMrChygR4bLF7QsTdenhWpFrrmf2UezBG3eeFsz41rtL" passphrase
@@ -2373,39 +2062,12 @@ fn test_qrc20_check_if_my_payment_sent() {
 
 #[test]
 fn test_qrc20_send_taker_fee() {
-    let conf = json!({
-        "coin":"QRC20",
-        "required_confirmations":0,
-        "pubtype":120,
-        "p2shtype":50,
-        "wiftype":128,
-        "segwit":true,
-        "mm2":1,
-        "mature_confirmations":500,
-    });
-    let req = json!({
-        "method": "electrum",
-        "servers": [{"url":"95.217.83.126:10001"}],
-        "swap_contract_address": "0xba8b71f3544b93e2f681f996da519a98ace0107a",
-    });
-
     // priv_key of qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG
     let priv_key = [
         3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144, 72,
         172, 110, 180, 13, 123, 179, 10, 49,
     ];
-    let contract_address = "0xd362e096e873eb7907e205fadc6175c6fec7bc44".into();
-
-    let ctx = MmCtxBuilder::new().into_mm_arc();
-    let coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
-        &ctx,
-        "QRC20",
-        "QTUM",
-        &conf,
-        &req,
-        &priv_key,
-        contract_address
-    )));
+    let (_ctx, coin) = qrc20_coin_for_test(&priv_key);
 
     let fee_addr_pub_key = hex::decode("03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc06").unwrap();
     let amount = BigDecimal::from_str("0.01").unwrap();
@@ -2422,39 +2084,12 @@ fn test_qrc20_send_taker_fee() {
 
 #[test]
 fn test_qrc20_validate_fee() {
-    let conf = json!({
-        "coin":"QRC20",
-        "required_confirmations":0,
-        "pubtype":120,
-        "p2shtype":50,
-        "wiftype":128,
-        "segwit":true,
-        "mm2":1,
-        "mature_confirmations":500,
-    });
-    let req = json!({
-        "method": "electrum",
-        "servers": [{"url":"95.217.83.126:10001"}],
-        "swap_contract_address": "0xba8b71f3544b93e2f681f996da519a98ace0107a",
-    });
-
     // priv_key of qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG
     let priv_key = [
         3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144, 72,
         172, 110, 180, 13, 123, 179, 10, 49,
     ];
-    let contract_address = "0xd362e096e873eb7907e205fadc6175c6fec7bc44".into();
-
-    let ctx = MmCtxBuilder::new().into_mm_arc();
-    let coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
-        &ctx,
-        "QRC20",
-        "QTUM",
-        &conf,
-        &req,
-        &priv_key,
-        contract_address
-    )));
+    let (_ctx, coin) = qrc20_coin_for_test(&priv_key);
 
     // QRC20 transfer tx "f97d3a43dbea0993f1b7a6a299377d4ee164c84935a1eb7d835f70c9429e6a1d"
     let tx = TransactionEnum::UtxoTx("010000000160fd74b5714172f285db2b36f0b391cd6883e7291441631c8b18f165b0a4635d020000006a47304402205d409e141111adbc4f185ae856997730de935ac30a0d2b1ccb5a6c4903db8171022024fc59bbcfdbba283556d7eeee4832167301dc8e8ad9739b7865f67b9676b226012103693bff1b39e8b5a306810023c29b95397eb395530b106b1820ea235fd81d9ce9ffffffff020000000000000000625403a08601012844a9059cbb000000000000000000000000ca1e04745e8ca0c60d8c5881531d51bec470743f00000000000000000000000000000000000000000000000000000000000f424014d362e096e873eb7907e205fadc6175c6fec7bc44c200ada205000000001976a9149e032d4b0090a11dc40fe6c47601499a35d55fbb88acfe967d5f".into());
@@ -2496,39 +2131,12 @@ fn test_qrc20_validate_fee() {
 
 #[test]
 fn test_qrc20_search_for_swap_tx_spend() {
-    let conf = json!({
-        "coin":"QRC20",
-        "required_confirmations":0,
-        "pubtype":120,
-        "p2shtype":50,
-        "wiftype":128,
-        "segwit":true,
-        "mm2":1,
-        "mature_confirmations":500,
-    });
-    let req = json!({
-        "method": "electrum",
-        "servers": [{"url":"95.217.83.126:10001"}],
-        "swap_contract_address": "0xba8b71f3544b93e2f681f996da519a98ace0107a",
-    });
-
     // priv_key of qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG
     let priv_key = [
         3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144, 72,
         172, 110, 180, 13, 123, 179, 10, 49,
     ];
-    let contract_address = "0xd362e096e873eb7907e205fadc6175c6fec7bc44".into();
-
-    let ctx = MmCtxBuilder::new().into_mm_arc();
-    let coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
-        &ctx,
-        "QRC20",
-        "QTUM",
-        &conf,
-        &req,
-        &priv_key,
-        contract_address
-    )));
+    let (_ctx, coin) = qrc20_coin_for_test(&priv_key);
 
     let other_pub = &[0]; //ignored
     let search_from_block = 693000;
@@ -2565,56 +2173,19 @@ fn test_qrc20_search_for_swap_tx_spend() {
 #[test]
 #[ignore]
 fn test_qrc20_wait_for_tx_spend() {
-    let conf = json!({
-        "coin":"QRC20",
-        "required_confirmations":0,
-        "pubtype":120,
-        "p2shtype":50,
-        "wiftype":128,
-        "segwit":true,
-        "mm2":1,
-        "mature_confirmations":500,
-    });
-    let req = json!({
-        "method": "electrum",
-        "servers": [{"url":"95.217.83.126:10001"}],
-        "swap_contract_address": "0xba8b71f3544b93e2f681f996da519a98ace0107a",
-    });
-
     // priv_key of qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG
     let priv_key = [
         3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144, 72,
         172, 110, 180, 13, 123, 179, 10, 49,
     ];
-    let contract_address = "0xd362e096e873eb7907e205fadc6175c6fec7bc44".into();
-
-    let maker_ctx = MmCtxBuilder::new().into_mm_arc();
-    let maker_coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
-        &maker_ctx,
-        "QRC20",
-        "QTUM",
-        &conf,
-        &req,
-        &priv_key,
-        contract_address
-    )));
+    let (_ctx, maker_coin) = qrc20_coin_for_test(&priv_key);
 
     // priv_key of qUX9FGHubczidVjWPCUWuwCUJWpkAtGCgf
     let priv_key = [
         24, 181, 194, 193, 18, 152, 142, 168, 71, 73, 70, 244, 9, 101, 92, 168, 243, 61, 132, 48, 25, 39, 103, 92, 29,
         17, 11, 29, 113, 235, 48, 70,
     ];
-
-    let taker_ctx = MmCtxBuilder::new().into_mm_arc();
-    let taker_coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
-        &taker_ctx,
-        "QRC20",
-        "QTUM",
-        &conf,
-        &req,
-        &priv_key,
-        contract_address
-    )));
+    let (_ctx, taker_coin) = qrc20_coin_for_test(&priv_key);
 
     let from_block = maker_coin.current_block().wait().unwrap();
 
@@ -2699,40 +2270,12 @@ fn test_qrc20_wait_for_tx_spend() {
 
 #[test]
 fn test_qrc20_extract_secret() {
-    // TODO create qrc20_coin_for_tests()
-    let conf = json!({
-        "coin":"QRC20",
-        "required_confirmations":0,
-        "pubtype":120,
-        "p2shtype":50,
-        "wiftype":128,
-        "segwit":true,
-        "mm2":1,
-        "mature_confirmations":500,
-    });
-    let req = json!({
-        "method": "electrum",
-        "servers": [{"url":"95.217.83.126:10001"}],
-        "swap_contract_address": "0xba8b71f3544b93e2f681f996da519a98ace0107a",
-    });
-
     // priv_key of qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG
     let priv_key = [
         3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144, 72,
         172, 110, 180, 13, 123, 179, 10, 49,
     ];
-    let contract_address = "0xd362e096e873eb7907e205fadc6175c6fec7bc44".into();
-
-    let ctx = MmCtxBuilder::new().into_mm_arc();
-    let coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
-        &ctx,
-        "QRC20",
-        "QTUM",
-        &conf,
-        &req,
-        &priv_key,
-        contract_address
-    )));
+    let (_ctx, coin) = qrc20_coin_for_test(&priv_key);
 
     let expected_secret = &[1; 32];
     let secret_hash = &*dhash160(expected_secret);
@@ -2845,39 +2388,12 @@ fn test_qrc20_extract_secret() {
 
 #[test]
 fn test_qrc20_generate_token_transfer_script_pubkey() {
-    let conf = json!({
-        "coin":"QRC20",
-        "required_confirmations":0,
-        "pubtype":120,
-        "p2shtype":50,
-        "wiftype":128,
-        "segwit":true,
-        "mm2":1,
-        "mature_confirmations":500,
-    });
-    let req = json!({
-        "method": "electrum",
-        "servers": [{"url":"95.217.83.126:10001"}],
-        "swap_contract_address": "0xba8b71f3544b93e2f681f996da519a98ace0107a",
-    });
-
     // priv_key of qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG
     let priv_key = [
         3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144, 72,
         172, 110, 180, 13, 123, 179, 10, 49,
     ];
-    let contract_address = "0xd362e096e873eb7907e205fadc6175c6fec7bc44".into();
-
-    let ctx = MmCtxBuilder::new().into_mm_arc();
-    let coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
-        &ctx,
-        "QRC20",
-        "QTUM",
-        &conf,
-        &req,
-        &priv_key,
-        contract_address
-    )));
+    let (_ctx, coin) = qrc20_coin_for_test(&priv_key);
 
     // sample QRC20 transfer from https://testnet.qtum.info/tx/51e9cec885d7eb26271f8b1434c000f6cf07aad47671268fc8d36cee9d48f6de
     // the script is a script_pubkey of one of the transaction output
