@@ -1084,7 +1084,10 @@ impl TakerSwap {
                 },
             }
         };
-        let secret = match tx.extract_secret() {
+        let secret = match self
+            .taker_coin
+            .extract_secret(&self.r().secret_hash.0, &tx_details.tx_hex.0)
+        {
             Ok(bytes) => H256Json::from(bytes.as_slice()),
             Err(e) => {
                 return Ok((Some(TakerSwapCommand::Finish), vec![
@@ -1341,7 +1344,7 @@ impl TakerSwap {
             Some(spend) => match spend {
                 FoundSwapTxSpend::Spent(tx) => {
                     check_maker_payment_is_not_spent!();
-                    let secret = try_s!(tx.extract_secret());
+                    let secret = try_s!(self.taker_coin.extract_secret(&self.r().secret_hash.0, &tx.tx_hex()));
                     let transaction = try_s!(self
                         .maker_coin
                         .send_taker_spends_maker_payment(

@@ -89,7 +89,6 @@ use common::mm_number::MmNumber;
 pub trait Transaction: fmt::Debug + 'static {
     /// Raw transaction bytes of the transaction
     fn tx_hex(&self) -> Vec<u8>;
-    fn extract_secret(&self) -> Result<Vec<u8>, String>;
     /// Serializable representation of tx hash for displaying purpose
     fn tx_hash(&self) -> BytesJson;
 }
@@ -231,6 +230,8 @@ pub trait SwapOps {
         tx: &[u8],
         search_from_block: u64,
     ) -> Result<Option<FoundSwapTxSpend>, String>;
+
+    fn extract_secret(&self, secret_hash: &[u8], spend_tx: &[u8]) -> Result<Vec<u8>, String>;
 }
 
 /// Operations that coins have independently from the MarketMaker.

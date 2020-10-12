@@ -115,17 +115,6 @@ fn get_special_folder_path() -> PathBuf { panic!("!windows") }
 impl Transaction for UtxoTx {
     fn tx_hex(&self) -> Vec<u8> { serialize(self).into() }
 
-    fn extract_secret(&self) -> Result<Vec<u8>, String> {
-        let script: Script = self.inputs[0].script_sig.clone().into();
-        for (i, instr) in script.iter().enumerate() {
-            let instruction = instr.unwrap();
-            if i == 1 && instruction.opcode == Opcode::OP_PUSHBYTES_32 {
-                return Ok(instruction.data.unwrap().to_vec());
-            }
-        }
-        ERR!("Couldn't extract secret")
-    }
-
     fn tx_hash(&self) -> BytesJson { self.hash().reversed().to_vec().into() }
 }
 

@@ -1,6 +1,7 @@
 use super::rpc_clients::{ElectrumProtocol, ListSinceBlockRes, NetworkInfo};
 use super::*;
-use crate::utxo::qrc20::{qrc20_addr_from_utxo_addr, qrc20_coin_from_conf_and_request, Qrc20Coin, Qrc20FeeDetails};
+use crate::utxo::qrc20::{qrc20_addr_from_str, qrc20_addr_from_utxo_addr, qrc20_coin_from_conf_and_request, Qrc20Coin,
+                         Qrc20FeeDetails, QtumRpcOps};
 use crate::utxo::rpc_clients::UtxoRpcClientOps;
 use crate::utxo::utxo_standard::{utxo_standard_coin_from_conf_and_request, UtxoStandardCoin, UTXO_STANDARD_DUST};
 use crate::{SwapOps, TxFeeDetails, WithdrawFee};
@@ -126,10 +127,14 @@ fn utxo_coin_for_test(rpc_client: UtxoRpcClientEnum, force_seed: Option<&str>) -
 
 #[test]
 fn test_extract_secret() {
-    let tx: UtxoTx = "0100000001de7aa8d29524906b2b54ee2e0281f3607f75662cbc9080df81d1047b78e21dbc00000000d7473044022079b6c50820040b1fbbe9251ced32ab334d33830f6f8d0bf0a40c7f1336b67d5b0220142ccf723ddabb34e542ed65c395abc1fbf5b6c3e730396f15d25c49b668a1a401209da937e5609680cb30bff4a7661364ca1d1851c2506fa80c443f00a3d3bf7365004c6b6304f62b0e5cb175210270e75970bb20029b3879ec76c4acd320a8d0589e003636264d01a7d566504bfbac6782012088a9142fb610d856c19fd57f2d0cffe8dff689074b3d8a882103f368228456c940ac113e53dad5c104cf209f2f102a409207269383b6ab9b03deac68ffffffff01d0dc9800000000001976a9146d9d2b554d768232320587df75c4338ecc8bf37d88ac40280e5c".into();
-    let secret = tx.extract_secret().unwrap();
+    let client = electrum_client_for_test(&["electrum1.cipig.net:10017"]);
+    let coin = utxo_coin_for_test(client.into(), None);
+
+    let tx_hex = hex::decode("0100000001de7aa8d29524906b2b54ee2e0281f3607f75662cbc9080df81d1047b78e21dbc00000000d7473044022079b6c50820040b1fbbe9251ced32ab334d33830f6f8d0bf0a40c7f1336b67d5b0220142ccf723ddabb34e542ed65c395abc1fbf5b6c3e730396f15d25c49b668a1a401209da937e5609680cb30bff4a7661364ca1d1851c2506fa80c443f00a3d3bf7365004c6b6304f62b0e5cb175210270e75970bb20029b3879ec76c4acd320a8d0589e003636264d01a7d566504bfbac6782012088a9142fb610d856c19fd57f2d0cffe8dff689074b3d8a882103f368228456c940ac113e53dad5c104cf209f2f102a409207269383b6ab9b03deac68ffffffff01d0dc9800000000001976a9146d9d2b554d768232320587df75c4338ecc8bf37d88ac40280e5c").unwrap();
     let expected_secret = hex::decode("9da937e5609680cb30bff4a7661364ca1d1851c2506fa80c443f00a3d3bf7365").unwrap();
-    assert_eq!(expected_secret, secret);
+    let secret_hash = &*dhash160(&expected_secret);
+    let secret = unwrap!(coin.extract_secret(secret_hash, &tx_hex));
+    assert_eq!(secret, expected_secret);
 }
 
 #[test]
@@ -2558,6 +2563,7 @@ fn test_qrc20_search_for_swap_tx_spend() {
 }
 
 #[test]
+#[ignore]
 fn test_qrc20_wait_for_tx_spend() {
     let conf = json!({
         "coin":"QRC20",
@@ -2690,6 +2696,152 @@ fn test_qrc20_wait_for_tx_spend() {
         _ => panic!("Unexpected Transaction type"),
     }
 }
+
+#[test]
+fn test_qrc20_extract_secret() {
+    // TODO create qrc20_coin_for_tests()
+    let conf = json!({
+        "coin":"QRC20",
+        "required_confirmations":0,
+        "pubtype":120,
+        "p2shtype":50,
+        "wiftype":128,
+        "segwit":true,
+        "mm2":1,
+        "mature_confirmations":500,
+    });
+    let req = json!({
+        "method": "electrum",
+        "servers": [{"url":"95.217.83.126:10001"}],
+        "swap_contract_address": "0xba8b71f3544b93e2f681f996da519a98ace0107a",
+    });
+
+    // priv_key of qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG
+    let priv_key = [
+        3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144, 72,
+        172, 110, 180, 13, 123, 179, 10, 49,
+    ];
+    let contract_address = "0xd362e096e873eb7907e205fadc6175c6fec7bc44".into();
+
+    let ctx = MmCtxBuilder::new().into_mm_arc();
+    let coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
+        &ctx,
+        "QRC20",
+        "QTUM",
+        &conf,
+        &req,
+        &priv_key,
+        contract_address
+    )));
+
+    let expected_secret = &[1; 32];
+    let secret_hash = &*dhash160(expected_secret);
+
+    // taker spent maker payment - d3f5dab4d54c14b3d7ed8c7f5c8cc7f47ccf45ce589fdc7cd5140a3c1c3df6e1
+    let tx_hex = hex::decode("01000000033f56ecafafc8602fde083ba868d1192d6649b8433e42e1a2d79ba007ea4f7abb010000006b48304502210093404e90e40d22730013035d31c404c875646dcf2fad9aa298348558b6d65ba60220297d045eac5617c1a3eddb71d4bca9772841afa3c4c9d6c68d8d2d42ee6de3950121022b00078841f37b5d30a6a1defb82b3af4d4e2d24dd4204d41f0c9ce1e875de1affffffff9cac7fe90d597922a1d92e05306c2215628e7ea6d5b855bfb4289c2944f4c73a030000006b483045022100b987da58c2c0c40ce5b6ef2a59e8124ed4ef7a8b3e60c7fb631139280019bc93022069649bcde6fe4dd5df9462a1fcae40598488d6af8c324cd083f5c08afd9568be0121022b00078841f37b5d30a6a1defb82b3af4d4e2d24dd4204d41f0c9ce1e875de1affffffff70b9870f2b0c65d220a839acecebf80f5b44c3ca4c982fa2fdc5552c037f5610010000006a473044022071b34dd3ebb72d29ca24f3fa0fc96571c815668d3b185dd45cc46a7222b6843f02206c39c030e618d411d4124f7b3e7ca1dd5436775bd8083a85712d123d933a51300121022b00078841f37b5d30a6a1defb82b3af4d4e2d24dd4204d41f0c9ce1e875de1affffffff020000000000000000c35403a0860101284ca402ed292b806a1835a1b514ad643f2acdb5c8db6b6a9714accff3275ea0d79a3f23be8fd00000000000000000000000000000000000000000000000000000000001312d000101010101010101010101010101010101010101010101010101010101010101000000000000000000000000d362e096e873eb7907e205fadc6175c6fec7bc440000000000000000000000009e032d4b0090a11dc40fe6c47601499a35d55fbb14ba8b71f3544b93e2f681f996da519a98ace0107ac2c02288d4010000001976a914783cf0be521101942da509846ea476e683aad83288ac0f047f5f").unwrap();
+    let secret = unwrap!(coin.extract_secret(secret_hash, &tx_hex));
+
+    assert_eq!(secret, expected_secret);
+}
+
+// #[test]
+// fn test_qrc20_receiver_spend_call_details_from_tx() {
+//     let conf = json!({
+//         "coin":"QRC20",
+//         "required_confirmations":0,
+//         "pubtype":120,
+//         "p2shtype":50,
+//         "wiftype":128,
+//         "segwit":true,
+//         "mm2":1,
+//         "mature_confirmations":500,
+//     });
+//     let req = json!({
+//         "method": "electrum",
+//         "servers": [{"url":"95.217.83.126:10001"}],
+//         "swap_contract_address": "0xba8b71f3544b93e2f681f996da519a98ace0107a",
+//     });
+//
+//     // priv_key of qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG
+//     let priv_key = [
+//         3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144, 72,
+//         172, 110, 180, 13, 123, 179, 10, 49,
+//     ];
+//     let contract_address = "0xd362e096e873eb7907e205fadc6175c6fec7bc44".into();
+//
+//     let maker_ctx = MmCtxBuilder::new().into_mm_arc();
+//     let maker_coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
+//         &maker_ctx,
+//         "QRC20",
+//         "QTUM",
+//         &conf,
+//         &req,
+//         &priv_key,
+//         contract_address
+//     )));
+//
+//     // priv_key of qUX9FGHubczidVjWPCUWuwCUJWpkAtGCgf
+//     let priv_key = [
+//         24, 181, 194, 193, 18, 152, 142, 168, 71, 73, 70, 244, 9, 101, 92, 168, 243, 61, 132, 48, 25, 39, 103, 92, 29,
+//         17, 11, 29, 113, 235, 48, 70,
+//     ];
+//
+//     let taker_ctx = MmCtxBuilder::new().into_mm_arc();
+//     let taker_coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
+//         &taker_ctx,
+//         "QRC20",
+//         "QTUM",
+//         &conf,
+//         &req,
+//         &priv_key,
+//         contract_address
+//     )));
+//
+//     let from_block = maker_coin.current_block().wait().unwrap();
+//
+//     let timelock = (now_ms() / 1000) as u32 - 200;
+//     // pubkey of "taker_passphrase" passphrase and qUX9FGHubczidVjWPCUWuwCUJWpkAtGCgf address
+//     let taker_pub = hex::decode("022b00078841f37b5d30a6a1defb82b3af4d4e2d24dd4204d41f0c9ce1e875de1a").unwrap();
+//     // pubkey of "cMhHM3PMpMrChygR4bLF7QsTdenhWpFrrmf2UezBG3eeFsz41rtL" passphrase
+//     let maker_pub = hex::decode("03693bff1b39e8b5a306810023c29b95397eb395530b106b1820ea235fd81d9ce9").unwrap();
+//     let secret = &[1; 32];
+//     let secret_hash = &*dhash160(secret);
+//     let amount = BigDecimal::from_str("0.2").unwrap();
+//     let payment = maker_coin
+//         .send_maker_payment(timelock, &taker_pub, secret_hash, amount.clone())
+//         .wait()
+//         .unwrap();
+//     let tx = match payment {
+//         TransactionEnum::UtxoTx(tx) => tx,
+//         _ => panic!("Expected UtxoTx"),
+//     };
+//
+//     let payment_tx_hash: H256Json = tx.hash().reversed().into();
+//     log!("Maker payment: "[payment_tx_hash]);
+//     let tx_hex = serialize(&tx);
+//
+//     let confirmations = 1;
+//     let requires_nota = false;
+//     let wait_until = (now_ms() / 1000) + 320; // timeout if test takes more than 320 seconds to run
+//     let check_every = 1;
+//     unwrap!(taker_coin
+//         .wait_for_confirmations(&tx_hex, confirmations, requires_nota, wait_until, check_every)
+//         .wait());
+//
+//     unwrap!(taker_coin
+//         .validate_maker_payment(&tx_hex, timelock, &maker_pub, secret_hash, amount.clone())
+//         .wait());
+//
+//     use crate::eth::SWAP_CONTRACT;
+//     use ethabi::Token;
+//     let mut outputs = vec![];
+//     let func = SWAP_CONTRACT.function("receiverSpend").unwrap();
+//     func.encode_input(&[Token::FixedBytes()])
+//
+//     let spend = unwrap!(taker_coin
+//         .send_taker_spends_maker_payment(&tx_hex, timelock, &maker_pub, secret)
+//         .wait());
+// }
 
 #[test]
 fn test_qrc20_generate_token_transfer_script_pubkey() {

@@ -272,6 +272,10 @@ impl SwapOps for QtumCoin {
     ) -> Result<Option<FoundSwapTxSpend>, String> {
         utxo_common::search_for_swap_tx_spend_other(self, time_lock, other_pub, secret_hash, tx, search_from_block)
     }
+
+    fn extract_secret(&self, secret_hash: &[u8], spend_tx: &[u8]) -> Result<Vec<u8>, String> {
+        utxo_common::extract_secret(secret_hash, spend_tx)
+    }
 }
 
 impl MarketCoinOps for QtumCoin {

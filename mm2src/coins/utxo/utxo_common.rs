@@ -1047,6 +1047,51 @@ where
     )
 }
 
+/// Extract a secret from the `spend_tx`.
+/// Note spender could generate the spend with several inputs where the only one input is the p2sh script.
+pub fn extract_secret(secret_hash: &[u8], spend_tx: &[u8]) -> Result<Vec<u8>, String> {
+    let spend_tx: UtxoTx = try_s!(deserialize(spend_tx).map_err(|e| ERRL!("{:?}", e)));
+    for (input_idx, input) in spend_tx.inputs.into_iter().enumerate() {
+        let script: Script = input.script_sig.clone().into();
+        let instruction = match script
+            .iter()
+            .enumerate()
+            .find_map(|(i, instr)| if i == 1 { Some(instr) } else { None })
+        {
+            Some(Ok(instr)) => instr,
+            Some(Err(e)) => {
+                log!("Warning: "[e]);
+                continue;
+            },
+            None => {
+                log!("Warning: couldn't find secret in "[input_idx]" input");
+                continue;
+            },
+        };
+
+        if instruction.opcode != Opcode::OP_PUSHBYTES_32 {
+            log!("Warning: expected "[Opcode::OP_PUSHBYTES_32]" opcode, found "[instruction.opcode] " in "[input_idx]" input");
+            continue;
+        }
+
+        let secret = match instruction.data {
+            Some(data) => data.to_vec(),
+            None => {
+                log!("Warning: secret is empty in "[input_idx] " input");
+                continue;
+            },
+        };
+
+        let actual_secret_hash = &*dhash160(&secret);
+        if actual_secret_hash != secret_hash {
+            log!("Warning: invalid 'dhash160(secret)' "[actual_secret_hash]", expected "[secret_hash]);
+            continue;
+        }
+        return Ok(secret);
+    }
+    ERR!("Couldn't extract secret")
+}
+
 pub fn my_address<T>(coin: &T) -> Result<String, String>
 where
     T: AsRef<UtxoArc> + UtxoCoinCommonOps,

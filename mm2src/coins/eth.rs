@@ -770,6 +770,22 @@ impl SwapOps for EthCoin {
     ) -> Result<Option<FoundSwapTxSpend>, String> {
         self.search_for_swap_tx_spend(tx, search_from_block)
     }
+
+    fn extract_secret(&self, _secret_hash: &[u8], spend_tx: &[u8]) -> Result<Vec<u8>, String> {
+        let unverified: UnverifiedTransaction = try_s!(rlp::decode(spend_tx));
+        let function = try_s!(SWAP_CONTRACT.function("receiverSpend"));
+        let tokens = try_s!(function.decode_input(&unverified.data));
+        if tokens.len() < 3 {
+            return ERR!("Invalid arguments in 'receiverSpend' call: {:?}", tokens);
+        }
+        match &tokens[2] {
+            Token::FixedBytes(secret) => Ok(secret.to_vec()),
+            _ => ERR!(
+                "Expected secret to be fixed bytes, decoded function data is {:?}",
+                tokens
+            ),
+        }
+    }
 }
 
 impl MarketCoinOps for EthCoin {
@@ -2442,18 +2458,6 @@ pub fn wei_from_big_decimal(amount: &BigDecimal, decimals: u8) -> Result<U256, S
 
 impl Transaction for SignedEthTx {
     fn tx_hex(&self) -> Vec<u8> { rlp::encode(self).to_vec() }
-
-    fn extract_secret(&self) -> Result<Vec<u8>, String> {
-        let function = try_s!(SWAP_CONTRACT.function("receiverSpend"));
-        let tokens = try_s!(function.decode_input(&self.data));
-        match &tokens[2] {
-            Token::FixedBytes(secret) => Ok(secret.to_vec()),
-            _ => ERR!(
-                "Expected secret to be fixed bytes, decoded function data is {:?}",
-                tokens
-            ),
-        }
-    }
 
     fn tx_hash(&self) -> BytesJson { self.hash.to_vec().into() }
 }

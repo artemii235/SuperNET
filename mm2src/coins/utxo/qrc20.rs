@@ -279,6 +279,7 @@ impl Qrc20Coin {
     }
 
     /// Get `Transfer` event details from [`TxReceipt::logs`].
+    /// Result - (amount, sender, receiver).
     fn transfer_call_details_from_receipt(&self, receipt: &TxReceipt) -> Result<(BigDecimal, H160, H160), String> {
         fn address_from_log_topic(topic: &str) -> Result<H160, String> {
             if topic.len() != 64 {
@@ -322,6 +323,7 @@ impl Qrc20Coin {
     }
 
     /// Get `transfer` contract call details from script pubkey.
+    /// Result - (receiver, amount).
     fn transfer_call_details_from_script_pubkey(&self, script_pubkey: &Script) -> Result<(H160, U256), String> {
         if !is_contract_call(&script_pubkey) {
             return ERR!("Expected 'transfer' contract call");
@@ -351,6 +353,64 @@ impl Qrc20Coin {
         };
 
         Ok((receiver, value))
+    }
+
+    pub fn receiver_spend_call_details_from_script_pubkey(
+        &self,
+        script_pubkey: &Script,
+    ) -> Result<ReceiverSpendDetails, String> {
+        if !is_contract_call(script_pubkey) {
+            return ERR!("Expected 'transfer' contract call");
+        }
+
+        let contract_call_bytes = try_s!(extract_contract_call_from_script(script_pubkey));
+        let call_type = try_s!(ContractCallType::from_script_pubkey(&contract_call_bytes));
+        match call_type {
+            Some(ContractCallType::ReceiverSpend) => (),
+            _ => return ERR!("Expected 'receiverSpend' contract call"),
+        }
+
+        let function = try_s!(SWAP_CONTRACT.function("receiverSpend"));
+        let decoded = try_s!(function.decode_input(&contract_call_bytes));
+        let mut decoded = decoded.into_iter();
+
+        let swap_id = match decoded.next() {
+            Some(Token::FixedBytes(id)) => id,
+            Some(token) => return ERR!("Payment tx 'swap_id' arg is invalid, found {:?}", token),
+            None => return ERR!("Couldn't find 'swap_id' in erc20Payment call"),
+        };
+
+        let value = match decoded.next() {
+            Some(Token::Uint(value)) => value,
+            Some(token) => return ERR!("Payment tx 'value' arg is invalid, found {:?}", token),
+            None => return ERR!("Couldn't find 'value' in erc20Payment call"),
+        };
+
+        let secret = match decoded.next() {
+            Some(Token::FixedBytes(hash)) => hash,
+            Some(token) => return ERR!("Payment tx 'secret_hash' arg is invalid, found {:?}", token),
+            None => return ERR!("Couldn't find 'secret_hash' in erc20Payment call"),
+        };
+
+        let token_address = match decoded.next() {
+            Some(Token::Address(addr)) => addr,
+            Some(token) => return ERR!("Payment tx 'token_address' arg is invalid, found {:?}", token),
+            None => return ERR!("Couldn't find 'token_address' in erc20Payment call"),
+        };
+
+        let sender = match decoded.next() {
+            Some(Token::Address(addr)) => addr,
+            Some(token) => return ERR!("Payment tx 'receiver' arg is invalid, found {:?}", token),
+            None => return ERR!("Couldn't find 'receiver' in erc20Payment call"),
+        };
+
+        Ok(ReceiverSpendDetails {
+            swap_id,
+            value,
+            secret,
+            token_address,
+            sender,
+        })
     }
 
     pub async fn allowance(&self, spender: H160) -> Result<U256, String> {
@@ -893,7 +953,7 @@ impl ContractCallType {
     fn short_signature(&self) -> [u8; 4] { self.as_function().short_signature() }
 }
 
-/// These variants contain values obtained from an [`TransactionOutput::script_pubkey`] and [`TxReceipt::logs`].
+/// `erc20Payment` call details consist of values obtained from [`TransactionOutput::script_pubkey`] and [`TxReceipt::logs`].
 #[derive(Debug, Eq, PartialEq)]
 pub struct Erc20PaymentDetails {
     pub output_index: i64,
@@ -905,6 +965,16 @@ pub struct Erc20PaymentDetails {
     pub receiver: H160,
     pub secret_hash: Vec<u8>,
     pub timelock: U256,
+}
+
+/// `receiverSpend` call details consist of values obtained from [`TransactionOutput::script_pubkey`].
+#[derive(Debug)]
+pub struct ReceiverSpendDetails {
+    pub swap_id: Vec<u8>,
+    pub value: U256,
+    pub secret: Vec<u8>,
+    pub token_address: H160,
+    pub sender: H160,
 }
 
 impl AsRef<UtxoArc> for Qrc20Coin {
@@ -1355,6 +1425,33 @@ impl SwapOps for Qrc20Coin {
         let tx: UtxoTx = try_s!(deserialize(tx).map_err(|e| ERRL!("{:?}", e)));
         let fut = qrc20_search_for_swap_tx_spend(self.clone(), time_lock, secret_hash.to_vec(), tx, search_from_block);
         block_on(fut)
+    }
+
+    fn extract_secret(&self, secret_hash: &[u8], spend_tx: &[u8]) -> Result<Vec<u8>, String> {
+        let spend_tx: UtxoTx = try_s!(deserialize(spend_tx).map_err(|e| ERRL!("{:?}", e)));
+        let spend_tx_hash: H256Json = spend_tx.hash().reversed().into();
+        for output in spend_tx.outputs {
+            let script_pubkey: Script = output.script_pubkey.into();
+            let ReceiverSpendDetails { secret, .. } =
+                match self.receiver_spend_call_details_from_script_pubkey(&script_pubkey) {
+                    Ok(details) => details,
+                    Err(e) => {
+                        log!((e));
+                        // try to obtain the details from the next output}
+                        continue;
+                    },
+                };
+
+            let actual_secret_hash = &*dhash160(&secret);
+            if actual_secret_hash != secret_hash {
+                log!("Warning: invalid 'dhash160(secret)' "[actual_secret_hash]", expected "[secret_hash]);
+                continue;
+            }
+
+            return Ok(secret);
+        }
+
+        ERR!("Couldn't obtain the 'secret' from {:?} tx", spend_tx_hash)
     }
 }
 
@@ -1829,6 +1926,7 @@ async fn qrc20_refund_hash_time_locked_payment(coin: Qrc20Coin, payment_tx: Utxo
     coin.send_contract_calls(vec![refund_output]).await
 }
 
+/// TODO check swap_id
 async fn qrc20_validate_payment(
     coin: Qrc20Coin,
     payment_tx: UtxoTx,

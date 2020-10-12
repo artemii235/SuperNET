@@ -187,6 +187,8 @@ impl SwapOps for TestCoin {
     ) -> Result<Option<FoundSwapTxSpend>, String> {
         unimplemented!()
     }
+
+    fn extract_secret(&self, secret_hash: &[u8], spend_tx: &[u8]) -> Result<Vec<u8>, String> { unimplemented!() }
 }
 
 #[mockable]
