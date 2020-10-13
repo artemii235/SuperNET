@@ -1920,6 +1920,15 @@ async fn qrc20_validate_payment(
 ) -> Result<(), String> {
     let erc20_payment = try_s!(coin.erc20_payment_details_from_tx(&payment_tx).await);
 
+    let expected_swap_id = qrc20_swap_id(time_lock, &secret_hash);
+    if erc20_payment.swap_id != expected_swap_id {
+        return ERR!(
+            "Invalid 'swap_id' {:?} in swap payment, expected {:?}",
+            erc20_payment.swap_id,
+            expected_swap_id
+        );
+    }
+
     if sender != erc20_payment.sender {
         return ERR!("Payment tx was sent from wrong address, expected {:?}", sender);
     }

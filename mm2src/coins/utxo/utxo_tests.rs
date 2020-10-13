@@ -798,10 +798,10 @@ fn test_qrc20_withdraw_impl_fee_details() {
 
     let expected: Qrc20FeeDetails = unwrap!(json::from_value(json!({
         "coin": "QTUM",
-        // (1000 + total_gas_fee) from satoshi,
+        // 1000 from satoshi,
         // where decimals = 8,
         //       1000 is fixed fee
-        "miner_fee": "1.00001",
+        "miner_fee": "0.00001",
         "gas_limit": 2_500_000,
         "gas_price": 40,
         // (gas_limit * gas_price) from satoshi in Qtum
@@ -1752,7 +1752,7 @@ fn test_qrc20_validate_maker_payment() {
         .wait()
         .err());
     log!("error: "[error]);
-    assert!(error.contains("Invalid 'secret_hash'"));
+    assert!(error.contains("Invalid 'swap_id'"));
 
     let time_lock_dif = 123;
     let error = unwrap!(coin
@@ -1760,7 +1760,7 @@ fn test_qrc20_validate_maker_payment() {
         .wait()
         .err());
     log!("error: "[error]);
-    assert!(error.contains("Invalid 'timelock'"));
+    assert!(error.contains("Invalid 'swap_id'"));
 }
 
 #[test]
@@ -2115,7 +2115,7 @@ fn test_qrc20_validate_fee() {
         .err()
         .expect("Expected an error");
     log!("error: "[err]);
-    assert!(err.contains("QRC20 Fee tx value 0.01 is less than expected 0.02"));
+    assert!(err.contains("QRC20 Fee tx value 1000000 is less than expected 2000000"));
 
     // QTUM tx "8a51f0ffd45f34974de50f07c5bf2f0949da4e88433f8f75191953a442cf9310"
     let tx = TransactionEnum::UtxoTx("020000000113640281c9332caeddd02a8dd0d784809e1ad87bda3c972d89d5ae41f5494b85010000006a47304402207c5c904a93310b8672f4ecdbab356b65dd869a426e92f1064a567be7ccfc61ff02203e4173b9467127f7de4682513a21efb5980e66dbed4da91dff46534b8e77c7ef012102baefe72b3591de2070c0da3853226b00f082d72daa417688b61cb18c1d543d1afeffffff020001b2c4000000001976a9149e032d4b0090a11dc40fe6c47601499a35d55fbb88acbc4dd20c2f0000001976a9144208fa7be80dcf972f767194ad365950495064a488ac76e70800".into());
