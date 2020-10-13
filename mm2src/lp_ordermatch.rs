@@ -652,8 +652,7 @@ impl BalanceTradeFeeUpdatedHandler for BalanceUpdateOrdermatchHandler {
                         let ctx = self.ctx.clone();
                         spawn(async move { maker_order_cancelled_p2p_notify(ctx, &order).await });
                         None
-                    } else if new_volume < order.max_base_vol {
-                        order.max_base_vol = new_volume.clone();
+                    } else if new_volume < order.available_amount() {
                         let update_msg =
                             new_protocol::MakerOrderUpdated::new(order.uuid).with_new_max_volume(new_volume.clone());
                         let base = order.base.to_owned();
@@ -2068,6 +2067,13 @@ async fn process_taker_connect(ctx: MmArc, sender_pubkey: H256Json, connect_msg:
         order_match.connected = Some(connected);
         my_order.started_swaps.push(order_match.request.uuid);
         lp_connect_start_bob(ctx.clone(), order_match.clone(), my_order.clone());
+
+        // If volume is less order will be cancelled a bit later
+        if my_order.available_amount() >= MmNumber::from(MIN_TRADING_VOL) {
+            let updated_msg =
+                new_protocol::MakerOrderUpdated::new(my_order.uuid).with_new_max_volume(my_order.available_amount());
+            maker_order_updated_p2p_notify(ctx.clone(), &my_order.base, &my_order.rel, updated_msg).await;
+        }
         save_my_maker_order(&ctx, &my_order);
     }
 }
