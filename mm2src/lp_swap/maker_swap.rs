@@ -1322,6 +1322,14 @@ pub async fn check_balance_for_maker_swap(
     }
 }
 
+pub fn calc_max_maker_vol(ctx: &MmArc, balance: &BigDecimal, trade_fee: &TradeFee, ticker: &str) -> MmNumber {
+    let mut vol = MmNumber::from(balance.clone()) - get_locked_amount(ctx, ticker, trade_fee);
+    if trade_fee.coin == ticker {
+        vol = &vol - &trade_fee.amount;
+    }
+    vol
+}
+
 #[cfg(test)]
 mod maker_swap_tests {
     use super::*;

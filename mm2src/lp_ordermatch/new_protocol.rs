@@ -3,6 +3,7 @@ use crate::mm2::lp_ordermatch::OrderConfirmationsSettings;
 use common::mm_number::MmNumber;
 use compact_uuid::CompactUuid;
 use std::collections::HashSet;
+use uuid::Uuid;
 
 #[derive(Debug, Deserialize, Serialize)]
 #[allow(clippy::large_enum_variant)]
@@ -42,6 +43,10 @@ pub struct Orderbook {
 
 impl From<MakerOrderKeepAlive> for OrdermatchMessage {
     fn from(keep_alive: MakerOrderKeepAlive) -> Self { OrdermatchMessage::MakerOrderKeepAlive(keep_alive) }
+}
+
+impl From<MakerOrderUpdated> for OrdermatchMessage {
+    fn from(message: MakerOrderUpdated) -> Self { OrdermatchMessage::MakerOrderUpdated(message) }
 }
 
 /// MsgPack compact representation does not work with tagged enums (encoding works, but decoding fails)
@@ -153,6 +158,40 @@ pub struct MakerOrderUpdated {
     new_price: Option<MmNumber>,
     new_max_volume: Option<MmNumber>,
     new_min_volume: Option<MmNumber>,
+}
+
+impl MakerOrderUpdated {
+    pub fn new(uuid: Uuid) -> Self {
+        MakerOrderUpdated {
+            uuid: uuid.into(),
+            new_price: None,
+            new_max_volume: None,
+            new_min_volume: None,
+        }
+    }
+
+    pub fn with_new_price(mut self, new_price: MmNumber) -> Self {
+        self.new_price = Some(new_price);
+        self
+    }
+
+    pub fn with_new_max_volume(mut self, new_max_volume: MmNumber) -> Self {
+        self.new_max_volume = Some(new_max_volume);
+        self
+    }
+
+    pub fn with_new_min_volume(mut self, new_min_volume: MmNumber) -> Self {
+        self.new_min_volume = Some(new_min_volume);
+        self
+    }
+
+    pub fn new_price(&self) -> &Option<MmNumber> { &self.new_price }
+
+    pub fn new_max_volume(&self) -> &Option<MmNumber> { &self.new_max_volume }
+
+    pub fn new_min_volume(&self) -> &Option<MmNumber> { &self.new_min_volume }
+
+    pub fn uuid(&self) -> Uuid { self.uuid.into() }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

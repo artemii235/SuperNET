@@ -512,15 +512,15 @@ impl Deref for MmCoinEnum {
 }
 
 #[async_trait]
-pub trait BalanceUpdateEventHandler {
-    async fn balance_updated(&self, ticker: &str, new_balance: &BigDecimal);
+pub trait BalanceTradeFeeUpdatedHandler {
+    async fn balance_updated(&self, ticker: &str, new_balance: &BigDecimal, trade_fee: &TradeFee);
 }
 
 struct CoinsContext {
     /// A map from a currency ticker symbol to the corresponding coin.
     /// Similar to `LP_coins`.
     coins: AsyncMutex<HashMap<String, MmCoinEnum>>,
-    balance_update_handlers: AsyncMutex<Vec<Box<dyn BalanceUpdateEventHandler + Send + Sync>>>,
+    balance_update_handlers: AsyncMutex<Vec<Box<dyn BalanceTradeFeeUpdatedHandler + Send + Sync>>>,
 }
 impl CoinsContext {
     /// Obtains a reference to this crate context, creating it if necessary.
@@ -659,10 +659,10 @@ impl RpcTransportEventHandler for CoinTransportMetrics {
 }
 
 #[async_trait]
-impl BalanceUpdateEventHandler for CoinsContext {
-    async fn balance_updated(&self, ticker: &str, new_balance: &BigDecimal) {
+impl BalanceTradeFeeUpdatedHandler for CoinsContext {
+    async fn balance_updated(&self, ticker: &str, new_balance: &BigDecimal, trade_fee: &TradeFee) {
         for sub in self.balance_update_handlers.lock().await.iter() {
-            sub.balance_updated(ticker, new_balance).await
+            sub.balance_updated(ticker, new_balance, trade_fee).await
         }
     }
 }
@@ -1082,6 +1082,7 @@ pub async fn show_priv_key(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, S
     Ok(try_s!(Response::builder().body(res)))
 }
 
+// TODO: Refactor this, it's actually not required to check balance and trade fee when there no orders using the coin
 pub async fn check_balance_update_loop(ctx: MmArc, ticker: String) {
     let mut current_balance = None;
     loop {
@@ -1093,8 +1094,9 @@ pub async fn check_balance_update_loop(ctx: MmArc, ticker: String) {
                     Err(_) => continue,
                 };
                 if Some(&balance) != current_balance.as_ref() {
+                    let trade_fee = coin.get_trade_fee().compat().await.unwrap();
                     let coins_ctx = unwrap!(CoinsContext::from_ctx(&ctx));
-                    coins_ctx.balance_updated(&ticker, &balance).await;
+                    coins_ctx.balance_updated(&ticker, &balance, &trade_fee).await;
                     current_balance = Some(balance);
                 }
             },
@@ -1104,7 +1106,10 @@ pub async fn check_balance_update_loop(ctx: MmArc, ticker: String) {
     }
 }
 
-pub async fn register_balance_update_handler(ctx: MmArc, handler: Box<dyn BalanceUpdateEventHandler + Send + Sync>) {
+pub async fn register_balance_update_handler(
+    ctx: MmArc,
+    handler: Box<dyn BalanceTradeFeeUpdatedHandler + Send + Sync>,
+) {
     let coins_ctx = unwrap!(CoinsContext::from_ctx(&ctx));
     coins_ctx.balance_update_handlers.lock().await.push(handler);
 }

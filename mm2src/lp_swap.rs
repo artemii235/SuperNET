@@ -256,7 +256,7 @@ macro_rules! recv {
 
 #[path = "lp_swap/taker_swap.rs"] mod taker_swap;
 
-pub use maker_swap::{check_balance_for_maker_swap, run_maker_swap, MakerSwap, RunMakerSwapInput};
+pub use maker_swap::{calc_max_maker_vol, check_balance_for_maker_swap, run_maker_swap, MakerSwap, RunMakerSwapInput};
 use maker_swap::{stats_maker_swap_file_path, MakerSavedSwap, MakerSwapEvent};
 use num_rational::BigRational;
 pub use taker_swap::{check_balance_for_taker_swap, max_taker_vol, run_taker_swap, RunTakerSwapInput, TakerSwap};

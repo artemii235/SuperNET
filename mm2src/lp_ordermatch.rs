@@ -23,7 +23,7 @@
 use async_trait::async_trait;
 use bigdecimal::BigDecimal;
 use coins::utxo::{compressed_pub_key_from_priv_raw, ChecksumType};
-use coins::{lp_coinfindᵃ, BalanceUpdateEventHandler, MmCoinEnum};
+use coins::{lp_coinfindᵃ, BalanceTradeFeeUpdatedHandler, MmCoinEnum, TradeFee};
 use common::executor::{spawn, Timer};
 use common::mm_ctx::{from_ctx, MmArc, MmWeak};
 use common::mm_number::{from_dec_to_ratio, Fraction, MmNumber};
@@ -48,8 +48,8 @@ use uuid::Uuid;
 
 use crate::mm2::{lp_network::{broadcast_p2p_msg, request_one_peer, request_relays, subscribe_to_topic, P2PRequest,
                               RelayDecodedResponse},
-                 lp_swap::{check_balance_for_maker_swap, check_balance_for_taker_swap, get_locked_amount,
-                           is_pubkey_banned, lp_atomic_locktime, run_maker_swap, run_taker_swap,
+                 lp_swap::{calc_max_maker_vol, check_balance_for_maker_swap, check_balance_for_taker_swap,
+                           get_locked_amount, is_pubkey_banned, lp_atomic_locktime, run_maker_swap, run_taker_swap,
                            AtomicLocktimeVersion, MakerSwap, RunMakerSwapInput, RunTakerSwapInput,
                            SwapConfirmationsSettings, TakerSwap}};
 
@@ -549,15 +549,19 @@ async fn maker_order_created_p2p_notify(ctx: MmArc, order: &MakerOrder) {
     broadcast_p2p_msg(&ctx, topic, encoded_msg);
 }
 
-fn maker_order_updated_p2p_notify(ctx: MmArc, _order: &MakerOrder) {
-    /*
-    spawn(async move {
-        if let Err(e) = broadcast_my_maker_orders(&ctx).await {
-            ctx.log
-                .log("", &[&"broadcast_my_maker_orders"], &format!("error {}", e));
-        };
-    });
-    */
+async fn process_my_maker_order_updated(ctx: &MmArc, message: &new_protocol::MakerOrderUpdated) {
+    let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
+    let mut orderbook = ordermatch_ctx.orderbook.lock().await;
+
+    let uuid = message.uuid();
+    if let Some(order) = orderbook.find_order_by_uuid(&uuid) {
+        order.apply_updated(message);
+    }
+}
+
+async fn maker_order_updated_p2p_notify(ctx: MmArc, base: &str, rel: &str, message: new_protocol::MakerOrderUpdated) {
+    process_my_maker_order_updated(&ctx, &message).await;
+    broadcast_ordermatch_message(&ctx, orderbook_topic(base, rel), message.into());
 }
 
 async fn maker_order_cancelled_p2p_notify(ctx: MmArc, order: &MakerOrder) {
@@ -578,23 +582,28 @@ impl BalanceUpdateOrdermatchHandler {
 }
 
 #[async_trait]
-impl BalanceUpdateEventHandler for BalanceUpdateOrdermatchHandler {
-    async fn balance_updated(&self, ticker: &str, new_balance: &BigDecimal) {
-        let new_balance = MmNumber::from(new_balance.clone());
+impl BalanceTradeFeeUpdatedHandler for BalanceUpdateOrdermatchHandler {
+    async fn balance_updated(&self, ticker: &str, new_balance: &BigDecimal, trade_fee: &TradeFee) {
+        let new_volume = calc_max_maker_vol(&self.ctx, &new_balance, trade_fee, ticker);
         let ordermatch_ctx = unwrap!(OrdermatchContext::from_ctx(&self.ctx));
         let mut maker_orders = ordermatch_ctx.my_maker_orders.lock().await;
         *maker_orders = maker_orders
             .drain()
             .filter_map(|(uuid, mut order)| {
                 if order.base == *ticker {
-                    if new_balance < MmNumber::from(MIN_TRADING_VOL) {
+                    if new_volume < MmNumber::from(MIN_TRADING_VOL) {
                         order.max_base_vol = 0.into();
                         let ctx = self.ctx.clone();
                         spawn(async move { maker_order_cancelled_p2p_notify(ctx, &order).await });
                         None
-                    } else if new_balance < order.max_base_vol {
-                        order.max_base_vol = new_balance.clone();
-                        maker_order_updated_p2p_notify(self.ctx.clone(), &order);
+                    } else if new_volume < order.max_base_vol {
+                        order.max_base_vol = new_volume.clone();
+                        let update_msg =
+                            new_protocol::MakerOrderUpdated::new(order.uuid).with_new_max_volume(new_volume.clone());
+                        let base = order.base.to_owned();
+                        let rel = order.rel.to_owned();
+                        let ctx = self.ctx.clone();
+                        spawn(async move { maker_order_updated_p2p_notify(ctx, &base, &rel, update_msg).await });
                         Some((uuid, order))
                     } else {
                         Some((uuid, order))
@@ -2183,6 +2192,20 @@ impl PricePingRequest {
             .into();
         Ok(req)
     }
+
+    fn apply_updated(&mut self, msg: &new_protocol::MakerOrderUpdated) {
+        self.timestamp = now_ms() / 1000;
+
+        if let Some(new_price) = msg.new_price() {
+            self.price = new_price.to_decimal();
+            self.price_rat = Some(new_price.clone());
+        }
+
+        if let Some(new_max_volume) = msg.new_max_volume() {
+            self.balance = new_max_volume.to_decimal();
+            self.balance_rat = Some(new_max_volume.clone());
+        }
+    }
 }
 
 fn one() -> u8 { 1 }
@@ -2234,11 +2257,7 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
         // use entire balance deducting the locked amount and trade fee if it's paid with base coin,
         // skipping "check_balance_for_maker_swap"
         let trade_fee = try_s!(base_coin.get_trade_fee().compat().await);
-        let mut vol = MmNumber::from(my_balance) - get_locked_amount(&ctx, base_coin.ticker(), &trade_fee);
-        if trade_fee.coin == base_coin.ticker() {
-            vol = vol - trade_fee.amount;
-        }
-        vol
+        calc_max_maker_vol(&ctx, &my_balance, &trade_fee, base_coin.ticker())
     } else {
         try_s!(check_balance_for_maker_swap(&ctx, &base_coin, req.volume.clone(), None).await);
         req.volume.clone()
