@@ -278,141 +278,6 @@ impl Qrc20Coin {
         Ok(qrc20_addr_from_utxo_addr(qtum_address))
     }
 
-    /// Get `Transfer` event details from [`TxReceipt::logs`].
-    /// Result - (amount, sender, receiver).
-    fn transfer_call_details_from_receipt(&self, receipt: &TxReceipt) -> Result<(BigDecimal, H160, H160), String> {
-        fn address_from_log_topic(topic: &str) -> Result<H160, String> {
-            if topic.len() != 64 {
-                return ERR!(
-                    "Topic {:?} is expected to be H256 encoded topic (with length of 64)",
-                    topic
-                );
-            }
-
-            // skip the first 24 characters to parse the last 40 characters to H160.
-            // https://github.com/qtumproject/qtum-electrum/blob/v4.0.2/electrum/wallet.py#L2112
-            let hash = try_s!(H160Json::from_str(&topic[24..]));
-            Ok(hash.0.into())
-        }
-
-        // We can get a log_index from get_history call, but it is overhead to request it on every tx_details_by_hash(),
-        // because of this try to find corresponding log entry below
-        let log = match receipt.log.iter().find(|log_entry| {
-            // we should find a log entry with three and more topics
-            if log_entry.topics.len() < 3 {
-                return false;
-            }
-            // the first topic means the type of the contract call
-            // https://github.com/qtumproject/qtum-electrum/blob/v4.0.2/electrum/wallet.py#L2101
-            log_entry.topics.first().unwrap() == QRC20_TRANSFER_TOPIC
-        }) {
-            Some(log) => log,
-            _ => return ERR!("Couldn't find a log entry that meets the requirements"),
-        };
-
-        let amount = try_s!(U256::from_str(&log.data));
-        // https://github.com/qtumproject/qtum-electrum/blob/v4.0.2/electrum/wallet.py#L2111
-        let amount = try_s!(u256_to_big_decimal(amount, self.decimals()));
-
-        // log.topics[i < 3] is safe because of the checking above
-        // https://github.com/qtumproject/qtum-electrum/blob/v4.0.2/electrum/wallet.py#L2112
-        let from = try_s!(address_from_log_topic(&log.topics[1]));
-        // https://github.com/qtumproject/qtum-electrum/blob/v4.0.2/electrum/wallet.py#L2113
-        let to = try_s!(address_from_log_topic(&log.topics[2]));
-        Ok((amount, from, to))
-    }
-
-    /// Get `transfer` contract call details from script pubkey.
-    /// Result - (receiver, amount).
-    fn transfer_call_details_from_script_pubkey(&self, script_pubkey: &Script) -> Result<(H160, U256), String> {
-        if !is_contract_call(&script_pubkey) {
-            return ERR!("Expected 'transfer' contract call");
-        }
-
-        let contract_call_bytes = try_s!(extract_contract_call_from_script(&script_pubkey));
-        let call_type = try_s!(ContractCallType::from_script_pubkey(&contract_call_bytes));
-        match call_type {
-            Some(ContractCallType::Transfer) => (),
-            _ => return ERR!("Expected 'transfer' contract call"),
-        }
-
-        let function = try_s!(ERC20_CONTRACT.function("transfer"));
-        let decoded = try_s!(function.decode_input(&contract_call_bytes));
-        let mut decoded = decoded.into_iter();
-
-        let receiver = match decoded.next() {
-            Some(Token::Address(addr)) => addr,
-            Some(token) => return ERR!("Transfer 'receiver' arg is invalid, found {:?}", token),
-            None => return ERR!("Couldn't find 'receiver' in 'transfer' call"),
-        };
-
-        let value = match decoded.next() {
-            Some(Token::Uint(value)) => value,
-            Some(token) => return ERR!("Transfer 'value' arg is invalid, found {:?}", token),
-            None => return ERR!("Couldn't find 'value' in 'transfer' call"),
-        };
-
-        Ok((receiver, value))
-    }
-
-    pub fn receiver_spend_call_details_from_script_pubkey(
-        &self,
-        script_pubkey: &Script,
-    ) -> Result<ReceiverSpendDetails, String> {
-        if !is_contract_call(script_pubkey) {
-            return ERR!("Expected 'transfer' contract call");
-        }
-
-        let contract_call_bytes = try_s!(extract_contract_call_from_script(script_pubkey));
-        let call_type = try_s!(ContractCallType::from_script_pubkey(&contract_call_bytes));
-        match call_type {
-            Some(ContractCallType::ReceiverSpend) => (),
-            _ => return ERR!("Expected 'receiverSpend' contract call"),
-        }
-
-        let function = try_s!(SWAP_CONTRACT.function("receiverSpend"));
-        let decoded = try_s!(function.decode_input(&contract_call_bytes));
-        let mut decoded = decoded.into_iter();
-
-        let swap_id = match decoded.next() {
-            Some(Token::FixedBytes(id)) => id,
-            Some(token) => return ERR!("Payment tx 'swap_id' arg is invalid, found {:?}", token),
-            None => return ERR!("Couldn't find 'swap_id' in erc20Payment call"),
-        };
-
-        let value = match decoded.next() {
-            Some(Token::Uint(value)) => value,
-            Some(token) => return ERR!("Payment tx 'value' arg is invalid, found {:?}", token),
-            None => return ERR!("Couldn't find 'value' in erc20Payment call"),
-        };
-
-        let secret = match decoded.next() {
-            Some(Token::FixedBytes(hash)) => hash,
-            Some(token) => return ERR!("Payment tx 'secret_hash' arg is invalid, found {:?}", token),
-            None => return ERR!("Couldn't find 'secret_hash' in erc20Payment call"),
-        };
-
-        let token_address = match decoded.next() {
-            Some(Token::Address(addr)) => addr,
-            Some(token) => return ERR!("Payment tx 'token_address' arg is invalid, found {:?}", token),
-            None => return ERR!("Couldn't find 'token_address' in erc20Payment call"),
-        };
-
-        let sender = match decoded.next() {
-            Some(Token::Address(addr)) => addr,
-            Some(token) => return ERR!("Payment tx 'receiver' arg is invalid, found {:?}", token),
-            None => return ERR!("Couldn't find 'receiver' in erc20Payment call"),
-        };
-
-        Ok(ReceiverSpendDetails {
-            swap_id,
-            value,
-            secret,
-            token_address,
-            sender,
-        })
-    }
-
     pub async fn allowance(&self, spender: H160) -> Result<U256, String> {
         let tokens = try_s!(
             self.rpc_contract_call(RpcContractCallType::Allowance, &[
@@ -756,7 +621,7 @@ impl Qrc20Coin {
                 None => return ERR!("Couldn't find 'timelock' in erc20Payment call"),
             };
 
-            let (_amount, sender, swap_contract_address) = try_s!(self.transfer_call_details_from_receipt(&receipt));
+            let (_amount, sender, swap_contract_address) = try_s!(transfer_call_details_from_receipt(&receipt));
             return Ok(Erc20PaymentDetails {
                 output_index: receipt.output_index,
                 swap_id,
@@ -770,123 +635,6 @@ impl Qrc20Coin {
             });
         }
         ERR!("Couldn't find erc20Payment contract call in {:?} tx", tx_hash)
-    }
-
-    /// Search a UTXO tx that contains a contract call in outputs using the specified `expected_swap_id` and `expected_call_type`.
-    /// Note contract calls within transaction history might have a different script pubkey structure (cause another `EtomicSwap` contract),
-    /// because of this the function returns fatal error only (couldn't request a history, etc).
-    async fn search_swap_tx_by_call_type_and_swap_id(
-        &self,
-        expected_call_type: &ContractCallType,
-        expected_swap_id: &[u8],
-        sender: &H160,
-        search_from_block: u64,
-    ) -> Result<Option<UtxoTx>, String> {
-        /// The helper function.
-        /// Note returns fatal error only.
-        fn try_find_contract_call(
-            tx: &UtxoTx,
-            expected_swap_id: &[u8],
-            expected_call_type: &ContractCallType,
-        ) -> Result<Option<usize>, String> {
-            let tx_hash: H256Json = tx.hash().reversed().into();
-
-            for (output_index, output) in tx.outputs.iter().enumerate() {
-                let script_pubkey: Script = output.script_pubkey.clone().into();
-                if !is_contract_call(&script_pubkey) {
-                    continue;
-                }
-
-                let contract_call_bytes = match extract_contract_call_from_script(&script_pubkey) {
-                    Ok(bytes) => bytes,
-                    Err(e) => {
-                        log!([e]);
-                        continue;
-                    },
-                };
-
-                let call_type = match ContractCallType::from_script_pubkey(&contract_call_bytes) {
-                    Ok(Some(t)) => t,
-                    Ok(None) => continue, // unknown contract call type
-                    Err(e) => {
-                        log!([e]);
-                        continue;
-                    },
-                };
-                if call_type != *expected_call_type {
-                    // skip the output
-                    continue;
-                }
-
-                let function = call_type.as_function();
-                let decoded = try_s!(function.decode_input(&contract_call_bytes));
-
-                // swap_id is the first in all of the EtomicSwap contract methods
-                let swap_id = match decoded.into_iter().next() {
-                    Some(Token::FixedBytes(id)) => id,
-                    Some(token) => {
-                        log!("Error: Payment tx "[tx_hash]" 'swap_id' arg is invalid, found "[token]);
-                        continue;
-                    },
-                    None => {
-                        log!("Couldn't find 'swap_id' in "[tx_hash]);
-                        continue;
-                    },
-                };
-
-                if swap_id == expected_swap_id {
-                    return Ok(Some(output_index));
-                }
-            }
-
-            Ok(None)
-        }
-
-        let electrum = match self.utxo_arc.rpc_client {
-            UtxoRpcClientEnum::Electrum(ref rpc_cln) => rpc_cln,
-
-            UtxoRpcClientEnum::Native(_) => {
-                return ERR!("Native mode not supported");
-            },
-        };
-
-        let sender = qrc20_addr_into_rpc_format(sender);
-        let contract_address = qrc20_addr_into_rpc_format(&self.contract_address);
-
-        let history = try_s!(
-            electrum
-                .blockchain_contract_event_get_history(&sender, &contract_address, QRC20_TRANSFER_TOPIC)
-                .compat()
-                .await
-        );
-
-        for entry in history {
-            if (entry.height as u64) < search_from_block {
-                continue;
-            }
-
-            let verbose_tx = match electrum.get_verbose_transaction(entry.tx_hash.clone()).compat().await {
-                Ok(tx) => tx,
-                Err(e) => {
-                    log!("Error on get_verbose_transaction(" [entry.tx_hash] "): " [e]);
-                    continue;
-                },
-            };
-            let qtum_tx: UtxoTx = match deserialize(verbose_tx.hex.as_slice()) {
-                Ok(tx) => tx,
-                Err(e) => {
-                    log!("Error on deserialize a Qtum tx_hex: "[verbose_tx.hex] ". Error: " [e]);
-                    continue;
-                },
-            };
-            // use try_s!(), because the `try_find_contract_call` can fails with fatal error only
-            if let Some(_output_index) = try_s!(try_find_contract_call(&qtum_tx, expected_swap_id, expected_call_type))
-            {
-                return Ok(Some(qtum_tx));
-            }
-        }
-
-        Ok(None)
     }
 }
 
@@ -1275,7 +1023,7 @@ impl SwapOps for Qrc20Coin {
                 .ok_or(ERRL!("Provided dex fee tx {:?} has no outputs", qtum_tx))?;
             let script_pubkey: Script = output.script_pubkey.clone().into();
 
-            let (receiver, value) = match selfi.transfer_call_details_from_script_pubkey(&script_pubkey) {
+            let (receiver, value) = match transfer_call_details_from_script_pubkey(&script_pubkey) {
                 Ok((rec, val)) => (rec, val),
                 Err(e) => return ERR!("Provided dex fee tx {:?} is incorrect: {}", qtum_tx, e),
             };
@@ -1354,7 +1102,6 @@ impl SwapOps for Qrc20Coin {
     ) -> Box<dyn Future<Item = Option<TransactionEnum>, Error = String> + Send> {
         let selfi = self.clone();
         let expected_swap_id = qrc20_swap_id(time_lock, secret_hash);
-        let my_address = qrc20_addr_from_utxo_addr(self.utxo_arc.my_address.clone());
 
         let fut = async move {
             let status = try_s!(selfi.payment_status(expected_swap_id.clone()).await);
@@ -1362,17 +1109,21 @@ impl SwapOps for Qrc20Coin {
                 return Ok(None);
             };
 
-            let found = try_s!(
-                selfi
-                    .search_swap_tx_by_call_type_and_swap_id(
-                        &ContractCallType::Erc20Payment,
-                        &expected_swap_id,
-                        &my_address,
-                        search_from_block
-                    )
+            let history = try_s!(
+                HistoryBuilder::new(selfi)
+                    .from_block(search_from_block as i64)
+                    .stop_on_verbose_error(false)
+                    .build_utxo()
                     .await
             );
-            Ok(found.map(TransactionEnum::UtxoTx))
+            let found = history
+                .into_iter()
+                .find(|tx| {
+                    find_swap_contract_call_with_swap_id(ContractCallType::Erc20Payment, tx, &expected_swap_id)
+                        .is_some()
+                })
+                .map(TransactionEnum::UtxoTx);
+            Ok(found)
         };
 
         Box::new(fut.boxed().compat())
@@ -1433,7 +1184,7 @@ impl SwapOps for Qrc20Coin {
         for output in spend_tx.outputs {
             let script_pubkey: Script = output.script_pubkey.into();
             let ReceiverSpendDetails { secret, .. } =
-                match self.receiver_spend_call_details_from_script_pubkey(&script_pubkey) {
+                match receiver_spend_call_details_from_script_pubkey(&script_pubkey) {
                     Ok(details) => details,
                     Err(e) => {
                         log!((e));
@@ -1511,30 +1262,34 @@ impl MarketCoinOps for Qrc20Coin {
         let selfi = self.clone();
         let tx: UtxoTx = try_fus!(deserialize(transaction).map_err(|e| ERRL!("{:?}", e)));
         let fut = async move {
-            let Erc20PaymentDetails { swap_id, receiver, .. } = try_s!(selfi.erc20_payment_details_from_tx(&tx).await);
+            let Erc20PaymentDetails {
+                swap_id,
+                receiver,
+                secret_hash,
+                ..
+            } = try_s!(selfi.erc20_payment_details_from_tx(&tx).await);
+
             loop {
                 // Try to find a 'receiverSpend' contract call.
                 // This means that we should request a transaction history for the possible spender of our payment - [`Erc20PaymentDetails::receiver`].
-                let found = try_s!(
-                    selfi
-                        .search_swap_tx_by_call_type_and_swap_id(
-                            &ContractCallType::ReceiverSpend,
-                            &swap_id,
-                            &receiver,
-                            from_block,
-                        )
+                let history = try_s!(
+                    HistoryBuilder::new(selfi.clone())
+                        .from_block(from_block as i64)
+                        .address(receiver.clone())
+                        .stop_on_verbose_error(false)
+                        .build_utxo()
                         .await
                 );
+                let found = history
+                    .into_iter()
+                    .find(|tx| find_receiver_spend_with_swap_id_and_secret_hash(tx, &swap_id, &secret_hash).is_some());
+
                 if let Some(spent_tx) = found {
                     return Ok(TransactionEnum::UtxoTx(spent_tx));
                 }
 
                 if now_ms() / 1000 > wait_until {
-                    return ERR!(
-                        "Waited too long until {} for transaction {:?} to be spent ",
-                        wait_until,
-                        tx
-                    );
+                    return ERR!("Waited too long until {} for {:?} to be spent ", wait_until, tx);
                 }
                 Timer::sleep(10.).await;
             }
@@ -1640,6 +1395,234 @@ pub fn qrc20_addr_from_utxo_addr(address: Address) -> H160 { address.hash.take()
 fn utxo_addr_into_rpc_format(address: Address) -> H160Json { address.hash.take().into() }
 
 fn qrc20_addr_into_rpc_format(address: &H160) -> H160Json { address.to_vec().as_slice().into() }
+
+struct HistoryBuilder {
+    coin: Qrc20Coin,
+    from_block: i64,
+    topic: String,
+    address: H160,
+    token_address: H160,
+    stop_on_verbose_error: bool,
+}
+
+struct HistoryCont<T> {
+    history: Vec<T>,
+}
+
+impl HistoryBuilder {
+    fn new(coin: Qrc20Coin) -> HistoryBuilder {
+        let address = qrc20_addr_from_utxo_addr(coin.utxo_arc.my_address.clone());
+        let token_address = coin.contract_address;
+        HistoryBuilder {
+            coin,
+            from_block: 0,
+            topic: QRC20_TRANSFER_TOPIC.to_string(),
+            address,
+            token_address,
+            stop_on_verbose_error: true,
+        }
+    }
+
+    #[allow(clippy::wrong_self_convention)]
+    fn from_block(mut self, from_block: i64) -> HistoryBuilder {
+        self.from_block = from_block;
+        self
+    }
+
+    #[allow(dead_code)]
+    fn topic(mut self, topic: &str) -> HistoryBuilder {
+        self.topic = topic.to_string();
+        self
+    }
+
+    fn address(mut self, address: H160) -> HistoryBuilder {
+        self.address = address;
+        self
+    }
+
+    #[allow(dead_code)]
+    fn token_address(mut self, token_address: H160) -> HistoryBuilder {
+        self.token_address = token_address;
+        self
+    }
+
+    fn stop_on_verbose_error(mut self, stop_on_verbose_error: bool) -> HistoryBuilder {
+        self.stop_on_verbose_error = stop_on_verbose_error;
+        self
+    }
+
+    async fn build(self) -> Result<HistoryCont<TxHistoryItem>, String> {
+        let electrum = match self.coin.utxo_arc.rpc_client {
+            UtxoRpcClientEnum::Electrum(ref rpc_cln) => rpc_cln,
+
+            UtxoRpcClientEnum::Native(_) => {
+                return ERR!("Native mode not supported");
+            },
+        };
+
+        let address = qrc20_addr_into_rpc_format(&self.address);
+        let token_address = qrc20_addr_into_rpc_format(&self.token_address);
+        let history = try_s!(
+            electrum
+                .blockchain_contract_event_get_history(&address, &token_address, &self.topic)
+                .compat()
+                .await
+        );
+
+        let history = history
+            .into_iter()
+            .filter(|item| self.from_block <= item.height)
+            .collect();
+        Ok(HistoryCont { history })
+    }
+
+    async fn build_utxo(self) -> Result<HistoryCont<UtxoTx>, String> {
+        let electrum = match self.coin.utxo_arc.rpc_client {
+            UtxoRpcClientEnum::Electrum(ref rpc_cln) => rpc_cln.clone(),
+
+            UtxoRpcClientEnum::Native(_) => {
+                return ERR!("Native mode not supported");
+            },
+        };
+        let stop_on_verbose_error = self.stop_on_verbose_error;
+
+        let cont = try_s!(self.build().await);
+        let mut history = Vec::with_capacity(cont.history.len());
+        for item in cont.into_iter() {
+            let verbose_tx = match electrum.get_verbose_transaction(item.tx_hash.clone()).compat().await {
+                Ok(tx) => tx,
+                Err(e) if stop_on_verbose_error => {
+                    return ERR!("Error on get_verbose_transaction {:?}: {}", item.tx_hash, e);
+                },
+                Err(e) => {
+                    log!("Error on get_verbose_transaction(" [item.tx_hash] "): " [e]);
+                    continue;
+                },
+            };
+            let qtum_tx: UtxoTx = match deserialize(verbose_tx.hex.as_slice()) {
+                Ok(tx) => tx,
+                Err(e) if stop_on_verbose_error => {
+                    return ERR!(
+                        "Error on deserialize a Qtum tx_hex: {:?}, error: {:?}",
+                        verbose_tx.hex,
+                        e
+                    );
+                },
+                Err(e) => {
+                    log!("Error on deserialize a Qtum tx_hex: "[verbose_tx.hex] ", error: " [e]);
+                    continue;
+                },
+            };
+            history.push(qtum_tx);
+        }
+
+        Ok(HistoryCont { history })
+    }
+}
+
+impl<T> HistoryCont<T> {
+    #[allow(dead_code)]
+    fn into_vec(self) -> Vec<T> { self.history }
+
+    fn into_iter(self) -> impl Iterator<Item = T> { self.history.into_iter() }
+}
+
+fn find_receiver_spend_with_swap_id_and_secret_hash(
+    tx: &UtxoTx,
+    expected_swap_id: &[u8],
+    expected_secret_hash: &[u8],
+) -> Option<usize> {
+    for (output_idx, output) in tx.outputs.iter().enumerate() {
+        let script_pubkey: Script = output.script_pubkey.clone().into();
+        let ReceiverSpendDetails { swap_id, secret, .. } =
+            match receiver_spend_call_details_from_script_pubkey(&script_pubkey) {
+                Ok(details) => details,
+                Err(_) => {
+                    // try to obtain the details from the next output
+                    continue;
+                },
+            };
+
+        if swap_id != expected_swap_id {
+            log!("Warning: invalid 'swap_id' "[swap_id]", expected "[expected_swap_id]);
+            continue;
+        }
+
+        let secret_hash = &*dhash160(&secret);
+        if secret_hash != expected_secret_hash {
+            log!("Warning: invalid 'dhash160(secret)' "[secret_hash]", expected "[expected_secret_hash]);
+            continue;
+        }
+
+        return Some(output_idx);
+    }
+
+    None
+}
+
+fn find_swap_contract_call_with_swap_id(
+    expected_call_type: ContractCallType,
+    tx: &UtxoTx,
+    expected_swap_id: &[u8],
+) -> Option<usize> {
+    let tx_hash: H256Json = tx.hash().reversed().into();
+
+    for (output_idx, output) in tx.outputs.iter().enumerate() {
+        let script_pubkey: Script = output.script_pubkey.clone().into();
+        if !is_contract_call(&script_pubkey) {
+            continue;
+        }
+
+        let contract_call_bytes = match extract_contract_call_from_script(&script_pubkey) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                log!([e]);
+                continue;
+            },
+        };
+
+        let call_type = match ContractCallType::from_script_pubkey(&contract_call_bytes) {
+            Ok(Some(t)) => t,
+            Ok(None) => continue, // unknown contract call type
+            Err(e) => {
+                log!([e]);
+                continue;
+            },
+        };
+        if call_type != expected_call_type {
+            // skip the output
+            continue;
+        }
+
+        let function = call_type.as_function();
+        let decoded = match function.decode_input(&contract_call_bytes) {
+            Ok(d) => d,
+            Err(e) => {
+                log!([e]);
+                continue;
+            },
+        };
+
+        // swap_id is the first in `erc20Payment` call
+        let swap_id = match decoded.into_iter().next() {
+            Some(Token::FixedBytes(id)) => id,
+            Some(token) => {
+                log!("Warning: tx "[tx_hash]" 'swap_id' arg is invalid, found "[token]);
+                continue;
+            },
+            None => {
+                log!("Warning: couldn't find 'swap_id' in "[tx_hash]);
+                continue;
+            },
+        };
+
+        if swap_id == expected_swap_id {
+            return Some(output_idx);
+        }
+    }
+
+    None
+}
 
 async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> Result<TransactionDetails, String> {
     let to_addr = try_s!(Address::from_str(&req.to));
@@ -2024,36 +2007,170 @@ async fn qrc20_search_for_swap_tx_spend(
 
     // First try to find a 'receiverSpend' contract call.
     // This means that we should request a transaction history for the possible spender of our payment - [`Erc20PaymentDetails::receiver`].
-    let found = try_s!(
-        coin.search_swap_tx_by_call_type_and_swap_id(
-            &ContractCallType::ReceiverSpend,
-            &expected_swap_id,
-            &receiver,
-            search_from_block,
-        )
-        .await
+    let history = try_s!(
+        HistoryBuilder::new(coin.clone())
+            .from_block(search_from_block as i64)
+            .address(receiver.clone())
+            .stop_on_verbose_error(false)
+            .build_utxo()
+            .await
     );
+    let found = history
+        .into_iter()
+        .find(|tx| find_receiver_spend_with_swap_id_and_secret_hash(tx, &expected_swap_id, &secret_hash).is_some());
     if let Some(spent_tx) = found {
         return Ok(Some(FoundSwapTxSpend::Spent(TransactionEnum::UtxoTx(spent_tx))));
     }
 
     // Else try to find a 'senderRefund' contract call.
     // This means that we should request our transaction history because we could refund the payment already.
-    let my_address = qrc20_addr_from_utxo_addr(coin.utxo_arc.my_address.clone());
-    let found = try_s!(
-        coin.search_swap_tx_by_call_type_and_swap_id(
-            &ContractCallType::SenderRefund,
-            &expected_swap_id,
-            &my_address,
-            search_from_block,
-        )
-        .await
+    let history = try_s!(
+        HistoryBuilder::new(coin)
+            .from_block(search_from_block as i64)
+            .stop_on_verbose_error(false)
+            .build_utxo()
+            .await
     );
+    let found = history.into_iter().find(|tx| {
+        find_swap_contract_call_with_swap_id(ContractCallType::SenderRefund, tx, &expected_swap_id).is_some()
+    });
     if let Some(refunded_tx) = found {
         return Ok(Some(FoundSwapTxSpend::Refunded(TransactionEnum::UtxoTx(refunded_tx))));
     }
 
     Ok(None)
+}
+
+/// Get `Transfer` event details from [`TxReceipt::logs`].
+/// Result - (amount, sender, receiver).
+fn transfer_call_details_from_receipt(receipt: &TxReceipt) -> Result<(U256, H160, H160), String> {
+    fn address_from_log_topic(topic: &str) -> Result<H160, String> {
+        if topic.len() != 64 {
+            return ERR!(
+                "Topic {:?} is expected to be H256 encoded topic (with length of 64)",
+                topic
+            );
+        }
+
+        // skip the first 24 characters to parse the last 40 characters to H160.
+        // https://github.com/qtumproject/qtum-electrum/blob/v4.0.2/electrum/wallet.py#L2112
+        let hash = try_s!(H160Json::from_str(&topic[24..]));
+        Ok(hash.0.into())
+    }
+
+    // We can get a log_index from get_history call, but it is overhead to request it on every tx_details_by_hash(),
+    // because of this try to find corresponding log entry below
+    let log = match receipt.log.iter().find(|log_entry| {
+        // we should find a log entry with three and more topics
+        if log_entry.topics.len() < 3 {
+            return false;
+        }
+        // the first topic means the type of the contract call
+        // https://github.com/qtumproject/qtum-electrum/blob/v4.0.2/electrum/wallet.py#L2101
+        log_entry.topics.first().unwrap() == QRC20_TRANSFER_TOPIC
+    }) {
+        Some(log) => log,
+        _ => return ERR!("Couldn't find a log entry that meets the requirements"),
+    };
+
+    // https://github.com/qtumproject/qtum-electrum/blob/v4.0.2/electrum/wallet.py#L2111
+    let amount = try_s!(U256::from_str(&log.data));
+
+    // log.topics[i < 3] is safe because of the checking above
+    // https://github.com/qtumproject/qtum-electrum/blob/v4.0.2/electrum/wallet.py#L2112
+    let from = try_s!(address_from_log_topic(&log.topics[1]));
+    // https://github.com/qtumproject/qtum-electrum/blob/v4.0.2/electrum/wallet.py#L2113
+    let to = try_s!(address_from_log_topic(&log.topics[2]));
+    Ok((amount, from, to))
+}
+
+/// Get `transfer` contract call details from script pubkey.
+/// Result - (receiver, amount).
+fn transfer_call_details_from_script_pubkey(script_pubkey: &Script) -> Result<(H160, U256), String> {
+    if !is_contract_call(&script_pubkey) {
+        return ERR!("Expected 'transfer' contract call");
+    }
+
+    let contract_call_bytes = try_s!(extract_contract_call_from_script(&script_pubkey));
+    let call_type = try_s!(ContractCallType::from_script_pubkey(&contract_call_bytes));
+    match call_type {
+        Some(ContractCallType::Transfer) => (),
+        _ => return ERR!("Expected 'transfer' contract call"),
+    }
+
+    let function = try_s!(ERC20_CONTRACT.function("transfer"));
+    let decoded = try_s!(function.decode_input(&contract_call_bytes));
+    let mut decoded = decoded.into_iter();
+
+    let receiver = match decoded.next() {
+        Some(Token::Address(addr)) => addr,
+        Some(token) => return ERR!("Transfer 'receiver' arg is invalid, found {:?}", token),
+        None => return ERR!("Couldn't find 'receiver' in 'transfer' call"),
+    };
+
+    let value = match decoded.next() {
+        Some(Token::Uint(value)) => value,
+        Some(token) => return ERR!("Transfer 'value' arg is invalid, found {:?}", token),
+        None => return ERR!("Couldn't find 'value' in 'transfer' call"),
+    };
+
+    Ok((receiver, value))
+}
+
+/// Get `receiverSpend` contract call details from script pubkey.
+pub fn receiver_spend_call_details_from_script_pubkey(script_pubkey: &Script) -> Result<ReceiverSpendDetails, String> {
+    if !is_contract_call(script_pubkey) {
+        return ERR!("Expected 'transfer' contract call");
+    }
+
+    let contract_call_bytes = try_s!(extract_contract_call_from_script(script_pubkey));
+    let call_type = try_s!(ContractCallType::from_script_pubkey(&contract_call_bytes));
+    match call_type {
+        Some(ContractCallType::ReceiverSpend) => (),
+        _ => return ERR!("Expected 'receiverSpend' contract call"),
+    }
+
+    let function = try_s!(SWAP_CONTRACT.function("receiverSpend"));
+    let decoded = try_s!(function.decode_input(&contract_call_bytes));
+    let mut decoded = decoded.into_iter();
+
+    let swap_id = match decoded.next() {
+        Some(Token::FixedBytes(id)) => id,
+        Some(token) => return ERR!("Payment tx 'swap_id' arg is invalid, found {:?}", token),
+        None => return ERR!("Couldn't find 'swap_id' in erc20Payment call"),
+    };
+
+    let value = match decoded.next() {
+        Some(Token::Uint(value)) => value,
+        Some(token) => return ERR!("Payment tx 'value' arg is invalid, found {:?}", token),
+        None => return ERR!("Couldn't find 'value' in erc20Payment call"),
+    };
+
+    let secret = match decoded.next() {
+        Some(Token::FixedBytes(hash)) => hash,
+        Some(token) => return ERR!("Payment tx 'secret_hash' arg is invalid, found {:?}", token),
+        None => return ERR!("Couldn't find 'secret_hash' in erc20Payment call"),
+    };
+
+    let token_address = match decoded.next() {
+        Some(Token::Address(addr)) => addr,
+        Some(token) => return ERR!("Payment tx 'token_address' arg is invalid, found {:?}", token),
+        None => return ERR!("Couldn't find 'token_address' in erc20Payment call"),
+    };
+
+    let sender = match decoded.next() {
+        Some(Token::Address(addr)) => addr,
+        Some(token) => return ERR!("Payment tx 'receiver' arg is invalid, found {:?}", token),
+        None => return ERR!("Couldn't find 'receiver' in erc20Payment call"),
+    };
+
+    Ok(ReceiverSpendDetails {
+        swap_id,
+        value,
+        secret,
+        token_address,
+        sender,
+    })
 }
 
 /// Serialize the `number` similar to BigEndian but in QRC20 specific format.
