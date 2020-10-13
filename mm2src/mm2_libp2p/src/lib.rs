@@ -67,7 +67,7 @@ pub fn decode_signed<'de, T: de::Deserialize<'de>>(
 
 fn sha256(input: impl AsRef<[u8]>) -> [u8; 32] { Sha256::new().chain(input).finalize().into() }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct Secp256k1PubkeySerialize(Secp256k1Pubkey);
 
 impl Serialize for Secp256k1PubkeySerialize {
@@ -89,7 +89,7 @@ impl<'de> de::Deserialize<'de> for Secp256k1PubkeySerialize {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum PublicKey {
     Secp256k1(Secp256k1PubkeySerialize),
 }

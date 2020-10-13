@@ -515,7 +515,7 @@ mod docker_tests {
     }
 
     #[test]
-    fn order_should_be_updated_when_balance_is_decreased() {
+    fn order_should_be_updated_when_balance_is_decreased_alice_subscribes_after_update() {
         let (_ctx, _, priv_key) = generate_coin_with_random_privkey("MYCOIN", 1000);
         let coins = json! ([
             {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
@@ -541,8 +541,30 @@ mod docker_tests {
         unwrap!(block_on(
             mm_bob.wait_for_log(60., |log| log.contains(">>>>>>>>> DEX stats "))
         ));
+
+        let mut mm_alice = unwrap!(MarketMakerIt::start(
+            json! ({
+                "gui": "nogui",
+                "netid": 9000,
+                "dht": "on",  // Enable DHT without delay.
+                "passphrase": "alice passphrase",
+                "coins": coins,
+                "rpc_password": "pass",
+                "seednodes": vec![format!("{}", mm_bob.ip)],
+            }),
+            "pass".to_string(),
+            None,
+        ));
+        let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
+        unwrap!(block_on(
+            mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
+        ));
+
         log!([block_on(enable_native(&mm_bob, "MYCOIN", vec![]))]);
         log!([block_on(enable_native(&mm_bob, "MYCOIN1", vec![]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN", vec![]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN1", vec![]))]);
+
         let rc = unwrap!(block_on(mm_bob.rpc(json! ({
             "userpass": mm_bob.userpass,
             "method": "setprice",
@@ -552,8 +574,6 @@ mod docker_tests {
             "volume": "999",
         }))));
         assert!(rc.0.is_success(), "!setprice: {}", rc.1);
-
-        thread::sleep(Duration::from_secs(12));
 
         log!("Get MYCOIN/MYCOIN1 orderbook");
         let rc = unwrap!(block_on(mm_bob.rpc(json! ({
@@ -590,7 +610,7 @@ mod docker_tests {
 
         thread::sleep(Duration::from_secs(12));
 
-        log!("Get MYCOIN/MYCOIN1 orderbook");
+        log!("Get MYCOIN/MYCOIN1 orderbook on Bob side");
         let rc = unwrap!(block_on(mm_bob.rpc(json! ({
             "userpass": mm_bob.userpass,
             "method": "orderbook",
@@ -602,28 +622,178 @@ mod docker_tests {
         let bob_orderbook: Json = unwrap!(json::from_str(&rc.1));
         log!("orderbook "(unwrap!(json::to_string(&bob_orderbook))));
         let asks = bob_orderbook["asks"].as_array().unwrap();
-        assert_eq!(asks.len(), 1, "MYCOIN/MYCOIN1 orderbook must have exactly 1 ask");
+        assert_eq!(asks.len(), 1, "Bob MYCOIN/MYCOIN1 orderbook must have exactly 1 ask");
 
         let order_volume = asks[0]["maxvolume"].as_str().unwrap();
         assert_eq!("500", order_volume);
 
-        /*
-        log!("Get my orders");
+        log!("Get MYCOIN/MYCOIN1 orderbook on Alice side");
+        let rc = unwrap!(block_on(mm_alice.rpc(json! ({
+            "userpass": mm_alice.userpass,
+            "method": "orderbook",
+            "base": "MYCOIN",
+            "rel": "MYCOIN1",
+        }))));
+        assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
+
+        let alice_orderbook: Json = unwrap!(json::from_str(&rc.1));
+        log!("orderbook "(unwrap!(json::to_string(&alice_orderbook))));
+        let asks = alice_orderbook["asks"].as_array().unwrap();
+        assert_eq!(asks.len(), 1, "Alice MYCOIN/MYCOIN1 orderbook must have exactly 1 ask");
+
+        let order_volume = asks[0]["maxvolume"].as_str().unwrap();
+        assert_eq!("500", order_volume);
+
+        unwrap!(block_on(mm_bob.stop()));
+        unwrap!(block_on(mm_alice.stop()));
+    }
+
+    #[test]
+    fn order_should_be_updated_when_balance_is_decreased_alice_subscribes_before_update() {
+        let (_ctx, _, priv_key) = generate_coin_with_random_privkey("MYCOIN", 1000);
+        let coins = json! ([
+            {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
+            {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
+        ]);
+        let mut mm_bob = unwrap!(MarketMakerIt::start(
+            json! ({
+                "gui": "nogui",
+                "netid": 9000,
+                "dht": "on",  // Enable DHT without delay.
+                "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+                "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+                "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| unwrap! (s.parse::<i64>())),
+                "passphrase": format!("0x{}", hex::encode(priv_key)),
+                "coins": coins,
+                "rpc_password": "pass",
+                "i_am_seed": true,
+            }),
+            "pass".to_string(),
+            None,
+        ));
+        let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
+        unwrap!(block_on(
+            mm_bob.wait_for_log(60., |log| log.contains(">>>>>>>>> DEX stats "))
+        ));
+
+        let mut mm_alice = unwrap!(MarketMakerIt::start(
+            json! ({
+                "gui": "nogui",
+                "netid": 9000,
+                "dht": "on",  // Enable DHT without delay.
+                "passphrase": "alice passphrase",
+                "coins": coins,
+                "rpc_password": "pass",
+                "seednodes": vec![format!("{}", mm_bob.ip)],
+            }),
+            "pass".to_string(),
+            None,
+        ));
+        let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
+        unwrap!(block_on(
+            mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
+        ));
+
+        log!([block_on(enable_native(&mm_bob, "MYCOIN", vec![]))]);
+        log!([block_on(enable_native(&mm_bob, "MYCOIN1", vec![]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN", vec![]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN1", vec![]))]);
+
         let rc = unwrap!(block_on(mm_bob.rpc(json! ({
             "userpass": mm_bob.userpass,
-            "method": "my_orders",
+            "method": "setprice",
+            "base": "MYCOIN",
+            "rel": "MYCOIN1",
+            "price": 1,
+            "volume": "999",
         }))));
-        assert!(rc.0.is_success(), "!my_orders: {}", rc.1);
-        let orders: Json = unwrap!(json::from_str(&rc.1));
-        log!("my_orders "(unwrap!(json::to_string(&orders))));
-        assert!(
-            unwrap!(orders["result"]["maker_orders"].as_object()).is_empty(),
-            "maker_orders must be empty"
-        );
+        assert!(rc.0.is_success(), "!setprice: {}", rc.1);
 
+        log!("Get MYCOIN/MYCOIN1 orderbook");
+        let rc = unwrap!(block_on(mm_bob.rpc(json! ({
+            "userpass": mm_bob.userpass,
+            "method": "orderbook",
+            "base": "MYCOIN",
+            "rel": "MYCOIN1",
+        }))));
+        assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
 
-         */
+        let bob_orderbook: Json = unwrap!(json::from_str(&rc.1));
+        log!("orderbook "[bob_orderbook]);
+        let asks = bob_orderbook["asks"].as_array().unwrap();
+        assert_eq!(asks.len(), 1, "Bob MYCOIN/MYCOIN1 orderbook must have exactly 1 ask");
+
+        log!("Get MYCOIN/MYCOIN1 orderbook on Alice side");
+        let rc = unwrap!(block_on(mm_alice.rpc(json! ({
+            "userpass": mm_alice.userpass,
+            "method": "orderbook",
+            "base": "MYCOIN",
+            "rel": "MYCOIN1",
+        }))));
+        assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
+
+        let alice_orderbook: Json = unwrap!(json::from_str(&rc.1));
+        log!("orderbook "(unwrap!(json::to_string(&alice_orderbook))));
+        let asks = alice_orderbook["asks"].as_array().unwrap();
+        assert_eq!(asks.len(), 1, "Alice MYCOIN/MYCOIN1 orderbook must have exactly 1 ask");
+
+        let withdraw = unwrap!(block_on(mm_bob.rpc(json! ({
+            "userpass": mm_bob.userpass,
+            "method": "withdraw",
+            "coin": "MYCOIN",
+            "amount": "499.99998",
+            "to": "R9imXLs1hEcU9KbFDQq2hJEEJ1P5UoekaF",
+        }))));
+        assert!(withdraw.0.is_success(), "!withdraw: {}", withdraw.1);
+
+        let withdraw: Json = unwrap!(json::from_str(&withdraw.1));
+
+        let send_raw = unwrap!(block_on(mm_bob.rpc(json! ({
+            "userpass": mm_bob.userpass,
+            "method": "send_raw_transaction",
+            "coin": "MYCOIN",
+            "tx_hex": withdraw["tx_hex"],
+        }))));
+        assert!(send_raw.0.is_success(), "!send_raw: {}", send_raw.1);
+
+        thread::sleep(Duration::from_secs(12));
+
+        log!("Get MYCOIN/MYCOIN1 orderbook on Bob side");
+        let rc = unwrap!(block_on(mm_bob.rpc(json! ({
+            "userpass": mm_bob.userpass,
+            "method": "orderbook",
+            "base": "MYCOIN",
+            "rel": "MYCOIN1",
+        }))));
+        assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
+
+        let bob_orderbook: Json = unwrap!(json::from_str(&rc.1));
+        log!("orderbook "(unwrap!(json::to_string(&bob_orderbook))));
+        let asks = bob_orderbook["asks"].as_array().unwrap();
+        assert_eq!(asks.len(), 1, "Bob MYCOIN/MYCOIN1 orderbook must have exactly 1 ask");
+
+        let order_volume = asks[0]["maxvolume"].as_str().unwrap();
+        assert_eq!("500", order_volume);
+
+        log!("Get MYCOIN/MYCOIN1 orderbook on Alice side");
+        let rc = unwrap!(block_on(mm_alice.rpc(json! ({
+            "userpass": mm_alice.userpass,
+            "method": "orderbook",
+            "base": "MYCOIN",
+            "rel": "MYCOIN1",
+        }))));
+        assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
+
+        let alice_orderbook: Json = unwrap!(json::from_str(&rc.1));
+        log!("orderbook "(unwrap!(json::to_string(&alice_orderbook))));
+        let asks = alice_orderbook["asks"].as_array().unwrap();
+        assert_eq!(asks.len(), 1, "Alice MYCOIN/MYCOIN1 orderbook must have exactly 1 ask");
+
+        let order_volume = asks[0]["maxvolume"].as_str().unwrap();
+        assert_eq!("500", order_volume);
+
         unwrap!(block_on(mm_bob.stop()));
+        unwrap!(block_on(mm_alice.stop()));
     }
 
     // https://github.com/KomodoPlatform/atomicDEX-API/issues/471

@@ -640,22 +640,17 @@ pub mod wio {
 #[cfg(feature = "native")]
 pub mod wio {
     use crate::SlurpRes;
-    use bytes::Bytes;
     use futures::compat::Future01CompatExt;
     use futures::executor::ThreadPool;
     use futures01::sync::oneshot::{self, Receiver};
     use futures01::{Async, Future, Poll};
     use futures_cpupool::CpuPool;
     use gstuff::{duration_to_float, now_float};
-    use http::{HeaderMap, Method, Request, StatusCode};
+    use http::{HeaderMap, Request, StatusCode};
     use hyper::client::HttpConnector;
-    use hyper::server::conn::Http;
     use hyper::{Body, Client};
     use hyper_rustls::HttpsConnector;
-    use serde_bencode::de::from_bytes as bdecode;
-    use serde_bencode::ser::to_bytes as bencode;
     use std::fmt;
-    use std::pin::Pin;
     use std::sync::Mutex;
     use std::thread::JoinHandle;
     use std::time::Duration;
@@ -677,11 +672,8 @@ pub mod wio {
             .pool_size (8)
             .name_prefix ("POOL")
             .create(), "!ThreadPool"));
-        /// Shared HTTP server.
-        pub static ref HTTP: Http = Http::new();
     }
 
-    pub type BoxSendFuture = Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
     impl<Fut: std::future::Future<Output = ()> + Send + 'static> hyper::rt::Executor<Fut> for &MM2Runtime {
         fn execute(&self, fut: Fut) { self.0.spawn(fut); }
     }
@@ -839,7 +831,6 @@ pub mod wio {
         let (head, body) = request.into_parts();
         let request = Request::from_parts(head, Body::from(body));
 
-        let uri = fomat!((request.uri()));
         let request_f = HYPER.request(request);
         let response = try_s!(try_s!(drive03(request_f).await));
         let status = response.status();
@@ -851,44 +842,6 @@ pub mod wio {
 
     pub async fn slurp_reqʹ(request: Request<Vec<u8>>) -> Result<(StatusCode, HeaderMap, Vec<u8>), String> {
         slurp_req(request).await
-    }
-
-    pub async fn slurp_reqʰ(req: Bytes) -> Result<Vec<u8>, String> {
-        let hhreq: super::HostedHttpRequest = try_s!(bdecode(&req));
-        //log! ("slurp_reqʰ] " [=hhreq]);
-
-        let mut req = Request::builder()
-            .method(try_s!(Method::from_bytes(hhreq.method.as_bytes())))
-            .uri(hhreq.uri);
-        for (n, v) in hhreq.headers {
-            req = req.header(&n[..], &v[..]);
-        }
-        let req = try_s!(req.body(hhreq.body));
-
-        let (status, headers, body) = try_s!(slurp_reqʹ(req).await);
-
-        let hhres = super::HostedHttpResponse {
-            status: status.as_u16(),
-            headers: headers
-                .iter()
-                .filter_map(|(name, value)| {
-                    let name = name.as_str().to_owned();
-                    let v = match value.to_str() {
-                        Ok(ascii) => ascii,
-                        Err(err) => {
-                            log! ("!ascii '" (name) "': " (err));
-                            return None;
-                        },
-                    };
-                    Some((name, v.to_owned()))
-                })
-                .collect(),
-            body,
-        };
-        //log! ("HostedHttpResponse: " [=hhres]);
-
-        let hhres = try_s!(bencode(&hhres));
-        Ok(hhres)
     }
 }
 

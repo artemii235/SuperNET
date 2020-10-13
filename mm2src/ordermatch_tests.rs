@@ -1471,7 +1471,7 @@ fn test_process_get_orderbook_request() {
     let asks: Vec<PricePingRequest> = orderbook
         .asks
         .into_iter()
-        .map(|order| PricePingRequest::from_initial_msg(order.initial_message, order.from_peer).unwrap())
+        .map(|order| PricePingRequest::from_initial_msg(order.initial_message, Vec::new(), order.from_peer).unwrap())
         .collect();
     assert_eq!(asks, vec![price_ping_request2]);
 
@@ -1494,7 +1494,7 @@ fn test_process_get_orderbook_request() {
     let bids: Vec<PricePingRequest> = orderbook
         .bids
         .into_iter()
-        .map(|order| PricePingRequest::from_initial_msg(order.initial_message, order.from_peer).unwrap())
+        .map(|order| PricePingRequest::from_initial_msg(order.initial_message, Vec::new(), order.from_peer).unwrap())
         .collect();
     assert_eq!(bids, vec![price_ping_request1]);
 }
@@ -1684,6 +1684,7 @@ fn test_process_order_keep_alive_requested_from_peer() {
         let response = new_protocol::OrderInitialMessage {
             initial_message,
             from_peer: from_peer.clone(),
+            update_messages: Vec::new(),
         };
 
         let response = AdexResponse::Ok {

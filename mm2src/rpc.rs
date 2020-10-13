@@ -23,11 +23,10 @@
 use coins::{convert_address, get_enabled_coins, get_trade_fee, kmd_rewards_info, my_tx_history, send_raw_transaction,
             set_required_confirmations, set_requires_notarization, show_priv_key, validate_address, withdraw};
 use common::mm_ctx::MmArc;
-#[cfg(feature = "native")]
-use common::wio::{CORE, CPUPOOL, HTTP};
+#[cfg(feature = "native")] use common::wio::{CORE, CPUPOOL};
 use common::{err_to_rpc_json_string, err_tp_rpc_json, HyRes};
 use futures::compat::Future01CompatExt;
-use futures::future::{join_all, Future, FutureExt, TryFutureExt};
+use futures::future::{join_all, FutureExt, TryFutureExt};
 use gstuff;
 use http::header::{HeaderValue, ACCESS_CONTROL_ALLOW_ORIGIN};
 use http::request::Parts;

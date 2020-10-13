@@ -23,6 +23,7 @@ pub enum OrdermatchMessage {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct OrderInitialMessage {
     pub initial_message: Vec<u8>,
+    pub update_messages: Vec<Vec<u8>>,
     pub from_peer: String,
 }
 
@@ -30,6 +31,7 @@ impl From<PricePingRequest> for OrderInitialMessage {
     fn from(order: PricePingRequest) -> Self {
         OrderInitialMessage {
             initial_message: order.initial_message,
+            update_messages: order.update_messages,
             from_peer: order.peer_id,
         }
     }
@@ -152,7 +154,7 @@ pub struct MakerOrderCancelled {
     pub uuid: CompactUuid,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct MakerOrderUpdated {
     uuid: CompactUuid,
     new_price: Option<MmNumber>,
