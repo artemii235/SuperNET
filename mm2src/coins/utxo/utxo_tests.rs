@@ -1,7 +1,6 @@
 use super::rpc_clients::{ElectrumProtocol, ListSinceBlockRes, NetworkInfo};
 use super::*;
-use crate::utxo::qrc20::{qrc20_addr_from_str, qrc20_addr_from_utxo_addr, qrc20_coin_from_conf_and_request, Qrc20Coin,
-                         Qrc20FeeDetails, QtumRpcOps};
+use crate::utxo::qrc20::{qrc20_addr_from_utxo_addr, qrc20_coin_from_conf_and_request, Qrc20Coin, Qrc20FeeDetails};
 use crate::utxo::rpc_clients::UtxoRpcClientOps;
 use crate::utxo::utxo_standard::{utxo_standard_coin_from_conf_and_request, UtxoStandardCoin, UTXO_STANDARD_DUST};
 use crate::{SwapOps, TxFeeDetails, WithdrawFee};
@@ -2269,6 +2268,35 @@ fn test_qrc20_wait_for_tx_spend() {
 }
 
 #[test]
+fn test_qrc20_wait_for_tx_spend_malicious() {
+    // priv_key of qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG
+    let priv_key = [
+        3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144, 72,
+        172, 110, 180, 13, 123, 179, 10, 49,
+    ];
+    let (_ctx, coin) = qrc20_coin_for_test(&priv_key);
+
+    // f94d79f89e9ec785db40bb8bb8dca9bc01b7761429618d4c843bbebbc31836b7
+    // the transaction has two outputs:
+    //   1 - with an invalid secret (this case should be processed correctly)
+    //   2 - correct spend tx
+    let expected_tx: UtxoTx = "01000000022bc8299981ec0cea664cdf9df4f8306396a02e2067d6ac2d3770b34646d2bc2a010000006b483045022100eb13ef2d99ac1cd9984045c2365654b115dd8a7815b7fbf8e2a257f0b93d1592022060d648e73118c843e97f75fafc94e5ff6da70ec8ba36ae255f8c96e2626af6260121022b00078841f37b5d30a6a1defb82b3af4d4e2d24dd4204d41f0c9ce1e875de1affffffffd92a0a10ac6d144b36033916f67ae79889f40f35096629a5cd87be1a08f40ee7010000006b48304502210080cdad5c4770dfbeb760e215494c63cc30da843b8505e75e7bf9e8dad18568000220234c0b11c41bfbcdd50046c69059976aedabe17657fe43d809af71e9635678e20121022b00078841f37b5d30a6a1defb82b3af4d4e2d24dd4204d41f0c9ce1e875de1affffffff030000000000000000c35403a0860101284ca402ed292b8620ad3b72361a5aeba5dffd333fb64750089d935a1ec974d6a91ef4f24ff6ba0000000000000000000000000000000000000000000000000000000001312d000202020202020202020202020202020202020202020202020202020202020202000000000000000000000000d362e096e873eb7907e205fadc6175c6fec7bc440000000000000000000000009e032d4b0090a11dc40fe6c47601499a35d55fbb14ba8b71f3544b93e2f681f996da519a98ace0107ac20000000000000000c35403a0860101284ca402ed292b8620ad3b72361a5aeba5dffd333fb64750089d935a1ec974d6a91ef4f24ff6ba0000000000000000000000000000000000000000000000000000000001312d000101010101010101010101010101010101010101010101010101010101010101000000000000000000000000d362e096e873eb7907e205fadc6175c6fec7bc440000000000000000000000009e032d4b0090a11dc40fe6c47601499a35d55fbb14ba8b71f3544b93e2f681f996da519a98ace0107ac2b8ea82d3010000001976a914783cf0be521101942da509846ea476e683aad83288ac735d855f".into();
+
+    // 15fd8f71be6b2678b021e1300e67fa99574a2ad877df08276ac275728ac12304
+    let payment_tx = hex::decode("01000000016601daa208531d20532c460d0c86b74a275f4a126bbffcf4eafdf33835af2859010000006a47304402205825657548bc1b5acf3f4bb2f89635a02b04f3228cd08126e63c5834888e7ac402207ca05fa0a629a31908a97a508e15076e925f8e621b155312b7526a6666b06a76012103693bff1b39e8b5a306810023c29b95397eb395530b106b1820ea235fd81d9ce9ffffffff020000000000000000e35403a0860101284cc49b415b2a8620ad3b72361a5aeba5dffd333fb64750089d935a1ec974d6a91ef4f24ff6ba0000000000000000000000000000000000000000000000000000000001312d00000000000000000000000000d362e096e873eb7907e205fadc6175c6fec7bc44000000000000000000000000783cf0be521101942da509846ea476e683aad8324b6b2e5444c2639cc0fb7bcea5afba3f3cdce239000000000000000000000000000000000000000000000000000000000000000000000000000000005f855c7614ba8b71f3544b93e2f681f996da519a98ace0107ac2203de400000000001976a9149e032d4b0090a11dc40fe6c47601499a35d55fbb88ac415d855f").unwrap();
+    let wait_until = (now_ms() / 1000) + 1;
+    let from_block = 696245;
+    let found = unwrap!(coin.wait_for_tx_spend(&payment_tx, wait_until, from_block).wait());
+
+    let spend_tx = match found {
+        TransactionEnum::UtxoTx(tx) => tx,
+        _ => panic!("Unexpected Transaction type"),
+    };
+
+    assert_eq!(spend_tx, expected_tx);
+}
+
+#[test]
 fn test_qrc20_extract_secret() {
     // priv_key of qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG
     let priv_key = [
@@ -2287,104 +2315,25 @@ fn test_qrc20_extract_secret() {
     assert_eq!(secret, expected_secret);
 }
 
-// #[test]
-// fn test_qrc20_receiver_spend_call_details_from_tx() {
-//     let conf = json!({
-//         "coin":"QRC20",
-//         "required_confirmations":0,
-//         "pubtype":120,
-//         "p2shtype":50,
-//         "wiftype":128,
-//         "segwit":true,
-//         "mm2":1,
-//         "mature_confirmations":500,
-//     });
-//     let req = json!({
-//         "method": "electrum",
-//         "servers": [{"url":"95.217.83.126:10001"}],
-//         "swap_contract_address": "0xba8b71f3544b93e2f681f996da519a98ace0107a",
-//     });
-//
-//     // priv_key of qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG
-//     let priv_key = [
-//         3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144, 72,
-//         172, 110, 180, 13, 123, 179, 10, 49,
-//     ];
-//     let contract_address = "0xd362e096e873eb7907e205fadc6175c6fec7bc44".into();
-//
-//     let maker_ctx = MmCtxBuilder::new().into_mm_arc();
-//     let maker_coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
-//         &maker_ctx,
-//         "QRC20",
-//         "QTUM",
-//         &conf,
-//         &req,
-//         &priv_key,
-//         contract_address
-//     )));
-//
-//     // priv_key of qUX9FGHubczidVjWPCUWuwCUJWpkAtGCgf
-//     let priv_key = [
-//         24, 181, 194, 193, 18, 152, 142, 168, 71, 73, 70, 244, 9, 101, 92, 168, 243, 61, 132, 48, 25, 39, 103, 92, 29,
-//         17, 11, 29, 113, 235, 48, 70,
-//     ];
-//
-//     let taker_ctx = MmCtxBuilder::new().into_mm_arc();
-//     let taker_coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
-//         &taker_ctx,
-//         "QRC20",
-//         "QTUM",
-//         &conf,
-//         &req,
-//         &priv_key,
-//         contract_address
-//     )));
-//
-//     let from_block = maker_coin.current_block().wait().unwrap();
-//
-//     let timelock = (now_ms() / 1000) as u32 - 200;
-//     // pubkey of "taker_passphrase" passphrase and qUX9FGHubczidVjWPCUWuwCUJWpkAtGCgf address
-//     let taker_pub = hex::decode("022b00078841f37b5d30a6a1defb82b3af4d4e2d24dd4204d41f0c9ce1e875de1a").unwrap();
-//     // pubkey of "cMhHM3PMpMrChygR4bLF7QsTdenhWpFrrmf2UezBG3eeFsz41rtL" passphrase
-//     let maker_pub = hex::decode("03693bff1b39e8b5a306810023c29b95397eb395530b106b1820ea235fd81d9ce9").unwrap();
-//     let secret = &[1; 32];
-//     let secret_hash = &*dhash160(secret);
-//     let amount = BigDecimal::from_str("0.2").unwrap();
-//     let payment = maker_coin
-//         .send_maker_payment(timelock, &taker_pub, secret_hash, amount.clone())
-//         .wait()
-//         .unwrap();
-//     let tx = match payment {
-//         TransactionEnum::UtxoTx(tx) => tx,
-//         _ => panic!("Expected UtxoTx"),
-//     };
-//
-//     let payment_tx_hash: H256Json = tx.hash().reversed().into();
-//     log!("Maker payment: "[payment_tx_hash]);
-//     let tx_hex = serialize(&tx);
-//
-//     let confirmations = 1;
-//     let requires_nota = false;
-//     let wait_until = (now_ms() / 1000) + 320; // timeout if test takes more than 320 seconds to run
-//     let check_every = 1;
-//     unwrap!(taker_coin
-//         .wait_for_confirmations(&tx_hex, confirmations, requires_nota, wait_until, check_every)
-//         .wait());
-//
-//     unwrap!(taker_coin
-//         .validate_maker_payment(&tx_hex, timelock, &maker_pub, secret_hash, amount.clone())
-//         .wait());
-//
-//     use crate::eth::SWAP_CONTRACT;
-//     use ethabi::Token;
-//     let mut outputs = vec![];
-//     let func = SWAP_CONTRACT.function("receiverSpend").unwrap();
-//     func.encode_input(&[Token::FixedBytes()])
-//
-//     let spend = unwrap!(taker_coin
-//         .send_taker_spends_maker_payment(&tx_hex, timelock, &maker_pub, secret)
-//         .wait());
-// }
+#[test]
+fn test_qrc20_extract_secret_malicious() {
+    // priv_key of qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG
+    let priv_key = [
+        3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144, 72,
+        172, 110, 180, 13, 123, 179, 10, 49,
+    ];
+    let (_ctx, coin) = qrc20_coin_for_test(&priv_key);
+
+    // f94d79f89e9ec785db40bb8bb8dca9bc01b7761429618d4c843bbebbc31836b7
+    // the transaction has two outputs:
+    //   1 - with an invalid secret (this case should be processed correctly)
+    //   2 - correct spend tx
+    let spend_tx = hex::decode("01000000022bc8299981ec0cea664cdf9df4f8306396a02e2067d6ac2d3770b34646d2bc2a010000006b483045022100eb13ef2d99ac1cd9984045c2365654b115dd8a7815b7fbf8e2a257f0b93d1592022060d648e73118c843e97f75fafc94e5ff6da70ec8ba36ae255f8c96e2626af6260121022b00078841f37b5d30a6a1defb82b3af4d4e2d24dd4204d41f0c9ce1e875de1affffffffd92a0a10ac6d144b36033916f67ae79889f40f35096629a5cd87be1a08f40ee7010000006b48304502210080cdad5c4770dfbeb760e215494c63cc30da843b8505e75e7bf9e8dad18568000220234c0b11c41bfbcdd50046c69059976aedabe17657fe43d809af71e9635678e20121022b00078841f37b5d30a6a1defb82b3af4d4e2d24dd4204d41f0c9ce1e875de1affffffff030000000000000000c35403a0860101284ca402ed292b8620ad3b72361a5aeba5dffd333fb64750089d935a1ec974d6a91ef4f24ff6ba0000000000000000000000000000000000000000000000000000000001312d000202020202020202020202020202020202020202020202020202020202020202000000000000000000000000d362e096e873eb7907e205fadc6175c6fec7bc440000000000000000000000009e032d4b0090a11dc40fe6c47601499a35d55fbb14ba8b71f3544b93e2f681f996da519a98ace0107ac20000000000000000c35403a0860101284ca402ed292b8620ad3b72361a5aeba5dffd333fb64750089d935a1ec974d6a91ef4f24ff6ba0000000000000000000000000000000000000000000000000000000001312d000101010101010101010101010101010101010101010101010101010101010101000000000000000000000000d362e096e873eb7907e205fadc6175c6fec7bc440000000000000000000000009e032d4b0090a11dc40fe6c47601499a35d55fbb14ba8b71f3544b93e2f681f996da519a98ace0107ac2b8ea82d3010000001976a914783cf0be521101942da509846ea476e683aad83288ac735d855f").unwrap();
+    let expected_secret = &[1; 32];
+    let secret_hash = &*dhash160(expected_secret);
+    let actual = coin.extract_secret(secret_hash, &spend_tx);
+    assert_eq!(actual, Ok(expected_secret.to_vec()));
+}
 
 #[test]
 fn test_qrc20_generate_token_transfer_script_pubkey() {
