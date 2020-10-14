@@ -219,6 +219,29 @@ enum RpcContractCallType {
     Payments,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct ContractCallOutput {
+    pub value: u64,
+    pub script_pubkey: Bytes,
+    pub gas_limit: u64,
+    pub gas_price: u64,
+}
+
+impl From<ContractCallOutput> for TransactionOutput {
+    fn from(out: ContractCallOutput) -> Self {
+        TransactionOutput {
+            value: out.value,
+            script_pubkey: out.script_pubkey,
+        }
+    }
+}
+
+struct GenerateQrc20TxResult {
+    signed: UtxoTx,
+    miner_fee: u64,
+    gas_fee: u64,
+}
+
 impl Qrc20Coin {
     async fn rpc_contract_call(&self, func: RpcContractCallType, tokens: &[Token]) -> Result<Vec<Token>, String> {
         let (function, contract_addr) = match func {
@@ -321,7 +344,7 @@ impl Qrc20Coin {
         amount: U256,
         gas_limit: u64,
         gas_price: u64,
-    ) -> Result<TransactionOutput, String> {
+    ) -> Result<ContractCallOutput, String> {
         let function = try_s!(ERC20_CONTRACT.function("transfer"));
         let params = try_s!(function.encode_input(&[Token::Address(to_addr), Token::Uint(amount)]));
 
@@ -335,30 +358,36 @@ impl Qrc20Coin {
 
         // qtum_amount is always 0 for the QRC20, because we should pay only a fee in Qtum to send the QRC20 transaction
         let qtum_amount = 0;
-        Ok(TransactionOutput {
+        Ok(ContractCallOutput {
             value: qtum_amount,
             script_pubkey,
+            gas_limit,
+            gas_price,
         })
     }
 
     /// Generate a UTXO output with a script_pubkey that calls standard QRC20 `approve` function.
-    pub fn approve_output(&self, spender: H160, amount: U256) -> Result<TransactionOutput, String> {
+    pub fn approve_output(&self, spender: H160, amount: U256) -> Result<ContractCallOutput, String> {
         let function = try_s!(ERC20_CONTRACT.function("approve"));
         let params = try_s!(function.encode_input(&[Token::Address(spender), Token::Uint(amount)]));
 
+        let gas_limit = QRC20_GAS_LIMIT_DEFAULT;
+        let gas_price = QRC20_GAS_PRICE_DEFAULT;
         let script_pubkey = try_s!(generate_contract_call_script_pubkey(
             &params,
-            QRC20_GAS_LIMIT_DEFAULT,
-            QRC20_GAS_PRICE_DEFAULT,
+            gas_limit,
+            gas_price,
             &self.contract_address
         ))
         .to_bytes();
 
         // qtum_amount is always 0 for the QRC20, because we should pay only a fee in Qtum to send the QRC20 transaction
         let qtum_amount = 0;
-        Ok(TransactionOutput {
+        Ok(ContractCallOutput {
             value: qtum_amount,
             script_pubkey,
+            gas_limit,
+            gas_price,
         })
     }
 
@@ -370,7 +399,7 @@ impl Qrc20Coin {
         time_lock: u32,
         secret_hash: &[u8],
         receiver_addr: H160,
-    ) -> Result<TransactionOutput, String> {
+    ) -> Result<ContractCallOutput, String> {
         let function = try_s!(SWAP_CONTRACT.function("erc20Payment"));
         let params = try_s!(function.encode_input(&[
             Token::FixedBytes(id),
@@ -381,19 +410,23 @@ impl Qrc20Coin {
             Token::Uint(U256::from(time_lock))
         ]));
 
+        let gas_limit = QRC20_GAS_LIMIT_DEFAULT;
+        let gas_price = QRC20_GAS_PRICE_DEFAULT;
         let script_pubkey = try_s!(generate_contract_call_script_pubkey(
             &params, // params of the function
-            QRC20_GAS_LIMIT_DEFAULT,
-            QRC20_GAS_PRICE_DEFAULT,
+            gas_limit,
+            gas_price,
             &self.swap_contract_address, // address of the contract which function will be called
         ))
         .to_bytes();
 
         // qtum_amount is always 0 for the QRC20, because we should pay only a fee in Qtum to send the QRC20 transaction
         let qtum_amount = 0;
-        Ok(TransactionOutput {
+        Ok(ContractCallOutput {
             value: qtum_amount,
             script_pubkey,
+            gas_limit,
+            gas_price,
         })
     }
 
@@ -404,7 +437,7 @@ impl Qrc20Coin {
         value: U256,
         secret: Vec<u8>,
         sender_addr: H160,
-    ) -> Result<TransactionOutput, String> {
+    ) -> Result<ContractCallOutput, String> {
         let function = try_s!(SWAP_CONTRACT.function("receiverSpend"));
         let params = try_s!(function.encode_input(&[
             Token::FixedBytes(id),
@@ -414,19 +447,23 @@ impl Qrc20Coin {
             Token::Address(sender_addr)
         ]));
 
+        let gas_limit = QRC20_GAS_LIMIT_DEFAULT;
+        let gas_price = QRC20_GAS_PRICE_DEFAULT;
         let script_pubkey = try_s!(generate_contract_call_script_pubkey(
             &params, // params of the function
-            QRC20_GAS_LIMIT_DEFAULT,
-            QRC20_GAS_PRICE_DEFAULT,
+            gas_limit,
+            gas_price,
             &self.swap_contract_address, // address of the contract which function will be called
         ))
         .to_bytes();
 
         // qtum_amount is always 0 for the QRC20, because we should pay only a fee in Qtum to send the QRC20 transaction
         let qtum_amount = 0;
-        Ok(TransactionOutput {
+        Ok(ContractCallOutput {
             value: qtum_amount,
             script_pubkey,
+            gas_limit,
+            gas_price,
         })
     }
 
@@ -436,7 +473,7 @@ impl Qrc20Coin {
         value: U256,
         secret_hash: Vec<u8>,
         receiver: H160,
-    ) -> Result<TransactionOutput, String> {
+    ) -> Result<ContractCallOutput, String> {
         let function = try_s!(SWAP_CONTRACT.function("senderRefund"));
 
         let params = try_s!(function.encode_input(&[
@@ -447,35 +484,32 @@ impl Qrc20Coin {
             Token::Address(receiver)
         ]));
 
+        let gas_limit = QRC20_GAS_LIMIT_DEFAULT;
+        let gas_price = QRC20_GAS_PRICE_DEFAULT;
         let script_pubkey = try_s!(generate_contract_call_script_pubkey(
             &params, // params of the function
-            QRC20_GAS_LIMIT_DEFAULT,
-            QRC20_GAS_PRICE_DEFAULT,
+            gas_limit,
+            gas_price,
             &self.swap_contract_address, // address of the contract which function will be called
         ))
         .to_bytes();
 
         // qtum_amount is always 0 for the QRC20, because we should pay only a fee in Qtum to send the QRC20 transaction
         let qtum_amount = 0;
-        Ok(TransactionOutput {
+        Ok(ContractCallOutput {
             value: qtum_amount,
             script_pubkey,
+            gas_limit,
+            gas_price,
         })
     }
 
     /// Generate and send a transaction from the specified UTXO outputs.
     /// Note this function locks the `UTXO_LOCK`.
-    pub async fn send_contract_calls(
-        &self,
-        // TODO replace TransactionOutput with a ContractCallOutput
-        outputs: Vec<TransactionOutput>,
-    ) -> Result<TransactionEnum, String> {
+    pub async fn send_contract_calls(&self, outputs: Vec<ContractCallOutput>) -> Result<TransactionEnum, String> {
         let _utxo_lock = UTXO_LOCK.lock().await;
 
-        let (signed, _fee_details) = try_s!(
-            self.generate_qrc20_transaction(QRC20_GAS_LIMIT_DEFAULT, QRC20_GAS_PRICE_DEFAULT, outputs)
-                .await
-        );
+        let GenerateQrc20TxResult { signed, .. } = try_s!(self.generate_qrc20_transaction(outputs).await);
         let _tx = try_s!(
             self.utxo_arc
                 .rpc_client
@@ -490,10 +524,8 @@ impl Qrc20Coin {
     /// Note: lock the UTXO_LOCK mutex before this function will be called.
     async fn generate_qrc20_transaction(
         &self,
-        gas_limit: u64,
-        gas_price: u64,
-        outputs: Vec<TransactionOutput>,
-    ) -> Result<(UtxoTx, Qrc20FeeDetails), String> {
+        outputs: Vec<ContractCallOutput>,
+    ) -> Result<GenerateQrc20TxResult, String> {
         let unspents = try_s!(self
             .ordered_mature_unspents(&self.utxo_arc.my_address)
             .compat()
@@ -503,13 +535,12 @@ impl Qrc20Coin {
         // None seems that the generate_transaction() should request estimated fee for Kbyte
         let actual_tx_fee = None;
         // We do one contract call, because of this gas_fee will be (1 * gas_limit * gas_price)
-        let gas_fee = gas_limit
-            .checked_mul(gas_price)
-            .ok_or(ERRL!("too large gas_limit and/or gas_price"))?
-            .checked_mul(outputs.len() as u64)
-            .ok_or(ERRL!("too large gas_fee"))?;
+        let gas_fee = outputs
+            .iter()
+            .fold(0, |gas_fee, output| gas_fee + output.gas_limit * output.gas_price);
         let fee_policy = FeePolicy::SendExact;
 
+        let outputs = outputs.into_iter().map(|output| output.into()).collect();
         let (unsigned, data) = self
             .generate_transaction(unspents, outputs, fee_policy, actual_tx_fee, Some(gas_fee))
             .await
@@ -528,15 +559,11 @@ impl Qrc20Coin {
             self.utxo_arc.signature_version,
             self.utxo_arc.fork_id
         ));
-        let fee_details = Qrc20FeeDetails {
-            // QRC20 fees are paid in base platform currency (in particular Qtum)
-            coin: self.platform.clone(),
-            miner_fee: utxo_common::big_decimal_from_sat(data.fee_amount as i64, self.utxo_arc.decimals),
-            gas_limit,
-            gas_price,
-            total_gas_fee: utxo_common::big_decimal_from_sat(gas_fee as i64, self.utxo_arc.decimals),
-        };
-        Ok((signed, fee_details))
+        Ok(GenerateQrc20TxResult {
+            signed,
+            miner_fee: data.fee_amount,
+            gas_fee,
+        })
     }
 
     /// Get `erc20Payment` contract call details.
@@ -1678,7 +1705,11 @@ async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> Result<Transac
     ));
     let outputs = vec![transfer_output];
 
-    let (signed, fee_details) = try_s!(coin.generate_qrc20_transaction(gas_limit, gas_price, outputs).await);
+    let GenerateQrc20TxResult {
+        signed,
+        miner_fee,
+        gas_fee,
+    } = try_s!(coin.generate_qrc20_transaction(outputs).await);
 
     let received_by_me = if to_addr == coin.utxo_arc.my_address {
         req.amount.clone()
@@ -1688,6 +1719,14 @@ async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> Result<Transac
     let my_balance_change = &received_by_me - &req.amount;
     let my_address = try_s!(coin.my_address());
     let to_address = try_s!(coin.display_address(&to_addr));
+    let fee_details = Qrc20FeeDetails {
+        // QRC20 fees are paid in base platform currency (in particular Qtum)
+        coin: coin.platform.clone(),
+        miner_fee: utxo_common::big_decimal_from_sat(miner_fee as i64, coin.utxo_arc.decimals),
+        gas_limit,
+        gas_price,
+        total_gas_fee: utxo_common::big_decimal_from_sat(gas_fee as i64, coin.utxo_arc.decimals),
+    };
     Ok(TransactionDetails {
         from: vec![my_address],
         to: vec![to_address],
@@ -1909,7 +1948,6 @@ async fn qrc20_refund_hash_time_locked_payment(coin: Qrc20Coin, payment_tx: Utxo
     coin.send_contract_calls(vec![refund_output]).await
 }
 
-/// TODO check swap_id
 async fn qrc20_validate_payment(
     coin: Qrc20Coin,
     payment_tx: UtxoTx,

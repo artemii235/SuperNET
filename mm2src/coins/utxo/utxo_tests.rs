@@ -1,6 +1,7 @@
 use super::rpc_clients::{ElectrumProtocol, ListSinceBlockRes, NetworkInfo};
 use super::*;
-use crate::utxo::qrc20::{qrc20_addr_from_utxo_addr, qrc20_coin_from_conf_and_request, Qrc20Coin, Qrc20FeeDetails};
+use crate::utxo::qrc20::{qrc20_addr_from_utxo_addr, qrc20_coin_from_conf_and_request, ContractCallOutput, Qrc20Coin,
+                         Qrc20FeeDetails};
 use crate::utxo::rpc_clients::UtxoRpcClientOps;
 use crate::utxo::utxo_standard::{utxo_standard_coin_from_conf_and_request, UtxoStandardCoin, UTXO_STANDARD_DUST};
 use crate::{SwapOps, TxFeeDetails, WithdrawFee};
@@ -2344,19 +2345,22 @@ fn test_qrc20_generate_token_transfer_script_pubkey() {
     ];
     let (_ctx, coin) = qrc20_coin_for_test(&priv_key);
 
+    let gas_limit = 2_500_000;
+    let gas_price = 40;
+
     // sample QRC20 transfer from https://testnet.qtum.info/tx/51e9cec885d7eb26271f8b1434c000f6cf07aad47671268fc8d36cee9d48f6de
     // the script is a script_pubkey of one of the transaction output
     let expected_script: Script = "5403a02526012844a9059cbb0000000000000000000000000240b898276ad2cc0d2fe6f527e8e31104e7fde3000000000000000000000000000000000000000000000000000000003b9aca0014d362e096e873eb7907e205fadc6175c6fec7bc44c2".into();
-    let expected = TransactionOutput {
+    let expected = ContractCallOutput {
         value: 0,
         script_pubkey: expected_script.to_bytes(),
+        gas_limit,
+        gas_price,
     };
 
     let to_addr: Address = "qHmJ3KA6ZAjR9wGjpFASn4gtUSeFAqdZgs".into();
     let to_addr = qrc20_addr_from_utxo_addr(to_addr);
     let amount: U256 = 1000000000.into();
-    let gas_limit = 2_500_000;
-    let gas_price = 40;
     let actual = coin
         .transfer_output(to_addr.clone(), amount, gas_limit, gas_price)
         .unwrap();
