@@ -21,7 +21,6 @@
 
 #![cfg_attr(not(feature = "native"), allow(unused_imports))]
 
-pub mod qrc20;
 pub mod qtum;
 pub mod rpc_clients;
 pub mod utxo_common;
@@ -52,7 +51,7 @@ use num_traits::ToPrimitive;
 use primitives::hash::{H256, H264, H512};
 use rand::seq::SliceRandom;
 use rpc::v1::types::{Bytes as BytesJson, Transaction as RpcTransaction, H256 as H256Json};
-use script::{Builder, Opcode, Script, SignatureVersion, TransactionInputSigner};
+use script::{Builder, Script, SignatureVersion, TransactionInputSigner};
 use serde_json::{self as json, Value as Json};
 use serialization::serialize;
 use std::convert::TryInto;
@@ -123,14 +122,14 @@ impl Transaction for UtxoTx {
 /// and check output values
 #[derive(Debug)]
 pub struct AdditionalTxData {
-    received_by_me: u64,
-    spent_by_me: u64,
-    fee_amount: u64,
+    pub received_by_me: u64,
+    pub spent_by_me: u64,
+    pub fee_amount: u64,
 }
 
 /// The fee set from coins config
 #[derive(Debug)]
-enum TxFee {
+pub enum TxFee {
     /// Tell the coin that it has fixed tx fee not depending on transaction size
     Fixed(u64),
     /// Tell the coin that it should request the fee from daemon RPC and calculate it relying on tx size
@@ -173,83 +172,83 @@ impl Default for UtxoAddressFormat {
 
 #[derive(Debug)]
 pub struct UtxoCoinFields {
-    ticker: String,
+    pub ticker: String,
     /// https://en.bitcoin.it/wiki/List_of_address_prefixes
     /// https://github.com/jl777/coins/blob/master/coins
-    pub_addr_prefix: u8,
-    p2sh_addr_prefix: u8,
-    wif_prefix: u8,
-    pub_t_addr_prefix: u8,
-    p2sh_t_addr_prefix: u8,
+    pub pub_addr_prefix: u8,
+    pub p2sh_addr_prefix: u8,
+    pub wif_prefix: u8,
+    pub pub_t_addr_prefix: u8,
+    pub p2sh_t_addr_prefix: u8,
     /// True if coins uses Proof of Stake consensus algo
     /// Proof of Work is expected by default
     /// https://en.bitcoin.it/wiki/Proof_of_Stake
     /// https://en.bitcoin.it/wiki/Proof_of_work
     /// The actual meaning of this is nTime field is used in transaction
-    is_pos: bool,
+    pub is_pos: bool,
     /// Special field for Zcash and it's forks
     /// Defines if Overwinter network upgrade was activated
     /// https://z.cash/upgrade/overwinter/
-    overwintered: bool,
+    pub overwintered: bool,
     /// The tx version used to detect the transaction ser/de/signing algo
     /// For now it's mostly used for Zcash and forks because they changed the algo in
     /// Overwinter and then Sapling upgrades
     /// https://github.com/zcash/zips/blob/master/zip-0243.rst
-    tx_version: i32,
+    pub tx_version: i32,
     /// If true - allow coins withdraw to P2SH addresses (Segwit).
     /// the flag will also affect the address that MM2 generates by default in the future
     /// will be the Segwit (starting from 3 for BTC case) instead of legacy
     /// https://en.bitcoin.it/wiki/Segregated_Witness
-    segwit: bool,
+    pub segwit: bool,
     /// Default decimals amount is 8 (BTC and almost all other UTXO coins)
     /// But there are forks which have different decimals:
     /// Peercoin has 6
     /// Emercoin has 6
     /// Bitcoin Diamond has 7
-    decimals: u8,
+    pub decimals: u8,
     /// Does coin require transactions to be notarized to be considered as confirmed?
     /// https://komodoplatform.com/security-delayed-proof-of-work-dpow/
-    requires_notarization: AtomicBool,
+    pub requires_notarization: AtomicBool,
     /// RPC client
     pub rpc_client: UtxoRpcClientEnum,
     /// ECDSA key pair
-    key_pair: KeyPair,
+    pub key_pair: KeyPair,
     /// Lock the mutex when we deal with address utxos
-    my_address: Address,
+    pub my_address: Address,
     /// The address format indicates how to parse and display UTXO addresses over RPC calls
-    address_format: UtxoAddressFormat,
+    pub address_format: UtxoAddressFormat,
     /// Is current coin KMD asset chain?
     /// https://komodoplatform.atlassian.net/wiki/spaces/KPSD/pages/71729160/What+is+a+Parallel+Chain+Asset+Chain
-    asset_chain: bool,
-    tx_fee: TxFee,
+    pub asset_chain: bool,
+    pub tx_fee: TxFee,
     /// Transaction version group id for Zcash transactions since Overwinter: https://github.com/zcash/zips/blob/master/zip-0202.rst
-    version_group_id: u32,
+    pub version_group_id: u32,
     /// Consensus branch id for Zcash transactions since Overwinter: https://github.com/zcash/zcash/blob/master/src/consensus/upgrades.cpp#L11
     /// used in transaction sig hash calculation
-    consensus_branch_id: u32,
+    pub consensus_branch_id: u32,
     /// Defines if coin uses Zcash transaction format
-    zcash: bool,
+    pub zcash: bool,
     /// Address and privkey checksum type
-    checksum_type: ChecksumType,
+    pub checksum_type: ChecksumType,
     /// Fork id used in sighash
-    fork_id: u32,
+    pub fork_id: u32,
     /// Signature version
-    signature_version: SignatureVersion,
-    history_sync_state: Mutex<HistorySyncState>,
-    required_confirmations: AtomicU64,
+    pub signature_version: SignatureVersion,
+    pub history_sync_state: Mutex<HistorySyncState>,
+    pub required_confirmations: AtomicU64,
     /// if set to true MM2 will check whether calculated fee is lower than relay fee and use
     /// relay fee amount instead of calculated
     /// https://github.com/KomodoPlatform/atomicDEX-API/issues/617
-    force_min_relay_fee: bool,
+    pub force_min_relay_fee: bool,
     /// Block count for median time past calculation
-    mtp_block_count: NonZeroU64,
-    estimate_fee_mode: Option<EstimateFeeMode>,
+    pub mtp_block_count: NonZeroU64,
+    pub estimate_fee_mode: Option<EstimateFeeMode>,
     /// Minimum transaction value at which the value is not less than fee
-    dust_amount: u64,
+    pub dust_amount: u64,
     /// Minimum number of confirmations at which a transaction is considered mature
-    mature_confirmations: u32,
+    pub mature_confirmations: u32,
     /// Path to the TX cache directory
-    tx_cache_directory: Option<PathBuf>,
+    pub tx_cache_directory: Option<PathBuf>,
 }
 
 #[async_trait]
