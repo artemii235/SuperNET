@@ -1,3 +1,4 @@
+#![feature(async_closure)]
 #![feature(drain_filter)]
 #![feature(hash_raw_entry)]
 #![feature(integer_atomics)]

@@ -1,3 +1,4 @@
+#![feature(async_closure)]
 #![feature(non_ascii_idents)]
 #![feature(drain_filter)]
 #![recursion_limit = "512"]

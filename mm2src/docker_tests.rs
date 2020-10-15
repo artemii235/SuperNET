@@ -1,3 +1,4 @@
+#![feature(async_closure)]
 #![feature(custom_test_frameworks)]
 #![feature(test)]
 #![test_runner(docker_tests_runner)]
@@ -68,7 +69,8 @@ mod docker_tests {
     use futures01::Future;
     use gstuff::now_ms;
     use keys::{KeyPair, Private};
-    use secp256k1::SecretKey;
+    use primitives::hash::H160;
+    use secp256k1::{PublicKey, SecretKey};
     use serde_json::{self as json, Value as Json};
     use std::env;
     use std::io::{BufRead, BufReader};
@@ -80,6 +82,12 @@ mod docker_tests {
     use testcontainers::clients::Cli;
     use testcontainers::images::generic::{GenericImage, WaitFor};
     use testcontainers::{Container, Docker, Image};
+
+    fn rmd160_from_priv(privkey: [u8; 32]) -> H160 {
+        let secret = SecretKey::parse(&privkey).unwrap();
+        let public = PublicKey::from_secret_key(&secret);
+        dhash160(&public.serialize_compressed())
+    }
 
     // AP: custom test runner is intended to initialize the required environment (e.g. coin daemons in the docker containers)
     // and then gracefully clear it by dropping the RAII docker container handlers
@@ -964,6 +972,8 @@ mod docker_tests {
             "max": true,
         }))));
         assert!(rc.0.is_success(), "!setprice: {}", rc.1);
+        let json: Json = json::from_str(&rc.1).unwrap();
+        let bob_uuid = json["result"]["uuid"].as_str().unwrap().to_owned();
 
         thread::sleep(Duration::from_secs(12));
 
@@ -998,6 +1008,17 @@ mod docker_tests {
         unwrap!(block_on(mm_alice.wait_for_log(22., |log| {
             log.contains("Entering the taker_swap_loop MYCOIN/MYCOIN1")
         })));
+
+        thread::sleep(Duration::from_secs(3));
+
+        let rmd160 = rmd160_from_priv(bob_priv_key);
+        let order_path = mm_bob.folder.join(format!(
+            "DB/{}/ORDERS/MY/MAKER/{}.json",
+            hex::encode(rmd160.take()),
+            bob_uuid,
+        ));
+        log!("Order path "(order_path.display()));
+        assert!(!order_path.exists());
         unwrap!(block_on(mm_bob.stop()));
         unwrap!(block_on(mm_alice.stop()));
     }

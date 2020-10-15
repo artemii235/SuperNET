@@ -1388,17 +1388,19 @@ impl UtxoRpcClientOps for ElectrumClient {
         )
     }
 
-    /// https://electrumx.readthedocs.io/en/latest/protocol-methods.html#blockchain-transaction-get
-    /// returns verbose transaction by default
-    fn get_verbose_transaction(&self, txid: H256Json) -> RpcRes<RpcTransaction> {
-        let verbose = true;
-        rpc_func!(self, "blockchain.transaction.get", txid, verbose)
-    }
+    fn send_raw_transaction(&self, tx: BytesJson) -> RpcRes<H256Json> { self.blockchain_transaction_broadcast(tx) }
 
     /// https://electrumx.readthedocs.io/en/latest/protocol-methods.html#blockchain-transaction-get
     /// returns transaction bytes by default
     fn get_transaction_bytes(&self, txid: H256Json) -> RpcRes<BytesJson> {
         let verbose = false;
+        rpc_func!(self, "blockchain.transaction.get", txid, verbose)
+    }
+
+    /// https://electrumx.readthedocs.io/en/latest/protocol-methods.html#blockchain-transaction-get
+    /// returns verbose transaction by default
+    fn get_verbose_transaction(&self, txid: H256Json) -> RpcRes<RpcTransaction> {
+        let verbose = true;
         rpc_func!(self, "blockchain.transaction.get", txid, verbose)
     }
 
@@ -1426,8 +1428,6 @@ impl UtxoRpcClientOps for ElectrumClient {
             }
         }))
     }
-
-    fn send_raw_transaction(&self, tx: BytesJson) -> RpcRes<H256Json> { self.blockchain_transaction_broadcast(tx) }
 
     fn get_relay_fee(&self) -> RpcRes<BigDecimal> { rpc_func!(self, "blockchain.relayfee") }
 

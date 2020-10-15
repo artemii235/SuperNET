@@ -29,7 +29,7 @@ use common::mm_ctx::{from_ctx, MmArc, MmWeak};
 use common::mm_number::{from_dec_to_ratio, Fraction, MmNumber};
 use common::{bits256, block_on, json_dir_entries, new_uuid, now_ms, remove_file, write};
 use either::Either;
-use futures::{compat::Future01CompatExt, lock::Mutex as AsyncMutex};
+use futures::{compat::Future01CompatExt, lock::Mutex as AsyncMutex, StreamExt};
 use gstuff::slurp;
 use http::Response;
 use mm2_libp2p::{decode_signed, encode_and_sign, pub_sub_topic, PublicKey, TopicPrefix, TOPIC_SEPARATOR};
@@ -1816,23 +1816,23 @@ pub async fn lp_ordermatch_loop(ctx: MmArc) {
                     save_my_maker_order(&ctx, order);
                 }
             });
-            let mut cancelled = vec![];
-            *my_maker_orders = my_maker_orders
-                .drain()
+            *my_maker_orders = futures::stream::iter(my_maker_orders.drain())
                 .filter_map(|(uuid, order)| {
-                    let min_amount: BigDecimal = MIN_TRADING_VOL.parse().unwrap();
-                    let min_amount: MmNumber = min_amount.into();
-                    if order.available_amount() <= min_amount && !order.has_ongoing_matches() {
-                        cancelled.push(order);
-                        None
-                    } else {
-                        Some((uuid, order))
+                    let ctx = ctx.clone();
+                    async move {
+                        let min_amount: BigDecimal = MIN_TRADING_VOL.parse().unwrap();
+                        let min_amount: MmNumber = min_amount.into();
+                        if order.available_amount() <= min_amount && !order.has_ongoing_matches() {
+                            delete_my_maker_order(&ctx, &order);
+                            maker_order_cancelled_p2p_notify(ctx.clone(), &order).await;
+                            None
+                        } else {
+                            Some((uuid, order))
+                        }
                     }
                 })
-                .collect();
-            for order in cancelled {
-                maker_order_cancelled_p2p_notify(ctx.clone(), &order).await;
-            }
+                .collect()
+                .await;
         }
 
         {
