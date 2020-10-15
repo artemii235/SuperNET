@@ -583,6 +583,19 @@ pub async fn utxo_arc_from_conf_and_request(
     priv_key: &[u8],
     dust_amount: u64,
 ) -> Result<UtxoArc, String> {
+    utxo_fields_from_conf_and_request(ctx, ticker, conf, req, priv_key, dust_amount)
+        .await
+        .map(|coin| UtxoArc(Arc::new(coin)))
+}
+
+pub async fn utxo_fields_from_conf_and_request(
+    ctx: &MmArc,
+    ticker: &str,
+    conf: &Json,
+    req: &Json,
+    priv_key: &[u8],
+    dust_amount: u64,
+) -> Result<UtxoCoinFields, String> {
     let checksum_type = if ticker == "GRS" {
         ChecksumType::DGROESTL512
     } else if ticker == "SMART" {
@@ -804,7 +817,7 @@ pub async fn utxo_arc_from_conf_and_request(
         mature_confirmations,
         tx_cache_directory,
     };
-    Ok(UtxoArc(Arc::new(coin)))
+    Ok(coin)
 }
 
 /// Ping the electrum servers every 30 seconds to prevent them from disconnecting us.
@@ -1034,7 +1047,7 @@ pub struct KmdRewardsInfoElement {
 /// The list is ordered by the output value.
 pub async fn kmd_rewards_info<T>(coin: &T) -> Result<Vec<KmdRewardsInfoElement>, String>
 where
-    T: AsRef<UtxoArc> + UtxoCoinCommonOps,
+    T: AsRef<UtxoCoinFields> + UtxoCoinCommonOps,
 {
     if coin.as_ref().ticker != "KMD" {
         return ERR!("rewards info can be obtained for KMD only");
@@ -1148,7 +1161,7 @@ pub(crate) fn sign_tx(
 
 async fn send_outputs_from_my_address_impl<T>(coin: T, outputs: Vec<TransactionOutput>) -> Result<UtxoTx, String>
 where
-    T: AsRef<UtxoArc> + UtxoArcCommonOps,
+    T: AsRef<UtxoCoinFields> + UtxoArcCommonOps,
 {
     let _utxo_lock = UTXO_LOCK.lock().await;
     let unspents = try_s!(

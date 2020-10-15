@@ -10,8 +10,8 @@ pub struct QtumCoin {
     utxo_arc: UtxoArc,
 }
 
-impl AsRef<UtxoArc> for QtumCoin {
-    fn as_ref(&self) -> &UtxoArc { &self.utxo_arc }
+impl AsRef<UtxoCoinFields> for QtumCoin {
+    fn as_ref(&self) -> &UtxoCoinFields { &self.utxo_arc }
 }
 
 impl From<UtxoArc> for QtumCoin {
@@ -123,11 +123,9 @@ impl UtxoArcCommonOps for QtumCoin {
         &self,
         txid: H256Json,
     ) -> Box<dyn Future<Item = VerboseTransactionFrom, Error = String> + Send> {
-        Box::new(
-            utxo_common::get_verbose_transaction_from_cache_or_rpc(self.clone(), txid)
-                .boxed()
-                .compat(),
-        )
+        let selfi = self.clone();
+        let fut = async move { utxo_common::get_verbose_transaction_from_cache_or_rpc(&selfi.utxo_arc, txid).await };
+        Box::new(fut.boxed().compat())
     }
 
     async fn request_tx_history(&self, metrics: MetricsArc) -> RequestTxHistoryResult {
@@ -206,7 +204,7 @@ impl SwapOps for QtumCoin {
         fee_addr: &[u8],
         amount: &BigDecimal,
     ) -> Box<dyn Future<Item = (), Error = String> + Send> {
-        utxo_common::validate_fee(self.utxo_arc.clone(), fee_tx, fee_addr, amount)
+        utxo_common::validate_fee(self.clone(), fee_tx, fee_addr, amount)
     }
 
     fn validate_maker_payment(
@@ -217,7 +215,7 @@ impl SwapOps for QtumCoin {
         priv_bn_hash: &[u8],
         amount: BigDecimal,
     ) -> Box<dyn Future<Item = (), Error = String> + Send> {
-        utxo_common::validate_maker_payment(&self.utxo_arc, payment_tx, time_lock, maker_pub, priv_bn_hash, amount)
+        utxo_common::validate_maker_payment(self, payment_tx, time_lock, maker_pub, priv_bn_hash, amount)
     }
 
     fn validate_taker_payment(
@@ -228,7 +226,7 @@ impl SwapOps for QtumCoin {
         priv_bn_hash: &[u8],
         amount: BigDecimal,
     ) -> Box<dyn Future<Item = (), Error = String> + Send> {
-        utxo_common::validate_taker_payment(&self.utxo_arc, payment_tx, time_lock, taker_pub, priv_bn_hash, amount)
+        utxo_common::validate_taker_payment(self, payment_tx, time_lock, taker_pub, priv_bn_hash, amount)
     }
 
     fn check_if_my_payment_sent(
@@ -259,7 +257,14 @@ impl SwapOps for QtumCoin {
         tx: &[u8],
         search_from_block: u64,
     ) -> Result<Option<FoundSwapTxSpend>, String> {
-        utxo_common::search_for_swap_tx_spend_my(self, time_lock, other_pub, secret_hash, tx, search_from_block)
+        utxo_common::search_for_swap_tx_spend_my(
+            &self.utxo_arc,
+            time_lock,
+            other_pub,
+            secret_hash,
+            tx,
+            search_from_block,
+        )
     }
 
     fn search_for_swap_tx_spend_other(
@@ -270,7 +275,14 @@ impl SwapOps for QtumCoin {
         tx: &[u8],
         search_from_block: u64,
     ) -> Result<Option<FoundSwapTxSpend>, String> {
-        utxo_common::search_for_swap_tx_spend_other(self, time_lock, other_pub, secret_hash, tx, search_from_block)
+        utxo_common::search_for_swap_tx_spend_other(
+            &self.utxo_arc,
+            time_lock,
+            other_pub,
+            secret_hash,
+            tx,
+            search_from_block,
+        )
     }
 
     fn extract_secret(&self, secret_hash: &[u8], spend_tx: &[u8]) -> Result<Vec<u8>, String> {

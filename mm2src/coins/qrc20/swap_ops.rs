@@ -102,7 +102,7 @@ impl Qrc20Coin {
         // check if we should reset the allowance to 0 and raise this to the max available value (our balance)
         if allowance < value {
             let balance = try_s!(self.my_balance().compat().await);
-            let balance = try_s!(wei_from_big_decimal(&balance, self.utxo_arc.decimals));
+            let balance = try_s!(wei_from_big_decimal(&balance, self.utxo.decimals));
             if allowance > U256::zero() {
                 // first reset the allowance to the 0
                 outputs.push(try_s!(self.approve_output(self.swap_contract_address, 0.into())));
@@ -190,7 +190,7 @@ impl Qrc20Coin {
             );
         }
 
-        let expected_value = try_s!(wei_from_big_decimal(&amount, self.utxo_arc.decimals));
+        let expected_value = try_s!(wei_from_big_decimal(&amount, self.utxo.decimals));
         if expected_value != erc20_payment.value {
             return ERR!(
                 "Invalid 'value' {:?} in swap payment, expected {:?}",
@@ -207,7 +207,7 @@ impl Qrc20Coin {
             );
         }
 
-        let expected_receiver = qrc20_addr_from_utxo_addr(self.utxo_arc.my_address.clone());
+        let expected_receiver = qrc20_addr_from_utxo_addr(self.utxo.my_address.clone());
         if expected_receiver != erc20_payment.receiver {
             return ERR!(
                 "Invalid 'receiver' {:?} in swap payment, expected {:?}",
@@ -242,7 +242,7 @@ impl Qrc20Coin {
         fee_addr: H160,
         expected_value: U256,
     ) -> Result<(), String> {
-        let verbose_tx = match self.utxo_arc.rpc_client {
+        let verbose_tx = match self.utxo.rpc_client {
             UtxoRpcClientEnum::Electrum(ref rpc) => try_s!(rpc.get_verbose_transaction(fee_tx_hash).compat().await),
             UtxoRpcClientEnum::Native(_) => return ERR!("Electrum client expected"),
         };
@@ -291,7 +291,7 @@ impl Qrc20Coin {
         tx: UtxoTx,
         search_from_block: u64,
     ) -> Result<Option<FoundSwapTxSpend>, String> {
-        let electrum = match self.utxo_arc.rpc_client {
+        let electrum = match self.utxo.rpc_client {
             UtxoRpcClientEnum::Electrum(ref rpc_cln) => rpc_cln,
 
             UtxoRpcClientEnum::Native(_) => {
@@ -464,7 +464,7 @@ impl Qrc20Coin {
             gas_price,
             &self.contract_address,
         ))
-            .to_bytes();
+        .to_bytes();
 
         // qtum_amount is always 0 for the QRC20, because we should pay only a fee in Qtum to send the QRC20 transaction
         let qtum_amount = 0;
@@ -479,7 +479,7 @@ impl Qrc20Coin {
     async fn allowance(&self, spender: H160) -> Result<U256, String> {
         let tokens = try_s!(
             self.rpc_contract_call(RpcContractCallType::Allowance, &[
-                Token::Address(qrc20_addr_from_utxo_addr(self.utxo_arc.my_address.clone())),
+                Token::Address(qrc20_addr_from_utxo_addr(self.utxo.my_address.clone())),
                 Token::Address(spender),
             ])
             .await
@@ -655,7 +655,7 @@ impl Qrc20Coin {
     /// Note returns an error if the contract call was excepted.
     async fn erc20_payment_details_from_tx(&self, qtum_tx: &UtxoTx) -> Result<Erc20PaymentDetails, String> {
         let tx_hash: H256Json = qtum_tx.hash().reversed().into();
-        let receipts = match self.utxo_arc.rpc_client {
+        let receipts = match self.utxo.rpc_client {
             UtxoRpcClientEnum::Electrum(ref rpc) => {
                 try_s!(rpc.blochchain_transaction_get_receipt(&tx_hash).compat().await)
             },
