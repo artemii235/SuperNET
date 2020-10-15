@@ -66,7 +66,7 @@ pub async fn get_tx_fee(coin: &UtxoCoinFields) -> Result<ActualTxFee, JsonRpcErr
 /// returns the fee required to be paid for HTLC spend transaction
 pub async fn get_htlc_spend_fee<T>(coin: &T) -> Result<u64, String>
 where
-    T: AsRef<UtxoCoinFields> + UtxoCoinCommonOps,
+    T: AsRef<UtxoCoinFields> + UtxoCommonOps,
 {
     let coin_fee = try_s!(coin.get_tx_fee().await);
     let mut fee = match coin_fee {
@@ -179,7 +179,7 @@ pub async fn get_current_mtp(coin: &UtxoCoinFields) -> Result<u32, String> {
 
 pub fn send_outputs_from_my_address<T>(coin: T, outputs: Vec<TransactionOutput>) -> TransactionFut
 where
-    T: AsRef<UtxoCoinFields> + UtxoArcCommonOps + Send + Sync + 'static,
+    T: AsRef<UtxoCoinFields> + UtxoCommonOps + Send + Sync + 'static,
 {
     let fut = send_outputs_from_my_address_impl(coin, outputs);
     Box::new(fut.boxed().compat().map(|tx| tx.into()))
@@ -203,7 +203,7 @@ pub async fn generate_transaction<T>(
     gas_fee: Option<u64>,
 ) -> Result<(TransactionInputSigner, AdditionalTxData), GenerateTransactionError>
 where
-    T: AsRef<UtxoCoinFields> + UtxoCoinCommonOps + UtxoArcCommonOps,
+    T: AsRef<UtxoCoinFields> + UtxoCommonOps,
 {
     macro_rules! try_other {
         ($exp: expr) => {
@@ -407,7 +407,7 @@ pub async fn calc_interest_if_required<T>(
     my_script_pub: Bytes,
 ) -> Result<(TransactionInputSigner, AdditionalTxData), String>
 where
-    T: AsRef<UtxoCoinFields> + UtxoCoinCommonOps,
+    T: AsRef<UtxoCoinFields> + UtxoCommonOps,
 {
     if coin.as_ref().ticker != "KMD" {
         return Ok((unsigned, data));
@@ -535,7 +535,7 @@ pub fn p2sh_spending_tx(
 
 pub fn send_taker_fee<T>(coin: T, fee_pub_key: &[u8], amount: BigDecimal) -> TransactionFut
 where
-    T: AsRef<UtxoCoinFields> + UtxoArcCommonOps + Send + Sync + 'static,
+    T: AsRef<UtxoCoinFields> + UtxoCommonOps + Send + Sync + 'static,
 {
     let address = try_fus!(address_from_raw_pubkey(
         fee_pub_key,
@@ -559,7 +559,7 @@ pub fn send_maker_payment<T>(
     amount: BigDecimal,
 ) -> TransactionFut
 where
-    T: AsRef<UtxoCoinFields> + UtxoCoinCommonOps + UtxoArcCommonOps + Clone + Send + Sync + 'static,
+    T: AsRef<UtxoCoinFields> + UtxoCommonOps + Clone + Send + Sync + 'static,
 {
     let redeem_script = payment_script(
         time_lock,
@@ -614,7 +614,7 @@ pub fn send_taker_payment<T>(
     amount: BigDecimal,
 ) -> TransactionFut
 where
-    T: AsRef<UtxoCoinFields> + UtxoCoinCommonOps + UtxoArcCommonOps + Clone + Send + Sync + 'static,
+    T: AsRef<UtxoCoinFields> + UtxoCommonOps + Clone + Send + Sync + 'static,
 {
     let redeem_script = payment_script(
         time_lock,
@@ -671,7 +671,7 @@ pub fn send_maker_spends_taker_payment<T>(
     secret: &[u8],
 ) -> TransactionFut
 where
-    T: AsRef<UtxoCoinFields> + UtxoArcCommonOps + UtxoCoinCommonOps + Send + Sync + 'static,
+    T: AsRef<UtxoCoinFields> + UtxoCommonOps + Send + Sync + 'static,
 {
     let prev_tx: UtxoTx = try_fus!(deserialize(taker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
     let script_data = Builder::default()
@@ -711,7 +711,7 @@ pub fn send_taker_spends_maker_payment<T>(
     secret: &[u8],
 ) -> TransactionFut
 where
-    T: AsRef<UtxoCoinFields> + UtxoArcCommonOps + UtxoCoinCommonOps + Send + Sync + 'static,
+    T: AsRef<UtxoCoinFields> + UtxoCommonOps + Send + Sync + 'static,
 {
     let prev_tx: UtxoTx = try_fus!(deserialize(maker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
     let script_data = Builder::default()
@@ -751,7 +751,7 @@ pub fn send_taker_refunds_payment<T>(
     secret_hash: &[u8],
 ) -> TransactionFut
 where
-    T: AsRef<UtxoCoinFields> + UtxoArcCommonOps + UtxoCoinCommonOps + Send + Sync + 'static,
+    T: AsRef<UtxoCoinFields> + UtxoCommonOps + Send + Sync + 'static,
 {
     let prev_tx: UtxoTx = try_fus!(deserialize(taker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
     let script_data = Builder::default().push_opcode(Opcode::OP_1).into_script();
@@ -793,7 +793,7 @@ pub fn send_maker_refunds_payment<T>(
     secret_hash: &[u8],
 ) -> TransactionFut
 where
-    T: AsRef<UtxoCoinFields> + UtxoArcCommonOps + UtxoCoinCommonOps + Send + Sync + 'static,
+    T: AsRef<UtxoCoinFields> + UtxoCommonOps + Send + Sync + 'static,
 {
     let prev_tx: UtxoTx = try_fus!(deserialize(maker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
     let script_data = Builder::default().push_opcode(Opcode::OP_1).into_script();
@@ -946,7 +946,7 @@ pub fn check_if_my_payment_sent<T>(
     secret_hash: &[u8],
 ) -> Box<dyn Future<Item = Option<TransactionEnum>, Error = String> + Send>
 where
-    T: AsRef<UtxoCoinFields> + UtxoCoinCommonOps + Send + Sync + 'static,
+    T: AsRef<UtxoCoinFields> + UtxoCommonOps + Send + Sync + 'static,
 {
     let script = payment_script(
         time_lock,
@@ -1000,7 +1000,7 @@ pub fn check_if_my_payment_completed<T>(
     secret_hash: &[u8],
 ) -> Box<dyn Future<Item = (), Error = String> + Send>
 where
-    T: AsRef<UtxoCoinFields> + UtxoCoinCommonOps + Send + Sync + 'static,
+    T: AsRef<UtxoCoinFields> + UtxoCommonOps + Send + Sync + 'static,
 {
     let fut = check_if_my_payment_sent(coin, time_lock, other_pub, secret_hash).and_then(|tx| {
         if tx.is_none() {
@@ -1096,7 +1096,7 @@ pub fn extract_secret(secret_hash: &[u8], spend_tx: &[u8]) -> Result<Vec<u8>, St
 
 pub fn my_address<T>(coin: &T) -> Result<String, String>
 where
-    T: AsRef<UtxoCoinFields> + UtxoCoinCommonOps,
+    T: AsRef<UtxoCoinFields> + UtxoCommonOps,
 {
     coin.display_address(&coin.as_ref().my_address)
 }
@@ -1171,7 +1171,7 @@ pub fn current_block(coin: &UtxoCoinFields) -> Box<dyn Future<Item = u64, Error 
 
 pub fn address_from_pubkey_str<T>(coin: &T, pubkey: &str) -> Result<String, String>
 where
-    T: AsRef<UtxoCoinFields> + UtxoCoinCommonOps,
+    T: AsRef<UtxoCoinFields> + UtxoCommonOps,
 {
     let pubkey_bytes = try_s!(hex::decode(pubkey));
     let addr = try_s!(address_from_raw_pubkey(
@@ -1193,7 +1193,7 @@ pub fn can_i_spend_other_payment() -> Box<dyn Future<Item = (), Error = String> 
 
 pub async fn withdraw<T>(coin: T, req: WithdrawRequest) -> Result<TransactionDetails, String>
 where
-    T: AsRef<UtxoCoinFields> + UtxoCoinCommonOps + UtxoArcCommonOps + MarketCoinOps,
+    T: AsRef<UtxoCoinFields> + UtxoCommonOps + MarketCoinOps,
 {
     let to = try_s!(coin.address_from_str(&req.to));
 
@@ -1292,7 +1292,7 @@ pub fn decimals(coin: &UtxoCoinFields) -> u8 { coin.decimals }
 
 pub fn convert_to_address<T>(coin: &T, from: &str, to_address_format: Json) -> Result<String, String>
 where
-    T: AsRef<UtxoCoinFields> + UtxoCoinCommonOps,
+    T: AsRef<UtxoCoinFields> + UtxoCommonOps,
 {
     let to_address_format: UtxoAddressFormat =
         json::from_value(to_address_format).map_err(|e| ERRL!("Error on parse UTXO address format {:?}", e))?;
@@ -1307,7 +1307,7 @@ where
 
 pub fn validate_address<T>(coin: &T, address: &str) -> ValidateAddressResult
 where
-    T: UtxoCoinCommonOps,
+    T: UtxoCommonOps,
 {
     validate_address_impl!(coin, address)
 }
@@ -1315,7 +1315,7 @@ where
 #[allow(clippy::cognitive_complexity)]
 pub fn process_history_loop<T>(coin: &T, ctx: MmArc)
 where
-    T: AsRef<UtxoCoinFields> + UtxoArcCommonOps + MmCoin + MarketCoinOps,
+    T: AsRef<UtxoCoinFields> + UtxoCommonOps + MmCoin + MarketCoinOps,
 {
     const HISTORY_TOO_LARGE_ERR_CODE: i64 = -1;
 
@@ -1593,7 +1593,7 @@ where
 
 pub fn tx_details_by_hash<T>(coin: T, hash: &[u8]) -> Box<dyn Future<Item = TransactionDetails, Error = String> + Send>
 where
-    T: AsRef<UtxoCoinFields> + UtxoCoinCommonOps + Send + Sync + 'static,
+    T: AsRef<UtxoCoinFields> + UtxoCommonOps + Send + Sync + 'static,
 {
     let hash = H256Json::from(hash);
     let fut = async move {
@@ -1692,7 +1692,7 @@ pub fn history_sync_status(coin: &UtxoCoinFields) -> HistorySyncState {
 
 pub fn get_trade_fee<T>(coin: T) -> Box<dyn Future<Item = TradeFee, Error = String> + Send>
 where
-    T: AsRef<UtxoCoinFields> + UtxoCoinCommonOps + Send + Sync + 'static,
+    T: AsRef<UtxoCoinFields> + UtxoCommonOps + Send + Sync + 'static,
 {
     let ticker = coin.as_ref().ticker.clone();
     let decimals = coin.as_ref().decimals;
@@ -1730,7 +1730,7 @@ pub fn set_requires_notarization(coin: &UtxoCoinFields, requires_nota: bool) {
 
 pub async fn ordered_mature_unspents<T>(coin: T, address: Address) -> Result<Vec<UnspentInfo>, String>
 where
-    T: AsRef<UtxoCoinFields> + UtxoCoinCommonOps + UtxoArcCommonOps,
+    T: AsRef<UtxoCoinFields> + UtxoCommonOps,
 {
     let unspents = try_s!(coin.as_ref().rpc_client.list_unspent_ordered(&address).compat().await);
     let block_count = try_s!(coin.as_ref().rpc_client.get_block_count().compat().await);
@@ -1823,7 +1823,7 @@ pub async fn get_verbose_transaction_from_cache_or_rpc(
 
 pub async fn my_unspendable_balance<T>(coin: T) -> Result<BigDecimal, String>
 where
-    T: AsRef<UtxoCoinFields> + UtxoArcCommonOps + MarketCoinOps,
+    T: AsRef<UtxoCoinFields> + UtxoCommonOps + MarketCoinOps,
 {
     let mut attempts = 0i32;
     loop {

@@ -33,8 +33,9 @@ pub async fn utxo_standard_coin_from_conf_and_request(
     Ok(inner.into())
 }
 
+#[cfg_attr(test, mockable)]
 #[async_trait]
-impl UtxoCoinCommonOps for UtxoStandardCoin {
+impl UtxoCommonOps for UtxoStandardCoin {
     async fn get_tx_fee(&self) -> Result<ActualTxFee, JsonRpcError> { utxo_common::get_tx_fee(&self.utxo_arc).await }
 
     async fn get_htlc_spend_fee(&self) -> Result<u64, String> { utxo_common::get_htlc_spend_fee(self).await }
@@ -64,12 +65,7 @@ impl UtxoCoinCommonOps for UtxoStandardCoin {
     fn is_unspent_mature(&self, output: &RpcTransaction) -> bool {
         utxo_common::is_unspent_mature(self.utxo_arc.mature_confirmations, output)
     }
-}
 
-#[mockable]
-#[async_trait]
-#[allow(clippy::forget_ref, clippy::forget_copy)]
-impl UtxoArcCommonOps for UtxoStandardCoin {
     async fn generate_transaction(
         &self,
         utxos: Vec<UnspentInfo>,

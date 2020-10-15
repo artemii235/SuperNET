@@ -58,7 +58,7 @@ mod docker_tests {
     use bitcrypto::ChecksumType;
     use coins::utxo::rpc_clients::{UtxoRpcClientEnum, UtxoRpcClientOps};
     use coins::utxo::utxo_standard::{utxo_standard_coin_from_conf_and_request, UtxoStandardCoin};
-    use coins::utxo::{coin_daemon_data_dir, dhash160, zcash_params_path, UtxoCoinCommonOps};
+    use coins::utxo::{coin_daemon_data_dir, dhash160, zcash_params_path, UtxoCommonOps};
     use coins::{FoundSwapTxSpend, MarketCoinOps, SwapOps};
     use common::block_on;
     use common::{file_lock::FileLock,

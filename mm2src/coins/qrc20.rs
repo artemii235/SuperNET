@@ -4,8 +4,8 @@ use crate::qrc20::rpc_electrum::{ContractCallResult, Qrc20RpcOps, TxHistoryItem,
 use crate::utxo::rpc_clients::{ElectrumClient, UnspentInfo, UtxoRpcClientEnum, UtxoRpcClientOps};
 use crate::utxo::utxo_common::{self, big_decimal_from_sat, HISTORY_TOO_LARGE_ERROR};
 use crate::utxo::{qtum, sign_tx, utxo_fields_from_conf_and_request, ActualTxFee, AdditionalTxData, FeePolicy,
-                  GenerateTransactionError, RequestTxHistoryResult, UtxoAddressFormat, UtxoArcCommonOps,
-                  UtxoCoinCommonOps, UtxoCoinFields, UtxoTx, VerboseTransactionFrom, UTXO_LOCK};
+                  GenerateTransactionError, RequestTxHistoryResult, UtxoAddressFormat, UtxoCoinFields, UtxoCommonOps,
+                  UtxoTx, VerboseTransactionFrom, UTXO_LOCK};
 use crate::{FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeFee, TransactionDetails,
             TransactionEnum, TransactionFut, ValidateAddressResult, WithdrawFee, WithdrawRequest};
 use async_trait::async_trait;
@@ -25,7 +25,7 @@ use futures01::Future;
 use gstuff::now_ms;
 use keys::bytes::Bytes as ScriptBytes;
 use keys::{Address as UtxoAddress, Public};
-use mocktopus::macros::*;
+#[cfg(test)] use mocktopus::macros::*;
 use rpc::v1::types::{Bytes as BytesJson, Transaction as RpcTransaction, H160 as H160Json, H256 as H256Json};
 use script::{Builder as ScriptBuilder, Opcode, Script, TransactionInputSigner};
 use serde_json::{self as json, Value as Json};
@@ -256,8 +256,9 @@ impl AsRef<UtxoCoinFields> for Qrc20Coin {
     fn as_ref(&self) -> &UtxoCoinFields { &self.utxo }
 }
 
+#[cfg_attr(test, mockable)]
 #[async_trait]
-impl UtxoCoinCommonOps for Qrc20Coin {
+impl UtxoCommonOps for Qrc20Coin {
     async fn get_tx_fee(&self) -> Result<ActualTxFee, JsonRpcError> { utxo_common::get_tx_fee(&self.utxo).await }
 
     async fn get_htlc_spend_fee(&self) -> Result<u64, String> { utxo_common::get_htlc_spend_fee(self).await }
@@ -287,12 +288,7 @@ impl UtxoCoinCommonOps for Qrc20Coin {
     fn is_unspent_mature(&self, output: &RpcTransaction) -> bool {
         qtum::is_qtum_unspent_mature(self.utxo.mature_confirmations, output)
     }
-}
 
-#[mockable]
-#[async_trait]
-#[allow(clippy::forget_ref, clippy::forget_copy)]
-impl UtxoArcCommonOps for Qrc20Coin {
     /// Generate UTXO transaction with specified unspent inputs and specified outputs.
     async fn generate_transaction(
         &self,

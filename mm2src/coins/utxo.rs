@@ -46,7 +46,7 @@ use futures::stream::StreamExt;
 use futures01::Future;
 use keys::bytes::Bytes;
 use keys::{Address, KeyPair, Private, Public, Secret};
-use mocktopus::macros::*;
+#[cfg(test)] use mocktopus::macros::*;
 use num_traits::ToPrimitive;
 use primitives::hash::{H256, H264, H512};
 use rand::seq::SliceRandom;
@@ -251,8 +251,9 @@ pub struct UtxoCoinFields {
     pub tx_cache_directory: Option<PathBuf>,
 }
 
+#[cfg_attr(test, mockable)]
 #[async_trait]
-pub trait UtxoCoinCommonOps {
+pub trait UtxoCommonOps {
     async fn get_tx_fee(&self) -> Result<ActualTxFee, JsonRpcError>;
 
     async fn get_htlc_spend_fee(&self) -> Result<u64, String>;
@@ -276,6 +277,53 @@ pub trait UtxoCoinCommonOps {
 
     /// Check if the output is spendable (is not coinbase or it has enough confirmations).
     fn is_unspent_mature(&self, output: &RpcTransaction) -> bool;
+
+    /// Generates unsigned transaction (TransactionInputSigner) from specified utxos and outputs.
+    /// This function expects that utxos are sorted by amounts in ascending order
+    /// Consider sorting before calling this function
+    /// Sends the change (inputs amount - outputs amount) to "my_address"
+    /// Also returns additional transaction data
+    async fn generate_transaction(
+        &self,
+        utxos: Vec<UnspentInfo>,
+        outputs: Vec<TransactionOutput>,
+        fee_policy: FeePolicy,
+        fee: Option<ActualTxFee>,
+        gas_fee: Option<u64>,
+    ) -> Result<(TransactionInputSigner, AdditionalTxData), GenerateTransactionError>;
+
+    /// Calculates interest if the coin is KMD
+    /// Adds the value to existing output to my_script_pub or creates additional interest output
+    /// returns transaction and data as is if the coin is not KMD
+    async fn calc_interest_if_required(
+        &self,
+        mut unsigned: TransactionInputSigner,
+        mut data: AdditionalTxData,
+        my_script_pub: Bytes,
+    ) -> Result<(TransactionInputSigner, AdditionalTxData), String>;
+
+    fn p2sh_spending_tx(
+        &self,
+        prev_transaction: UtxoTx,
+        redeem_script: Bytes,
+        outputs: Vec<TransactionOutput>,
+        script_data: Script,
+        sequence: u32,
+    ) -> Result<UtxoTx, String>;
+
+    /// Get transaction outputs available to spend.
+    fn ordered_mature_unspents(
+        &self,
+        address: &Address,
+    ) -> Box<dyn Future<Item = Vec<UnspentInfo>, Error = String> + Send>;
+
+    /// Try load verbose transaction from cache or try to request it from Rpc client.
+    fn get_verbose_transaction_from_cache_or_rpc(
+        &self,
+        txid: H256Json,
+    ) -> Box<dyn Future<Item = VerboseTransactionFrom, Error = String> + Send>;
+
+    async fn request_tx_history(&self, metrics: MetricsArc) -> RequestTxHistoryResult;
 }
 
 #[derive(Clone, Debug)]
@@ -327,57 +375,6 @@ impl std::fmt::Display for GenerateTransactionError {
 }
 
 impl std::error::Error for GenerateTransactionError {}
-
-#[mockable]
-#[async_trait]
-pub trait UtxoArcCommonOps {
-    /// Generates unsigned transaction (TransactionInputSigner) from specified utxos and outputs.
-    /// This function expects that utxos are sorted by amounts in ascending order
-    /// Consider sorting before calling this function
-    /// Sends the change (inputs amount - outputs amount) to "my_address"
-    /// Also returns additional transaction data
-    async fn generate_transaction(
-        &self,
-        utxos: Vec<UnspentInfo>,
-        outputs: Vec<TransactionOutput>,
-        fee_policy: FeePolicy,
-        fee: Option<ActualTxFee>,
-        gas_fee: Option<u64>,
-    ) -> Result<(TransactionInputSigner, AdditionalTxData), GenerateTransactionError>;
-
-    /// Calculates interest if the coin is KMD
-    /// Adds the value to existing output to my_script_pub or creates additional interest output
-    /// returns transaction and data as is if the coin is not KMD
-    async fn calc_interest_if_required(
-        &self,
-        mut unsigned: TransactionInputSigner,
-        mut data: AdditionalTxData,
-        my_script_pub: Bytes,
-    ) -> Result<(TransactionInputSigner, AdditionalTxData), String>;
-
-    fn p2sh_spending_tx(
-        &self,
-        prev_transaction: UtxoTx,
-        redeem_script: Bytes,
-        outputs: Vec<TransactionOutput>,
-        script_data: Script,
-        sequence: u32,
-    ) -> Result<UtxoTx, String>;
-
-    /// Get transaction outputs available to spend.
-    fn ordered_mature_unspents(
-        &self,
-        address: &Address,
-    ) -> Box<dyn Future<Item = Vec<UnspentInfo>, Error = String> + Send>;
-
-    /// Try load verbose transaction from cache or try to request it from Rpc client.
-    fn get_verbose_transaction_from_cache_or_rpc(
-        &self,
-        txid: H256Json,
-    ) -> Box<dyn Future<Item = VerboseTransactionFrom, Error = String> + Send>;
-
-    async fn request_tx_history(&self, metrics: MetricsArc) -> RequestTxHistoryResult;
-}
 
 pub enum RequestTxHistoryResult {
     Ok(Vec<(H256Json, u64)>),
@@ -1047,7 +1044,7 @@ pub struct KmdRewardsInfoElement {
 /// The list is ordered by the output value.
 pub async fn kmd_rewards_info<T>(coin: &T) -> Result<Vec<KmdRewardsInfoElement>, String>
 where
-    T: AsRef<UtxoCoinFields> + UtxoCoinCommonOps,
+    T: AsRef<UtxoCoinFields> + UtxoCommonOps,
 {
     if coin.as_ref().ticker != "KMD" {
         return ERR!("rewards info can be obtained for KMD only");
@@ -1161,7 +1158,7 @@ pub(crate) fn sign_tx(
 
 async fn send_outputs_from_my_address_impl<T>(coin: T, outputs: Vec<TransactionOutput>) -> Result<UtxoTx, String>
 where
-    T: AsRef<UtxoCoinFields> + UtxoArcCommonOps,
+    T: AsRef<UtxoCoinFields> + UtxoCommonOps,
 {
     let _utxo_lock = UTXO_LOCK.lock().await;
     let unspents = try_s!(

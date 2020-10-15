@@ -33,8 +33,9 @@ pub async fn qtum_coin_from_conf_and_request(
     Ok(inner.into())
 }
 
+#[cfg_attr(test, mockable)]
 #[async_trait]
-impl UtxoCoinCommonOps for QtumCoin {
+impl UtxoCommonOps for QtumCoin {
     async fn get_tx_fee(&self) -> Result<ActualTxFee, JsonRpcError> { utxo_common::get_tx_fee(&self.utxo_arc).await }
 
     async fn get_htlc_spend_fee(&self) -> Result<u64, String> { utxo_common::get_htlc_spend_fee(self).await }
@@ -64,12 +65,7 @@ impl UtxoCoinCommonOps for QtumCoin {
     fn is_unspent_mature(&self, output: &RpcTransaction) -> bool {
         is_qtum_unspent_mature(self.utxo_arc.mature_confirmations, output)
     }
-}
 
-#[mockable]
-#[async_trait]
-#[allow(clippy::forget_ref, clippy::forget_copy)]
-impl UtxoArcCommonOps for QtumCoin {
     async fn generate_transaction(
         &self,
         utxos: Vec<UnspentInfo>,
