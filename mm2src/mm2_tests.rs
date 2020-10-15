@@ -2401,7 +2401,7 @@ fn check_too_low_volume_order_creation_fails(mm: &MarketMakerIt, base: &str, rel
 #[test]
 #[cfg(feature = "native")]
 // https://github.com/KomodoPlatform/atomicDEX-API/issues/481
-fn setprice_buy_sell_min_volume() {
+fn setprice_buy_sell_too_low_volume() {
     let bob_passphrase = unwrap!(get_passphrase(&".env.seed", "BOB_PASSPHRASE"));
 
     let coins = json! ([
@@ -2443,6 +2443,77 @@ fn setprice_buy_sell_min_volume() {
     check_too_low_volume_order_creation_fails(&mm, "MORTY", "ETH");
     check_too_low_volume_order_creation_fails(&mm, "ETH", "MORTY");
     check_too_low_volume_order_creation_fails(&mm, "JST", "MORTY");
+}
+
+#[test]
+#[cfg(feature = "native")]
+// https://github.com/KomodoPlatform/atomicDEX-API/issues/473
+fn setprice_min_volume_should_be_displayed_in_orderbook() {
+    let bob_passphrase = unwrap!(get_passphrase(&".env.seed", "BOB_PASSPHRASE"));
+
+    let coins = json! ([
+        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
+        {"coin":"MORTY","asset":"MORTY","rpcport":11608,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
+        {"coin":"ETH","name":"ethereum","protocol":{"type":"ETH"}},
+        {"coin":"JST","name":"jst","protocol":{"type":"ERC20","protocol_data":{"platform":"ETH","contract_address":"0x2b294F029Fde858b2c62184e8390591755521d8E"}}}
+    ]);
+
+    let mut mm = unwrap!(MarketMakerIt::start(
+        json! ({
+            "gui": "nogui",
+            "netid": 9998,
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| unwrap! (s.parse::<i64>())),
+            "passphrase": bob_passphrase,
+            "coins": coins,
+            "rpc_password": "pass",
+            "i_am_seed": true,
+        }),
+        "pass".into(),
+        match var("LOCAL_THREAD_MM") {
+            Ok(ref e) if e == "bob" => Some(local_start()),
+            _ => None,
+        }
+    ));
+
+    let (_dump_log, _dump_dashboard) = mm_dump(&mm.log_path);
+    log!({"Log path: {}", mm.log_path.display()});
+    unwrap!(block_on(
+        mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
+    ));
+
+    log!([block_on(enable_coins_eth_electrum(&mm, vec![
+        "http://195.201.0.6:8565"
+    ]))]);
+
+    let rc = unwrap!(block_on(mm.rpc(json! ({
+        "userpass": mm.userpass,
+        "method": "setprice",
+        "base": "ETH",
+        "rel": "JST",
+        "price": "1",
+        "volume": "10",
+        "min_volume": "1",
+    }))));
+    assert!(rc.0.is_success(), "!setprice: {}", rc.1);
+
+    log!("Get ETH/JST orderbook");
+    let rc = unwrap!(block_on(mm.rpc(json! ({
+        "userpass": mm.userpass,
+        "method": "orderbook",
+        "base": "ETH",
+        "rel": "JST",
+    }))));
+    assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
+
+    let orderbook: Json = unwrap!(json::from_str(&rc.1));
+    log!("orderbook "[orderbook]);
+    let asks = orderbook["asks"].as_array().unwrap();
+    assert_eq!(asks.len(), 1, "ETH/JST orderbook must have exactly 1 ask");
+
+    let min_volume = asks[0]["min_volume"].as_str().unwrap();
+    assert_eq!(min_volume, "1", "ETH/JST ask must display correct min_volume");
 }
 
 #[test]

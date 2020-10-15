@@ -88,6 +88,7 @@ impl From<(new_protocol::MakerOrderCreated, Vec<u8>, String, String)> for PriceP
             sig: "".to_string(),
             balance: order.max_volume.to_decimal(),
             balance_rat: Some(order.max_volume),
+            min_volume: order.min_volume,
             uuid: Some(order.uuid.into()),
             peer_id,
             initial_message,
@@ -1173,6 +1174,11 @@ impl MakerOrderBuilder {
         self
     }
 
+    fn with_min_base_vol(mut self, vol: MmNumber) -> Self {
+        self.min_base_vol = vol;
+        self
+    }
+
     fn with_price(mut self, price: MmNumber) -> Self {
         self.price = price;
         self
@@ -1186,8 +1192,7 @@ impl MakerOrderBuilder {
     /// Validate fields and build
     fn build(self) -> Result<MakerOrder, MakerOrderBuildError> {
         let min_price = MmNumber::from(BigRational::new(1.into(), 100_000_000.into()));
-        let min_vol = MmNumber::from(MIN_TRADING_VOL.parse::<BigDecimal>().unwrap());
-        let zero: MmNumber = 0.into();
+        let min_vol = MmNumber::from(MIN_TRADING_VOL);
 
         if self.base.is_empty() {
             return Err(MakerOrderBuildError::BaseCoinEmpty);
@@ -1223,10 +1228,10 @@ impl MakerOrderBuilder {
             });
         }
 
-        if self.min_base_vol < zero {
+        if self.min_base_vol < min_vol {
             return Err(MakerOrderBuildError::MinBaseVolTooLow {
                 actual: self.min_base_vol,
-                threshold: zero,
+                threshold: min_vol,
             });
         }
 
@@ -2232,6 +2237,7 @@ struct PricePingRequest {
     #[serde(rename = "bal")]
     balance: BigDecimal,
     balance_rat: Option<MmNumber>,
+    min_volume: MmNumber,
     uuid: Option<Uuid>,
     peer_id: String,
     initial_message: Vec<u8>,
@@ -2294,6 +2300,8 @@ fn one() -> u8 { 1 }
 
 fn get_true() -> bool { true }
 
+fn min_volume() -> MmNumber { MmNumber::from(MIN_TRADING_VOL) }
+
 #[derive(Deserialize)]
 struct SetPriceReq {
     base: String,
@@ -2306,6 +2314,8 @@ struct SetPriceReq {
     broadcast: u8,
     #[serde(default)]
     volume: MmNumber,
+    #[serde(default = "min_volume")]
+    min_volume: MmNumber,
     #[serde(default = "get_true")]
     cancel_previous: bool,
     base_confs: Option<u64>,
@@ -2356,6 +2366,7 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
         .with_base_coin(req.base)
         .with_rel_coin(req.rel)
         .with_max_base_vol(volume)
+        .with_min_base_vol(req.min_volume)
         .with_price(req.price)
         .with_conf_settings(conf_settings);
 
@@ -2812,6 +2823,9 @@ pub struct OrderbookEntry {
     max_volume: BigDecimal,
     max_volume_rat: BigRational,
     max_volume_fraction: Fraction,
+    min_volume: BigDecimal,
+    min_volume_rat: BigRational,
+    min_volume_fraction: Fraction,
     pubkey: String,
     age: i64,
     zcredits: u64,
@@ -2891,6 +2905,9 @@ pub async fn orderbook(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
                         .as_ref()
                         .map(|p| p.to_fraction())
                         .unwrap_or_else(|| ask.balance.clone().into()),
+                    min_volume: ask.min_volume.to_decimal(),
+                    min_volume_rat: ask.min_volume.to_ratio(),
+                    min_volume_fraction: ask.min_volume.to_fraction(),
                     pubkey: ask.pubkey.clone(),
                     age: (now_ms() as i64 / 1000) - ask.timestamp as i64,
                     zcredits: 0,
@@ -2935,6 +2952,9 @@ pub async fn orderbook(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
                         .as_ref()
                         .map(|p| p.to_fraction())
                         .unwrap_or_else(|| from_dec_to_ratio(bid.balance.clone()).into()),
+                    min_volume: bid.min_volume.to_decimal(),
+                    min_volume_rat: bid.min_volume.to_ratio(),
+                    min_volume_fraction: bid.min_volume.to_fraction(),
                     pubkey: bid.pubkey.clone(),
                     age: (now_ms() as i64 / 1000) - bid.timestamp as i64,
                     zcredits: 0,
