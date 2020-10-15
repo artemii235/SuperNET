@@ -1825,9 +1825,7 @@ pub async fn lp_ordermatch_loop(ctx: MmArc) {
                 .filter_map(|(uuid, order)| {
                     let ctx = ctx.clone();
                     async move {
-                        let min_amount: BigDecimal = MIN_TRADING_VOL.parse().unwrap();
-                        let min_amount: MmNumber = min_amount.into();
-                        if order.available_amount() <= min_amount && !order.has_ongoing_matches() {
+                        if order.available_amount() < order.min_base_vol && !order.has_ongoing_matches() {
                             delete_my_maker_order(&ctx, &order);
                             maker_order_cancelled_p2p_notify(ctx.clone(), &order).await;
                             None
@@ -2074,7 +2072,7 @@ async fn process_taker_connect(ctx: MmArc, sender_pubkey: H256Json, connect_msg:
         lp_connect_start_bob(ctx.clone(), order_match.clone(), my_order.clone());
 
         // If volume is less order will be cancelled a bit later
-        if my_order.available_amount() >= MmNumber::from(MIN_TRADING_VOL) {
+        if my_order.available_amount() >= my_order.min_base_vol {
             let updated_msg =
                 new_protocol::MakerOrderUpdated::new(my_order.uuid).with_new_max_volume(my_order.available_amount());
             maker_order_updated_p2p_notify(ctx.clone(), &my_order.base, &my_order.rel, updated_msg).await;
@@ -2290,6 +2288,10 @@ impl PricePingRequest {
         if let Some(new_max_volume) = msg.new_max_volume() {
             self.balance = new_max_volume.to_decimal();
             self.balance_rat = Some(new_max_volume.clone());
+        }
+
+        if let Some(new_min_volume) = msg.new_min_volume() {
+            self.min_volume = new_min_volume.clone();
         }
 
         self.update_messages.push(serialized);
