@@ -454,8 +454,8 @@ mod docker_tests {
             "volume": "999",
         }))));
         assert!(rc.0.is_success(), "!setprice: {}", rc.1);
-
-        thread::sleep(Duration::from_secs(12));
+        let json: Json = json::from_str(&rc.1).unwrap();
+        let bob_uuid = json["result"]["uuid"].as_str().unwrap().to_owned();
 
         log!("Get MYCOIN/MYCOIN1 orderbook");
         let rc = unwrap!(block_on(mm_bob.rpc(json! ({
@@ -519,6 +519,14 @@ mod docker_tests {
             "maker_orders must be empty"
         );
 
+        let rmd160 = rmd160_from_priv(priv_key);
+        let order_path = mm_bob.folder.join(format!(
+            "DB/{}/ORDERS/MY/MAKER/{}.json",
+            hex::encode(rmd160.take()),
+            bob_uuid,
+        ));
+        log!("Order path "(order_path.display()));
+        assert!(!order_path.exists());
         unwrap!(block_on(mm_bob.stop()));
     }
 
@@ -974,8 +982,6 @@ mod docker_tests {
         assert!(rc.0.is_success(), "!setprice: {}", rc.1);
         let json: Json = json::from_str(&rc.1).unwrap();
         let bob_uuid = json["result"]["uuid"].as_str().unwrap().to_owned();
-
-        thread::sleep(Duration::from_secs(12));
 
         log!("Get MYCOIN/MYCOIN1 orderbook");
         let rc = unwrap!(block_on(mm_bob.rpc(json! ({

@@ -648,9 +648,9 @@ impl BalanceTradeFeeUpdatedHandler for BalanceUpdateOrdermatchHandler {
             .drain()
             .filter_map(|(uuid, mut order)| {
                 if order.base == *ticker {
-                    if new_volume < MmNumber::from(MIN_TRADING_VOL) {
-                        order.max_base_vol = 0.into();
+                    if new_volume < order.min_base_vol {
                         let ctx = self.ctx.clone();
+                        delete_my_maker_order(&ctx, &order);
                         spawn(async move { maker_order_cancelled_p2p_notify(ctx, &order).await });
                         None
                     } else if new_volume < order.available_amount() {
