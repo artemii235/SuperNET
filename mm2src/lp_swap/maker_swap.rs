@@ -2,12 +2,12 @@
 
 use super::{ban_pubkey, broadcast_my_swap_status, dex_fee_amount, get_locked_amount, get_locked_amount_by_other_swaps,
             my_swap_file_path, my_swaps_dir, AtomicSwap, LockedAmount, MySwapInfo, RecoveredSwap, RecoveredSwapAction,
-            SavedSwap, SwapConfirmationsSettings, SwapError, SwapNegotiationData, SwapsContext, BASIC_COMM_TIMEOUT,
-            WAIT_CONFIRM_INTERVAL};
+            SavedSwap, SwapConfirmationsSettings, SwapError, SwapNegotiationData, SwapsContext, TransactionIdentifier,
+            BASIC_COMM_TIMEOUT, WAIT_CONFIRM_INTERVAL};
 use atomic::Atomic;
 use bigdecimal::BigDecimal;
 use bitcrypto::dhash160;
-use coins::{FoundSwapTxSpend, MmCoinEnum, TradeFee, TransactionDetails};
+use coins::{FoundSwapTxSpend, MmCoinEnum, TradeFee};
 use common::{bits256, executor::Timer, file_lock::FileLock, mm_ctx::MmArc, mm_number::MmNumber, now_float, now_ms,
              slurp, write, MM_VERSION};
 use crc::crc32;
@@ -118,11 +118,11 @@ pub struct MakerSwapData {
 pub struct MakerSwapMut {
     data: MakerSwapData,
     other_persistent_pub: H264,
-    taker_fee: Option<TransactionDetails>,
-    maker_payment: Option<TransactionDetails>,
-    taker_payment: Option<TransactionDetails>,
-    taker_payment_spend: Option<TransactionDetails>,
-    maker_payment_refund: Option<TransactionDetails>,
+    taker_fee: Option<TransactionIdentifier>,
+    maker_payment: Option<TransactionIdentifier>,
+    taker_payment: Option<TransactionIdentifier>,
+    taker_payment_spend: Option<TransactionIdentifier>,
+    maker_payment_refund: Option<TransactionIdentifier>,
 }
 
 pub struct MakerSwap {
@@ -461,27 +461,13 @@ impl MakerSwap {
             };
         }
 
-        let mut attempts = 0;
-        let fee_details = loop {
-            match self.taker_coin.tx_details_by_hash(&hash).compat().await {
-                Ok(details) => break details,
-                Err(err) => {
-                    if attempts >= 3 {
-                        return Ok((Some(MakerSwapCommand::Finish), vec![
-                            MakerSwapEvent::TakerFeeValidateFailed(
-                                ERRL!("Taker fee tx_details_by_hash failed {}", err).into(),
-                            ),
-                        ]));
-                    } else {
-                        attempts += 1;
-                        Timer::sleep(10.).await;
-                    }
-                },
-            };
+        let fee_ident = TransactionIdentifier {
+            tx_hex: taker_fee.tx_hex().into(),
+            tx_hash: hash,
         };
 
         Ok((Some(MakerSwapCommand::SendPayment), vec![
-            MakerSwapEvent::TakerFeeValidated(fee_details),
+            MakerSwapEvent::TakerFeeValidated(fee_ident),
         ]))
     }
 
@@ -531,23 +517,16 @@ impl MakerSwap {
             },
         };
 
-        let hash = transaction.tx_hash();
-        log!({ "Maker payment tx {:02x}", hash });
-        // we can attempt to get the details in loop here as transaction was already sent and
-        // is present on blockchain so only transport errors are expected to happen
-        let tx_details = loop {
-            match self.maker_coin.tx_details_by_hash(&hash).compat().await {
-                Ok(details) => break details,
-                Err(e) => {
-                    log!({"Error {} getting tx details of {:02x}", e, hash});
-                    Timer::sleep(30.).await;
-                    continue;
-                },
-            }
+        let tx_hash = transaction.tx_hash();
+        log!({ "Maker payment tx {:02x}", tx_hash });
+
+        let tx_ident = TransactionIdentifier {
+            tx_hex: transaction.tx_hex().into(),
+            tx_hash,
         };
 
         Ok((Some(MakerSwapCommand::WaitForMakerPaymentComplete), vec![
-            MakerSwapEvent::MakerPaymentSent(tx_details),
+            MakerSwapEvent::MakerPaymentSent(tx_ident),
             MakerSwapEvent::MakerPaymentWaitCompleteStarted,
         ]))
     }
@@ -643,32 +622,15 @@ impl MakerSwap {
             },
         };
 
-        let hash = taker_payment.tx_hash();
-        log!({ "Taker payment tx {:02x}", hash });
-        let mut attempts = 0;
-        let tx_details = loop {
-            match self.taker_coin.tx_details_by_hash(&hash).compat().await {
-                Ok(details) => break details,
-                Err(err) => {
-                    if attempts >= 3 {
-                        return Ok((Some(MakerSwapCommand::RefundMakerPayment), vec![
-                            MakerSwapEvent::TakerPaymentValidateFailed(
-                                ERRL!("!taker_coin.tx_details_by_hash: {}", err).into(),
-                            ),
-                            MakerSwapEvent::MakerPaymentWaitRefundStarted {
-                                wait_until: self.wait_refund_until(),
-                            },
-                        ]));
-                    } else {
-                        attempts += 1;
-                        Timer::sleep(10.).await;
-                    }
-                },
-            };
+        let tx_hash = taker_payment.tx_hash();
+        log!({ "Taker payment tx {:02x}", tx_hash });
+        let tx_ident = TransactionIdentifier {
+            tx_hex: taker_payment.tx_hex().into(),
+            tx_hash,
         };
 
         Ok((Some(MakerSwapCommand::ValidateTakerPayment), vec![
-            MakerSwapEvent::TakerPaymentReceived(tx_details),
+            MakerSwapEvent::TakerPaymentReceived(tx_ident),
             MakerSwapEvent::TakerPaymentWaitConfirmStarted,
         ]))
     }
@@ -745,23 +707,15 @@ impl MakerSwap {
             },
         };
 
-        let hash = transaction.tx_hash();
-        log!({ "Taker payment spend tx {:02x}", hash });
-
-        // we can attempt to get the details in loop here as transaction was already sent and
-        // is present on blockchain so only transport errors are expected to happen
-        let tx_details = loop {
-            match self.taker_coin.tx_details_by_hash(&hash).compat().await {
-                Ok(details) => break details,
-                Err(e) => {
-                    log!({"Error {} getting tx details of {:02x}", e, hash});
-                    Timer::sleep(30.).await;
-                    continue;
-                },
-            }
+        let tx_hash = transaction.tx_hash();
+        log!({ "Taker payment spend tx {:02x}", tx_hash });
+        let tx_ident = TransactionIdentifier {
+            tx_hex: transaction.tx_hex().into(),
+            tx_hash,
         };
+
         Ok((Some(MakerSwapCommand::Finish), vec![MakerSwapEvent::TakerPaymentSpent(
-            tx_details,
+            tx_ident,
         )]))
     }
 
@@ -789,23 +743,15 @@ impl MakerSwap {
                 ]))
             },
         };
-        let hash = transaction.tx_hash();
-        log!({ "Maker payment refund tx {:02x}", hash });
-
-        // we can attempt to get the details in loop here as transaction was already sent and
-        // is present on blockchain so only transport errors are expected to happen
-        let tx_details = loop {
-            match self.maker_coin.tx_details_by_hash(&hash).compat().await {
-                Ok(details) => break details,
-                Err(e) => {
-                    log!({"Error {} getting tx details of {:02x}", e, hash});
-                    Timer::sleep(30.).await;
-                    continue;
-                },
-            }
+        let tx_hash = transaction.tx_hash();
+        log!({ "Maker payment refund tx {:02x}", tx_hash });
+        let tx_ident = TransactionIdentifier {
+            tx_hex: transaction.tx_hex().into(),
+            tx_hash,
         };
+
         Ok((Some(MakerSwapCommand::Finish), vec![
-            MakerSwapEvent::MakerPaymentRefunded(tx_details),
+            MakerSwapEvent::MakerPaymentRefunded(tx_ident),
         ]))
     }
 
@@ -1004,23 +950,23 @@ pub enum MakerSwapEvent {
     StartFailed(SwapError),
     Negotiated(TakerNegotiationData),
     NegotiateFailed(SwapError),
-    TakerFeeValidated(TransactionDetails),
+    TakerFeeValidated(TransactionIdentifier),
     TakerFeeValidateFailed(SwapError),
-    MakerPaymentSent(TransactionDetails),
+    MakerPaymentSent(TransactionIdentifier),
     MakerPaymentWaitCompleteStarted,
     MakerPaymentTransactionFailed(SwapError),
     MakerPaymentDataSendFailed(SwapError),
     MakerPaymentWaitConfirmFailed(SwapError),
     MakerPaymentCompleted,
-    TakerPaymentReceived(TransactionDetails),
+    TakerPaymentReceived(TransactionIdentifier),
     TakerPaymentWaitConfirmStarted,
     TakerPaymentValidatedAndConfirmed,
     TakerPaymentValidateFailed(SwapError),
     TakerPaymentWaitConfirmFailed(SwapError),
-    TakerPaymentSpent(TransactionDetails),
+    TakerPaymentSpent(TransactionIdentifier),
     TakerPaymentSpendFailed(SwapError),
     MakerPaymentWaitRefundStarted { wait_until: u64 },
-    MakerPaymentRefunded(TransactionDetails),
+    MakerPaymentRefunded(TransactionIdentifier),
     MakerPaymentRefundFailed(SwapError),
     Finished,
 }

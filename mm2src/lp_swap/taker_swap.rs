@@ -2,11 +2,11 @@
 
 use super::{ban_pubkey, broadcast_my_swap_status, dex_fee_amount, get_locked_amount, get_locked_amount_by_other_swaps,
             my_swap_file_path, my_swaps_dir, AtomicSwap, LockedAmount, MySwapInfo, RecoveredSwap, RecoveredSwapAction,
-            SavedSwap, SwapConfirmationsSettings, SwapError, SwapNegotiationData, SwapsContext, BASIC_COMM_TIMEOUT,
-            WAIT_CONFIRM_INTERVAL};
+            SavedSwap, SwapConfirmationsSettings, SwapError, SwapNegotiationData, SwapsContext, TransactionIdentifier,
+            BASIC_COMM_TIMEOUT, WAIT_CONFIRM_INTERVAL};
 use atomic::Atomic;
 use bigdecimal::BigDecimal;
-use coins::{lp_coinfindᵃ, FoundSwapTxSpend, MmCoinEnum, TradeFee, TransactionDetails};
+use coins::{lp_coinfindᵃ, FoundSwapTxSpend, MmCoinEnum, TradeFee};
 use common::{bits256, executor::Timer, file_lock::FileLock, mm_ctx::MmArc, mm_number::MmNumber, now_float, now_ms,
              slurp, write, MM_VERSION};
 use crc::crc32;
@@ -373,12 +373,12 @@ pub struct TakerSwapData {
 pub struct TakerSwapMut {
     data: TakerSwapData,
     other_persistent_pub: H264,
-    taker_fee: Option<TransactionDetails>,
-    maker_payment: Option<TransactionDetails>,
-    taker_payment: Option<TransactionDetails>,
-    taker_payment_spend: Option<TransactionDetails>,
-    maker_payment_spend: Option<TransactionDetails>,
-    taker_payment_refund: Option<TransactionDetails>,
+    taker_fee: Option<TransactionIdentifier>,
+    maker_payment: Option<TransactionIdentifier>,
+    taker_payment: Option<TransactionIdentifier>,
+    maker_payment_spend: Option<TransactionIdentifier>,
+    taker_payment_spend: Option<TransactionIdentifier>,
+    taker_payment_refund: Option<TransactionIdentifier>,
     secret_hash: H160Json,
     secret: H256Json,
 }
@@ -403,7 +403,7 @@ pub struct TakerSwap {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct TakerPaymentSpentData {
-    transaction: TransactionDetails,
+    transaction: TransactionIdentifier,
     secret: H256Json,
 }
 
@@ -422,14 +422,14 @@ pub enum TakerSwapEvent {
     StartFailed(SwapError),
     Negotiated(MakerNegotiationData),
     NegotiateFailed(SwapError),
-    TakerFeeSent(TransactionDetails),
+    TakerFeeSent(TransactionIdentifier),
     TakerFeeSendFailed(SwapError),
-    MakerPaymentReceived(TransactionDetails),
+    MakerPaymentReceived(TransactionIdentifier),
     MakerPaymentWaitConfirmStarted,
     MakerPaymentValidatedAndConfirmed,
     MakerPaymentValidateFailed(SwapError),
     MakerPaymentWaitConfirmFailed(SwapError),
-    TakerPaymentSent(TransactionDetails),
+    TakerPaymentSent(TransactionIdentifier),
     TakerPaymentWaitCompleteStarted,
     TakerPaymentTransactionFailed(SwapError),
     TakerPaymentDataSendFailed(SwapError),
@@ -437,10 +437,10 @@ pub enum TakerSwapEvent {
     TakerPaymentCompleted,
     TakerPaymentSpent(TakerPaymentSpentData),
     TakerPaymentWaitForSpendFailed(SwapError),
-    MakerPaymentSpent(TransactionDetails),
+    MakerPaymentSpent(TransactionIdentifier),
     MakerPaymentSpendFailed(SwapError),
     TakerPaymentWaitRefundStarted { wait_until: u64 },
-    TakerPaymentRefunded(TransactionDetails),
+    TakerPaymentRefunded(TransactionIdentifier),
     TakerPaymentRefundFailed(SwapError),
     Finished,
 }
@@ -800,22 +800,15 @@ impl TakerSwap {
             },
         };
 
-        let hash = transaction.tx_hash();
-        // we can attempt to get the details in loop here as transaction was already sent and
-        // is present on blockchain so only transport errors are expected to happen
-        let tx_details = loop {
-            match self.taker_coin.tx_details_by_hash(&hash).compat().await {
-                Ok(details) => break details,
-                Err(e) => {
-                    log!({"Error {} getting tx details of {:02x}", e, hash});
-                    Timer::sleep(30.).await;
-                    continue;
-                },
-            }
+        let tx_hash = transaction.tx_hash();
+        log!({"Taker fee tx hash {:02x}", tx_hash});
+        let tx_ident = TransactionIdentifier {
+            tx_hex: transaction.tx_hex().into(),
+            tx_hash,
         };
-        log!({"Taker fee tx hash {:02x}", hash});
+
         Ok((Some(TakerSwapCommand::WaitForMakerPayment), vec![
-            TakerSwapEvent::TakerFeeSent(tx_details),
+            TakerSwapEvent::TakerFeeSent(tx_ident),
         ]))
     }
 
@@ -859,31 +852,15 @@ impl TakerSwap {
             },
         };
 
-        let hash = maker_payment.tx_hash();
-        log!({"Got maker payment {:02x}", hash});
-        let mut attempts = 0;
-        log!({ "Before tx details" });
-        let tx_details = loop {
-            match self.maker_coin.tx_details_by_hash(&hash).compat().await {
-                Ok(details) => break details,
-                Err(e) => {
-                    if attempts >= 3 {
-                        return Ok((Some(TakerSwapCommand::Finish), vec![
-                            TakerSwapEvent::MakerPaymentValidateFailed(
-                                ERRL!("!maker_coin.tx_details_by_hash: {}", e).into(),
-                            ),
-                        ]));
-                    } else {
-                        attempts += 1;
-                        Timer::sleep(10.).await;
-                    }
-                },
-            };
+        let tx_hash = maker_payment.tx_hash();
+        log!({"Got maker payment {:02x}", tx_hash});
+        let tx_ident = TransactionIdentifier {
+            tx_hex: maker_payment.tx_hex().into(),
+            tx_hash,
         };
-        log!({ "After tx details" });
 
         Ok((Some(TakerSwapCommand::ValidateMakerPayment), vec![
-            TakerSwapEvent::MakerPaymentReceived(tx_details),
+            TakerSwapEvent::MakerPaymentReceived(tx_ident),
             TakerSwapEvent::MakerPaymentWaitConfirmStarted,
         ]))
     }
@@ -969,23 +946,15 @@ impl TakerSwap {
             },
         };
 
-        let hash = transaction.tx_hash();
-        log!({"Taker payment tx hash {:02x}", hash});
-        // we can attempt to get the details in loop here as transaction was already sent and
-        // is present on blockchain so only transport errors are expected to happen
-        let tx_details = loop {
-            match self.taker_coin.tx_details_by_hash(&hash).compat().await {
-                Ok(details) => break details,
-                Err(e) => {
-                    log!({"Error {} getting tx details of {:02x}", e, hash});
-                    Timer::sleep(30.).await;
-                    continue;
-                },
-            }
+        let tx_hash = transaction.tx_hash();
+        log!({"Taker payment tx hash {:02x}", tx_hash });
+        let tx_ident = TransactionIdentifier {
+            tx_hex: transaction.tx_hex().into(),
+            tx_hash,
         };
 
         Ok((Some(TakerSwapCommand::WaitForTakerPaymentComplete), vec![
-            TakerSwapEvent::TakerPaymentSent(tx_details),
+            TakerSwapEvent::TakerPaymentSent(tx_ident),
             TakerSwapEvent::TakerPaymentWaitCompleteStarted,
         ]))
     }
@@ -1070,23 +1039,15 @@ impl TakerSwap {
             },
         };
         drop(sending_f);
-        let hash = tx.tx_hash();
-        log!({"Taker payment spend tx {:02x}", hash});
-        // we can attempt to get the details in loop here as transaction was already sent and
-        // is present on blockchain so only transport errors are expected to happen
-        let tx_details = loop {
-            match self.taker_coin.tx_details_by_hash(&hash).compat().await {
-                Ok(details) => break details,
-                Err(e) => {
-                    log!({"Error {} getting tx details of {:02x}", e, hash});
-                    Timer::sleep(30.).await;
-                    continue;
-                },
-            }
+        let tx_hash = tx.tx_hash();
+        log!({"Taker payment spend tx {:02x}", tx_hash });
+        let tx_ident = TransactionIdentifier {
+            tx_hex: tx.tx_hex().into(),
+            tx_hash,
         };
         let secret = match self
             .taker_coin
-            .extract_secret(&self.r().secret_hash.0, &tx_details.tx_hex.0)
+            .extract_secret(&self.r().secret_hash.0, &tx_ident.tx_hex.0)
         {
             Ok(bytes) => H256Json::from(bytes.as_slice()),
             Err(e) => {
@@ -1098,7 +1059,7 @@ impl TakerSwap {
 
         Ok((Some(TakerSwapCommand::SpendMakerPayment), vec![
             TakerSwapEvent::TakerPaymentSpent(TakerPaymentSpentData {
-                transaction: tx_details,
+                transaction: tx_ident,
                 secret,
             }),
         ]))
@@ -1120,22 +1081,15 @@ impl TakerSwap {
             },
         };
 
-        let hash = transaction.tx_hash();
-        log!({"Maker payment spend tx {:02x}", hash});
-        // we can attempt to get the details in loop here as transaction was already sent and
-        // is present on blockchain so only transport errors are expected to happen
-        let tx_details = loop {
-            match self.maker_coin.tx_details_by_hash(&hash).compat().await {
-                Ok(details) => break details,
-                Err(e) => {
-                    log!({"Error {} getting tx details of {:02x}", e, hash});
-                    Timer::sleep(30.).await;
-                    continue;
-                },
-            }
+        let tx_hash = transaction.tx_hash();
+        log!({"Maker payment spend tx {:02x}", tx_hash });
+        let tx_ident = TransactionIdentifier {
+            tx_hex: transaction.tx_hex().into(),
+            tx_hash,
         };
+
         Ok((Some(TakerSwapCommand::Finish), vec![TakerSwapEvent::MakerPaymentSpent(
-            tx_details,
+            tx_ident,
         )]))
     }
 
@@ -1164,22 +1118,15 @@ impl TakerSwap {
             },
         };
 
-        let hash = transaction.tx_hash();
-        log!({"Taker refund tx hash {:02x}", hash});
-        // we can attempt to get the details in loop here as transaction was already sent and
-        // is present on blockchain so only transport errors are expected to happen
-        let tx_details = loop {
-            match self.taker_coin.tx_details_by_hash(&hash).compat().await {
-                Ok(details) => break details,
-                Err(e) => {
-                    log!({"Error {} getting tx details of {:02x}", e, hash});
-                    Timer::sleep(30.).await;
-                    continue;
-                },
-            }
+        let tx_hash = transaction.tx_hash();
+        log!({"Taker refund tx hash {:02x}", tx_hash });
+        let tx_ident = TransactionIdentifier {
+            tx_hex: transaction.tx_hex().into(),
+            tx_hash,
         };
+
         Ok((Some(TakerSwapCommand::Finish), vec![
-            TakerSwapEvent::TakerPaymentRefunded(tx_details),
+            TakerSwapEvent::TakerPaymentRefunded(tx_ident),
         ]))
     }
 
@@ -1626,6 +1573,7 @@ mod taker_swap_tests {
         let ctx = MmCtxBuilder::default().with_secp256k1_key_pair(key_pair).into_mm_arc();
 
         TestCoin::ticker.mock_safe(|_| MockResult::Return("ticker"));
+        TestCoin::extract_secret.mock_safe(|_, _, _| MockResult::Return(Ok(vec![])));
 
         static mut MY_PAYMENT_SENT_CALLED: bool = false;
         TestCoin::check_if_my_payment_sent.mock_safe(|_, _, _, _, _| {
@@ -1747,6 +1695,7 @@ mod taker_swap_tests {
         let ctx = MmCtxBuilder::default().with_secp256k1_key_pair(key_pair).into_mm_arc();
 
         TestCoin::ticker.mock_safe(|_| MockResult::Return("ticker"));
+        TestCoin::extract_secret.mock_safe(|_, _, _| MockResult::Return(Ok(vec![])));
 
         static mut SEARCH_TX_SPEND_CALLED: bool = false;
         TestCoin::search_for_swap_tx_spend_my.mock_safe(|_, _, _, _, _, _| {
