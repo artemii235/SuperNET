@@ -1156,16 +1156,18 @@ where
     let after_lock = now_ms();
     log!("UTXO_LOCK took "(after_lock - before_lock));
 
-    let before_ordered_mature_unspents = now_ms();
+    let before_list_unspent_ordered = now_ms();
     let unspents = try_s!(
-        coin.ordered_mature_unspents(&coin.as_ref().my_address)
+        coin.as_ref()
+            .rpc_client
+            .list_unspent_ordered(&coin.as_ref().my_address)
             .map_err(|e| ERRL!("{}", e))
             .compat()
             .await
     );
-    let after_ordered_mature_unspents = now_ms();
-    log!("ordered_mature_unspents took "(
-        after_ordered_mature_unspents - before_ordered_mature_unspents
+    let after_list_unspent_ordered = now_ms();
+    log!("list_unspent_ordered took "(
+        after_list_unspent_ordered - before_list_unspent_ordered
     ));
 
     let before_generate_transaction = now_ms();
