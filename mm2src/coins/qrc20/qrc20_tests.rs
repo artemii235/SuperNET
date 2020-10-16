@@ -83,49 +83,49 @@ fn test_withdraw_impl_fee_details() {
     assert_eq!(tx_details.fee_details, Some(TxFeeDetails::Qrc20(expected)));
 }
 
-#[test]
-fn test_tx_details_by_hash() {
-    let priv_key = [
-        192, 240, 176, 226, 14, 170, 226, 96, 107, 47, 166, 243, 154, 48, 28, 243, 18, 144, 240, 1, 79, 103, 178, 42,
-        32, 161, 106, 119, 241, 227, 42, 102,
-    ];
-    let (_ctx, coin) = qrc20_coin_for_test(&priv_key);
-
-    let expected = json!({
-        "tx_hex":"0100000001fcaaf1343a392cc96c93ac6f5e84399a69cf52c29ac70254f17ac484169110b7000000006a47304402201b31345c1f377b2a19603d922796726940e4c8068e64e21d551534799ffacaf002207d382f49c9c069dcdd18c90a51687a346a99857ce8b82b91a6cb1ee391811aee012102cd7745ea1c03c9a1ebbcdb7ab9ee19d4e4d306f44665295d996db7c38527da6bffffffff020000000000000000625403a02526012844a9059cbb0000000000000000000000009e032d4b0090a11dc40fe6c47601499a35d55fbb0000000000000000000000000000000000000000000000000000000011e1a30014d362e096e873eb7907e205fadc6175c6fec7bc44c23540a753010000001976a914f36e14131c70e5f15a3f92b1d7e8622a62e570d888ac13f9ff5e",
-        "tx_hash":"39104d29d77ba83c5c6c63ab7a0f096301c443b4538dc6b30140453a40caa80a",
-        "from":[
-            "qfkXE2cNFEwPFQqvBcqs8m9KrkNa9KV4xi"
-        ],
-        "to":[
-            "qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG"
-        ],
-        "total_amount":"3",
-        "spent_by_me":"3",
-        "received_by_me":"0",
-        "my_balance_change":"-3",
-        "block_height":628164,
-        "timestamp":1593833808,
-        "fee_details":{
-            "coin":"QTUM",
-            "miner_fee":"1.01526596",
-            "gas_limit":2_500_000,
-            "gas_price":40,
-            "total_gas_fee":"0.00036231",
-        },
-        "coin":"QRC20",
-        "internal_id":""
-    });
-    let expected = json::from_value(expected).unwrap();
-
-    let hash = hex::decode("39104d29d77ba83c5c6c63ab7a0f096301c443b4538dc6b30140453a40caa80a").unwrap();
-    let actual = unwrap!(coin.tx_details_by_hash(&hash).wait());
-
-    let st = json::to_string(&actual).unwrap();
-    println!("{}", st);
-
-    assert_eq!(actual, expected);
-}
+// #[test]
+// fn test_tx_details_by_hash() {
+//     let priv_key = [
+//         192, 240, 176, 226, 14, 170, 226, 96, 107, 47, 166, 243, 154, 48, 28, 243, 18, 144, 240, 1, 79, 103, 178, 42,
+//         32, 161, 106, 119, 241, 227, 42, 102,
+//     ];
+//     let (_ctx, coin) = qrc20_coin_for_test(&priv_key);
+//
+//     let expected = json!({
+//         "tx_hex":"0100000001fcaaf1343a392cc96c93ac6f5e84399a69cf52c29ac70254f17ac484169110b7000000006a47304402201b31345c1f377b2a19603d922796726940e4c8068e64e21d551534799ffacaf002207d382f49c9c069dcdd18c90a51687a346a99857ce8b82b91a6cb1ee391811aee012102cd7745ea1c03c9a1ebbcdb7ab9ee19d4e4d306f44665295d996db7c38527da6bffffffff020000000000000000625403a02526012844a9059cbb0000000000000000000000009e032d4b0090a11dc40fe6c47601499a35d55fbb0000000000000000000000000000000000000000000000000000000011e1a30014d362e096e873eb7907e205fadc6175c6fec7bc44c23540a753010000001976a914f36e14131c70e5f15a3f92b1d7e8622a62e570d888ac13f9ff5e",
+//         "tx_hash":"39104d29d77ba83c5c6c63ab7a0f096301c443b4538dc6b30140453a40caa80a",
+//         "from":[
+//             "qfkXE2cNFEwPFQqvBcqs8m9KrkNa9KV4xi"
+//         ],
+//         "to":[
+//             "qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG"
+//         ],
+//         "total_amount":"3",
+//         "spent_by_me":"3",
+//         "received_by_me":"0",
+//         "my_balance_change":"-3",
+//         "block_height":628164,
+//         "timestamp":1593833808,
+//         "fee_details":{
+//             "coin":"QTUM",
+//             "miner_fee":"1.01526596",
+//             "gas_limit":2_500_000,
+//             "gas_price":40,
+//             "total_gas_fee":"0.00036231",
+//         },
+//         "coin":"QRC20",
+//         "internal_id":""
+//     });
+//     let expected = json::from_value(expected).unwrap();
+//
+//     let hash = hex::decode("39104d29d77ba83c5c6c63ab7a0f096301c443b4538dc6b30140453a40caa80a").unwrap();
+//     let actual = unwrap!(block_on(coin.tx_details_by_hash(&hash)));
+//
+//     let st = json::to_string(&actual).unwrap();
+//     println!("{}", st);
+//
+//     assert_eq!(actual, expected);
+// }
 
 #[test]
 fn test_can_i_spend_other_payment() {

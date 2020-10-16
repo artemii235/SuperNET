@@ -457,9 +457,6 @@ pub trait MmCoin: SwapOps + MarketCoinOps + fmt::Debug + Send + Sync + 'static {
         }
     }
 
-    /// Gets tx details by hash requesting the coin RPC if required
-    fn tx_details_by_hash(&self, hash: &[u8]) -> Box<dyn Future<Item = TransactionDetails, Error = String> + Send>;
-
     /// Transaction history background sync status
     fn history_sync_status(&self) -> HistorySyncState;
 

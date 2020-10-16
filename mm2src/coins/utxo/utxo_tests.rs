@@ -809,7 +809,7 @@ fn get_tx_details_doge() {
         log!((block));
         let hash = hex::decode("99caab76bd025d189f10856dc649aad1a191b1cfd9b139ece457c5fedac58132").unwrap();
         loop {
-            let tx_details = coin1.tx_details_by_hash(&hash).compat().await.unwrap();
+            let tx_details = coin1.tx_details_by_hash(&hash).await.unwrap();
             log!([tx_details]);
             Timer::sleep(1.).await;
         }
@@ -819,7 +819,7 @@ fn get_tx_details_doge() {
         log!((block));
         let hash = hex::decode("99caab76bd025d189f10856dc649aad1a191b1cfd9b139ece457c5fedac58132").unwrap();
         loop {
-            let tx_details = coin2.tx_details_by_hash(&hash).compat().await.unwrap();
+            let tx_details = coin2.tx_details_by_hash(&hash).await.unwrap();
             log!([tx_details]);
             Timer::sleep(1.).await;
         }
@@ -846,7 +846,7 @@ fn get_tx_details_coinbase_transaction() {
         // hash of coinbase transaction https://morty.explorer.dexstats.info/tx/b59b093ed97c1798f2a88ee3375a0c11d0822b6e4468478777f899891abd34a5
         let hash = hex::decode("b59b093ed97c1798f2a88ee3375a0c11d0822b6e4468478777f899891abd34a5").unwrap();
 
-        let tx_details = coin.tx_details_by_hash(&hash).compat().await.unwrap();
+        let tx_details = coin.tx_details_by_hash(&hash).await.unwrap();
         assert!(tx_details.from.is_empty());
     };
 
@@ -1155,7 +1155,7 @@ fn test_cashaddresses_in_tx_details_by_hash() {
 
     let hash = hex::decode("0f2f6e0c8f440c641895023782783426c3aca1acc78d7c0db7751995e8aa5751").unwrap();
     let fut = async {
-        let tx_details = coin.tx_details_by_hash(&hash).compat().await.unwrap();
+        let tx_details = coin.tx_details_by_hash(&hash).await.unwrap();
         log!([tx_details]);
 
         assert!(tx_details

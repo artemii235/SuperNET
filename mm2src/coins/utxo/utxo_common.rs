@@ -1315,7 +1315,7 @@ where
 #[allow(clippy::cognitive_complexity)]
 pub fn process_history_loop<T>(coin: &T, ctx: MmArc)
 where
-    T: AsRef<UtxoCoinFields> + UtxoCommonOps + MmCoin + MarketCoinOps,
+    T: AsRef<UtxoCoinFields> + UtxoStandardOps + UtxoCommonOps + MmCoin + MarketCoinOps,
 {
     const HISTORY_TOO_LARGE_ERR_CODE: i64 = -1;
 
@@ -1420,7 +1420,7 @@ where
                 Entry::Vacant(e) => {
                     mm_counter!(ctx.metrics, "tx.history.request.count", 1, "coin" => coin.as_ref().ticker.clone(), "method" => "tx_detail_by_hash");
 
-                    match coin.tx_details_by_hash(&txid.0).wait() {
+                    match block_on(coin.tx_details_by_hash(&txid.0)) {
                         Ok(mut tx_details) => {
                             mm_counter!(ctx.metrics, "tx.history.response.count", 1, "coin" => coin.as_ref().ticker.clone(), "method" => "tx_detail_by_hash");
 
@@ -1452,7 +1452,7 @@ where
                     if e.get().should_update_timestamp() {
                         mm_counter!(ctx.metrics, "tx.history.request.count", 1, "coin" => coin.as_ref().ticker.clone(), "method" => "tx_detail_by_hash");
 
-                        if let Ok(tx_details) = coin.tx_details_by_hash(&txid.0).wait() {
+                        if let Ok(tx_details) = block_on(coin.tx_details_by_hash(&txid.0)) {
                             mm_counter!(ctx.metrics, "tx.history.response.count", 1, "coin" => coin.as_ref().ticker.clone(), "method" => "tx_detail_by_hash");
 
                             e.get_mut().timestamp = tx_details.timestamp;
@@ -1591,99 +1591,96 @@ where
     RequestTxHistoryResult::Ok(tx_ids)
 }
 
-pub fn tx_details_by_hash<T>(coin: T, hash: &[u8]) -> Box<dyn Future<Item = TransactionDetails, Error = String> + Send>
+pub async fn tx_details_by_hash<T>(coin: &T, hash: &[u8]) -> Result<TransactionDetails, String>
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps + Send + Sync + 'static,
 {
     let hash = H256Json::from(hash);
-    let fut = async move {
-        let verbose_tx = try_s!(coin.as_ref().rpc_client.get_verbose_transaction(hash).compat().await);
-        let tx: UtxoTx = try_s!(deserialize(verbose_tx.hex.as_slice()).map_err(|e| ERRL!("{:?}", e)));
-        let mut input_transactions: HashMap<&H256, UtxoTx> = HashMap::new();
-        let mut input_amount = 0;
-        let mut output_amount = 0;
-        let mut from_addresses = vec![];
-        let mut to_addresses = vec![];
-        let mut spent_by_me = 0;
-        let mut received_by_me = 0;
-        for input in tx.inputs.iter() {
-            // input transaction is zero if the tx is the coinbase transaction
-            if input.previous_output.hash.is_zero() {
-                continue;
-            }
-
-            let input_tx = match input_transactions.entry(&input.previous_output.hash) {
-                Entry::Vacant(e) => {
-                    let prev_hash = input.previous_output.hash.reversed();
-                    let prev: BytesJson = try_s!(
-                        coin.as_ref()
-                            .rpc_client
-                            .get_transaction_bytes(prev_hash.clone().into())
-                            .compat()
-                            .await
-                    );
-                    let prev_tx: UtxoTx =
-                        try_s!(deserialize(prev.as_slice()).map_err(|e| ERRL!("{:?}, tx: {:?}", e, prev_hash)));
-                    e.insert(prev_tx)
-                },
-                Entry::Occupied(e) => e.into_mut(),
-            };
-            input_amount += input_tx.outputs[input.previous_output.index as usize].value;
-            let from: Vec<Address> = try_s!(coin.addresses_from_script(
-                &input_tx.outputs[input.previous_output.index as usize]
-                    .script_pubkey
-                    .clone()
-                    .into()
-            ));
-            if from.contains(&coin.as_ref().my_address) {
-                spent_by_me += input_tx.outputs[input.previous_output.index as usize].value;
-            }
-            from_addresses.push(from);
+    let verbose_tx = try_s!(coin.as_ref().rpc_client.get_verbose_transaction(hash).compat().await);
+    let tx: UtxoTx = try_s!(deserialize(verbose_tx.hex.as_slice()).map_err(|e| ERRL!("{:?}", e)));
+    let mut input_transactions: HashMap<&H256, UtxoTx> = HashMap::new();
+    let mut input_amount = 0;
+    let mut output_amount = 0;
+    let mut from_addresses = vec![];
+    let mut to_addresses = vec![];
+    let mut spent_by_me = 0;
+    let mut received_by_me = 0;
+    for input in tx.inputs.iter() {
+        // input transaction is zero if the tx is the coinbase transaction
+        if input.previous_output.hash.is_zero() {
+            continue;
         }
 
-        for output in tx.outputs.iter() {
-            output_amount += output.value;
-            let to = try_s!(coin.addresses_from_script(&output.script_pubkey.clone().into()));
-            if to.contains(&coin.as_ref().my_address) {
-                received_by_me += output.value;
-            }
-            to_addresses.push(to);
+        let input_tx = match input_transactions.entry(&input.previous_output.hash) {
+            Entry::Vacant(e) => {
+                let prev_hash = input.previous_output.hash.reversed();
+                let prev: BytesJson = try_s!(
+                    coin.as_ref()
+                        .rpc_client
+                        .get_transaction_bytes(prev_hash.clone().into())
+                        .compat()
+                        .await
+                );
+                let prev_tx: UtxoTx =
+                    try_s!(deserialize(prev.as_slice()).map_err(|e| ERRL!("{:?}, tx: {:?}", e, prev_hash)));
+                e.insert(prev_tx)
+            },
+            Entry::Occupied(e) => e.into_mut(),
+        };
+        input_amount += input_tx.outputs[input.previous_output.index as usize].value;
+        let from: Vec<Address> = try_s!(coin.addresses_from_script(
+            &input_tx.outputs[input.previous_output.index as usize]
+                .script_pubkey
+                .clone()
+                .into()
+        ));
+        if from.contains(&coin.as_ref().my_address) {
+            spent_by_me += input_tx.outputs[input.previous_output.index as usize].value;
         }
-        // remove address duplicates in case several inputs were spent from same address
-        // or several outputs are sent to same address
-        let mut from_addresses: Vec<String> = try_s!(from_addresses
-            .into_iter()
-            .flatten()
-            .map(|addr| coin.display_address(&addr))
-            .collect());
-        from_addresses.sort();
-        from_addresses.dedup();
-        let mut to_addresses: Vec<String> = try_s!(to_addresses
-            .into_iter()
-            .flatten()
-            .map(|addr| coin.display_address(&addr))
-            .collect());
-        to_addresses.sort();
-        to_addresses.dedup();
+        from_addresses.push(from);
+    }
 
-        let fee = big_decimal_from_sat(input_amount as i64 - output_amount as i64, coin.as_ref().decimals);
-        Ok(TransactionDetails {
-            from: from_addresses,
-            to: to_addresses,
-            received_by_me: big_decimal_from_sat(received_by_me as i64, coin.as_ref().decimals),
-            spent_by_me: big_decimal_from_sat(spent_by_me as i64, coin.as_ref().decimals),
-            my_balance_change: big_decimal_from_sat(received_by_me as i64 - spent_by_me as i64, coin.as_ref().decimals),
-            total_amount: big_decimal_from_sat(input_amount as i64, coin.as_ref().decimals),
-            tx_hash: tx.hash().reversed().to_vec().into(),
-            tx_hex: verbose_tx.hex,
-            fee_details: Some(UtxoFeeDetails { amount: fee }.into()),
-            block_height: verbose_tx.height.unwrap_or(0),
-            coin: coin.as_ref().ticker.clone(),
-            internal_id: tx.hash().reversed().to_vec().into(),
-            timestamp: verbose_tx.time.into(),
-        })
-    };
-    Box::new(fut.boxed().compat())
+    for output in tx.outputs.iter() {
+        output_amount += output.value;
+        let to = try_s!(coin.addresses_from_script(&output.script_pubkey.clone().into()));
+        if to.contains(&coin.as_ref().my_address) {
+            received_by_me += output.value;
+        }
+        to_addresses.push(to);
+    }
+    // remove address duplicates in case several inputs were spent from same address
+    // or several outputs are sent to same address
+    let mut from_addresses: Vec<String> = try_s!(from_addresses
+        .into_iter()
+        .flatten()
+        .map(|addr| coin.display_address(&addr))
+        .collect());
+    from_addresses.sort();
+    from_addresses.dedup();
+    let mut to_addresses: Vec<String> = try_s!(to_addresses
+        .into_iter()
+        .flatten()
+        .map(|addr| coin.display_address(&addr))
+        .collect());
+    to_addresses.sort();
+    to_addresses.dedup();
+
+    let fee = big_decimal_from_sat(input_amount as i64 - output_amount as i64, coin.as_ref().decimals);
+    Ok(TransactionDetails {
+        from: from_addresses,
+        to: to_addresses,
+        received_by_me: big_decimal_from_sat(received_by_me as i64, coin.as_ref().decimals),
+        spent_by_me: big_decimal_from_sat(spent_by_me as i64, coin.as_ref().decimals),
+        my_balance_change: big_decimal_from_sat(received_by_me as i64 - spent_by_me as i64, coin.as_ref().decimals),
+        total_amount: big_decimal_from_sat(input_amount as i64, coin.as_ref().decimals),
+        tx_hash: tx.hash().reversed().to_vec().into(),
+        tx_hex: verbose_tx.hex,
+        fee_details: Some(UtxoFeeDetails { amount: fee }.into()),
+        block_height: verbose_tx.height.unwrap_or(0),
+        coin: coin.as_ref().ticker.clone(),
+        internal_id: tx.hash().reversed().to_vec().into(),
+        timestamp: verbose_tx.time.into(),
+    })
 }
 
 pub fn history_sync_status(coin: &UtxoCoinFields) -> HistorySyncState {

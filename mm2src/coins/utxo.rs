@@ -322,6 +322,12 @@ pub trait UtxoCommonOps {
         &self,
         txid: H256Json,
     ) -> Box<dyn Future<Item = VerboseTransactionFrom, Error = String> + Send>;
+}
+
+#[async_trait]
+pub trait UtxoStandardOps {
+    /// Gets tx details by hash requesting the coin RPC if required
+    async fn tx_details_by_hash(&self, hash: &[u8]) -> Result<TransactionDetails, String>;
 
     async fn request_tx_history(&self, metrics: MetricsArc) -> RequestTxHistoryResult;
 }

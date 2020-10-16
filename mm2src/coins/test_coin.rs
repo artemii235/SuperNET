@@ -212,10 +212,6 @@ impl MmCoin for TestCoin {
 
     fn process_history_loop(&self, ctx: MmArc) { unimplemented!() }
 
-    fn tx_details_by_hash(&self, hash: &[u8]) -> Box<dyn Future<Item = TransactionDetails, Error = String> + Send> {
-        unimplemented!()
-    }
-
     fn history_sync_status(&self) -> HistorySyncState { unimplemented!() }
 
     /// Get fee to be paid per 1 swap transaction

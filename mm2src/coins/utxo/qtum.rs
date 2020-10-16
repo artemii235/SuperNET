@@ -123,6 +123,13 @@ impl UtxoCommonOps for QtumCoin {
         let fut = async move { utxo_common::get_verbose_transaction_from_cache_or_rpc(&selfi.utxo_arc, txid).await };
         Box::new(fut.boxed().compat())
     }
+}
+
+#[async_trait]
+impl UtxoStandardOps for QtumCoin {
+    async fn tx_details_by_hash(&self, hash: &[u8]) -> Result<TransactionDetails, String> {
+        utxo_common::tx_details_by_hash(self, hash).await
+    }
 
     async fn request_tx_history(&self, metrics: MetricsArc) -> RequestTxHistoryResult {
         utxo_common::request_tx_history(self, metrics).await
@@ -363,10 +370,6 @@ impl MmCoin for QtumCoin {
     fn validate_address(&self, address: &str) -> ValidateAddressResult { utxo_common::validate_address(self, address) }
 
     fn process_history_loop(&self, ctx: MmArc) { utxo_common::process_history_loop(self, ctx) }
-
-    fn tx_details_by_hash(&self, hash: &[u8]) -> Box<dyn Future<Item = TransactionDetails, Error = String> + Send> {
-        utxo_common::tx_details_by_hash(self.clone(), hash)
-    }
 
     fn history_sync_status(&self) -> HistorySyncState { utxo_common::history_sync_status(&self.utxo_arc) }
 

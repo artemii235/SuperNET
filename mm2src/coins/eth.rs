@@ -2321,69 +2321,6 @@ impl MmCoin for EthCoin {
         }
     }
 
-    fn tx_details_by_hash(&self, hash: &[u8]) -> Box<dyn Future<Item = TransactionDetails, Error = String> + Send> {
-        let selfi = self.clone();
-        let hash = H256::from(hash);
-
-        let fut = async move {
-            let tx = try_s!(selfi.web3.eth().transaction(TransactionId::Hash(hash)).compat().await);
-            let tx: Web3Transaction = try_s!(tx.ok_or(format!("tx hash {:02x} is not found", hash)));
-            let raw = try_s!(signed_tx_from_web3_tx(tx.clone()));
-            let mut received_by_me = 0.into();
-            let mut spent_by_me = 0.into();
-
-            let to = match tx.to {
-                Some(addr) => vec![checksum_address(&format!("{:#02x}", addr))],
-                None => vec![],
-            };
-            let total_amount: BigDecimal = try_s!(display_u256_with_decimal_point(tx.value, selfi.decimals).parse());
-
-            match selfi.coin_type {
-                EthCoinType::Eth => {
-                    if tx.to == Some(selfi.my_address) {
-                        received_by_me = total_amount.clone();
-                    }
-
-                    if tx.from == selfi.my_address {
-                        spent_by_me = total_amount.clone();
-                    }
-
-                    Ok(TransactionDetails {
-                        my_balance_change: &received_by_me - &spent_by_me,
-                        from: vec![checksum_address(&format!("{:#02x}", tx.from))],
-                        to,
-                        coin: selfi.ticker.clone(),
-                        block_height: tx.block_number.unwrap_or_else(|| U256::from(0)).into(),
-                        tx_hex: rlp::encode(&raw).into(),
-                        tx_hash: tx.hash.0.to_vec().into(),
-                        received_by_me,
-                        spent_by_me,
-                        total_amount,
-                        fee_details: None,
-                        internal_id: vec![0].into(),
-                        timestamp: now_ms() / 1000,
-                    })
-                },
-                EthCoinType::Erc20(_addr) => Ok(TransactionDetails {
-                    my_balance_change: &received_by_me - &spent_by_me,
-                    from: vec![checksum_address(&format!("{:#02x}", tx.from))],
-                    to,
-                    coin: selfi.ticker.clone(),
-                    block_height: tx.block_number.unwrap_or_else(|| U256::from(0)).into(),
-                    tx_hex: rlp::encode(&raw).into(),
-                    tx_hash: tx.hash.0.to_vec().into(),
-                    received_by_me,
-                    spent_by_me,
-                    total_amount,
-                    fee_details: None,
-                    internal_id: vec![0].into(),
-                    timestamp: now_ms() / 1000,
-                }),
-            }
-        };
-        Box::new(fut.boxed().compat())
-    }
-
     fn history_sync_status(&self) -> HistorySyncState { unwrap!(self.history_sync_state.lock()).clone() }
 
     fn get_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = String> + Send> {
