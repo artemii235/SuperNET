@@ -45,6 +45,7 @@ use std::num::NonZeroU64;
 use std::ops::Deref;
 #[cfg(not(feature = "native"))] use std::os::raw::c_char;
 use std::pin::Pin;
+use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -211,7 +212,7 @@ pub trait UtxoRpcClientOps: fmt::Debug + Send + Sync + 'static {
     ) -> Box<dyn Future<Item = u32, Error = String> + Send>;
 }
 
-#[derive(Clone, Deserialize, Debug, PartialEq)]
+#[derive(Clone, Deserialize, Debug)]
 pub struct NativeUnspent {
     pub txid: H256Json,
     pub vout: u32,
@@ -219,7 +220,7 @@ pub struct NativeUnspent {
     pub account: Option<String>,
     #[serde(rename = "scriptPubKey")]
     pub script_pub_key: BytesJson,
-    pub amount: BigDecimal,
+    pub amount: Box<json::value::RawValue>,
     pub confirmations: u64,
     pub spendable: bool,
 }
@@ -483,7 +484,7 @@ impl UtxoRpcClientOps for NativeClient {
                             hash: unspent.txid.reversed().into(),
                             index: unspent.vout,
                         },
-                        value: sat_from_big_decimal(&unspent.amount, 8)
+                        value: sat_from_big_decimal(&BigDecimal::from_str(&unspent.amount.to_string()).unwrap(), 8)
                             .expect("sat_from_big_decimal should never fail here"),
                         height: None,
                     })
@@ -550,9 +551,9 @@ impl UtxoRpcClientOps for NativeClient {
         Box::new(
             self.list_unspent(0, std::i32::MAX, vec![address.to_string()])
                 .map(|unspents| {
-                    unspents
-                        .iter()
-                        .fold(BigDecimal::from(0), |sum, unspent| &sum + &unspent.amount)
+                    unspents.iter().fold(BigDecimal::from(0), |sum, unspent| {
+                        &sum + BigDecimal::from_str(&unspent.amount.to_string()).unwrap()
+                    })
                 }),
         )
     }
