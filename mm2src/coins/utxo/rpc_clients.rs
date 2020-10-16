@@ -486,7 +486,7 @@ impl UtxoRpcClientOps for NativeClient {
                     Ok(u) => u,
                     Err(e) => {
                         log!("Error during list_unspent "(e));
-                        Timer::sleep(1.).await;
+                        Timer::sleep(0.1).await;
                         continue;
                     },
                 };
@@ -498,7 +498,7 @@ impl UtxoRpcClientOps for NativeClient {
                     // Check again if at least 1 spent outpoint is still there
                     if find.is_some() {
                         log!("Spent output is still returned from daemon: "[find]);
-                        Timer::sleep(1.).await;
+                        Timer::sleep(0.1).await;
                         continue 'mainloop;
                     }
                 }
