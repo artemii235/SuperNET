@@ -646,7 +646,7 @@ impl BalanceTradeFeeUpdatedHandler for BalanceUpdateOrdermatchHandler {
         let mut maker_orders = ordermatch_ctx.my_maker_orders.lock().await;
         *maker_orders = maker_orders
             .drain()
-            .filter_map(|(uuid, mut order)| {
+            .filter_map(|(uuid, order)| {
                 if order.base == *ticker {
                     if new_volume < order.min_base_vol {
                         let ctx = self.ctx.clone();

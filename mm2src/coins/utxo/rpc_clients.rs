@@ -475,11 +475,39 @@ impl UtxoRpcClientOps for NativeClient {
         Box::new(fut)
     }
 
-    fn send_transaction(&self, tx: &UtxoTx, _addr: Address) -> UtxoRpcRes<H256Json> {
-        Box::new(
-            self.send_raw_transaction(BytesJson::from(serialize(tx)))
-                .map_err(|e| ERRL!("{}", e)),
-        )
+    fn send_transaction(&self, tx: &UtxoTx, addr: Address) -> UtxoRpcRes<H256Json> {
+        let arc = self.clone();
+        let inputs = tx.inputs.clone();
+        let tx_bytes = BytesJson::from(serialize(tx));
+        let fut = async move {
+            let tx_hash = try_s!(arc.send_raw_transaction(tx_bytes).compat().await);
+            'mainloop: loop {
+                let unspents = match arc.list_unspent(0, 999999, vec![addr.to_string()]).compat().await {
+                    Ok(u) => u,
+                    Err(e) => {
+                        log!("Error during list_unspent "(e));
+                        Timer::sleep(1.).await;
+                        continue;
+                    },
+                };
+                for input in inputs.iter() {
+                    let find = unspents.iter().find(|unspent| {
+                        unspent.txid == input.previous_output.hash.reversed().into()
+                            && unspent.vout == input.previous_output.index
+                    });
+                    // Check again if at least 1 spent outpoint is still there
+                    if find.is_some() {
+                        log!("Spent output is still returned from daemon: "[find]);
+                        Timer::sleep(1.).await;
+                        continue 'mainloop;
+                    }
+                }
+                break;
+            }
+            Ok(tx_hash)
+        };
+
+        Box::new(fut.boxed().compat())
     }
 
     /// https://bitcoin.org/en/developer-reference#sendrawtransaction
