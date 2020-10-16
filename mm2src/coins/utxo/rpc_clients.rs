@@ -2,6 +2,7 @@
 #![cfg_attr(not(feature = "native"), allow(unused_macros))]
 #![cfg_attr(not(feature = "native"), allow(dead_code))]
 
+use crate::utxo::sat_from_big_decimal;
 use crate::{RpcTransportEventHandler, RpcTransportEventHandlerShared};
 use bigdecimal::BigDecimal;
 use chain::{BlockHeader, OutPoint, Transaction as UtxoTx};
@@ -218,7 +219,7 @@ pub struct NativeUnspent {
     pub account: Option<String>,
     #[serde(rename = "scriptPubKey")]
     pub script_pub_key: BytesJson,
-    pub amount: f64,
+    pub amount: BigDecimal,
     pub confirmations: u64,
     pub spendable: bool,
 }
@@ -415,8 +416,7 @@ impl JsonRpcClient for NativeClientImpl {
 impl UtxoRpcClientOps for NativeClient {
     fn list_unspent_ordered(&self, address: &Address) -> UtxoRpcRes<Vec<UnspentInfo>> {
         let address = address.to_string();
-        let selfi_on_block_count = self.0.clone();
-        let selfi_on_unspent = self.0.clone();
+        /*
         let fut = self
             .get_block_count()
             .and_then(move |block_count| {
@@ -471,7 +471,32 @@ impl UtxoRpcClientOps for NativeClient {
                     result
                 })
             });
-
+        */
+        let fut = self
+            .list_unspent(0, 999999, vec![address])
+            .map_err(|e| ERRL!("{}", e))
+            .and_then(|unspents| {
+                let mut result: Vec<_> = unspents
+                    .into_iter()
+                    .map(|unspent| UnspentInfo {
+                        outpoint: OutPoint {
+                            hash: unspent.txid.reversed().into(),
+                            index: unspent.vout,
+                        },
+                        value: sat_from_big_decimal(&unspent.amount, 8)
+                            .expect("sat_from_big_decimal should never fail here"),
+                        height: None,
+                    })
+                    .collect();
+                result.sort_unstable_by(|a, b| {
+                    if a.value < b.value {
+                        Ordering::Less
+                    } else {
+                        Ordering::Greater
+                    }
+                });
+                Ok(result)
+            });
         Box::new(fut)
     }
 
@@ -524,7 +549,11 @@ impl UtxoRpcClientOps for NativeClient {
     fn display_balance(&self, address: Address, _decimals: u8) -> RpcRes<BigDecimal> {
         Box::new(
             self.list_unspent(0, std::i32::MAX, vec![address.to_string()])
-                .map(|unspents| unspents.iter().fold(0., |sum, unspent| sum + unspent.amount).into()),
+                .map(|unspents| {
+                    unspents
+                        .iter()
+                        .fold(BigDecimal::from(0), |sum, unspent| &sum + &unspent.amount)
+                }),
         )
     }
 
