@@ -10,8 +10,8 @@ use atomic::Atomic;
 use bigdecimal::BigDecimal;
 use bitcrypto::dhash160;
 use coins::{FoundSwapTxSpend, MmCoinEnum, TradeFee, TransactionDetails};
-use common::{bits256, executor::Timer, file_lock::FileLock, mm_ctx::MmArc, mm_number::MmNumber, now_ms, slurp, write,
-             MM_VERSION};
+use common::{bits256, executor::Timer, file_lock::FileLock, mm_ctx::MmArc, mm_number::MmNumber, now_float, now_ms,
+             slurp, write, MM_VERSION};
 use futures::{compat::Future01CompatExt, select, FutureExt};
 use futures01::Future;
 use parking_lot::Mutex as PaMutex;
@@ -472,6 +472,7 @@ impl MakerSwap {
             ]));
         }
 
+        let before_check_my_payment = now_ms();
         let transaction_f = self
             .maker_coin
             .check_if_my_payment_sent(
@@ -485,6 +486,12 @@ impl MakerSwap {
             Ok(res) => match res {
                 Some(tx) => tx,
                 None => {
+                    let after_check_my_payment = now_ms();
+                    log!("check_if_my_payment_sent took "(
+                        after_check_my_payment - before_check_my_payment
+                    ));
+
+                    let before_send_maker_payment = now_ms();
                     let payment_fut = self.maker_coin.send_maker_payment(
                         self.r().data.maker_payment_lock as u32,
                         &*self.r().other_persistent_pub,
@@ -493,7 +500,13 @@ impl MakerSwap {
                     );
 
                     match payment_fut.compat().await {
-                        Ok(t) => t,
+                        Ok(t) => {
+                            let after_send_maker_payment = now_ms();
+                            log!("send_maker_payment took "(
+                                after_send_maker_payment - before_send_maker_payment
+                            ));
+                            t
+                        },
                         Err(err) => {
                             return Ok((Some(MakerSwapCommand::Finish), vec![
                                 MakerSwapEvent::MakerPaymentTransactionFailed(ERRL!("{}", err).into()),
@@ -509,6 +522,7 @@ impl MakerSwap {
             },
         };
 
+        let before_tx_details = now_ms();
         let hash = transaction.tx_hash();
         log!({ "Maker payment tx {:02x}", hash });
         // we can attempt to get the details in loop here as transaction was already sent and
@@ -523,6 +537,8 @@ impl MakerSwap {
                 },
             }
         };
+        let after_tx_details = now_ms();
+        log!("tx_details_by_hash took "(after_tx_details - before_tx_details));
 
         Ok((Some(MakerSwapCommand::WaitForTakerPayment), vec![
             MakerSwapEvent::MakerPaymentSent(tx_details),

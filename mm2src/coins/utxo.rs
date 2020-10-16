@@ -38,7 +38,7 @@ use common::executor::{spawn, Timer};
 use common::jsonrpc_client::JsonRpcError;
 use common::mm_ctx::MmArc;
 use common::mm_metrics::MetricsArc;
-use common::{first_char_to_upper, small_rng, MM_VERSION};
+use common::{first_char_to_upper, now_ms, small_rng, MM_VERSION};
 #[cfg(feature = "native")] use dirs::home_dir;
 use futures::channel::mpsc;
 use futures::compat::Future01CompatExt;
@@ -1151,17 +1151,33 @@ async fn send_outputs_from_my_address_impl<T>(coin: T, outputs: Vec<TransactionO
 where
     T: AsRef<UtxoArc> + UtxoArcCommonOps,
 {
+    let before_lock = now_ms();
     let _utxo_lock = UTXO_LOCK.lock().await;
+    let after_lock = now_ms();
+    log!("UTXO_LOCK took "(after_lock - before_lock));
+
+    let before_ordered_mature_unspents = now_ms();
     let unspents = try_s!(
         coin.ordered_mature_unspents(&coin.as_ref().my_address)
             .map_err(|e| ERRL!("{}", e))
             .compat()
             .await
     );
+    let after_ordered_mature_unspents = now_ms();
+    log!("ordered_mature_unspents took "(
+        after_ordered_mature_unspents - before_ordered_mature_unspents
+    ));
+
+    let before_generate_transaction = now_ms();
     let (unsigned, _) = try_s!(
         coin.generate_transaction(unspents, outputs, FeePolicy::SendExact, None, None)
             .await
     );
+    let after_generate_transaction = now_ms();
+    log!("generate_transaction took "(
+        after_generate_transaction - before_generate_transaction
+    ));
+
     let prev_script = Builder::build_p2pkh(&coin.as_ref().my_address.hash);
     let signed = try_s!(sign_tx(
         unsigned,
@@ -1170,6 +1186,8 @@ where
         coin.as_ref().signature_version,
         coin.as_ref().fork_id
     ));
+
+    let before_send_transaction = now_ms();
     try_s!(
         coin.as_ref()
             .rpc_client
@@ -1178,6 +1196,11 @@ where
             .compat()
             .await
     );
+    let after_send_transaction = now_ms();
+    log!("send_transaction took "(
+        after_send_transaction - before_send_transaction
+    ));
+
     Ok(signed)
 }
 
