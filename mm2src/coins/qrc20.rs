@@ -33,8 +33,10 @@ use serialization::serialize;
 use std::ops::{Deref, Neg};
 use std::str::FromStr;
 use std::sync::Arc;
+use qrc20_script::generate_contract_call_script_pubkey;
 
 mod history;
+mod qrc20_script;
 #[cfg(test)] mod qrc20_tests;
 pub mod rpc_electrum;
 mod swap_ops;
@@ -248,6 +250,34 @@ impl Qrc20Coin {
             signed,
             miner_fee: data.fee_amount,
             gas_fee,
+        })
+    }
+
+    fn transfer_output(
+        &self,
+        to_addr: H160,
+        amount: U256,
+        gas_limit: u64,
+        gas_price: u64,
+    ) -> Result<ContractCallOutput, String> {
+        let function = try_s!(ERC20_CONTRACT.function("transfer"));
+        let params = try_s!(function.encode_input(&[Token::Address(to_addr), Token::Uint(amount)]));
+
+        let script_pubkey = try_s!(generate_contract_call_script_pubkey(
+            &params,
+            gas_limit,
+            gas_price,
+            &self.contract_address,
+        ))
+        .to_bytes();
+
+        // qtum_amount is always 0 for the QRC20, because we should pay only a fee in Qtum to send the QRC20 transaction
+        let qtum_amount = 0;
+        Ok(ContractCallOutput {
+            value: qtum_amount,
+            script_pubkey,
+            gas_limit,
+            gas_price,
         })
     }
 }
@@ -1059,193 +1089,4 @@ fn transfer_event_from_log(log: &LogEntry) -> Result<(U256, H160, H160), String>
     // https://github.com/qtumproject/qtum-electrum/blob/v4.0.2/electrum/wallet.py#L2113
     let to = try_s!(address_from_log_topic(&log.topics[2]));
     Ok((amount, from, to))
-}
-
-/// Serialize the `number` similar to BigEndian but in QRC20 specific format.
-fn encode_contract_number(number: i64) -> Vec<u8> {
-    // | encoded number (0 - 8 bytes) |
-    // therefore the max result vector length is 8
-    let capacity = 8;
-    let mut encoded = Vec::with_capacity(capacity);
-
-    if number == 0 {
-        return Vec::new();
-    }
-
-    let is_negative = number.is_negative();
-    let mut absnum = (number as i128).abs();
-
-    while absnum != 0 {
-        // absnum & 0xFF is first lowest byte
-        encoded.push((absnum & 0xFF) as u8);
-        absnum >>= 8;
-    }
-
-    if (encoded.last().unwrap() & 0x80) != 0 {
-        encoded.push({
-            if is_negative {
-                0x80
-            } else {
-                0
-            }
-        });
-    } else if is_negative {
-        *encoded.last_mut().unwrap() |= 0x80;
-    }
-
-    encoded
-}
-
-fn decode_contract_number(source: &[u8]) -> Result<i64, String> {
-    macro_rules! try_opt {
-        ($e: expr) => {
-            match $e {
-                Some(x) => x,
-                _ => return ERR!("Couldn't decode the input {:?}", source),
-            }
-        };
-    }
-
-    if source.is_empty() {
-        return Ok(0);
-    }
-
-    let mut data = source.to_vec();
-
-    // let last_byte = data.pop().unwrap();
-    let mut decoded = 0i128;
-
-    // first pop the data last byte
-    let (is_negative, last_byte) = match data.pop().unwrap() {
-        // this last byte is the sign byte, pop the real last byte
-        0x80 => (true, try_opt!(data.pop())),
-        // this last byte is the sign byte, pop the real last byte
-        0 => (false, try_opt!(data.pop())),
-        // this last byte is real, do XOR on it because it's greater than 0x80
-        last_byte if 0x80 < last_byte => (true, last_byte ^ 0x80),
-        // this last byte is real, returns it
-        last_byte => (false, last_byte),
-    };
-
-    // push the last_byte back to the data array
-    data.push(last_byte);
-
-    for byte in data.iter().rev() {
-        decoded <<= 8;
-        decoded |= *byte as i128;
-    }
-
-    if is_negative {
-        let decoded = decoded.neg();
-        Ok(decoded as i64)
-    } else {
-        Ok(decoded as i64)
-    }
-}
-
-/// Generate a script_pubkey contains a `function_call` from the specified `contract_address`.
-/// The `contract_address` can be either Token address (QRC20) or Swap contract address (EtomicSwap).
-fn generate_contract_call_script_pubkey(
-    function_call: &[u8],
-    gas_limit: u64,
-    gas_price: u64,
-    contract_address: &[u8],
-) -> Result<Script, String> {
-    if gas_limit == 0 || gas_price == 0 {
-        // this is because the `contract_encode_number` will return an empty bytes
-        return ERR!("gas_limit and gas_price cannot be zero");
-    }
-
-    if contract_address.is_empty() {
-        // this is because the `push_bytes` will panic
-        return ERR!("token_addr cannot be empty");
-    }
-
-    let gas_limit = encode_contract_number(gas_limit as i64);
-    let gas_price = encode_contract_number(gas_price as i64);
-
-    Ok(ScriptBuilder::default()
-        .push_opcode(Opcode::OP_4)
-        .push_bytes(&gas_limit)
-        .push_bytes(&gas_price)
-        .push_data(function_call)
-        .push_bytes(contract_address)
-        .push_opcode(Opcode::OP_CALL)
-        .into_script())
-}
-
-/// The `extract_gas_from_script_pubkey` helper.
-#[derive(Clone, Copy, Debug)]
-enum ExtractGasEnum {
-    GasLimit = 1,
-    GasPrice = 2,
-}
-
-/// Check if a given script contains a contract call.
-/// First opcode should be OP_4 to be a contract call.
-fn is_contract_call(script: &Script) -> bool {
-    match script.iter().next() {
-        Some(Ok(instr)) => instr.opcode == Opcode::OP_4,
-        _ => false,
-    }
-}
-
-/// TODO move to script.rs
-fn extract_gas_from_script(script: &Script, extract: ExtractGasEnum) -> Result<u64, String> {
-    let instruction = script
-        .iter()
-        .enumerate()
-        .find_map(|(i, instr)| if i == extract as usize { Some(instr) } else { None })
-        .ok_or(ERRL!("Couldn't extract {:?} from script pubkey", extract as usize))?
-        .map_err(|e| ERRL!("Error on extract {:?} from pubkey: {}", extract, e))?;
-
-    let opcode = instruction.opcode as usize;
-    if !(1..75).contains(&opcode) {
-        return ERR!("Opcode::OP_PUSHBYTES_[X] expected, found {:?}", instruction.opcode);
-    }
-
-    let number = match instruction.data {
-        Some(d) => try_s!(decode_contract_number(d)),
-        _ => return ERR!("Non-empty instruction data expected"),
-    };
-
-    Ok(number as u64)
-}
-
-fn extract_contract_call_from_script(script: &Script) -> Result<Vec<u8>, String> {
-    const CONTRACT_CALL_IDX: usize = 3;
-    let instruction = script
-        .iter()
-        .enumerate()
-        .find_map(|(i, instr)| if i == CONTRACT_CALL_IDX { Some(instr) } else { None })
-        .ok_or(ERRL!("Couldn't extract 'contract_params' from script pubkey"))?
-        .map_err(|e| ERRL!("Error on extract 'contract_params' from pubkey: {}", e))?;
-
-    match instruction.opcode {
-        Opcode::OP_PUSHDATA1 | Opcode::OP_PUSHDATA2 | Opcode::OP_PUSHDATA4 => (),
-        opcode if (1..75).contains(&(opcode as usize)) => (),
-        _ => return ERR!("Unexpected instruction's opcode {}", instruction.opcode),
-    }
-
-    instruction
-        .data
-        .ok_or(ERRL!("An empty contract call data"))
-        .map(Vec::from)
-}
-
-fn extract_token_addr_from_script(script: &Script) -> Result<H160, String> {
-    const TOKEN_ADDRESS_IDX: usize = 4;
-    let instruction = script
-        .iter()
-        .enumerate()
-        .find_map(|(i, instr)| if i == TOKEN_ADDRESS_IDX { Some(instr) } else { None })
-        .ok_or(ERRL!("Couldn't extract 'token_address' from script pubkey"))?
-        .map_err(|e| ERRL!("Error on extract 'token_address' from pubkey: {}", e))?;
-
-    match instruction.opcode {
-        opcode if (1..75).contains(&(opcode as usize)) => (),
-        _ => return ERR!("Unexpected instruction's opcode {}", instruction.opcode),
-    }
-
-    Ok(instruction.data.ok_or(ERRL!("An empty contract call data"))?.into())
 }

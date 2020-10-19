@@ -2,6 +2,7 @@ use super::*;
 use crate::utxo::UtxoFeeDetails;
 use crate::TxFeeDetails;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
+use qrc20_script::{extract_contract_call_from_script, extract_gas_from_script, ExtractGasEnum};
 use std::io::Cursor;
 use swap_ops::ContractCallType;
 

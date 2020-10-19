@@ -1,4 +1,5 @@
 use super::*;
+use qrc20_script::{extract_contract_call_from_script, extract_token_addr_from_script, is_contract_call};
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum ContractCallType {
@@ -446,35 +447,6 @@ impl Qrc20Coin {
             }
             Timer::sleep(10.).await;
         }
-    }
-
-    /// TODO replace to qrc20.rs
-    pub fn transfer_output(
-        &self,
-        to_addr: H160,
-        amount: U256,
-        gas_limit: u64,
-        gas_price: u64,
-    ) -> Result<ContractCallOutput, String> {
-        let function = try_s!(ERC20_CONTRACT.function("transfer"));
-        let params = try_s!(function.encode_input(&[Token::Address(to_addr), Token::Uint(amount)]));
-
-        let script_pubkey = try_s!(generate_contract_call_script_pubkey(
-            &params,
-            gas_limit,
-            gas_price,
-            &self.contract_address,
-        ))
-        .to_bytes();
-
-        // qtum_amount is always 0 for the QRC20, because we should pay only a fee in Qtum to send the QRC20 transaction
-        let qtum_amount = 0;
-        Ok(ContractCallOutput {
-            value: qtum_amount,
-            script_pubkey,
-            gas_limit,
-            gas_price,
-        })
     }
 
     async fn allowance(&self, spender: H160) -> Result<U256, String> {
