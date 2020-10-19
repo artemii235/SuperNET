@@ -4,8 +4,52 @@ use core::ops::{Add, Div, Mul, Sub};
 use num_rational::BigRational;
 use num_traits::Pow;
 use serde::{de, Deserialize, Deserializer, Serialize};
+use serde_json::value::RawValue;
+use std::str::FromStr;
 
 pub use num_bigint::{BigInt, Sign};
+
+/// Custom BigDecimal type that is deserialized using serde_json RawValue to avoid floating point errors in some cases
+#[derive(Debug)]
+pub struct BigDecimalRaw(BigDecimal);
+
+impl<'de> Deserialize<'de> for BigDecimalRaw {
+    fn deserialize<D>(deserializer: D) -> Result<Self, <D as Deserializer<'de>>::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Helper<'a> {
+            #[serde(borrow)]
+            Str(&'a str),
+            #[serde(borrow)]
+            Raw(&'a RawValue),
+        }
+
+        impl<'a> Helper<'a> {
+            fn get(&self) -> &str {
+                match self {
+                    Helper::Str(str) => str,
+                    Helper::Raw(raw) => raw.get(),
+                }
+            }
+        }
+
+        log!("Before");
+        let raw: Helper<'de> = serde_json::from_slice(deserializer.into()).map_err(|e| {
+            log!((e));
+            e
+        })?;
+        let num = BigDecimal::from_str(raw.get()).map_err(|e| {
+            let msg = format!("Could not parse BigDecimal from {}, err {}", raw.get(), e);
+            log!((msg));
+            de::Error::custom(msg)
+        })?;
+
+        Ok(BigDecimalRaw(num))
+    }
+}
 
 #[derive(Clone, Debug, Serialize)]
 pub struct MmNumber(BigRational);
@@ -95,13 +139,13 @@ impl<'de> Deserialize<'de> for MmNumber {
         #[derive(Deserialize)]
         #[serde(untagged)]
         enum MmNumberHelper {
-            BigDecimal(BigDecimal),
+            BigDecimal(BigDecimalRaw),
             BigRational(BigRational),
             Fraction(Fraction),
         }
 
         let ratio = match Deserialize::deserialize(deserializer)? {
-            MmNumberHelper::BigDecimal(x) => from_dec_to_ratio(x),
+            MmNumberHelper::BigDecimal(x) => from_dec_to_ratio(x.0),
             MmNumberHelper::BigRational(x) => x,
             MmNumberHelper::Fraction(x) => x.into(),
         };
