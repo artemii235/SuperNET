@@ -1,5 +1,5 @@
 use super::*;
-use qrc20_script::{extract_contract_call_from_script, extract_token_addr_from_script, is_contract_call};
+use script_pubkey::{extract_contract_call_from_script, extract_token_addr_from_script, is_contract_call};
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum ContractCallType {

@@ -27,18 +27,18 @@ use keys::{Address as UtxoAddress, Public};
 #[cfg(test)] use mocktopus::macros::*;
 use rpc::v1::types::{Bytes as BytesJson, Transaction as RpcTransaction, H160 as H160Json, H256 as H256Json};
 use script::{Builder as ScriptBuilder, Opcode, Script, TransactionInputSigner};
+use script_pubkey::generate_contract_call_script_pubkey;
 use serde_json::{self as json, Value as Json};
 use serialization::deserialize;
 use serialization::serialize;
 use std::ops::{Deref, Neg};
 use std::str::FromStr;
 use std::sync::Arc;
-use qrc20_script::generate_contract_call_script_pubkey;
 
 mod history;
-mod qrc20_script;
 #[cfg(test)] mod qrc20_tests;
 pub mod rpc_electrum;
+mod script_pubkey;
 mod swap_ops;
 
 const QRC20_GAS_LIMIT_DEFAULT: u64 = 100_000;

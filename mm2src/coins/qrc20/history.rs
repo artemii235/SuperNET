@@ -2,7 +2,7 @@ use super::*;
 use crate::utxo::UtxoFeeDetails;
 use crate::TxFeeDetails;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
-use qrc20_script::{extract_contract_call_from_script, extract_gas_from_script, ExtractGasEnum};
+use script_pubkey::{extract_contract_call_from_script, extract_gas_from_script, ExtractGasEnum};
 use std::io::Cursor;
 use swap_ops::ContractCallType;
 
@@ -22,6 +22,7 @@ impl TxInternalId {
         }
     }
 
+    #[allow(dead_code)]
     pub fn from_bytes(bytes: &BytesJson) -> Result<TxInternalId, String> {
         // H256(32 bytes) + output_index(8 bytes) + log_index(8 bytes)
         const EXPECTED_LEN: usize = 32 + 8 + 8;
