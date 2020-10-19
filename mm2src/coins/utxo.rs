@@ -415,7 +415,7 @@ pub fn compressed_pub_key_from_priv_raw(raw_priv: &[u8], sum_type: ChecksumType)
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct UtxoFeeDetails {
-    amount: BigDecimal,
+    pub amount: BigDecimal,
 }
 
 #[cfg(feature = "native")]

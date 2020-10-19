@@ -79,6 +79,17 @@ pub struct LogEntry {
     pub data: String,
 }
 
+impl LogEntry {
+    pub fn parse_address(&self) -> Result<H160, String> {
+        if self.address.starts_with("0x") {
+            qrc20_addr_from_str(&self.address)
+        } else {
+            let address = format!("0x{}", self.address);
+            qrc20_addr_from_str(&address)
+        }
+    }
+}
+
 /// Qrc20 specific RPC ops
 pub trait Qrc20RpcOps {
     /// This can be used to get the basic information(name, decimals, total_supply, symbol) of a QRC20 token.

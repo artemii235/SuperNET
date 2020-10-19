@@ -1,11 +1,11 @@
 use crate::eth::{u256_to_big_decimal, wei_from_big_decimal, ERC20_CONTRACT, PAYMENT_STATE_SENT,
                  PAYMENT_STATE_UNINITIALIZED, SWAP_CONTRACT};
-use crate::qrc20::rpc_electrum::{ContractCallResult, Qrc20RpcOps, TxHistoryItem, TxReceipt};
+use crate::qrc20::rpc_electrum::{ContractCallResult, LogEntry, Qrc20RpcOps, TxHistoryItem, TxReceipt};
 use crate::utxo::rpc_clients::{ElectrumClient, UnspentInfo, UtxoRpcClientEnum, UtxoRpcClientOps};
-use crate::utxo::utxo_common::{self, big_decimal_from_sat, HISTORY_TOO_LARGE_ERROR};
+use crate::utxo::utxo_common::{self, big_decimal_from_sat};
 use crate::utxo::{qtum, sign_tx, utxo_fields_from_conf_and_request, ActualTxFee, AdditionalTxData, FeePolicy,
-                  GenerateTransactionError, RequestTxHistoryResult, UtxoAddressFormat, UtxoCoinFields, UtxoCommonOps,
-                  UtxoTx, VerboseTransactionFrom, UTXO_LOCK};
+                  GenerateTransactionError, UtxoAddressFormat, UtxoCoinFields, UtxoCommonOps, UtxoTx,
+                  VerboseTransactionFrom, UTXO_LOCK};
 use crate::{FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeFee, TransactionDetails,
             TransactionEnum, TransactionFut, ValidateAddressResult, WithdrawFee, WithdrawRequest};
 use async_trait::async_trait;
@@ -14,9 +14,8 @@ use bitcrypto::{dhash160, sha256};
 use chain::TransactionOutput;
 use common::block_on;
 use common::executor::Timer;
-use common::jsonrpc_client::{JsonRpcClient, JsonRpcError, JsonRpcErrorType, JsonRpcRequest, RpcRes};
+use common::jsonrpc_client::{JsonRpcClient, JsonRpcError, JsonRpcRequest, RpcRes};
 use common::mm_ctx::MmArc;
-use common::mm_metrics::MetricsArc;
 use ethabi::{Function, Token};
 use ethereum_types::{H160, U256};
 use futures::compat::Future01CompatExt;
@@ -35,6 +34,7 @@ use std::ops::{Deref, Neg};
 use std::str::FromStr;
 use std::sync::Arc;
 
+mod history;
 #[cfg(test)] mod qrc20_tests;
 pub mod rpc_electrum;
 mod swap_ops;
@@ -789,6 +789,7 @@ pub fn qrc20_addr_from_str(address: &str) -> Result<H160, String> {
 
 pub fn qrc20_addr_from_utxo_addr(address: UtxoAddress) -> H160 { address.hash.take().into() }
 
+#[allow(dead_code)]
 fn utxo_addr_into_rpc_format(address: UtxoAddress) -> H160Json { address.hash.take().into() }
 
 fn qrc20_addr_into_rpc_format(address: &H160) -> H160Json { address.to_vec().as_slice().into() }
@@ -930,9 +931,11 @@ pub struct Qrc20FeeDetails {
     coin: String,
     /// Standard UTXO miner fee based on transaction size
     miner_fee: BigDecimal,
-    /// in satoshi
+    /// Gas limit in satoshi.
     gas_limit: u64,
+    /// Gas price in satoshi.
     gas_price: u64,
+    /// Total used gas.
     total_gas_fee: BigDecimal,
 }
 
@@ -1028,133 +1031,34 @@ async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> Result<Transac
     })
 }
 
-async fn qrc20_tx_details_by_hash(coin: Qrc20Coin, hash: H256Json) -> Result<TransactionDetails, String> {
-    unimplemented!()
-    // let mut receipts = match coin.as_ref().rpc_client {
-    //     UtxoRpcClientEnum::Electrum(ref rpc) => try_s!(rpc.blochchain_transaction_get_receipt(&hash).compat().await),
-    //     UtxoRpcClientEnum::Native(_) => return ERR!("Electrum client expected"),
-    // };
-    //
-    // if receipts.len() != 1 {
-    //     return ERR!(
-    //         "blochchain.transaction.get_receipt returned {} receipts for {:?} transaction, expected 1",
-    //         receipts.len(),
-    //         hash
-    //     );
-    // }
-    //
-    // // receipt is one always
-    // let receipt = receipts.remove(0);
-    //
-    // // request Qtum transaction details to get a tx_hex, timestamp, block_height and miner_fee
-    // let qtum_tx = try_s!(utxo_common::tx_details_by_hash(coin.clone(), &hash.0).compat().await);
-    // let script_pubkey: Script = {
-    //     // Deserialize the UtxoTx to get a script pubkey
-    //     let utxo_tx: UtxoTx = try_s!(deserialize(qtum_tx.tx_hex.as_slice()).map_err(|e| ERRL!("{:?}", e)));
-    //     if utxo_tx.outputs.len() <= (receipt.output_index as usize) {
-    //         return ERR!(
-    //             "Length of the transaction {:?} outputs less than output_index {}",
-    //             qtum_tx.tx_hash,
-    //             receipt.output_index
-    //         );
-    //     }
-    //
-    //     utxo_tx.outputs[receipt.output_index as usize]
-    //         .script_pubkey
-    //         .clone()
-    //         .into()
-    // };
-    //
-    // // We can get a log_index from get_history call, but it is overhead to request it on every tx_details_by_hash(),
-    // // because of this try to find corresponding log entry below
-    // let log = match receipt.log.into_iter().find(|log_entry| {
-    //     let contract_address = if log_entry.address.starts_with("0x") {
-    //         log_entry.address.clone()
-    //     } else {
-    //         format!("0x{}", log_entry.address)
-    //     };
-    //     match qrc20_addr_from_str(&contract_address) {
-    //         // contract address from the log entry should be equal to the coin's contract address
-    //         Ok(addr) if addr == coin.contract_address => (),
-    //         Ok(_) => return false,
-    //         Err(e) => {
-    //             log!("Error on parse " [contract_address] " contract address " [e]);
-    //             return false;
-    //         },
-    //     }
-    //
-    //     // we find a log entry with three and more topics
-    //     if log_entry.topics.len() < 3 {
-    //         return false;
-    //     }
-    //     // the first topic should be ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef
-    //     // https://github.com/qtumproject/qtum-electrum/blob/v4.0.2/electrum/wallet.py#L2101
-    //     log_entry.topics.first().unwrap() == QRC20_TRANSFER_TOPIC
-    // }) {
-    //     Some(log) => log,
-    //     _ => return ERR!("Couldn't find a log entry that meets the requirements"),
-    // };
-    //
-    // let amount = try_s!(U256::from_str(&log.data));
-    // // https://github.com/qtumproject/qtum-electrum/blob/v4.0.2/electrum/wallet.py#L2111
-    // let total_amount = try_s!(u256_to_big_decimal(amount, coin.decimals()));
-    //
-    // // log.topics[i < 3] is safe because of the checking above
-    // // https://github.com/qtumproject/qtum-electrum/blob/v4.0.2/electrum/wallet.py#L2112
-    // let from = try_s!(coin.address_from_log_topic(&log.topics[1]));
-    // // https://github.com/qtumproject/qtum-electrum/blob/v4.0.2/electrum/wallet.py#L2113
-    // let to = try_s!(coin.address_from_log_topic(&log.topics[2]));
-    //
-    // let spent_by_me = if from == coin.utxo.my_address {
-    //     total_amount.clone()
-    // } else {
-    //     0.into()
-    // };
-    // let received_by_me = if to == coin.utxo.my_address {
-    //     total_amount.clone()
-    // } else {
-    //     0.into()
-    // };
-    //
-    // let from = vec![try_s!(coin.display_address(&from))];
-    // let to = vec![try_s!(coin.display_address(&to))];
-    //
-    // let total_qtum_fee = match qtum_tx.fee_details {
-    //     Some(TxFeeDetails::Utxo(UtxoFeeDetails { amount })) => amount,
-    //     fee => return ERR!("Unexpected fee details {:?}", fee),
-    // };
-    //
-    // let fee_details = {
-    //     let gas_limit = try_s!(extract_gas_from_script(&script_pubkey, ExtractGasEnum::GasLimit));
-    //     let gas_price = try_s!(extract_gas_from_script(&script_pubkey, ExtractGasEnum::GasPrice));
-    //
-    //     let total_gas_fee = utxo_common::big_decimal_from_sat(receipt.gas_used, coin.utxo.decimals);
-    //     Qrc20FeeDetails {
-    //         // QRC20 fees are paid in base platform currency (in particular Qtum)
-    //         coin: coin.platform.clone(),
-    //         miner_fee: &total_qtum_fee - &total_gas_fee,
-    //         gas_limit,
-    //         gas_price,
-    //         total_gas_fee,
-    //     }
-    // };
-    //
-    // // do not inherit the block_height from qtum_tx (usually it is None)
-    // let block_height = receipt.block_number as u64;
-    //
-    // let my_balance_change = &received_by_me - &spent_by_me;
-    // Ok(TransactionDetails {
-    //     from,
-    //     to,
-    //     total_amount,
-    //     spent_by_me,
-    //     received_by_me,
-    //     my_balance_change,
-    //     block_height,
-    //     fee_details: Some(fee_details.into()),
-    //     internal_id: vec![].into(),
-    //     ..qtum_tx
-    // })
+/// Parse the given topic to `H160` address.
+fn address_from_log_topic(topic: &str) -> Result<H160, String> {
+    if topic.len() != 64 {
+        return ERR!(
+            "Topic {:?} is expected to be H256 encoded topic (with length of 64)",
+            topic
+        );
+    }
+
+    // skip the first 24 characters to parse the last 40 characters to H160.
+    // https://github.com/qtumproject/qtum-electrum/blob/v4.0.2/electrum/wallet.py#L2112
+    let hash = try_s!(H160Json::from_str(&topic[24..]));
+    Ok(hash.0.into())
+}
+
+fn transfer_event_from_log(log: &LogEntry) -> Result<(U256, H160, H160), String> {
+    if log.topics.len() != 3 {
+        return ERR!("'Transfer' event must have 3 topics, found, {}", log.topics.len());
+    }
+
+    // https://github.com/qtumproject/qtum-electrum/blob/v4.0.2/electrum/wallet.py#L2111
+    let amount = try_s!(U256::from_str(&log.data));
+
+    // https://github.com/qtumproject/qtum-electrum/blob/v4.0.2/electrum/wallet.py#L2112
+    let from = try_s!(address_from_log_topic(&log.topics[1]));
+    // https://github.com/qtumproject/qtum-electrum/blob/v4.0.2/electrum/wallet.py#L2113
+    let to = try_s!(address_from_log_topic(&log.topics[2]));
+    Ok((amount, from, to))
 }
 
 /// Serialize the `number` similar to BigEndian but in QRC20 specific format.
@@ -1286,6 +1190,7 @@ fn is_contract_call(script: &Script) -> bool {
     }
 }
 
+/// TODO move to script.rs
 fn extract_gas_from_script(script: &Script, extract: ExtractGasEnum) -> Result<u64, String> {
     let instruction = script
         .iter()

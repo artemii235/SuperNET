@@ -27,7 +27,7 @@ impl ContractCallType {
         }
     }
 
-    fn from_script_pubkey(script: &[u8]) -> Result<Option<ContractCallType>, String> {
+    pub fn from_script_pubkey(script: &[u8]) -> Result<Option<ContractCallType>, String> {
         if script.len() < 4 {
             return ERR!("Length of the script pubkey less than 4: {:?}", script);
         }
@@ -448,6 +448,7 @@ impl Qrc20Coin {
         }
     }
 
+    /// TODO replace to qrc20.rs
     pub fn transfer_output(
         &self,
         to_addr: H160,
@@ -733,7 +734,7 @@ impl Qrc20Coin {
                 None => return ERR!("Couldn't find 'timelock' in erc20Payment call"),
             };
 
-            let (_amount, sender, swap_contract_address) = try_s!(transfer_call_details_from_receipt(&receipt));
+            let (_amount, sender, swap_contract_address) = try_s!(transfer_event_details_from_receipt(&receipt));
             return Ok(Erc20PaymentDetails {
                 output_index: receipt.output_index,
                 swap_id,
@@ -751,22 +752,8 @@ impl Qrc20Coin {
 }
 
 /// Get `Transfer` event details from [`TxReceipt::logs`].
-/// Result - (amount, sender, receiver).
-fn transfer_call_details_from_receipt(receipt: &TxReceipt) -> Result<(U256, H160, H160), String> {
-    fn address_from_log_topic(topic: &str) -> Result<H160, String> {
-        if topic.len() != 64 {
-            return ERR!(
-                "Topic {:?} is expected to be H256 encoded topic (with length of 64)",
-                topic
-            );
-        }
-
-        // skip the first 24 characters to parse the last 40 characters to H160.
-        // https://github.com/qtumproject/qtum-electrum/blob/v4.0.2/electrum/wallet.py#L2112
-        let hash = try_s!(H160Json::from_str(&topic[24..]));
-        Ok(hash.0.into())
-    }
-
+/// Note finds first log entry with `Transfer` topic and extract (amount, sender, receiver) from it.
+fn transfer_event_details_from_receipt(receipt: &TxReceipt) -> Result<(U256, H160, H160), String> {
     // We can get a log_index from get_history call, but it is overhead to request it on every tx_details_by_hash(),
     // because of this try to find corresponding log entry below
     let log = match receipt.log.iter().find(|log_entry| {
@@ -782,15 +769,7 @@ fn transfer_call_details_from_receipt(receipt: &TxReceipt) -> Result<(U256, H160
         _ => return ERR!("Couldn't find a log entry that meets the requirements"),
     };
 
-    // https://github.com/qtumproject/qtum-electrum/blob/v4.0.2/electrum/wallet.py#L2111
-    let amount = try_s!(U256::from_str(&log.data));
-
-    // log.topics[i < 3] is safe because of the checking above
-    // https://github.com/qtumproject/qtum-electrum/blob/v4.0.2/electrum/wallet.py#L2112
-    let from = try_s!(address_from_log_topic(&log.topics[1]));
-    // https://github.com/qtumproject/qtum-electrum/blob/v4.0.2/electrum/wallet.py#L2113
-    let to = try_s!(address_from_log_topic(&log.topics[2]));
-    Ok((amount, from, to))
+    transfer_event_from_log(log)
 }
 
 /// Get `transfer` contract call details from script pubkey.

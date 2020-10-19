@@ -1,5 +1,6 @@
 use super::*;
 use crate::TxFeeDetails;
+use bigdecimal::Zero;
 use chain::OutPoint;
 use common::executor::spawn;
 use common::mm_ctx::MmCtxBuilder;
@@ -1021,4 +1022,144 @@ fn extract_token_addr() {
 
     let actual = unwrap!(extract_token_addr_from_script(&script));
     assert_eq!(actual, expected);
+}
+
+#[test]
+fn test_transfer_details_by_hash() {
+    // priv_key of qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG
+    let priv_key = [
+        3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144, 72,
+        172, 110, 180, 13, 123, 179, 10, 49,
+    ];
+    let (_ctx, coin) = qrc20_coin_for_test(&priv_key);
+    let tx_hash_bytes = hex::decode("85ede12ccc12fb1709c4d9e403e96c0c394b0916f2f6098d41d8dfa00013fcdb").unwrap();
+    let tx_hash: H256Json = tx_hash_bytes.as_slice().into();
+    let tx_hex:BytesJson = hex::decode("0100000001426d27fde82e12e1ce84e73ca41e2a30420f4c94aaa37b30d4c5b8b4f762c042040000006a473044022032665891693ee732571cefaa6d322ec5114c78259f2adbe03a0d7e6b65fbf40d022035c9319ca41e5423e09a8a613ac749a20b8f5ad6ba4ad6bb60e4a020b085d009012103693bff1b39e8b5a306810023c29b95397eb395530b106b1820ea235fd81d9ce9ffffffff050000000000000000625403a08601012844095ea7b30000000000000000000000001549128bbfb33b997949b4105b6a6371c998e212000000000000000000000000000000000000000000000000000000000000000014d362e096e873eb7907e205fadc6175c6fec7bc44c20000000000000000625403a08601012844095ea7b30000000000000000000000001549128bbfb33b997949b4105b6a6371c998e21200000000000000000000000000000000000000000000000000000000000927c014d362e096e873eb7907e205fadc6175c6fec7bc44c20000000000000000835403a0860101284c640c565ae300000000000000000000000000000000000000000000000000000000000493e0000000000000000000000000d362e096e873eb7907e205fadc6175c6fec7bc440000000000000000000000000000000000000000000000000000000000000000141549128bbfb33b997949b4105b6a6371c998e212c20000000000000000835403a0860101284c640c565ae300000000000000000000000000000000000000000000000000000000000493e0000000000000000000000000d362e096e873eb7907e205fadc6175c6fec7bc440000000000000000000000000000000000000000000000000000000000000001141549128bbfb33b997949b4105b6a6371c998e212c231754b04000000001976a9149e032d4b0090a11dc40fe6c47601499a35d55fbb88acf7cd8b5f").unwrap().into();
+
+    let details = unwrap!(block_on(coin.transfer_details_by_hash(tx_hash)));
+    let mut it = details.into_iter();
+
+    let expected_fee_details = |total_gas_fee: &str| -> TxFeeDetails {
+        let fee = Qrc20FeeDetails {
+            coin: "QTUM".into(),
+            miner_fee: BigDecimal::from_str("0.15806792").unwrap(),
+            gas_limit: 100000,
+            gas_price: 40,
+            total_gas_fee: BigDecimal::from_str(total_gas_fee).unwrap(),
+        };
+        TxFeeDetails::Qrc20(fee)
+    };
+
+    // qKVvtDqpnFGDxsDzck5jmLwdnD2jRH6aM8 is UTXO representation of 1549128bbfb33b997949b4105b6a6371c998e212 contract address
+
+    let actual = it.next().unwrap();
+    let expected = TransactionDetails {
+        tx_hex: tx_hex.clone(),
+        tx_hash: tx_hash_bytes.clone().into(),
+        from: vec!["qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG".into()],
+        to: vec!["qKVvtDqpnFGDxsDzck5jmLwdnD2jRH6aM8".into()],
+        total_amount: BigDecimal::from_str("0.003").unwrap(),
+        spent_by_me: BigDecimal::from_str("0.003").unwrap(),
+        received_by_me: BigDecimal::zero(),
+        my_balance_change: BigDecimal::from_str("-0.003").unwrap(),
+        block_height: 699545,
+        timestamp: 1602997840,
+        fee_details: Some(expected_fee_details("0.00059074")),
+        coin: "QRC20".into(),
+        internal_id: hex::decode(
+            "85ede12ccc12fb1709c4d9e403e96c0c394b0916f2f6098d41d8dfa00013fcdb00000000000000020000000000000000",
+        )
+        .unwrap()
+        .into(),
+    };
+    assert_eq!(actual, expected);
+
+    let actual = it.next().unwrap();
+    let expected = TransactionDetails {
+        tx_hex: tx_hex.clone(),
+        tx_hash: tx_hash_bytes.clone().into(),
+        from: vec!["qKVvtDqpnFGDxsDzck5jmLwdnD2jRH6aM8".into()],
+        to: vec!["qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG".into()],
+        total_amount: BigDecimal::from_str("0.00295").unwrap(),
+        spent_by_me: BigDecimal::zero(),
+        received_by_me: BigDecimal::from_str("0.00295").unwrap(),
+        my_balance_change: BigDecimal::from_str("0.00295").unwrap(),
+        block_height: 699545,
+        timestamp: 1602997840,
+        fee_details: Some(expected_fee_details("0.00059074")),
+        coin: "QRC20".into(),
+        internal_id: hex::decode(
+            "85ede12ccc12fb1709c4d9e403e96c0c394b0916f2f6098d41d8dfa00013fcdb00000000000000020000000000000001",
+        )
+        .unwrap()
+        .into(),
+    };
+    assert_eq!(actual, expected);
+
+    let actual = it.next().unwrap();
+    let expected = TransactionDetails {
+        tx_hex: tx_hex.clone(),
+        tx_hash: tx_hash_bytes.clone().into(),
+        from: vec!["qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG".into()],
+        to: vec!["qKVvtDqpnFGDxsDzck5jmLwdnD2jRH6aM8".into()],
+        total_amount: BigDecimal::from_str("0.003").unwrap(),
+        spent_by_me: BigDecimal::from_str("0.003").unwrap(),
+        received_by_me: BigDecimal::zero(),
+        my_balance_change: BigDecimal::from_str("-0.003").unwrap(),
+        block_height: 699545,
+        timestamp: 1602997840,
+        fee_details: Some(expected_fee_details("0.00059118")),
+        coin: "QRC20".into(),
+        internal_id: hex::decode(
+            "85ede12ccc12fb1709c4d9e403e96c0c394b0916f2f6098d41d8dfa00013fcdb00000000000000030000000000000000",
+        )
+        .unwrap()
+        .into(),
+    };
+    assert_eq!(actual, expected);
+
+    let actual = it.next().unwrap();
+    let expected = TransactionDetails {
+        tx_hex: tx_hex.clone(),
+        tx_hash: tx_hash_bytes.clone().into(),
+        from: vec!["qKVvtDqpnFGDxsDzck5jmLwdnD2jRH6aM8".into()],
+        to: vec!["qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG".into()],
+        total_amount: BigDecimal::from_str("0.00295").unwrap(),
+        spent_by_me: BigDecimal::zero(),
+        received_by_me: BigDecimal::from_str("0.00295").unwrap(),
+        my_balance_change: BigDecimal::from_str("0.00295").unwrap(),
+        block_height: 699545,
+        timestamp: 1602997840,
+        fee_details: Some(expected_fee_details("0.00059118")),
+        coin: "QRC20".into(),
+        internal_id: hex::decode(
+            "85ede12ccc12fb1709c4d9e403e96c0c394b0916f2f6098d41d8dfa00013fcdb00000000000000030000000000000001",
+        )
+        .unwrap()
+        .into(),
+    };
+    assert_eq!(actual, expected);
+
+    let actual = it.next().unwrap();
+    let expected = TransactionDetails {
+        tx_hex: tx_hex.clone(),
+        tx_hash: tx_hash_bytes.clone().into(),
+        from: vec!["qKVvtDqpnFGDxsDzck5jmLwdnD2jRH6aM8".into()],
+        to: vec!["qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG".into()],
+        total_amount: BigDecimal::from_str("0.00005000").unwrap(),
+        spent_by_me: BigDecimal::zero(),
+        received_by_me: BigDecimal::from_str("0.00005000").unwrap(),
+        my_balance_change: BigDecimal::from_str("0.00005000").unwrap(),
+        block_height: 699545,
+        timestamp: 1602997840,
+        fee_details: Some(expected_fee_details("0.00059118")),
+        coin: "QRC20".into(),
+        internal_id: hex::decode(
+            "85ede12ccc12fb1709c4d9e403e96c0c394b0916f2f6098d41d8dfa00013fcdb00000000000000030000000000000002",
+        )
+        .unwrap()
+        .into(),
+    };
+    assert_eq!(actual, expected);
+    assert!(it.next().is_none());
 }
