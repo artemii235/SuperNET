@@ -140,6 +140,7 @@ impl Encoder for GossipsubCodec {
             prune: Vec::new(),
             iamrelay: None,
             included_to_relays_mesh: None,
+            mesh_size: None,
         };
 
         let empty_control_msg = item.control_msgs.is_empty();
@@ -178,8 +179,14 @@ impl Encoder for GossipsubCodec {
                 GossipsubControlAction::IAmRelay(is_relay) => {
                     control.iamrelay = Some(is_relay);
                 },
-                GossipsubControlAction::IncludedTorelaysMesh(is_included) => {
-                    control.included_to_relays_mesh = Some(is_included);
+                GossipsubControlAction::IncludedToRelaysMesh { included, mesh_size } => {
+                    control.included_to_relays_mesh = Some(rpc_proto::IncludedToRelaysMesh {
+                        included,
+                        mesh_size: mesh_size as u32,
+                    });
+                },
+                GossipsubControlAction::MeshSize(size) => {
+                    control.mesh_size = Some(size as u32);
                 },
             }
         }
@@ -278,10 +285,15 @@ impl Decoder for GossipsubCodec {
                 control_msgs.extend(iter::once(GossipsubControlAction::IAmRelay(is_relay)));
             }
 
-            if let Some(is_included_to_relays_mesh) = rpc_control.included_to_relays_mesh {
-                control_msgs.extend(iter::once(GossipsubControlAction::IncludedTorelaysMesh(
-                    is_included_to_relays_mesh,
-                )));
+            if let Some(mesh_size) = rpc_control.mesh_size {
+                control_msgs.extend(iter::once(GossipsubControlAction::MeshSize(mesh_size as usize)));
+            }
+
+            if let Some(msg) = rpc_control.included_to_relays_mesh {
+                control_msgs.extend(iter::once(GossipsubControlAction::IncludedToRelaysMesh {
+                    included: msg.included,
+                    mesh_size: msg.mesh_size as usize,
+                }));
             }
         }
 
@@ -379,5 +391,9 @@ pub enum GossipsubControlAction {
     },
     IAmRelay(bool),
     /// Whether the node included or excluded from other node relays mesh
-    IncludedTorelaysMesh(bool),
+    IncludedToRelaysMesh {
+        included: bool,
+        mesh_size: usize,
+    },
+    MeshSize(usize),
 }

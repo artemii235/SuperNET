@@ -6,7 +6,7 @@ use crate::utxo::sat_from_big_decimal;
 use crate::{RpcTransportEventHandler, RpcTransportEventHandlerShared};
 use bigdecimal::BigDecimal;
 use chain::{BlockHeader, OutPoint, Transaction as UtxoTx};
-use common::custom_futures::{join_all_sequential, select_ok_sequential};
+use common::custom_futures::select_ok_sequential;
 use common::executor::{spawn, Timer};
 use common::jsonrpc_client::{JsonRpcClient, JsonRpcMultiClient, JsonRpcRemoteAddr, JsonRpcRequest, JsonRpcResponse,
                              JsonRpcResponseFut, RpcRes};

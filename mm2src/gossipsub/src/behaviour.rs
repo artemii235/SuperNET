@@ -64,8 +64,8 @@ pub struct Gossipsub {
     /// The peer ids of connected relay nodes
     connected_relays: HashSet<PeerId>,
 
-    /// relays to which we forward the messages
-    relays_mesh: HashSet<PeerId>,
+    /// relays to which we forward the messages. Also tracks the relay mesh size of nodes in mesh.
+    relays_mesh: HashMap<PeerId, usize>,
 
     /// Peers included our node to their relays mesh
     included_to_relays_mesh: HashSet<PeerId>,
@@ -133,7 +133,7 @@ impl Gossipsub {
             ),
             peer_connections: HashMap::new(),
             connected_relays: HashSet::new(),
-            relays_mesh: HashSet::new(),
+            relays_mesh: HashMap::new(),
             included_to_relays_mesh: HashSet::new(),
             connected_addresses: Vec::new(),
         }
@@ -549,7 +549,7 @@ impl Gossipsub {
     }
 
     /// Handles IncludedTorelaysMesh message
-    fn handle_included_to_relays_mesh(&mut self, peer_id: &PeerId, is_included: bool) {
+    fn handle_included_to_relays_mesh(&mut self, peer_id: &PeerId, is_included: bool, other_mesh_size: usize) {
         if self.is_relay() {
             debug!(
                 "Handling IncludedTorelaysMesh message for peer: {:?}, is_included: {}",
@@ -561,7 +561,7 @@ impl Gossipsub {
                         self.notify_excluded_from_relay_mesh(peer_id.clone());
                     } else {
                         debug!("Adding peer {:?} to relays_mesh", peer_id);
-                        self.relays_mesh.insert(peer_id.clone());
+                        self.relays_mesh.insert(peer_id.clone(), other_mesh_size);
                     }
                 } else {
                     debug!("Adding peer {:?} to included_to_relays_mesh", peer_id);
@@ -592,12 +592,17 @@ impl Gossipsub {
             Some(peers) => {
                 debug!("Message already received, ignoring. Message: {:?}", msg_id);
                 peers.push(propagation_source.clone());
-                if self.relays_mesh.contains(propagation_source) && self.relay_mesh_len() > self.config.mesh_n_low {
-                    info!(
-                        "Removing peer {:?} from relay mesh because it sent duplicated message",
-                        propagation_source
-                    );
-                    self.remove_peer_from_relay_mesh(propagation_source);
+
+                if self.relay_mesh_len() > self.config.mesh_n_low {
+                    if let Some(other_mesh_size) = self.relays_mesh.get(propagation_source) {
+                        if *other_mesh_size > self.config.mesh_n_low {
+                            info!(
+                                "Removing peer {:?} from relay mesh because it sent duplicated message",
+                                propagation_source
+                            );
+                            self.remove_peer_from_relay_mesh(propagation_source);
+                        }
+                    }
                 }
                 return;
             },
@@ -978,7 +983,7 @@ impl Gossipsub {
                 control_msgs: Vec::new(),
             });
 
-            for relay in self.relays_mesh.iter() {
+            for (relay, _) in self.relays_mesh.iter() {
                 if let Some(received_from_peers) = self.received.get(&msg_id) {
                     if received_from_peers.contains(relay) {
                         continue;
@@ -1094,7 +1099,7 @@ impl Gossipsub {
 
     pub fn get_mesh(&self) -> &HashMap<TopicHash, Vec<PeerId>> { &self.mesh }
 
-    pub fn get_relay_mesh(&self) -> Vec<PeerId> { self.relays_mesh.iter().cloned().collect() }
+    pub fn get_relay_mesh(&self) -> Vec<PeerId> { self.relays_mesh.iter().map(|(peer, _)| peer).cloned().collect() }
 
     pub fn relay_mesh_len(&self) -> usize { self.relays_mesh.len() }
 
@@ -1107,13 +1112,16 @@ impl Gossipsub {
     /// Adds peers to relays mesh and notifies them they are added
     fn add_peers_to_relays_mesh(&mut self, peers: Vec<PeerId>) {
         for peer in &peers {
-            self.notify_included_to_relay_mesh(peer.clone());
+            // other mesh size is unknown at this point
+            self.relays_mesh.insert(peer.clone(), 0);
         }
-        self.relays_mesh.extend(peers);
+        for peer in peers {
+            self.notify_included_to_relay_mesh(peer);
+        }
     }
 
     fn remove_peer_from_relay_mesh(&mut self, peer: &PeerId) {
-        if self.relays_mesh.remove(peer) {
+        if let Some(_) = self.relays_mesh.remove(peer) {
             self.notify_excluded_from_relay_mesh(peer.clone())
         }
     }
@@ -1136,7 +1144,7 @@ impl Gossipsub {
             })
             .collect();
 
-        for peer in removed {
+        for (peer, _) in removed {
             self.notify_excluded_from_relay_mesh(peer)
         }
     }
@@ -1148,7 +1156,10 @@ impl Gossipsub {
             event: Arc::new(GossipsubRpc {
                 subscriptions: Vec::new(),
                 messages: Vec::new(),
-                control_msgs: vec![GossipsubControlAction::IncludedTorelaysMesh(true)],
+                control_msgs: vec![GossipsubControlAction::IncludedToRelaysMesh {
+                    included: true,
+                    mesh_size: self.relay_mesh_len(),
+                }],
             }),
         });
     }
@@ -1160,22 +1171,26 @@ impl Gossipsub {
             event: Arc::new(GossipsubRpc {
                 subscriptions: Vec::new(),
                 messages: Vec::new(),
-                control_msgs: vec![GossipsubControlAction::IncludedTorelaysMesh(false)],
+                control_msgs: vec![GossipsubControlAction::IncludedToRelaysMesh {
+                    included: false,
+                    mesh_size: self.relay_mesh_len(),
+                }],
             }),
         });
     }
 
     fn maintain_relays_mesh(&mut self) {
-        if self.relays_mesh.len() < self.config.mesh_n {
+        if self.relays_mesh.len() < self.config.mesh_n_low {
             info!(
                 "HEARTBEAT: relays low. Contains: {:?} needs: {:?}",
                 self.relays_mesh.len(),
-                self.config.mesh_n,
+                self.config.mesh_n_low,
             );
             // add peers 1 by 1 to avoid overloading peaks when node connects to several other nodes at once
             let required = 1;
             // get `n` relays that are not in the `relays_mesh`
-            let to_add = Self::get_random_relays(&self.connected_relays, required, |p| !self.relays_mesh.contains(p));
+            let to_add =
+                Self::get_random_relays(&self.connected_relays, required, |p| !self.relays_mesh.contains_key(p));
             self.add_peers_to_relays_mesh(to_add);
         }
 
@@ -1186,6 +1201,15 @@ impl Gossipsub {
                 self.config.mesh_n,
             );
             self.clean_up_relays_mesh();
+        }
+
+        let size = self.relays_mesh.len();
+        for (relay, _) in &self.relays_mesh {
+            Self::control_pool_add(
+                &mut self.control_pool,
+                relay.clone(),
+                GossipsubControlAction::MeshSize(size),
+            );
         }
     }
 
@@ -1354,8 +1378,13 @@ impl NetworkBehaviour for Gossipsub {
                 GossipsubControlAction::Graft { topic_hash } => graft_msgs.push(topic_hash),
                 GossipsubControlAction::Prune { topic_hash } => prune_msgs.push(topic_hash),
                 GossipsubControlAction::IAmRelay(is_relay) => self.handle_i_am_relay(&propagation_source, is_relay),
-                GossipsubControlAction::IncludedTorelaysMesh(is_included) => {
-                    self.handle_included_to_relays_mesh(&propagation_source, is_included)
+                GossipsubControlAction::IncludedToRelaysMesh { included, mesh_size } => {
+                    self.handle_included_to_relays_mesh(&propagation_source, included, mesh_size)
+                },
+                GossipsubControlAction::MeshSize(size) => {
+                    if let Some(old_size) = self.relays_mesh.get_mut(&propagation_source) {
+                        *old_size = size;
+                    }
                 },
             }
         }

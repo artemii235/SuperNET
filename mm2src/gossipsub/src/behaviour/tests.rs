@@ -795,7 +795,7 @@ mod tests {
         let peer_no = 20;
         let (mut gs, peers, _) = build_and_inject_nodes(peer_no, vec![], GossipsubConfig::default(), false);
         for peer in peers {
-            gs.relays_mesh.insert(peer);
+            gs.relays_mesh.insert(peer, 0);
         }
         assert_eq!(peer_no, gs.relays_mesh.len(), "relays mesh must contain 20 peers");
         gs.maintain_relays_mesh();
@@ -808,9 +808,10 @@ mod tests {
         for event in gs.events {
             match event {
                 NetworkBehaviourAction::NotifyHandler { event, .. } => {
-                    assert_eq!(event.control_msgs, vec![GossipsubControlAction::IncludedTorelaysMesh(
-                        false
-                    )]);
+                    assert_eq!(event.control_msgs, vec![GossipsubControlAction::IncludedToRelaysMesh {
+                        included: false,
+                        mesh_size: gs.relays_mesh.len(),
+                    }]);
                 },
                 _ => panic!("Invalid NetworkBehaviourAction variant"),
             }
@@ -823,7 +824,7 @@ mod tests {
         let (mut gs, peers, _) = build_and_inject_nodes(peer_no, vec![], GossipsubConfig::default(), false);
         for (i, peer) in peers.into_iter().enumerate() {
             if i < 3 {
-                gs.relays_mesh.insert(peer);
+                gs.relays_mesh.insert(peer, 0);
             } else {
                 gs.connected_relays.insert(peer);
             }
@@ -839,9 +840,10 @@ mod tests {
         for event in gs.events {
             match event {
                 NetworkBehaviourAction::NotifyHandler { event, .. } => {
-                    assert_eq!(event.control_msgs, vec![GossipsubControlAction::IncludedTorelaysMesh(
-                        true
-                    )]);
+                    assert_eq!(event.control_msgs, vec![GossipsubControlAction::IncludedToRelaysMesh {
+                        included: true,
+                        mesh_size: gs.relays_mesh.len(),
+                    }]);
                 },
                 _ => panic!("Invalid NetworkBehaviourAction variant"),
             }
@@ -857,11 +859,11 @@ mod tests {
             gs.connected_relays.insert(peer.clone());
         }
 
-        gs.handle_included_to_relays_mesh(&peers[0], true);
-        assert!(gs.relays_mesh.contains(&peers[0]));
+        gs.handle_included_to_relays_mesh(&peers[0], true, 1);
+        assert!(gs.relays_mesh.contains_key(&peers[0]));
 
-        gs.handle_included_to_relays_mesh(&peers[0], false);
-        assert!(!gs.relays_mesh.contains(&peers[0]));
+        gs.handle_included_to_relays_mesh(&peers[0], false, 1);
+        assert!(!gs.relays_mesh.contains_key(&peers[0]));
     }
 
     #[test]
@@ -872,18 +874,19 @@ mod tests {
         for (i, peer) in peers.iter().enumerate() {
             gs.connected_relays.insert(peer.clone());
             if i < 13 {
-                gs.relays_mesh.insert(peer.clone());
+                gs.relays_mesh.insert(peer.clone(), 0);
             }
         }
 
-        gs.handle_included_to_relays_mesh(&peers[13], true);
-        assert!(!gs.relays_mesh.contains(&peers[13]));
+        gs.handle_included_to_relays_mesh(&peers[13], true, 1);
+        assert!(!gs.relays_mesh.contains_key(&peers[13]));
 
         match gs.events.pop_back().unwrap() {
             NetworkBehaviourAction::NotifyHandler { event, peer_id, .. } => {
-                assert_eq!(event.control_msgs, vec![GossipsubControlAction::IncludedTorelaysMesh(
-                    false
-                )]);
+                assert_eq!(event.control_msgs, vec![GossipsubControlAction::IncludedToRelaysMesh {
+                    included: false,
+                    mesh_size: gs.relay_mesh_len(),
+                }]);
                 assert_eq!(peer_id, peers[13]);
             },
             _ => panic!("Invalid NetworkBehaviourAction variant"),
