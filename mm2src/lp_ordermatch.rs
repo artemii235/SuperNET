@@ -64,7 +64,7 @@ use order_requests_tracker::OrderRequestsTracker;
 mod ordermatch_tests;
 
 pub const ORDERBOOK_PREFIX: TopicPrefix = "orbk";
-const MIN_ORDER_KEEP_ALIVE_INTERVAL: u64 = 20;
+const MIN_ORDER_KEEP_ALIVE_INTERVAL: u64 = 30;
 const MAKER_ORDER_TIMEOUT: u64 = MIN_ORDER_KEEP_ALIVE_INTERVAL * 3;
 const TAKER_ORDER_TIMEOUT: u64 = 30;
 const ORDER_MATCH_TIMEOUT: u64 = 30;
