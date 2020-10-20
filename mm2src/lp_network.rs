@@ -64,7 +64,7 @@ impl P2PContext {
     }
 }
 
-pub async fn p2p_event_process_loop(ctx: MmArc, mut rx: AdexEventRx, i_am_relayer: bool) {
+pub async fn p2p_event_process_loop(ctx: MmArc, mut rx: AdexEventRx, i_am_relay: bool) {
     while !ctx.is_stopping() {
         match rx.next().await {
             Some(AdexBehaviourEvent::Message(peer_id, message_id, message)) => {
@@ -73,7 +73,7 @@ pub async fn p2p_event_process_loop(ctx: MmArc, mut rx: AdexEventRx, i_am_relaye
                     peer_id,
                     message_id,
                     message,
-                    i_am_relayer,
+                    i_am_relay,
                 ));
             },
             Some(AdexBehaviourEvent::PeerRequest {
@@ -96,7 +96,7 @@ async fn process_p2p_message(
     peer_id: PeerId,
     message_id: MessageId,
     message: GossipsubMessage,
-    i_am_relayer: bool,
+    i_am_relay: bool,
 ) {
     let mut to_propagate = false;
     for topic in message.topics {
@@ -114,7 +114,7 @@ async fn process_p2p_message(
             None | Some(_) => (),
         }
     }
-    if to_propagate && i_am_relayer {
+    if to_propagate && i_am_relay {
         propagate_message(&ctx, message_id, peer_id);
     }
 }

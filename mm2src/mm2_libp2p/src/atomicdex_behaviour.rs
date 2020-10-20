@@ -448,17 +448,17 @@ type AtomicDexSwarm = ExpandedSwarm<
     <AtomicDexBehaviour as NetworkBehaviour>::ProtocolsHandler,
 >;
 
-fn maintain_connection_to_relayers(swarm: &mut AtomicDexSwarm, bootstrap_addresses: &[Multiaddr]) {
-    let connected_relayers = swarm.gossipsub.connected_relayers();
+fn maintain_connection_to_relays(swarm: &mut AtomicDexSwarm, bootstrap_addresses: &[Multiaddr]) {
+    let connected_relays = swarm.gossipsub.connected_relays();
     let mesh_n_low = swarm.gossipsub.get_config().mesh_n_low;
     let mesh_n = swarm.gossipsub.get_config().mesh_n;
     // allow 2 * mesh_n_high connections to other nodes
     let max_n = swarm.gossipsub.get_config().mesh_n_high * 2;
-    if connected_relayers.len() < mesh_n_low {
-        let to_connect_num = mesh_n - connected_relayers.len();
+    if connected_relays.len() < mesh_n_low {
+        let to_connect_num = mesh_n - connected_relays.len();
         let to_connect = swarm
             .peers_exchange
-            .get_random_peers(to_connect_num, |peer| !connected_relayers.contains(peer));
+            .get_random_peers(to_connect_num, |peer| !connected_relays.contains(peer));
 
         // choose some random bootstrap addresses to connect if peers exchange returned not enough peers
         if to_connect.len() < to_connect_num {
@@ -481,13 +481,13 @@ fn maintain_connection_to_relayers(swarm: &mut AtomicDexSwarm, bootstrap_address
         }
     }
 
-    if connected_relayers.len() > max_n {
+    if connected_relays.len() > max_n {
         let mut rng = thread_rng();
-        let to_disconnect_num = connected_relayers.len() - max_n;
-        let relayers_mesh = swarm.gossipsub.get_relay_mesh();
-        let not_in_mesh: Vec<_> = connected_relayers
+        let to_disconnect_num = connected_relays.len() - max_n;
+        let relays_mesh = swarm.gossipsub.get_relay_mesh();
+        let not_in_mesh: Vec<_> = connected_relays
             .iter()
-            .filter(|peer| !relayers_mesh.contains(peer))
+            .filter(|peer| !relays_mesh.contains(peer))
             .collect();
         for peer in not_in_mesh.choose_multiple(&mut rng, to_disconnect_num) {
             info!("Disconnecting peer {}", peer);
@@ -497,9 +497,9 @@ fn maintain_connection_to_relayers(swarm: &mut AtomicDexSwarm, bootstrap_address
         }
     }
 
-    for relayer in connected_relayers {
-        if !swarm.peers_exchange.is_known_peer(&relayer) {
-            swarm.peers_exchange.add_known_peer(relayer);
+    for relay in connected_relays {
+        if !swarm.peers_exchange.is_known_peer(&relay) {
+            swarm.peers_exchange.add_known_peer(relay);
         }
     }
 }
@@ -618,10 +618,10 @@ pub fn start_gossipsub(
     swarm.floodsub.subscribe(FloodsubTopic::new(PEERS_TOPIC.to_owned()));
     let addr = format!("/ip4/{}/tcp/{}", ip, port);
     libp2p::Swarm::listen_on(&mut swarm, addr.parse().unwrap()).unwrap();
-    for relayer in &bootstrap {
-        match libp2p::Swarm::dial_addr(&mut swarm, relayer.clone()) {
-            Ok(_) => println!("Dialed {}", relayer),
-            Err(e) => println!("Dial {:?} failed: {:?}", relayer, e),
+    for relay in &bootstrap {
+        match libp2p::Swarm::dial_addr(&mut swarm, relay.clone()) {
+            Ok(_) => println!("Dialed {}", relay),
+            Err(e) => println!("Dial {:?} failed: {:?}", relay, e),
         }
     }
 
@@ -654,7 +654,7 @@ pub fn start_gossipsub(
         }
 
         while let Poll::Ready(Some(())) = check_connected_relays_interval.poll_next_unpin(cx) {
-            maintain_connection_to_relayers(&mut swarm, &bootstrap);
+            maintain_connection_to_relays(&mut swarm, &bootstrap);
         }
         on_poll(&swarm);
         Poll::Pending
