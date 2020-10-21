@@ -5,7 +5,9 @@ pub mod atomicdex_behaviour;
 mod peers_exchange;
 pub mod request_response;
 
-use secp256k1::{sign, verify, Message as SecpMessage, PublicKey as Secp256k1Pubkey, SecretKey, Signature};
+use lazy_static::lazy_static;
+use secp256k1::{Message as SecpMessage, PublicKey as Secp256k1Pubkey, Secp256k1, SecretKey, SignOnly, Signature,
+                VerifyOnly};
 use serde::{de, ser::Serializer, Deserialize, Serialize};
 use serde_bytes;
 use sha2::{Digest, Sha256};
@@ -13,6 +15,11 @@ use sha2::{Digest, Sha256};
 pub use atomicdex_behaviour::start_gossipsub;
 pub use atomicdex_gossipsub::{GossipsubEvent, GossipsubMessage, MessageId};
 pub use libp2p::PeerId;
+
+lazy_static! {
+    static ref SECP_VERIFY: Secp256k1<VerifyOnly> = Secp256k1::verification_only();
+    static ref SECP_SIGN: Secp256k1<SignOnly> = Secp256k1::signing_only();
+}
 
 pub fn encode_message<T: Serialize>(message: &T) -> Result<Vec<u8>, rmp_serde::encode::Error> {
     rmp_serde::to_vec(message)
@@ -32,12 +39,12 @@ struct SignedMessageSerdeHelper<'a> {
 }
 
 pub fn encode_and_sign<T: Serialize>(message: &T, secret: &[u8; 32]) -> Result<Vec<u8>, rmp_serde::encode::Error> {
-    let secret = SecretKey::parse(secret).unwrap();
+    let secret = SecretKey::from_slice(secret).unwrap();
     let encoded = encode_message(message)?;
-    let sig_hash = SecpMessage::parse(&sha256(&encoded));
-    let (sig, _) = sign(&sig_hash, &secret);
-    let serialized_sig = sig.serialize();
-    let pubkey = PublicKey::from(Secp256k1Pubkey::from_secret_key(&secret));
+    let sig_hash = SecpMessage::from_slice(&sha256(&encoded)).expect("Message::from_slice should never fail");
+    let sig = SECP_SIGN.sign(&sig_hash, &secret);
+    let serialized_sig = sig.serialize_compact();
+    let pubkey = PublicKey::from(Secp256k1Pubkey::from_secret_key(&*SECP_SIGN, &secret));
     let msg = SignedMessageSerdeHelper {
         pubkey,
         signature: &serialized_sig,
@@ -50,12 +57,12 @@ pub fn decode_signed<'de, T: de::Deserialize<'de>>(
     encoded: &'de [u8],
 ) -> Result<(T, Signature, PublicKey), rmp_serde::decode::Error> {
     let helper: SignedMessageSerdeHelper = decode_message(encoded)?;
-    let signature = Signature::parse_slice(helper.signature)
+    let signature = Signature::from_compact(helper.signature)
         .map_err(|e| rmp_serde::decode::Error::Syntax(format!("Failed to parse signature {}", e)))?;
-    let sig_hash = SecpMessage::parse(&sha256(&helper.payload));
+    let sig_hash = SecpMessage::from_slice(&sha256(&helper.payload)).expect("Message::from_slice should never fail");
     match &helper.pubkey {
         PublicKey::Secp256k1(serialized_pub) => {
-            if !verify(&sig_hash, &signature, &serialized_pub.0) {
+            if SECP_VERIFY.verify(&sig_hash, &signature, &serialized_pub.0).is_err() {
                 return Err(rmp_serde::decode::Error::Syntax("Invalid message signature".into()));
             }
         },
@@ -72,7 +79,7 @@ pub struct Secp256k1PubkeySerialize(Secp256k1Pubkey);
 
 impl Serialize for Secp256k1PubkeySerialize {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_bytes(&self.0.serialize_compressed())
+        serializer.serialize_bytes(&self.0.serialize())
     }
 }
 
@@ -82,8 +89,8 @@ impl<'de> de::Deserialize<'de> for Secp256k1PubkeySerialize {
         D: de::Deserializer<'de>,
     {
         let slice: &[u8] = de::Deserialize::deserialize(deserializer)?;
-        let pubkey = Secp256k1Pubkey::parse_slice(slice, None)
-            .map_err(|e| de::Error::custom(format!("Error {} parsing pubkey", e)))?;
+        let pubkey =
+            Secp256k1Pubkey::from_slice(slice).map_err(|e| de::Error::custom(format!("Error {} parsing pubkey", e)))?;
 
         Ok(Secp256k1PubkeySerialize(pubkey))
     }
@@ -97,20 +104,20 @@ pub enum PublicKey {
 impl PublicKey {
     pub fn to_bytes(&self) -> Vec<u8> {
         match self {
-            PublicKey::Secp256k1(pubkey) => pubkey.0.serialize_compressed().to_vec(),
+            PublicKey::Secp256k1(pubkey) => pubkey.0.serialize().to_vec(),
         }
     }
 
     pub fn to_hex(&self) -> String {
         match self {
-            PublicKey::Secp256k1(pubkey) => hex::encode(pubkey.0.serialize_compressed().as_ref()),
+            PublicKey::Secp256k1(pubkey) => hex::encode(pubkey.0.serialize().as_ref()),
         }
     }
 
     pub fn unprefixed(&self) -> [u8; 32] {
         let mut res = [0; 32];
         match self {
-            PublicKey::Secp256k1(pubkey) => res.copy_from_slice(&pubkey.0.serialize_compressed()[1..33]),
+            PublicKey::Secp256k1(pubkey) => res.copy_from_slice(&pubkey.0.serialize()[1..33]),
         }
         res
     }
@@ -132,10 +139,9 @@ pub fn pub_sub_topic(prefix: TopicPrefix, topic: &str) -> String {
 
 #[test]
 fn signed_message_serde() {
-    let mut rng = rand::thread_rng();
-    let secret = SecretKey::random(&mut rng);
+    let secret = [1u8; 32];
     let initial_msg = vec![0u8; 32];
-    let signed_encoded = encode_and_sign(&initial_msg, &secret.serialize()).unwrap();
+    let signed_encoded = encode_and_sign(&initial_msg, &secret).unwrap();
 
     let (decoded, ..) = decode_signed::<Vec<u8>>(&signed_encoded).unwrap();
     assert_eq!(decoded, initial_msg);

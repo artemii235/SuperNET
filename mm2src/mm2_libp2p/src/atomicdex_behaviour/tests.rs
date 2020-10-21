@@ -26,8 +26,8 @@ impl Node {
         let my_address = ip.parse().unwrap();
 
         let mut rng = rand::thread_rng();
-        let secret = SecretKey::random(&mut rng);
-        let mut priv_key = secret.serialize();
+        let secret = SecretKey::new(&mut rng);
+        let mut priv_key = secret.as_ref().clone();
 
         let (cmd_tx, mut event_rx, peer_id) =
             start_gossipsub(my_address, port, spawn_boxed, seednodes, &mut priv_key, true, |_| {});
