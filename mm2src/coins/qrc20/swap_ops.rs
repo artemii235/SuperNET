@@ -183,7 +183,6 @@ impl Qrc20Coin {
             return ERR!("Payment tx was sent from wrong address, expected {:?}", sender);
         }
 
-        // TODO refactor this to allow deploy new swap contracts
         if self.swap_contract_address != erc20_payment.swap_contract_address {
             return ERR!(
                 "Payment tx was sent to wrong address, expected {:?}",

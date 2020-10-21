@@ -4,10 +4,11 @@ use bigdecimal::Zero;
 use chain::OutPoint;
 use common::executor::spawn;
 use common::mm_ctx::MmCtxBuilder;
+use itertools::Itertools;
 use mocktopus::mocking::{MockResult, Mockable};
 use std::sync::{Arc, Mutex};
 
-fn qrc20_coin_for_test(priv_key: &[u8]) -> (MmArc, Qrc20Coin) {
+pub fn qrc20_coin_for_test(priv_key: &[u8]) -> (MmArc, Qrc20Coin) {
     let conf = json!({
         "coin":"QRC20",
         "required_confirmations":0,
@@ -83,50 +84,6 @@ fn test_withdraw_impl_fee_details() {
     })));
     assert_eq!(tx_details.fee_details, Some(TxFeeDetails::Qrc20(expected)));
 }
-
-// #[test]
-// fn test_tx_details_by_hash() {
-//     let priv_key = [
-//         192, 240, 176, 226, 14, 170, 226, 96, 107, 47, 166, 243, 154, 48, 28, 243, 18, 144, 240, 1, 79, 103, 178, 42,
-//         32, 161, 106, 119, 241, 227, 42, 102,
-//     ];
-//     let (_ctx, coin) = qrc20_coin_for_test(&priv_key);
-//
-//     let expected = json!({
-//         "tx_hex":"0100000001fcaaf1343a392cc96c93ac6f5e84399a69cf52c29ac70254f17ac484169110b7000000006a47304402201b31345c1f377b2a19603d922796726940e4c8068e64e21d551534799ffacaf002207d382f49c9c069dcdd18c90a51687a346a99857ce8b82b91a6cb1ee391811aee012102cd7745ea1c03c9a1ebbcdb7ab9ee19d4e4d306f44665295d996db7c38527da6bffffffff020000000000000000625403a02526012844a9059cbb0000000000000000000000009e032d4b0090a11dc40fe6c47601499a35d55fbb0000000000000000000000000000000000000000000000000000000011e1a30014d362e096e873eb7907e205fadc6175c6fec7bc44c23540a753010000001976a914f36e14131c70e5f15a3f92b1d7e8622a62e570d888ac13f9ff5e",
-//         "tx_hash":"39104d29d77ba83c5c6c63ab7a0f096301c443b4538dc6b30140453a40caa80a",
-//         "from":[
-//             "qfkXE2cNFEwPFQqvBcqs8m9KrkNa9KV4xi"
-//         ],
-//         "to":[
-//             "qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG"
-//         ],
-//         "total_amount":"3",
-//         "spent_by_me":"3",
-//         "received_by_me":"0",
-//         "my_balance_change":"-3",
-//         "block_height":628164,
-//         "timestamp":1593833808,
-//         "fee_details":{
-//             "coin":"QTUM",
-//             "miner_fee":"1.01526596",
-//             "gas_limit":2_500_000,
-//             "gas_price":40,
-//             "total_gas_fee":"0.00036231",
-//         },
-//         "coin":"QRC20",
-//         "internal_id":""
-//     });
-//     let expected = json::from_value(expected).unwrap();
-//
-//     let hash = hex::decode("39104d29d77ba83c5c6c63ab7a0f096301c443b4538dc6b30140453a40caa80a").unwrap();
-//     let actual = unwrap!(block_on(coin.tx_details_by_hash(&hash)));
-//
-//     let st = json::to_string(&actual).unwrap();
-//     println!("{}", st);
-//
-//     assert_eq!(actual, expected);
-// }
 
 #[test]
 fn test_can_i_spend_other_payment() {
@@ -937,7 +894,7 @@ fn test_transfer_details_by_hash() {
     let tx_hex:BytesJson = hex::decode("0100000001426d27fde82e12e1ce84e73ca41e2a30420f4c94aaa37b30d4c5b8b4f762c042040000006a473044022032665891693ee732571cefaa6d322ec5114c78259f2adbe03a0d7e6b65fbf40d022035c9319ca41e5423e09a8a613ac749a20b8f5ad6ba4ad6bb60e4a020b085d009012103693bff1b39e8b5a306810023c29b95397eb395530b106b1820ea235fd81d9ce9ffffffff050000000000000000625403a08601012844095ea7b30000000000000000000000001549128bbfb33b997949b4105b6a6371c998e212000000000000000000000000000000000000000000000000000000000000000014d362e096e873eb7907e205fadc6175c6fec7bc44c20000000000000000625403a08601012844095ea7b30000000000000000000000001549128bbfb33b997949b4105b6a6371c998e21200000000000000000000000000000000000000000000000000000000000927c014d362e096e873eb7907e205fadc6175c6fec7bc44c20000000000000000835403a0860101284c640c565ae300000000000000000000000000000000000000000000000000000000000493e0000000000000000000000000d362e096e873eb7907e205fadc6175c6fec7bc440000000000000000000000000000000000000000000000000000000000000000141549128bbfb33b997949b4105b6a6371c998e212c20000000000000000835403a0860101284c640c565ae300000000000000000000000000000000000000000000000000000000000493e0000000000000000000000000d362e096e873eb7907e205fadc6175c6fec7bc440000000000000000000000000000000000000000000000000000000000000001141549128bbfb33b997949b4105b6a6371c998e212c231754b04000000001976a9149e032d4b0090a11dc40fe6c47601499a35d55fbb88acf7cd8b5f").unwrap().into();
 
     let details = unwrap!(block_on(coin.transfer_details_by_hash(tx_hash)));
-    let mut it = details.into_iter();
+    let mut it = details.into_iter().sorted_by(|(id_x, _), (id_y, _)| id_x.cmp(&id_y));
 
     let expected_fee_details = |total_gas_fee: &str| -> TxFeeDetails {
         let fee = Qrc20FeeDetails {
@@ -952,7 +909,7 @@ fn test_transfer_details_by_hash() {
 
     // qKVvtDqpnFGDxsDzck5jmLwdnD2jRH6aM8 is UTXO representation of 1549128bbfb33b997949b4105b6a6371c998e212 contract address
 
-    let actual = it.next().unwrap();
+    let (_id, actual) = it.next().unwrap();
     let expected = TransactionDetails {
         tx_hex: tx_hex.clone(),
         tx_hash: tx_hash_bytes.clone().into(),
@@ -974,7 +931,7 @@ fn test_transfer_details_by_hash() {
     };
     assert_eq!(actual, expected);
 
-    let actual = it.next().unwrap();
+    let (_id, actual) = it.next().unwrap();
     let expected = TransactionDetails {
         tx_hex: tx_hex.clone(),
         tx_hash: tx_hash_bytes.clone().into(),
@@ -996,7 +953,7 @@ fn test_transfer_details_by_hash() {
     };
     assert_eq!(actual, expected);
 
-    let actual = it.next().unwrap();
+    let (_id, actual) = it.next().unwrap();
     let expected = TransactionDetails {
         tx_hex: tx_hex.clone(),
         tx_hash: tx_hash_bytes.clone().into(),
@@ -1018,7 +975,7 @@ fn test_transfer_details_by_hash() {
     };
     assert_eq!(actual, expected);
 
-    let actual = it.next().unwrap();
+    let (_id, actual) = it.next().unwrap();
     let expected = TransactionDetails {
         tx_hex: tx_hex.clone(),
         tx_hash: tx_hash_bytes.clone().into(),
@@ -1040,7 +997,7 @@ fn test_transfer_details_by_hash() {
     };
     assert_eq!(actual, expected);
 
-    let actual = it.next().unwrap();
+    let (_id, actual) = it.next().unwrap();
     let expected = TransactionDetails {
         tx_hex: tx_hex.clone(),
         tx_hash: tx_hash_bytes.clone().into(),

@@ -6,8 +6,8 @@ use bigdecimal::BigDecimal;
 #[cfg(not(feature = "native"))] use common::call_back;
 use common::executor::Timer;
 #[cfg(feature = "native")] use common::for_tests::mm_dump;
-use common::for_tests::{enable_electrum, enable_native, from_env_file, get_passphrase, mm_spat, LocalStart,
-                        MarketMakerIt};
+use common::for_tests::{enable_electrum, enable_native, find_metrics_in_json, from_env_file, get_passphrase, mm_spat,
+                        LocalStart, MarketMakerIt};
 #[cfg(not(feature = "native"))] use common::mm_ctx::MmArc;
 use common::mm_metrics::{MetricType, MetricsJson};
 use common::mm_number::Fraction;
@@ -2574,32 +2574,6 @@ fn request_metrics(mm: &MarketMakerIt) -> MetricsJson {
     unwrap!(json::from_str(&metrics))
 }
 
-fn find_metric(metrics: MetricsJson, search_key: &str, search_labels: &Vec<(&str, &str)>) -> Option<MetricType> {
-    metrics.metrics.into_iter().find(|metric| {
-        let (key, labels) = match metric {
-            MetricType::Counter { key, labels, .. } => (key, labels),
-            _ => return false,
-        };
-
-        if key != search_key {
-            return false;
-        }
-
-        for (s_label_key, s_label_value) in search_labels.iter() {
-            let label_value = match labels.get(&s_label_key.to_string()) {
-                Some(x) => x,
-                _ => return false,
-            };
-
-            if s_label_value != label_value {
-                return false;
-            }
-        }
-
-        true
-    })
-}
-
 #[test]
 #[cfg(feature = "native")]
 fn test_metrics_method() {
@@ -2639,7 +2613,7 @@ fn test_metrics_method() {
     log!("Received metrics:");
     log!([metrics]);
 
-    find_metric(metrics, "rpc_client.traffic.out", &vec![("coin", "RICK")])
+    find_metrics_in_json(metrics, "rpc_client.traffic.out", &[("coin", "RICK")])
         .expect(r#"Couldn't find a metric with key = "traffic.out" and label: coin = "RICK" in received json"#);
 }
 
@@ -2649,7 +2623,7 @@ fn test_metrics_method() {
 fn test_electrum_tx_history() {
     fn get_tx_history_request_count(mm: &MarketMakerIt) -> u64 {
         let metrics = request_metrics(&mm);
-        match find_metric(metrics, "tx.history.request.count", &vec![
+        match find_metrics_in_json(metrics, "tx.history.request.count", &[
             ("coin", "RICK"),
             ("method", "blockchain.scripthash.get_history"),
         ])
@@ -3290,6 +3264,7 @@ fn qrc20_activate_electrum() {
         "coin": "QRC20",
         "servers": [{"url":"95.217.83.126:10001"}],
         "mm2": 1,
+        "swap_contract_address": "0xd362e096e873eb7907e205fadc6175c6fec7bc44",
     }))));
     assert_eq!(
         electrum.0,
@@ -3429,6 +3404,7 @@ fn test_qrc20_withdraw_error() {
         "coin": "QRC20",
         "servers": [{"url":"95.217.83.126:10001"}],
         "mm2": 1,
+        "swap_contract_address": "0xd362e096e873eb7907e205fadc6175c6fec7bc44",
     }))));
     assert_eq!(
         electrum.0,
@@ -3547,6 +3523,7 @@ fn test_qrc20_tx_history() {
         "servers": [{"url":"95.217.83.126:10001"}],
         "mm2": 1,
         "tx_history": true,
+        "swap_contract_address": "0xd362e096e873eb7907e205fadc6175c6fec7bc44",
     }))));
     assert_eq!(
         electrum.0,
@@ -3579,24 +3556,36 @@ fn test_qrc20_tx_history() {
         tx_history.0,
         tx_history.1
     );
+    log!([tx_history.1]);
     let tx_history_json: Json = json::from_str(&tx_history.1).unwrap();
-    log!([tx_history_json]);
     let tx_history_result = &tx_history_json["result"];
 
     let mut expected = vec![
-        /// https://testnet.qtum.info/tx/39104d29d77ba83c5c6c63ab7a0f096301c443b4538dc6b30140453a40caa80a
-        "39104d29d77ba83c5c6c63ab7a0f096301c443b4538dc6b30140453a40caa80a",
-        /// https://testnet.qtum.info/tx/d9965e3496a8a4af2d462424b989694b3146d78c61654b99bbadba64464f75cb
-        "d9965e3496a8a4af2d462424b989694b3146d78c61654b99bbadba64464f75cb",
-        /// https://testnet.qtum.info/tx/c2f346d3d2aadc35f5343d0d493a139b2579175496d685ec30734d161e62f7a1
-        "c2f346d3d2aadc35f5343d0d493a139b2579175496d685ec30734d161e62f7a1",
+        // https://testnet.qtum.info/tx/45d722e615feb853d608033ffc20fd51c9ee86e2321cfa814ba5961190fb57d2
+        "45d722e615feb853d608033ffc20fd51c9ee86e2321cfa814ba5961190fb57d200000000000000020000000000000000",
+        // https://testnet.qtum.info/tx/45d722e615feb853d608033ffc20fd51c9ee86e2321cfa814ba5961190fb57d2
+        "45d722e615feb853d608033ffc20fd51c9ee86e2321cfa814ba5961190fb57d200000000000000020000000000000001",
+        // https://testnet.qtum.info/tx/abcb51963e720fdfed7b889cea79947ba3cabd7b8b384f6b5adb41a3f4b5d61b
+        "abcb51963e720fdfed7b889cea79947ba3cabd7b8b384f6b5adb41a3f4b5d61b00000000000000020000000000000000",
+        // https://testnet.qtum.info/tx/4ea5392d03a9c35126d2d5a8294c3c3102cfc6d65235897c92ca04c5515f6be5
+        "4ea5392d03a9c35126d2d5a8294c3c3102cfc6d65235897c92ca04c5515f6be500000000000000020000000000000000",
+        // https://testnet.qtum.info/tx/9156f5f1d3652c27dca0216c63177da38de5c9e9f03a5cfa278bf82882d2d3d8
+        "9156f5f1d3652c27dca0216c63177da38de5c9e9f03a5cfa278bf82882d2d3d800000000000000020000000000000000",
+        // https://testnet.qtum.info/tx/35e03bc529528a853ee75dde28f27eec8ed7b152b6af7ab6dfa5d55ea46f25ac
+        "35e03bc529528a853ee75dde28f27eec8ed7b152b6af7ab6dfa5d55ea46f25ac00000000000000010000000000000000",
+        // https://testnet.qtum.info/tx/39104d29d77ba83c5c6c63ab7a0f096301c443b4538dc6b30140453a40caa80a
+        "39104d29d77ba83c5c6c63ab7a0f096301c443b4538dc6b30140453a40caa80a00000000000000000000000000000000",
+        // https://testnet.qtum.info/tx/d9965e3496a8a4af2d462424b989694b3146d78c61654b99bbadba64464f75cb
+        "d9965e3496a8a4af2d462424b989694b3146d78c61654b99bbadba64464f75cb00000000000000000000000000000000",
+        // https://testnet.qtum.info/tx/c2f346d3d2aadc35f5343d0d493a139b2579175496d685ec30734d161e62f7a1
+        "c2f346d3d2aadc35f5343d0d493a139b2579175496d685ec30734d161e62f7a100000000000000000000000000000000",
     ];
 
-    assert_eq!(tx_history_result["total"].as_u64().unwrap(), 3);
+    assert_eq!(tx_history_result["total"].as_u64().unwrap(), expected.len() as u64);
     for tx in tx_history_result["transactions"].as_array().unwrap() {
         // pop front item
         let expected_tx = expected.remove(0);
-        assert_eq!(tx["tx_hash"].as_str().unwrap(), expected_tx);
+        assert_eq!(tx["internal_id"].as_str().unwrap(), expected_tx);
     }
 }
 

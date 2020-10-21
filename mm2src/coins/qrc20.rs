@@ -377,63 +377,6 @@ impl UtxoCommonOps for Qrc20Coin {
         let fut = async move { utxo_common::get_verbose_transaction_from_cache_or_rpc(&selfi.utxo, txid).await };
         Box::new(fut.boxed().compat())
     }
-
-    // async fn request_tx_history(&self, metrics: MetricsArc) -> RequestTxHistoryResult {
-    //     let tx_ids = match &self.utxo.rpc_client {
-    //         UtxoRpcClientEnum::Native(_client) => {
-    //             // it should not be happened because qrc20_coin_from_conf_and_request() must not allow enable mode
-    //             return RequestTxHistoryResult::UnknownError(ERRL!("Native mode not supported"));
-    //         },
-    //         UtxoRpcClientEnum::Electrum(client) => {
-    //             let my_address = utxo_addr_into_rpc_format(self.utxo.my_address.clone());
-    //             let contract_addr = qrc20_addr_into_rpc_format(&self.contract_address);
-    //
-    //             mm_counter!(metrics, "tx.history.request.count", 1,
-    //                 "coin" => self.utxo.ticker.clone(), "client" => "electrum", "method" => "blockchain.contract.event.get_history");
-    //
-    //             let history = match client
-    //                 .blockchain_contract_event_get_history(&my_address, &contract_addr, QRC20_TRANSFER_TOPIC)
-    //                 .compat()
-    //                 .await
-    //             {
-    //                 Ok(value) => value,
-    //                 Err(e) => match &e.error {
-    //                     JsonRpcErrorType::Transport(e) | JsonRpcErrorType::Parse(_, e) => {
-    //                         return RequestTxHistoryResult::Retry {
-    //                             error: ERRL!("Error {} on blockchain_contract_event_get_history", e),
-    //                         };
-    //                     },
-    //                     JsonRpcErrorType::Response(_addr, err) => {
-    //                         if HISTORY_TOO_LARGE_ERROR.eq(err) {
-    //                             return RequestTxHistoryResult::HistoryTooLarge;
-    //                         } else {
-    //                             return RequestTxHistoryResult::Retry {
-    //                                 error: ERRL!("Error {:?} on blockchain_contract_event_get_history", e),
-    //                             };
-    //                         }
-    //                     },
-    //                 },
-    //             };
-    //             mm_counter!(metrics, "tx.history.response.count", 1,
-    //                 "coin" => self.utxo.ticker.clone(), "client" => "electrum", "method" => "blockchain.contract.event.get_history");
-    //
-    //             mm_counter!(metrics, "tx.history.response.total_length", history.len() as u64,
-    //                 "coin" => self.utxo.ticker.clone(), "client" => "electrum", "method" => "blockchain.contract.event.get_history");
-    //
-    //             // electrum returns the most recent transactions in the end but we need to
-    //             // process them first so rev is required
-    //             history
-    //                 .into_iter()
-    //                 .rev()
-    //                 .map(|item| {
-    //                     let height = if item.height < 0 { 0 } else { item.height as u64 };
-    //                     (item.tx_hash, height)
-    //                 })
-    //                 .collect()
-    //         },
-    //     };
-    //     RequestTxHistoryResult::Ok(tx_ids)
-    // }
 }
 
 impl SwapOps for Qrc20Coin {
@@ -778,7 +721,7 @@ impl MmCoin for Qrc20Coin {
 
     fn validate_address(&self, address: &str) -> ValidateAddressResult { utxo_common::validate_address(self, address) }
 
-    fn process_history_loop(&self, ctx: MmArc) { unimplemented!() }
+    fn process_history_loop(&self, ctx: MmArc) { self.history_loop(ctx) }
 
     fn history_sync_status(&self) -> HistorySyncState { utxo_common::history_sync_status(&self.utxo) }
 
@@ -904,6 +847,7 @@ impl HistoryBuilder {
         Ok(HistoryCont { history })
     }
 
+    /// TODO refactor
     async fn build_utxo(self) -> Result<HistoryCont<UtxoTx>, String> {
         let electrum = match self.coin.utxo.rpc_client {
             UtxoRpcClientEnum::Electrum(ref rpc_cln) => rpc_cln.clone(),

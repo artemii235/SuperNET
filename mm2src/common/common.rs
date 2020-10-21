@@ -884,6 +884,55 @@ pub mod wio {
     }
 }
 
+pub struct LazyLocal<'a, T> {
+    inner: Option<T>,
+    constructor: Option<Box<dyn FnOnce() -> T + 'a>>,
+}
+
+impl<'a, T> LazyLocal<'a, T> {
+    pub fn with_constructor(constructor: impl FnOnce() -> T + 'a) -> Self {
+        Self {
+            inner: None,
+            constructor: Some(Box::new(constructor)),
+        }
+    }
+
+    pub fn is_initialized(&self) -> bool { self.inner.is_some() }
+
+    pub fn get(&mut self) -> &T { self.get_mut() }
+
+    pub fn get_mut(&mut self) -> &mut T {
+        match self.inner {
+            Some(ref mut inner) => inner,
+            None => {
+                let mut constructor = None;
+                std::mem::swap(&mut self.constructor, &mut constructor);
+                let constructor = constructor.expect("constructor is used already");
+                self.inner = Some(constructor());
+                self.inner.as_mut().unwrap()
+            },
+        }
+    }
+}
+
+#[test]
+fn test_lazy_local() {
+    let template = "Default".to_string();
+    let mut local = LazyLocal::with_constructor(|| template.clone());
+
+    assert!(!local.is_initialized());
+    assert!(local.constructor.is_some());
+    assert_eq!(local.inner, None);
+
+    assert_eq!(local.get(), &template);
+    assert!(local.is_initialized());
+    assert!(local.constructor.is_none());
+    assert_eq!(local.get_mut(), &template);
+
+    *local.get_mut() = "Another string".into();
+    assert_eq!(local.get(), "Another string");
+}
+
 #[cfg(feature = "native")]
 pub mod executor {
     use futures::task::Context;

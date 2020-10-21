@@ -38,7 +38,7 @@ gstuff = { version = "0.6", features = ["nightly"] }
 http = "0.1"
 http-body = "0.1"
 hyper = { version = "0.12", optional = true }
-itertools = "0.7"
+itertools = "0.9"
 lazy_static = "1.3"
 libc = "0.2"
 rand = { version = "0.7", features = ["std", "small_rng"] }

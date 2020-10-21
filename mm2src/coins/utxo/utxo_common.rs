@@ -49,6 +49,8 @@ lazy_static! {
     });
 }
 
+pub const HISTORY_TOO_LARGE_ERR_CODE: i64 = -1;
+
 pub async fn get_tx_fee(coin: &UtxoCoinFields) -> Result<ActualTxFee, JsonRpcError> {
     match &coin.tx_fee {
         TxFee::Fixed(fee) => Ok(ActualTxFee::Fixed(*fee)),
@@ -1317,8 +1319,6 @@ pub fn process_history_loop<T>(coin: &T, ctx: MmArc)
 where
     T: AsRef<UtxoCoinFields> + UtxoStandardOps + UtxoCommonOps + MmCoin + MarketCoinOps,
 {
-    const HISTORY_TOO_LARGE_ERR_CODE: i64 = -1;
-
     let mut my_balance: Option<BigDecimal> = None;
     let history = coin.load_history_from_file(&ctx);
     let mut history_map: HashMap<H256Json, TransactionDetails> = history
