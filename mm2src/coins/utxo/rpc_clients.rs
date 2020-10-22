@@ -6,7 +6,7 @@ use crate::utxo::sat_from_big_decimal;
 use crate::{RpcTransportEventHandler, RpcTransportEventHandlerShared};
 use bigdecimal::BigDecimal;
 use chain::{BlockHeader, OutPoint, Transaction as UtxoTx};
-use common::custom_futures::{join_all_sequential, select_ok_sequential};
+use common::custom_futures::select_ok_sequential;
 use common::executor::{spawn, Timer};
 use common::jsonrpc_client::{JsonRpcClient, JsonRpcMultiClient, JsonRpcRemoteAddr, JsonRpcRequest, JsonRpcResponse,
                              JsonRpcResponseFut, RpcRes};
@@ -336,7 +336,7 @@ pub enum EstimateFeeMethod {
 /// https://bitcoin.org/en/developer-reference#rpc-quick-reference - Bitcoin RPC API reference
 /// Other coins have additional methods or miss some of these
 /// This description will be updated with more info
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct NativeClientImpl {
     /// Name of coin the rpc client is intended to work with
     pub coin_ticker: String,
@@ -346,6 +346,7 @@ pub struct NativeClientImpl {
     pub auth: String,
     /// Transport event handlers
     pub event_handlers: Vec<RpcTransportEventHandlerShared>,
+    pub request_id: AtomicU64,
 }
 
 #[derive(Clone, Debug)]
@@ -371,7 +372,7 @@ impl UtxoJsonRpcClientInfo for NativeClientImpl {
 impl JsonRpcClient for NativeClientImpl {
     fn version(&self) -> &'static str { "1.0" }
 
-    fn next_id(&self) -> String { "0".into() }
+    fn next_id(&self) -> String { self.request_id.fetch_add(1, AtomicOrdering::Relaxed).to_string() }
 
     fn client_info(&self) -> String { UtxoJsonRpcClientInfo::client_info(self) }
 

@@ -21,13 +21,19 @@ message Message {
 	repeated string topic_ids = 4;
 }
 
+message IncludedToRelaysMesh {
+    required bool included = 1;
+    required uint32 mesh_size = 2;
+}
+
 message ControlMessage {
 	repeated ControlIHave ihave = 1;
 	repeated ControlIWant iwant = 2;
 	repeated ControlGraft graft = 3;
 	repeated ControlPrune prune = 4;
 	optional bool iamrelay = 5;
-	optional bool included_to_relayers_mesh = 6;
+	optional IncludedToRelaysMesh included_to_relays_mesh = 6;
+	optional uint32 mesh_size = 7;
 }
 
 message ControlIHave {

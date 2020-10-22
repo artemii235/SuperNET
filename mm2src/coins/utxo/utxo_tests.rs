@@ -51,6 +51,7 @@ fn native_client_for_test() -> NativeClient {
         uri: "".into(),
         auth: "".into(),
         event_handlers: vec![],
+        request_id: 0u64.into(),
     }))
 }
 
@@ -354,6 +355,7 @@ fn test_wait_for_payment_spend_timeout_native() {
             URL_SAFE
         ))),
         event_handlers: Default::default(),
+        request_id: 0u64.into(),
     };
 
     static mut OUTPUT_SPEND_CALLED: bool = false;
@@ -470,6 +472,7 @@ fn test_withdraw_impl_set_fixed_fee() {
             URL_SAFE
         ))),
         event_handlers: Default::default(),
+        request_id: 0u64.into(),
     }));
 
     let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client), None);
@@ -515,6 +518,7 @@ fn test_withdraw_impl_sat_per_kb_fee() {
             URL_SAFE
         ))),
         event_handlers: Default::default(),
+        request_id: 0u64.into(),
     }));
 
     let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client), None);
@@ -563,6 +567,7 @@ fn test_withdraw_impl_sat_per_kb_fee_amount_equal_to_max() {
             URL_SAFE
         ))),
         event_handlers: Default::default(),
+        request_id: 0u64.into(),
     }));
 
     let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client), None);
@@ -613,6 +618,7 @@ fn test_withdraw_impl_sat_per_kb_fee_amount_equal_to_max_dust_included_to_fee() 
             URL_SAFE
         ))),
         event_handlers: Default::default(),
+        request_id: 0u64.into(),
     }));
 
     let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client), None);
@@ -663,6 +669,7 @@ fn test_withdraw_impl_sat_per_kb_fee_amount_over_max() {
             URL_SAFE
         ))),
         event_handlers: Default::default(),
+        request_id: 0u64.into(),
     }));
 
     let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client), None);
@@ -701,6 +708,7 @@ fn test_withdraw_impl_sat_per_kb_fee_max() {
             URL_SAFE
         ))),
         event_handlers: Default::default(),
+        request_id: 0u64.into(),
     }));
 
     let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client), None);
@@ -1032,6 +1040,7 @@ fn test_generate_transaction_relay_fee_is_used_when_dynamic_fee_is_lower() {
             URL_SAFE
         ))),
         event_handlers: Default::default(),
+        request_id: 0u64.into(),
     };
 
     static mut GET_RELAY_FEE_CALLED: bool = false;
@@ -1082,6 +1091,7 @@ fn test_generate_tx_fee_is_correct_when_dynamic_fee_is_larger_than_relay() {
             URL_SAFE
         ))),
         event_handlers: Default::default(),
+        request_id: 0u64.into(),
     };
 
     static mut GET_RELAY_FEE_CALLED: bool = false;

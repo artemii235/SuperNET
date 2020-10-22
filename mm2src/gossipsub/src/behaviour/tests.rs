@@ -791,26 +791,27 @@ mod tests {
     }
 
     #[test]
-    fn test_maintain_relayers_mesh_n_high() {
+    fn test_maintain_relays_mesh_n_high() {
         let peer_no = 20;
         let (mut gs, peers, _) = build_and_inject_nodes(peer_no, vec![], GossipsubConfig::default(), false);
         for peer in peers {
-            gs.relayers_mesh.insert(peer);
+            gs.relays_mesh.insert(peer, 0);
         }
-        assert_eq!(peer_no, gs.relayers_mesh.len(), "Relayers mesh must contain 20 peers");
-        gs.maintain_relayers_mesh();
+        assert_eq!(peer_no, gs.relays_mesh.len(), "relays mesh must contain 20 peers");
+        gs.maintain_relays_mesh();
         assert_eq!(
             gs.config.mesh_n,
-            gs.relayers_mesh.len(),
-            "Relayers mesh must contain mesh_n peers after maintenance"
+            gs.relays_mesh.len(),
+            "relays mesh must contain mesh_n peers after maintenance"
         );
         assert_eq!(gs.events.len(), 14);
         for event in gs.events {
             match event {
                 NetworkBehaviourAction::NotifyHandler { event, .. } => {
-                    assert_eq!(event.control_msgs, vec![
-                        GossipsubControlAction::IncludedToRelayersMesh(false)
-                    ]);
+                    assert_eq!(event.control_msgs, vec![GossipsubControlAction::IncludedToRelaysMesh {
+                        included: false,
+                        mesh_size: gs.relays_mesh.len(),
+                    }]);
                 },
                 _ => panic!("Invalid NetworkBehaviourAction variant"),
             }
@@ -818,30 +819,31 @@ mod tests {
     }
 
     #[test]
-    fn test_maintain_relayers_mesh_n_low() {
+    fn test_maintain_relays_mesh_n_low() {
         let peer_no = 20;
         let (mut gs, peers, _) = build_and_inject_nodes(peer_no, vec![], GossipsubConfig::default(), false);
         for (i, peer) in peers.into_iter().enumerate() {
             if i < 3 {
-                gs.relayers_mesh.insert(peer);
+                gs.relays_mesh.insert(peer, 0);
             } else {
-                gs.connected_relayers.insert(peer);
+                gs.connected_relays.insert(peer);
             }
         }
-        assert_eq!(3, gs.relayers_mesh.len(), "Relayers mesh must contain 3 peers");
-        gs.maintain_relayers_mesh();
+        assert_eq!(3, gs.relays_mesh.len(), "relays mesh must contain 3 peers");
+        gs.maintain_relays_mesh();
         assert_eq!(
-            gs.config.mesh_n,
-            gs.relayers_mesh.len(),
-            "Relayers mesh must contain mesh_n peers after maintenance"
+            4,
+            gs.relays_mesh.len(),
+            "relays mesh must contain 1 more peer after maintenance (4 total)"
         );
-        assert_eq!(gs.events.len(), 3);
+        assert_eq!(gs.events.len(), 1);
         for event in gs.events {
             match event {
                 NetworkBehaviourAction::NotifyHandler { event, .. } => {
-                    assert_eq!(event.control_msgs, vec![
-                        GossipsubControlAction::IncludedToRelayersMesh(true)
-                    ]);
+                    assert_eq!(event.control_msgs, vec![GossipsubControlAction::IncludedToRelaysMesh {
+                        included: true,
+                        mesh_size: gs.relays_mesh.len(),
+                    }]);
                 },
                 _ => panic!("Invalid NetworkBehaviourAction variant"),
             }
@@ -849,41 +851,42 @@ mod tests {
     }
 
     #[test]
-    fn test_process_included_to_relayers_mesh() {
+    fn test_process_included_to_relays_mesh() {
         let peer_no = 2;
         let config = GossipsubConfigBuilder::default().i_am_relay(true).build();
         let (mut gs, peers, _) = build_and_inject_nodes(peer_no, vec![], config, false);
         for peer in &peers {
-            gs.connected_relayers.insert(peer.clone());
+            gs.connected_relays.insert(peer.clone());
         }
 
-        gs.handle_included_to_relayers_mesh(&peers[0], true);
-        assert!(gs.relayers_mesh.contains(&peers[0]));
+        gs.handle_included_to_relays_mesh(&peers[0], true, 1);
+        assert!(gs.relays_mesh.contains_key(&peers[0]));
 
-        gs.handle_included_to_relayers_mesh(&peers[0], false);
-        assert!(!gs.relayers_mesh.contains(&peers[0]));
+        gs.handle_included_to_relays_mesh(&peers[0], false, 1);
+        assert!(!gs.relays_mesh.contains_key(&peers[0]));
     }
 
     #[test]
-    fn test_process_included_to_relayers_mesh_n_high_exceeded() {
+    fn test_process_included_to_relays_mesh_n_high_exceeded() {
         let peer_no = 14;
         let config = GossipsubConfigBuilder::default().i_am_relay(true).build();
         let (mut gs, peers, _) = build_and_inject_nodes(peer_no, vec![], config, false);
         for (i, peer) in peers.iter().enumerate() {
-            gs.connected_relayers.insert(peer.clone());
+            gs.connected_relays.insert(peer.clone());
             if i < 13 {
-                gs.relayers_mesh.insert(peer.clone());
+                gs.relays_mesh.insert(peer.clone(), 0);
             }
         }
 
-        gs.handle_included_to_relayers_mesh(&peers[13], true);
-        assert!(!gs.relayers_mesh.contains(&peers[13]));
+        gs.handle_included_to_relays_mesh(&peers[13], true, 1);
+        assert!(!gs.relays_mesh.contains_key(&peers[13]));
 
         match gs.events.pop_back().unwrap() {
             NetworkBehaviourAction::NotifyHandler { event, peer_id, .. } => {
-                assert_eq!(event.control_msgs, vec![
-                    GossipsubControlAction::IncludedToRelayersMesh(false)
-                ]);
+                assert_eq!(event.control_msgs, vec![GossipsubControlAction::IncludedToRelaysMesh {
+                    included: false,
+                    mesh_size: gs.relay_mesh_len(),
+                }]);
                 assert_eq!(peer_id, peers[13]);
             },
             _ => panic!("Invalid NetworkBehaviourAction variant"),

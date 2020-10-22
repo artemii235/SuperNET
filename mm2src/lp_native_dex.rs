@@ -487,9 +487,9 @@ pub async fn lp_init(mypubport: u16, ctx: MmArc) -> Result<(), String> {
     spawn(p2p_event_process_loop(ctx.clone(), event_rx, i_am_seed));
     /*
     if i_am_seed {
-        log!("Before relayer node");
-        let (tx, peer_id) = relayer_node(ctx.clone(), myipaddr, mypubport, seednodes.clone());
-        log!("After relayer node");
+        log!("Before relay node");
+        let (tx, peer_id) = relay_node(ctx.clone(), myipaddr, mypubport, seednodes.clone());
+        log!("After relay node");
         try_s!(ctx.gossip_sub_cmd_queue.pin(tx));
         try_s!(ctx.peer_id.pin(peer_id));
     }
