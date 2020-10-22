@@ -12,6 +12,7 @@ pub fn test_list_unspent() {
             URL_SAFE
         ))),
         event_handlers: Default::default(),
+        request_id: 0u64.into(),
     };
     let unspents = client.list_unspent(0, std::i32::MAX, vec!["RBs52D7pVq7txo6SCz1Tuyw2WrPmdqU3qw".to_owned()]);
     let unspents = unwrap!(unspents.wait());
@@ -27,6 +28,7 @@ pub fn test_get_block_count() {
             URL_SAFE
         ))),
         event_handlers: Default::default(),
+        request_id: 0u64.into(),
     };
     let block_count = unwrap!(client
         .validate_address("RBs52D7pVq7txo6SCz1Tuyw2WrPmdqU3qw".to_owned())
@@ -43,6 +45,7 @@ pub fn test_import_address() {
             URL_SAFE
         ))),
         event_handlers: Default::default(),
+        request_id: 0u64.into(),
     };
     let import_addr = client.import_address(
         "bMjWGCinft5qEvsuf9Wg1fgz1CjpXBXbTB",

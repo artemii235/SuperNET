@@ -640,6 +640,7 @@ pub async fn utxo_arc_from_conf_and_request(
                     uri: fomat!("http://127.0.0.1:"(rpc_port)),
                     auth: format!("Basic {}", base64_encode(&auth_str, URL_SAFE)),
                     event_handlers,
+                    request_id: 0u64.into(),
                 });
 
                 UtxoRpcClientEnum::Native(NativeClient(client))
