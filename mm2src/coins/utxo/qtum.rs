@@ -395,13 +395,6 @@ impl MmCoin for QtumCoin {
 }
 
 pub fn is_qtum_unspent_mature(mature_confirmations: u32, output: &RpcTransaction) -> bool {
-    // QTUM coin specific.
-    // Note that the behavior might appear only once and it's not true.
-    if output.confirmations == 0 {
-        log!("output with confirmations == 0: "[output.txid]);
-        return false;
-    }
-
     let is_qrc20_coinbase = output.vout.iter().any(|x| x.is_empty());
     let is_coinbase = output.is_coinbase() || is_qrc20_coinbase;
     !is_coinbase || output.confirmations >= mature_confirmations
