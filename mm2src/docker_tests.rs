@@ -954,7 +954,7 @@ mod docker_tests {
         }))));
         assert!(rc.0.is_success(), "!max_taker_vol: {}", rc.1);
         let json: Json = json::from_str(&rc.1).unwrap();
-        // the result of equation x + 0.0001 + 0.00002 = 0.05328455
+        // the result of equation x + 0.0001 (dex fee) + 0.0002 (miner fee * 2) = 0.05328455
         assert_eq!(json["result"]["numer"], Json::from("1059691"));
         assert_eq!(json["result"]["denom"], Json::from("20000000"));
 
