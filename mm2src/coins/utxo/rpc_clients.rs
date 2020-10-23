@@ -524,7 +524,7 @@ impl UtxoRpcClientOps for NativeClient {
                     });
                     // Check again if at least 1 spent outpoint is still there
                     if find.is_some() {
-                        log!("Spent output is still returned from daemon: "[find]);
+                        log!("Spent output is still returned from daemon: "[find] ". Tx hash just sent " [tx_hash] ". All returned unspents " [unspents]);
                         Timer::sleep(0.1).await;
                         continue 'mainloop;
                     }
