@@ -133,6 +133,10 @@ impl From<u64> for MmNumber {
     fn from(n: u64) -> MmNumber { BigRational::from_integer(n.into()).into() }
 }
 
+impl From<&'static str> for MmNumber {
+    fn from(n: &'static str) -> MmNumber { MmNumber::from(n.parse::<BigDecimal>().unwrap()) }
+}
+
 impl From<(u64, u64)> for MmNumber {
     fn from(tuple: (u64, u64)) -> MmNumber { BigRational::new(tuple.0.into(), tuple.1.into()).into() }
 }
