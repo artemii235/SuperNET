@@ -32,10 +32,14 @@ pub fn generate_contract_call_script_pubkey(
 }
 
 /// Check if a given script contains a contract call.
-/// First opcode should be OP_4 to be a contract call.
+/// First opcode should be a version (OP_1..OP_16) to be a contract call.
 pub fn is_contract_call(script: &Script) -> bool {
     match script.iter().next() {
-        Some(Ok(instr)) => instr.opcode == Opcode::OP_4,
+        Some(Ok(instr)) => {
+            let opcode = instr.opcode as usize;
+            let version_range = (Opcode::OP_1 as usize)..(Opcode::OP_16 as usize);
+            version_range.contains(&opcode)
+        },
         _ => false,
     }
 }

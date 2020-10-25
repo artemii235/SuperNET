@@ -1,4 +1,7 @@
 use super::*;
+use crate::qrc20::history::HistoryOrder;
+use common::lazy::FindMapLazy;
+use history::HistoryBuilder;
 use script_pubkey::{extract_contract_call_from_script, extract_token_addr_from_script, is_contract_call};
 
 #[derive(Debug, Eq, PartialEq)]
@@ -317,13 +320,20 @@ impl Qrc20Coin {
             HistoryBuilder::new(self.clone())
                 .from_block(search_from_block as i64)
                 .address(receiver.clone())
-                .stop_on_verbose_error(false)
-                .build_utxo()
+                // current function could be called much later than end of the swap
+                .order(HistoryOrder::OldestToNewest)
+                .build_utxo_lazy()
                 .await
         );
         let found = history
             .into_iter()
-            .find(|tx| find_receiver_spend_with_swap_id_and_secret_hash(tx, &expected_swap_id, &secret_hash).is_some());
+            .find_map_lazy(|tx| {
+                let tx = tx.ok()?;
+                find_receiver_spend_with_swap_id_and_secret_hash(&tx, &expected_swap_id, &secret_hash)
+                    // return Some(tx) if the `receiverSpend` was found
+                    .map(|_| tx)
+            })
+            .await;
         if let Some(spent_tx) = found {
             return Ok(Some(FoundSwapTxSpend::Spent(TransactionEnum::UtxoTx(spent_tx))));
         }
@@ -333,13 +343,20 @@ impl Qrc20Coin {
         let history = try_s!(
             HistoryBuilder::new(self.clone())
                 .from_block(search_from_block as i64)
-                .stop_on_verbose_error(false)
-                .build_utxo()
+                // current function could be called much later than end of the swap
+                .order(HistoryOrder::OldestToNewest)
+                .build_utxo_lazy()
                 .await
         );
-        let found = history.into_iter().find(|tx| {
-            find_swap_contract_call_with_swap_id(ContractCallType::SenderRefund, tx, &expected_swap_id).is_some()
-        });
+        let found = history
+            .into_iter()
+            .find_map_lazy(|tx| {
+                let tx = tx.ok()?;
+                find_swap_contract_call_with_swap_id(ContractCallType::SenderRefund, &tx, &expected_swap_id)
+                    // return Some(tx) if the `senderRefund` was found
+                    .map(|_| tx)
+            })
+            .await;
         if let Some(refunded_tx) = found {
             return Ok(Some(FoundSwapTxSpend::Refunded(TransactionEnum::UtxoTx(refunded_tx))));
         }
@@ -360,14 +377,19 @@ impl Qrc20Coin {
         let history = try_s!(
             HistoryBuilder::new(self.clone())
                 .from_block(search_from_block)
-                .stop_on_verbose_error(false)
-                .build_utxo()
+                .order(HistoryOrder::OldestToNewest)
+                .build_utxo_lazy()
                 .await
         );
         let found = history
             .into_iter()
-            .find(|tx| find_swap_contract_call_with_swap_id(ContractCallType::Erc20Payment, tx, &swap_id).is_some())
-            .map(TransactionEnum::UtxoTx);
+            .find_map_lazy(|tx| {
+                let tx = tx.ok()?;
+                find_swap_contract_call_with_swap_id(ContractCallType::Erc20Payment, &tx, &swap_id)
+                    // return Some(UtxoTx(tx)) if the `erc20Payment` was found
+                    .map(|_| TransactionEnum::UtxoTx(tx))
+            })
+            .await;
         Ok(found)
     }
 
@@ -423,22 +445,30 @@ impl Qrc20Coin {
         } = try_s!(self.erc20_payment_details_from_tx(&tx).await);
 
         loop {
+            // TODO update from_block on each iteration
+
             // Try to find a 'receiverSpend' contract call.
             // This means that we should request a transaction history for the possible spender of our payment - [`Erc20PaymentDetails::receiver`].
             let history = try_s!(
                 HistoryBuilder::new(self.clone())
                     .from_block(from_block as i64)
                     .address(receiver.clone())
-                    .stop_on_verbose_error(false)
-                    .build_utxo()
+                    .order(HistoryOrder::NewestToOldest)
+                    .build_utxo_lazy()
                     .await
             );
             let found = history
                 .into_iter()
-                .find(|tx| find_receiver_spend_with_swap_id_and_secret_hash(tx, &swap_id, &secret_hash).is_some());
+                .find_map_lazy(|tx| {
+                    let tx = tx.ok()?;
+                    find_receiver_spend_with_swap_id_and_secret_hash(&tx, &swap_id, &secret_hash)
+                        // return Some(UtxoTx(tx)) if the `receiverSpend` was found
+                        .map(|_| TransactionEnum::UtxoTx(tx))
+                })
+                .await;
 
             if let Some(spent_tx) = found {
-                return Ok(TransactionEnum::UtxoTx(spent_tx));
+                return Ok(spent_tx);
             }
 
             if now_ms() / 1000 > wait_until {

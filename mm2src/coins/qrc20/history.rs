@@ -4,13 +4,17 @@ use crate::CoinsContext;
 use crate::TxFeeDetails;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use common::jsonrpc_client::JsonRpcErrorType;
+use common::lazy::LazyLocal;
 use common::mm_metrics::MetricsArc;
-use common::LazyLocal;
+use futures01::Future as Future01;
 use itertools::Itertools;
 use script_pubkey::{extract_contract_call_from_script, extract_gas_from_script, ExtractGasEnum};
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::future::Future;
 use std::io::Cursor;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 use std::thread;
 use std::time::Duration;
 use swap_ops::ContractCallType;
@@ -174,18 +178,11 @@ impl Qrc20Coin {
                 .flatten()
                 .map(|(_tx_id, tx)| tx)
                 .collect();
-            // the transactions with block_height == 0 are the most recent so we need to separately handle them while sorting
             to_write.sort_unstable_by(|a, b| {
-                if a.block_height == 0 {
-                    Ordering::Less
-                } else if b.block_height == 0 {
-                    Ordering::Greater
-                } else {
-                    match b.block_height.cmp(&a.block_height) {
-                        // do not reverse `transfer` events in one transaction
-                        Ordering::Equal => a.internal_id.cmp(&b.internal_id),
-                        cmp => cmp,
-                    }
+                match sort_newest_to_oldest(a.block_height as i64, b.block_height as i64) {
+                    // do not reverse `transfer` events in one transaction
+                    Ordering::Equal => a.internal_id.cmp(&b.internal_id),
+                    ord => ord,
                 }
             });
             self.save_history_to_file(&unwrap!(json::to_vec(&to_write)), &ctx);
@@ -334,24 +331,15 @@ impl Qrc20Coin {
     }
 
     fn request_tx_history(&self, metrics: MetricsArc) -> RequestTxHistoryResult {
-        let electrum = match self.utxo.rpc_client {
-            UtxoRpcClientEnum::Electrum(ref electrum) => electrum,
-            UtxoRpcClientEnum::Native(_) => {
-                return RequestTxHistoryResult::UnknownError(ERRL!("Native mode not supported"));
-            },
-        };
-
-        let my_address = utxo_addr_into_rpc_format(self.utxo.my_address.clone());
-        let contract_addr = qrc20_addr_into_rpc_format(&self.contract_address);
-
         mm_counter!(metrics, "tx.history.request.count", 1,
                     "coin" => self.utxo.ticker.clone(), "client" => "electrum", "method" => "blockchain.contract.event.get_history");
-
-        let history = match electrum
-            .blockchain_contract_event_get_history(&my_address, &contract_addr, QRC20_TRANSFER_TOPIC)
-            .wait()
-        {
-            Ok(value) => value,
+        let history_res = block_on(
+            HistoryBuilder::new(self.clone())
+                .order(HistoryOrder::NewestToOldest)
+                .build_with_rpc_error(),
+        );
+        let history_cont = match history_res {
+            Ok(h) => h,
             Err(e) => match &e.error {
                 JsonRpcErrorType::Transport(e) | JsonRpcErrorType::Parse(_, e) => {
                     return RequestTxHistoryResult::Retry {
@@ -372,21 +360,15 @@ impl Qrc20Coin {
         mm_counter!(metrics, "tx.history.response.count", 1,
                     "coin" => self.utxo.ticker.clone(), "client" => "electrum", "method" => "blockchain.contract.event.get_history");
 
-        mm_counter!(metrics, "tx.history.response.total_length", history.len() as u64,
+        mm_counter!(metrics, "tx.history.response.total_length", history_cont.len() as u64,
                     "coin" => self.utxo.ticker.clone(), "client" => "electrum", "method" => "blockchain.contract.event.get_history");
 
-        let tx_ids = history
+        let tx_ids = history_cont
             .into_iter()
-            // electrum returns the most recent transactions in the end but we need to
-            // process them first so rev is required
-            .rev()
             // electrum can returns multiple `TxHistoryItem` with the same `TxHistoryItem::tx_hash`
             // but with the different `TxHistoryItem::log_index`
             .unique_by(|item| item.tx_hash.clone())
-            .map(|item| {
-                let height = if item.height < 0 { 0 } else { item.height as u64 };
-                (item.tx_hash, height)
-            })
+            .map(|item| (item.tx_hash, item.height as u64))
             .collect();
         RequestTxHistoryResult::Ok(tx_ids)
     }
@@ -567,6 +549,172 @@ impl Qrc20Coin {
     }
 }
 
+pub struct HistoryBuilder {
+    coin: Qrc20Coin,
+    from_block: i64,
+    topic: String,
+    address: H160,
+    token_address: H160,
+    order: Option<HistoryOrder>,
+}
+
+pub struct HistoryCont<T> {
+    history: Vec<T>,
+}
+
+/// Future for the [`HistoryBuilder::build_utxo_lazy()`].
+/// Loads `UtxoTx` from `tx_hash`.
+pub struct UtxoFromHashFuture {
+    future: Option<Box<dyn Future<Output = Result<UtxoTx, String>> + Unpin + 'static>>,
+}
+
+pub enum HistoryOrder {
+    NewestToOldest,
+    OldestToNewest,
+}
+
+impl HistoryBuilder {
+    pub fn new(coin: Qrc20Coin) -> HistoryBuilder {
+        let address = qrc20_addr_from_utxo_addr(coin.utxo.my_address.clone());
+        let token_address = coin.contract_address;
+        HistoryBuilder {
+            coin,
+            from_block: 0,
+            topic: QRC20_TRANSFER_TOPIC.to_string(),
+            address,
+            token_address,
+            order: None,
+        }
+    }
+
+    #[allow(clippy::wrong_self_convention)]
+    pub fn from_block(mut self, from_block: i64) -> HistoryBuilder {
+        self.from_block = from_block;
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn topic(mut self, topic: &str) -> HistoryBuilder {
+        self.topic = topic.to_string();
+        self
+    }
+
+    pub fn address(mut self, address: H160) -> HistoryBuilder {
+        self.address = address;
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn token_address(mut self, token_address: H160) -> HistoryBuilder {
+        self.token_address = token_address;
+        self
+    }
+
+    pub fn order(mut self, order: HistoryOrder) -> HistoryBuilder {
+        self.order = Some(order);
+        self
+    }
+
+    pub async fn build(self) -> Result<HistoryCont<TxHistoryItem>, String> {
+        self.build_with_rpc_error().await.map_err(|e| ERRL!("{}", e))
+    }
+
+    pub async fn build_with_rpc_error(self) -> Result<HistoryCont<TxHistoryItem>, JsonRpcError> {
+        let electrum = match self.coin.utxo.rpc_client {
+            UtxoRpcClientEnum::Electrum(ref rpc_cln) => rpc_cln,
+            UtxoRpcClientEnum::Native(_) => panic!("Native mode doesn't support"),
+        };
+
+        let address = qrc20_addr_into_rpc_format(&self.address);
+        let token_address = qrc20_addr_into_rpc_format(&self.token_address);
+        let mut history = electrum
+            .blockchain_contract_event_get_history(&address, &token_address, &self.topic)
+            .compat()
+            .await?;
+
+        if self.from_block != 0 {
+            history = history
+                .into_iter()
+                .filter(|item| self.from_block <= item.height)
+                .collect();
+        }
+
+        match self.order {
+            Some(HistoryOrder::NewestToOldest) => {
+                history.sort_unstable_by(|a, b| sort_newest_to_oldest(a.height, b.height))
+            },
+            Some(HistoryOrder::OldestToNewest) => {
+                history.sort_unstable_by(|a, b| sort_oldest_to_newest(a.height, b.height))
+            },
+            None => (),
+        }
+
+        Ok(HistoryCont { history })
+    }
+
+    /// Request history by `tx_hash` and wrap it into list of UtxoLazyFuture.
+    /// This method is used when there is no reason to load not all `UtxoTx`,
+    /// only the necessary ones.
+    ///
+    /// In particular this is used to load `UtxoTx` until the wanted tx is found.
+    /// See [`FindLazy::find_lazy()`] and [`FindMapLazy::find_map_lazy()`].
+    pub async fn build_utxo_lazy(self) -> Result<HistoryCont<UtxoFromHashFuture>, String> {
+        let coin = self.coin.clone();
+        let cont = try_s!(self.build().await);
+
+        let history = cont
+            .into_iter()
+            .unique_by(|tx| tx.tx_hash.clone())
+            .map(|item| UtxoFromHashFuture::new(coin.clone(), item.tx_hash))
+            .collect();
+
+        Ok(HistoryCont { history })
+    }
+}
+
+impl<T> HistoryCont<T> {
+    #[allow(dead_code)]
+    pub fn into_vec(self) -> Vec<T> { self.history }
+
+    pub fn into_iter(self) -> impl Iterator<Item = T> { self.history.into_iter() }
+
+    pub fn len(&self) -> usize { self.history.len() }
+}
+
+impl UtxoFromHashFuture {
+    /// Create the future.
+    fn new(coin: Qrc20Coin, tx_hash: H256Json) -> UtxoFromHashFuture {
+        let fut = async move {
+            let electrum = match coin.utxo.rpc_client {
+                UtxoRpcClientEnum::Electrum(ref rpc_cln) => rpc_cln,
+                UtxoRpcClientEnum::Native(_) => panic!("Native mode doesn't support"),
+            };
+
+            let verbose_tx = try_s!(electrum.get_verbose_transaction(tx_hash).compat().await);
+            let utxo_tx: UtxoTx = deserialize(verbose_tx.hex.as_slice()).map_err(|e| ERRL!("{:?}", e))?;
+            Ok(utxo_tx)
+        };
+        UtxoFromHashFuture {
+            future: Some(Box::new(fut.boxed())),
+        }
+    }
+}
+
+unsafe impl Send for UtxoFromHashFuture {}
+
+impl Future for UtxoFromHashFuture {
+    type Output = Result<UtxoTx, String>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let mut fut = self.future.take().expect("cannot poll UtxoLazyFuture twice");
+        if let Poll::Ready(result) = fut.poll_unpin(cx) {
+            return Poll::Ready(result);
+        }
+        self.future = Some(fut);
+        Poll::Pending
+    }
+}
+
 fn is_sender_contract(script_pubkey: &Script) -> bool {
     let contract_call_bytes = match extract_contract_call_from_script(&script_pubkey) {
         Ok(bytes) => bytes,
@@ -618,6 +766,21 @@ fn is_receiver_contract(script_pubkey: &Script) -> bool {
 fn display_contract_address(address: UtxoAddress) -> String {
     let address = qrc20_addr_from_utxo_addr(address);
     format!("{:#02x}", address)
+}
+
+fn sort_newest_to_oldest(x_height: i64, y_height: i64) -> Ordering {
+    // the transactions with block_height == 0 are the most recent
+    if x_height == 0 {
+        Ordering::Less
+    } else if y_height == 0 {
+        Ordering::Greater
+    } else {
+        y_height.cmp(&x_height)
+    }
+}
+
+fn sort_oldest_to_newest(x_height: i64, y_height: i64) -> Ordering {
+    sort_newest_to_oldest(x_height, y_height).reverse()
 }
 
 #[cfg(test)]

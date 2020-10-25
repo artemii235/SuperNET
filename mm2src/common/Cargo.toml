@@ -19,6 +19,7 @@ doctest = false
 [dependencies]
 arrayref = "0.3"
 async-std = {version = "1.5", features = ["unstable"]}
+async-trait = "0.1"
 atomic = "0.4"
 backtrace = "0.3"
 base64 = "0.10.0"
