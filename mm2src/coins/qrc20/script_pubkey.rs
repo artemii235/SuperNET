@@ -34,7 +34,8 @@ pub fn generate_contract_call_script_pubkey(
 /// Check if a given script contains a contract call.
 /// First opcode should be a version (OP_1..OP_16) to be a contract call.
 pub fn is_contract_call(script: &Script) -> bool {
-    match script.iter().next() {
+    const VERSION_IDX: usize = 0;
+    match script.get_instruction(VERSION_IDX) {
         Some(Ok(instr)) => {
             let opcode = instr.opcode as usize;
             let version_range = (Opcode::OP_1 as usize)..(Opcode::OP_16 as usize);
@@ -53,9 +54,7 @@ pub enum ExtractGasEnum {
 
 pub fn extract_gas_from_script(script: &Script, extract: ExtractGasEnum) -> Result<u64, String> {
     let instruction = script
-        .iter()
-        .enumerate()
-        .find_map(|(i, instr)| if i == extract as usize { Some(instr) } else { None })
+        .get_instruction(extract as usize)
         .ok_or(ERRL!("Couldn't extract {:?} from script pubkey", extract as usize))?
         .map_err(|e| ERRL!("Error on extract {:?} from pubkey: {}", extract, e))?;
 
@@ -75,9 +74,7 @@ pub fn extract_gas_from_script(script: &Script, extract: ExtractGasEnum) -> Resu
 pub fn extract_contract_call_from_script(script: &Script) -> Result<Vec<u8>, String> {
     const CONTRACT_CALL_IDX: usize = 3;
     let instruction = script
-        .iter()
-        .enumerate()
-        .find_map(|(i, instr)| if i == CONTRACT_CALL_IDX { Some(instr) } else { None })
+        .get_instruction(CONTRACT_CALL_IDX)
         .ok_or(ERRL!("Couldn't extract 'contract_params' from script pubkey"))?
         .map_err(|e| ERRL!("Error on extract 'contract_params' from pubkey: {}", e))?;
 
@@ -96,9 +93,7 @@ pub fn extract_contract_call_from_script(script: &Script) -> Result<Vec<u8>, Str
 pub fn extract_token_addr_from_script(script: &Script) -> Result<H160, String> {
     const TOKEN_ADDRESS_IDX: usize = 4;
     let instruction = script
-        .iter()
-        .enumerate()
-        .find_map(|(i, instr)| if i == TOKEN_ADDRESS_IDX { Some(instr) } else { None })
+        .get_instruction(TOKEN_ADDRESS_IDX)
         .ok_or(ERRL!("Couldn't extract 'token_address' from script pubkey"))?
         .map_err(|e| ERRL!("Error on extract 'token_address' from pubkey: {}", e))?;
 

@@ -1057,11 +1057,7 @@ pub fn extract_secret(secret_hash: &[u8], spend_tx: &[u8]) -> Result<Vec<u8>, St
     let spend_tx: UtxoTx = try_s!(deserialize(spend_tx).map_err(|e| ERRL!("{:?}", e)));
     for (input_idx, input) in spend_tx.inputs.into_iter().enumerate() {
         let script: Script = input.script_sig.clone().into();
-        let instruction = match script
-            .iter()
-            .enumerate()
-            .find_map(|(i, instr)| if i == 1 { Some(instr) } else { None })
-        {
+        let instruction = match script.get_instruction(1) {
             Some(Ok(instr)) => instr,
             Some(Err(e)) => {
                 log!("Warning: "[e]);
