@@ -315,7 +315,7 @@ impl Default for MatchBy {
     fn default() -> Self { MatchBy::Any }
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Copy, Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", content = "data")]
 enum OrderType {
     FillOrKill,
@@ -1271,6 +1271,13 @@ struct TakerMatch {
     last_updated: u64,
 }
 
+#[derive(Serialize)]
+struct LpautobuyResult<'a> {
+    #[serde(flatten)]
+    request: &'a TakerRequest,
+    order_type: OrderType,
+}
+
 pub fn lp_auto_buy(
     ctx: &MmArc,
     base_coin: &MmCoinEnum,
@@ -1308,7 +1315,10 @@ pub fn lp_auto_buy(
         .with_sender_pubkey(H256Json::from(our_public_id.bytes));
     let request = try_s!(request_builder.build());
     ctx.broadcast_p2p_msg(P2PMessage::from_serialize_with_default_addr(&request));
-    let result = json!({ "result": request }).to_string();
+    let result = json!({ "result": LpautobuyResult {
+        request: &request,
+        order_type: input.order_type,
+    } });
     let order = TakerOrder {
         created_at: now_ms(),
         matches: HashMap::new(),
@@ -1318,7 +1328,7 @@ pub fn lp_auto_buy(
     save_my_taker_order(ctx, &order);
     my_taker_orders.insert(order.request.uuid, order);
     drop(my_taker_orders);
-    Ok(result)
+    Ok(result.to_string())
 }
 
 fn price_ping_sig_hash(timestamp: u32, pubsecp: &[u8], pubkey: &[u8], base: &[u8], rel: &[u8], price64: u64) -> H256 {

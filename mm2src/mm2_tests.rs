@@ -2341,7 +2341,11 @@ fn test_fill_or_kill_taker_order_should_not_transform_to_maker() {
             "type": "FillOrKill"
         }
     }))));
-    assert!(rc.0.is_success(), "!setprice: {}", rc.1);
+    assert!(rc.0.is_success(), "!sell: {}", rc.1);
+    let sell_json: Json = json::from_str(&rc.1).unwrap();
+    let order_type = sell_json["result"]["order_type"]["type"].as_str();
+    assert_eq!(order_type, Some("FillOrKill"));
+
     log!("Wait for 40 seconds for Bob order to be cancelled");
     thread::sleep(Duration::from_secs(40));
 

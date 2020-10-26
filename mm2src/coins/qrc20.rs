@@ -795,29 +795,27 @@ async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> Result<Transac
 
     let qrc20_balance = try_s!(coin.my_balance().compat().await);
 
-    // the qrc20_amount is used only within smart contract calls
-    let qrc20_amount = if req.max {
+    // the qrc20_amount_sat is used only within smart contract calls
+    let (qrc20_amount_sat, qrc20_amount) = if req.max {
         let amount = try_s!(wei_from_big_decimal(&qrc20_balance, coin.utxo.decimals));
         if amount.is_zero() {
             return ERR!("Balance is 0");
         }
-        amount
+        (amount, qrc20_balance.clone())
     } else {
-        let amount = try_s!(wei_from_big_decimal(&req.amount, coin.utxo.decimals));
-        if amount.is_zero() {
+        let amount_sat = try_s!(wei_from_big_decimal(&req.amount, coin.utxo.decimals));
+        if amount_sat.is_zero() {
             return ERR!("The amount {} is too small", req.amount);
         }
 
-        // convert balance from big_decimal to U256 to compare it with the amount
-        let balance = try_s!(wei_from_big_decimal(&qrc20_balance, coin.utxo.decimals));
-        if amount > balance {
+        if req.amount > qrc20_balance {
             return ERR!(
                 "The amount {} to withdraw is larger than balance {}",
                 req.amount,
                 qrc20_balance
             );
         }
-        amount
+        (amount_sat, req.amount)
     };
 
     let (gas_limit, gas_price) = match req.fee {
@@ -828,7 +826,7 @@ async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> Result<Transac
 
     let transfer_output = try_s!(coin.transfer_output(
         qrc20_addr_from_utxo_addr(to_addr.clone()),
-        qrc20_amount,
+        qrc20_amount_sat,
         gas_limit,
         gas_price
     ));
@@ -841,11 +839,11 @@ async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> Result<Transac
     } = try_s!(coin.generate_qrc20_transaction(outputs).await);
 
     let received_by_me = if to_addr == coin.utxo.my_address {
-        req.amount.clone()
+        qrc20_amount.clone()
     } else {
         0.into()
     };
-    let my_balance_change = &received_by_me - &req.amount;
+    let my_balance_change = &received_by_me - &qrc20_amount;
     let my_address = try_s!(coin.my_address());
     let to_address = try_s!(coin.display_address(&to_addr));
     let fee_details = Qrc20FeeDetails {
@@ -859,8 +857,8 @@ async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> Result<Transac
     Ok(TransactionDetails {
         from: vec![my_address],
         to: vec![to_address],
-        total_amount: req.amount.clone(),
-        spent_by_me: req.amount,
+        total_amount: qrc20_amount.clone(),
+        spent_by_me: qrc20_amount,
         received_by_me,
         my_balance_change,
         tx_hash: signed.hash().reversed().to_vec().into(),
