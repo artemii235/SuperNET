@@ -1,7 +1,7 @@
 use super::rpc_clients::{ElectrumProtocol, ListSinceBlockRes, NetworkInfo};
 use super::*;
 use crate::utxo::qrc20::{qrc20_coin_from_conf_and_request, Qrc20Coin, Qrc20FeeDetails};
-use crate::utxo::rpc_clients::UtxoRpcClientOps;
+use crate::utxo::rpc_clients::{NativeUnspent, UtxoRpcClientOps};
 use crate::utxo::utxo_standard::{utxo_standard_coin_from_conf_and_request, UtxoStandardCoin, UTXO_STANDARD_DUST};
 use crate::{SwapOps, TxFeeDetails, WithdrawFee};
 use bigdecimal::BigDecimal;
@@ -13,6 +13,7 @@ use futures::future::join_all;
 use gstuff::now_ms;
 use mocktopus::mocking::*;
 use rpc::v1::types::{VerboseBlockClient, H256 as H256Json};
+use serde_json::value::RawValue;
 use serialization::deserialize;
 use std::collections::HashMap;
 use std::thread;
@@ -52,6 +53,7 @@ fn native_client_for_test() -> NativeClient {
         auth: "".into(),
         event_handlers: vec![],
         request_id: 0u64.into(),
+        recently_sent_txs: AsyncMutex::new(HashMap::new()),
     }))
 }
 
@@ -356,6 +358,7 @@ fn test_wait_for_payment_spend_timeout_native() {
         ))),
         event_handlers: Default::default(),
         request_id: 0u64.into(),
+        recently_sent_txs: AsyncMutex::new(HashMap::new()),
     };
 
     static mut OUTPUT_SPEND_CALLED: bool = false;
@@ -473,6 +476,7 @@ fn test_withdraw_impl_set_fixed_fee() {
         ))),
         event_handlers: Default::default(),
         request_id: 0u64.into(),
+        recently_sent_txs: AsyncMutex::new(HashMap::new()),
     }));
 
     let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client), None);
@@ -519,6 +523,7 @@ fn test_withdraw_impl_sat_per_kb_fee() {
         ))),
         event_handlers: Default::default(),
         request_id: 0u64.into(),
+        recently_sent_txs: AsyncMutex::new(HashMap::new()),
     }));
 
     let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client), None);
@@ -568,6 +573,7 @@ fn test_withdraw_impl_sat_per_kb_fee_amount_equal_to_max() {
         ))),
         event_handlers: Default::default(),
         request_id: 0u64.into(),
+        recently_sent_txs: AsyncMutex::new(HashMap::new()),
     }));
 
     let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client), None);
@@ -619,6 +625,7 @@ fn test_withdraw_impl_sat_per_kb_fee_amount_equal_to_max_dust_included_to_fee() 
         ))),
         event_handlers: Default::default(),
         request_id: 0u64.into(),
+        recently_sent_txs: AsyncMutex::new(HashMap::new()),
     }));
 
     let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client), None);
@@ -670,6 +677,7 @@ fn test_withdraw_impl_sat_per_kb_fee_amount_over_max() {
         ))),
         event_handlers: Default::default(),
         request_id: 0u64.into(),
+        recently_sent_txs: AsyncMutex::new(HashMap::new()),
     }));
 
     let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client), None);
@@ -709,6 +717,7 @@ fn test_withdraw_impl_sat_per_kb_fee_max() {
         ))),
         event_handlers: Default::default(),
         request_id: 0u64.into(),
+        recently_sent_txs: AsyncMutex::new(HashMap::new()),
     }));
 
     let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client), None);
@@ -1041,6 +1050,7 @@ fn test_generate_transaction_relay_fee_is_used_when_dynamic_fee_is_lower() {
         ))),
         event_handlers: Default::default(),
         request_id: 0u64.into(),
+        recently_sent_txs: AsyncMutex::new(HashMap::new()),
     };
 
     static mut GET_RELAY_FEE_CALLED: bool = false;
@@ -1092,6 +1102,7 @@ fn test_generate_tx_fee_is_correct_when_dynamic_fee_is_larger_than_relay() {
         ))),
         event_handlers: Default::default(),
         request_id: 0u64.into(),
+        recently_sent_txs: AsyncMutex::new(HashMap::new()),
     };
 
     static mut GET_RELAY_FEE_CALLED: bool = false;
@@ -1611,4 +1622,25 @@ fn test_qrc20_tx_details_by_hash() {
     println!("{}", st);
 
     assert_eq!(actual, expected);
+}
+
+#[test]
+fn test_native_client_unspents_filtered_using_tx_cache() {
+    let client = native_client_for_test();
+    let tx: UtxoTx = "0400008085202f89027f57730fcbbc2c72fb18bcc3766a713044831a117bb1cade3ed88644864f7333020000006a47304402206e3737b2fcf078b61b16fa67340cc3e79c5d5e2dc9ffda09608371552a3887450220460a332aa1b8ad8f2de92d319666f70751078b221199951f80265b4f7cef8543012102d8c948c6af848c588517288168faa397d6ba3ea924596d03d1d84f224b5123c2ffffffff42b916a80430b80a77e114445b08cf120735447a524de10742fac8f6a9d4170f000000006a473044022004aa053edafb9d161ea8146e0c21ed1593aa6b9404dd44294bcdf920a1695fd902202365eac15dbcc5e9f83e2eed56a8f2f0e5aded36206f9c3fabc668fd4665fa2d012102d8c948c6af848c588517288168faa397d6ba3ea924596d03d1d84f224b5123c2ffffffff03547b16000000000017a9143e8ad0e2bf573d32cb0b3d3a304d9ebcd0c2023b870000000000000000166a144e2b3c0323ab3c2dc6f86dc5ec0729f11e42f56103970400000000001976a91450f4f098306f988d8843004689fae28c83ef16e888ac89c5925f000000000000000000000000000000".into();
+    block_on(client.recently_sent_txs.lock()).insert(tx.hash().reversed().into(), tx.clone());
+    NativeClientImpl::list_unspent.mock_safe(|_, _, _, _| {
+        let result = vec![NativeUnspent {
+            txid: tx.inputs[0].previous_output.hash.reversed().into(),
+            vout: tx.inputs[0].previous_output.index,
+            address: "".to_string(),
+            account: None,
+            script_pub_key: Default::default(),
+            amount: RawValue::from_string("1".into()).unwrap(),
+            confirmations: 0,
+            spendable: false,
+        }];
+
+        MockResult::Return(Box::new(futures01::future::ok(result)))
+    });
 }

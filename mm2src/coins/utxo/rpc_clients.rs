@@ -347,6 +347,10 @@ pub struct NativeClientImpl {
     /// Transport event handlers
     pub event_handlers: Vec<RpcTransportEventHandlerShared>,
     pub request_id: AtomicU64,
+    /// The cache of recently send transactions used to track the spent UTXOs and replace them with new outputs
+    /// The daemon needs some time to update the listunspent list for address which makes it return already spent UTXOs
+    /// This cache helps to prevent UTXO reuse in such cases
+    pub recently_sent_txs: AsyncMutex<HashMap<H256Json, UtxoTx>>,
 }
 
 #[derive(Clone, Debug)]
@@ -504,10 +508,11 @@ impl UtxoRpcClientOps for NativeClient {
 
     fn send_transaction(&self, tx: &UtxoTx, addr: Address) -> UtxoRpcRes<H256Json> {
         let arc = self.clone();
-        let inputs = tx.inputs.clone();
-        let tx_bytes = BytesJson::from(serialize(tx));
+        let tx = tx.clone();
+        let tx_bytes = BytesJson::from(serialize(&tx));
         let fut = async move {
             let tx_hash = try_s!(arc.send_raw_transaction(tx_bytes).compat().await);
+            arc.recently_sent_txs.lock().await.insert(tx_hash.clone(), tx.clone());
             'mainloop: loop {
                 let unspents = match arc.list_unspent(0, 999999, vec![addr.to_string()]).compat().await {
                     Ok(u) => u,
@@ -517,7 +522,7 @@ impl UtxoRpcClientOps for NativeClient {
                         continue;
                     },
                 };
-                for input in inputs.iter() {
+                for input in &tx.inputs {
                     let find = unspents.iter().find(|unspent| {
                         unspent.txid == input.previous_output.hash.reversed().into()
                             && unspent.vout == input.previous_output.index
