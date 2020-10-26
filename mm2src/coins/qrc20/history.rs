@@ -17,7 +17,6 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::thread;
 use std::time::Duration;
-use swap_ops::ContractCallType;
 use utxo_common::{HISTORY_TOO_LARGE_ERROR, HISTORY_TOO_LARGE_ERR_CODE};
 
 type TxTransferMap = HashMap<TxInternalId, TransactionDetails>;

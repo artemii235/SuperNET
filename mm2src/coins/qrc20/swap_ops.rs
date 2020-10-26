@@ -4,69 +4,6 @@ use common::lazy::FindMapLazy;
 use history::HistoryBuilder;
 use script_pubkey::{extract_contract_call_from_script, extract_token_addr_from_script, is_contract_call};
 
-#[derive(Debug, Eq, PartialEq)]
-pub enum ContractCallType {
-    Transfer,
-    Erc20Payment,
-    ReceiverSpend,
-    SenderRefund,
-}
-
-impl ContractCallType {
-    fn as_function_name(&self) -> &'static str {
-        match self {
-            ContractCallType::Transfer => "transfer",
-            ContractCallType::Erc20Payment => "erc20Payment",
-            ContractCallType::ReceiverSpend => "receiverSpend",
-            ContractCallType::SenderRefund => "senderRefund",
-        }
-    }
-
-    fn as_function(&self) -> &'static Function {
-        match self {
-            ContractCallType::Transfer => unwrap!(ERC20_CONTRACT.function(self.as_function_name())),
-            ContractCallType::Erc20Payment | ContractCallType::ReceiverSpend | ContractCallType::SenderRefund => {
-                unwrap!(SWAP_CONTRACT.function(self.as_function_name()))
-            },
-        }
-    }
-
-    pub fn from_script_pubkey(script: &[u8]) -> Result<Option<ContractCallType>, String> {
-        if script.len() < 4 {
-            return ERR!("Length of the script pubkey less than 4: {:?}", script);
-        }
-
-        // Result of (ContractCallType::Transfer).short_signature()
-        // in hex: a9059cbb
-        if script.starts_with(&[169, 5, 156, 187]) {
-            return Ok(Some(ContractCallType::Transfer));
-        }
-
-        // Result of (ContractCallType::Erc20Payment).short_signature()
-        // in hex: 9b415b2a
-        if script.starts_with(&[155, 65, 91, 42]) {
-            return Ok(Some(ContractCallType::Erc20Payment));
-        }
-
-        // Result of (ContractCallType::ReceiverSpend).short_signature()
-        // in hex: 02ed292b
-        if script.starts_with(&[2, 237, 41, 43]) {
-            return Ok(Some(ContractCallType::ReceiverSpend));
-        }
-
-        // Result of (ContractCallType::SenderRefund).short_signature()
-        // in hex: 46fc0294
-        if script.starts_with(&[70, 252, 2, 148]) {
-            return Ok(Some(ContractCallType::SenderRefund));
-        }
-
-        Ok(None)
-    }
-
-    #[allow(dead_code)]
-    fn short_signature(&self) -> [u8; 4] { self.as_function().short_signature() }
-}
-
 /// `erc20Payment` call details consist of values obtained from [`TransactionOutput::script_pubkey`] and [`TxReceipt::logs`].
 #[derive(Debug, Eq, PartialEq)]
 pub struct Erc20PaymentDetails {

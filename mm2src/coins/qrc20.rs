@@ -144,6 +144,67 @@ pub enum Qrc20AddressFormat {
     Contract,
 }
 
+#[derive(Debug, Eq, PartialEq)]
+pub enum ContractCallType {
+    Transfer,
+    Erc20Payment,
+    ReceiverSpend,
+    SenderRefund,
+}
+
+impl ContractCallType {
+    fn as_function_name(&self) -> &'static str {
+        match self {
+            ContractCallType::Transfer => "transfer",
+            ContractCallType::Erc20Payment => "erc20Payment",
+            ContractCallType::ReceiverSpend => "receiverSpend",
+            ContractCallType::SenderRefund => "senderRefund",
+        }
+    }
+
+    fn as_function(&self) -> &'static Function {
+        match self {
+            ContractCallType::Transfer => unwrap!(ERC20_CONTRACT.function(self.as_function_name())),
+            ContractCallType::Erc20Payment | ContractCallType::ReceiverSpend | ContractCallType::SenderRefund => {
+                unwrap!(SWAP_CONTRACT.function(self.as_function_name()))
+            },
+        }
+    }
+
+    pub fn from_script_pubkey(script: &[u8]) -> Result<Option<ContractCallType>, String> {
+        lazy_static! {
+            static ref TRANSFER_SHORT_SIGN: [u8; 4] = ERC20_CONTRACT.function("transfer").unwrap().short_signature();
+            static ref ERC20_PAYMENT_SHORT_SIGN: [u8; 4] =
+                SWAP_CONTRACT.function("erc20Payment").unwrap().short_signature();
+            static ref RECEIVER_SPEND_SHORT_SIGN: [u8; 4] =
+                SWAP_CONTRACT.function("receiverSpend").unwrap().short_signature();
+            static ref SENDER_REFUND_SHORT_SIGN: [u8; 4] =
+                SWAP_CONTRACT.function("senderRefund").unwrap().short_signature();
+        }
+
+        if script.len() < 4 {
+            return ERR!("Length of the script pubkey less than 4: {:?}", script);
+        }
+
+        if script.starts_with(TRANSFER_SHORT_SIGN.as_ref()) {
+            return Ok(Some(ContractCallType::Transfer));
+        }
+        if script.starts_with(ERC20_PAYMENT_SHORT_SIGN.as_ref()) {
+            return Ok(Some(ContractCallType::Erc20Payment));
+        }
+        if script.starts_with(RECEIVER_SPEND_SHORT_SIGN.as_ref()) {
+            return Ok(Some(ContractCallType::ReceiverSpend));
+        }
+        if script.starts_with(SENDER_REFUND_SHORT_SIGN.as_ref()) {
+            return Ok(Some(ContractCallType::SenderRefund));
+        }
+        Ok(None)
+    }
+
+    #[allow(dead_code)]
+    fn short_signature(&self) -> [u8; 4] { self.as_function().short_signature() }
+}
+
 struct GenerateQrc20TxResult {
     signed: UtxoTx,
     miner_fee: u64,
