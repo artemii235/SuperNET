@@ -5,6 +5,7 @@ use super::lp_main;
 use bigdecimal::BigDecimal;
 #[cfg(not(feature = "native"))] use common::call_back;
 use common::executor::Timer;
+use common::for_tests::enable_qrc20;
 #[cfg(feature = "native")] use common::for_tests::mm_dump;
 use common::for_tests::{enable_electrum, enable_native, find_metrics_in_json, from_env_file, get_passphrase, mm_spat,
                         LocalStart, MarketMakerIt};
@@ -928,6 +929,7 @@ async fn trade_base_rel_electrum(pairs: Vec<(&'static str, &'static str)>) {
         "MakerPaymentTransactionFailed",
         "MakerPaymentDataSendFailed",
         "MakerPaymentWaitConfirmFailed",
+        "MakerPaymentCompleteFailed",
         "TakerPaymentValidateFailed",
         "TakerPaymentWaitConfirmFailed",
         "TakerPaymentSpendFailed",
@@ -957,6 +959,7 @@ async fn trade_base_rel_electrum(pairs: Vec<(&'static str, &'static str)>) {
         "MakerPaymentWaitConfirmFailed",
         "TakerPaymentTransactionFailed",
         "TakerPaymentWaitConfirmFailed",
+        "TakerPaymentCompleteFailed",
         "TakerPaymentDataSendFailed",
         "TakerPaymentWaitForSpendFailed",
         "MakerPaymentSpendFailed",
@@ -3280,23 +3283,12 @@ fn qrc20_activate_electrum() {
     unwrap!(block_on(
         mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
-
-    let electrum = unwrap!(block_on(mm.rpc(json! ({
-        "userpass": mm.userpass,
-        "method": "electrum",
-        "coin": "QRC20",
-        "servers": [{"url":"95.217.83.126:10001"}],
-        "mm2": 1,
-        "swap_contract_address": "0xd362e096e873eb7907e205fadc6175c6fec7bc44",
-    }))));
-    assert_eq!(
-        electrum.0,
-        StatusCode::OK,
-        "RPC «electrum» failed with status «{}», response «{}»",
-        electrum.0,
-        electrum.1
-    );
-    let electrum_json: Json = json::from_str(&electrum.1).unwrap();
+    let electrum_json = block_on(enable_qrc20(
+        &mm,
+        "QRC20",
+        &["95.217.83.126:10001"],
+        "0xd362e096e873eb7907e205fadc6175c6fec7bc44",
+    ));
     assert_eq!(
         electrum_json["address"].as_str(),
         Some("qKEDGuogDhtH9zBnc71QtqT1KDamaR1KJ3")
@@ -3336,22 +3328,12 @@ fn test_qrc20_withdraw() {
         mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
 
-    let electrum = unwrap!(block_on(mm.rpc(json! ({
-        "userpass": mm.userpass,
-        "method": "electrum",
-        "coin": "QRC20",
-        "servers": [{"url":"95.217.83.126:10001"}],
-        "mm2": 1,
-        "swap_contract_address": "0xd362e096e873eb7907e205fadc6175c6fec7bc44",
-    }))));
-    assert_eq!(
-        electrum.0,
-        StatusCode::OK,
-        "RPC «electrum» failed with status «{}», response «{}»",
-        electrum.0,
-        electrum.1
-    );
-    let electrum_json: Json = json::from_str(&electrum.1).unwrap();
+    let electrum_json = block_on(enable_qrc20(
+        &mm,
+        "QRC20",
+        &["95.217.83.126:10001"],
+        "0xd362e096e873eb7907e205fadc6175c6fec7bc44",
+    ));
     assert_eq!(
         electrum_json["address"].as_str(),
         Some("qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG")
@@ -3421,22 +3403,12 @@ fn test_qrc20_withdraw_error() {
         mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
 
-    let electrum = unwrap!(block_on(mm.rpc(json!({
-        "userpass": mm.userpass,
-        "method": "electrum",
-        "coin": "QRC20",
-        "servers": [{"url":"95.217.83.126:10001"}],
-        "mm2": 1,
-        "swap_contract_address": "0xd362e096e873eb7907e205fadc6175c6fec7bc44",
-    }))));
-    assert_eq!(
-        electrum.0,
-        StatusCode::OK,
-        "RPC «electrum» failed with status «{}», response «{}»",
-        electrum.0,
-        electrum.1
-    );
-    let electrum_json: Json = json::from_str(&electrum.1).unwrap();
+    let electrum_json = block_on(enable_qrc20(
+        &mm,
+        "QRC20",
+        &["95.217.83.126:10001"],
+        "0xd362e096e873eb7907e205fadc6175c6fec7bc44",
+    ));
     let balance = electrum_json["balance"].as_str().unwrap();
     assert_eq!(balance, "10");
 

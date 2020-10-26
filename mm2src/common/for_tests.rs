@@ -583,6 +583,29 @@ pub async fn enable_electrum(mm: &MarketMakerIt, coin: &str, urls: Vec<&str>) ->
     unwrap!(json::from_str(&electrum.1))
 }
 
+pub async fn enable_qrc20(mm: &MarketMakerIt, coin: &str, urls: &[&str], swap_contract_address: &str) -> Json {
+    let servers: Vec<_> = urls.into_iter().map(|url| json!({ "url": url })).collect();
+    let electrum = unwrap!(
+        mm.rpc(json! ({
+            "userpass": mm.userpass,
+            "method": "electrum",
+            "coin": coin,
+            "servers": servers,
+            "mm2": 1,
+            "swap_contract_address": swap_contract_address,
+        }))
+        .await
+    );
+    assert_eq!(
+        electrum.0,
+        StatusCode::OK,
+        "RPC «electrum» failed with {} {}",
+        electrum.0,
+        electrum.1
+    );
+    unwrap!(json::from_str(&electrum.1))
+}
+
 /// Reads passphrase and userpass from .env file
 pub fn from_env_file(env: Vec<u8>) -> (Option<String>, Option<String>) {
     use regex::bytes::Regex;
