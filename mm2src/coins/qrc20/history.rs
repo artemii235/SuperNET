@@ -763,11 +763,6 @@ fn is_receiver_contract(script_pubkey: &Script) -> bool {
     }
 }
 
-fn display_contract_address(address: UtxoAddress) -> String {
-    let address = qrc20_addr_from_utxo_addr(address);
-    format!("{:#02x}", address)
-}
-
 fn sort_newest_to_oldest(x_height: i64, y_height: i64) -> Ordering {
     // the transactions with block_height == 0 are the most recent
     if x_height == 0 {

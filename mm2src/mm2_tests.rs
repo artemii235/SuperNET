@@ -3102,6 +3102,143 @@ fn test_convert_eth_address() {
 }
 
 #[test]
+fn test_convert_qrc20_address() {
+    let passphrase = "cV463HpebE2djP9ugJry5wZ9st5cc6AbkHXGryZVPXMH1XJK8cVU";
+    let coins = json! ([
+        {"coin":"QRC20","required_confirmations":0,"pubtype": 120,"p2shtype": 50,"wiftype": 128,"segwit": true,"txfee": 0,"mm2": 1,"mature_confirmations":500,
+         "protocol":{"type":"QRC20","protocol_data":{"platform":"QTUM","contract_address":"0xd362e096e873eb7907e205fadc6175c6fec7bc44"}}},
+    ]);
+
+    let mut mm = unwrap!(MarketMakerIt::start(
+        json! ({
+            "gui": "nogui",
+            "netid": 8999,
+            "dht": "on",  // Enable DHT without delay.
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| unwrap! (s.parse::<i64>())),
+            "passphrase": passphrase,
+            "coins": coins,
+            "rpc_password": "password",
+            "i_am_seed": true,
+        }),
+        "password".into(),
+        local_start!("bob")
+    ));
+
+    let (_bob_dump_log, _bob_dump_dashboard) = mm.mm_dump();
+    log! ({"Bob log path: {}", mm.log_path.display()});
+    unwrap!(block_on(
+        mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
+    ));
+    let _electrum = block_on(enable_qrc20(
+        &mm,
+        "QRC20",
+        &["95.217.83.126:10001"],
+        "0xd362e096e873eb7907e205fadc6175c6fec7bc44",
+    ));
+
+    // test wallet to contract
+    let rc = unwrap!(block_on(mm.rpc(json! ({
+        "userpass": mm.userpass,
+        "method": "convertaddress",
+        "coin": "QRC20",
+        "from": "qKVvtDqpnFGDxsDzck5jmLwdnD2jRH6aM8",
+        "to_address_format":{"format":"contract"},
+    }))));
+    assert_eq!(
+        rc.0,
+        StatusCode::OK,
+        "RPC «convertaddress» failed with status «{}»",
+        rc.0
+    );
+    let actual: Json = unwrap!(json::from_str(&rc.1));
+
+    let expected = json!({
+        "result": {
+            "address": "0x1549128bbfb33b997949b4105b6a6371c998e212",
+        },
+    });
+    assert_eq!(actual, expected);
+
+    // test contract to wallet
+    let rc = unwrap!(block_on(mm.rpc(json! ({
+        "userpass": mm.userpass,
+        "method": "convertaddress",
+        "coin": "QRC20",
+        "from": "0x1549128bbfb33b997949b4105b6a6371c998e212",
+        "to_address_format":{"format":"wallet"},
+    }))));
+    assert_eq!(
+        rc.0,
+        StatusCode::OK,
+        "RPC «convertaddress» failed with status «{}»",
+        rc.0
+    );
+    let actual: Json = unwrap!(json::from_str(&rc.1));
+
+    let expected = json!({
+        "result": {
+            "address": "qKVvtDqpnFGDxsDzck5jmLwdnD2jRH6aM8",
+        },
+    });
+    assert_eq!(actual, expected);
+
+    // test wallet to wallet
+    let rc = unwrap!(block_on(mm.rpc(json! ({
+        "userpass": mm.userpass,
+        "method": "convertaddress",
+        "coin": "QRC20",
+        "from": "qKVvtDqpnFGDxsDzck5jmLwdnD2jRH6aM8",
+        "to_address_format":{"format":"wallet"},
+    }))));
+    assert_eq!(
+        rc.0,
+        StatusCode::OK,
+        "RPC «convertaddress» failed with status «{}»",
+        rc.0
+    );
+    let actual: Json = unwrap!(json::from_str(&rc.1));
+
+    let expected = json!({
+        "result": {
+            "address": "qKVvtDqpnFGDxsDzck5jmLwdnD2jRH6aM8",
+        },
+    });
+    assert_eq!(actual, expected);
+
+    // test invalid address (invalid prefixes)
+    let rc = unwrap!(block_on(mm.rpc(json! ({
+        "userpass": mm.userpass,
+        "method": "convertaddress",
+        "coin": "QRC20",
+        "from": "RRnMcSeKiLrNdbp91qNVQwwXx5azD4S4CD",
+        "to_address_format":{"format":"contract"},
+    }))));
+    assert!(
+        rc.0.is_server_error(),
+        "!convertaddress success but should be error: {}",
+        rc.1
+    );
+    log!((rc.1));
+    assert!(rc.1.contains("Address has invalid prefixes"));
+
+    // test invalid address
+    let rc = unwrap!(block_on(mm.rpc(json! ({
+        "userpass": mm.userpass,
+        "method": "convertaddress",
+        "coin": "QRC20",
+        "from": "0000000000000000000000000000000000",
+        "to_address_format":{"format":"wallet"},
+    }))));
+    assert!(
+        rc.0.is_server_error(),
+        "!convertaddress success but should be error: {}",
+        rc.1
+    );
+}
+
+#[test]
 fn test_validateaddress() {
     let coins = json!([
         {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},

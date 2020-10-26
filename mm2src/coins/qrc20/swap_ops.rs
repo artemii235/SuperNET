@@ -528,10 +528,8 @@ impl Qrc20Coin {
         ))
         .to_bytes();
 
-        // qtum_amount is always 0 for the QRC20, because we should pay only a fee in Qtum to send the QRC20 transaction
-        let qtum_amount = 0;
         Ok(ContractCallOutput {
-            value: qtum_amount,
+            value: OUTPUT_QTUM_AMOUNT,
             script_pubkey,
             gas_limit,
             gas_price,
@@ -567,10 +565,8 @@ impl Qrc20Coin {
         ))
         .to_bytes();
 
-        // qtum_amount is always 0 for the QRC20, because we should pay only a fee in Qtum to send the QRC20 transaction
-        let qtum_amount = 0;
         Ok(ContractCallOutput {
-            value: qtum_amount,
+            value: OUTPUT_QTUM_AMOUNT,
             script_pubkey,
             gas_limit,
             gas_price,
@@ -604,10 +600,8 @@ impl Qrc20Coin {
         ))
         .to_bytes();
 
-        // qtum_amount is always 0 for the QRC20, because we should pay only a fee in Qtum to send the QRC20 transaction
-        let qtum_amount = 0;
         Ok(ContractCallOutput {
-            value: qtum_amount,
+            value: OUTPUT_QTUM_AMOUNT,
             script_pubkey,
             gas_limit,
             gas_price,
@@ -641,10 +635,8 @@ impl Qrc20Coin {
         ))
         .to_bytes();
 
-        // qtum_amount is always 0 for the QRC20, because we should pay only a fee in Qtum to send the QRC20 transaction
-        let qtum_amount = 0;
         Ok(ContractCallOutput {
-            value: qtum_amount,
+            value: OUTPUT_QTUM_AMOUNT,
             script_pubkey,
             gas_limit,
             gas_price,
@@ -877,7 +869,6 @@ fn find_receiver_spend_with_swap_id_and_secret_hash(
             };
 
         if swap_id != expected_swap_id {
-            log!("Warning: invalid 'swap_id' "[swap_id]", expected "[expected_swap_id]);
             continue;
         }
 
