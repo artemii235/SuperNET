@@ -2312,7 +2312,13 @@ impl MmCoin for EthCoin {
         }
     }
 
-    fn validate_address(&self, address: &str) -> ValidateAddressResult { validate_address_impl!(self, address) }
+    fn validate_address(&self, address: &str) -> ValidateAddressResult {
+        let result = self.address_from_str(address);
+        ValidateAddressResult {
+            is_valid: result.is_ok(),
+            reason: result.err(),
+        }
+    }
 
     fn process_history_loop(&self, ctx: MmArc) {
         match self.coin_type {

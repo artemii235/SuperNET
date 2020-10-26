@@ -63,17 +63,6 @@ macro_rules! try_fus {
 #[cfg(test)]
 pub mod coins_tests;
 
-// validate_address implementation for coin that has address_from_str method
-macro_rules! validate_address_impl {
-    ($self: ident, $address: expr) => {{
-        let result = $self.address_from_str($address);
-        $crate::ValidateAddressResult {
-            is_valid: result.is_ok(),
-            reason: result.err(),
-        }
-    }};
-}
-
 pub mod eth;
 use self::eth::{eth_coin_from_conf_and_request, EthCoin, EthTxFeeDetails, SignedEthTx};
 pub mod utxo;

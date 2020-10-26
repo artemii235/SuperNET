@@ -1309,9 +1309,36 @@ where
 
 pub fn validate_address<T>(coin: &T, address: &str) -> ValidateAddressResult
 where
-    T: UtxoCommonOps,
+    T: AsRef<UtxoCoinFields> + UtxoCommonOps,
 {
-    validate_address_impl!(coin, address)
+    let result = coin.address_from_str(address);
+    let address = match result {
+        Ok(addr) => addr,
+        Err(e) => {
+            return ValidateAddressResult {
+                is_valid: false,
+                reason: Some(e),
+            }
+        },
+    };
+
+    let is_p2pkh =
+        address.prefix == coin.as_ref().pub_addr_prefix && address.t_addr_prefix == coin.as_ref().pub_t_addr_prefix;
+    let is_p2sh = address.prefix == coin.as_ref().p2sh_addr_prefix
+        && address.t_addr_prefix == coin.as_ref().p2sh_t_addr_prefix
+        && coin.as_ref().segwit;
+
+    if is_p2pkh || is_p2sh {
+        ValidateAddressResult {
+            is_valid: true,
+            reason: None,
+        }
+    } else {
+        ValidateAddressResult {
+            is_valid: false,
+            reason: Some(ERRL!("Address {} has invalid prefixes", address)),
+        }
+    }
 }
 
 #[allow(clippy::cognitive_complexity)]

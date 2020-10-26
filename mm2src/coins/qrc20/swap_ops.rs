@@ -445,8 +445,6 @@ impl Qrc20Coin {
         } = try_s!(self.erc20_payment_details_from_tx(&tx).await);
 
         loop {
-            // TODO update from_block on each iteration
-
             // Try to find a 'receiverSpend' contract call.
             // This means that we should request a transaction history for the possible spender of our payment - [`Erc20PaymentDetails::receiver`].
             let history = try_s!(

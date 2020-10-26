@@ -3182,7 +3182,7 @@ fn test_validateaddress() {
     });
     assert_eq!(actual, expected);
 
-    // test invalid RICK address
+    // test invalid RICK address (legacy address format activated)
 
     let rc = unwrap!(block_on(mm.rpc(json! ({
         "userpass": mm.userpass,
@@ -3203,6 +3203,29 @@ fn test_validateaddress() {
     let reason = result["reason"].as_str().unwrap();
     log!((reason));
     assert!(reason.contains("Legacy address format activated for RICK, but cashaddress format used instead"));
+
+    // test invalid RICK address (invalid prefixes)
+
+    let rc = unwrap!(block_on(mm.rpc(json! ({
+        "userpass": mm.userpass,
+        "method": "validateaddress",
+        "coin": "RICK",
+        "address": "1DmFp16U73RrVZtYUbo2Ectt8mAnYScpqM",
+    }))));
+    assert_eq!(
+        rc.0,
+        StatusCode::OK,
+        "RPC «validateaddress» failed with status «{}»",
+        rc.0
+    );
+
+    let json: Json = unwrap!(json::from_str(&rc.1));
+    let result = &json["result"];
+
+    assert!(!result["is_valid"].as_bool().unwrap());
+    let reason = result["reason"].as_str().unwrap();
+    log!((reason));
+    assert!(reason.contains("Address 1DmFp16U73RrVZtYUbo2Ectt8mAnYScpqM has invalid"));
 
     // test invalid ETH address
 
