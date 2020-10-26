@@ -584,7 +584,7 @@ pub async fn enable_electrum(mm: &MarketMakerIt, coin: &str, urls: Vec<&str>) ->
 }
 
 pub async fn enable_qrc20(mm: &MarketMakerIt, coin: &str, urls: &[&str], swap_contract_address: &str) -> Json {
-    let servers: Vec<_> = urls.into_iter().map(|url| json!({ "url": url })).collect();
+    let servers: Vec<_> = urls.iter().map(|url| json!({ "url": url })).collect();
     let electrum = unwrap!(
         mm.rpc(json! ({
             "userpass": mm.userpass,
