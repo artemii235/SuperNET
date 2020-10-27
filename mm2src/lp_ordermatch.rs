@@ -2554,7 +2554,7 @@ pub async fn cancel_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, St
 #[derive(Serialize)]
 struct MakerOrderForRpc<'a> {
     #[serde(flatten)]
-    order: &'a MakerOrder,
+    order: SetPriceResult<'a>,
     cancellable: bool,
     available_amount: BigDecimal,
 }
@@ -2562,7 +2562,7 @@ struct MakerOrderForRpc<'a> {
 impl<'a> From<&'a MakerOrder> for MakerOrderForRpc<'a> {
     fn from(order: &'a MakerOrder) -> MakerOrderForRpc {
         MakerOrderForRpc {
-            order,
+            order: order.into(),
             cancellable: order.is_cancellable(),
             available_amount: order.available_amount().into(),
         }
