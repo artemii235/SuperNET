@@ -1629,18 +1629,31 @@ fn test_native_client_unspents_filtered_using_tx_cache() {
     let client = native_client_for_test();
     let tx: UtxoTx = "0400008085202f89027f57730fcbbc2c72fb18bcc3766a713044831a117bb1cade3ed88644864f7333020000006a47304402206e3737b2fcf078b61b16fa67340cc3e79c5d5e2dc9ffda09608371552a3887450220460a332aa1b8ad8f2de92d319666f70751078b221199951f80265b4f7cef8543012102d8c948c6af848c588517288168faa397d6ba3ea924596d03d1d84f224b5123c2ffffffff42b916a80430b80a77e114445b08cf120735447a524de10742fac8f6a9d4170f000000006a473044022004aa053edafb9d161ea8146e0c21ed1593aa6b9404dd44294bcdf920a1695fd902202365eac15dbcc5e9f83e2eed56a8f2f0e5aded36206f9c3fabc668fd4665fa2d012102d8c948c6af848c588517288168faa397d6ba3ea924596d03d1d84f224b5123c2ffffffff03547b16000000000017a9143e8ad0e2bf573d32cb0b3d3a304d9ebcd0c2023b870000000000000000166a144e2b3c0323ab3c2dc6f86dc5ec0729f11e42f56103970400000000001976a91450f4f098306f988d8843004689fae28c83ef16e888ac89c5925f000000000000000000000000000000".into();
     block_on(client.recently_sent_txs.lock()).insert(tx.hash().reversed().into(), tx.clone());
-    NativeClientImpl::list_unspent.mock_safe(|_, _, _, _| {
-        let result = vec![NativeUnspent {
-            txid: tx.inputs[0].previous_output.hash.reversed().into(),
-            vout: tx.inputs[0].previous_output.index,
+    let unspents: Vec<_> = tx
+        .inputs
+        .iter()
+        .map(|input| NativeUnspent {
+            txid: input.previous_output.hash.reversed().into(),
+            vout: input.previous_output.index,
             address: "".to_string(),
             account: None,
             script_pub_key: Default::default(),
             amount: RawValue::from_string("1".into()).unwrap(),
             confirmations: 0,
             spendable: false,
-        }];
+        })
+        .collect();
+    NativeClientImpl::list_unspent
+        .mock_safe(move |_, _, _, _| MockResult::Return(Box::new(futures01::future::ok(unspents.clone()))));
 
-        MockResult::Return(Box::new(futures01::future::ok(result)))
-    });
+    let address: Address = "RGfFZaaNV68uVe1uMf6Y37Y8E1i2SyYZBN".into();
+    let unspents_ordered = client.list_unspent_ordered(&address).wait().unwrap();
+    for unspent in &unspents_ordered {
+        assert!(tx
+            .inputs
+            .iter()
+            .find(|input| input.previous_output == unspent.outpoint)
+            .is_none());
+    }
+    log!([unspents_ordered]);
 }

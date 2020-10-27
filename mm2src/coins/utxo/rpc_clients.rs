@@ -160,7 +160,7 @@ impl UtxoRpcClientEnum {
 
 /// Generic unspent info required to build transactions, we need this separate type because native
 /// and Electrum provide different list_unspent format.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UnspentInfo {
     pub outpoint: OutPoint,
     pub value: u64,
@@ -421,7 +421,6 @@ impl JsonRpcClient for NativeClientImpl {
 #[cfg_attr(test, mockable)]
 impl UtxoRpcClientOps for NativeClient {
     fn list_unspent_ordered(&self, address: &Address) -> UtxoRpcRes<Vec<UnspentInfo>> {
-        let address = address.to_string();
         /*
         let fut = self
             .get_block_count()
@@ -478,30 +477,71 @@ impl UtxoRpcClientOps for NativeClient {
                 })
             });
         */
+        let arc = self.clone();
+        let address = address.clone();
         let fut = self
-            .list_unspent(0, 999999, vec![address])
+            .list_unspent(0, 999999, vec![address.to_string()])
             .map_err(|e| ERRL!("{}", e))
             .and_then(|unspents| {
-                let mut result: Vec<_> = unspents
-                    .into_iter()
-                    .map(|unspent| UnspentInfo {
-                        outpoint: OutPoint {
-                            hash: unspent.txid.reversed().into(),
-                            index: unspent.vout,
-                        },
-                        value: sat_from_big_decimal(&BigDecimal::from_str(&unspent.amount.to_string()).unwrap(), 8)
-                            .expect("sat_from_big_decimal should never fail here"),
-                        height: None,
-                    })
-                    .collect();
-                result.sort_unstable_by(|a, b| {
-                    if a.value < b.value {
-                        Ordering::Less
-                    } else {
-                        Ordering::Greater
-                    }
-                });
-                Ok(result)
+                let fut = async move {
+                    let mut result: Vec<_> = unspents
+                        .into_iter()
+                        .map(|unspent| UnspentInfo {
+                            outpoint: OutPoint {
+                                hash: unspent.txid.reversed().into(),
+                                index: unspent.vout,
+                            },
+                            value: sat_from_big_decimal(&BigDecimal::from_str(&unspent.amount.to_string()).unwrap(), 8)
+                                .expect("sat_from_big_decimal should never fail here"),
+                            height: None,
+                        })
+                        .collect();
+                    let recently_sent = arc.recently_sent_txs.lock().await;
+                    let addr_script_pubkey = Builder::build_p2pkh(&address.hash).to_bytes();
+                    let mut replacement_unspents = Vec::new();
+                    result = result
+                        .into_iter()
+                        .filter(|unspent| {
+                            let tx = recently_sent.iter().find(|(_, tx)| {
+                                tx.inputs
+                                    .iter()
+                                    .find(|input| input.previous_output == unspent.outpoint)
+                                    .is_some()
+                            });
+                            match tx {
+                                Some(tx) => {
+                                    for (index, output) in tx.1.outputs.iter().enumerate() {
+                                        if output.script_pubkey == addr_script_pubkey {
+                                            let unspent = UnspentInfo {
+                                                outpoint: OutPoint {
+                                                    hash: tx.0.reversed().into(),
+                                                    index: index as u32,
+                                                },
+                                                value: output.value,
+                                                height: None,
+                                            };
+                                            if !replacement_unspents.contains(&unspent) {
+                                                replacement_unspents.push(unspent);
+                                            }
+                                        }
+                                    }
+                                    false
+                                },
+                                None => true,
+                            }
+                        })
+                        .collect();
+                    result.extend(replacement_unspents);
+                    result.sort_unstable_by(|a, b| {
+                        if a.value < b.value {
+                            Ordering::Less
+                        } else {
+                            Ordering::Greater
+                        }
+                    });
+                    Ok(result)
+                };
+                fut.boxed().compat()
             });
         Box::new(fut)
     }
