@@ -20,10 +20,10 @@ use futures::future::{select as select_func, Either, FutureExt, TryFutureExt};
 use futures::io::Error;
 use futures::lock::Mutex as AsyncMutex;
 use futures::{select, StreamExt};
-use futures01::future::{loop_fn, select_ok, Loop};
+use futures01::future::select_ok;
 use futures01::sync::{mpsc, oneshot};
 use futures01::{Future, Sink, Stream};
-use futures_timer::{Delay, FutureExt as FutureTimerExt};
+use futures_timer::FutureExt as FutureTimerExt;
 use gstuff::{now_float, now_ms};
 use http::header::AUTHORIZATION;
 use http::Uri;
@@ -1101,6 +1101,10 @@ pub struct ElectrumClientImpl {
     next_id: AtomicU64,
     event_handlers: Vec<RpcTransportEventHandlerShared>,
     protocol_version: OrdRange<f32>,
+    /// The cache of recently send transactions used to track the spent UTXOs and replace them with new outputs
+    /// The daemon needs some time to update the listunspent list for address which makes it return already spent UTXOs
+    /// This cache helps to prevent UTXO reuse in such cases
+    pub recently_sent_txs: AsyncMutex<HashMap<H256Json, UtxoTx>>,
 }
 
 #[cfg(feature = "native")]
@@ -1411,76 +1415,56 @@ impl UtxoRpcClientOps for ElectrumClient {
     fn list_unspent_ordered(&self, address: &Address) -> UtxoRpcRes<Vec<UnspentInfo>> {
         let script = Builder::build_p2pkh(&address.hash);
         let script_hash = electrum_script_hash(&script);
+        let arc = self.clone();
         Box::new(
             self.scripthash_list_unspent(&hex::encode(script_hash))
                 .map_err(|e| ERRL!("{}", e))
-                .map(move |unspents| {
-                    let mut result: Vec<UnspentInfo> = unspents
-                        .iter()
-                        .map(|unspent| UnspentInfo {
-                            outpoint: OutPoint {
-                                hash: unspent.tx_hash.reversed().into(),
-                                index: unspent.tx_pos,
-                            },
-                            value: unspent.value,
-                            height: unspent.height,
-                        })
-                        .collect();
+                .and_then(move |unspents| {
+                    let fut = async move {
+                        let mut result: Vec<UnspentInfo> = unspents
+                            .iter()
+                            .map(|unspent| UnspentInfo {
+                                outpoint: OutPoint {
+                                    hash: unspent.tx_hash.reversed().into(),
+                                    index: unspent.tx_pos,
+                                },
+                                value: unspent.value,
+                                height: unspent.height,
+                            })
+                            .collect();
 
-                    result.sort_unstable_by(|a, b| {
-                        if a.value < b.value {
-                            Ordering::Less
-                        } else {
-                            Ordering::Greater
-                        }
-                    });
-                    result
+                        let recently_sent = arc.recently_sent_txs.lock().await;
+                        result = replace_spent_outputs_with_cache(result, &recently_sent, script.to_bytes());
+                        result.sort_unstable_by(|a, b| {
+                            if a.value < b.value {
+                                Ordering::Less
+                            } else {
+                                Ordering::Greater
+                            }
+                        });
+                        // dedup just in case we add duplicates of same unspent out
+                        // all duplicates will be removed because vector in sorted before dedup
+                        result.dedup();
+                        Ok(result)
+                    };
+                    fut.boxed().compat()
                 }),
         )
     }
 
     fn send_transaction(&self, tx: &UtxoTx, my_addr: Address) -> UtxoRpcRes<H256Json> {
         let bytes = BytesJson::from(serialize(tx));
-        let inputs = tx.inputs.clone();
         let arc = self.clone();
-        let script = Builder::build_p2pkh(&my_addr.hash);
-        let script_hash = hex::encode(electrum_script_hash(&script));
+        let tx = tx.clone();
         Box::new(
             self.blockchain_transaction_broadcast(bytes)
                 .map_err(|e| ERRL!("{}", e))
                 .and_then(move |res| {
-                    // Check every second until Electrum server recognizes that used UTXOs are spent
-                    loop_fn(
-                        (res, arc, script_hash, inputs),
-                        move |(res, arc, script_hash, inputs)| {
-                            let delay_f = Delay::new(Duration::from_secs(1)).map_err(|e| ERRL!("{}", e));
-                            delay_f.and_then(move |_res| {
-                                arc.scripthash_list_unspent(&script_hash).then(move |unspents| {
-                                    let unspents = match unspents {
-                                        Ok(unspents) => unspents,
-                                        Err(e) => {
-                                            log!("Error getting Electrum unspents "[e]);
-                                            // we can just keep looping in case of error hoping it will go away
-                                            return Ok(Loop::Continue((res, arc, script_hash, inputs)));
-                                        },
-                                    };
-
-                                    for input in inputs.iter() {
-                                        let find = unspents.iter().find(|unspent| {
-                                            unspent.tx_hash == input.previous_output.hash.reversed().into()
-                                                && unspent.tx_pos == input.previous_output.index
-                                        });
-                                        // Check again if at least 1 spent outpoint is still there
-                                        if find.is_some() {
-                                            return Ok(Loop::Continue((res, arc, script_hash, inputs)));
-                                        }
-                                    }
-
-                                    Ok(Loop::Break(res))
-                                })
-                            })
-                        },
-                    )
+                    let fut = async move {
+                        arc.recently_sent_txs.lock().await.insert(res.clone(), tx);
+                        Ok(res)
+                    };
+                    fut.boxed().compat()
                 }),
         )
     }
@@ -1600,6 +1584,7 @@ impl ElectrumClientImpl {
             next_id: 0.into(),
             event_handlers,
             protocol_version,
+            recently_sent_txs: AsyncMutex::new(HashMap::new()),
         }
     }
 

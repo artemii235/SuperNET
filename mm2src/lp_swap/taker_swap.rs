@@ -846,7 +846,7 @@ impl TakerSwap {
             match self.maker_coin.tx_details_by_hash(&hash).compat().await {
                 Ok(details) => break details,
                 Err(e) => {
-                    if attempts >= 3 {
+                    if attempts >= 6 {
                         return Ok((Some(TakerSwapCommand::Finish), vec![
                             TakerSwapEvent::MakerPaymentValidateFailed(
                                 ERRL!("!maker_coin.tx_details_by_hash: {}", e).into(),

@@ -272,6 +272,7 @@ impl MakerSwap {
         };
         let started_at = now_ms() / 1000;
 
+        /*
         let maker_coin_start_block = match self.maker_coin.current_block().compat().await {
             Ok(b) => b,
             Err(e) => {
@@ -290,6 +291,7 @@ impl MakerSwap {
             },
         };
 
+        */
         let data = MakerSwapData {
             taker_coin: self.taker_coin.ticker().to_owned(),
             maker_coin: self.maker_coin.ticker().to_owned(),
@@ -307,8 +309,8 @@ impl MakerSwap {
             maker_payment_lock: started_at + self.payment_locktime * 2,
             my_persistent_pub: self.my_persistent_pub.clone().into(),
             uuid: self.uuid.clone(),
-            maker_coin_start_block,
-            taker_coin_start_block,
+            maker_coin_start_block: 0,
+            taker_coin_start_block: 0,
         };
 
         Ok((Some(MakerSwapCommand::Negotiate), vec![MakerSwapEvent::Started(data)]))
@@ -609,7 +611,7 @@ impl MakerSwap {
             match self.taker_coin.tx_details_by_hash(&hash).compat().await {
                 Ok(details) => break details,
                 Err(err) => {
-                    if attempts >= 3 {
+                    if attempts >= 6 {
                         return Ok((Some(MakerSwapCommand::RefundMakerPayment), vec![
                             MakerSwapEvent::TakerPaymentValidateFailed(
                                 ERRL!("!taker_coin.tx_details_by_hash: {}", err).into(),
