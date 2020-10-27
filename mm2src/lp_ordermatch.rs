@@ -32,7 +32,7 @@ use either::Either;
 use futures::{compat::Future01CompatExt, lock::Mutex as AsyncMutex, StreamExt};
 use gstuff::slurp;
 use http::Response;
-use mm2_libp2p::{decode_signed, encode_and_sign, pub_sub_topic, PublicKey, TopicPrefix, TOPIC_SEPARATOR};
+use mm2_libp2p::{decode_signed, encode_and_sign, encode_message, pub_sub_topic, TopicPrefix, TOPIC_SEPARATOR};
 #[cfg(test)] use mocktopus::macros::*;
 use num_rational::BigRational;
 use num_traits::identities::Zero;
@@ -47,7 +47,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::mm2::{lp_network::{broadcast_p2p_msg, request_one_peer, request_relays, subscribe_to_topic, P2PRequest,
-                              RelayDecodedResponse},
+                              PeerDecodedResponse},
                  lp_swap::{calc_max_maker_vol, check_balance_for_maker_swap, check_balance_for_taker_swap,
                            is_pubkey_banned, lp_atomic_locktime, run_maker_swap, run_taker_swap,
                            AtomicLocktimeVersion, MakerSwap, RunMakerSwapInput, RunTakerSwapInput,
@@ -217,7 +217,7 @@ async fn request_order(
     };
     let req = P2PRequest::Ordermatch(get_order);
     match try_s!(request_one_peer::<new_protocol::OrderInitialMessage>(ctx, req, propagated_from_peer).await) {
-        Some((order, _pubkey)) => {
+        Some(order) => {
             let order = try_s!(PricePingRequest::from_initial_msg(
                 order.initial_message,
                 order.update_messages,
@@ -275,12 +275,12 @@ async fn request_and_fill_orderbook(
     let mut bids = Vec::new();
     for (peer_id, peer_response) in responses {
         match peer_response {
-            RelayDecodedResponse::Ok((orderbook, _pubkey)) => {
+            PeerDecodedResponse::Ok(orderbook) => {
                 asks.extend(process_initial_messages(orderbook.asks));
                 bids.extend(process_initial_messages(orderbook.bids));
             },
-            RelayDecodedResponse::None => (),
-            RelayDecodedResponse::Err(e) => log!("Received error from peer " [peer_id] ": " [e]),
+            PeerDecodedResponse::None => (),
+            PeerDecodedResponse::Err(e) => log!("Received error from peer " [peer_id] ": " [e]),
         }
     }
 
@@ -434,12 +434,8 @@ pub enum OrdermatchRequest {
     },
 }
 
-pub async fn process_peer_request(
-    ctx: MmArc,
-    request: OrdermatchRequest,
-    _pubkey: PublicKey,
-) -> Result<Option<Vec<u8>>, String> {
-    println!("Got ordermatching request {:?}", request);
+pub async fn process_peer_request(ctx: MmArc, request: OrdermatchRequest) -> Result<Option<Vec<u8>>, String> {
+    println!("Got ordermatch request {:?}", request);
     match request {
         OrdermatchRequest::GetOrder { uuid, from_pubkey } => process_get_order_request(ctx, uuid, from_pubkey).await,
         OrdermatchRequest::GetOrderbook {
@@ -452,15 +448,12 @@ pub async fn process_peer_request(
 }
 
 async fn process_get_order_request(ctx: MmArc, uuid: Uuid, from_pubkey: String) -> Result<Option<Vec<u8>>, String> {
-    let key_pair = ctx.secp256k1_key_pair.or(&&|| panic!());
-    let secret = &*key_pair.private().secret;
-
     let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
     let mut orderbook = ordermatch_ctx.orderbook.lock().await;
     match orderbook.find_order_by_uuid_and_pubkey(&uuid, &from_pubkey) {
         Some(order) => {
             let response: new_protocol::OrderInitialMessage = order.clone().into();
-            let encoded = try_s!(encode_and_sign(&response, secret));
+            let encoded = try_s!(encode_message(&response));
             Ok(Some(encoded))
         },
         None => Ok(None),
@@ -510,9 +503,6 @@ async fn process_get_orderbook_request(
         .collect()
     }
 
-    let key_pair = ctx.secp256k1_key_pair.or(&&|| panic!());
-    let secret = &*key_pair.private().secret;
-
     let ordermatch_ctx = unwrap!(OrdermatchContext::from_ctx(&ctx));
     let orderbook = ordermatch_ctx.orderbook.lock().await;
 
@@ -528,7 +518,7 @@ async fn process_get_orderbook_request(
     let bids = get_n_orders(&orderbook, rel, base, bids_num, PriceOrdering::HighestToLowest);
 
     let response = new_protocol::Orderbook { asks, bids };
-    let encoded = try_s!(encode_and_sign(&response, secret));
+    let encoded = try_s!(encode_message(&response));
     Ok(Some(encoded))
 }
 
