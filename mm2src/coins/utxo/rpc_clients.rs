@@ -30,6 +30,7 @@ use http::Uri;
 use http::{Request, StatusCode};
 use keys::Address;
 #[cfg(test)] use mocktopus::macros::*;
+use primitives::bytes::Bytes;
 use rpc::v1::types::{Bytes as BytesJson, Transaction as RpcTransaction, VerboseBlockClient, H256 as H256Json};
 #[cfg(feature = "native")] use rustls::{self};
 use script::Builder;
@@ -418,6 +419,51 @@ impl JsonRpcClient for NativeClientImpl {
     }
 }
 
+fn replace_spent_outputs_with_cache(
+    mut outputs: Vec<UnspentInfo>,
+    recently_sent: &HashMap<H256Json, UtxoTx>,
+    addr_script_pubkey: Bytes,
+) -> Vec<UnspentInfo> {
+    let mut replacement_unspents = Vec::new();
+    outputs = outputs
+        .into_iter()
+        .filter(|unspent| {
+            let tx = recently_sent.iter().find(|(_, tx)| {
+                tx.inputs
+                    .iter()
+                    .find(|input| input.previous_output == unspent.outpoint)
+                    .is_some()
+            });
+            match tx {
+                Some(tx) => {
+                    for (index, output) in tx.1.outputs.iter().enumerate() {
+                        if output.script_pubkey == addr_script_pubkey {
+                            let unspent = UnspentInfo {
+                                outpoint: OutPoint {
+                                    hash: tx.0.reversed().into(),
+                                    index: index as u32,
+                                },
+                                value: output.value,
+                                height: None,
+                            };
+                            if !replacement_unspents.contains(&unspent) {
+                                replacement_unspents.push(unspent);
+                            }
+                        }
+                    }
+                    false
+                },
+                None => true,
+            }
+        })
+        .collect();
+    if replacement_unspents.is_empty() {
+        return outputs;
+    }
+    outputs.extend(replacement_unspents);
+    replace_spent_outputs_with_cache(outputs, recently_sent, addr_script_pubkey)
+}
+
 #[cfg_attr(test, mockable)]
 impl UtxoRpcClientOps for NativeClient {
     fn list_unspent_ordered(&self, address: &Address) -> UtxoRpcRes<Vec<UnspentInfo>> {
@@ -498,40 +544,7 @@ impl UtxoRpcClientOps for NativeClient {
                         .collect();
                     let recently_sent = arc.recently_sent_txs.lock().await;
                     let addr_script_pubkey = Builder::build_p2pkh(&address.hash).to_bytes();
-                    let mut replacement_unspents = Vec::new();
-                    result = result
-                        .into_iter()
-                        .filter(|unspent| {
-                            let tx = recently_sent.iter().find(|(_, tx)| {
-                                tx.inputs
-                                    .iter()
-                                    .find(|input| input.previous_output == unspent.outpoint)
-                                    .is_some()
-                            });
-                            match tx {
-                                Some(tx) => {
-                                    for (index, output) in tx.1.outputs.iter().enumerate() {
-                                        if output.script_pubkey == addr_script_pubkey {
-                                            let unspent = UnspentInfo {
-                                                outpoint: OutPoint {
-                                                    hash: tx.0.reversed().into(),
-                                                    index: index as u32,
-                                                },
-                                                value: output.value,
-                                                height: None,
-                                            };
-                                            if !replacement_unspents.contains(&unspent) {
-                                                replacement_unspents.push(unspent);
-                                            }
-                                        }
-                                    }
-                                    false
-                                },
-                                None => true,
-                            }
-                        })
-                        .collect();
-                    result.extend(replacement_unspents);
+                    result = replace_spent_outputs_with_cache(result, &recently_sent, addr_script_pubkey);
                     result.sort_unstable_by(|a, b| {
                         if a.value < b.value {
                             Ordering::Less
@@ -539,6 +552,9 @@ impl UtxoRpcClientOps for NativeClient {
                             Ordering::Greater
                         }
                     });
+                    // dedup just in case we add duplicates of same unspent out
+                    // all duplicates will be removed because vector in sorted before dedup
+                    result.dedup();
                     Ok(result)
                 };
                 fut.boxed().compat()
@@ -553,29 +569,6 @@ impl UtxoRpcClientOps for NativeClient {
         let fut = async move {
             let tx_hash = try_s!(arc.send_raw_transaction(tx_bytes).compat().await);
             arc.recently_sent_txs.lock().await.insert(tx_hash.clone(), tx.clone());
-            'mainloop: loop {
-                let unspents = match arc.list_unspent(0, 999999, vec![addr.to_string()]).compat().await {
-                    Ok(u) => u,
-                    Err(e) => {
-                        log!("Error during list_unspent "(e));
-                        Timer::sleep(0.1).await;
-                        continue;
-                    },
-                };
-                for input in &tx.inputs {
-                    let find = unspents.iter().find(|unspent| {
-                        unspent.txid == input.previous_output.hash.reversed().into()
-                            && unspent.vout == input.previous_output.index
-                    });
-                    // Check again if at least 1 spent outpoint is still there
-                    if find.is_some() {
-                        log!("Spent output is still returned from daemon: "[find]);
-                        Timer::sleep(0.1).await;
-                        continue 'mainloop;
-                    }
-                }
-                break;
-            }
             Ok(tx_hash)
         };
 
