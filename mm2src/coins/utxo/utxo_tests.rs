@@ -1655,5 +1655,4 @@ fn test_native_client_unspents_filtered_using_tx_cache() {
             .find(|input| input.previous_output == unspent.outpoint)
             .is_none());
     }
-    log!([unspents_ordered]);
 }
