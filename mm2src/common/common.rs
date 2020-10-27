@@ -927,7 +927,7 @@ pub mod lazy {
 
     /// Searches for an element of an iterator that satisfies a predicate function.
     /// `find_lazy()` takes a closure that returns `true` or `false`.
-    /// It applies this closure to each execution result of the future stored within iterator, and if any of them return
+    /// It applies this closure to each execution result of the futures stored within iterator, and if any of them return
     /// `true`, then `find_lazy()` returns [`Some(element)`]. If they all return
     /// `false`, it returns [`None`].
     #[async_trait]
@@ -949,7 +949,7 @@ pub mod lazy {
             F: FnMut(Self::FutureOutput) -> Option<M> + Send;
     }
 
-    /// Implement the `FindLazy` for iterators of futures.
+    /// Implement the `FindLazy` for iterator of futures.
     #[async_trait]
     impl<T, I> FindLazy for I
     where

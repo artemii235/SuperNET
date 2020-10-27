@@ -52,7 +52,7 @@ impl Qrc20Coin {
             outputs.push(try_s!(self.approve_output(self.swap_contract_address, balance)));
         }
 
-        // when this output is executed, the allowance will be sufficient allready
+        // when this output is executed, the allowance will be sufficient already
         outputs.push(try_s!(self.erc20_payment_output(
             id,
             value,
@@ -351,7 +351,7 @@ impl Qrc20Coin {
                     Ok(details) => details,
                     Err(e) => {
                         log!((e));
-                        // try to obtain the details from the next output}
+                        // try to obtain the details from the next output
                         continue;
                     },
                 };
