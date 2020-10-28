@@ -8,8 +8,8 @@ use bigdecimal::BigDecimal;
 use chain::{BlockHeader, OutPoint, Transaction as UtxoTx};
 use common::custom_futures::select_ok_sequential;
 use common::executor::{spawn, Timer};
-use common::jsonrpc_client::{JsonRpcClient, JsonRpcMultiClient, JsonRpcRemoteAddr, JsonRpcRequest, JsonRpcResponse,
-                             JsonRpcResponseFut, RpcRes};
+use common::jsonrpc_client::{JsonRpcClient, JsonRpcError, JsonRpcMultiClient, JsonRpcRemoteAddr, JsonRpcRequest,
+                             JsonRpcResponse, JsonRpcResponseFut, RpcRes};
 use common::wio::slurp_req;
 use common::{median, OrdRange, StringError};
 use futures::channel::oneshot as async_oneshot;
@@ -47,7 +47,7 @@ use std::ops::Deref;
 #[cfg(not(feature = "native"))] use std::os::raw::c_char;
 use std::pin::Pin;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrdering};
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
@@ -348,6 +348,8 @@ pub struct NativeClientImpl {
     /// Transport event handlers
     pub event_handlers: Vec<RpcTransportEventHandlerShared>,
     pub request_id: AtomicU64,
+    pub list_unspent_in_progress: AtomicBool,
+    pub list_unspent_subs: AsyncMutex<Vec<async_oneshot::Sender<Result<Vec<NativeUnspent>, JsonRpcError>>>>,
     /// The cache of recently send transactions used to track the spent UTXOs and replace them with new outputs
     /// The daemon needs some time to update the listunspent list for address which makes it return already spent UTXOs
     /// This cache helps to prevent UTXO reuse in such cases
@@ -680,12 +682,40 @@ impl UtxoRpcClientOps for NativeClient {
 }
 
 #[cfg_attr(test, mockable)]
-impl NativeClientImpl {
+impl NativeClient {
     /// https://bitcoin.org/en/developer-reference#listunspent
     pub fn list_unspent(&self, min_conf: i32, max_conf: i32, addresses: Vec<String>) -> RpcRes<Vec<NativeUnspent>> {
-        rpc_func!(self, "listunspent", min_conf, max_conf, addresses)
+        let arc = self.clone();
+        if self
+            .list_unspent_in_progress
+            .compare_and_swap(false, true, AtomicOrdering::Relaxed)
+        {
+            let fut = async move {
+                let (tx, rx) = async_oneshot::channel();
+                arc.list_unspent_subs.lock().await.push(tx);
+                rx.await.unwrap()
+            };
+            Box::new(fut.boxed().compat())
+        } else {
+            let fut = async move {
+                let unspents_res = rpc_func!(arc, "listunspent", min_conf, max_conf, addresses)
+                    .compat()
+                    .await;
+                for sub in arc.list_unspent_subs.lock().await.drain(..) {
+                    if sub.send(unspents_res.clone()).is_err() {
+                        log!("list_unspent_sub is dropped");
+                    }
+                }
+                arc.list_unspent_in_progress.store(false, AtomicOrdering::Relaxed);
+                unspents_res
+            };
+            Box::new(fut.boxed().compat())
+        }
     }
+}
 
+#[cfg_attr(test, mockable)]
+impl NativeClientImpl {
     /// https://bitcoin.org/en/developer-reference#importaddress
     pub fn import_address(&self, address: &str, label: &str, rescan: bool) -> RpcRes<()> {
         rpc_func!(self, "importaddress", address, label, rescan)

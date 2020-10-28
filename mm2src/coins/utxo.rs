@@ -642,6 +642,8 @@ pub async fn utxo_arc_from_conf_and_request(
                     auth: format!("Basic {}", base64_encode(&auth_str, URL_SAFE)),
                     event_handlers,
                     request_id: 0u64.into(),
+                    list_unspent_in_progress: false.into(),
+                    list_unspent_subs: AsyncMutex::new(Vec::new()),
                     recently_sent_txs: AsyncMutex::new(HashMap::new()),
                 });
 
