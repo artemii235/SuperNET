@@ -30,14 +30,12 @@ use http::Uri;
 use http::{Request, StatusCode};
 use keys::Address;
 #[cfg(test)] use mocktopus::macros::*;
-use primitives::bytes::Bytes;
 use rpc::v1::types::{Bytes as BytesJson, Transaction as RpcTransaction, VerboseBlockClient, H256 as H256Json};
 #[cfg(feature = "native")] use rustls::{self};
 use script::Builder;
 use serde_json::{self as json, Value as Json};
 use serialization::{deserialize, serialize, CompactInteger, Reader};
 use sha2::{Digest, Sha256};
-use std::cmp::Ordering;
 use std::collections::hash_map::{Entry, HashMap};
 use std::fmt;
 use std::io;
@@ -174,7 +172,7 @@ pub type UtxoRpcRes<T> = Box<dyn Future<Item = T, Error = String> + Send + 'stat
 
 /// Common operations that both types of UTXO clients have but implement them differently
 pub trait UtxoRpcClientOps: fmt::Debug + Send + Sync + 'static {
-    fn list_unspent_ordered(&self, address: &Address) -> UtxoRpcRes<Vec<UnspentInfo>>;
+    fn list_unspent(&self, address: &Address) -> UtxoRpcRes<Vec<UnspentInfo>>;
 
     fn send_transaction(&self, tx: &UtxoTx, my_addr: Address) -> UtxoRpcRes<H256Json>;
 
@@ -350,10 +348,6 @@ pub struct NativeClientImpl {
     pub request_id: AtomicU64,
     pub list_unspent_in_progress: AtomicBool,
     pub list_unspent_subs: AsyncMutex<Vec<async_oneshot::Sender<Result<Vec<NativeUnspent>, JsonRpcError>>>>,
-    /// The cache of recently send transactions used to track the spent UTXOs and replace them with new outputs
-    /// The daemon needs some time to update the listunspent list for address which makes it return already spent UTXOs
-    /// This cache helps to prevent UTXO reuse in such cases
-    pub recently_sent_txs: AsyncMutex<HashMap<H256Json, UtxoTx>>,
 }
 
 #[derive(Clone, Debug)]
@@ -421,160 +415,32 @@ impl JsonRpcClient for NativeClientImpl {
     }
 }
 
-fn replace_spent_outputs_with_cache(
-    mut outputs: Vec<UnspentInfo>,
-    recently_sent: &HashMap<H256Json, UtxoTx>,
-    addr_script_pubkey: Bytes,
-) -> Vec<UnspentInfo> {
-    let mut replacement_unspents = Vec::new();
-    outputs = outputs
-        .into_iter()
-        .filter(|unspent| {
-            let tx = recently_sent.iter().find(|(_, tx)| {
-                tx.inputs
-                    .iter()
-                    .find(|input| input.previous_output == unspent.outpoint)
-                    .is_some()
-            });
-            match tx {
-                Some(tx) => {
-                    for (index, output) in tx.1.outputs.iter().enumerate() {
-                        if output.script_pubkey == addr_script_pubkey {
-                            let unspent = UnspentInfo {
-                                outpoint: OutPoint {
-                                    hash: tx.0.reversed().into(),
-                                    index: index as u32,
-                                },
-                                value: output.value,
-                                height: None,
-                            };
-                            if !replacement_unspents.contains(&unspent) {
-                                replacement_unspents.push(unspent);
-                            }
-                        }
-                    }
-                    false
-                },
-                None => true,
-            }
-        })
-        .collect();
-    if replacement_unspents.is_empty() {
-        return outputs;
-    }
-    outputs.extend(replacement_unspents);
-    replace_spent_outputs_with_cache(outputs, recently_sent, addr_script_pubkey)
-}
-
 #[cfg_attr(test, mockable)]
 impl UtxoRpcClientOps for NativeClient {
-    fn list_unspent_ordered(&self, address: &Address) -> UtxoRpcRes<Vec<UnspentInfo>> {
-        /*
-        let fut = self
-            .get_block_count()
-            .and_then(move |block_count| {
-                selfi_on_block_count
-                    .list_unspent(0, std::i32::MAX, vec![address])
-                    .map(move |unspents| (block_count, unspents))
-            })
-            .map_err(|e| ERRL!("{}", e))
-            .and_then(move |(block_count, unspents)| {
-                let mut futures = vec![];
-                for unspent in unspents.iter() {
-                    let delay_f = Delay::new(Duration::from_millis(10)).map_err(|e| ERRL!("{}", e));
-                    let tx_id = unspent.txid.clone();
-                    let vout = unspent.vout as usize;
-                    let selfi = selfi_on_unspent.clone();
-                    // The delay here is required to mitigate "Work queue depth exceeded" error from coin daemon.
-                    // It happens even when we run requests sequentially.
-                    // Seems like daemon need some time to clean up it's queue after response is sent.
-                    futures
-                        .push(delay_f.and_then(move |_| selfi.output_amount(tx_id, vout).map_err(|e| ERRL!("{}", e))));
-                }
-
-                join_all_sequential(futures).map(move |amounts| {
-                    let zip_iter = amounts.iter().zip(unspents.iter());
-                    let mut result: Vec<UnspentInfo> = zip_iter
-                        .map(|(value, unspent)| {
-                            // calculate the block height from current block count and number of the transaction confirmations
-                            let height = if unspent.confirmations > 0 {
-                                Some(block_count - unspent.confirmations + 1)
-                            } else {
-                                None
-                            };
-
-                            UnspentInfo {
-                                outpoint: OutPoint {
-                                    hash: unspent.txid.reversed().into(),
-                                    index: unspent.vout,
-                                },
-                                value: *value,
-                                height,
-                            }
-                        })
-                        .collect();
-
-                    result.sort_unstable_by(|a, b| {
-                        if a.value < b.value {
-                            Ordering::Less
-                        } else {
-                            Ordering::Greater
-                        }
-                    });
-                    result
-                })
-            });
-        */
-        let arc = self.clone();
-        let address = address.clone();
+    fn list_unspent(&self, address: &Address) -> UtxoRpcRes<Vec<UnspentInfo>> {
         let fut = self
             .list_unspent(0, 999999, vec![address.to_string()])
             .map_err(|e| ERRL!("{}", e))
-            .and_then(|unspents| {
-                let fut = async move {
-                    let mut result: Vec<_> = unspents
-                        .into_iter()
-                        .map(|unspent| UnspentInfo {
-                            outpoint: OutPoint {
-                                hash: unspent.txid.reversed().into(),
-                                index: unspent.vout,
-                            },
-                            value: sat_from_big_decimal(&BigDecimal::from_str(&unspent.amount.to_string()).unwrap(), 8)
-                                .expect("sat_from_big_decimal should never fail here"),
-                            height: None,
-                        })
-                        .collect();
-                    let recently_sent = arc.recently_sent_txs.lock().await;
-                    let addr_script_pubkey = Builder::build_p2pkh(&address.hash).to_bytes();
-                    result = replace_spent_outputs_with_cache(result, &recently_sent, addr_script_pubkey);
-                    result.sort_unstable_by(|a, b| {
-                        if a.value < b.value {
-                            Ordering::Less
-                        } else {
-                            Ordering::Greater
-                        }
-                    });
-                    // dedup just in case we add duplicates of same unspent out
-                    // all duplicates will be removed because vector in sorted before dedup
-                    result.dedup();
-                    Ok(result)
-                };
-                fut.boxed().compat()
+            .map(|unspents| {
+                unspents
+                    .into_iter()
+                    .map(|unspent| UnspentInfo {
+                        outpoint: OutPoint {
+                            hash: unspent.txid.reversed().into(),
+                            index: unspent.vout,
+                        },
+                        value: sat_from_big_decimal(&BigDecimal::from_str(&unspent.amount.to_string()).unwrap(), 8)
+                            .expect("sat_from_big_decimal should never fail here"),
+                        height: None,
+                    })
+                    .collect()
             });
         Box::new(fut)
     }
 
     fn send_transaction(&self, tx: &UtxoTx, addr: Address) -> UtxoRpcRes<H256Json> {
-        let arc = self.clone();
-        let tx = tx.clone();
-        let tx_bytes = BytesJson::from(serialize(&tx));
-        let fut = async move {
-            let tx_hash = try_s!(arc.send_raw_transaction(tx_bytes).compat().await);
-            arc.recently_sent_txs.lock().await.insert(tx_hash.clone(), tx.clone());
-            Ok(tx_hash)
-        };
-
-        Box::new(fut.boxed().compat())
+        let tx_bytes = BytesJson::from(serialize(tx));
+        Box::new(self.send_raw_transaction(tx_bytes).map_err(|e| ERRL!("{}", e)))
     }
 
     /// https://bitcoin.org/en/developer-reference#sendrawtransaction
@@ -1131,10 +997,6 @@ pub struct ElectrumClientImpl {
     next_id: AtomicU64,
     event_handlers: Vec<RpcTransportEventHandlerShared>,
     protocol_version: OrdRange<f32>,
-    /// The cache of recently send transactions used to track the spent UTXOs and replace them with new outputs
-    /// The daemon needs some time to update the listunspent list for address which makes it return already spent UTXOs
-    /// This cache helps to prevent UTXO reuse in such cases
-    pub recently_sent_txs: AsyncMutex<HashMap<H256Json, UtxoTx>>,
 }
 
 #[cfg(feature = "native")]
@@ -1442,61 +1304,31 @@ impl ElectrumClient {
 
 #[cfg_attr(test, mockable)]
 impl UtxoRpcClientOps for ElectrumClient {
-    fn list_unspent_ordered(&self, address: &Address) -> UtxoRpcRes<Vec<UnspentInfo>> {
+    fn list_unspent(&self, address: &Address) -> UtxoRpcRes<Vec<UnspentInfo>> {
         let script = Builder::build_p2pkh(&address.hash);
         let script_hash = electrum_script_hash(&script);
-        let arc = self.clone();
         Box::new(
             self.scripthash_list_unspent(&hex::encode(script_hash))
                 .map_err(|e| ERRL!("{}", e))
-                .and_then(move |unspents| {
-                    let fut = async move {
-                        let mut result: Vec<UnspentInfo> = unspents
-                            .iter()
-                            .map(|unspent| UnspentInfo {
-                                outpoint: OutPoint {
-                                    hash: unspent.tx_hash.reversed().into(),
-                                    index: unspent.tx_pos,
-                                },
-                                value: unspent.value,
-                                height: unspent.height,
-                            })
-                            .collect();
-
-                        let recently_sent = arc.recently_sent_txs.lock().await;
-                        result = replace_spent_outputs_with_cache(result, &recently_sent, script.to_bytes());
-                        result.sort_unstable_by(|a, b| {
-                            if a.value < b.value {
-                                Ordering::Less
-                            } else {
-                                Ordering::Greater
-                            }
-                        });
-                        // dedup just in case we add duplicates of same unspent out
-                        // all duplicates will be removed because vector in sorted before dedup
-                        result.dedup();
-                        Ok(result)
-                    };
-                    fut.boxed().compat()
+                .map(move |unspents| {
+                    unspents
+                        .iter()
+                        .map(|unspent| UnspentInfo {
+                            outpoint: OutPoint {
+                                hash: unspent.tx_hash.reversed().into(),
+                                index: unspent.tx_pos,
+                            },
+                            value: unspent.value,
+                            height: unspent.height,
+                        })
+                        .collect()
                 }),
         )
     }
 
     fn send_transaction(&self, tx: &UtxoTx, my_addr: Address) -> UtxoRpcRes<H256Json> {
         let bytes = BytesJson::from(serialize(tx));
-        let arc = self.clone();
-        let tx = tx.clone();
-        Box::new(
-            self.blockchain_transaction_broadcast(bytes)
-                .map_err(|e| ERRL!("{}", e))
-                .and_then(move |res| {
-                    let fut = async move {
-                        arc.recently_sent_txs.lock().await.insert(res.clone(), tx);
-                        Ok(res)
-                    };
-                    fut.boxed().compat()
-                }),
-        )
+        self.blockchain_transaction_broadcast(bytes)
     }
 
     fn send_raw_transaction(&self, tx: BytesJson) -> RpcRes<H256Json> { self.blockchain_transaction_broadcast(tx) }

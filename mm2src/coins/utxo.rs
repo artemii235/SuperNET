@@ -33,7 +33,7 @@ use async_trait::async_trait;
 use base64::{encode_config as base64_encode, URL_SAFE};
 use bigdecimal::BigDecimal;
 pub use bitcrypto::{dhash160, sha256, ChecksumType};
-use chain::{TransactionInput, TransactionOutput};
+use chain::{OutPoint, TransactionInput, TransactionOutput};
 use common::executor::{spawn, Timer};
 use common::jsonrpc_client::JsonRpcError;
 use common::mm_ctx::MmArc;
@@ -55,6 +55,7 @@ use rpc::v1::types::{Bytes as BytesJson, Transaction as RpcTransaction, H256 as 
 use script::{Builder, Opcode, Script, SignatureVersion, TransactionInputSigner};
 use serde_json::{self as json, Value as Json};
 use serialization::serialize;
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::num::NonZeroU64;
@@ -262,6 +263,10 @@ pub struct UtxoCoinFields {
     mature_confirmations: u32,
     /// Path to the TX cache directory
     tx_cache_directory: Option<PathBuf>,
+    /// The cache of recently send transactions used to track the spent UTXOs and replace them with new outputs
+    /// The daemon needs some time to update the listunspent list for address which makes it return already spent UTXOs
+    /// This cache helps to prevent UTXO reuse in such cases
+    pub recently_sent_txs: AsyncMutex<HashMap<H256Json, UtxoTx>>,
 }
 
 #[async_trait]
@@ -644,7 +649,6 @@ pub async fn utxo_arc_from_conf_and_request(
                     request_id: 0u64.into(),
                     list_unspent_in_progress: false.into(),
                     list_unspent_subs: AsyncMutex::new(Vec::new()),
-                    recently_sent_txs: AsyncMutex::new(HashMap::new()),
                 });
 
                 UtxoRpcClientEnum::Native(NativeClient(client))
@@ -809,6 +813,7 @@ pub async fn utxo_arc_from_conf_and_request(
         dust_amount,
         mature_confirmations,
         tx_cache_directory,
+        recently_sent_txs: AsyncMutex::new(HashMap::new()),
     };
     Ok(UtxoArc(Arc::new(coin)))
 }
@@ -1047,12 +1052,7 @@ where
     }
 
     let rpc_client = &coin.as_ref().rpc_client;
-    let mut unspents = try_s!(
-        rpc_client
-            .list_unspent_ordered(&coin.as_ref().my_address)
-            .compat()
-            .await
-    );
+    let mut unspents = try_s!(rpc_client.list_unspent(&coin.as_ref().my_address).compat().await);
     // list_unspent_ordered() returns ordered from lowest to highest by value unspent outputs.
     // reverse it to reorder from highest to lowest outputs.
     unspents.reverse();
@@ -1152,38 +1152,85 @@ pub(crate) fn sign_tx(
     })
 }
 
+fn replace_spent_outputs_with_cache(
+    mut outputs: Vec<UnspentInfo>,
+    recently_sent: &HashMap<H256Json, UtxoTx>,
+    addr_script_pubkey: Bytes,
+) -> Vec<UnspentInfo> {
+    let mut replacement_unspents = Vec::new();
+    outputs = outputs
+        .into_iter()
+        .filter(|unspent| {
+            let tx = recently_sent.iter().find(|(_, tx)| {
+                tx.inputs
+                    .iter()
+                    .find(|input| input.previous_output == unspent.outpoint)
+                    .is_some()
+            });
+            match tx {
+                Some(tx) => {
+                    for (index, output) in tx.1.outputs.iter().enumerate() {
+                        if output.script_pubkey == addr_script_pubkey {
+                            let unspent = UnspentInfo {
+                                outpoint: OutPoint {
+                                    hash: tx.0.reversed().into(),
+                                    index: index as u32,
+                                },
+                                value: output.value,
+                                height: None,
+                            };
+                            if !replacement_unspents.contains(&unspent) {
+                                replacement_unspents.push(unspent);
+                            }
+                        }
+                    }
+                    false
+                },
+                None => true,
+            }
+        })
+        .collect();
+    if replacement_unspents.is_empty() {
+        return outputs;
+    }
+    outputs.extend(replacement_unspents);
+    replace_spent_outputs_with_cache(outputs, recently_sent, addr_script_pubkey)
+}
+
 async fn send_outputs_from_my_address_impl<T>(coin: T, outputs: Vec<TransactionOutput>) -> Result<UtxoTx, String>
 where
     T: AsRef<UtxoArc> + UtxoArcCommonOps,
 {
-    let before_lock = now_ms();
-    let _utxo_lock = UTXO_LOCK.lock().await;
-    let after_lock = now_ms();
-    log!("UTXO_LOCK took "(after_lock - before_lock));
-
-    let before_list_unspent_ordered = now_ms();
-    let unspents = try_s!(
+    let before_list_unspent = now_ms();
+    let mut unspents = try_s!(
         coin.as_ref()
             .rpc_client
-            .list_unspent_ordered(&coin.as_ref().my_address)
+            .list_unspent(&coin.as_ref().my_address)
             .map_err(|e| ERRL!("{}", e))
             .compat()
             .await
     );
-    let after_list_unspent_ordered = now_ms();
-    log!("list_unspent_ordered took "(
-        after_list_unspent_ordered - before_list_unspent_ordered
-    ));
+    let after_list_unspent = now_ms();
+    log!("list_unspent took "(after_list_unspent - before_list_unspent));
 
-    let before_generate_transaction = now_ms();
+    let mut recently_sent = coin.as_ref().recently_sent_txs.lock().await;
+    let my_address_script = Builder::build_p2pkh(&coin.as_ref().my_address.hash);
+    unspents = replace_spent_outputs_with_cache(unspents, &recently_sent, my_address_script.to_bytes());
+    unspents.sort_unstable_by(|a, b| {
+        if a.value < b.value {
+            Ordering::Less
+        } else {
+            Ordering::Greater
+        }
+    });
+    // dedup just in case we add duplicates of same unspent out
+    // all duplicates will be removed because vector in sorted before dedup
+    unspents.dedup();
+
     let (unsigned, _) = try_s!(
         coin.generate_transaction(unspents, outputs, FeePolicy::SendExact, None, None)
             .await
     );
-    let after_generate_transaction = now_ms();
-    log!("generate_transaction took "(
-        after_generate_transaction - before_generate_transaction
-    ));
 
     let prev_script = Builder::build_p2pkh(&coin.as_ref().my_address.hash);
     let signed = try_s!(sign_tx(
@@ -1195,7 +1242,7 @@ where
     ));
 
     let before_send_transaction = now_ms();
-    try_s!(
+    let hash = try_s!(
         coin.as_ref()
             .rpc_client
             .send_transaction(&signed, coin.as_ref().my_address.clone())
@@ -1207,6 +1254,7 @@ where
     log!("send_transaction took "(
         after_send_transaction - before_send_transaction
     ));
+    recently_sent.insert(hash, signed.clone());
 
     Ok(signed)
 }
