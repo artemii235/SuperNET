@@ -653,11 +653,7 @@ impl SwapOps for Qrc20Coin {
         let swap_id = qrc20_swap_id(time_lock, secret_hash);
 
         let selfi = self.clone();
-        let fut = async move {
-            selfi
-                .check_if_my_payment_sent_impl(swap_id, search_from_block as i64)
-                .await
-        };
+        let fut = async move { selfi.check_if_my_payment_sent_impl(swap_id, search_from_block).await };
         Box::new(fut.boxed().compat())
     }
 

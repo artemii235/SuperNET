@@ -7,7 +7,7 @@ use script_pubkey::{extract_contract_call_from_script, extract_token_addr_from_s
 /// `erc20Payment` call details consist of values obtained from [`TransactionOutput::script_pubkey`] and [`TxReceipt::logs`].
 #[derive(Debug, Eq, PartialEq)]
 pub struct Erc20PaymentDetails {
-    pub output_index: i64,
+    pub output_index: u64,
     pub swap_id: Vec<u8>,
     pub value: U256,
     pub token_address: H160,
@@ -255,7 +255,7 @@ impl Qrc20Coin {
         // This means that we should request a transaction history for the possible spender of our payment - [`Erc20PaymentDetails::receiver`].
         let history = try_s!(
             HistoryBuilder::new(self.clone())
-                .from_block(search_from_block as i64)
+                .from_block(search_from_block)
                 .address(receiver.clone())
                 // current function could be called much later than end of the swap
                 .order(HistoryOrder::OldestToNewest)
@@ -279,7 +279,7 @@ impl Qrc20Coin {
         // This means that we should request our transaction history because we could refund the payment already.
         let history = try_s!(
             HistoryBuilder::new(self.clone())
-                .from_block(search_from_block as i64)
+                .from_block(search_from_block)
                 // current function could be called much later than end of the swap
                 .order(HistoryOrder::OldestToNewest)
                 .build_utxo_lazy()
@@ -304,7 +304,7 @@ impl Qrc20Coin {
     pub async fn check_if_my_payment_sent_impl(
         &self,
         swap_id: Vec<u8>,
-        search_from_block: i64,
+        search_from_block: u64,
     ) -> Result<Option<TransactionEnum>, String> {
         let status = try_s!(self.payment_status(swap_id.clone()).await);
         if status == PAYMENT_STATE_UNINITIALIZED.into() {
@@ -386,7 +386,7 @@ impl Qrc20Coin {
             // This means that we should request a transaction history for the possible spender of our payment - [`Erc20PaymentDetails::receiver`].
             let history = try_s!(
                 HistoryBuilder::new(self.clone())
-                    .from_block(from_block as i64)
+                    .from_block(from_block)
                     .address(receiver.clone())
                     .order(HistoryOrder::NewestToOldest)
                     .build_utxo_lazy()

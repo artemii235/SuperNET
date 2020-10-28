@@ -26,12 +26,12 @@ type TxIds = Vec<(H256Json, u64)>;
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct TxInternalId {
     tx_hash: H256Json,
-    output_index: i64,
-    log_index: i64,
+    output_index: u64,
+    log_index: u64,
 }
 
 impl TxInternalId {
-    pub fn new(tx_hash: H256Json, output_index: i64, log_index: i64) -> TxInternalId {
+    pub fn new(tx_hash: H256Json, output_index: u64, log_index: u64) -> TxInternalId {
         TxInternalId {
             tx_hash,
             output_index,
@@ -51,8 +51,8 @@ impl TxInternalId {
 
         let buf = bytes[32..].to_vec();
         let mut cursor = Cursor::new(buf);
-        let output_index = cursor.read_i64::<BigEndian>().unwrap();
-        let log_index = cursor.read_i64::<BigEndian>().unwrap();
+        let output_index = cursor.read_u64::<BigEndian>().unwrap();
+        let log_index = cursor.read_u64::<BigEndian>().unwrap();
 
         Ok(TxInternalId {
             tx_hash,
@@ -66,9 +66,9 @@ impl From<TxInternalId> for BytesJson {
     fn from(id: TxInternalId) -> Self {
         let mut bytes = id.tx_hash.0.to_vec();
         bytes
-            .write_i64::<BigEndian>(id.output_index)
-            .expect("Error on write_i64");
-        bytes.write_i64::<BigEndian>(id.log_index).expect("Error on write_i64");
+            .write_u64::<BigEndian>(id.output_index)
+            .expect("Error on write_u64");
+        bytes.write_u64::<BigEndian>(id.log_index).expect("Error on write_u64");
         bytes.into()
     }
 }
@@ -178,7 +178,7 @@ impl Qrc20Coin {
                 .map(|(_tx_id, tx)| tx)
                 .collect();
             to_write.sort_unstable_by(|a, b| {
-                match sort_newest_to_oldest(a.block_height as i64, b.block_height as i64) {
+                match sort_newest_to_oldest(a.block_height, b.block_height) {
                     // do not reverse `transfer` events in one transaction
                     Ordering::Equal => a.internal_id.cmp(&b.internal_id),
                     ord => ord,
@@ -206,7 +206,7 @@ impl Qrc20Coin {
                 None => return ERR!("No Qtum fee details"),
             };
             let total_gas_used = receipts.iter().fold(0, |gas, receipt| gas + receipt.gas_used);
-            let total_gas_used = big_decimal_from_sat(total_gas_used, self.utxo.decimals);
+            let total_gas_used = big_decimal_from_sat(total_gas_used as i64, self.utxo.decimals);
             total_qtum_fee - total_gas_used
         };
 
@@ -243,7 +243,7 @@ impl Qrc20Coin {
             let gas_limit = try_s!(extract_gas_from_script(&script_pubkey, ExtractGasEnum::GasLimit));
             let gas_price = try_s!(extract_gas_from_script(&script_pubkey, ExtractGasEnum::GasPrice));
 
-            let total_gas_fee = utxo_common::big_decimal_from_sat(receipt.gas_used, self.utxo.decimals);
+            let total_gas_fee = utxo_common::big_decimal_from_sat(receipt.gas_used as i64, self.utxo.decimals);
             Qrc20FeeDetails {
                 // QRC20 fees are paid in base platform currency (particular in Qtum)
                 coin: self.platform.clone(),
@@ -294,9 +294,9 @@ impl Qrc20Coin {
             };
 
             // do not inherit the block_height from qtum_tx (usually it is None)
-            let block_height = receipt.block_number as u64;
+            let block_height = receipt.block_number;
             let my_balance_change = &received_by_me - &spent_by_me;
-            let internal_id = TxInternalId::new(tx_hash.clone(), receipt.output_index, log_index as i64);
+            let internal_id = TxInternalId::new(tx_hash.clone(), receipt.output_index, log_index as u64);
 
             let from = if is_sender_contract(&script_pubkey) {
                 display_contract_address(from)
@@ -550,7 +550,7 @@ impl Qrc20Coin {
 
 pub struct HistoryBuilder {
     coin: Qrc20Coin,
-    from_block: i64,
+    from_block: u64,
     topic: String,
     address: H160,
     token_address: H160,
@@ -587,7 +587,7 @@ impl HistoryBuilder {
     }
 
     #[allow(clippy::wrong_self_convention)]
-    pub fn from_block(mut self, from_block: i64) -> HistoryBuilder {
+    pub fn from_block(mut self, from_block: u64) -> HistoryBuilder {
         self.from_block = from_block;
         self
     }
@@ -652,7 +652,7 @@ impl HistoryBuilder {
     }
 
     /// Request history by `tx_hash` and wrap it into list of UtxoLazyFuture.
-    /// This method is used when there is no reason to load not all `UtxoTx`,
+    /// This method is used when there is no reason to load all `UtxoTx`,
     /// only the necessary ones.
     ///
     /// In particular this is used to load `UtxoTx` until the wanted tx is found.
@@ -762,7 +762,7 @@ fn is_receiver_contract(script_pubkey: &Script) -> bool {
     }
 }
 
-fn sort_newest_to_oldest(x_height: i64, y_height: i64) -> Ordering {
+fn sort_newest_to_oldest(x_height: u64, y_height: u64) -> Ordering {
     // the transactions with block_height == 0 are the most recent
     if x_height == 0 {
         Ordering::Less
@@ -773,7 +773,7 @@ fn sort_newest_to_oldest(x_height: i64, y_height: i64) -> Ordering {
     }
 }
 
-fn sort_oldest_to_newest(x_height: i64, y_height: i64) -> Ordering {
+fn sort_oldest_to_newest(x_height: u64, y_height: u64) -> Ordering {
     sort_newest_to_oldest(x_height, y_height).reverse()
 }
 

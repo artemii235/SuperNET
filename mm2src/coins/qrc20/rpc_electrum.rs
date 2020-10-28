@@ -23,8 +23,8 @@ pub struct ContractCallResult {
 #[derive(Debug, Deserialize)]
 pub struct TxHistoryItem {
     pub tx_hash: H256Json,
-    pub height: i64,
-    pub log_index: i64,
+    pub height: u64,
+    pub log_index: u64,
 }
 
 /// The structure is the same as Qtum Core RPC gettransactionreceipt returned data.
@@ -36,16 +36,16 @@ pub struct TxReceipt {
     pub block_hash: H256Json,
     /// Number of the block this transaction was included within.
     #[serde(rename = "blockNumber")]
-    pub block_number: i64,
+    pub block_number: u64,
     /// Transaction hash.
     #[serde(rename = "transactionHash")]
     pub transaction_hash: H256Json,
     /// Index within the block.
     #[serde(rename = "transactionIndex")]
-    pub transaction_index: i64,
+    pub transaction_index: u64,
     /// Index within the outputs.
     #[serde(rename = "outputIndex")]
-    pub output_index: i64,
+    pub output_index: u64,
     /// 20 bytes，the sender address of this tx.
     pub from: String,
     /// 20 bytes，the receiver address of this tx. if this  address is created by a contract, return null.
@@ -56,7 +56,7 @@ pub struct TxReceipt {
     pub cumulative_gas_used: u64,
     /// The gas cost alone to execute the current transaction.
     #[serde(rename = "gasUsed")]
-    pub gas_used: i64,
+    pub gas_used: u64,
     /// Contract address created, or `None` if not a deployment.
     #[serde(rename = "contractAddress")]
     pub contract_address: Option<String>,
