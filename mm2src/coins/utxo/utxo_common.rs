@@ -129,25 +129,6 @@ pub fn display_address(coin: &UtxoCoinFields, address: &Address) -> Result<Strin
     }
 }
 
-pub fn try_address_from_str(coin: &UtxoCoinFields, from: &str) -> Result<Address, String> {
-    let standard_err = match Address::from_str(from) {
-        Ok(a) => return Ok(a),
-        Err(e) => e,
-    };
-
-    let cashaddress_err =
-        match Address::from_cashaddress(from, coin.checksum_type, coin.pub_addr_prefix, coin.p2sh_addr_prefix) {
-            Ok(a) => return Ok(a),
-            Err(e) => e,
-        };
-
-    ERR!(
-        "error on parse standard address: {:?}, error on parse cashaddress: {:?}",
-        standard_err,
-        cashaddress_err,
-    )
-}
-
 pub fn address_from_str(coin: &UtxoCoinFields, address: &str) -> Result<Address, String> {
     match &coin.address_format {
         UtxoAddressFormat::Standard => Address::from_str(address)
@@ -1294,7 +1275,7 @@ where
 {
     let to_address_format: UtxoAddressFormat =
         json::from_value(to_address_format).map_err(|e| ERRL!("Error on parse UTXO address format {:?}", e))?;
-    let from_address = try_s!(coin.try_address_from_str(from));
+    let from_address = try_s!(address_from_any_format(&coin.as_ref(), from));
     match to_address_format {
         UtxoAddressFormat::Standard => Ok(from_address.to_string()),
         UtxoAddressFormat::CashAddress { network } => Ok(try_s!(from_address
@@ -1888,6 +1869,26 @@ pub fn address_from_raw_pubkey(
         hash: try_s!(Public::from_slice(pub_key)).address_hash(),
         checksum_type,
     })
+}
+
+/// Try to parse address from either cashaddress or standard UTXO address format.
+fn address_from_any_format(coin: &UtxoCoinFields, from: &str) -> Result<Address, String> {
+    let standard_err = match Address::from_str(from) {
+        Ok(a) => return Ok(a),
+        Err(e) => e,
+    };
+
+    let cashaddress_err =
+        match Address::from_cashaddress(from, coin.checksum_type, coin.pub_addr_prefix, coin.p2sh_addr_prefix) {
+            Ok(a) => return Ok(a),
+            Err(e) => e,
+        };
+
+    ERR!(
+        "error on parse standard address: {:?}, error on parse cashaddress: {:?}",
+        standard_err,
+        cashaddress_err,
+    )
 }
 
 fn validate_payment<T>(

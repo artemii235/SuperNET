@@ -266,10 +266,7 @@ pub trait UtxoCommonOps {
 
     fn display_address(&self, address: &Address) -> Result<String, String>;
 
-    /// Try to convert either standard address or cashaddress.
-    fn try_address_from_str(&self, from: &str) -> Result<Address, String>;
-
-    /// Try to parse address from string using specified format
+    /// Try to parse address from string using specified on asset enable format,
     /// and if it failed inform user that he used a wrong format.
     fn address_from_str(&self, address: &str) -> Result<Address, String>;
 

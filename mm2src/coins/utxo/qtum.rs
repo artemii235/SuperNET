@@ -52,10 +52,6 @@ impl UtxoCommonOps for QtumCoin {
         utxo_common::display_address(&self.utxo_arc, address)
     }
 
-    fn try_address_from_str(&self, from: &str) -> Result<Address, String> {
-        utxo_common::try_address_from_str(&self.utxo_arc, from)
-    }
-
     fn address_from_str(&self, address: &str) -> Result<Address, String> {
         utxo_common::address_from_str(&self.utxo_arc, address)
     }

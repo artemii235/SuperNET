@@ -270,6 +270,30 @@ impl Qrc20Coin {
         Ok(qrc20_addr_from_utxo_addr(qtum_address))
     }
 
+    /// Try to parse address from either wallet (UTXO) format or contract (QRC20) format.
+    fn utxo_address_from_any_format(&self, from: &str) -> Result<UtxoAddress, String> {
+        let utxo_err = match UtxoAddress::from_str(from) {
+            Ok(addr) => {
+                let is_p2pkh =
+                    addr.prefix == self.utxo.pub_addr_prefix && addr.t_addr_prefix == self.utxo.pub_t_addr_prefix;
+                if is_p2pkh {
+                    return Ok(addr);
+                }
+                "Address has invalid prefixes".to_string()
+            },
+            Err(e) => e.to_string(),
+        };
+        let qrc20_err = match qrc20_addr_from_str(from) {
+            Ok(qrc20_addr) => return Ok(self.utxo_address_from_qrc20(qrc20_addr)),
+            Err(e) => e,
+        };
+        ERR!(
+            "error on parse wallet address: {:?}, error on parse contract address: {:?}",
+            utxo_err,
+            qrc20_err,
+        )
+    }
+
     /// Generate and send a transaction with the specified UTXO outputs.
     /// Note this function locks the `UTXO_LOCK`.
     pub async fn send_contract_calls(&self, outputs: Vec<ContractCallOutput>) -> Result<TransactionEnum, String> {
@@ -375,29 +399,6 @@ impl UtxoCommonOps for Qrc20Coin {
 
     fn display_address(&self, address: &UtxoAddress) -> Result<String, String> {
         utxo_common::display_address(&self.utxo, address)
-    }
-
-    fn try_address_from_str(&self, from: &str) -> Result<UtxoAddress, String> {
-        let utxo_err = match UtxoAddress::from_str(from) {
-            Ok(addr) => {
-                let is_p2pkh =
-                    addr.prefix == self.utxo.pub_addr_prefix && addr.t_addr_prefix == self.utxo.pub_t_addr_prefix;
-                if is_p2pkh {
-                    return Ok(addr);
-                }
-                "Address has invalid prefixes".to_string()
-            },
-            Err(e) => e.to_string(),
-        };
-        let qrc20_err = match qrc20_addr_from_str(from) {
-            Ok(qrc20_addr) => return Ok(self.utxo_address_from_qrc20(qrc20_addr)),
-            Err(e) => e,
-        };
-        ERR!(
-            "error on parse wallet address: {:?}, error on parse contract address: {:?}",
-            utxo_err,
-            qrc20_err,
-        )
     }
 
     fn address_from_str(&self, address: &str) -> Result<UtxoAddress, String> {
@@ -805,7 +806,7 @@ impl MmCoin for Qrc20Coin {
     fn convert_to_address(&self, from: &str, to_address_format: Json) -> Result<String, String> {
         let to_address_format: Qrc20AddressFormat =
             json::from_value(to_address_format).map_err(|e| ERRL!("Error on parse QRC20 address format {:?}", e))?;
-        let from_address = try_s!(self.try_address_from_str(from));
+        let from_address = try_s!(self.utxo_address_from_any_format(from));
         match to_address_format {
             Qrc20AddressFormat::Wallet => Ok(from_address.to_string()),
             Qrc20AddressFormat::Contract => Ok(display_contract_address(from_address)),
