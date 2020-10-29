@@ -3,7 +3,6 @@ use crate::utxo::rpc_clients::NativeClientImpl;
 use base64::{encode_config as base64_encode, URL_SAFE};
 use futures::lock::Mutex as AsyncMutex;
 use futures01::Future;
-use std::collections::HashMap;
 
 pub fn test_get_block_count() {
     let client = NativeClientImpl {
@@ -17,7 +16,6 @@ pub fn test_get_block_count() {
         request_id: 0u64.into(),
         list_unspent_in_progress: false.into(),
         list_unspent_subs: AsyncMutex::new(Vec::new()),
-        recently_sent_txs: AsyncMutex::new(HashMap::new()),
     };
     let block_count = unwrap!(client
         .validate_address("RBs52D7pVq7txo6SCz1Tuyw2WrPmdqU3qw".to_owned())
@@ -37,7 +35,6 @@ pub fn test_import_address() {
         request_id: 0u64.into(),
         list_unspent_in_progress: false.into(),
         list_unspent_subs: AsyncMutex::new(Vec::new()),
-        recently_sent_txs: AsyncMutex::new(HashMap::new()),
     };
     let import_addr = client.import_address(
         "bMjWGCinft5qEvsuf9Wg1fgz1CjpXBXbTB",

@@ -1752,7 +1752,7 @@ pub async fn ordered_mature_unspents<T>(coin: T, address: Address) -> Result<Vec
 where
     T: AsRef<UtxoArc> + UtxoCoinCommonOps + UtxoArcCommonOps,
 {
-    let unspents = try_s!(coin.as_ref().rpc_client.list_unspent_ordered(&address).compat().await);
+    let (unspents, _) = try_s!(coin.as_ref().list_unspent_ordered(&address).await);
     let block_count = try_s!(coin.as_ref().rpc_client.get_block_count().compat().await);
 
     let mut result = Vec::with_capacity(unspents.len());

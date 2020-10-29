@@ -42,7 +42,7 @@ use common::{first_char_to_upper, now_ms, small_rng, MM_VERSION};
 #[cfg(feature = "native")] use dirs::home_dir;
 use futures::channel::mpsc;
 use futures::compat::Future01CompatExt;
-use futures::lock::Mutex as AsyncMutex;
+use futures::lock::{Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard};
 use futures::stream::StreamExt;
 use futures01::Future;
 use keys::bytes::Bytes;
@@ -184,6 +184,8 @@ impl Default for UtxoAddressFormat {
     fn default() -> Self { UtxoAddressFormat::Standard }
 }
 
+pub type RecentlySentTxsCache = HashMap<H256Json, UtxoTx>;
+
 #[derive(Debug)]
 pub struct UtxoCoinFields {
     ticker: String,
@@ -266,7 +268,7 @@ pub struct UtxoCoinFields {
     /// The cache of recently send transactions used to track the spent UTXOs and replace them with new outputs
     /// The daemon needs some time to update the listunspent list for address which makes it return already spent UTXOs
     /// This cache helps to prevent UTXO reuse in such cases
-    pub recently_sent_txs: AsyncMutex<HashMap<H256Json, UtxoTx>>,
+    pub recently_sent_txs: AsyncMutex<RecentlySentTxsCache>,
 }
 
 #[async_trait]
@@ -315,6 +317,40 @@ impl Deref for UtxoArc {
 
 impl From<UtxoCoinFields> for UtxoArc {
     fn from(coin: UtxoCoinFields) -> UtxoArc { UtxoArc(Arc::new(coin)) }
+}
+
+impl UtxoArc {
+    /// Returns available unspents in ascending order + RecentlySentTxsCache MutexGuard for further interaction (e.g. to add new transaction to it).
+    pub async fn list_unspent_ordered(
+        &self,
+        address: &Address,
+    ) -> Result<(Vec<UnspentInfo>, AsyncMutexGuard<'_, RecentlySentTxsCache>), String> {
+        let before_list_unspent = now_ms();
+        let mut unspents = try_s!(
+            self.rpc_client
+                .list_unspent(address)
+                .map_err(|e| ERRL!("{}", e))
+                .compat()
+                .await
+        );
+        let after_list_unspent = now_ms();
+        log!("list_unspent took "(after_list_unspent - before_list_unspent));
+
+        let recently_sent = self.recently_sent_txs.lock().await;
+        let my_address_script = Builder::build_p2pkh(&address.hash);
+        unspents = replace_spent_outputs_with_cache(unspents, &recently_sent, my_address_script.to_bytes());
+        unspents.sort_unstable_by(|a, b| {
+            if a.value < b.value {
+                Ordering::Less
+            } else {
+                Ordering::Greater
+            }
+        });
+        // dedup just in case we add duplicates of same unspent out
+        // all duplicates will be removed because vector in sorted before dedup
+        unspents.dedup_by(|one, another| one.outpoint == another.outpoint);
+        Ok((unspents, recently_sent))
+    }
 }
 
 // We can use a shared UTXO lock for all UTXO coins at 1 time.
@@ -1154,7 +1190,7 @@ pub(crate) fn sign_tx(
 
 fn replace_spent_outputs_with_cache(
     mut outputs: Vec<UnspentInfo>,
-    recently_sent: &HashMap<H256Json, UtxoTx>,
+    recently_sent: &RecentlySentTxsCache,
     addr_script_pubkey: Bytes,
 ) -> Vec<UnspentInfo> {
     let mut replacement_unspents = Vec::new();
@@ -1201,32 +1237,7 @@ async fn send_outputs_from_my_address_impl<T>(coin: T, outputs: Vec<TransactionO
 where
     T: AsRef<UtxoArc> + UtxoArcCommonOps,
 {
-    let before_list_unspent = now_ms();
-    let mut unspents = try_s!(
-        coin.as_ref()
-            .rpc_client
-            .list_unspent(&coin.as_ref().my_address)
-            .map_err(|e| ERRL!("{}", e))
-            .compat()
-            .await
-    );
-    let after_list_unspent = now_ms();
-    log!("list_unspent took "(after_list_unspent - before_list_unspent));
-
-    let mut recently_sent = coin.as_ref().recently_sent_txs.lock().await;
-    let my_address_script = Builder::build_p2pkh(&coin.as_ref().my_address.hash);
-    unspents = replace_spent_outputs_with_cache(unspents, &recently_sent, my_address_script.to_bytes());
-    unspents.sort_unstable_by(|a, b| {
-        if a.value < b.value {
-            Ordering::Less
-        } else {
-            Ordering::Greater
-        }
-    });
-    // dedup just in case we add duplicates of same unspent out
-    // all duplicates will be removed because vector in sorted before dedup
-    unspents.dedup();
-
+    let (unspents, mut recently_sent_txs) = try_s!(coin.as_ref().list_unspent_ordered(&coin.as_ref().my_address).await);
     let (unsigned, _) = try_s!(
         coin.generate_transaction(unspents, outputs, FeePolicy::SendExact, None, None)
             .await
@@ -1254,7 +1265,7 @@ where
     log!("send_transaction took "(
         after_send_transaction - before_send_transaction
     ));
-    recently_sent.insert(hash, signed.clone());
+    recently_sent_txs.insert(hash, signed.clone());
 
     Ok(signed)
 }

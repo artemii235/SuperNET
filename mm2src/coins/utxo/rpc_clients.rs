@@ -1328,7 +1328,7 @@ impl UtxoRpcClientOps for ElectrumClient {
 
     fn send_transaction(&self, tx: &UtxoTx, my_addr: Address) -> UtxoRpcRes<H256Json> {
         let bytes = BytesJson::from(serialize(tx));
-        self.blockchain_transaction_broadcast(bytes)
+        Box::new(self.blockchain_transaction_broadcast(bytes).map_err(|e| ERRL!("{}", e)))
     }
 
     fn send_raw_transaction(&self, tx: BytesJson) -> RpcRes<H256Json> { self.blockchain_transaction_broadcast(tx) }
@@ -1446,7 +1446,6 @@ impl ElectrumClientImpl {
             next_id: 0.into(),
             event_handlers,
             protocol_version,
-            recently_sent_txs: AsyncMutex::new(HashMap::new()),
         }
     }
 
