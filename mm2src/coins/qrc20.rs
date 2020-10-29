@@ -1,5 +1,4 @@
-use crate::eth::{u256_to_big_decimal, wei_from_big_decimal, ERC20_CONTRACT, PAYMENT_STATE_SENT,
-                 PAYMENT_STATE_UNINITIALIZED, SWAP_CONTRACT};
+use crate::eth;
 use crate::qrc20::rpc_electrum::{ContractCallResult, LogEntry, Qrc20RpcOps, TxHistoryItem, TxReceipt};
 use crate::utxo::rpc_clients::{ElectrumClient, UnspentInfo, UtxoRpcClientEnum, UtxoRpcClientOps};
 use crate::utxo::utxo_common::{self, big_decimal_from_sat};
@@ -164,22 +163,23 @@ impl ContractCallType {
 
     fn as_function(&self) -> &'static Function {
         match self {
-            ContractCallType::Transfer => unwrap!(ERC20_CONTRACT.function(self.as_function_name())),
+            ContractCallType::Transfer => unwrap!(eth::ERC20_CONTRACT.function(self.as_function_name())),
             ContractCallType::Erc20Payment | ContractCallType::ReceiverSpend | ContractCallType::SenderRefund => {
-                unwrap!(SWAP_CONTRACT.function(self.as_function_name()))
+                unwrap!(eth::SWAP_CONTRACT.function(self.as_function_name()))
             },
         }
     }
 
     pub fn from_script_pubkey(script: &[u8]) -> Result<Option<ContractCallType>, String> {
         lazy_static! {
-            static ref TRANSFER_SHORT_SIGN: [u8; 4] = ERC20_CONTRACT.function("transfer").unwrap().short_signature();
+            static ref TRANSFER_SHORT_SIGN: [u8; 4] =
+                eth::ERC20_CONTRACT.function("transfer").unwrap().short_signature();
             static ref ERC20_PAYMENT_SHORT_SIGN: [u8; 4] =
-                SWAP_CONTRACT.function("erc20Payment").unwrap().short_signature();
+                eth::SWAP_CONTRACT.function("erc20Payment").unwrap().short_signature();
             static ref RECEIVER_SPEND_SHORT_SIGN: [u8; 4] =
-                SWAP_CONTRACT.function("receiverSpend").unwrap().short_signature();
+                eth::SWAP_CONTRACT.function("receiverSpend").unwrap().short_signature();
             static ref SENDER_REFUND_SHORT_SIGN: [u8; 4] =
-                SWAP_CONTRACT.function("senderRefund").unwrap().short_signature();
+                eth::SWAP_CONTRACT.function("senderRefund").unwrap().short_signature();
         }
 
         if script.len() < 4 {
@@ -215,17 +215,17 @@ impl Qrc20Coin {
     async fn rpc_contract_call(&self, func: RpcContractCallType, tokens: &[Token]) -> Result<Vec<Token>, String> {
         let (function, contract_addr) = match func {
             RpcContractCallType::BalanceOf => {
-                let function = try_s!(ERC20_CONTRACT.function("balanceOf"));
+                let function = try_s!(eth::ERC20_CONTRACT.function("balanceOf"));
                 let contract_addr = qrc20_addr_into_rpc_format(&self.contract_address);
                 (function, contract_addr)
             },
             RpcContractCallType::Allowance => {
-                let function = try_s!(ERC20_CONTRACT.function("allowance"));
+                let function = try_s!(eth::ERC20_CONTRACT.function("allowance"));
                 let contract_addr = qrc20_addr_into_rpc_format(&self.contract_address);
                 (function, contract_addr)
             },
             RpcContractCallType::Payments => {
-                let function = try_s!(SWAP_CONTRACT.function("payments"));
+                let function = try_s!(eth::SWAP_CONTRACT.function("payments"));
                 let contract_addr = qrc20_addr_into_rpc_format(&self.swap_contract_address);
                 (function, contract_addr)
             },
@@ -362,7 +362,7 @@ impl Qrc20Coin {
         gas_limit: u64,
         gas_price: u64,
     ) -> Result<ContractCallOutput, String> {
-        let function = try_s!(ERC20_CONTRACT.function("transfer"));
+        let function = try_s!(eth::ERC20_CONTRACT.function("transfer"));
         let params = try_s!(function.encode_input(&[Token::Address(to_addr), Token::Uint(amount)]));
 
         let script_pubkey = try_s!(generate_contract_call_script_pubkey(
@@ -474,7 +474,7 @@ impl UtxoCommonOps for Qrc20Coin {
 impl SwapOps for Qrc20Coin {
     fn send_taker_fee(&self, fee_addr: &[u8], amount: BigDecimal) -> TransactionFut {
         let to_address = try_fus!(self.qrc20_address_from_raw_pubkey(fee_addr));
-        let amount = try_fus!(wei_from_big_decimal(&amount, self.utxo.decimals));
+        let amount = try_fus!(eth::wei_from_big_decimal(&amount, self.utxo.decimals));
         let transfer_output =
             try_fus!(self.transfer_output(to_address, amount, QRC20_GAS_LIMIT_DEFAULT, QRC20_GAS_PRICE_DEFAULT));
         let outputs = vec![transfer_output];
@@ -494,7 +494,7 @@ impl SwapOps for Qrc20Coin {
     ) -> TransactionFut {
         let taker_addr = try_fus!(self.qrc20_address_from_raw_pubkey(taker_pub));
         let id = qrc20_swap_id(time_lock, secret_hash);
-        let value = try_fus!(wei_from_big_decimal(&amount, self.utxo.decimals));
+        let value = try_fus!(eth::wei_from_big_decimal(&amount, self.utxo.decimals));
         let secret_hash = Vec::from(secret_hash);
 
         let selfi = self.clone();
@@ -515,7 +515,7 @@ impl SwapOps for Qrc20Coin {
     ) -> TransactionFut {
         let maker_addr = try_fus!(self.qrc20_address_from_raw_pubkey(maker_pub));
         let id = qrc20_swap_id(time_lock, secret_hash);
-        let value = try_fus!(wei_from_big_decimal(&amount, self.utxo.decimals));
+        let value = try_fus!(eth::wei_from_big_decimal(&amount, self.utxo.decimals));
         let secret_hash = Vec::from(secret_hash);
 
         let selfi = self.clone();
@@ -595,7 +595,7 @@ impl SwapOps for Qrc20Coin {
             _ => panic!("Unexpected TransactionEnum"),
         };
         let fee_addr = try_fus!(self.qrc20_address_from_raw_pubkey(fee_addr));
-        let expected_value = try_fus!(wei_from_big_decimal(amount, self.utxo.decimals));
+        let expected_value = try_fus!(eth::wei_from_big_decimal(amount, self.utxo.decimals));
 
         let selfi = self.clone();
         let fut = async move { selfi.validate_fee_impl(fee_tx_hash, fee_addr, expected_value).await };
@@ -719,13 +719,10 @@ impl MarketCoinOps for Qrc20Coin {
             let params = &[Token::Address(my_address)];
             let tokens = try_s!(selfi.rpc_contract_call(RpcContractCallType::BalanceOf, params).await);
 
-            if tokens.is_empty() {
-                return ERR!(r#"Expected Uint as "balanceOf" result but got nothing"#);
-            }
-
-            match tokens[0] {
-                Token::Uint(bal) => u256_to_big_decimal(bal, selfi.utxo.decimals),
-                _ => ERR!(r#"Expected Uint as "balanceOf" result but got {:?}"#, tokens),
+            match tokens.first() {
+                Some(Token::Uint(bal)) => eth::u256_to_big_decimal(*bal, selfi.utxo.decimals),
+                Some(_) => ERR!(r#"Expected Uint as "balanceOf" result but got {:?}"#, tokens),
+                None => ERR!(r#"Expected Uint as "balanceOf" result but got nothing"#),
             }
         };
 
@@ -781,7 +778,7 @@ impl MmCoin for Qrc20Coin {
     fn can_i_spend_other_payment(&self) -> Box<dyn Future<Item = (), Error = String> + Send> {
         let decimals = self.utxo.decimals;
         Box::new(self.base_coin_balance().and_then(move |qtum_balance| {
-            let sat_balance = try_s!(wei_from_big_decimal(&qtum_balance, decimals));
+            let sat_balance = try_s!(eth::wei_from_big_decimal(&qtum_balance, decimals));
             let min_amount = QRC20_SWAP_GAS_REQUIRED * QRC20_GAS_PRICE_DEFAULT;
             log!("sat_balance " [sat_balance] " min_amount " [min_amount]);
             if sat_balance < min_amount.into() {
@@ -848,11 +845,9 @@ pub fn qrc20_swap_id(time_lock: u32, secret_hash: &[u8]) -> Vec<u8> {
     sha256(&input).to_vec()
 }
 
-pub fn qrc20_addr_from_str(address: &str) -> Result<H160, String> {
-    // use deserialization instead of eth::contract_addr_from_str(),
-    // because that function fails on some of the QRC20 contract addresses
-    Ok(try_s!(json::from_str(&format!("\"{}\"", address))))
-}
+/// Parse QRC20 address (H160) from string.
+/// QRC20 addresses have another checksum verification algorithm, because of this do not use [`eth::valid_addr_from_str`].
+pub fn qrc20_addr_from_str(addr: &str) -> Result<H160, String> { eth::addr_from_str(addr) }
 
 pub fn qrc20_addr_from_utxo_addr(address: UtxoAddress) -> H160 { address.hash.take().into() }
 
@@ -891,13 +886,13 @@ async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> Result<Transac
 
     // the qrc20_amount_sat is used only within smart contract calls
     let (qrc20_amount_sat, qrc20_amount) = if req.max {
-        let amount = try_s!(wei_from_big_decimal(&qrc20_balance, coin.utxo.decimals));
+        let amount = try_s!(eth::wei_from_big_decimal(&qrc20_balance, coin.utxo.decimals));
         if amount.is_zero() {
             return ERR!("Balance is 0");
         }
         (amount, qrc20_balance.clone())
     } else {
-        let amount_sat = try_s!(wei_from_big_decimal(&req.amount, coin.utxo.decimals));
+        let amount_sat = try_s!(eth::wei_from_big_decimal(&req.amount, coin.utxo.decimals));
         if amount_sat.is_zero() {
             return ERR!("The amount {} is too small", req.amount);
         }

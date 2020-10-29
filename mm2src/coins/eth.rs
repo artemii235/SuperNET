@@ -2499,7 +2499,7 @@ fn valid_addr_from_str(addr_str: &str) -> Result<Address, String> {
     Ok(addr)
 }
 
-fn addr_from_str(addr_str: &str) -> Result<Address, String> {
+pub fn addr_from_str(addr_str: &str) -> Result<Address, String> {
     if !addr_str.starts_with("0x") {
         return ERR!("Address must be prefixed with 0x");
     };

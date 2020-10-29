@@ -245,7 +245,7 @@ mod tests {
         let to_addr: UtxoAddress = "qHmJ3KA6ZAjR9wGjpFASn4gtUSeFAqdZgs".into();
         let to_addr = qrc20_addr_from_utxo_addr(to_addr);
         let amount: U256 = 1000000000.into();
-        let function = ERC20_CONTRACT.function("transfer").unwrap();
+        let function = eth::ERC20_CONTRACT.function("transfer").unwrap();
         let expected = function
             .encode_input(&[Token::Address(to_addr), Token::Uint(amount)])
             .unwrap();

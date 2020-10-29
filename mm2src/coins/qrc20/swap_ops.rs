@@ -1,7 +1,6 @@
 use super::*;
-use crate::qrc20::history::HistoryOrder;
 use common::lazy::FindMapLazy;
-use history::HistoryBuilder;
+use history::{HistoryBuilder, HistoryOrder};
 use script_pubkey::{extract_contract_call_from_script, extract_token_addr_from_script, is_contract_call};
 
 /// `erc20Payment` call details consist of values obtained from [`TransactionOutput::script_pubkey`] and [`TxReceipt::logs`].
@@ -43,7 +42,7 @@ impl Qrc20Coin {
         // check if we should reset the allowance to 0 and raise this to the max available value (our balance)
         if allowance < value {
             let balance = try_s!(self.my_balance().compat().await);
-            let balance = try_s!(wei_from_big_decimal(&balance, self.utxo.decimals));
+            let balance = try_s!(eth::wei_from_big_decimal(&balance, self.utxo.decimals));
             if allowance > U256::zero() {
                 // first reset the allowance to the 0
                 outputs.push(try_s!(self.approve_output(self.swap_contract_address, 0.into())));
@@ -74,7 +73,7 @@ impl Qrc20Coin {
         } = try_s!(self.erc20_payment_details_from_tx(&payment_tx).await);
 
         let status = try_s!(self.payment_status(swap_id.clone()).await);
-        if status != PAYMENT_STATE_SENT.into() {
+        if status != eth::PAYMENT_STATE_SENT.into() {
             return ERR!("Payment state is not PAYMENT_STATE_SENT, got {}", status);
         }
 
@@ -92,7 +91,7 @@ impl Qrc20Coin {
         } = try_s!(self.erc20_payment_details_from_tx(&payment_tx).await);
 
         let status = try_s!(self.payment_status(swap_id.clone()).await);
-        if status != PAYMENT_STATE_SENT.into() {
+        if status != eth::PAYMENT_STATE_SENT.into() {
             return ERR!("Payment state is not PAYMENT_STATE_SENT, got {}", status);
         }
 
@@ -130,7 +129,7 @@ impl Qrc20Coin {
             );
         }
 
-        let expected_value = try_s!(wei_from_big_decimal(&amount, self.utxo.decimals));
+        let expected_value = try_s!(eth::wei_from_big_decimal(&amount, self.utxo.decimals));
         if expected_value != erc20_payment.value {
             return ERR!(
                 "Invalid 'value' {:?} in swap payment, expected {:?}",
@@ -307,7 +306,7 @@ impl Qrc20Coin {
         search_from_block: u64,
     ) -> Result<Option<TransactionEnum>, String> {
         let status = try_s!(self.payment_status(swap_id.clone()).await);
-        if status == PAYMENT_STATE_UNINITIALIZED.into() {
+        if status == eth::PAYMENT_STATE_UNINITIALIZED.into() {
             return Ok(None);
         };
 
@@ -334,7 +333,7 @@ impl Qrc20Coin {
         let Erc20PaymentDetails { swap_id, .. } = try_s!(self.erc20_payment_details_from_tx(&payment_tx).await);
 
         let status = try_s!(self.payment_status(swap_id.clone()).await);
-        if status != PAYMENT_STATE_SENT.into() {
+        if status != eth::PAYMENT_STATE_SENT.into() {
             return ERR!("Payment state is not PAYMENT_STATE_SENT, got {}", status);
         }
 
@@ -422,13 +421,10 @@ impl Qrc20Coin {
             .await
         );
 
-        if tokens.is_empty() {
-            return ERR!(r#"Expected U256 as "allowance" result but got nothing"#);
-        }
-
-        match tokens[0] {
-            Token::Uint(number) => Ok(number),
-            _ => ERR!(r#"Expected U256 as "allowance" result but got {:?}"#, tokens),
+        match tokens.first() {
+            Some(Token::Uint(number)) => Ok(*number),
+            Some(_) => ERR!(r#"Expected U256 as "allowance" result but got {:?}"#, tokens),
+            None => ERR!(r#"Expected U256 as "allowance" result but got nothing"#),
         }
     }
 
@@ -452,7 +448,7 @@ impl Qrc20Coin {
 
     /// Generate a UTXO output with a script_pubkey that calls standard QRC20 `approve` function.
     fn approve_output(&self, spender: H160, amount: U256) -> Result<ContractCallOutput, String> {
-        let function = try_s!(ERC20_CONTRACT.function("approve"));
+        let function = try_s!(eth::ERC20_CONTRACT.function("approve"));
         let params = try_s!(function.encode_input(&[Token::Address(spender), Token::Uint(amount)]));
 
         let gas_limit = QRC20_GAS_LIMIT_DEFAULT;
@@ -482,7 +478,7 @@ impl Qrc20Coin {
         secret_hash: &[u8],
         receiver_addr: H160,
     ) -> Result<ContractCallOutput, String> {
-        let function = try_s!(SWAP_CONTRACT.function("erc20Payment"));
+        let function = try_s!(eth::SWAP_CONTRACT.function("erc20Payment"));
         let params = try_s!(function.encode_input(&[
             Token::FixedBytes(id),
             Token::Uint(value),
@@ -518,7 +514,7 @@ impl Qrc20Coin {
         secret: Vec<u8>,
         sender_addr: H160,
     ) -> Result<ContractCallOutput, String> {
-        let function = try_s!(SWAP_CONTRACT.function("receiverSpend"));
+        let function = try_s!(eth::SWAP_CONTRACT.function("receiverSpend"));
         let params = try_s!(function.encode_input(&[
             Token::FixedBytes(id),
             Token::Uint(value),
@@ -552,7 +548,7 @@ impl Qrc20Coin {
         secret_hash: Vec<u8>,
         receiver: H160,
     ) -> Result<ContractCallOutput, String> {
-        let function = try_s!(SWAP_CONTRACT.function("senderRefund"));
+        let function = try_s!(eth::SWAP_CONTRACT.function("senderRefund"));
 
         let params = try_s!(function.encode_input(&[
             Token::FixedBytes(id),
@@ -621,7 +617,7 @@ impl Qrc20Coin {
                 _ => (),
             }
 
-            let function = try_s!(SWAP_CONTRACT.function("erc20Payment"));
+            let function = try_s!(eth::SWAP_CONTRACT.function("erc20Payment"));
             let decoded = try_s!(function.decode_input(&contract_call_bytes));
 
             let mut decoded = decoded.into_iter();
@@ -714,7 +710,7 @@ fn transfer_call_details_from_script_pubkey(script_pubkey: &Script) -> Result<(H
         _ => return ERR!("Expected 'transfer' contract call"),
     }
 
-    let function = try_s!(ERC20_CONTRACT.function("transfer"));
+    let function = try_s!(eth::ERC20_CONTRACT.function("transfer"));
     let decoded = try_s!(function.decode_input(&contract_call_bytes));
     let mut decoded = decoded.into_iter();
 
@@ -746,7 +742,7 @@ pub fn receiver_spend_call_details_from_script_pubkey(script_pubkey: &Script) ->
         _ => return ERR!("Expected 'receiverSpend' contract call"),
     }
 
-    let function = try_s!(SWAP_CONTRACT.function("receiverSpend"));
+    let function = try_s!(eth::SWAP_CONTRACT.function("receiverSpend"));
     let decoded = try_s!(function.decode_input(&contract_call_bytes));
     let mut decoded = decoded.into_iter();
 
