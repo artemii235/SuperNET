@@ -271,8 +271,6 @@ impl MakerSwap {
             rng.gen()
         };
         let started_at = now_ms() / 1000;
-
-        /*
         let maker_coin_start_block = match self.maker_coin.current_block().compat().await {
             Ok(b) => b,
             Err(e) => {
@@ -291,7 +289,6 @@ impl MakerSwap {
             },
         };
 
-        */
         let data = MakerSwapData {
             taker_coin: self.taker_coin.ticker().to_owned(),
             maker_coin: self.maker_coin.ticker().to_owned(),
@@ -309,8 +306,8 @@ impl MakerSwap {
             maker_payment_lock: started_at + self.payment_locktime * 2,
             my_persistent_pub: self.my_persistent_pub.clone().into(),
             uuid: self.uuid.clone(),
-            maker_coin_start_block: 0,
-            taker_coin_start_block: 0,
+            maker_coin_start_block,
+            taker_coin_start_block,
         };
 
         Ok((Some(MakerSwapCommand::Negotiate), vec![MakerSwapEvent::Started(data)]))
