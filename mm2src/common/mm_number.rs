@@ -4,6 +4,8 @@ use core::ops::{Add, Div, Mul, Sub};
 use num_rational::BigRational;
 use num_traits::Pow;
 use serde::{de, Deserialize, Deserializer, Serialize};
+use serde_json::value::RawValue;
+use std::str::FromStr;
 
 pub use num_bigint::{BigInt, Sign};
 
@@ -87,26 +89,34 @@ pub fn from_dec_to_ratio(d: BigDecimal) -> BigRational {
 /// 1. big rational representation,
 /// 2. decimal string e.g. "0.1"
 /// 3. fraction object e.g. { "numer":"2", "denom":"3" }
+/// IMPORTANT: the deserialization implementation works properly from JSON only!
+/// Consider using BigRational type directly for other serde implementations
 impl<'de> Deserialize<'de> for MmNumber {
     fn deserialize<D>(deserializer: D) -> Result<Self, <D as Deserializer<'de>>::Error>
     where
         D: Deserializer<'de>,
     {
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum MmNumberHelper {
-            BigDecimal(BigDecimal),
-            BigRational(BigRational),
-            Fraction(Fraction),
-        }
+        let raw: Box<RawValue> = Deserialize::deserialize(deserializer)?;
 
-        let ratio = match Deserialize::deserialize(deserializer)? {
-            MmNumberHelper::BigDecimal(x) => from_dec_to_ratio(x),
-            MmNumberHelper::BigRational(x) => x,
-            MmNumberHelper::Fraction(x) => x.into(),
+        match BigDecimal::from_str(&raw.get().trim_matches('"')) {
+            Ok(dec) => return Ok(MmNumber(from_dec_to_ratio(dec))),
+            Err(_) => (),
         };
 
-        Ok(MmNumber(ratio))
+        match serde_json::from_str::<BigRational>(raw.get()) {
+            Ok(rat) => return Ok(MmNumber(rat)),
+            Err(_) => (),
+        };
+
+        match serde_json::from_str::<Fraction>(raw.get()) {
+            Ok(rat) => return Ok(MmNumber(rat.into())),
+            Err(_) => (),
+        };
+
+        Err(de::Error::custom(format!(
+            "Could not deserialize any variant of MmNumber from {}",
+            raw.get()
+        )))
     }
 }
 

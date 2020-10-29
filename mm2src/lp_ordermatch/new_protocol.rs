@@ -2,6 +2,7 @@ use super::{MatchBy as SuperMatchBy, PricePingRequest, TakerAction};
 use crate::mm2::lp_ordermatch::OrderConfirmationsSettings;
 use common::mm_number::MmNumber;
 use compact_uuid::CompactUuid;
+use num_rational::BigRational;
 use std::collections::HashSet;
 use uuid::Uuid;
 
@@ -137,9 +138,9 @@ pub struct MakerOrderCreated {
     pub uuid: CompactUuid,
     pub base: String,
     pub rel: String,
-    pub price: MmNumber,
-    pub max_volume: MmNumber,
-    pub min_volume: MmNumber,
+    pub price: BigRational,
+    pub max_volume: BigRational,
+    pub min_volume: BigRational,
     pub conf_settings: OrderConfirmationsSettings,
 }
 
@@ -157,9 +158,9 @@ pub struct MakerOrderCancelled {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct MakerOrderUpdated {
     uuid: CompactUuid,
-    new_price: Option<MmNumber>,
-    new_max_volume: Option<MmNumber>,
-    new_min_volume: Option<MmNumber>,
+    new_price: Option<BigRational>,
+    new_max_volume: Option<BigRational>,
+    new_min_volume: Option<BigRational>,
 }
 
 impl MakerOrderUpdated {
@@ -172,26 +173,26 @@ impl MakerOrderUpdated {
         }
     }
 
-    pub fn with_new_price(mut self, new_price: MmNumber) -> Self {
+    pub fn with_new_price(mut self, new_price: BigRational) -> Self {
         self.new_price = Some(new_price);
         self
     }
 
-    pub fn with_new_max_volume(mut self, new_max_volume: MmNumber) -> Self {
+    pub fn with_new_max_volume(mut self, new_max_volume: BigRational) -> Self {
         self.new_max_volume = Some(new_max_volume);
         self
     }
 
-    pub fn with_new_min_volume(mut self, new_min_volume: MmNumber) -> Self {
+    pub fn with_new_min_volume(mut self, new_min_volume: BigRational) -> Self {
         self.new_min_volume = Some(new_min_volume);
         self
     }
 
-    pub fn new_price(&self) -> &Option<MmNumber> { &self.new_price }
+    pub fn new_price(&self) -> Option<MmNumber> { self.new_price.as_ref().map(|num| num.clone().into()) }
 
-    pub fn new_max_volume(&self) -> &Option<MmNumber> { &self.new_max_volume }
+    pub fn new_max_volume(&self) -> Option<MmNumber> { self.new_max_volume.as_ref().map(|num| num.clone().into()) }
 
-    pub fn new_min_volume(&self) -> &Option<MmNumber> { &self.new_min_volume }
+    pub fn new_min_volume(&self) -> Option<MmNumber> { self.new_min_volume.as_ref().map(|num| num.clone().into()) }
 
     pub fn uuid(&self) -> Uuid { self.uuid.into() }
 }
@@ -200,8 +201,8 @@ impl MakerOrderUpdated {
 pub struct TakerRequest {
     pub base: String,
     pub rel: String,
-    pub base_amount: MmNumber,
-    pub rel_amount: MmNumber,
+    pub base_amount: BigRational,
+    pub rel_amount: BigRational,
     pub action: TakerAction,
     pub uuid: CompactUuid,
     pub match_by: MatchBy,
@@ -212,8 +213,8 @@ pub struct TakerRequest {
 pub struct MakerReserved {
     pub base: String,
     pub rel: String,
-    pub base_amount: MmNumber,
-    pub rel_amount: MmNumber,
+    pub base_amount: BigRational,
+    pub rel_amount: BigRational,
     pub taker_order_uuid: CompactUuid,
     pub maker_order_uuid: CompactUuid,
     pub conf_settings: OrderConfirmationsSettings,

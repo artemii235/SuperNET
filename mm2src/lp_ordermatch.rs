@@ -75,20 +75,24 @@ const MIN_TRADING_VOL: &str = "0.00777";
 impl From<(new_protocol::MakerOrderCreated, Vec<u8>, String, String)> for PricePingRequest {
     fn from(tuple: (new_protocol::MakerOrderCreated, Vec<u8>, String, String)) -> PricePingRequest {
         let (order, initial_message, pubsecp, peer_id) = tuple;
+        let price_mm = MmNumber::from(order.price);
+        let max_vol_mm = MmNumber::from(order.max_volume);
+        let min_vol_mm = MmNumber::from(order.min_volume);
+
         PricePingRequest {
             method: "".to_string(),
             pubkey: "".to_string(),
             base: order.base,
             rel: order.rel,
-            price: order.price.to_decimal(),
-            price_rat: Some(order.price),
+            price: price_mm.to_decimal(),
+            price_rat: Some(price_mm),
             price64: "".to_string(),
             timestamp: now_ms() / 1000,
             pubsecp,
             sig: "".to_string(),
-            balance: order.max_volume.to_decimal(),
-            balance_rat: Some(order.max_volume),
-            min_volume: order.min_volume,
+            balance: max_vol_mm.to_decimal(),
+            balance_rat: Some(max_vol_mm),
+            min_volume: min_vol_mm,
             uuid: Some(order.uuid.into()),
             peer_id,
             initial_message,
@@ -575,9 +579,9 @@ async fn maker_order_created_p2p_notify(ctx: MmArc, order: &MakerOrder) {
         uuid: order.uuid.into(),
         base: order.base.clone(),
         rel: order.rel.clone(),
-        price: order.price.clone(),
-        max_volume: order.max_base_vol.clone(),
-        min_volume: order.min_base_vol.clone(),
+        price: order.price.to_ratio(),
+        max_volume: order.max_base_vol.to_ratio(),
+        min_volume: order.min_base_vol.to_ratio(),
         conf_settings: order.conf_settings.unwrap(),
     };
 
@@ -645,7 +649,7 @@ impl BalanceTradeFeeUpdatedHandler for BalanceUpdateOrdermatchHandler {
                         None
                     } else if new_volume < order.available_amount() {
                         let update_msg =
-                            new_protocol::MakerOrderUpdated::new(order.uuid).with_new_max_volume(new_volume.clone());
+                            new_protocol::MakerOrderUpdated::new(order.uuid).with_new_max_volume(new_volume.to_ratio());
                         let base = order.base.to_owned();
                         let rel = order.rel.to_owned();
                         let ctx = self.ctx.clone();
@@ -708,13 +712,16 @@ pub struct TakerRequest {
 
 impl TakerRequest {
     fn from_new_proto_and_pubkey(message: new_protocol::TakerRequest, sender_pubkey: H256Json) -> Self {
+        let base_amount_mm = MmNumber::from(message.base_amount);
+        let rel_amount_mm = MmNumber::from(message.rel_amount);
+
         TakerRequest {
             base: message.base,
             rel: message.rel,
-            base_amount: message.base_amount.to_decimal(),
-            base_amount_rat: Some(message.base_amount.into()),
-            rel_amount: message.rel_amount.to_decimal(),
-            rel_amount_rat: Some(message.rel_amount.into()),
+            base_amount: base_amount_mm.to_decimal(),
+            base_amount_rat: Some(base_amount_mm.into()),
+            rel_amount: rel_amount_mm.to_decimal(),
+            rel_amount_rat: Some(rel_amount_mm.into()),
             action: message.action,
             uuid: message.uuid.into(),
             method: "".to_string(),
@@ -743,8 +750,8 @@ impl TakerRequest {
 impl Into<new_protocol::OrdermatchMessage> for TakerRequest {
     fn into(self) -> new_protocol::OrdermatchMessage {
         new_protocol::OrdermatchMessage::TakerRequest(new_protocol::TakerRequest {
-            base_amount: self.get_base_amount(),
-            rel_amount: self.get_rel_amount(),
+            base_amount: self.get_base_amount().into(),
+            rel_amount: self.get_rel_amount().into(),
             base: self.base,
             rel: self.rel,
             action: self.action,
@@ -1406,13 +1413,16 @@ impl MakerReserved {
 
 impl MakerReserved {
     fn from_new_proto_and_pubkey(message: new_protocol::MakerReserved, sender_pubkey: H256Json) -> Self {
+        let base_amount_mm = MmNumber::from(message.base_amount);
+        let rel_amount_mm = MmNumber::from(message.rel_amount);
+
         MakerReserved {
             base: message.base,
             rel: message.rel,
-            base_amount: message.base_amount.to_decimal(),
-            rel_amount: message.rel_amount.to_decimal(),
-            base_amount_rat: Some(message.base_amount.into()),
-            rel_amount_rat: Some(message.rel_amount.into()),
+            base_amount: base_amount_mm.to_decimal(),
+            rel_amount: rel_amount_mm.to_decimal(),
+            base_amount_rat: Some(base_amount_mm.into()),
+            rel_amount_rat: Some(rel_amount_mm.into()),
             taker_order_uuid: message.taker_order_uuid.into(),
             maker_order_uuid: message.maker_order_uuid.into(),
             method: "".to_string(),
@@ -1426,8 +1436,8 @@ impl MakerReserved {
 impl Into<new_protocol::OrdermatchMessage> for MakerReserved {
     fn into(self) -> new_protocol::OrdermatchMessage {
         new_protocol::OrdermatchMessage::MakerReserved(new_protocol::MakerReserved {
-            base_amount: self.get_base_amount(),
-            rel_amount: self.get_rel_amount(),
+            base_amount: self.get_base_amount().into(),
+            rel_amount: self.get_rel_amount().into(),
             base: self.base,
             rel: self.rel,
             taker_order_uuid: self.taker_order_uuid.into(),
@@ -2063,8 +2073,8 @@ async fn process_taker_connect(ctx: MmArc, sender_pubkey: H256Json, connect_msg:
 
         // If volume is less order will be cancelled a bit later
         if my_order.available_amount() >= my_order.min_base_vol {
-            let updated_msg =
-                new_protocol::MakerOrderUpdated::new(my_order.uuid).with_new_max_volume(my_order.available_amount());
+            let updated_msg = new_protocol::MakerOrderUpdated::new(my_order.uuid)
+                .with_new_max_volume(my_order.available_amount().into());
             maker_order_updated_p2p_notify(ctx.clone(), &my_order.base, &my_order.rel, updated_msg).await;
         }
         save_my_maker_order(&ctx, &my_order);

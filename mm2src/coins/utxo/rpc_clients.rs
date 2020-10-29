@@ -10,6 +10,7 @@ use common::custom_futures::select_ok_sequential;
 use common::executor::{spawn, Timer};
 use common::jsonrpc_client::{JsonRpcClient, JsonRpcError, JsonRpcMultiClient, JsonRpcRemoteAddr, JsonRpcRequest,
                              JsonRpcResponse, JsonRpcResponseFut, RpcRes};
+use common::mm_number::MmNumber;
 use common::wio::slurp_req;
 use common::{median, OrdRange, StringError};
 use futures::channel::oneshot as async_oneshot;
@@ -219,7 +220,7 @@ pub struct NativeUnspent {
     pub account: Option<String>,
     #[serde(rename = "scriptPubKey")]
     pub script_pub_key: BytesJson,
-    pub amount: Box<json::value::RawValue>,
+    pub amount: MmNumber,
     pub confirmations: u64,
     pub spendable: bool,
 }

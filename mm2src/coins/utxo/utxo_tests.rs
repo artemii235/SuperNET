@@ -7,6 +7,7 @@ use crate::{SwapOps, TxFeeDetails, WithdrawFee};
 use bigdecimal::BigDecimal;
 use chain::OutPoint;
 use common::mm_ctx::MmCtxBuilder;
+use common::mm_number::MmNumber;
 use common::privkey::key_pair_from_seed;
 use common::{block_on, OrdRange};
 use futures::future::join_all;
@@ -1651,7 +1652,7 @@ fn test_native_client_unspents_filtered_using_tx_cache_single_tx_in_cache() {
             address: "".to_string(),
             account: None,
             script_pub_key: Default::default(),
-            amount: RawValue::from_string("1".into()).unwrap(),
+            amount: MmNumber::from(1),
             confirmations: 0,
             spendable: false,
         })
@@ -1703,7 +1704,7 @@ fn test_native_client_unspents_filtered_using_tx_cache_single_several_chained_tx
             address: "".to_string(),
             account: None,
             script_pub_key: Default::default(),
-            amount: RawValue::from_string("1".into()).unwrap(),
+            amount: MmNumber::from(1),
             confirmations: 0,
             spendable: false,
         })

@@ -1369,9 +1369,9 @@ fn make_random_orders(
             uuid: Uuid::new_v4().into(),
             base: base.clone(),
             rel: rel.clone(),
-            price: (numer, 1000000).into(),
-            max_volume: 1.into(),
-            min_volume: 0.into(),
+            price: BigRational::new(numer.into(), 1000000.into()),
+            max_volume: BigRational::from_integer(1.into()),
+            min_volume: BigRational::from_integer(0.into()),
             conf_settings: OrderConfirmationsSettings::default(),
         };
 
@@ -1413,18 +1413,18 @@ fn test_process_get_orderbook_request() {
         uuid: Uuid::new_v4().into(),
         base: "RICK".into(),
         rel: "MORTY".into(),
-        price: 1000000.into(),
-        max_volume: 2000000.into(),
-        min_volume: 2000000.into(),
+        price: BigRational::from_integer(1000000.into()),
+        max_volume: BigRational::from_integer(2000000.into()),
+        min_volume: BigRational::from_integer(2000000.into()),
         conf_settings: OrderConfirmationsSettings::default(),
     };
     let order2 = new_protocol::MakerOrderCreated {
         uuid: Uuid::new_v4().into(),
         base: "RICK".into(),
         rel: "MORTY".into(),
-        price: 500000.into(),
-        max_volume: 2000000.into(),
-        min_volume: 2000000.into(),
+        price: BigRational::from_integer(500000.into()),
+        max_volume: BigRational::from_integer(2000000.into()),
+        min_volume: BigRational::from_integer(2000000.into()),
         conf_settings: OrderConfirmationsSettings::default(),
     };
 
@@ -1649,9 +1649,9 @@ fn test_process_order_keep_alive_requested_from_peer() {
         uuid: uuid.clone().into(),
         base: "RICK".into(),
         rel: "MORTY".into(),
-        price: 1000000.into(),
-        max_volume: 2000000.into(),
-        min_volume: 2000000.into(),
+        price: BigRational::from_integer(1000000.into()),
+        max_volume: BigRational::from_integer(2000000.into()),
+        min_volume: BigRational::from_integer(2000000.into()),
         conf_settings: OrderConfirmationsSettings::default(),
     };
 
@@ -1730,9 +1730,9 @@ fn test_process_get_order_request() {
         uuid: Uuid::new_v4().into(),
         base: "RICK".into(),
         rel: "MORTY".into(),
-        price: 1000000.into(),
-        max_volume: 2000000.into(),
-        min_volume: 2000000.into(),
+        price: BigRational::from_integer(1000000.into()),
+        max_volume: BigRational::from_integer(2000000.into()),
+        min_volume: BigRational::from_integer(2000000.into()),
         conf_settings: OrderConfirmationsSettings::default(),
     };
     // create an initial_message and encode it with the secret
