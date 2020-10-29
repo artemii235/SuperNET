@@ -1002,7 +1002,7 @@ pub fn search_for_swap_tx_spend_my(
     tx: &[u8],
     search_from_block: u64,
 ) -> Result<Option<FoundSwapTxSpend>, String> {
-    search_for_swap_tx_spend(
+    block_on(search_for_swap_tx_spend(
         coin,
         time_lock,
         coin.key_pair.public(),
@@ -1010,7 +1010,7 @@ pub fn search_for_swap_tx_spend_my(
         secret_hash,
         tx,
         search_from_block,
-    )
+    ))
 }
 
 pub fn search_for_swap_tx_spend_other(
@@ -1021,7 +1021,7 @@ pub fn search_for_swap_tx_spend_other(
     tx: &[u8],
     search_from_block: u64,
 ) -> Result<Option<FoundSwapTxSpend>, String> {
-    search_for_swap_tx_spend(
+    block_on(search_for_swap_tx_spend(
         coin,
         time_lock,
         &try_s!(Public::from_slice(other_pub)),
@@ -1029,7 +1029,7 @@ pub fn search_for_swap_tx_spend_other(
         secret_hash,
         tx,
         search_from_block,
-    )
+    ))
 }
 
 /// Extract a secret from the `spend_tx`.
@@ -1963,7 +1963,7 @@ where
     Box::new(fut.boxed().compat())
 }
 
-fn search_for_swap_tx_spend(
+async fn search_for_swap_tx_spend(
     coin: &UtxoCoinFields,
     time_lock: u32,
     first_pub: &Public,
@@ -1983,7 +1983,12 @@ fn search_for_swap_tx_spend(
         );
     }
 
-    let spend = try_s!(coin.rpc_client.find_output_spend(&tx, 0, search_from_block).wait());
+    let spend = try_s!(
+        coin.rpc_client
+            .find_output_spend(&tx, 0, search_from_block)
+            .compat()
+            .await
+    );
     match spend {
         Some(tx) => {
             let script: Script = tx.inputs[0].script_sig.clone().into();
