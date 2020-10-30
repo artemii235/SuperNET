@@ -792,7 +792,7 @@ pub struct ElectrumTxHistoryItem {
     pub fee: Option<i64>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 struct ElectrumBalance {
     confirmed: i64,
     unconfirmed: i64,
@@ -1026,7 +1026,7 @@ pub struct ElectrumClientImpl {
     list_unspent_in_progress: AtomicBool,
     list_unspent_subs: AsyncMutex<Vec<async_oneshot::Sender<Result<Vec<ElectrumUnspent>, JsonRpcError>>>>,
     get_balance_in_progress: AtomicBool,
-    get_balance_subs: AsyncMutex<Vec<async_oneshot::Sender<Result<Vec<ElectrumBalance>, JsonRpcError>>>>,
+    get_balance_subs: AsyncMutex<Vec<async_oneshot::Sender<Result<ElectrumBalance, JsonRpcError>>>>,
 }
 
 #[cfg(feature = "native")]
@@ -1342,16 +1342,14 @@ impl ElectrumClient {
             Box::new(fut.boxed().compat())
         } else {
             let fut = async move {
-                let balance_res = rpc_func!(self, "blockchain.scripthash.get_balance", hash)
-                    .compat()
-                    .await;
+                let balance_res = rpc_func!(arc, "blockchain.scripthash.get_balance", hash).compat().await;
                 for sub in arc.get_balance_subs.lock().await.drain(..) {
                     if sub.send(balance_res.clone()).is_err() {
                         log!("list_unspent_sub is dropped");
                     }
                 }
                 arc.get_balance_in_progress.store(false, AtomicOrdering::Relaxed);
-                unspents_res
+                balance_res
             };
             Box::new(fut.boxed().compat())
         }
