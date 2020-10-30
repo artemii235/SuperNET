@@ -38,6 +38,11 @@ pub fn qrc20_coin_for_test(priv_key: &[u8]) -> (MmArc, Qrc20Coin) {
     (ctx, coin)
 }
 
+fn check_tx_fee(coin: &Qrc20Coin, expected_tx_fee: ActualTxFee) {
+    let actual_tx_fee = block_on(coin.get_tx_fee()).unwrap();
+    assert_eq!(actual_tx_fee, expected_tx_fee);
+}
+
 #[test]
 fn test_withdraw_impl_fee_details() {
     Qrc20Coin::ordered_mature_unspents.mock_safe(|_, _| {
@@ -87,9 +92,11 @@ fn test_withdraw_impl_fee_details() {
 
 #[test]
 fn test_can_i_spend_other_payment() {
-    ElectrumClient::display_balance.mock_safe(|_, _, decimal| {
-        // required more than 12000000 (QRC20_SWAP_GAS_REQUIRED * QRC20_GAS_PRICE_DEFAULT)
-        let balance = big_decimal_from_sat(13000000, decimal);
+    let miner_fee = 1000;
+    ElectrumClient::display_balance.mock_safe(move |_, _, decimal| {
+        // one satoshi more than required
+        let balance = QRC20_GAS_LIMIT_DEFAULT * QRC20_GAS_PRICE_DEFAULT + miner_fee + 1;
+        let balance = big_decimal_from_sat(balance as i64, decimal);
         MockResult::Return(Box::new(futures01::future::ok(balance)))
     });
 
@@ -98,6 +105,7 @@ fn test_can_i_spend_other_payment() {
         32, 161, 106, 119, 241, 227, 42, 102,
     ];
     let (_ctx, coin) = qrc20_coin_for_test(&priv_key);
+    check_tx_fee(&coin, ActualTxFee::Fixed(miner_fee));
 
     let actual = coin.can_i_spend_other_payment().wait();
     assert_eq!(actual, Ok(()));
@@ -105,9 +113,11 @@ fn test_can_i_spend_other_payment() {
 
 #[test]
 fn test_can_i_spend_other_payment_err() {
-    ElectrumClient::display_balance.mock_safe(|_, _, decimal| {
-        // required more than 12000000 (QRC20_SWAP_GAS_REQUIRED * QRC20_GAS_PRICE_DEFAULT)
-        let balance = big_decimal_from_sat(10000000, decimal);
+    let miner_fee = 1000;
+    ElectrumClient::display_balance.mock_safe(move |_, _, decimal| {
+        // one satoshi less than required
+        let balance = QRC20_GAS_LIMIT_DEFAULT * QRC20_GAS_PRICE_DEFAULT + miner_fee - 1;
+        let balance = big_decimal_from_sat(balance as i64, decimal);
         MockResult::Return(Box::new(futures01::future::ok(balance)))
     });
 
@@ -116,10 +126,11 @@ fn test_can_i_spend_other_payment_err() {
         32, 161, 106, 119, 241, 227, 42, 102,
     ];
     let (_ctx, coin) = qrc20_coin_for_test(&priv_key);
+    check_tx_fee(&coin, ActualTxFee::Fixed(miner_fee));
 
     let error = coin.can_i_spend_other_payment().wait().err().unwrap();
     log!([error]);
-    assert!(error.contains("Base coin balance 0.1 is too low to cover gas fee, required 0.12"));
+    assert!(error.contains("Base coin balance 0.04000999 is too low to cover gas fee, required 0.04001"));
 }
 
 #[test]
@@ -1019,4 +1030,28 @@ fn test_transfer_details_by_hash() {
     };
     assert_eq!(actual, expected);
     assert!(it.next().is_none());
+}
+
+#[test]
+fn test_get_trade_fee() {
+    // priv_key of qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG
+    let priv_key = [
+        3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144, 72,
+        172, 110, 180, 13, 123, 179, 10, 49,
+    ];
+    let (_ctx, coin) = qrc20_coin_for_test(&priv_key);
+    // check if the coin's tx fee is required
+    let expected_tx_fee = 1000;
+    check_tx_fee(&coin, ActualTxFee::Fixed(expected_tx_fee));
+
+    let actual_trade_fee = coin.get_trade_fee().wait().unwrap();
+    let expected_trade_fee_amount = big_decimal_from_sat(
+        (QRC20_SWAP_GAS_REQUIRED * QRC20_GAS_PRICE_DEFAULT + expected_tx_fee) as i64,
+        coin.utxo.decimals,
+    );
+    let expected = TradeFee {
+        coin: "QTUM".into(),
+        amount: expected_trade_fee_amount.into(),
+    };
+    assert_eq!(actual_trade_fee, expected);
 }

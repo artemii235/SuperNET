@@ -368,7 +368,7 @@ pub enum TradeInfo {
     Taker(BigDecimal),
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, PartialEq, Serialize)]
 pub struct TradeFee {
     pub coin: String,
     pub amount: MmNumber,

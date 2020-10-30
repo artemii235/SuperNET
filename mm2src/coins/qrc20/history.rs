@@ -270,7 +270,7 @@ impl Qrc20Coin {
 
             let (total_amount, from, to) = {
                 let (amount, from, to) = try_s!(transfer_event_from_log(&log_entry));
-                let amount = try_s!(eth::u256_to_big_decimal(amount, self.decimals()));
+                let amount = try_s!(u256_to_big_decimal(amount, self.decimals()));
                 let from = self.utxo_address_from_qrc20(from);
                 let to = self.utxo_address_from_qrc20(to);
                 (amount, from, to)

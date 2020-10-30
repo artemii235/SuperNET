@@ -137,7 +137,7 @@ pub enum TxFee {
 }
 
 /// The actual "runtime" fee that is received from RPC in case of dynamic calculation
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum ActualTxFee {
     /// fixed tx fee not depending on transaction size
     Fixed(u64),

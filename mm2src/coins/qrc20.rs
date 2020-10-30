@@ -1,4 +1,4 @@
-use crate::eth;
+use crate::eth::{self, u256_to_big_decimal, wei_from_big_decimal};
 use crate::qrc20::rpc_electrum::{ContractCallResult, LogEntry, Qrc20RpcOps, TxHistoryItem, TxReceipt};
 use crate::utxo::rpc_clients::{ElectrumClient, UnspentInfo, UtxoRpcClientEnum, UtxoRpcClientOps};
 use crate::utxo::utxo_common::{self, big_decimal_from_sat};
@@ -45,9 +45,9 @@ mod swap_ops;
 const OUTPUT_QTUM_AMOUNT: u64 = 0;
 const QRC20_GAS_LIMIT_DEFAULT: u64 = 100_000;
 const QRC20_GAS_PRICE_DEFAULT: u64 = 40;
-const QRC20_SWAP_GAS_REQUIRED: u64 = 300_000;
+const QRC20_SWAP_GAS_REQUIRED: u64 = QRC20_GAS_LIMIT_DEFAULT * 3;
 const QRC20_DUST: u64 = 0;
-// Keccak-256 hash of event Transfer
+// Keccak-256 hash of `Transfer` event
 const QRC20_TRANSFER_TOPIC: &str = "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 #[allow(dead_code)]
 const QRC20_APPROVE_TOPIC: &str = "8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925";
@@ -271,7 +271,7 @@ impl Qrc20Coin {
     }
 
     /// Try to parse address from either wallet (UTXO) format or contract (QRC20) format.
-    fn utxo_address_from_any_format(&self, from: &str) -> Result<UtxoAddress, String> {
+    pub fn utxo_address_from_any_format(&self, from: &str) -> Result<UtxoAddress, String> {
         let utxo_err = match UtxoAddress::from_str(from) {
             Ok(addr) => {
                 let is_p2pkh =
@@ -292,6 +292,15 @@ impl Qrc20Coin {
             utxo_err,
             qrc20_err,
         )
+    }
+
+    /// `gas_fee` should be calculated by: gas_limit * gas_price * (count of contract calls),
+    /// or should be sum of gas fee of all contract calls.
+    pub async fn get_qrc20_tx_fee(&self, gas_fee: u64) -> Result<ActualTxFee, String> {
+        match try_s!(self.get_tx_fee().await) {
+            ActualTxFee::Fixed(amount) => Ok(ActualTxFee::Fixed(amount + gas_fee)),
+            ActualTxFee::Dynamic(amount) => Ok(ActualTxFee::Dynamic(amount + gas_fee)),
+        }
     }
 
     /// Generate and send a transaction with the specified UTXO outputs.
@@ -385,6 +394,7 @@ impl Qrc20Coin {
 #[cfg_attr(test, mockable)]
 #[async_trait]
 impl UtxoCommonOps for Qrc20Coin {
+    /// Get only QTUM transaction fee.
     async fn get_tx_fee(&self) -> Result<ActualTxFee, JsonRpcError> { utxo_common::get_tx_fee(&self.utxo).await }
 
     async fn get_htlc_spend_fee(&self) -> Result<u64, String> { utxo_common::get_htlc_spend_fee(self).await }
@@ -474,7 +484,7 @@ impl UtxoCommonOps for Qrc20Coin {
 impl SwapOps for Qrc20Coin {
     fn send_taker_fee(&self, fee_addr: &[u8], amount: BigDecimal) -> TransactionFut {
         let to_address = try_fus!(self.qrc20_address_from_raw_pubkey(fee_addr));
-        let amount = try_fus!(eth::wei_from_big_decimal(&amount, self.utxo.decimals));
+        let amount = try_fus!(wei_from_big_decimal(&amount, self.utxo.decimals));
         let transfer_output =
             try_fus!(self.transfer_output(to_address, amount, QRC20_GAS_LIMIT_DEFAULT, QRC20_GAS_PRICE_DEFAULT));
         let outputs = vec![transfer_output];
@@ -494,7 +504,7 @@ impl SwapOps for Qrc20Coin {
     ) -> TransactionFut {
         let taker_addr = try_fus!(self.qrc20_address_from_raw_pubkey(taker_pub));
         let id = qrc20_swap_id(time_lock, secret_hash);
-        let value = try_fus!(eth::wei_from_big_decimal(&amount, self.utxo.decimals));
+        let value = try_fus!(wei_from_big_decimal(&amount, self.utxo.decimals));
         let secret_hash = Vec::from(secret_hash);
 
         let selfi = self.clone();
@@ -515,7 +525,7 @@ impl SwapOps for Qrc20Coin {
     ) -> TransactionFut {
         let maker_addr = try_fus!(self.qrc20_address_from_raw_pubkey(maker_pub));
         let id = qrc20_swap_id(time_lock, secret_hash);
-        let value = try_fus!(eth::wei_from_big_decimal(&amount, self.utxo.decimals));
+        let value = try_fus!(wei_from_big_decimal(&amount, self.utxo.decimals));
         let secret_hash = Vec::from(secret_hash);
 
         let selfi = self.clone();
@@ -595,7 +605,7 @@ impl SwapOps for Qrc20Coin {
             _ => panic!("Unexpected TransactionEnum"),
         };
         let fee_addr = try_fus!(self.qrc20_address_from_raw_pubkey(fee_addr));
-        let expected_value = try_fus!(eth::wei_from_big_decimal(amount, self.utxo.decimals));
+        let expected_value = try_fus!(wei_from_big_decimal(amount, self.utxo.decimals));
 
         let selfi = self.clone();
         let fut = async move { selfi.validate_fee_impl(fee_tx_hash, fee_addr, expected_value).await };
@@ -720,7 +730,7 @@ impl MarketCoinOps for Qrc20Coin {
             let tokens = try_s!(selfi.rpc_contract_call(RpcContractCallType::BalanceOf, params).await);
 
             match tokens.first() {
-                Some(Token::Uint(bal)) => eth::u256_to_big_decimal(*bal, selfi.utxo.decimals),
+                Some(Token::Uint(bal)) => u256_to_big_decimal(*bal, selfi.utxo.decimals),
                 Some(_) => ERR!(r#"Expected Uint as "balanceOf" result but got {:?}"#, tokens),
                 None => ERR!(r#"Expected Uint as "balanceOf" result but got nothing"#),
             }
@@ -776,20 +786,30 @@ impl MmCoin for Qrc20Coin {
     fn is_asset_chain(&self) -> bool { utxo_common::is_asset_chain(&self.utxo) }
 
     fn can_i_spend_other_payment(&self) -> Box<dyn Future<Item = (), Error = String> + Send> {
-        let decimals = self.utxo.decimals;
-        Box::new(self.base_coin_balance().and_then(move |qtum_balance| {
-            let sat_balance = try_s!(eth::wei_from_big_decimal(&qtum_balance, decimals));
-            let min_amount = QRC20_SWAP_GAS_REQUIRED * QRC20_GAS_PRICE_DEFAULT;
-            log!("sat_balance " [sat_balance] " min_amount " [min_amount]);
-            if sat_balance < min_amount.into() {
+        let selfi = self.clone();
+        let fut = async move {
+            let qtum_balance = try_s!(selfi.base_coin_balance().compat().await);
+            let qtum_balance_sat = try_s!(wei_from_big_decimal(&qtum_balance, selfi.utxo.decimals));
+
+            // other payment can be spend by `receiverSpend` that require only one output
+            let gas_fee = QRC20_GAS_LIMIT_DEFAULT * QRC20_GAS_PRICE_DEFAULT;
+            let min_amount: U256 = match try_s!(selfi.get_qrc20_tx_fee(gas_fee).await) {
+                ActualTxFee::Fixed(trade_fee) | ActualTxFee::Dynamic(trade_fee) => trade_fee.into(),
+            };
+
+            log!("qtum_balance " [qtum_balance_sat] " min_amount " (min_amount));
+            if qtum_balance_sat < min_amount {
+                // u256_to_big_decimal() is expected to return no error
+                let min_amount = try_s!(u256_to_big_decimal(min_amount, selfi.utxo.decimals));
                 return ERR!(
                     "Base coin balance {} is too low to cover gas fee, required {}",
                     qtum_balance,
-                    big_decimal_from_sat(min_amount as i64, decimals),
+                    min_amount,
                 );
             }
             Ok(())
-        }))
+        };
+        Box::new(fut.boxed().compat())
     }
 
     fn wallet_only(&self) -> bool { false }
@@ -816,8 +836,24 @@ impl MmCoin for Qrc20Coin {
 
     fn history_sync_status(&self) -> HistorySyncState { utxo_common::history_sync_status(&self.utxo) }
 
+    /// This method is called to check our QTUM balance.
     fn get_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = String> + Send> {
-        utxo_common::get_trade_fee(self.clone())
+        // `erc20Payment` may require two `approve` contract calls in worst case,
+        // therefore use `QRC20_SWAP_GAS_REQUIRED` instead of `QRC20_GAS_LIMIT_DEFAULT`.
+        let gas_fee = QRC20_SWAP_GAS_REQUIRED * QRC20_GAS_PRICE_DEFAULT;
+
+        let selfi = self.clone();
+        let fut = async move {
+            let tx_fee = try_s!(selfi.get_qrc20_tx_fee(gas_fee).await);
+            let fee = match tx_fee {
+                ActualTxFee::Fixed(f) | ActualTxFee::Dynamic(f) => f,
+            };
+            Ok(TradeFee {
+                coin: selfi.platform.clone(),
+                amount: big_decimal_from_sat(fee as i64, selfi.utxo.decimals).into(),
+            })
+        };
+        Box::new(fut.boxed().compat())
     }
 
     fn required_confirmations(&self) -> u64 { utxo_common::required_confirmations(&self.utxo) }
@@ -886,13 +922,13 @@ async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> Result<Transac
 
     // the qrc20_amount_sat is used only within smart contract calls
     let (qrc20_amount_sat, qrc20_amount) = if req.max {
-        let amount = try_s!(eth::wei_from_big_decimal(&qrc20_balance, coin.utxo.decimals));
+        let amount = try_s!(wei_from_big_decimal(&qrc20_balance, coin.utxo.decimals));
         if amount.is_zero() {
             return ERR!("Balance is 0");
         }
         (amount, qrc20_balance.clone())
     } else {
-        let amount_sat = try_s!(eth::wei_from_big_decimal(&req.amount, coin.utxo.decimals));
+        let amount_sat = try_s!(wei_from_big_decimal(&req.amount, coin.utxo.decimals));
         if amount_sat.is_zero() {
             return ERR!("The amount {} is too small", req.amount);
         }

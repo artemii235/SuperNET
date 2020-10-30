@@ -42,7 +42,7 @@ impl Qrc20Coin {
         // check if we should reset the allowance to 0 and raise this to the max available value (our balance)
         if allowance < value {
             let balance = try_s!(self.my_balance().compat().await);
-            let balance = try_s!(eth::wei_from_big_decimal(&balance, self.utxo.decimals));
+            let balance = try_s!(wei_from_big_decimal(&balance, self.utxo.decimals));
             if allowance > U256::zero() {
                 // first reset the allowance to the 0
                 outputs.push(try_s!(self.approve_output(self.swap_contract_address, 0.into())));
@@ -129,7 +129,7 @@ impl Qrc20Coin {
             );
         }
 
-        let expected_value = try_s!(eth::wei_from_big_decimal(&amount, self.utxo.decimals));
+        let expected_value = try_s!(wei_from_big_decimal(&amount, self.utxo.decimals));
         if expected_value != erc20_payment.value {
             return ERR!(
                 "Invalid 'value' {:?} in swap payment, expected {:?}",
