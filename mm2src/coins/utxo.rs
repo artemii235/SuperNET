@@ -337,8 +337,13 @@ impl UtxoArc {
         let after_list_unspent = now_ms();
         log!("list_unspent took "(after_list_unspent - before_list_unspent));
 
+        let before = now_ms();
         let recently_sent = self.recently_sent_txs.lock().await;
+        let after = now_ms();
+        log!("recently_sent lock took "(after - before));
+
         let my_address_script = Builder::build_p2pkh(&address.hash);
+        let before = now_ms();
         unspents = replace_spent_outputs_with_cache(unspents, &recently_sent, my_address_script.to_bytes());
         unspents.sort_unstable_by(|a, b| {
             if a.value < b.value {
@@ -350,6 +355,8 @@ impl UtxoArc {
         // dedup just in case we add duplicates of same unspent out
         // all duplicates will be removed because vector in sorted before dedup
         unspents.dedup_by(|one, another| one.outpoint == another.outpoint);
+        let after = now_ms();
+        log!("replace_spent_outputs_with_cache + sort + dedup took "(after - before));
         Ok((unspents, recently_sent))
     }
 }
@@ -1238,7 +1245,13 @@ async fn send_outputs_from_my_address_impl<T>(coin: T, outputs: Vec<TransactionO
 where
     T: AsRef<UtxoArc> + UtxoArcCommonOps,
 {
+    let before_list_unspent_ordered = now_ms();
     let (unspents, mut recently_sent_txs) = try_s!(coin.as_ref().list_unspent_ordered(&coin.as_ref().my_address).await);
+    let after_list_unspent_ordered = now_ms();
+    log!("list_unspent_ordered took "(
+        after_list_unspent_ordered - before_list_unspent_ordered
+    ));
+
     let (unsigned, _) = try_s!(
         coin.generate_transaction(unspents, outputs, FeePolicy::SendExact, None, None)
             .await
