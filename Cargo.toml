@@ -70,6 +70,7 @@ atomic = "0.4"
 bigdecimal = { version = "0.1", features = ["serde"] }
 bitcrypto = { git = "https://github.com/artemii235/parity-bitcoin.git" }
 bytes = "0.4"
+chain = { git = "https://github.com/artemii235/parity-bitcoin.git" }
 coins = { path = "mm2src/coins" }
 common = { path = "mm2src/common" }
 crc = "1.8"
@@ -108,6 +109,7 @@ rand = { version = "0.7", features = ["std", "small_rng"] }
 # TODO: Reduce the size of regex by disabling the features we don't use.
 # cf. https://github.com/rust-lang/regex/issues/583
 regex = "1"
+script = { git = "https://github.com/artemii235/parity-bitcoin.git" }
 serde = "1.0"
 serde_bencode = "0.2"
 serde_json = { version = "1.0", features = ["preserve_order"] }

@@ -58,10 +58,12 @@ mod docker_tests {
     mod swaps_file_lock_tests;
 
     use bitcrypto::ChecksumType;
-    use coins::utxo::rpc_clients::{UtxoRpcClientEnum, UtxoRpcClientOps};
+    use chain::OutPoint;
+    use coins::utxo::rpc_clients::{UnspentInfo, UtxoRpcClientEnum, UtxoRpcClientOps};
     use coins::utxo::utxo_standard::{utxo_standard_coin_from_conf_and_request, UtxoStandardCoin};
-    use coins::utxo::{coin_daemon_data_dir, dhash160, zcash_params_path, UtxoCoinCommonOps};
-    use coins::{FoundSwapTxSpend, MarketCoinOps, SwapOps};
+    use coins::utxo::{coin_daemon_data_dir, dhash160, replace_spent_outputs_with_cache, zcash_params_path,
+                      UtxoCoinCommonOps};
+    use coins::{FoundSwapTxSpend, MarketCoinOps, SwapOps, TransactionEnum};
     use common::block_on;
     use common::{file_lock::FileLock,
                  for_tests::{enable_native, mm_dump, new_mm2_temp_folder_path, MarketMakerIt},
@@ -70,6 +72,7 @@ mod docker_tests {
     use gstuff::now_ms;
     use keys::{KeyPair, Private};
     use primitives::hash::H160;
+    use script::Builder;
     use secp256k1::{PublicKey, SecretKey};
     use serde_json::{self as json, Value as Json};
     use std::env;
@@ -421,11 +424,48 @@ mod docker_tests {
         let secret = [0; 32];
 
         let time_lock = (now_ms() / 1000) as u32 - 3600;
-        for i in 0..100 {
-            coin.send_maker_payment(time_lock + i, &*coin.my_public_key(), &*dhash160(&secret), 1.into())
+        let mut unspents = vec![];
+        for i in 0..300 {
+            let tx = coin
+                .send_maker_payment(time_lock + i, &*coin.my_public_key(), &*dhash160(&secret), 1.into())
                 .wait()
                 .unwrap();
+            if let TransactionEnum::UtxoTx(tx) = tx {
+                unspents.push(UnspentInfo {
+                    outpoint: OutPoint {
+                        hash: tx.hash(),
+                        index: 2,
+                    },
+                    value: tx.outputs[2].value,
+                    height: None,
+                });
+                block_on(coin.as_ref().recently_sent_txs.lock()).insert(tx.hash().reversed().into(), tx);
+            }
         }
+
+        let recently_sent = block_on(coin.as_ref().recently_sent_txs.lock());
+
+        let before = now_ms();
+        unspents = replace_spent_outputs_with_cache(
+            unspents,
+            &recently_sent,
+            Builder::build_p2pkh(&coin.as_ref().my_address.hash).to_bytes(),
+        );
+
+        let after = now_ms();
+        log!("Took "(after - before));
+
+        unspents.sort_unstable_by(|a, b| {
+            if a.value < b.value {
+                std::cmp::Ordering::Less
+            } else {
+                std::cmp::Ordering::Greater
+            }
+        });
+        // dedup just in case we add duplicates of same unspent out
+        // all duplicates will be removed because vector in sorted before dedup
+        unspents.dedup_by(|one, another| one.outpoint == another.outpoint);
+        log!([unspents]);
     }
 
     // https://github.com/KomodoPlatform/atomicDEX-API/issues/554

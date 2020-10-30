@@ -184,7 +184,17 @@ impl Default for UtxoAddressFormat {
     fn default() -> Self { UtxoAddressFormat::Standard }
 }
 
-pub type RecentlySentTxsCache = HashMap<H256Json, UtxoTx>;
+struct RecentlySpentOutPoints {
+    inner: HashMap<OutPoint, UtxoTx>,
+}
+
+impl RecentlySpentOutPoints {
+    fn add_tx(&mut self, tx: UtxoTx) {
+        for input in &tx.inputs {
+            self.inner.insert(input.previous_output.clone(), tx.clone());
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct UtxoCoinFields {
@@ -230,7 +240,7 @@ pub struct UtxoCoinFields {
     /// ECDSA key pair
     key_pair: KeyPair,
     /// Lock the mutex when we deal with address utxos
-    my_address: Address,
+    pub my_address: Address,
     /// The address format indicates how to parse and display UTXO addresses over RPC calls
     address_format: UtxoAddressFormat,
     /// Is current coin KMD asset chain?
@@ -268,7 +278,7 @@ pub struct UtxoCoinFields {
     /// The cache of recently send transactions used to track the spent UTXOs and replace them with new outputs
     /// The daemon needs some time to update the listunspent list for address which makes it return already spent UTXOs
     /// This cache helps to prevent UTXO reuse in such cases
-    pub recently_sent_txs: AsyncMutex<RecentlySentTxsCache>,
+    pub recently_spent_outpoints: AsyncMutex<RecentlySpentOutPoints>,
 }
 
 #[async_trait]
@@ -1196,12 +1206,13 @@ pub(crate) fn sign_tx(
     })
 }
 
-fn replace_spent_outputs_with_cache(
+pub fn replace_spent_outputs_with_cache(
     mut outputs: Vec<UnspentInfo>,
     recently_sent: &RecentlySentTxsCache,
     addr_script_pubkey: Bytes,
 ) -> Vec<UnspentInfo> {
     let mut replacement_unspents = Vec::new();
+    let before = now_ms();
     outputs = outputs
         .into_iter()
         .filter(|unspent| {
@@ -1212,12 +1223,12 @@ fn replace_spent_outputs_with_cache(
                     .is_some()
             });
             match tx {
-                Some(tx) => {
-                    for (index, output) in tx.1.outputs.iter().enumerate() {
+                Some((hash, tx)) => {
+                    for (index, output) in tx.outputs.iter().enumerate() {
                         if output.script_pubkey == addr_script_pubkey {
                             let unspent = UnspentInfo {
                                 outpoint: OutPoint {
-                                    hash: tx.0.reversed().into(),
+                                    hash: hash.reversed().into(),
                                     index: index as u32,
                                 },
                                 value: output.value,
@@ -1234,6 +1245,8 @@ fn replace_spent_outputs_with_cache(
             }
         })
         .collect();
+    let after = now_ms();
+    log!("took "(after - before));
     if replacement_unspents.is_empty() {
         return outputs;
     }
