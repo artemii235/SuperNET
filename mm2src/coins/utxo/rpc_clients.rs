@@ -175,7 +175,7 @@ pub type UtxoRpcRes<T> = Box<dyn Future<Item = T, Error = String> + Send + 'stat
 pub trait UtxoRpcClientOps: fmt::Debug + Send + Sync + 'static {
     fn list_unspent(&self, address: &Address) -> UtxoRpcRes<Vec<UnspentInfo>>;
 
-    fn send_transaction(&self, tx: &UtxoTx, my_addr: Address) -> UtxoRpcRes<H256Json>;
+    fn send_transaction(&self, tx: &UtxoTx) -> UtxoRpcRes<H256Json>;
 
     fn send_raw_transaction(&self, tx: BytesJson) -> RpcRes<H256Json>;
 
@@ -439,7 +439,7 @@ impl UtxoRpcClientOps for NativeClient {
         Box::new(fut)
     }
 
-    fn send_transaction(&self, tx: &UtxoTx, addr: Address) -> UtxoRpcRes<H256Json> {
+    fn send_transaction(&self, tx: &UtxoTx) -> UtxoRpcRes<H256Json> {
         let tx_bytes = BytesJson::from(serialize(tx));
         Box::new(self.send_raw_transaction(tx_bytes).map_err(|e| ERRL!("{}", e)))
     }
@@ -721,7 +721,7 @@ impl NativeClientImpl {
     pub fn get_network_info(&self) -> RpcRes<NetworkInfo> { rpc_func!(self, "getnetworkinfo") }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 struct ElectrumUnspent {
     height: Option<u64>,
     tx_hash: H256Json,
@@ -992,12 +992,41 @@ impl Drop for ElectrumConnection {
 }
 
 #[derive(Debug)]
+pub struct RpcRequestState<T> {
+    is_request_running: Arc<AtomicBool>,
+    response_subs: Vec<oneshot::Sender<Result<T, JsonRpcError>>>,
+}
+
+#[derive(Debug)]
+pub struct RpcRequestWrapper<Key, Response> {
+    inner: HashMap<Key, RpcRequestState<Response>>,
+}
+
+impl<Key, Response> RpcRequestWrapper<Key, Response> {
+    fn new() -> Self { RpcRequestWrapper { inner: HashMap::new() } }
+
+    async fn wrap_request(
+        &mut self,
+        key: Key,
+        request: impl Future<Item = Response, Error = JsonRpcError>,
+    ) -> Result<Response, JsonRpcError> {
+        unimplemented!()
+    }
+}
+
+#[derive(Debug)]
 pub struct ElectrumClientImpl {
     coin_ticker: String,
     connections: AsyncMutex<Vec<ElectrumConnection>>,
     next_id: AtomicU64,
     event_handlers: Vec<RpcTransportEventHandlerShared>,
     protocol_version: OrdRange<f32>,
+    get_balance_wrapper: RpcRequestWrapper<Address, ElectrumBalance>,
+    list_unspent_wrapper: RpcRequestWrapper<Address, Vec<ElectrumUnspent>>,
+    list_unspent_in_progress: AtomicBool,
+    list_unspent_subs: AsyncMutex<Vec<async_oneshot::Sender<Result<Vec<ElectrumUnspent>, JsonRpcError>>>>,
+    get_balance_in_progress: AtomicBool,
+    get_balance_subs: AsyncMutex<Vec<async_oneshot::Sender<Result<Vec<ElectrumBalance>, JsonRpcError>>>>,
 }
 
 #[cfg(feature = "native")]
@@ -1249,22 +1278,47 @@ impl ElectrumClient {
     /// It can return duplicates sometimes: https://github.com/artemii235/SuperNET/issues/269
     /// We should remove them to build valid transactions
     fn scripthash_list_unspent(&self, hash: &str) -> RpcRes<Vec<ElectrumUnspent>> {
-        Box::new(rpc_func!(self, "blockchain.scripthash.listunspent", hash).and_then(
-            move |unspents: Vec<ElectrumUnspent>| {
-                let mut map: HashMap<(H256Json, u32), bool> = HashMap::new();
-                let unspents = unspents
-                    .into_iter()
-                    .filter(|unspent| match map.entry((unspent.tx_hash.clone(), unspent.tx_pos)) {
-                        Entry::Occupied(_) => false,
-                        Entry::Vacant(e) => {
-                            e.insert(true);
-                            true
-                        },
+        let arc = self.clone();
+        let hash = hash.to_owned();
+        if self
+            .list_unspent_in_progress
+            .compare_and_swap(false, true, AtomicOrdering::Relaxed)
+        {
+            let fut = async move {
+                let (tx, rx) = async_oneshot::channel();
+                arc.list_unspent_subs.lock().await.push(tx);
+                rx.await.unwrap()
+            };
+            Box::new(fut.boxed().compat())
+        } else {
+            let fut = async move {
+                let unspents_res = rpc_func!(arc, "blockchain.scripthash.listunspent", hash)
+                    .and_then(move |unspents: Vec<ElectrumUnspent>| {
+                        let mut map: HashMap<(H256Json, u32), bool> = HashMap::new();
+                        let unspents = unspents
+                            .into_iter()
+                            .filter(|unspent| match map.entry((unspent.tx_hash.clone(), unspent.tx_pos)) {
+                                Entry::Occupied(_) => false,
+                                Entry::Vacant(e) => {
+                                    e.insert(true);
+                                    true
+                                },
+                            })
+                            .collect();
+                        Ok(unspents)
                     })
-                    .collect();
-                Ok(unspents)
-            },
-        ))
+                    .compat()
+                    .await;
+                for sub in arc.list_unspent_subs.lock().await.drain(..) {
+                    if sub.send(unspents_res.clone()).is_err() {
+                        log!("list_unspent_sub is dropped");
+                    }
+                }
+                arc.list_unspent_in_progress.store(false, AtomicOrdering::Relaxed);
+                unspents_res
+            };
+            Box::new(fut.boxed().compat())
+        }
     }
 
     /// https://electrumx.readthedocs.io/en/latest/protocol-methods.html#blockchain-scripthash-get-history
@@ -1274,7 +1328,33 @@ impl ElectrumClient {
 
     /// https://electrumx.readthedocs.io/en/latest/protocol-methods.html#blockchain-scripthash-gethistory
     fn scripthash_get_balance(&self, hash: &str) -> RpcRes<ElectrumBalance> {
-        rpc_func!(self, "blockchain.scripthash.get_balance", hash)
+        let arc = self.clone();
+        let hash = hash.to_owned();
+        if self
+            .get_balance_in_progress
+            .compare_and_swap(false, true, AtomicOrdering::Relaxed)
+        {
+            let fut = async move {
+                let (tx, rx) = async_oneshot::channel();
+                arc.get_balance_subs.lock().await.push(tx);
+                rx.await.unwrap()
+            };
+            Box::new(fut.boxed().compat())
+        } else {
+            let fut = async move {
+                let balance_res = rpc_func!(self, "blockchain.scripthash.get_balance", hash)
+                    .compat()
+                    .await;
+                for sub in arc.get_balance_subs.lock().await.drain(..) {
+                    if sub.send(balance_res.clone()).is_err() {
+                        log!("list_unspent_sub is dropped");
+                    }
+                }
+                arc.get_balance_in_progress.store(false, AtomicOrdering::Relaxed);
+                unspents_res
+            };
+            Box::new(fut.boxed().compat())
+        }
     }
 
     /// https://electrumx.readthedocs.io/en/latest/protocol-methods.html#blockchain-headers-subscribe
@@ -1327,7 +1407,7 @@ impl UtxoRpcClientOps for ElectrumClient {
         )
     }
 
-    fn send_transaction(&self, tx: &UtxoTx, my_addr: Address) -> UtxoRpcRes<H256Json> {
+    fn send_transaction(&self, tx: &UtxoTx) -> UtxoRpcRes<H256Json> {
         let bytes = BytesJson::from(serialize(tx));
         Box::new(self.blockchain_transaction_broadcast(bytes).map_err(|e| ERRL!("{}", e)))
     }
@@ -1447,6 +1527,12 @@ impl ElectrumClientImpl {
             next_id: 0.into(),
             event_handlers,
             protocol_version,
+            get_balance_wrapper: RpcRequestWrapper::new(),
+            list_unspent_wrapper: RpcRequestWrapper::new(),
+            list_unspent_in_progress: Default::default(),
+            list_unspent_subs: Default::default(),
+            get_balance_in_progress: Default::default(),
+            get_balance_subs: Default::default(),
         }
     }
 

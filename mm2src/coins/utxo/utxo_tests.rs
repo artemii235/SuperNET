@@ -14,7 +14,6 @@ use futures::future::join_all;
 use gstuff::now_ms;
 use mocktopus::mocking::*;
 use rpc::v1::types::{VerboseBlockClient, H256 as H256Json};
-use serde_json::value::RawValue;
 use serialization::deserialize;
 use std::collections::HashMap;
 use std::thread;

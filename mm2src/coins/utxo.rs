@@ -320,7 +320,8 @@ impl From<UtxoCoinFields> for UtxoArc {
 }
 
 impl UtxoArc {
-    /// Returns available unspents in ascending order + RecentlySentTxsCache MutexGuard for further interaction (e.g. to add new transaction to it).
+    /// Returns available unspents in ascending order + RecentlySentTxsCache MutexGuard for further interaction
+    /// (e.g. to add new transaction to it).
     pub async fn list_unspent_ordered(
         &self,
         address: &Address,
@@ -1256,7 +1257,7 @@ where
     let hash = try_s!(
         coin.as_ref()
             .rpc_client
-            .send_transaction(&signed, coin.as_ref().my_address.clone())
+            .send_transaction(&signed)
             .map_err(|e| ERRL!("{}", e))
             .compat()
             .await

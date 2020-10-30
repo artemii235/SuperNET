@@ -780,11 +780,7 @@ where
         };
         let transaction =
             try_s!(coin.p2sh_spending_tx(prev_tx, redeem_script.into(), vec![output], script_data, SEQUENCE_FINAL,));
-        let tx_fut = coin
-            .as_ref()
-            .rpc_client
-            .send_transaction(&transaction, coin.as_ref().my_address.clone())
-            .compat();
+        let tx_fut = coin.as_ref().rpc_client.send_transaction(&transaction).compat();
         try_s!(tx_fut.await);
         Ok(transaction.into())
     };
@@ -820,11 +816,7 @@ where
         };
         let transaction =
             try_s!(coin.p2sh_spending_tx(prev_tx, redeem_script.into(), vec![output], script_data, SEQUENCE_FINAL,));
-        let tx_fut = coin
-            .as_ref()
-            .rpc_client
-            .send_transaction(&transaction, coin.as_ref().my_address.clone())
-            .compat();
+        let tx_fut = coin.as_ref().rpc_client.send_transaction(&transaction).compat();
         try_s!(tx_fut.await);
         Ok(transaction.into())
     };
@@ -862,11 +854,7 @@ where
             script_data,
             SEQUENCE_FINAL - 1,
         ));
-        let tx_fut = coin
-            .as_ref()
-            .rpc_client
-            .send_transaction(&transaction, coin.as_ref().my_address.clone())
-            .compat();
+        let tx_fut = coin.as_ref().rpc_client.send_transaction(&transaction).compat();
         try_s!(tx_fut.await);
         Ok(transaction.into())
     };
@@ -904,11 +892,7 @@ where
             script_data,
             SEQUENCE_FINAL - 1,
         ));
-        let tx_fut = coin
-            .as_ref()
-            .rpc_client
-            .send_transaction(&transaction, coin.as_ref().my_address.clone())
-            .compat();
+        let tx_fut = coin.as_ref().rpc_client.send_transaction(&transaction).compat();
         try_s!(tx_fut.await);
         Ok(transaction.into())
     };
