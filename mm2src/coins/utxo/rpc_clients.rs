@@ -160,7 +160,7 @@ impl UtxoRpcClientEnum {
 
 /// Generic unspent info required to build transactions, we need this separate type because native
 /// and Electrum provide different list_unspent format.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct UnspentInfo {
     pub outpoint: OutPoint,
     pub value: u64,
@@ -420,7 +420,7 @@ impl JsonRpcClient for NativeClientImpl {
 impl UtxoRpcClientOps for NativeClient {
     fn list_unspent(&self, address: &Address) -> UtxoRpcRes<Vec<UnspentInfo>> {
         let fut = self
-            .list_unspent(0, 999999, vec![address.to_string()])
+            .list_unspent_impl(0, 999999, vec![address.to_string()])
             .map_err(|e| ERRL!("{}", e))
             .map(|unspents| {
                 unspents
@@ -457,7 +457,7 @@ impl UtxoRpcClientOps for NativeClient {
 
     fn display_balance(&self, address: Address, _decimals: u8) -> RpcRes<BigDecimal> {
         Box::new(
-            self.list_unspent(0, std::i32::MAX, vec![address.to_string()])
+            self.list_unspent_impl(0, std::i32::MAX, vec![address.to_string()])
                 .map(|unspents| {
                     unspents.iter().fold(BigDecimal::from(0), |sum, unspent| {
                         &sum + BigDecimal::from_str(&unspent.amount.to_string()).unwrap()
@@ -551,7 +551,12 @@ impl UtxoRpcClientOps for NativeClient {
 #[cfg_attr(test, mockable)]
 impl NativeClient {
     /// https://bitcoin.org/en/developer-reference#listunspent
-    pub fn list_unspent(&self, min_conf: i32, max_conf: i32, addresses: Vec<String>) -> RpcRes<Vec<NativeUnspent>> {
+    pub fn list_unspent_impl(
+        &self,
+        min_conf: i32,
+        max_conf: i32,
+        addresses: Vec<String>,
+    ) -> RpcRes<Vec<NativeUnspent>> {
         let arc = self.clone();
         if self
             .list_unspent_in_progress

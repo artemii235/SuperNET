@@ -56,7 +56,7 @@ use script::{Builder, Opcode, Script, SignatureVersion, TransactionInputSigner};
 use serde_json::{self as json, Value as Json};
 use serialization::serialize;
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
 use std::num::NonZeroU64;
 use std::ops::Deref;
@@ -184,15 +184,104 @@ impl Default for UtxoAddressFormat {
     fn default() -> Self { UtxoAddressFormat::Standard }
 }
 
-struct RecentlySpentOutPoints {
-    inner: HashMap<OutPoint, UtxoTx>,
+pub struct RecentlySpentOutPoints {
+    input_to_output_map: HashMap<UnspentInfo, HashSet<UnspentInfo>>,
+    output_to_input_map: HashMap<UnspentInfo, HashSet<UnspentInfo>>,
+    for_script_pubkey: Bytes,
 }
 
 impl RecentlySpentOutPoints {
-    fn add_tx(&mut self, tx: UtxoTx) {
-        for input in &tx.inputs {
-            self.inner.insert(input.previous_output.clone(), tx.clone());
+    fn new(for_script_pubkey: Bytes) -> Self {
+        RecentlySpentOutPoints {
+            input_to_output_map: HashMap::new(),
+            output_to_input_map: HashMap::new(),
+            for_script_pubkey,
         }
+    }
+
+    pub fn add_spent(&mut self, mut inputs: Vec<UnspentInfo>, spend_tx_hash: H256, outputs: Vec<TransactionOutput>) {
+        // reset the height for all inputs as spent cache is not aware about block height of spent output
+        inputs.iter_mut().for_each(|input| input.height = None);
+        let inputs: HashSet<_> = inputs.into_iter().collect();
+        let to_replace: HashSet<_> = outputs
+            .iter()
+            .enumerate()
+            .filter_map(|(index, output)| {
+                if output.script_pubkey == self.for_script_pubkey {
+                    Some(UnspentInfo {
+                        outpoint: OutPoint {
+                            hash: spend_tx_hash.clone(),
+                            index: index as u32,
+                        },
+                        value: output.value,
+                        height: None,
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let mut prev_inputs_spent = HashSet::new();
+
+        // check if inputs are already in spending cached chain
+        for input in &inputs {
+            if let Some(prev_inputs) = self.output_to_input_map.get(input) {
+                for prev_input in prev_inputs {
+                    if let Some(outputs) = self.input_to_output_map.get_mut(prev_input) {
+                        prev_inputs_spent.insert(prev_input.clone());
+                        outputs.remove(input);
+                        for replace in &to_replace {
+                            outputs.insert(replace.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        prev_inputs_spent.extend(inputs.clone());
+        for output in &to_replace {
+            self.output_to_input_map
+                .insert(output.clone(), prev_inputs_spent.clone());
+        }
+
+        for input in inputs {
+            self.input_to_output_map.insert(input, to_replace.clone());
+        }
+    }
+
+    pub fn replace_spent_outputs_with_cache(&self, mut outputs: HashSet<UnspentInfo>) -> HashSet<UnspentInfo> {
+        let mut replacement_unspents = HashSet::new();
+        // reset the height for all outputs as spent cache is not aware about block height of a just sent tx
+        outputs = outputs
+            .into_iter()
+            .map(|mut output| {
+                output.height = None;
+                output
+            })
+            .collect();
+        outputs = outputs
+            .into_iter()
+            .filter(|unspent| {
+                let outs = self.input_to_output_map.get(&unspent);
+                match outs {
+                    Some(outs) => {
+                        for out in outs.iter() {
+                            if !replacement_unspents.contains(out) {
+                                replacement_unspents.insert(out.clone());
+                            }
+                        }
+                        false
+                    },
+                    None => true,
+                }
+            })
+            .collect();
+        if replacement_unspents.is_empty() {
+            return outputs;
+        }
+        outputs.extend(replacement_unspents);
+        self.replace_spent_outputs_with_cache(outputs)
     }
 }
 
@@ -330,12 +419,12 @@ impl From<UtxoCoinFields> for UtxoArc {
 }
 
 impl UtxoArc {
-    /// Returns available unspents in ascending order + RecentlySentTxsCache MutexGuard for further interaction
+    /// Returns available unspents in ascending order + RecentlySpentOutPoints MutexGuard for further interaction
     /// (e.g. to add new transaction to it).
     pub async fn list_unspent_ordered(
         &self,
         address: &Address,
-    ) -> Result<(Vec<UnspentInfo>, AsyncMutexGuard<'_, RecentlySentTxsCache>), String> {
+    ) -> Result<(Vec<UnspentInfo>, AsyncMutexGuard<'_, RecentlySpentOutPoints>), String> {
         let before_list_unspent = now_ms();
         let mut unspents = try_s!(
             self.rpc_client
@@ -348,13 +437,15 @@ impl UtxoArc {
         log!("list_unspent took "(after_list_unspent - before_list_unspent));
 
         let before = now_ms();
-        let recently_sent = self.recently_sent_txs.lock().await;
+        let recently_spent = self.recently_spent_outpoints.lock().await;
         let after = now_ms();
-        log!("recently_sent lock took "(after - before));
+        log!("recently_spent lock took "(after - before));
 
-        let my_address_script = Builder::build_p2pkh(&address.hash);
         let before = now_ms();
-        unspents = replace_spent_outputs_with_cache(unspents, &recently_sent, my_address_script.to_bytes());
+        unspents = recently_spent
+            .replace_spent_outputs_with_cache(unspents.into_iter().collect())
+            .into_iter()
+            .collect();
         unspents.sort_unstable_by(|a, b| {
             if a.value < b.value {
                 Ordering::Less
@@ -367,7 +458,7 @@ impl UtxoArc {
         unspents.dedup_by(|one, another| one.outpoint == another.outpoint);
         let after = now_ms();
         log!("replace_spent_outputs_with_cache + sort + dedup took "(after - before));
-        Ok((unspents, recently_sent))
+        Ok((unspents, recently_spent))
     }
 }
 
@@ -832,6 +923,8 @@ pub async fn utxo_arc_from_conf_and_request(
         .unwrap_or(MATURE_CONFIRMATIONS_DEFAULT);
     let tx_cache_directory = Some(ctx.dbdir().join("TX_CACHE"));
 
+    let my_script_pubkey = Builder::build_p2pkh(&my_address.hash).to_bytes();
+
     let coin = UtxoCoinFields {
         ticker: ticker.into(),
         decimals,
@@ -849,7 +942,7 @@ pub async fn utxo_arc_from_conf_and_request(
         segwit: conf["segwit"].as_bool().unwrap_or(false),
         wif_prefix,
         tx_version,
-        my_address: my_address.clone(),
+        my_address,
         address_format,
         asset_chain,
         tx_fee,
@@ -867,7 +960,7 @@ pub async fn utxo_arc_from_conf_and_request(
         dust_amount,
         mature_confirmations,
         tx_cache_directory,
-        recently_sent_txs: AsyncMutex::new(HashMap::new()),
+        recently_spent_outpoints: AsyncMutex::new(RecentlySpentOutPoints::new(my_script_pubkey)),
     };
     Ok(UtxoArc(Arc::new(coin)))
 }
@@ -1206,54 +1299,6 @@ pub(crate) fn sign_tx(
     })
 }
 
-pub fn replace_spent_outputs_with_cache(
-    mut outputs: Vec<UnspentInfo>,
-    recently_sent: &RecentlySentTxsCache,
-    addr_script_pubkey: Bytes,
-) -> Vec<UnspentInfo> {
-    let mut replacement_unspents = Vec::new();
-    let before = now_ms();
-    outputs = outputs
-        .into_iter()
-        .filter(|unspent| {
-            let tx = recently_sent.iter().find(|(_, tx)| {
-                tx.inputs
-                    .iter()
-                    .find(|input| input.previous_output == unspent.outpoint)
-                    .is_some()
-            });
-            match tx {
-                Some((hash, tx)) => {
-                    for (index, output) in tx.outputs.iter().enumerate() {
-                        if output.script_pubkey == addr_script_pubkey {
-                            let unspent = UnspentInfo {
-                                outpoint: OutPoint {
-                                    hash: hash.reversed().into(),
-                                    index: index as u32,
-                                },
-                                value: output.value,
-                                height: None,
-                            };
-                            if !replacement_unspents.contains(&unspent) {
-                                replacement_unspents.push(unspent);
-                            }
-                        }
-                    }
-                    false
-                },
-                None => true,
-            }
-        })
-        .collect();
-    let after = now_ms();
-    log!("took "(after - before));
-    if replacement_unspents.is_empty() {
-        return outputs;
-    }
-    outputs.extend(replacement_unspents);
-    replace_spent_outputs_with_cache(outputs, recently_sent, addr_script_pubkey)
-}
-
 async fn send_outputs_from_my_address_impl<T>(coin: T, outputs: Vec<TransactionOutput>) -> Result<UtxoTx, String>
 where
     T: AsRef<UtxoArc> + UtxoArcCommonOps,
@@ -1266,7 +1311,7 @@ where
     ));
 
     let (unsigned, _) = try_s!(
-        coin.generate_transaction(unspents, outputs, FeePolicy::SendExact, None, None)
+        coin.generate_transaction(unspents.clone(), outputs, FeePolicy::SendExact, None, None)
             .await
     );
 
@@ -1292,7 +1337,11 @@ where
     log!("send_transaction took "(
         after_send_transaction - before_send_transaction
     ));
-    recently_sent_txs.insert(hash, signed.clone());
+
+    let before = now_ms();
+    recently_sent_txs.add_spent(unspents, signed.hash(), signed.outputs.clone());
+    let after = now_ms();
+    log!("add_spent took "(after - before));
 
     Ok(signed)
 }
