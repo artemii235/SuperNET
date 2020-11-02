@@ -1311,9 +1311,19 @@ where
     ));
 
     let (unsigned, _) = try_s!(
-        coin.generate_transaction(unspents.clone(), outputs, FeePolicy::SendExact, None, None)
+        coin.generate_transaction(unspents, outputs, FeePolicy::SendExact, None, None)
             .await
     );
+
+    let spent_unspents = unsigned
+        .inputs
+        .iter()
+        .map(|input| UnspentInfo {
+            outpoint: input.previous_output.clone(),
+            value: input.amount,
+            height: None,
+        })
+        .collect();
 
     let prev_script = Builder::build_p2pkh(&coin.as_ref().my_address.hash);
     let signed = try_s!(sign_tx(
@@ -1339,7 +1349,7 @@ where
     ));
 
     let before = now_ms();
-    recently_sent_txs.add_spent(unspents, signed.hash(), signed.outputs.clone());
+    recently_sent_txs.add_spent(spent_unspents, signed.hash(), signed.outputs.clone());
     let after = now_ms();
     log!("add_spent took "(after - before));
 
