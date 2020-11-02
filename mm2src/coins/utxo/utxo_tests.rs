@@ -1389,6 +1389,38 @@ fn test_unavailable_electrum_proto_version() {
 }
 
 #[test]
+fn test_spam_rick() {
+    let conf = json!({"coin":"RICK","asset":"RICK","fname":"RICK (TESTCOIN)","rpcport":25435,"txversion":4,"overwintered":1,"mm2":1,"required_confirmations":1,"avg_blocktime":1,"protocol":{"type":"UTXO"}});
+    let req = json!({
+         "method": "enable",
+         "coin": "RICK",
+    });
+
+    let key_pair = key_pair_from_seed("my_seed").unwrap();
+    let ctx = MmCtxBuilder::new().into_mm_arc();
+    let coin = unwrap!(block_on(utxo_standard_coin_from_conf_and_request(
+        &ctx,
+        "RICK",
+        &conf,
+        &req,
+        &*key_pair.private().secret
+    )));
+
+    let output = TransactionOutput {
+        value: 1000000,
+        script_pubkey: Builder::build_p2pkh(&coin.as_ref().my_address.hash).to_bytes(),
+    };
+    let mut futures = vec![];
+    for _ in 0..5 {
+        futures.push(send_outputs_from_my_address_impl(coin.clone(), vec![output.clone()]));
+    }
+    let results = block_on(join_all(futures));
+    for result in results {
+        unwrap!(result);
+    }
+}
+
+#[test]
 fn test_one_unavailable_electrum_proto_version() {
     ElectrumClientImpl::new.mock_safe(|coin_ticker, event_handlers| {
         MockResult::Return(ElectrumClientImpl::with_protocol_version(
