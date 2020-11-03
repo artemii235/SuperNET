@@ -1118,5 +1118,5 @@ fn test_validate_maker_payment_malicious() {
         .err()
         .expect("'erc20Payment' was called from another swap contract, expected an error");
     log!("error: "(error));
-    // error.contains("")
+    assert!(error.contains("Unexpected amount 1000 in 'Transfer' event, expected 100000000"));
 }

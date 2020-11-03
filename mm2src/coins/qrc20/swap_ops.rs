@@ -658,14 +658,48 @@ impl Qrc20Coin {
                 None => return ERR!("Couldn't find 'timelock' in erc20Payment call"),
             };
 
-            let (_amount, sender, swap_contract_address) = try_s!(transfer_event_details_from_receipt(&receipt));
+            let mut events = try_s!(transfer_events_from_receipt(&receipt)).into_iter();
+            let event = match events.next() {
+                Some(e) => e,
+                None => return ERR!("Couldn't find 'Transfer' event from logs"),
+            };
+            // check if the erc20Payment emitted only one Transfer event
+            if events.next().is_some() {
+                return ERR!("'erc20Payment' should emit only one 'Transfer' event");
+            }
+
+            if event.contract_address != self.contract_address {
+                return ERR!(
+                    "Unexpected token address {:#02x} in 'Transfer' event, expected {:#02x}",
+                    event.contract_address,
+                    self.contract_address
+                );
+            }
+            if event.amount != value {
+                return ERR!(
+                    "Unexpected amount {} in 'Transfer' event, expected {}",
+                    event.amount,
+                    value
+                );
+            }
+
+            let contract_address_from_script = try_s!(extract_token_addr_from_script(&script_pubkey));
+            // `erc20Payment` function should emit a `Transfer` event where the receiver is the swap contract
+            if event.receiver != contract_address_from_script {
+                return ERR!(
+                    "Contract address {:#02x} from script pubkey and receiver {:#02x} in 'Transfer' event are different",
+                    contract_address_from_script,
+                    event.receiver
+                );
+            }
+
             return Ok(Erc20PaymentDetails {
                 output_index: receipt.output_index,
                 swap_id,
                 value,
                 token_address,
-                swap_contract_address,
-                sender,
+                swap_contract_address: event.receiver,
+                sender: event.sender,
                 receiver,
                 secret_hash,
                 timelock,
@@ -675,25 +709,26 @@ impl Qrc20Coin {
     }
 }
 
-/// Get `Transfer` event details from [`TxReceipt::logs`].
-/// Note finds first log entry with `Transfer` topic and extract (amount, sender, receiver) from it.
-fn transfer_event_details_from_receipt(receipt: &TxReceipt) -> Result<(U256, H160, H160), String> {
-    // We can get a log_index from get_history call, but it is overhead to request it on every tx_details_by_hash(),
-    // because of this try to find corresponding log entry below
-    let log = match receipt.log.iter().find(|log_entry| {
-        // we should find a log entry with three and more topics
-        if log_entry.topics.len() < 3 {
-            return false;
-        }
-        // the first topic means the type of the contract call
-        // https://github.com/qtumproject/qtum-electrum/blob/v4.0.2/electrum/wallet.py#L2101
-        log_entry.topics.first().unwrap() == QRC20_TRANSFER_TOPIC
-    }) {
-        Some(log) => log,
-        _ => return ERR!("Couldn't find a log entry that meets the requirements"),
-    };
+/// Get `Transfer` events details from [`TxReceipt::logs`].
+fn transfer_events_from_receipt(receipt: &TxReceipt) -> Result<Vec<TransferEventDetails>, String> {
+    receipt
+        .log
+        .iter()
+        .filter_map(|log_entry| {
+            // Transfer event has at least 3 topics
+            if log_entry.topics.len() < 3 {
+                return None;
+            }
 
-    transfer_event_from_log(log)
+            // the first topic is a type of event
+            // https://github.com/qtumproject/qtum-electrum/blob/v4.0.2/electrum/wallet.py#L2101
+            if log_entry.topics.first().unwrap() != QRC20_TRANSFER_TOPIC {
+                return None;
+            }
+
+            Some(transfer_event_from_log(log_entry))
+        })
+        .collect()
 }
 
 /// Get `transfer` contract call details from script pubkey.

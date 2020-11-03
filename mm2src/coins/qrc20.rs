@@ -1011,7 +1011,21 @@ fn address_from_log_topic(topic: &str) -> Result<H160, String> {
     Ok(hash.0.into())
 }
 
-fn transfer_event_from_log(log: &LogEntry) -> Result<(U256, H160, H160), String> {
+pub struct TransferEventDetails {
+    contract_address: H160,
+    amount: U256,
+    sender: H160,
+    receiver: H160,
+}
+
+fn transfer_event_from_log(log: &LogEntry) -> Result<TransferEventDetails, String> {
+    let contract_address = if log.address.starts_with("0x") {
+        try_s!(qrc20_addr_from_str(&log.address))
+    } else {
+        let address = format!("0x{}", log.address);
+        try_s!(qrc20_addr_from_str(&address))
+    };
+
     if log.topics.len() != 3 {
         return ERR!("'Transfer' event must have 3 topics, found, {}", log.topics.len());
     }
@@ -1020,10 +1034,15 @@ fn transfer_event_from_log(log: &LogEntry) -> Result<(U256, H160, H160), String>
     let amount = try_s!(U256::from_str(&log.data));
 
     // https://github.com/qtumproject/qtum-electrum/blob/v4.0.2/electrum/wallet.py#L2112
-    let from = try_s!(address_from_log_topic(&log.topics[1]));
+    let sender = try_s!(address_from_log_topic(&log.topics[1]));
     // https://github.com/qtumproject/qtum-electrum/blob/v4.0.2/electrum/wallet.py#L2113
-    let to = try_s!(address_from_log_topic(&log.topics[2]));
-    Ok((amount, from, to))
+    let receiver = try_s!(address_from_log_topic(&log.topics[2]));
+    Ok(TransferEventDetails {
+        contract_address,
+        amount,
+        sender,
+        receiver,
+    })
 }
 
 fn display_contract_address(address: UtxoAddress) -> String {

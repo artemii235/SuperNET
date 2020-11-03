@@ -269,16 +269,21 @@ impl Qrc20Coin {
             }
 
             let (total_amount, from, to) = {
-                let (amount, from, to) = try_s!(transfer_event_from_log(&log_entry));
-                let amount = try_s!(u256_to_big_decimal(amount, self.decimals()));
-                let from = self.utxo_address_from_qrc20(from);
-                let to = self.utxo_address_from_qrc20(to);
+                let event = try_s!(transfer_event_from_log(&log_entry));
+                // https://github.com/qtumproject/qtum-electrum/blob/v4.0.2/electrum/wallet.py#L2093
+                if event.contract_address != self.contract_address {
+                    // contract address mismatch
+                    continue;
+                }
+                let amount = try_s!(u256_to_big_decimal(event.amount, self.decimals()));
+                let from = self.utxo_address_from_qrc20(event.sender);
+                let to = self.utxo_address_from_qrc20(event.receiver);
                 (amount, from, to)
             };
 
             // https://github.com/qtumproject/qtum-electrum/blob/v4.0.2/electrum/wallet.py#L2102
             if from != self.utxo.my_address && to != self.utxo.my_address {
-                log!("Address mismatch");
+                // address mismatch
                 continue;
             }
 
