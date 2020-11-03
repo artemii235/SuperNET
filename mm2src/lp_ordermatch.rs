@@ -1670,7 +1670,7 @@ fn lp_connect_start_bob(ctx: MmArc, maker_match: MakerMatch, maker_order: MakerO
         let taker_amount = maker_match.reserved.get_rel_amount().into();
         let privkey = &ctx.secp256k1_key_pair().private().secret;
         let my_persistent_pub = unwrap!(compressed_pub_key_from_priv_raw(&privkey[..], ChecksumType::DSHA256));
-        let uuid = maker_match.request.uuid.to_string();
+        let uuid = maker_match.request.uuid;
         let my_conf_settings = choose_maker_confs_and_notas(
             maker_order.conf_settings,
             &maker_match.request,
@@ -1740,7 +1740,7 @@ fn lp_connected_alice(ctx: MmArc, taker_request: TakerRequest, taker_match: Take
         let my_persistent_pub = unwrap!(compressed_pub_key_from_priv_raw(&privkey[..], ChecksumType::DSHA256));
         let maker_amount = taker_match.reserved.get_base_amount().into();
         let taker_amount = taker_match.reserved.get_rel_amount().into();
-        let uuid = taker_match.reserved.taker_order_uuid.to_string();
+        let uuid = taker_match.reserved.taker_order_uuid;
 
         let my_conf_settings =
             choose_taker_confs_and_notas(&taker_request, &taker_match.reserved, &maker_coin, &taker_coin);

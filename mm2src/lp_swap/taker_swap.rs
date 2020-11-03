@@ -20,8 +20,9 @@ use rpc::v1::types::{H160 as H160Json, H256 as H256Json, H264 as H264Json};
 use serde_json::{self as json, Value as Json};
 use std::path::PathBuf;
 use std::sync::{atomic::Ordering, Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use uuid::Uuid;
 
-pub fn stats_taker_swap_file_path(ctx: &MmArc, uuid: &str) -> PathBuf {
+pub fn stats_taker_swap_file_path(ctx: &MmArc, uuid: &Uuid) -> PathBuf {
     ctx.dbdir()
         .join("SWAPS")
         .join("STATS")
@@ -124,7 +125,7 @@ impl TakerSavedEvent {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TakerSavedSwap {
-    pub uuid: String,
+    pub uuid: Uuid,
     pub events: Vec<TakerSavedEvent>,
     maker_amount: Option<BigDecimal>,
     maker_coin: Option<String>,
@@ -208,12 +209,12 @@ pub enum RunTakerSwapInput {
     KickStart {
         maker_coin: MmCoinEnum,
         taker_coin: MmCoinEnum,
-        swap_uuid: String,
+        swap_uuid: Uuid,
     },
 }
 
 impl RunTakerSwapInput {
-    fn uuid(&self) -> &str {
+    fn uuid(&self) -> &Uuid {
         match self {
             RunTakerSwapInput::StartNew(swap) => &swap.uuid,
             RunTakerSwapInput::KickStart { swap_uuid, .. } => &swap_uuid,
@@ -288,11 +289,11 @@ pub async fn run_taker_swap(swap: RunTakerSwapInput, ctx: MmArc) {
     let ctx = swap.ctx.clone();
     subscribe_to_topic(&ctx, swap_topic(&swap.uuid)).await;
     let mut status = ctx.log.status_handle();
-    let uuid = swap.uuid.clone();
+    let uuid = swap.uuid.to_string();
     let running_swap = Arc::new(swap);
     let weak_ref = Arc::downgrade(&running_swap);
     let swap_ctx = unwrap!(SwapsContext::from_ctx(&ctx));
-    swap_ctx.init_msg_store(running_swap.uuid.clone(), running_swap.maker);
+    swap_ctx.init_msg_store(running_swap.uuid, running_swap.maker);
     unwrap!(swap_ctx.running_swaps.lock()).push(weak_ref);
     let shutdown_rx = swap_ctx.shutdown_rx.clone();
     let swap_for_log = running_swap.clone();
@@ -320,7 +321,7 @@ pub async fn run_taker_swap(swap: RunTakerSwapInput, ctx: MmArc) {
                             event.clone().into(),
                         )
                     }
-                    status.status(&[&"swap", &("uuid", &uuid[..])], &event.status_str());
+                    status.status(&[&"swap", &("uuid", uuid.as_str())], &event.status_str());
                     unwrap!(running_swap.apply_event(event), "!apply_event");
                 }
                 match res.0 {
@@ -328,7 +329,7 @@ pub async fn run_taker_swap(swap: RunTakerSwapInput, ctx: MmArc) {
                         command = c;
                     },
                     None => {
-                        if let Err(e) = broadcast_my_swap_status(&uuid, &ctx) {
+                        if let Err(e) = broadcast_my_swap_status(&running_swap.uuid, &ctx) {
                             log!("!broadcast_my_swap_status(" (uuid) "): " (e));
                         }
                         break;
@@ -361,7 +362,7 @@ pub struct TakerSwapData {
     taker_payment_requires_nota: Option<bool>,
     taker_payment_lock: u64,
     /// Allows to recognize one SWAP from the other in the logs. #274.
-    uuid: String,
+    uuid: Uuid,
     started_at: u64,
     maker_payment_wait: u64,
     maker_coin_start_block: u64,
@@ -389,7 +390,7 @@ pub struct TakerSwap {
     taker_amount: BigDecimal,
     my_persistent_pub: H264,
     maker: bits256,
-    uuid: String,
+    uuid: Uuid,
     maker_payment_lock: Atomic<u64>,
     maker_payment_confirmed: Atomic<bool>,
     errors: PaMutex<Vec<SwapError>>,
@@ -570,7 +571,7 @@ impl TakerSwap {
         maker_amount: BigDecimal,
         taker_amount: BigDecimal,
         my_persistent_pub: H264,
-        uuid: String,
+        uuid: Uuid,
         conf_settings: SwapConfirmationsSettings,
         maker_coin: MmCoinEnum,
         taker_coin: MmCoinEnum,
@@ -660,7 +661,7 @@ impl TakerSwap {
             taker_payment_requires_nota: Some(self.conf_settings.taker_coin_nota),
             taker_payment_lock: started_at + self.payment_locktime,
             my_persistent_pub: self.my_persistent_pub.clone().into(),
-            uuid: self.uuid.clone(),
+            uuid: self.uuid,
             maker_payment_wait: started_at + (self.payment_locktime * 2) / 5,
             maker_coin_start_block,
             taker_coin_start_block,
@@ -1128,7 +1129,7 @@ impl TakerSwap {
         ctx: MmArc,
         maker_coin: MmCoinEnum,
         taker_coin: MmCoinEnum,
-        swap_uuid: &str,
+        swap_uuid: &Uuid,
     ) -> Result<(Self, Option<TakerSwapCommand>), String> {
         let path = my_swap_file_path(&ctx, swap_uuid);
         let saved: SavedSwap = try_s!(json::from_slice(&try_s!(slurp(&path))));
@@ -1371,7 +1372,7 @@ impl AtomicSwap for TakerSwap {
         }
     }
 
-    fn uuid(&self) -> &str { &self.uuid }
+    fn uuid(&self) -> &Uuid { &self.uuid }
 
     fn maker_coin(&self) -> &str { self.maker_coin.ticker() }
 
@@ -1383,7 +1384,7 @@ pub async fn check_balance_for_taker_swap(
     my_coin: &MmCoinEnum,
     other_coin: &MmCoinEnum,
     volume: MmNumber,
-    swap_uuid: Option<&str>,
+    swap_uuid: Option<&Uuid>,
 ) -> Result<(), String> {
     let miner_fee = try_s!(my_coin.get_trade_fee().compat().await);
     log!("check_balance_for_taker_swap miner fee "[miner_fee.amount.to_fraction()]);

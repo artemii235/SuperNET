@@ -246,11 +246,7 @@ mod docker_tests {
 
     // generate random privkey, create a coin and fill it's address with 1000 coins
     fn generate_coin_with_random_privkey(ticker: &str, balance: u64) -> (MmArc, UtxoStandardCoin, [u8; 32]) {
-        // prevent concurrent initialization since daemon RPC returns errors if send_to_address
-        // is called concurrently (insufficient funds) and it also may return other errors
-        // if previous transaction is not confirmed yet
         let ctx = MmCtxBuilder::new().into_mm_arc();
-        let _lock = unwrap!(COINS_LOCK.lock());
         let timeout = (now_ms() / 1000) + 120; // timeout if test takes more than 120 seconds to run
         let conf = json!({"asset":ticker,"txversion":4,"overwintered":1,"txfee":1000});
         let req = json!({"method":"enable"});
@@ -263,6 +259,11 @@ mod docker_tests {
     }
 
     fn fill_address(coin: &UtxoStandardCoin, address: &str, amount: u64, timeout: u64) {
+        // prevent concurrent fill since daemon RPC returns errors if send_to_address
+        // is called concurrently (insufficient funds) and it also may return other errors
+        // if previous transaction is not confirmed yet
+        let _lock = unwrap!(COINS_LOCK.lock());
+
         if let UtxoRpcClientEnum::Native(client) = &coin.as_ref().rpc_client {
             unwrap!(client
                 .import_address(&coin.my_address().unwrap(), &coin.my_address().unwrap(), false)

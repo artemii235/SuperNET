@@ -10,8 +10,8 @@ use atomic::Atomic;
 use bigdecimal::BigDecimal;
 use bitcrypto::dhash160;
 use coins::{FoundSwapTxSpend, MmCoinEnum, TradeFee, TransactionDetails};
-use common::{bits256, executor::Timer, file_lock::FileLock, mm_ctx::MmArc, mm_number::MmNumber, now_float, now_ms,
-             slurp, write, MM_VERSION};
+use common::{bits256, executor::Timer, file_lock::FileLock, mm_ctx::MmArc, mm_number::MmNumber, now_ms, slurp, write,
+             MM_VERSION};
 use futures::{compat::Future01CompatExt, select, FutureExt};
 use futures01::Future;
 use parking_lot::Mutex as PaMutex;
@@ -21,8 +21,9 @@ use rpc::v1::types::{H160 as H160Json, H256 as H256Json, H264 as H264Json};
 use serde_json::{self as json};
 use std::path::PathBuf;
 use std::sync::{atomic::Ordering, Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use uuid::Uuid;
 
-pub fn stats_maker_swap_file_path(ctx: &MmArc, uuid: &str) -> PathBuf {
+pub fn stats_maker_swap_file_path(ctx: &MmArc, uuid: &Uuid) -> PathBuf {
     ctx.dbdir()
         .join("SWAPS")
         .join("STATS")
@@ -107,7 +108,7 @@ pub struct MakerSwapData {
     taker_payment_requires_nota: Option<bool>,
     maker_payment_lock: u64,
     /// Allows to recognize one SWAP from the other in the logs. #274.
-    uuid: String,
+    uuid: Uuid,
     started_at: u64,
     maker_coin_start_block: u64,
     taker_coin_start_block: u64,
@@ -131,7 +132,7 @@ pub struct MakerSwap {
     taker_amount: BigDecimal,
     my_persistent_pub: H264,
     taker: bits256,
-    uuid: String,
+    uuid: Uuid,
     taker_payment_lock: Atomic<u64>,
     taker_payment_confirmed: Atomic<bool>,
     errors: PaMutex<Vec<SwapError>>,
@@ -204,7 +205,7 @@ impl MakerSwap {
         maker_amount: BigDecimal,
         taker_amount: BigDecimal,
         my_persistent_pub: H264,
-        uuid: String,
+        uuid: Uuid,
         conf_settings: SwapConfirmationsSettings,
         maker_coin: MmCoinEnum,
         taker_coin: MmCoinEnum,
@@ -305,7 +306,7 @@ impl MakerSwap {
             taker_payment_requires_nota: Some(self.conf_settings.taker_coin_nota),
             maker_payment_lock: started_at + self.payment_locktime * 2,
             my_persistent_pub: self.my_persistent_pub.clone().into(),
-            uuid: self.uuid.clone(),
+            uuid: self.uuid,
             maker_coin_start_block,
             taker_coin_start_block,
         };
@@ -772,7 +773,7 @@ impl MakerSwap {
         ctx: MmArc,
         maker_coin: MmCoinEnum,
         taker_coin: MmCoinEnum,
-        swap_uuid: &str,
+        swap_uuid: &Uuid,
     ) -> Result<(Self, Option<MakerSwapCommand>), String> {
         let path = my_swap_file_path(&ctx, swap_uuid);
         let saved: SavedSwap = try_s!(json::from_slice(&try_s!(slurp(&path))));
@@ -934,7 +935,7 @@ impl AtomicSwap for MakerSwap {
         }
     }
 
-    fn uuid(&self) -> &str { &self.uuid }
+    fn uuid(&self) -> &Uuid { &self.uuid }
 
     fn maker_coin(&self) -> &str { self.maker_coin.ticker() }
 
@@ -1061,7 +1062,7 @@ impl MakerSavedEvent {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MakerSavedSwap {
-    pub uuid: String,
+    pub uuid: Uuid,
     events: Vec<MakerSavedEvent>,
     maker_amount: Option<BigDecimal>,
     maker_coin: Option<String>,
@@ -1151,12 +1152,12 @@ pub enum RunMakerSwapInput {
     KickStart {
         maker_coin: MmCoinEnum,
         taker_coin: MmCoinEnum,
-        swap_uuid: String,
+        swap_uuid: Uuid,
     },
 }
 
 impl RunMakerSwapInput {
-    fn uuid(&self) -> &str {
+    fn uuid(&self) -> &Uuid {
         match self {
             RunMakerSwapInput::StartNew(swap) => &swap.uuid,
             RunMakerSwapInput::KickStart { swap_uuid, .. } => &swap_uuid,
@@ -1231,10 +1232,10 @@ pub async fn run_maker_swap(swap: RunMakerSwapInput, ctx: MmArc) {
     let ctx = swap.ctx.clone();
     subscribe_to_topic(&ctx, swap_topic(&swap.uuid)).await;
     let mut status = ctx.log.status_handle();
-    let uuid = swap.uuid.clone();
+    let uuid_str = swap.uuid.to_string();
     macro_rules! swap_tags {
         () => {
-            &[&"swap", &("uuid", &uuid[..])]
+            &[&"swap", &("uuid", uuid_str.as_str())]
         };
     }
     let running_swap = Arc::new(swap);
@@ -1297,7 +1298,7 @@ pub async fn check_balance_for_maker_swap(
     ctx: &MmArc,
     my_coin: &MmCoinEnum,
     volume: MmNumber,
-    swap_uuid: Option<&str>,
+    swap_uuid: Option<&Uuid>,
 ) -> Result<(), String> {
     let miner_fee = try_s!(my_coin.get_trade_fee().compat().await);
     log!("check_balance_for_maker_swap miner fee "[miner_fee.amount.to_fraction()]);

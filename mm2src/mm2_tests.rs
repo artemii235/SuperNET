@@ -1265,7 +1265,7 @@ fn test_swap_status() {
         "userpass": mm.userpass,
         "method": "my_swap_status",
         "params": {
-            "uuid":"random",
+            "uuid":Uuid::new_v4(),
         }
     }))));
 
@@ -1280,7 +1280,7 @@ fn test_swap_status() {
         "userpass": mm.userpass,
         "method": "stats_swap_status",
         "params": {
-            "uuid":"random",
+            "uuid":Uuid::new_v4(),
         }
     }))));
 
