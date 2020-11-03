@@ -260,7 +260,7 @@ fn test_validate_maker_payment() {
         .wait()
         .err());
     log!("error: "[error]);
-    assert!(error.contains("Invalid 'swap_id'"));
+    assert!(error.contains("Payment state is not PAYMENT_STATE_SENT, got 0"));
 
     let time_lock_dif = 123;
     let error = unwrap!(coin
@@ -268,7 +268,7 @@ fn test_validate_maker_payment() {
         .wait()
         .err());
     log!("error: "[error]);
-    assert!(error.contains("Invalid 'swap_id'"));
+    assert!(error.contains("Payment state is not PAYMENT_STATE_SENT, got 0"));
 }
 
 #[test]
@@ -1096,6 +1096,8 @@ fn test_get_trade_fee() {
 /// ```
 ///
 /// In the function above maker spent only 1000 amount, but value is 100000000 in the arguments.
+/// Note maker initialized payment with the corresponding swap_id in
+/// b61ef2f9911d075e80a3623444cce8fd948932f66c9148283860d46e9af4f2c8 tx.
 #[test]
 fn test_validate_maker_payment_malicious() {
     // priv_key of qUX9FGHubczidVjWPCUWuwCUJWpkAtGCgf

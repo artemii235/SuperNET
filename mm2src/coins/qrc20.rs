@@ -296,10 +296,9 @@ impl Qrc20Coin {
 
     /// `gas_fee` should be calculated by: gas_limit * gas_price * (count of contract calls),
     /// or should be sum of gas fee of all contract calls.
-    pub async fn get_qrc20_tx_fee(&self, gas_fee: u64) -> Result<ActualTxFee, String> {
+    pub async fn get_qrc20_tx_fee(&self, gas_fee: u64) -> Result<u64, String> {
         match try_s!(self.get_tx_fee().await) {
-            ActualTxFee::Fixed(amount) => Ok(ActualTxFee::Fixed(amount + gas_fee)),
-            ActualTxFee::Dynamic(amount) => Ok(ActualTxFee::Dynamic(amount + gas_fee)),
+            ActualTxFee::Fixed(amount) | ActualTxFee::Dynamic(amount) => Ok(amount + gas_fee),
         }
     }
 
@@ -793,9 +792,7 @@ impl MmCoin for Qrc20Coin {
 
             // other payment can be spend by `receiverSpend` that require only one output
             let gas_fee = QRC20_GAS_LIMIT_DEFAULT * QRC20_GAS_PRICE_DEFAULT;
-            let min_amount: U256 = match try_s!(selfi.get_qrc20_tx_fee(gas_fee).await) {
-                ActualTxFee::Fixed(trade_fee) | ActualTxFee::Dynamic(trade_fee) => trade_fee.into(),
-            };
+            let min_amount: U256 = try_s!(selfi.get_qrc20_tx_fee(gas_fee).await).into();
 
             log!("qtum_balance " [qtum_balance_sat] " min_amount " (min_amount));
             if qtum_balance_sat < min_amount {
@@ -844,10 +841,7 @@ impl MmCoin for Qrc20Coin {
 
         let selfi = self.clone();
         let fut = async move {
-            let tx_fee = try_s!(selfi.get_qrc20_tx_fee(gas_fee).await);
-            let fee = match tx_fee {
-                ActualTxFee::Fixed(f) | ActualTxFee::Dynamic(f) => f,
-            };
+            let fee = try_s!(selfi.get_qrc20_tx_fee(gas_fee).await);
             Ok(TradeFee {
                 coin: selfi.platform.clone(),
                 amount: big_decimal_from_sat(fee as i64, selfi.utxo.decimals).into(),

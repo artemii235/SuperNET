@@ -107,9 +107,13 @@ impl Qrc20Coin {
         secret_hash: Vec<u8>,
         amount: BigDecimal,
     ) -> Result<(), String> {
-        let erc20_payment = try_s!(self.erc20_payment_details_from_tx(&payment_tx).await);
-
         let expected_swap_id = qrc20_swap_id(time_lock, &secret_hash);
+        let status = try_s!(self.payment_status(expected_swap_id.clone()).await);
+        if status != eth::PAYMENT_STATE_SENT.into() {
+            return ERR!("Payment state is not PAYMENT_STATE_SENT, got {}", status);
+        }
+
+        let erc20_payment = try_s!(self.erc20_payment_details_from_tx(&payment_tx).await);
         if erc20_payment.swap_id != expected_swap_id {
             return ERR!(
                 "Invalid 'swap_id' {:?} in swap payment, expected {:?}",

@@ -1424,6 +1424,12 @@ impl EthCoin {
         let selfi = self.clone();
         let secret_hash = secret_hash.to_vec();
         let fut = async move {
+            let swap_id = selfi.etomic_swap_id(time_lock, &secret_hash);
+            let status = try_s!(selfi.payment_status(Token::FixedBytes(swap_id.clone())).compat().await);
+            if status != PAYMENT_STATE_SENT.into() {
+                return ERR!("Payment state is not PAYMENT_STATE_SENT, got {}", status);
+            }
+
             let tx_from_rpc = try_s!(
                 selfi
                     .web3
@@ -1465,6 +1471,10 @@ impl EthCoin {
 
                     let function = try_s!(SWAP_CONTRACT.function("ethPayment"));
                     let decoded = try_s!(function.decode_input(&tx_from_rpc.input.0));
+                    if decoded[0] != Token::FixedBytes(swap_id.clone()) {
+                        return ERR!("Invalid 'swap_id' {:?}, expected {:?}", decoded, swap_id);
+                    }
+
                     if decoded[1] != Token::Address(selfi.my_address) {
                         return ERR!(
                             "Payment tx receiver arg {:?} is invalid, expected {:?}",
@@ -1500,6 +1510,10 @@ impl EthCoin {
 
                     let function = try_s!(SWAP_CONTRACT.function("erc20Payment"));
                     let decoded = try_s!(function.decode_input(&tx_from_rpc.input.0));
+                    if decoded[0] != Token::FixedBytes(swap_id.clone()) {
+                        return ERR!("Invalid 'swap_id' {:?}, expected {:?}", decoded, swap_id);
+                    }
+
                     if decoded[1] != Token::Uint(expected_value) {
                         return ERR!(
                             "Payment tx value arg {:?} is invalid, expected {:?}",
