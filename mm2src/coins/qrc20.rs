@@ -114,6 +114,25 @@ enum RpcContractCallType {
     Payments,
 }
 
+impl RpcContractCallType {
+    fn as_function_name(&self) -> &'static str {
+        match self {
+            RpcContractCallType::BalanceOf => "balanceOf",
+            RpcContractCallType::Allowance => "allowance",
+            RpcContractCallType::Payments => "payments",
+        }
+    }
+
+    fn as_function(&self) -> &'static Function {
+        match self {
+            RpcContractCallType::BalanceOf | RpcContractCallType::Allowance => {
+                unwrap!(eth::ERC20_CONTRACT.function(self.as_function_name()))
+            },
+            RpcContractCallType::Payments => unwrap!(eth::SWAP_CONTRACT.function(self.as_function_name())),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct ContractCallOutput {
     pub value: u64,
@@ -212,25 +231,15 @@ struct GenerateQrc20TxResult {
 }
 
 impl Qrc20Coin {
-    async fn rpc_contract_call(&self, func: RpcContractCallType, tokens: &[Token]) -> Result<Vec<Token>, String> {
-        let (function, contract_addr) = match func {
-            RpcContractCallType::BalanceOf => {
-                let function = try_s!(eth::ERC20_CONTRACT.function("balanceOf"));
-                let contract_addr = qrc20_addr_into_rpc_format(&self.contract_address);
-                (function, contract_addr)
-            },
-            RpcContractCallType::Allowance => {
-                let function = try_s!(eth::ERC20_CONTRACT.function("allowance"));
-                let contract_addr = qrc20_addr_into_rpc_format(&self.contract_address);
-                (function, contract_addr)
-            },
-            RpcContractCallType::Payments => {
-                let function = try_s!(eth::SWAP_CONTRACT.function("payments"));
-                let contract_addr = qrc20_addr_into_rpc_format(&self.swap_contract_address);
-                (function, contract_addr)
-            },
-        };
+    async fn rpc_contract_call(
+        &self,
+        func: RpcContractCallType,
+        contract_addr: &H160,
+        tokens: &[Token],
+    ) -> Result<Vec<Token>, String> {
+        let function = func.as_function();
         let params = try_s!(function.encode_input(tokens));
+        let contract_addr = qrc20_addr_into_rpc_format(contract_addr);
 
         let electrum = match self.utxo.rpc_client {
             UtxoRpcClientEnum::Electrum(ref electrum) => electrum,
@@ -723,10 +732,15 @@ impl MarketCoinOps for Qrc20Coin {
 
     fn my_balance(&self) -> Box<dyn Future<Item = BigDecimal, Error = String> + Send> {
         let my_address = qrc20_addr_from_utxo_addr(self.utxo.my_address.clone());
+        let contract_address = self.contract_address.clone();
         let selfi = self.clone();
         let fut = async move {
             let params = &[Token::Address(my_address)];
-            let tokens = try_s!(selfi.rpc_contract_call(RpcContractCallType::BalanceOf, params).await);
+            let tokens = try_s!(
+                selfi
+                    .rpc_contract_call(RpcContractCallType::BalanceOf, &contract_address, params)
+                    .await
+            );
 
             match tokens.first() {
                 Some(Token::Uint(bal)) => u256_to_big_decimal(*bal, selfi.utxo.decimals),

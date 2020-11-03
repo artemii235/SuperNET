@@ -69,15 +69,19 @@ impl Qrc20Coin {
         secret: Vec<u8>,
     ) -> Result<TransactionEnum, String> {
         let Erc20PaymentDetails {
-            swap_id, value, sender, ..
+            swap_id,
+            value,
+            swap_contract_address,
+            sender,
+            ..
         } = try_s!(self.erc20_payment_details_from_tx(&payment_tx).await);
 
-        let status = try_s!(self.payment_status(swap_id.clone()).await);
+        let status = try_s!(self.payment_status(&swap_contract_address, swap_id.clone()).await);
         if status != eth::PAYMENT_STATE_SENT.into() {
             return ERR!("Payment state is not PAYMENT_STATE_SENT, got {}", status);
         }
 
-        let spend_output = try_s!(self.receiver_spend_output(swap_id, value, secret, sender));
+        let spend_output = try_s!(self.receiver_spend_output(&swap_contract_address, swap_id, value, secret, sender));
         self.send_contract_calls(vec![spend_output]).await
     }
 
@@ -85,17 +89,19 @@ impl Qrc20Coin {
         let Erc20PaymentDetails {
             swap_id,
             value,
+            swap_contract_address,
             receiver,
             secret_hash,
             ..
         } = try_s!(self.erc20_payment_details_from_tx(&payment_tx).await);
 
-        let status = try_s!(self.payment_status(swap_id.clone()).await);
+        let status = try_s!(self.payment_status(&swap_contract_address, swap_id.clone()).await);
         if status != eth::PAYMENT_STATE_SENT.into() {
             return ERR!("Payment state is not PAYMENT_STATE_SENT, got {}", status);
         }
 
-        let refund_output = try_s!(self.sender_refund_output(swap_id, value, secret_hash, receiver));
+        let refund_output =
+            try_s!(self.sender_refund_output(&swap_contract_address, swap_id, value, secret_hash, receiver));
         self.send_contract_calls(vec![refund_output]).await
     }
 
@@ -108,7 +114,10 @@ impl Qrc20Coin {
         amount: BigDecimal,
     ) -> Result<(), String> {
         let expected_swap_id = qrc20_swap_id(time_lock, &secret_hash);
-        let status = try_s!(self.payment_status(expected_swap_id.clone()).await);
+        let status = try_s!(
+            self.payment_status(&self.swap_contract_address, expected_swap_id.clone())
+                .await
+        );
         if status != eth::PAYMENT_STATE_SENT.into() {
             return ERR!("Payment state is not PAYMENT_STATE_SENT, got {}", status);
         }
@@ -309,7 +318,7 @@ impl Qrc20Coin {
         swap_id: Vec<u8>,
         search_from_block: u64,
     ) -> Result<Option<TransactionEnum>, String> {
-        let status = try_s!(self.payment_status(swap_id.clone()).await);
+        let status = try_s!(self.payment_status(&self.swap_contract_address, swap_id.clone()).await);
         if status == eth::PAYMENT_STATE_UNINITIALIZED.into() {
             return Ok(None);
         };
@@ -334,9 +343,13 @@ impl Qrc20Coin {
     }
 
     pub async fn check_if_my_payment_completed_impl(&self, payment_tx: UtxoTx) -> Result<(), String> {
-        let Erc20PaymentDetails { swap_id, .. } = try_s!(self.erc20_payment_details_from_tx(&payment_tx).await);
+        let Erc20PaymentDetails {
+            swap_id,
+            swap_contract_address,
+            ..
+        } = try_s!(self.erc20_payment_details_from_tx(&payment_tx).await);
 
-        let status = try_s!(self.payment_status(swap_id.clone()).await);
+        let status = try_s!(self.payment_status(&swap_contract_address, swap_id.clone()).await);
         if status != eth::PAYMENT_STATE_SENT.into() {
             return ERR!("Payment state is not PAYMENT_STATE_SENT, got {}", status);
         }
@@ -418,7 +431,7 @@ impl Qrc20Coin {
 
     async fn allowance(&self, spender: H160) -> Result<U256, String> {
         let tokens = try_s!(
-            self.rpc_contract_call(RpcContractCallType::Allowance, &[
+            self.rpc_contract_call(RpcContractCallType::Allowance, &self.contract_address, &[
                 Token::Address(qrc20_addr_from_utxo_addr(self.utxo.my_address.clone())),
                 Token::Address(spender),
             ])
@@ -432,10 +445,14 @@ impl Qrc20Coin {
         }
     }
 
-    async fn payment_status(&self, swap_id: Vec<u8>) -> Result<U256, String> {
+    /// Get payment status by `swap_id`.
+    /// Do not use self swap_contract_address, because it could be updated during restart.
+    async fn payment_status(&self, swap_contract_address: &H160, swap_id: Vec<u8>) -> Result<U256, String> {
         let decoded = try_s!(
-            self.rpc_contract_call(RpcContractCallType::Payments, &[Token::FixedBytes(swap_id)])
-                .await
+            self.rpc_contract_call(RpcContractCallType::Payments, swap_contract_address, &[
+                Token::FixedBytes(swap_id)
+            ])
+            .await
         );
         if decoded.len() < 3 {
             return ERR!(
@@ -513,6 +530,7 @@ impl Qrc20Coin {
     /// Generate a UTXO output with a script_pubkey that calls EtomicSwap `receiverSpend` function.
     fn receiver_spend_output(
         &self,
+        swap_contract_address: &H160,
         id: Vec<u8>,
         value: U256,
         secret: Vec<u8>,
@@ -533,7 +551,7 @@ impl Qrc20Coin {
             &params, // params of the function
             gas_limit,
             gas_price,
-            &self.swap_contract_address, // address of the contract which function will be called
+            swap_contract_address, // address of the contract which function will be called
         ))
         .to_bytes();
 
@@ -547,6 +565,7 @@ impl Qrc20Coin {
 
     fn sender_refund_output(
         &self,
+        swap_contract_address: &H160,
         id: Vec<u8>,
         value: U256,
         secret_hash: Vec<u8>,
@@ -568,7 +587,7 @@ impl Qrc20Coin {
             &params, // params of the function
             gas_limit,
             gas_price,
-            &self.swap_contract_address, // address of the contract which function will be called
+            swap_contract_address, // address of the contract which function will be called
         ))
         .to_bytes();
 
