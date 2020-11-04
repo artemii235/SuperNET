@@ -985,13 +985,9 @@ pub fn check_if_my_payment_completed<T>(
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps + Send + Sync + 'static,
 {
-    let fut = check_if_my_payment_sent(coin, time_lock, other_pub, secret_hash).and_then(|tx| {
-        if tx.is_none() {
-            return ERR!("Couldn't find the payment on blockchain");
-        }
-        Ok(())
-    });
-    Box::new(fut)
+    // As we first wait for payment confirmation during swap before `check_if_my_payment_completed`,
+    // we can simply return Ok here.
+    Box::new(futures01::future::ok(()))
 }
 
 pub fn search_for_swap_tx_spend_my(
