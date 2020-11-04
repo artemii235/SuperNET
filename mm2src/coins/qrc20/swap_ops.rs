@@ -1,7 +1,7 @@
 use super::*;
 use common::lazy::FindMapLazy;
 use history::{HistoryBuilder, HistoryOrder};
-use script_pubkey::{extract_contract_call_from_script, extract_token_addr_from_script, is_contract_call};
+use script_pubkey::{extract_contract_addr_from_script, extract_contract_call_from_script, is_contract_call};
 
 /// `erc20Payment` call details consist of values obtained from [`TransactionOutput::script_pubkey`] and [`TxReceipt::logs`].
 #[derive(Debug, Eq, PartialEq)]
@@ -15,6 +15,8 @@ pub struct Erc20PaymentDetails {
     pub receiver: H160,
     pub secret_hash: Vec<u8>,
     pub timelock: U256,
+    /// Contract call bytes extracted from [`TransactionOutput::script_pubkey`] using `extract_contract_call_from_script`.
+    pub contract_call_bytes: Vec<u8>,
 }
 
 /// `receiverSpend` call details consist of values obtained from [`TransactionOutput::script_pubkey`].
@@ -122,12 +124,23 @@ impl Qrc20Coin {
             return ERR!("Payment state is not PAYMENT_STATE_SENT, got {}", status);
         }
 
+        let expected_call_bytes = {
+            let expected_value = try_s!(wei_from_big_decimal(&amount, self.utxo.decimals));
+            let expected_receiver = qrc20_addr_from_utxo_addr(self.utxo.my_address.clone());
+            try_s!(self.erc20_payment_call_bytes(
+                expected_swap_id,
+                expected_value,
+                time_lock,
+                &secret_hash,
+                expected_receiver
+            ))
+        };
+
         let erc20_payment = try_s!(self.erc20_payment_details_from_tx(&payment_tx).await);
-        if erc20_payment.swap_id != expected_swap_id {
+        if erc20_payment.contract_call_bytes != expected_call_bytes {
             return ERR!(
-                "Invalid 'swap_id' {:?} in swap payment, expected {:?}",
-                erc20_payment.swap_id,
-                expected_swap_id
+                "Unexpected 'erc20Payment' contract call bytes: {:?}",
+                erc20_payment.contract_call_bytes
             );
         }
 
@@ -139,49 +152,6 @@ impl Qrc20Coin {
             return ERR!(
                 "Payment tx was sent to wrong address, expected {:?}",
                 self.swap_contract_address
-            );
-        }
-
-        let expected_value = try_s!(wei_from_big_decimal(&amount, self.utxo.decimals));
-        if expected_value != erc20_payment.value {
-            return ERR!(
-                "Invalid 'value' {:?} in swap payment, expected {:?}",
-                erc20_payment.value,
-                expected_value
-            );
-        }
-
-        if self.contract_address != erc20_payment.token_address {
-            return ERR!(
-                "Invalid 'token_address' {:?} in swap payment, expected {:?}",
-                erc20_payment.token_address,
-                self.contract_address
-            );
-        }
-
-        let expected_receiver = qrc20_addr_from_utxo_addr(self.utxo.my_address.clone());
-        if expected_receiver != erc20_payment.receiver {
-            return ERR!(
-                "Invalid 'receiver' {:?} in swap payment, expected {:?}",
-                erc20_payment.receiver,
-                expected_receiver
-            );
-        }
-
-        if secret_hash != erc20_payment.secret_hash {
-            return ERR!(
-                "Invalid 'secret_hash' {:?} in swap payment, expected {:?}",
-                erc20_payment.secret_hash,
-                secret_hash
-            );
-        }
-
-        let expected_timelock = U256::from(time_lock);
-        if expected_timelock != erc20_payment.timelock {
-            return ERR!(
-                "Invalid 'timelock' {:?} in swap payment, expected {:?}",
-                erc20_payment.timelock,
-                expected_timelock
             );
         }
 
@@ -224,7 +194,7 @@ impl Qrc20Coin {
             return ERR!("QRC20 Fee tx value {} is less than expected {}", value, expected_value);
         }
 
-        let token_addr = try_s!(extract_token_addr_from_script(&script_pubkey));
+        let token_addr = try_s!(extract_contract_addr_from_script(&script_pubkey));
         if token_addr != self.contract_address {
             return ERR!(
                 "QRC20 Fee tx {:?} called wrong smart contract, expected {:?}",
@@ -499,15 +469,7 @@ impl Qrc20Coin {
         secret_hash: &[u8],
         receiver_addr: H160,
     ) -> Result<ContractCallOutput, String> {
-        let function = try_s!(eth::SWAP_CONTRACT.function("erc20Payment"));
-        let params = try_s!(function.encode_input(&[
-            Token::FixedBytes(id),
-            Token::Uint(value),
-            Token::Address(self.contract_address),
-            Token::Address(receiver_addr),
-            Token::FixedBytes(secret_hash.to_vec()),
-            Token::Uint(U256::from(time_lock))
-        ]));
+        let params = try_s!(self.erc20_payment_call_bytes(id, value, time_lock, secret_hash, receiver_addr));
 
         let gas_limit = QRC20_GAS_LIMIT_DEFAULT;
         let gas_price = QRC20_GAS_PRICE_DEFAULT;
@@ -525,6 +487,27 @@ impl Qrc20Coin {
             gas_limit,
             gas_price,
         })
+    }
+
+    fn erc20_payment_call_bytes(
+        &self,
+        id: Vec<u8>,
+        value: U256,
+        time_lock: u32,
+        secret_hash: &[u8],
+        receiver_addr: H160,
+    ) -> Result<Vec<u8>, String> {
+        let function = try_s!(eth::SWAP_CONTRACT.function("erc20Payment"));
+        function
+            .encode_input(&[
+                Token::FixedBytes(id),
+                Token::Uint(value),
+                Token::Address(self.contract_address),
+                Token::Address(receiver_addr),
+                Token::FixedBytes(secret_hash.to_vec()),
+                Token::Uint(U256::from(time_lock)),
+            ])
+            .map_err(|e| ERRL!("{}", e))
     }
 
     /// Generate a UTXO output with a script_pubkey that calls EtomicSwap `receiverSpend` function.
@@ -681,6 +664,11 @@ impl Qrc20Coin {
                 None => return ERR!("Couldn't find 'timelock' in erc20Payment call"),
             };
 
+            // check if there is no arguments more
+            if let Some(token) = decoded.next() {
+                return ERR!("Unexpected additional arg {:?}", token);
+            }
+
             let mut events = try_s!(transfer_events_from_receipt(&receipt)).into_iter();
             let event = match events.next() {
                 Some(e) => e,
@@ -706,7 +694,7 @@ impl Qrc20Coin {
                 );
             }
 
-            let contract_address_from_script = try_s!(extract_token_addr_from_script(&script_pubkey));
+            let contract_address_from_script = try_s!(extract_contract_addr_from_script(&script_pubkey));
             // `erc20Payment` function should emit a `Transfer` event where the receiver is the swap contract
             if event.receiver != contract_address_from_script {
                 return ERR!(
@@ -721,11 +709,12 @@ impl Qrc20Coin {
                 swap_id,
                 value,
                 token_address,
-                swap_contract_address: event.receiver,
+                swap_contract_address: contract_address_from_script,
                 sender: event.sender,
                 receiver,
                 secret_hash,
                 timelock,
+                contract_call_bytes,
             });
         }
         ERR!("Couldn't find erc20Payment contract call in {:?} tx", tx_hash)

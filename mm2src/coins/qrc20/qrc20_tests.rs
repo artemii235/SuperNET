@@ -252,7 +252,7 @@ fn test_validate_maker_payment() {
         .wait()
         .err());
     log!("error: "[error]);
-    assert!(error.contains("Invalid 'value'"));
+    assert!(error.contains("Unexpected 'erc20Payment' contract call bytes"));
 
     let secret_hash_dif = &[2; 20];
     let error = unwrap!(coin

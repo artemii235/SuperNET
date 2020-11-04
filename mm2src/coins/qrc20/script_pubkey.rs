@@ -90,10 +90,10 @@ pub fn extract_contract_call_from_script(script: &Script) -> Result<Vec<u8>, Str
         .map(Vec::from)
 }
 
-pub fn extract_token_addr_from_script(script: &Script) -> Result<H160, String> {
-    const TOKEN_ADDRESS_IDX: usize = 4;
+pub fn extract_contract_addr_from_script(script: &Script) -> Result<H160, String> {
+    const CONTRACT_ADDRESS_IDX: usize = 4;
     let instruction = script
-        .get_instruction(TOKEN_ADDRESS_IDX)
+        .get_instruction(CONTRACT_ADDRESS_IDX)
         .ok_or(ERRL!("Couldn't extract 'token_address' from script pubkey"))?
         .map_err(|e| ERRL!("Error on extract 'token_address' from pubkey: {}", e))?;
 
@@ -283,11 +283,11 @@ mod tests {
     }
 
     #[test]
-    fn extract_token_addr() {
+    fn test_extract_contract_addr_from_script() {
         let script: Script = "5403a02526012844a9059cbb0000000000000000000000000240b898276ad2cc0d2fe6f527e8e31104e7fde3000000000000000000000000000000000000000000000000000000003b9aca0014d362e096e873eb7907e205fadc6175c6fec7bc44c2".into();
         let expected = qrc20_addr_from_str("0xd362e096e873eb7907e205fadc6175c6fec7bc44").unwrap();
 
-        let actual = unwrap!(extract_token_addr_from_script(&script));
+        let actual = unwrap!(extract_contract_addr_from_script(&script));
         assert_eq!(actual, expected);
     }
 }
