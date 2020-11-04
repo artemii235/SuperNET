@@ -212,6 +212,34 @@ fn test_match_maker_order_and_taker_request() {
     assert_eq!(expected, actual);
 }
 
+// https://github.com/KomodoPlatform/atomicDEX-API/pull/739#discussion_r517275495
+#[test]
+fn maker_order_match_with_request_zero_volumes() {
+    let maker_order = MakerOrderBuilder::default()
+        .with_max_base_vol(1.into())
+        .with_price(1.into())
+        .build_unchecked();
+
+    // default taker request has empty coins and zero amounts so it should pass to the price calculation stage (division)
+    let taker_request = TakerRequestBuilder::default()
+        .with_rel_amount(1.into())
+        .build_unchecked();
+
+    let expected = OrderMatchResult::NotMatched;
+    let actual = maker_order.match_with_request(&taker_request);
+    assert_eq!(expected, actual);
+
+    // default taker request has empty coins and zero amounts so it should pass to the price calculation stage (division)
+    let taker_request = TakerRequestBuilder::default()
+        .with_base_amount(1.into())
+        .with_action(TakerAction::Sell)
+        .build_unchecked();
+
+    let expected = OrderMatchResult::NotMatched;
+    let actual = maker_order.match_with_request(&taker_request);
+    assert_eq!(expected, actual);
+}
+
 #[test]
 fn test_maker_order_available_amount() {
     let mut maker = MakerOrder {

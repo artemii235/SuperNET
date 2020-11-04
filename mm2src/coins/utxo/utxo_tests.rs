@@ -45,17 +45,7 @@ pub fn electrum_client_for_test(servers: &[&str]) -> ElectrumClient {
 }
 
 /// Returned client won't work by default, requires some mocks to be usable
-fn native_client_for_test() -> NativeClient {
-    NativeClient(Arc::new(NativeClientImpl {
-        coin_ticker: "TEST".into(),
-        uri: "".into(),
-        auth: "".into(),
-        event_handlers: vec![],
-        request_id: 0u64.into(),
-        list_unspent_in_progress: false.into(),
-        list_unspent_subs: AsyncMutex::new(Vec::new()),
-    }))
-}
+fn native_client_for_test() -> NativeClient { NativeClient(Arc::new(NativeClientImpl::default())) }
 
 fn utxo_coin_fields_for_test(rpc_client: UtxoRpcClientEnum, force_seed: Option<&str>) -> UtxoCoinFields {
     let checksum_type = ChecksumType::DSHA256;
@@ -351,18 +341,7 @@ fn test_sat_from_big_decimal() {
 
 #[test]
 fn test_wait_for_payment_spend_timeout_native() {
-    let client = NativeClientImpl {
-        coin_ticker: "RICK".into(),
-        uri: "http://127.0.0.1:10271".to_owned(),
-        auth: fomat!("Basic "(base64_encode(
-            "user481805103:pass97a61c8d048bcf468c6c39a314970e557f57afd1d8a5edee917fb29bafb3a43371",
-            URL_SAFE
-        ))),
-        event_handlers: Default::default(),
-        request_id: 0u64.into(),
-        list_unspent_in_progress: false.into(),
-        list_unspent_subs: AsyncMutex::new(Vec::new()),
-    };
+    let client = NativeClientImpl::default();
 
     static mut OUTPUT_SPEND_CALLED: bool = false;
     NativeClient::find_output_spend.mock_safe(|_, _, _, _| {
@@ -470,18 +449,7 @@ fn test_withdraw_impl_set_fixed_fee() {
         MockResult::Return(Box::new(futures01::future::ok(unspents)))
     });
 
-    let client = NativeClient(Arc::new(NativeClientImpl {
-        coin_ticker: TEST_COIN_NAME.into(),
-        uri: "http://127.0.0.1".to_owned(),
-        auth: fomat!("Basic "(base64_encode(
-            "user481805103:pass97a61c8d048bcf468c6c39a314970e557f57afd1d8a5edee917fb29bafb3a43371",
-            URL_SAFE
-        ))),
-        event_handlers: Default::default(),
-        request_id: 0u64.into(),
-        list_unspent_in_progress: false.into(),
-        list_unspent_subs: AsyncMutex::new(Vec::new()),
-    }));
+    let client = NativeClient(Arc::new(NativeClientImpl::default()));
 
     let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client), None);
 
@@ -518,18 +486,7 @@ fn test_withdraw_impl_sat_per_kb_fee() {
         MockResult::Return(Box::new(futures01::future::ok(unspents)))
     });
 
-    let client = NativeClient(Arc::new(NativeClientImpl {
-        coin_ticker: TEST_COIN_NAME.into(),
-        uri: "http://127.0.0.1".to_owned(),
-        auth: fomat!("Basic "(base64_encode(
-            "user481805103:pass97a61c8d048bcf468c6c39a314970e557f57afd1d8a5edee917fb29bafb3a43371",
-            URL_SAFE
-        ))),
-        event_handlers: Default::default(),
-        request_id: 0u64.into(),
-        list_unspent_in_progress: false.into(),
-        list_unspent_subs: AsyncMutex::new(Vec::new()),
-    }));
+    let client = NativeClient(Arc::new(NativeClientImpl::default()));
 
     let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client), None);
 
@@ -569,18 +526,7 @@ fn test_withdraw_impl_sat_per_kb_fee_amount_equal_to_max() {
         MockResult::Return(Box::new(futures01::future::ok(unspents)))
     });
 
-    let client = NativeClient(Arc::new(NativeClientImpl {
-        coin_ticker: TEST_COIN_NAME.into(),
-        uri: "http://127.0.0.1".to_owned(),
-        auth: fomat!("Basic "(base64_encode(
-            "user481805103:pass97a61c8d048bcf468c6c39a314970e557f57afd1d8a5edee917fb29bafb3a43371",
-            URL_SAFE
-        ))),
-        event_handlers: Default::default(),
-        request_id: 0u64.into(),
-        list_unspent_in_progress: false.into(),
-        list_unspent_subs: AsyncMutex::new(Vec::new()),
-    }));
+    let client = NativeClient(Arc::new(NativeClientImpl::default()));
 
     let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client), None);
 
@@ -622,18 +568,7 @@ fn test_withdraw_impl_sat_per_kb_fee_amount_equal_to_max_dust_included_to_fee() 
         MockResult::Return(Box::new(futures01::future::ok(unspents)))
     });
 
-    let client = NativeClient(Arc::new(NativeClientImpl {
-        coin_ticker: TEST_COIN_NAME.into(),
-        uri: "http://127.0.0.1".to_owned(),
-        auth: fomat!("Basic "(base64_encode(
-            "user481805103:pass97a61c8d048bcf468c6c39a314970e557f57afd1d8a5edee917fb29bafb3a43371",
-            URL_SAFE
-        ))),
-        event_handlers: Default::default(),
-        request_id: 0u64.into(),
-        list_unspent_in_progress: false.into(),
-        list_unspent_subs: AsyncMutex::new(Vec::new()),
-    }));
+    let client = NativeClient(Arc::new(NativeClientImpl::default()));
 
     let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client), None);
 
@@ -675,18 +610,7 @@ fn test_withdraw_impl_sat_per_kb_fee_amount_over_max() {
         MockResult::Return(Box::new(futures01::future::ok(unspents)))
     });
 
-    let client = NativeClient(Arc::new(NativeClientImpl {
-        coin_ticker: TEST_COIN_NAME.into(),
-        uri: "http://127.0.0.1".to_owned(),
-        auth: fomat!("Basic "(base64_encode(
-            "user481805103:pass97a61c8d048bcf468c6c39a314970e557f57afd1d8a5edee917fb29bafb3a43371",
-            URL_SAFE
-        ))),
-        event_handlers: Default::default(),
-        request_id: 0u64.into(),
-        list_unspent_in_progress: false.into(),
-        list_unspent_subs: AsyncMutex::new(Vec::new()),
-    }));
+    let client = NativeClient(Arc::new(NativeClientImpl::default()));
 
     let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client), None);
 
@@ -716,18 +640,7 @@ fn test_withdraw_impl_sat_per_kb_fee_max() {
         MockResult::Return(Box::new(futures01::future::ok(unspents)))
     });
 
-    let client = NativeClient(Arc::new(NativeClientImpl {
-        coin_ticker: TEST_COIN_NAME.into(),
-        uri: "http://127.0.0.1".to_owned(),
-        auth: fomat!("Basic "(base64_encode(
-            "user481805103:pass97a61c8d048bcf468c6c39a314970e557f57afd1d8a5edee917fb29bafb3a43371",
-            URL_SAFE
-        ))),
-        event_handlers: Default::default(),
-        request_id: 0u64.into(),
-        list_unspent_in_progress: false.into(),
-        list_unspent_subs: AsyncMutex::new(Vec::new()),
-    }));
+    let client = NativeClient(Arc::new(NativeClientImpl::default()));
 
     let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client), None);
 
@@ -1050,18 +963,7 @@ fn test_network_info_deserialization() {
 #[test]
 // https://github.com/KomodoPlatform/atomicDEX-API/issues/617
 fn test_generate_transaction_relay_fee_is_used_when_dynamic_fee_is_lower() {
-    let client = NativeClientImpl {
-        coin_ticker: "RICK".into(),
-        uri: "http://127.0.0.1:10271".to_owned(),
-        auth: fomat!("Basic "(base64_encode(
-            "user481805103:pass97a61c8d048bcf468c6c39a314970e557f57afd1d8a5edee917fb29bafb3a43371",
-            URL_SAFE
-        ))),
-        event_handlers: Default::default(),
-        request_id: 0u64.into(),
-        list_unspent_in_progress: false.into(),
-        list_unspent_subs: AsyncMutex::new(Vec::new()),
-    };
+    let client = NativeClientImpl::default();
 
     static mut GET_RELAY_FEE_CALLED: bool = false;
     NativeClient::get_relay_fee.mock_safe(|_| {
@@ -1103,18 +1005,7 @@ fn test_generate_transaction_relay_fee_is_used_when_dynamic_fee_is_lower() {
 #[test]
 // https://github.com/KomodoPlatform/atomicDEX-API/issues/617
 fn test_generate_tx_fee_is_correct_when_dynamic_fee_is_larger_than_relay() {
-    let client = NativeClientImpl {
-        coin_ticker: "RICK".into(),
-        uri: "http://127.0.0.1:10271".to_owned(),
-        auth: fomat!("Basic "(base64_encode(
-            "user481805103:pass97a61c8d048bcf468c6c39a314970e557f57afd1d8a5edee917fb29bafb3a43371",
-            URL_SAFE
-        ))),
-        event_handlers: Default::default(),
-        request_id: 0u64.into(),
-        list_unspent_in_progress: false.into(),
-        list_unspent_subs: AsyncMutex::new(Vec::new()),
-    };
+    let client = NativeClientImpl::default();
 
     static mut GET_RELAY_FEE_CALLED: bool = false;
     NativeClient::get_relay_fee.mock_safe(|_| {
@@ -1670,11 +1561,11 @@ fn test_qrc20_tx_details_by_hash() {
 #[test]
 fn test_native_client_unspents_filtered_using_tx_cache_single_tx_in_cache() {
     let client = native_client_for_test();
-    let coin = utxo_coin_fields_for_test(UtxoRpcClientEnum::Native(client), None);
+    let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client), None);
 
     let address: Address = "RGfFZaaNV68uVe1uMf6Y37Y8E1i2SyYZBN".into();
-    block_on(coin.recently_spent_outpoints.lock()).for_script_pubkey = Builder::build_p2pkh(&address.hash).to_bytes();
-    let coin = UtxoArc(Arc::new(coin));
+    block_on(coin.as_ref().recently_spent_outpoints.lock()).for_script_pubkey =
+        Builder::build_p2pkh(&address.hash).to_bytes();
 
     // https://morty.explorer.dexstats.info/tx/31c7aaae89ab1c39febae164a3190a86ed7c6c6f8c9dc98ec28d508b7929d347
     let tx: UtxoTx = "0400008085202f89027f57730fcbbc2c72fb18bcc3766a713044831a117bb1cade3ed88644864f7333020000006a47304402206e3737b2fcf078b61b16fa67340cc3e79c5d5e2dc9ffda09608371552a3887450220460a332aa1b8ad8f2de92d319666f70751078b221199951f80265b4f7cef8543012102d8c948c6af848c588517288168faa397d6ba3ea924596d03d1d84f224b5123c2ffffffff42b916a80430b80a77e114445b08cf120735447a524de10742fac8f6a9d4170f000000006a473044022004aa053edafb9d161ea8146e0c21ed1593aa6b9404dd44294bcdf920a1695fd902202365eac15dbcc5e9f83e2eed56a8f2f0e5aded36206f9c3fabc668fd4665fa2d012102d8c948c6af848c588517288168faa397d6ba3ea924596d03d1d84f224b5123c2ffffffff03547b16000000000017a9143e8ad0e2bf573d32cb0b3d3a304d9ebcd0c2023b870000000000000000166a144e2b3c0323ab3c2dc6f86dc5ec0729f11e42f56103970400000000001976a91450f4f098306f988d8843004689fae28c83ef16e888ac89c5925f000000000000000000000000000000".into();
@@ -1691,7 +1582,11 @@ fn test_native_client_unspents_filtered_using_tx_cache_single_tx_in_cache() {
         },
     ];
 
-    block_on(coin.recently_spent_outpoints.lock()).add_spent(spent_by_tx.clone(), tx.hash(), tx.outputs.clone());
+    block_on(coin.as_ref().recently_spent_outpoints.lock()).add_spent(
+        spent_by_tx.clone(),
+        tx.hash(),
+        tx.outputs.clone(),
+    );
     NativeClient::list_unspent
         .mock_safe(move |_, _| MockResult::Return(Box::new(futures01::future::ok(spent_by_tx.clone()))));
 
@@ -1716,7 +1611,7 @@ fn test_native_client_unspents_filtered_using_tx_cache_single_several_chained_tx
 
     let address: Address = "RGfFZaaNV68uVe1uMf6Y37Y8E1i2SyYZBN".into();
     block_on(coin.recently_spent_outpoints.lock()).for_script_pubkey = Builder::build_p2pkh(&address.hash).to_bytes();
-    let coin = UtxoArc(Arc::new(coin));
+    let coin = utxo_coin_from_fields(coin);
 
     // https://morty.explorer.dexstats.info/tx/31c7aaae89ab1c39febae164a3190a86ed7c6c6f8c9dc98ec28d508b7929d347
     let tx_0: UtxoTx = "0400008085202f89027f57730fcbbc2c72fb18bcc3766a713044831a117bb1cade3ed88644864f7333020000006a47304402206e3737b2fcf078b61b16fa67340cc3e79c5d5e2dc9ffda09608371552a3887450220460a332aa1b8ad8f2de92d319666f70751078b221199951f80265b4f7cef8543012102d8c948c6af848c588517288168faa397d6ba3ea924596d03d1d84f224b5123c2ffffffff42b916a80430b80a77e114445b08cf120735447a524de10742fac8f6a9d4170f000000006a473044022004aa053edafb9d161ea8146e0c21ed1593aa6b9404dd44294bcdf920a1695fd902202365eac15dbcc5e9f83e2eed56a8f2f0e5aded36206f9c3fabc668fd4665fa2d012102d8c948c6af848c588517288168faa397d6ba3ea924596d03d1d84f224b5123c2ffffffff03547b16000000000017a9143e8ad0e2bf573d32cb0b3d3a304d9ebcd0c2023b870000000000000000166a144e2b3c0323ab3c2dc6f86dc5ec0729f11e42f56103970400000000001976a91450f4f098306f988d8843004689fae28c83ef16e888ac89c5925f000000000000000000000000000000".into();
@@ -1732,7 +1627,11 @@ fn test_native_client_unspents_filtered_using_tx_cache_single_several_chained_tx
             height: Some(642293),
         },
     ];
-    block_on(coin.recently_spent_outpoints.lock()).add_spent(spent_by_tx_0.clone(), tx_0.hash(), tx_0.outputs.clone());
+    block_on(coin.as_ref().recently_spent_outpoints.lock()).add_spent(
+        spent_by_tx_0.clone(),
+        tx_0.hash(),
+        tx_0.outputs.clone(),
+    );
 
     // https://morty.explorer.dexstats.info/tx/dbfc821e482747a3512ee6d5734f9df2aa73dab07e2fcd86abeadb462e795bf9
     let tx_1: UtxoTx = "0400008085202f890347d329798b508dc28ec99d8c6f6c7ced860a19a364e1bafe391cab89aeaac731020000006a47304402203ea8b380d0a7e64348869ef7c4c2bfa966fc7b148633003332fa8d0ab0c1bc5602202cc63fabdd2a6578c52d8f4f549069b16505f2ead48edc2b8de299be15aadf9a012102d8c948c6af848c588517288168faa397d6ba3ea924596d03d1d84f224b5123c2ffffffff1d1fd3a6b01710647a7f4a08c6de6075cb8e78d5069fa50f10c4a2a10ded2a95000000006a47304402203868945edc0f6dc2ee43d70a69ee4ec46ca188dc493173ce58924ba9bf6ee7a50220648ff99ce458ca72800758f6a1bd3800cd05ff9c3122f23f3653c25e09d22c79012102d8c948c6af848c588517288168faa397d6ba3ea924596d03d1d84f224b5123c2ffffffff7932150df8b4a1852b8b84b89b0d5322bf74665fb7f76a728369fd6895d3fd48000000006a4730440220127918c6f79c11f7f2376a6f3b750ed4c7103183181ad1218afcb2625ece9599022028c05e88d3a2f97cebd84a718cda33b62b48b18f16278fa8e531fd2155e61ee8012102d8c948c6af848c588517288168faa397d6ba3ea924596d03d1d84f224b5123c2ffffffff0329fd12000000000017a914cafb62e3e8bdb8db3735c39b92743ac6ebc9ef20870000000000000000166a14a7416b070c9bb98f4bafae55616f005a2a30bd6014b40c00000000001976a91450f4f098306f988d8843004689fae28c83ef16e888ac8cc5925f000000000000000000000000000000".into();
@@ -1753,7 +1652,11 @@ fn test_native_client_unspents_filtered_using_tx_cache_single_several_chained_tx
             height: Some(642293),
         },
     ];
-    block_on(coin.recently_spent_outpoints.lock()).add_spent(spent_by_tx_1.clone(), tx_1.hash(), tx_1.outputs.clone());
+    block_on(coin.as_ref().recently_spent_outpoints.lock()).add_spent(
+        spent_by_tx_1.clone(),
+        tx_1.hash(),
+        tx_1.outputs.clone(),
+    );
     // https://morty.explorer.dexstats.info/tx/12ea22a7cde9efb66b76f9b84345ddfc4c34870e293bfa8eac68d7df83dffa4b
     let tx_2: UtxoTx = "0400008085202f8902f95b792e46dbeaab86cd2f7eb0da73aaf29d4f73d5e62e51a34727481e82fcdb020000006a4730440220347adefe33ed5afbbb8e5d453afd527319f9a50ab790023296a981da095ca4a2022029a68ef6fd5a4decf3793d4c33994eb8658408f3b14a6d439c4753b2dde954ee012102d8c948c6af848c588517288168faa397d6ba3ea924596d03d1d84f224b5123c2ffffffff75bd4348594f8ff2a216e5ad7533b37d47d2a2767b0b88d43972ad51895355e2000000006a473044022069b36c0f65d56e02bc179f7442806374c4163d07939090aba1da736abad9a77d022006dc39adf48e02033ae9d4a48540752ae3b3841e3ec60d2e86dececb88b9e518012102d8c948c6af848c588517288168faa397d6ba3ea924596d03d1d84f224b5123c2ffffffff03414111000000000017a914a153024c826a3a42c2e501eca5d7dacd3fc59976870000000000000000166a14db0e6f4d418d68dce8e5beb26cc5078e01e2e3ace2fe0800000000001976a91450f4f098306f988d8843004689fae28c83ef16e888ac8fc5925f000000000000000000000000000000".into();
     let spent_by_tx_2 = vec![
@@ -1768,7 +1671,11 @@ fn test_native_client_unspents_filtered_using_tx_cache_single_several_chained_tx
             height: Some(642293),
         },
     ];
-    block_on(coin.recently_spent_outpoints.lock()).add_spent(spent_by_tx_2.clone(), tx_2.hash(), tx_2.outputs.clone());
+    block_on(coin.as_ref().recently_spent_outpoints.lock()).add_spent(
+        spent_by_tx_2.clone(),
+        tx_2.hash(),
+        tx_2.outputs.clone(),
+    );
 
     let mut unspents_to_return = spent_by_tx_0;
     unspents_to_return.extend(spent_by_tx_1);

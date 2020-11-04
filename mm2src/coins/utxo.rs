@@ -55,7 +55,6 @@ use rpc::v1::types::{Bytes as BytesJson, Transaction as RpcTransaction, H256 as 
 use script::{Builder, Opcode, Script, SignatureVersion, TransactionInputSigner};
 use serde_json::{self as json, Value as Json};
 use serialization::serialize;
-use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
 use std::num::NonZeroU64;
@@ -184,9 +183,15 @@ impl Default for UtxoAddressFormat {
     fn default() -> Self { UtxoAddressFormat::Standard }
 }
 
+/// The cache of recently send transactions used to track the spent UTXOs and replace them with new outputs
+/// The daemon needs some time to update the listunspent list for address which makes it return already spent UTXOs
+/// This cache helps to prevent UTXO reuse in such cases
 pub struct RecentlySpentOutPoints {
+    /// Maps UnspentInfo A to a set of UnspentInfos which `spent` A
     input_to_output_map: HashMap<UnspentInfo, HashSet<UnspentInfo>>,
+    /// Maps UnspentInfo A to a set of UnspentInfos that `were spent by` A
     output_to_input_map: HashMap<UnspentInfo, HashSet<UnspentInfo>>,
+    /// Cache includes only outputs having script_pubkey == for_script_pubkey
     for_script_pubkey: Bytes,
 }
 
@@ -418,50 +423,6 @@ impl From<UtxoCoinFields> for UtxoArc {
     fn from(coin: UtxoCoinFields) -> UtxoArc { UtxoArc(Arc::new(coin)) }
 }
 
-impl UtxoArc {
-    /// Returns available unspents in ascending order + RecentlySpentOutPoints MutexGuard for further interaction
-    /// (e.g. to add new transaction to it).
-    pub async fn list_unspent_ordered(
-        &self,
-        address: &Address,
-    ) -> Result<(Vec<UnspentInfo>, AsyncMutexGuard<'_, RecentlySpentOutPoints>), String> {
-        let before_list_unspent = now_ms();
-        let mut unspents = try_s!(
-            self.rpc_client
-                .list_unspent(address)
-                .map_err(|e| ERRL!("{}", e))
-                .compat()
-                .await
-        );
-        let after_list_unspent = now_ms();
-        log!("list_unspent took "(after_list_unspent - before_list_unspent));
-
-        let before = now_ms();
-        let recently_spent = self.recently_spent_outpoints.lock().await;
-        let after = now_ms();
-        log!("recently_spent lock took "(after - before));
-
-        let before = now_ms();
-        unspents = recently_spent
-            .replace_spent_outputs_with_cache(unspents.into_iter().collect())
-            .into_iter()
-            .collect();
-        unspents.sort_unstable_by(|a, b| {
-            if a.value < b.value {
-                Ordering::Less
-            } else {
-                Ordering::Greater
-            }
-        });
-        // dedup just in case we add duplicates of same unspent out
-        // all duplicates will be removed because vector in sorted before dedup
-        unspents.dedup_by(|one, another| one.outpoint == another.outpoint);
-        let after = now_ms();
-        log!("replace_spent_outputs_with_cache + sort + dedup took "(after - before));
-        Ok((unspents, recently_spent))
-    }
-}
-
 // We can use a shared UTXO lock for all UTXO coins at 1 time.
 // It's highly likely that we won't experience any issues with it as we won't need to send "a lot" of transactions concurrently.
 lazy_static! {
@@ -529,6 +490,13 @@ pub trait UtxoArcCommonOps {
     ) -> Box<dyn Future<Item = VerboseTransactionFrom, Error = String> + Send>;
 
     async fn request_tx_history(&self, metrics: MetricsArc) -> RequestTxHistoryResult;
+
+    /// Returns available unspents in ascending order + RecentlySpentOutPoints MutexGuard for further interaction
+    /// (e.g. to add new transaction to it).
+    async fn list_unspent_ordered(
+        &self,
+        address: &Address,
+    ) -> Result<(Vec<UnspentInfo>, AsyncMutexGuard<'_, RecentlySpentOutPoints>), String>;
 }
 
 pub enum RequestTxHistoryResult {
@@ -769,6 +737,8 @@ pub async fn utxo_arc_from_conf_and_request(
         try_s!(json::from_value(conf["address_format"].clone()))
     };
 
+    let decimals = conf["decimals"].as_u64().unwrap_or(8) as u8;
+
     let rpc_client = match req["method"].as_str() {
         Some("enable") => {
             if cfg!(feature = "native") {
@@ -794,6 +764,7 @@ pub async fn utxo_arc_from_conf_and_request(
                     request_id: 0u64.into(),
                     list_unspent_in_progress: false.into(),
                     list_unspent_subs: AsyncMutex::new(Vec::new()),
+                    coin_decimals: decimals,
                 });
 
                 UtxoRpcClientEnum::Native(NativeClient(client))
@@ -891,8 +862,6 @@ pub async fn utxo_arc_from_conf_and_request(
             _ => 0,
         },
     };
-
-    let decimals = conf["decimals"].as_u64().unwrap_or(8) as u8;
 
     let (signature_version, fork_id) = if ticker == "BCH" {
         (SignatureVersion::ForkId, 0x40)
@@ -1304,7 +1273,7 @@ where
     T: AsRef<UtxoArc> + UtxoArcCommonOps,
 {
     let before_list_unspent_ordered = now_ms();
-    let (unspents, mut recently_sent_txs) = try_s!(coin.as_ref().list_unspent_ordered(&coin.as_ref().my_address).await);
+    let (unspents, mut recently_sent_txs) = try_s!(coin.list_unspent_ordered(&coin.as_ref().my_address).await);
     let after_list_unspent_ordered = now_ms();
     log!("list_unspent_ordered took "(
         after_list_unspent_ordered - before_list_unspent_ordered

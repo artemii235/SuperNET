@@ -1736,7 +1736,7 @@ pub async fn ordered_mature_unspents<T>(coin: T, address: Address) -> Result<Vec
 where
     T: AsRef<UtxoArc> + UtxoCoinCommonOps + UtxoArcCommonOps,
 {
-    let (unspents, _) = try_s!(coin.as_ref().list_unspent_ordered(&address).await);
+    let (unspents, _) = try_s!(coin.list_unspent_ordered(&address).await);
     let block_count = try_s!(coin.as_ref().rpc_client.get_block_count().compat().await);
 
     let mut result = Vec::with_capacity(unspents.len());
@@ -1970,4 +1970,48 @@ where
         log!("Error " (e) " on caching transaction " [txid]);
     };
     Ok(tx)
+}
+
+pub async fn list_unspent_ordered<'a, T>(
+    coin: &'a T,
+    address: &Address,
+) -> Result<(Vec<UnspentInfo>, AsyncMutexGuard<'a, RecentlySpentOutPoints>), String>
+where
+    T: AsRef<UtxoArc>,
+{
+    let before_list_unspent = now_ms();
+    let mut unspents = try_s!(
+        coin.as_ref()
+            .rpc_client
+            .list_unspent(address)
+            .map_err(|e| ERRL!("{}", e))
+            .compat()
+            .await
+    );
+    let after_list_unspent = now_ms();
+    log!("list_unspent took "(after_list_unspent - before_list_unspent));
+
+    let before = now_ms();
+    let recently_spent = coin.as_ref().recently_spent_outpoints.lock().await;
+    let after = now_ms();
+    log!("recently_spent lock took "(after - before));
+
+    let before = now_ms();
+    unspents = recently_spent
+        .replace_spent_outputs_with_cache(unspents.into_iter().collect())
+        .into_iter()
+        .collect();
+    unspents.sort_unstable_by(|a, b| {
+        if a.value < b.value {
+            Ordering::Less
+        } else {
+            Ordering::Greater
+        }
+    });
+    // dedup just in case we add duplicates of same unspent out
+    // all duplicates will be removed because vector in sorted before dedup
+    unspents.dedup_by(|one, another| one.outpoint == another.outpoint);
+    let after = now_ms();
+    log!("replace_spent_outputs_with_cache + sort + dedup took "(after - before));
+    Ok((unspents, recently_spent))
 }

@@ -414,6 +414,13 @@ impl UtxoArcCommonOps for Qrc20Coin {
         };
         RequestTxHistoryResult::Ok(tx_ids)
     }
+
+    async fn list_unspent_ordered<'a>(
+        &'a self,
+        address: &Address,
+    ) -> Result<(Vec<UnspentInfo>, AsyncMutexGuard<'a, RecentlySpentOutPoints>), String> {
+        utxo_common::list_unspent_ordered(self, address).await
+    }
 }
 
 impl SwapOps for Qrc20Coin {

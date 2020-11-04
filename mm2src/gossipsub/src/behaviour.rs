@@ -1028,14 +1028,14 @@ impl Gossipsub {
 
         // if we have less than needed, return them
         if relays.len() <= n {
-            debug!("RANDOM relayS: Got {:?} peers", relays.len());
+            debug!("RANDOM RELAYS: Got {:?} peers", relays.len());
             return relays;
         }
 
         // we have more peers than needed, shuffle them and return n of them
         let mut rng = thread_rng();
         relays.partial_shuffle(&mut rng, n);
-        debug!("RANDOM relayS: Got {:?} peers", n);
+        debug!("RANDOM RELAYS: Got {:?} peers", n);
 
         relays[..n].to_vec()
     }

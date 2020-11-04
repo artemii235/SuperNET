@@ -45,7 +45,6 @@ use std::num::NonZeroU64;
 use std::ops::Deref;
 #[cfg(not(feature = "native"))] use std::os::raw::c_char;
 use std::pin::Pin;
-use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrdering};
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -349,6 +348,24 @@ pub struct NativeClientImpl {
     pub request_id: AtomicU64,
     pub list_unspent_in_progress: AtomicBool,
     pub list_unspent_subs: AsyncMutex<Vec<async_oneshot::Sender<Result<Vec<NativeUnspent>, JsonRpcError>>>>,
+    /// coin decimals used to convert the decimal amount returned from daemon to correct satoshis amount
+    pub coin_decimals: u8,
+}
+
+#[cfg(test)]
+impl Default for NativeClientImpl {
+    fn default() -> Self {
+        NativeClientImpl {
+            coin_ticker: "TEST".to_string(),
+            uri: "".to_string(),
+            auth: "".to_string(),
+            event_handlers: vec![],
+            request_id: Default::default(),
+            list_unspent_in_progress: Default::default(),
+            list_unspent_subs: Default::default(),
+            coin_decimals: 8,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -419,22 +436,25 @@ impl JsonRpcClient for NativeClientImpl {
 #[cfg_attr(test, mockable)]
 impl UtxoRpcClientOps for NativeClient {
     fn list_unspent(&self, address: &Address) -> UtxoRpcRes<Vec<UnspentInfo>> {
+        let decimals = self.coin_decimals;
         let fut = self
-            .list_unspent_impl(0, 999999, vec![address.to_string()])
+            .list_unspent_impl(0, std::i32::MAX, vec![address.to_string()])
             .map_err(|e| ERRL!("{}", e))
-            .map(|unspents| {
-                unspents
+            .and_then(move |unspents| {
+                let unspents: Result<Vec<_>, _> = unspents
                     .into_iter()
-                    .map(|unspent| UnspentInfo {
-                        outpoint: OutPoint {
-                            hash: unspent.txid.reversed().into(),
-                            index: unspent.vout,
-                        },
-                        value: sat_from_big_decimal(&BigDecimal::from_str(&unspent.amount.to_string()).unwrap(), 8)
-                            .expect("sat_from_big_decimal should never fail here"),
-                        height: None,
+                    .map(|unspent| {
+                        Ok(UnspentInfo {
+                            outpoint: OutPoint {
+                                hash: unspent.txid.reversed().into(),
+                                index: unspent.vout,
+                            },
+                            value: try_s!(sat_from_big_decimal(&unspent.amount.to_decimal(), decimals)),
+                            height: None,
+                        })
                     })
-                    .collect()
+                    .collect();
+                Ok(try_s!(unspents))
             });
         Box::new(fut)
     }
@@ -459,9 +479,9 @@ impl UtxoRpcClientOps for NativeClient {
         Box::new(
             self.list_unspent_impl(0, std::i32::MAX, vec![address.to_string()])
                 .map(|unspents| {
-                    unspents.iter().fold(BigDecimal::from(0), |sum, unspent| {
-                        &sum + BigDecimal::from_str(&unspent.amount.to_string()).unwrap()
-                    })
+                    unspents
+                        .iter()
+                        .fold(BigDecimal::from(0), |sum, unspent| sum + unspent.amount.to_decimal())
                 }),
         )
     }

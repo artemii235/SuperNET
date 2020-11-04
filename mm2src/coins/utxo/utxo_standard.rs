@@ -177,6 +177,13 @@ impl UtxoArcCommonOps for UtxoStandardCoin {
     async fn request_tx_history(&self, metrics: MetricsArc) -> RequestTxHistoryResult {
         utxo_common::request_tx_history(self, metrics).await
     }
+
+    async fn list_unspent_ordered<'a>(
+        &'a self,
+        address: &Address,
+    ) -> Result<(Vec<UnspentInfo>, AsyncMutexGuard<'a, RecentlySpentOutPoints>), String> {
+        utxo_common::list_unspent_ordered(self, address).await
+    }
 }
 
 impl SwapOps for UtxoStandardCoin {

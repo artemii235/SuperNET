@@ -1249,6 +1249,22 @@ impl MakerOrderBuilder {
             conf_settings: self.conf_settings,
         })
     }
+
+    #[cfg(test)]
+    fn build_unchecked(self) -> MakerOrder {
+        MakerOrder {
+            base: self.base,
+            rel: self.rel,
+            created_at: now_ms(),
+            max_base_vol: self.max_base_vol,
+            min_base_vol: self.min_base_vol,
+            price: self.price,
+            matches: HashMap::new(),
+            started_swaps: Vec::new(),
+            uuid: new_uuid(),
+            conf_settings: self.conf_settings,
+        }
+    }
 }
 
 #[allow(dead_code)]
@@ -1279,35 +1295,35 @@ impl MakerOrder {
         let taker_base_amount: MmNumber = taker.get_base_amount();
         let taker_rel_amount: MmNumber = taker.get_rel_amount();
 
+        let zero = MmNumber::from(0);
+        if taker_base_amount <= zero || taker_rel_amount <= zero {
+            return OrderMatchResult::NotMatched;
+        }
+
         match taker.action {
             TakerAction::Buy => {
+                let taker_price = &taker_rel_amount / &taker_base_amount;
                 if self.base == taker.base
                     && self.rel == taker.rel
                     && taker_base_amount <= self.available_amount()
                     && taker_base_amount >= self.min_base_vol
+                    && taker_price >= self.price
                 {
-                    let taker_price = &taker_rel_amount / &taker_base_amount;
-                    if taker_price >= self.price {
-                        OrderMatchResult::Matched((taker_base_amount.clone(), &taker_base_amount * &self.price))
-                    } else {
-                        OrderMatchResult::NotMatched
-                    }
+                    OrderMatchResult::Matched((taker_base_amount.clone(), &taker_base_amount * &self.price))
                 } else {
                     OrderMatchResult::NotMatched
                 }
             },
             TakerAction::Sell => {
+                let taker_price = &taker_base_amount / &taker_rel_amount;
+
                 if self.base == taker.rel
                     && self.rel == taker.base
                     && taker_rel_amount <= self.available_amount()
                     && taker_rel_amount >= self.min_base_vol
+                    && taker_price >= self.price
                 {
-                    let taker_price = &taker_base_amount / &taker_rel_amount;
-                    if taker_price >= self.price {
-                        OrderMatchResult::Matched((&taker_base_amount / &self.price, taker_base_amount))
-                    } else {
-                        OrderMatchResult::NotMatched
-                    }
+                    OrderMatchResult::Matched((&taker_base_amount / &self.price, taker_base_amount))
                 } else {
                     OrderMatchResult::NotMatched
                 }
