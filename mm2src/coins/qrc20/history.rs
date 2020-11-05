@@ -39,6 +39,7 @@ impl TxInternalId {
         }
     }
 
+    /// TODO use parity_bitcoin::serialization instead of this custom implementation
     pub fn from_bytes(bytes: &BytesJson) -> Result<TxInternalId, String> {
         // H256(32 bytes) + output_index(8 bytes) + log_index(8 bytes)
         const EXPECTED_LEN: usize = 32 + 8 + 8;
