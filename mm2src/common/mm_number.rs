@@ -9,7 +9,7 @@ use std::str::FromStr;
 
 pub use num_bigint::{BigInt, Sign};
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord, Serialize)]
 pub struct MmNumber(BigRational);
 
 /// Rational number representation de/serializable in human readable form
@@ -208,25 +208,9 @@ impl Div for &MmNumber {
     }
 }
 
-impl PartialOrd<MmNumber> for MmNumber {
-    fn partial_cmp(&self, rhs: &MmNumber) -> Option<std::cmp::Ordering> {
-        let lhs = from_ratio_to_dec(&self.0);
-        let rhs = from_ratio_to_dec(&rhs.0);
-        Some(lhs.cmp(&rhs))
-    }
-}
-
 impl PartialOrd<BigDecimal> for MmNumber {
     fn partial_cmp(&self, other: &BigDecimal) -> Option<std::cmp::Ordering> {
         Some(from_ratio_to_dec(&self.0).cmp(other))
-    }
-}
-
-impl PartialEq for MmNumber {
-    fn eq(&self, rhs: &MmNumber) -> bool {
-        let lhs = from_ratio_to_dec(&self.0);
-        let rhs = from_ratio_to_dec(&rhs.0);
-        lhs == rhs
     }
 }
 

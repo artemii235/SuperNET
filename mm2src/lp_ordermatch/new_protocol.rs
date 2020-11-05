@@ -1,4 +1,4 @@
-use super::{MatchBy as SuperMatchBy, PricePingRequest, TakerAction};
+use super::{MatchBy as SuperMatchBy, OrderbookItem, TakerAction};
 use crate::mm2::lp_ordermatch::OrderConfirmationsSettings;
 use common::mm_number::MmNumber;
 use compact_uuid::CompactUuid;
@@ -20,7 +20,7 @@ pub enum OrdermatchMessage {
 }
 
 /// Get an order using uuid and the order maker's pubkey.
-/// Actual we expect to receive [`OrdermatchMessage::MakerOrderCreated`] that will be parsed into [`PricePingRequest`].
+/// Actual we expect to receive [`OrdermatchMessage::MakerOrderCreated`] that will be parsed into [`OrderbookItem`].
 #[derive(Debug, Deserialize, Serialize)]
 pub struct OrderInitialMessage {
     pub initial_message: Vec<u8>,
@@ -28,8 +28,8 @@ pub struct OrderInitialMessage {
     pub from_peer: String,
 }
 
-impl From<PricePingRequest> for OrderInitialMessage {
-    fn from(order: PricePingRequest) -> Self {
+impl From<OrderbookItem> for OrderInitialMessage {
+    fn from(order: OrderbookItem) -> Self {
         OrderInitialMessage {
             initial_message: order.initial_message,
             update_messages: order.update_messages,

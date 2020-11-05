@@ -75,25 +75,20 @@ const MIN_TRADING_VOL: &str = "0.00777";
 impl From<(new_protocol::MakerOrderCreated, Vec<u8>, String, String)> for OrderbookItem {
     fn from(tuple: (new_protocol::MakerOrderCreated, Vec<u8>, String, String)) -> OrderbookItem {
         let (order, initial_message, pubsecp, peer_id) = tuple;
-        let price_mm = MmNumber::from(order.price);
-        let max_vol_mm = MmNumber::from(order.max_volume);
-        let min_vol_mm = MmNumber::from(order.min_volume);
+        let price = MmNumber::from(order.price);
+        let max_volume = MmNumber::from(order.max_volume);
+        let min_volume = MmNumber::from(order.min_volume);
 
         OrderbookItem {
-            method: "".to_string(),
             pubkey: "".to_string(),
             base: order.base,
             rel: order.rel,
-            price: price_mm.to_decimal(),
-            price_rat: Some(price_mm),
-            price64: "".to_string(),
+            price,
+            max_volume,
+            min_volume,
             timestamp: now_ms() / 1000,
             pubsecp,
-            sig: "".to_string(),
-            balance: max_vol_mm.to_decimal(),
-            balance_rat: Some(max_vol_mm),
-            min_volume: min_vol_mm,
-            uuid: Some(order.uuid.into()),
+            uuid: order.uuid.into(),
             peer_id,
             initial_message,
             update_messages: Vec::new(),
@@ -121,22 +116,14 @@ async fn process_order_keep_alive(
 
     if let Some(mut order) = ordermatch_ctx.inactive_orders.lock().await.remove(&uuid) {
         order.timestamp = keep_alive.timestamp;
-        ordermatch_ctx
-            .orderbook
-            .lock()
-            .await
-            .insert_or_update_order(uuid, order);
+        ordermatch_ctx.orderbook.lock().await.insert_or_update_order(order);
         return true;
     }
 
     log!("Couldn't find an order " [uuid] ", try request it from peers");
     match request_order(ctx, uuid, propagated_from_peer, &from_pubkey).await {
         Ok(Some(order)) => {
-            ordermatch_ctx
-                .orderbook
-                .lock()
-                .await
-                .insert_or_update_order(uuid, order);
+            ordermatch_ctx.orderbook.lock().await.insert_or_update_order(order);
             return true;
         },
         Ok(None) => log!("None of peers responded to the GetOrder request"),
@@ -168,22 +155,14 @@ async fn process_maker_order_updated(
 
     if let Some(mut order) = ordermatch_ctx.inactive_orders.lock().await.remove(&uuid) {
         order.apply_updated(&updated_msg, serialized);
-        ordermatch_ctx
-            .orderbook
-            .lock()
-            .await
-            .insert_or_update_order(uuid, order);
+        ordermatch_ctx.orderbook.lock().await.insert_or_update_order(order);
         return true;
     }
 
     log!("Couldn't find an order " [uuid] ", try request it from peers");
     match request_order(ctx, uuid, propagated_from_peer, &from_pubkey).await {
         Ok(Some(order)) => {
-            ordermatch_ctx
-                .orderbook
-                .lock()
-                .await
-                .insert_or_update_order(uuid, order);
+            ordermatch_ctx.orderbook.lock().await.insert_or_update_order(order);
             return true;
         },
         Ok(None) => log!("None of peers responded to the GetOrder request"),
@@ -305,10 +284,10 @@ async fn request_and_fill_orderbook(
     let mut orderbook = ordermatch_ctx.orderbook.lock().await;
 
     for ask in asks {
-        orderbook.insert_or_update_order(ask.uuid.clone().unwrap(), ask);
+        orderbook.insert_or_update_order(ask);
     }
     for bid in bids {
-        orderbook.insert_or_update_order(bid.uuid.clone().unwrap(), bid);
+        orderbook.insert_or_update_order(bid);
     }
 
     orderbook
@@ -375,15 +354,14 @@ pub async fn process_msg(ctx: MmArc, _initial_topic: &str, from_peer: String, ms
     match decode_signed::<new_protocol::OrdermatchMessage>(msg) {
         Ok((message, _sig, pubkey)) => match message {
             new_protocol::OrdermatchMessage::MakerOrderCreated(created_msg) => {
-                let req: OrderbookItem = (
+                let order: OrderbookItem = (
                     created_msg,
                     msg.to_vec(),
                     hex::encode(pubkey.to_bytes().as_slice()),
                     from_peer,
                 )
                     .into();
-                let uuid = req.uuid.unwrap();
-                insert_or_update_order(&ctx, req, uuid).await;
+                insert_or_update_order(&ctx, order).await;
                 true
             },
             new_protocol::OrdermatchMessage::MakerOrderKeepAlive(keep_alive) => {
@@ -589,9 +567,8 @@ async fn maker_order_created_p2p_notify(ctx: MmArc, order: &MakerOrder) {
     let to_broadcast = new_protocol::OrdermatchMessage::MakerOrderCreated(message.clone());
     let encoded_msg = encode_and_sign(&to_broadcast, &*key_pair.private().secret).unwrap();
     let peer = ctx.peer_id.or(&&|| panic!()).clone();
-    let price_ping_req: OrderbookItem = (message, encoded_msg.clone(), hex::encode(&**key_pair.public()), peer).into();
-    let uuid = price_ping_req.uuid.unwrap();
-    insert_or_update_order(&ctx, price_ping_req, uuid).await;
+    let order: OrderbookItem = (message, encoded_msg.clone(), hex::encode(&**key_pair.public()), peer).into();
+    insert_or_update_order(&ctx, order).await;
     broadcast_p2p_msg(&ctx, vec![topic], encoded_msg);
 }
 
@@ -695,13 +672,10 @@ impl OrderConfirmationsSettings {
 pub struct TakerRequest {
     base: String,
     rel: String,
-    base_amount: BigDecimal,
-    base_amount_rat: Option<BigRational>,
-    rel_amount: BigDecimal,
-    rel_amount_rat: Option<BigRational>,
+    base_amount: MmNumber,
+    rel_amount: MmNumber,
     action: TakerAction,
     uuid: Uuid,
-    method: String,
     sender_pubkey: H256Json,
     dest_pub_key: H256Json,
     #[serde(default)]
@@ -711,19 +685,16 @@ pub struct TakerRequest {
 
 impl TakerRequest {
     fn from_new_proto_and_pubkey(message: new_protocol::TakerRequest, sender_pubkey: H256Json) -> Self {
-        let base_amount_mm = MmNumber::from(message.base_amount);
-        let rel_amount_mm = MmNumber::from(message.rel_amount);
+        let base_amount = MmNumber::from(message.base_amount);
+        let rel_amount = MmNumber::from(message.rel_amount);
 
         TakerRequest {
             base: message.base,
             rel: message.rel,
-            base_amount: base_amount_mm.to_decimal(),
-            base_amount_rat: Some(base_amount_mm.into()),
-            rel_amount: rel_amount_mm.to_decimal(),
-            rel_amount_rat: Some(rel_amount_mm.into()),
+            base_amount,
+            rel_amount,
             action: message.action,
             uuid: message.uuid.into(),
-            method: "".to_string(),
             sender_pubkey,
             dest_pub_key: Default::default(),
             match_by: message.match_by.into(),
@@ -1398,10 +1369,8 @@ impl Into<new_protocol::OrdermatchMessage> for TakerConnect {
 pub struct MakerReserved {
     base: String,
     rel: String,
-    base_amount: BigDecimal,
-    base_amount_rat: Option<BigRational>,
-    rel_amount: BigDecimal,
-    rel_amount_rat: Option<BigRational>,
+    base_amount: MmNumber,
+    rel_amount: MmNumber,
     taker_order_uuid: Uuid,
     maker_order_uuid: Uuid,
     method: String,
@@ -1572,8 +1541,9 @@ impl Orderbook {
     fn find_order_by_uuid(&mut self, uuid: &Uuid) -> Option<&mut OrderbookItem> { self.order_set.get_mut(uuid) }
 
     fn insert_or_update_order(&mut self, order: OrderbookItem) {
-        if req.balance <= 0.into() || req.price <= 0.into() {
-            self.remove_order(uuid);
+        let zero = MmNumber::from(0);
+        if order.max_volume <= zero || order.price <= zero || order.min_volume < zero {
+            self.remove_order(order.uuid);
             return;
         } // else insert the order
 
@@ -1584,7 +1554,7 @@ impl Orderbook {
             .or_insert_with(BTreeSet::new)
             .insert(OrderedByPriceOrder {
                 price: order.price.clone(),
-                uuid,
+                uuid: order.uuid,
             });
 
         self.unordered
@@ -2931,28 +2901,12 @@ pub async fn orderbook(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
                 orderbook_entries.push(OrderbookEntry {
                     coin: req.base.clone(),
                     address: try_s!(base_coin.address_from_pubkey_str(&ask.pubsecp)),
-                    price: ask.price.clone(),
-                    price_rat: ask
-                        .price_rat
-                        .as_ref()
-                        .map(|p| p.to_ratio())
-                        .unwrap_or_else(|| from_dec_to_ratio(ask.price.clone())),
-                    price_fraction: ask
-                        .price_rat
-                        .as_ref()
-                        .map(|p| p.to_fraction())
-                        .unwrap_or_else(|| ask.price.clone().into()),
-                    max_volume: ask.balance.clone(),
-                    max_volume_rat: ask
-                        .balance_rat
-                        .as_ref()
-                        .map(|p| p.to_ratio())
-                        .unwrap_or_else(|| from_dec_to_ratio(ask.balance.clone())),
-                    max_volume_fraction: ask
-                        .balance_rat
-                        .as_ref()
-                        .map(|p| p.to_fraction())
-                        .unwrap_or_else(|| ask.balance.clone().into()),
+                    price: ask.price.to_decimal(),
+                    price_rat: ask.price.to_ratio(),
+                    price_fraction: ask.price.to_fraction(),
+                    max_volume: ask.max_volume.to_decimal(),
+                    max_volume_rat: ask.max_volume.to_ratio(),
+                    max_volume_fraction: ask.max_volume.to_fraction(),
                     min_volume: ask.min_volume.to_decimal(),
                     min_volume_rat: ask.min_volume.to_ratio(),
                     min_volume_fraction: ask.min_volume.to_fraction(),
@@ -2976,30 +2930,18 @@ pub async fn orderbook(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
                     "Orderbook::unordered contains {:?} uuid that is not in Orderbook::order_set",
                     uuid
                 ))?;
-                let price_mm = MmNumber::from(1i32)
-                    / bid
-                        .price_rat
-                        .clone()
-                        .unwrap_or_else(|| from_dec_to_ratio(bid.price.clone()).into());
+                let price_mm = &MmNumber::from(1i32) / &bid.price;
                 orderbook_entries.push(OrderbookEntry {
                     coin: req.rel.clone(),
                     address: try_s!(rel_coin.address_from_pubkey_str(&bid.pubsecp)),
                     // NB: 1/x can not be represented as a decimal and introduces a rounding error
                     // cf. https://github.com/KomodoPlatform/atomicDEX-API/issues/495#issuecomment-516365682
-                    price: BigDecimal::from(1) / &bid.price,
+                    price: price_mm.to_decimal(),
                     price_rat: price_mm.to_ratio(),
                     price_fraction: price_mm.to_fraction(),
-                    max_volume: bid.balance.clone(),
-                    max_volume_rat: bid
-                        .balance_rat
-                        .as_ref()
-                        .map(|p| p.to_ratio())
-                        .unwrap_or_else(|| from_dec_to_ratio(bid.balance.clone())),
-                    max_volume_fraction: bid
-                        .balance_rat
-                        .as_ref()
-                        .map(|p| p.to_fraction())
-                        .unwrap_or_else(|| from_dec_to_ratio(bid.balance.clone()).into()),
+                    max_volume: bid.max_volume.to_decimal(),
+                    max_volume_rat: bid.max_volume.to_ratio(),
+                    max_volume_fraction: bid.max_volume.to_fraction(),
                     min_volume: bid.min_volume.to_decimal(),
                     min_volume_rat: bid.min_volume.to_ratio(),
                     min_volume_fraction: bid.min_volume.to_fraction(),
