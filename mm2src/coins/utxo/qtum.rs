@@ -241,11 +241,11 @@ impl SwapOps for QtumCoin {
     fn check_if_my_payment_completed(
         &self,
         _payment_tx: &[u8],
-        time_lock: u32,
-        other_pub: &[u8],
-        secret_hash: &[u8],
+        _time_lock: u32,
+        _other_pub: &[u8],
+        _secret_hash: &[u8],
     ) -> Box<dyn Future<Item = (), Error = String> + Send> {
-        utxo_common::check_if_my_payment_completed(self.clone(), time_lock, other_pub, secret_hash)
+        utxo_common::check_if_my_payment_completed()
     }
 
     fn search_for_swap_tx_spend_my(
