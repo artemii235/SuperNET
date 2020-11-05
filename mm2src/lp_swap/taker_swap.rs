@@ -995,21 +995,30 @@ impl TakerSwap {
             ]));
         }
 
-        let f = self.taker_coin.check_if_my_payment_completed(
-            &unwrap!(self.r().taker_payment.clone()).tx_hex,
-            self.r().data.taker_payment_lock as u32,
-            &*self.r().other_persistent_pub,
-            &self.r().secret_hash.0,
-        );
-        if let Err(err) = f.compat().await {
-            // Note the error may caused by internet problems.
-            // Try to refund the payment.
-            return Ok((Some(TakerSwapCommand::RefundTakerPayment), vec![
-                TakerSwapEvent::TakerPaymentCompleteFailed(ERRL!("{}", err).into()),
-                TakerSwapEvent::TakerPaymentWaitRefundStarted {
-                    wait_until: self.wait_refund_until(),
+        let mut attempts = 0;
+        loop {
+            let f = self.taker_coin.check_if_my_payment_completed(
+                &unwrap!(self.r().taker_payment.clone()).tx_hex,
+                self.r().data.taker_payment_lock as u32,
+                &*self.r().other_persistent_pub,
+                &self.r().secret_hash.0,
+            );
+            match f.compat().await {
+                Ok(_) => break,
+                Err(err) => {
+                    if attempts >= 3 {
+                        // Try to refund the payment.
+                        return Ok((Some(TakerSwapCommand::RefundTakerPayment), vec![
+                            TakerSwapEvent::TakerPaymentCompleteFailed(ERRL!("{}", err).into()),
+                            TakerSwapEvent::TakerPaymentWaitRefundStarted {
+                                wait_until: self.wait_refund_until(),
+                            },
+                        ]));
+                    }
+                    attempts += 1;
+                    Timer::sleep(10.).await;
                 },
-            ]));
+            }
         }
 
         let f = self.taker_coin.wait_for_tx_spend(

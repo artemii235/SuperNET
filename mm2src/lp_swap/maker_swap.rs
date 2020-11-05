@@ -568,21 +568,30 @@ impl MakerSwap {
             ]));
         }
 
-        let f = self.maker_coin.check_if_my_payment_completed(
-            &unwrap!(self.r().maker_payment.clone()).tx_hex,
-            self.r().data.maker_payment_lock as u32,
-            &*self.r().other_persistent_pub,
-            &*dhash160(&self.r().data.secret.0),
-        );
-        if let Err(err) = f.compat().await {
-            // Note the error may caused by internet problems.
-            // Try to refund the payment.
-            return Ok((Some(MakerSwapCommand::RefundMakerPayment), vec![
-                MakerSwapEvent::MakerPaymentCompleteFailed(ERRL!("{}", err).into()),
-                MakerSwapEvent::MakerPaymentWaitRefundStarted {
-                    wait_until: self.wait_refund_until(),
+        let mut attempts = 0;
+        loop {
+            let f = self.maker_coin.check_if_my_payment_completed(
+                &unwrap!(self.r().maker_payment.clone()).tx_hex,
+                self.r().data.maker_payment_lock as u32,
+                &*self.r().other_persistent_pub,
+                &*dhash160(&self.r().data.secret.0),
+            );
+            match f.compat().await {
+                Ok(_) => break,
+                Err(err) => {
+                    if attempts >= 3 {
+                        // Try to refund the payment.
+                        return Ok((Some(MakerSwapCommand::RefundMakerPayment), vec![
+                            MakerSwapEvent::MakerPaymentCompleteFailed(ERRL!("{}", err).into()),
+                            MakerSwapEvent::MakerPaymentWaitRefundStarted {
+                                wait_until: self.wait_refund_until(),
+                            },
+                        ]));
+                    }
+                    attempts += 1;
+                    Timer::sleep(10.).await;
                 },
-            ]));
+            }
         }
 
         // wait for 3/5, we need to leave some time space for transaction to be confirmed
