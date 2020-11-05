@@ -732,7 +732,7 @@ impl MarketCoinOps for Qrc20Coin {
 
     fn my_balance(&self) -> Box<dyn Future<Item = BigDecimal, Error = String> + Send> {
         let my_address = qrc20_addr_from_utxo_addr(self.utxo.my_address.clone());
-        let contract_address = self.contract_address.clone();
+        let contract_address = self.contract_address;
         let selfi = self.clone();
         let fut = async move {
             let params = &[Token::Address(my_address)];

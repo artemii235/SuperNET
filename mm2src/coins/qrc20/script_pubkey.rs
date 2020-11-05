@@ -119,13 +119,15 @@ fn encode_contract_number(number: i64) -> Vec<u8> {
     let is_negative = number.is_negative();
     let mut absnum = (number as i128).abs();
 
+    let mut lowest_byte = 0;
     while absnum != 0 {
         // absnum & 0xFF is first lowest byte
-        encoded.push((absnum & 0xFF) as u8);
+        lowest_byte = (absnum & 0xFF) as u8;
+        encoded.push(lowest_byte);
         absnum >>= 8;
     }
 
-    if (encoded.last().unwrap() & 0x80) != 0 {
+    if (lowest_byte & 0x80) != 0 {
         encoded.push({
             if is_negative {
                 0x80

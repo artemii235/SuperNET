@@ -779,7 +779,7 @@ fn transfer_call_details_from_script_pubkey(script_pubkey: &Script) -> Result<(H
 /// Get `receiverSpend` contract call details from script pubkey.
 pub fn receiver_spend_call_details_from_script_pubkey(script_pubkey: &Script) -> Result<ReceiverSpendDetails, String> {
     if !is_contract_call(script_pubkey) {
-        return ERR!("Expected 'transfer' contract call");
+        return ERR!("Expected 'receiverSpend' contract call");
     }
 
     let contract_call_bytes = try_s!(extract_contract_call_from_script(script_pubkey));
