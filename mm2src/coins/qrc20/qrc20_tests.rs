@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 pub fn qrc20_coin_for_test(priv_key: &[u8]) -> (MmArc, Qrc20Coin) {
     let conf = json!({
         "coin":"QRC20",
+        "decimals": 8,
         "required_confirmations":0,
         "pubtype":120,
         "p2shtype":50,
@@ -1054,6 +1055,45 @@ fn test_get_trade_fee() {
         amount: expected_trade_fee_amount.into(),
     };
     assert_eq!(actual_trade_fee, expected);
+}
+
+#[test]
+fn test_qrc20_coin_from_conf_without_decimals() {
+    // priv_key of qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG
+    let priv_key = [
+        3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144, 72,
+        172, 110, 180, 13, 123, 179, 10, 49,
+    ];
+    let conf = json!({
+        "coin":"QRC20",
+        "required_confirmations":0,
+        "pubtype":120,
+        "p2shtype":50,
+        "wiftype":128,
+        "segwit":true,
+        "mm2":1,
+        "mature_confirmations":500,
+    });
+    let req = json!({
+        "method": "electrum",
+        "servers": [{"url":"95.217.83.126:10001"}],
+        "swap_contract_address": "0xba8b71f3544b93e2f681f996da519a98ace0107a",
+    });
+    // 0459c999c3edf05e73c83f3fbae9f0f020919f91 has 12 decimals instead of standard 8
+    let contract_address = "0x0459c999c3edf05e73c83f3fbae9f0f020919f91".into();
+    let ctx = MmCtxBuilder::new().into_mm_arc();
+    let coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
+        &ctx,
+        "QRC20",
+        "QTUM",
+        &conf,
+        &req,
+        &priv_key,
+        contract_address
+    )));
+
+    assert_eq!(coin.utxo.decimals, 12);
+    assert_eq!(coin.decimals(), 12);
 }
 
 /// Test [`Qrc20Coin::validate_maker_payment`] and [`Qrc20Coin::erc20_payment_details_from_tx`]

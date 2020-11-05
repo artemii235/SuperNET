@@ -1,11 +1,11 @@
 use super::*;
 
-#[derive(Debug, Deserialize, Eq, PartialEq)]
+#[derive(Debug, Deserialize, PartialEq)]
 pub struct TokenInfo {
-    name: String,
-    decimals: u8,
-    total_supply: u64,
-    symbol: String,
+    pub name: String,
+    pub decimals: u8,
+    pub total_supply: f64,
+    pub symbol: String,
 }
 
 #[derive(Debug, Deserialize)]

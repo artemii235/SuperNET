@@ -70,11 +70,25 @@ pub async fn qrc20_coin_from_conf_and_request(
         Some(address) => try_s!(qrc20_addr_from_str(address)),
         None => return ERR!("\"swap_contract_address\" field is expected"),
     };
-    let utxo = try_s!(utxo_fields_from_conf_and_request(ctx, ticker, conf, req, priv_key, QRC20_DUST).await);
+
+    let mut utxo = try_s!(utxo_fields_from_conf_and_request(ctx, ticker, conf, req, priv_key, QRC20_DUST).await);
     match &utxo.address_format {
         UtxoAddressFormat::Standard => (),
         _ => return ERR!("Expect standard UTXO address format"),
     }
+
+    // if `decimals` is not set in config then we have to request it from contract
+    if conf["decimals"].as_u64().is_none() {
+        let contract_addr = qrc20_addr_into_rpc_format(&contract_address);
+        let token_info = match utxo.rpc_client {
+            UtxoRpcClientEnum::Electrum(ref electrum) => {
+                try_s!(electrum.blockchain_token_get_info(&contract_addr).compat().await)
+            },
+            UtxoRpcClientEnum::Native(_) => return ERR!("Electrum client expected"),
+        };
+        utxo.decimals = token_info.decimals;
+    }
+
     let platform = platform.to_owned();
     let inner = Qrc20CoinFields {
         utxo,
