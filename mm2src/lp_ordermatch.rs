@@ -72,14 +72,14 @@ const ORDERBOOK_REQUESTING_TIMEOUT: u64 = MIN_ORDER_KEEP_ALIVE_INTERVAL * 2;
 const INACTIVE_ORDER_TIMEOUT: u64 = 240;
 const MIN_TRADING_VOL: &str = "0.00777";
 
-impl From<(new_protocol::MakerOrderCreated, Vec<u8>, String, String)> for PricePingRequest {
-    fn from(tuple: (new_protocol::MakerOrderCreated, Vec<u8>, String, String)) -> PricePingRequest {
+impl From<(new_protocol::MakerOrderCreated, Vec<u8>, String, String)> for OrderbookItem {
+    fn from(tuple: (new_protocol::MakerOrderCreated, Vec<u8>, String, String)) -> OrderbookItem {
         let (order, initial_message, pubsecp, peer_id) = tuple;
         let price_mm = MmNumber::from(order.price);
         let max_vol_mm = MmNumber::from(order.max_volume);
         let min_vol_mm = MmNumber::from(order.min_volume);
 
-        PricePingRequest {
+        OrderbookItem {
             method: "".to_string(),
             pubkey: "".to_string(),
             base: order.base,
@@ -198,7 +198,7 @@ async fn request_order(
     uuid: Uuid,
     propagated_from_peer: String,
     from_pubkey: &str,
-) -> Result<Option<PricePingRequest>, String> {
+) -> Result<Option<OrderbookItem>, String> {
     let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
     if ordermatch_ctx
         .order_requests_tracker
@@ -222,7 +222,7 @@ async fn request_order(
     let req = P2PRequest::Ordermatch(get_order);
     match try_s!(request_one_peer::<new_protocol::OrderInitialMessage>(ctx, req, propagated_from_peer).await) {
         Some(order) => {
-            let order = try_s!(PricePingRequest::from_initial_msg(
+            let order = try_s!(OrderbookItem::from_initial_msg(
                 order.initial_message,
                 order.update_messages,
                 order.from_peer,
@@ -246,19 +246,19 @@ async fn request_and_fill_orderbook(
     asks_num: Option<usize>,
     bids_num: Option<usize>,
 ) -> Result<(), String> {
-    // The function converts the given Vec<OrderInitialMessage> to Iter<Item = PricePingRequest>.
+    // The function converts the given Vec<OrderInitialMessage> to Iter<Item = OrderbookItem>.
     fn process_initial_messages(
         initial_msgs: Vec<new_protocol::OrderInitialMessage>,
-    ) -> impl Iterator<Item = PricePingRequest> {
+    ) -> impl Iterator<Item = OrderbookItem> {
         initial_msgs.into_iter().filter_map(
             |new_protocol::OrderInitialMessage {
                  initial_message,
                  from_peer,
                  update_messages,
-             }| match PricePingRequest::from_initial_msg(initial_message, update_messages, from_peer) {
+             }| match OrderbookItem::from_initial_msg(initial_message, update_messages, from_peer) {
                 Ok(order) => Some(order),
                 Err(e) => {
-                    log!("Error on parse PricePingRequest from initial message: "[e]);
+                    log!("Error on parse OrderbookItem from initial message: "[e]);
                     None
                 },
             },
@@ -334,10 +334,10 @@ async fn process_my_order_keep_alive(ctx: &MmArc, keep_alive: &new_protocol::Mak
 
 /// Insert or update an order `req`.
 /// Note this function locks the [`OrdermatchContext::orderbook`] async mutex.
-async fn insert_or_update_order(ctx: &MmArc, req: PricePingRequest, uuid: Uuid) {
+async fn insert_or_update_order(ctx: &MmArc, item: OrderbookItem) {
     let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
     let mut orderbook = ordermatch_ctx.orderbook.lock().await;
-    orderbook.insert_or_update_order(uuid, req)
+    orderbook.insert_or_update_order(item)
 }
 
 async fn delete_order(ctx: &MmArc, pubkey: &str, uuid: Uuid) {
@@ -375,7 +375,7 @@ pub async fn process_msg(ctx: MmArc, _initial_topic: &str, from_peer: String, ms
     match decode_signed::<new_protocol::OrdermatchMessage>(msg) {
         Ok((message, _sig, pubkey)) => match message {
             new_protocol::OrdermatchMessage::MakerOrderCreated(created_msg) => {
-                let req: PricePingRequest = (
+                let req: OrderbookItem = (
                     created_msg,
                     msg.to_vec(),
                     hex::encode(pubkey.to_bytes().as_slice()),
@@ -589,11 +589,10 @@ async fn maker_order_created_p2p_notify(ctx: MmArc, order: &MakerOrder) {
     let to_broadcast = new_protocol::OrdermatchMessage::MakerOrderCreated(message.clone());
     let encoded_msg = encode_and_sign(&to_broadcast, &*key_pair.private().secret).unwrap();
     let peer = ctx.peer_id.or(&&|| panic!()).clone();
-    let price_ping_req: PricePingRequest =
-        (message, encoded_msg.clone(), hex::encode(&**key_pair.public()), peer).into();
+    let price_ping_req: OrderbookItem = (message, encoded_msg.clone(), hex::encode(&**key_pair.public()), peer).into();
     let uuid = price_ping_req.uuid.unwrap();
     insert_or_update_order(&ctx, price_ping_req, uuid).await;
-    broadcast_p2p_msg(&ctx, topic, encoded_msg);
+    broadcast_p2p_msg(&ctx, vec![topic], encoded_msg);
 }
 
 async fn process_my_maker_order_updated(ctx: &MmArc, message: &new_protocol::MakerOrderUpdated, serialized: Vec<u8>) {
@@ -612,7 +611,7 @@ async fn maker_order_updated_p2p_notify(ctx: MmArc, base: &str, rel: &str, messa
     let key_pair = ctx.secp256k1_key_pair.or(&&|| panic!());
     let encoded_msg = encode_and_sign(&msg, &*key_pair.private().secret).unwrap();
     process_my_maker_order_updated(&ctx, &message, encoded_msg.clone()).await;
-    broadcast_p2p_msg(&ctx, topic, encoded_msg);
+    broadcast_p2p_msg(&ctx, vec![topic], encoded_msg);
 }
 
 async fn maker_order_cancelled_p2p_notify(ctx: MmArc, order: &MakerOrder) {
@@ -1529,13 +1528,13 @@ pub async fn broadcast_maker_keep_alives_loop(ctx: MmArc) {
 fn broadcast_ordermatch_message(ctx: &MmArc, topic: String, msg: new_protocol::OrdermatchMessage) {
     let key_pair = ctx.secp256k1_key_pair.or(&&|| panic!());
     let encoded_msg = encode_and_sign(&msg, &*key_pair.private().secret).unwrap();
-    broadcast_p2p_msg(ctx, topic, encoded_msg);
+    broadcast_p2p_msg(ctx, vec![topic], encoded_msg);
 }
 
-/// The order is ordered by [`PricePingRequest::price`] and [`PricePingRequest::uuid`].
+/// The order is ordered by [`OrderbookItem::price`] and [`OrderbookItem::uuid`].
 #[derive(Eq, Ord, PartialEq, PartialOrd)]
 struct OrderedByPriceOrder {
-    price: BigDecimal,
+    price: MmNumber,
     uuid: Uuid,
 }
 
@@ -1553,12 +1552,14 @@ struct Orderbook {
     ordered: HashMap<(String, String), BTreeSet<OrderedByPriceOrder>>,
     /// A map from (base, rel).
     unordered: HashMap<(String, String), HashSet<Uuid>>,
-    order_set: HashMap<Uuid, PricePingRequest>,
+    order_set: HashMap<Uuid, OrderbookItem>,
+    /// a map of order UUIDs owned by specific pubkey
+    pubkey_to_uuid: HashMap<String, HashSet<Uuid>>,
     topics_subscribed_to: HashMap<String, OrderbookRequestingState>,
 }
 
 impl Orderbook {
-    fn find_order_by_uuid_and_pubkey(&mut self, uuid: &Uuid, from_pubkey: &str) -> Option<&mut PricePingRequest> {
+    fn find_order_by_uuid_and_pubkey(&mut self, uuid: &Uuid, from_pubkey: &str) -> Option<&mut OrderbookItem> {
         self.order_set.get_mut(uuid).and_then(|order| {
             if order.pubsecp == from_pubkey {
                 Some(order)
@@ -1568,33 +1569,33 @@ impl Orderbook {
         })
     }
 
-    fn find_order_by_uuid(&mut self, uuid: &Uuid) -> Option<&mut PricePingRequest> { self.order_set.get_mut(uuid) }
+    fn find_order_by_uuid(&mut self, uuid: &Uuid) -> Option<&mut OrderbookItem> { self.order_set.get_mut(uuid) }
 
-    fn insert_or_update_order(&mut self, uuid: Uuid, req: PricePingRequest) {
+    fn insert_or_update_order(&mut self, order: OrderbookItem) {
         if req.balance <= 0.into() || req.price <= 0.into() {
             self.remove_order(uuid);
             return;
         } // else insert the order
 
-        let base_rel = (req.base.clone(), req.rel.clone());
+        let base_rel = (order.base.clone(), order.rel.clone());
 
         self.ordered
             .entry(base_rel.clone())
             .or_insert_with(BTreeSet::new)
             .insert(OrderedByPriceOrder {
-                price: req.price.clone(),
+                price: order.price.clone(),
                 uuid,
             });
 
         self.unordered
             .entry(base_rel)
             .or_insert_with(HashSet::new)
-            .insert(uuid.clone());
+            .insert(order.uuid);
 
-        self.order_set.insert(uuid, req);
+        self.order_set.insert(order.uuid, order);
     }
 
-    fn remove_order(&mut self, uuid: Uuid) -> Option<PricePingRequest> {
+    fn remove_order(&mut self, uuid: Uuid) -> Option<OrderbookItem> {
         let order = match self.order_set.remove(&uuid) {
             Some(order) => order,
             None => return None,
@@ -1633,7 +1634,7 @@ struct OrdermatchContext {
     pub my_cancelled_orders: AsyncMutex<HashMap<Uuid, MakerOrder>>,
     pub orderbook: AsyncMutex<Orderbook>,
     pub order_requests_tracker: AsyncMutex<OrderRequestsTracker>,
-    pub inactive_orders: AsyncMutex<HashMap<Uuid, PricePingRequest>>,
+    pub inactive_orders: AsyncMutex<HashMap<Uuid, OrderbookItem>>,
 }
 
 #[cfg_attr(test, mockable)]
@@ -2235,42 +2236,35 @@ pub async fn lp_auto_buy(
     Ok(result)
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-struct PricePingRequest {
-    method: String,
+#[derive(Clone, Debug, PartialEq)]
+struct OrderbookItem {
     pubkey: String,
     base: String,
     rel: String,
-    price: BigDecimal,
-    price_rat: Option<MmNumber>,
-    price64: String,
+    price: MmNumber,
     timestamp: u64,
     pubsecp: String,
-    sig: String,
-    // TODO rename, it's called "balance", but it's actual meaning is max available volume to trade
-    #[serde(rename = "bal")]
-    balance: BigDecimal,
-    balance_rat: Option<MmNumber>,
+    max_volume: MmNumber,
     min_volume: MmNumber,
-    uuid: Option<Uuid>,
+    uuid: Uuid,
     peer_id: String,
     initial_message: Vec<u8>,
     update_messages: Vec<Vec<u8>>,
 }
 
-impl PricePingRequest {
+impl OrderbookItem {
     fn from_initial_msg(
         initial_message: Vec<u8>,
         update_messages: Vec<Vec<u8>>,
         from_peer: String,
-    ) -> Result<PricePingRequest, String> {
+    ) -> Result<OrderbookItem, String> {
         let (message, _sig, init_pubkey) = try_s!(decode_signed::<new_protocol::OrdermatchMessage>(&initial_message));
         let order = match message {
             new_protocol::OrdermatchMessage::MakerOrderCreated(order) => order,
             msg => return ERR!("Expected MakerOrderCreated, found {:?}", msg),
         };
 
-        let mut req: PricePingRequest = (
+        let mut req: OrderbookItem = (
             order,
             initial_message,
             hex::encode(init_pubkey.to_bytes().as_slice()),
@@ -2297,17 +2291,15 @@ impl PricePingRequest {
         self.timestamp = now_ms() / 1000;
 
         if let Some(new_price) = msg.new_price() {
-            self.price = new_price.to_decimal();
-            self.price_rat = Some(new_price.clone());
+            self.price = new_price;
         }
 
         if let Some(new_max_volume) = msg.new_max_volume() {
-            self.balance = new_max_volume.to_decimal();
-            self.balance_rat = Some(new_max_volume.clone());
+            self.max_volume = new_max_volume;
         }
 
         if let Some(new_min_volume) = msg.new_min_volume() {
-            self.min_volume = new_min_volume.clone();
+            self.min_volume = new_min_volume;
         }
 
         self.update_messages.push(serialized);

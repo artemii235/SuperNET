@@ -143,10 +143,10 @@ async fn process_p2p_request(
 }
 
 #[cfg(feature = "native")]
-pub fn broadcast_p2p_msg(ctx: &MmArc, topic: String, msg: Vec<u8>) {
+pub fn broadcast_p2p_msg(ctx: &MmArc, topics: Vec<String>, msg: Vec<u8>) {
     let ctx = ctx.clone();
     spawn(async move {
-        let cmd = AdexBehaviourCmd::PublishMsg { topic, msg };
+        let cmd = AdexBehaviourCmd::PublishMsg { topics, msg };
         let p2p_ctx = P2PContext::fetch_from_mm_arc(&ctx);
         if let Err(e) = p2p_ctx.cmd_tx.lock().await.try_send(cmd) {
             log!("broadcast_p2p_msg cmd_tx.send error "[e]);

@@ -1388,7 +1388,7 @@ fn make_random_orders(
     base: String,
     rel: String,
     n: usize,
-) -> Vec<PricePingRequest> {
+) -> Vec<OrderbookItem> {
     let mut rng = rand::thread_rng();
     let mut orders = Vec::with_capacity(n);
     for _i in 0..n {
@@ -1470,12 +1470,12 @@ fn test_process_get_orderbook_request() {
     .unwrap();
 
     // the first ping request has best MORTY:RICK price (1000000 highest price), therefore is the best bid
-    let price_ping_request1: PricePingRequest = (order1, initial_message1, pubkey.clone(), peer.clone()).into();
+    let price_ping_request1: OrderbookItem = (order1, initial_message1, pubkey.clone(), peer.clone()).into();
     // the second ping request has best RICK:MORTY price (500000 lowest price), therefore is the best ask
-    let price_ping_request2: PricePingRequest = (order2, initial_message2, pubkey.clone(), peer.clone()).into();
+    let price_ping_request2: OrderbookItem = (order2, initial_message2, pubkey.clone(), peer.clone()).into();
 
-    orderbook.insert_or_update_order(price_ping_request1.uuid.unwrap().clone(), price_ping_request1.clone());
-    orderbook.insert_or_update_order(price_ping_request2.uuid.unwrap().clone(), price_ping_request2.clone());
+    orderbook.insert_or_update_order(price_ping_request1.clone());
+    orderbook.insert_or_update_order(price_ping_request2.clone());
 
     // avoid dead lock on orderbook as process_get_orderbook_request also acquires it
     drop(orderbook);
@@ -1496,10 +1496,10 @@ fn test_process_get_orderbook_request() {
 
     let orderbook = decode_message::<new_protocol::Orderbook>(&encoded).unwrap();
     assert!(orderbook.bids.is_empty());
-    let asks: Vec<PricePingRequest> = orderbook
+    let asks: Vec<OrderbookItem> = orderbook
         .asks
         .into_iter()
-        .map(|order| PricePingRequest::from_initial_msg(order.initial_message, Vec::new(), order.from_peer).unwrap())
+        .map(|order| OrderbookItem::from_initial_msg(order.initial_message, Vec::new(), order.from_peer).unwrap())
         .collect();
     assert_eq!(asks, vec![price_ping_request2]);
 
@@ -1519,10 +1519,10 @@ fn test_process_get_orderbook_request() {
     let orderbook = decode_message::<new_protocol::Orderbook>(&encoded).unwrap();
     assert!(orderbook.asks.is_empty());
 
-    let bids: Vec<PricePingRequest> = orderbook
+    let bids: Vec<OrderbookItem> = orderbook
         .bids
         .into_iter()
-        .map(|order| PricePingRequest::from_initial_msg(order.initial_message, Vec::new(), order.from_peer).unwrap())
+        .map(|order| OrderbookItem::from_initial_msg(order.initial_message, Vec::new(), order.from_peer).unwrap())
         .collect();
     assert_eq!(bids, vec![price_ping_request1]);
 }
@@ -1628,7 +1628,7 @@ fn test_request_and_fill_orderbook() {
     // check if the best asks and bids are in the orderbook
     let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
     let orderbook = block_on(ordermatch_ctx.orderbook.lock());
-    let asks: Vec<PricePingRequest> = orderbook
+    let asks: Vec<OrderbookItem> = orderbook
         .ordered
         .get(&("RICK".into(), "MORTY".into()))
         .unwrap()
@@ -1642,7 +1642,7 @@ fn test_request_and_fill_orderbook() {
                 .clone()
         })
         .collect();
-    let bids: Vec<PricePingRequest> = orderbook
+    let bids: Vec<OrderbookItem> = orderbook
         .ordered
         .get(&("MORTY".into(), "RICK".into()))
         .unwrap()
@@ -1737,7 +1737,7 @@ fn test_process_order_keep_alive_requested_from_peer() {
     let mut orderbook = block_on(ordermatch_ctx.orderbook.lock());
     // try to find the order within OrdermatchContext::orderbook and check if this order equals to the expected
     let actual = orderbook.find_order_by_uuid_and_pubkey(&uuid, &pubkey).unwrap();
-    let expected: PricePingRequest = (order, initial_order_message, pubkey, peer).into();
+    let expected: OrderbookItem = (order, initial_order_message, pubkey, peer).into();
 
     // the expected.timestamp may be greater than actual.timestamp because of two now_ms() calls
     actual.timestamp = expected.timestamp;
@@ -1769,15 +1769,15 @@ fn test_process_get_order_request() {
         &secret,
     )
     .unwrap();
-    let price_ping_request: PricePingRequest = (order, initial_message, pubkey.clone(), peer.clone()).into();
-    orderbook.insert_or_update_order(price_ping_request.uuid.unwrap(), price_ping_request.clone());
+    let price_ping_request: OrderbookItem = (order, initial_message, pubkey.clone(), peer.clone()).into();
+    orderbook.insert_or_update_order(price_ping_request.clone());
 
     // avoid dead lock on orderbook as process_get_orderbook_request also acquires it
     drop(orderbook);
 
     let encoded = block_on(process_get_order_request(
         ctx.clone(),
-        price_ping_request.uuid.unwrap(),
+        price_ping_request.uuid,
         pubkey.clone(),
     ))
     .unwrap()
@@ -1785,7 +1785,7 @@ fn test_process_get_order_request() {
 
     let order = decode_message::<new_protocol::OrderInitialMessage>(&encoded).unwrap();
     let actual_price_ping_request =
-        PricePingRequest::from_initial_msg(order.initial_message, order.update_messages, order.from_peer).unwrap();
+        OrderbookItem::from_initial_msg(order.initial_message, order.update_messages, order.from_peer).unwrap();
     assert_eq!(actual_price_ping_request, price_ping_request);
 }
 
@@ -1958,4 +1958,14 @@ fn test_taker_request_can_match_with_uuid() {
 
     request.match_by = MatchBy::Orders(HashSet::new());
     assert!(!request.can_match_with_uuid(&uuid));
+}
+
+#[test]
+fn test_orderbook_insert_or_update_order() {
+    let (_, pubkey, secret) = make_ctx_for_tests();
+    let mut orderbook = Orderbook::default();
+    let peer = PeerId::random();
+    let order = make_random_orders(pubkey.clone(), &secret, peer.to_string(), "C1".into(), "C2".into(), 1).remove(0);
+
+    orderbook.insert_or_update_order(order);
 }

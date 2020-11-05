@@ -106,7 +106,7 @@ pub enum AdexBehaviourCmd {
         topic: String,
     },
     PublishMsg {
-        topic: String,
+        topics: Vec<String>,
         msg: Vec<u8>,
     },
     /// Request relays sequential until a response is received.
@@ -259,8 +259,9 @@ impl AtomicDexBehaviour {
                 let topic = Topic::new(topic);
                 self.gossipsub.subscribe(topic);
             },
-            AdexBehaviourCmd::PublishMsg { topic, msg } => {
-                self.gossipsub.publish(&Topic::new(topic), msg);
+            AdexBehaviourCmd::PublishMsg { topics, msg } => {
+                self.gossipsub
+                    .publish_many(topics.into_iter().map(|topic| Topic::new(topic)), msg);
             },
             AdexBehaviourCmd::RequestAnyRelay { req, response_tx } => {
                 let relays = self.gossipsub.get_relay_mesh();

@@ -1280,6 +1280,9 @@ fn test_unavailable_electrum_proto_version() {
 }
 
 #[test]
+#[ignore]
+// The test provided to dimxy to recreate "stuck mempool" problem of komodod on RICK chain.
+// Leaving this test here for a while because it might be still useful
 fn test_spam_rick() {
     let conf = json!({"coin":"RICK","asset":"RICK","fname":"RICK (TESTCOIN)","rpcport":25435,"txversion":4,"overwintered":1,"mm2":1,"required_confirmations":1,"avg_blocktime":1,"protocol":{"type":"UTXO"}});
     let req = json!({

@@ -138,7 +138,7 @@ pub fn broadcast_swap_message_every(ctx: MmArc, topic: String, msg: SwapMsg, int
 pub fn broadcast_swap_message(ctx: &MmArc, topic: String, msg: SwapMsg) {
     let key_pair = ctx.secp256k1_key_pair.or(&&|| panic!());
     let encoded_msg = encode_and_sign(&msg, &*key_pair.private().secret).unwrap();
-    broadcast_p2p_msg(ctx, topic, encoded_msg);
+    broadcast_p2p_msg(ctx, vec![topic], encoded_msg);
 }
 
 pub fn process_msg(ctx: MmArc, topic: &str, msg: &[u8]) {
@@ -792,7 +792,7 @@ fn broadcast_my_swap_status(uuid: &Uuid, ctx: &MmArc) -> Result<(), String> {
         data: status,
     };
     let msg = json::to_vec(&status).expect("Swap status ser should never fail");
-    broadcast_p2p_msg(ctx, swap_topic(uuid), msg);
+    broadcast_p2p_msg(ctx, vec![swap_topic(uuid)], msg);
     Ok(())
 }
 
