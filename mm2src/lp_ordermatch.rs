@@ -720,8 +720,8 @@ impl TakerRequest {
 impl Into<new_protocol::OrdermatchMessage> for TakerRequest {
     fn into(self) -> new_protocol::OrdermatchMessage {
         new_protocol::OrdermatchMessage::TakerRequest(new_protocol::TakerRequest {
-            base_amount: self.get_base_amount().into(),
-            rel_amount: self.get_rel_amount().into(),
+            base_amount: self.get_base_amount().to_ratio(),
+            rel_amount: self.get_rel_amount().to_ratio(),
             base: self.base,
             rel: self.rel,
             action: self.action,
@@ -733,19 +733,9 @@ impl Into<new_protocol::OrdermatchMessage> for TakerRequest {
 }
 
 impl TakerRequest {
-    fn get_base_amount(&self) -> MmNumber {
-        match &self.base_amount_rat {
-            Some(r) => r.clone().into(),
-            None => self.base_amount.clone().into(),
-        }
-    }
+    fn get_base_amount(&self) -> &MmNumber { &self.base_amount }
 
-    fn get_rel_amount(&self) -> MmNumber {
-        match &self.rel_amount_rat {
-            Some(r) => r.clone().into(),
-            None => self.rel_amount.clone().into(),
-        }
-    }
+    fn get_rel_amount(&self) -> &MmNumber { &self.rel_amount }
 }
 
 struct TakerRequestBuilder {
@@ -898,13 +888,10 @@ impl TakerRequestBuilder {
         Ok(TakerRequest {
             base: self.base,
             rel: self.rel,
-            base_amount: self.base_amount.to_decimal(),
-            base_amount_rat: Some(self.base_amount.into()),
-            rel_amount: self.rel_amount.to_decimal(),
-            rel_amount_rat: Some(self.rel_amount.into()),
+            base_amount: self.base_amount,
+            rel_amount: self.rel_amount,
             action: self.action,
             uuid: new_uuid(),
-            method: "request".to_string(),
             sender_pubkey: self.sender_pubkey,
             dest_pub_key: Default::default(),
             match_by: self.match_by,
@@ -918,13 +905,10 @@ impl TakerRequestBuilder {
         TakerRequest {
             base: self.base,
             rel: self.rel,
-            base_amount: self.base_amount.to_decimal(),
-            base_amount_rat: Some(self.base_amount.into()),
-            rel_amount: self.rel_amount.to_decimal(),
-            rel_amount_rat: Some(self.rel_amount.into()),
+            base_amount: self.base_amount,
+            rel_amount: self.rel_amount,
             action: self.action,
             uuid: new_uuid(),
-            method: "request".to_string(),
             sender_pubkey: self.sender_pubkey,
             dest_pub_key: Default::default(),
             match_by: self.match_by,
@@ -991,10 +975,10 @@ impl TakerOrder {
             },
         }
 
-        let my_base_amount: MmNumber = self.request.get_base_amount();
-        let my_rel_amount: MmNumber = self.request.get_rel_amount();
-        let other_base_amount: MmNumber = reserved.get_base_amount();
-        let other_rel_amount: MmNumber = reserved.get_rel_amount();
+        let my_base_amount = self.request.get_base_amount();
+        let my_rel_amount = self.request.get_rel_amount();
+        let other_base_amount = reserved.get_base_amount();
+        let other_rel_amount = reserved.get_rel_amount();
 
         match self.request.action {
             TakerAction::Buy => {
@@ -1244,7 +1228,7 @@ impl MakerOrder {
     fn available_amount(&self) -> MmNumber {
         let reserved: MmNumber = self.matches.iter().fold(
             MmNumber::from(BigRational::from_integer(0.into())),
-            |reserved, (_, order_match)| reserved + order_match.reserved.get_base_amount(),
+            |reserved, (_, order_match)| &reserved + order_match.reserved.get_base_amount(),
         );
         &self.max_base_vol - &reserved
     }
@@ -1262,38 +1246,38 @@ impl MakerOrder {
     }
 
     fn match_with_request(&self, taker: &TakerRequest) -> OrderMatchResult {
-        let taker_base_amount: MmNumber = taker.get_base_amount();
-        let taker_rel_amount: MmNumber = taker.get_rel_amount();
+        let taker_base_amount = taker.get_base_amount();
+        let taker_rel_amount = taker.get_rel_amount();
 
         let zero = MmNumber::from(0);
-        if taker_base_amount <= zero || taker_rel_amount <= zero {
+        if taker_base_amount <= &zero || taker_rel_amount <= &zero {
             return OrderMatchResult::NotMatched;
         }
 
         match taker.action {
             TakerAction::Buy => {
-                let taker_price = &taker_rel_amount / &taker_base_amount;
+                let taker_price = taker_rel_amount / taker_base_amount;
                 if self.base == taker.base
                     && self.rel == taker.rel
-                    && taker_base_amount <= self.available_amount()
-                    && taker_base_amount >= self.min_base_vol
+                    && taker_base_amount <= &self.available_amount()
+                    && taker_base_amount >= &self.min_base_vol
                     && taker_price >= self.price
                 {
-                    OrderMatchResult::Matched((taker_base_amount.clone(), &taker_base_amount * &self.price))
+                    OrderMatchResult::Matched((taker_base_amount.clone(), taker_base_amount * &self.price))
                 } else {
                     OrderMatchResult::NotMatched
                 }
             },
             TakerAction::Sell => {
-                let taker_price = &taker_base_amount / &taker_rel_amount;
+                let taker_price = taker_base_amount / taker_rel_amount;
 
                 if self.base == taker.rel
                     && self.rel == taker.base
-                    && taker_rel_amount <= self.available_amount()
-                    && taker_rel_amount >= self.min_base_vol
+                    && taker_rel_amount <= &self.available_amount()
+                    && taker_rel_amount >= &self.min_base_vol
                     && taker_price >= self.price
                 {
-                    OrderMatchResult::Matched((&taker_base_amount / &self.price, taker_base_amount))
+                    OrderMatchResult::Matched((taker_base_amount / &self.price, taker_base_amount.clone()))
                 } else {
                     OrderMatchResult::NotMatched
                 }
@@ -1307,7 +1291,7 @@ impl Into<MakerOrder> for TakerOrder {
         match self.request.action {
             TakerAction::Sell => MakerOrder {
                 price: (self.request.get_rel_amount() / self.request.get_base_amount()),
-                max_base_vol: self.request.get_base_amount(),
+                max_base_vol: self.request.get_base_amount().clone(),
                 min_base_vol: 0.into(),
                 created_at: now_ms(),
                 base: self.request.base,
@@ -1320,7 +1304,7 @@ impl Into<MakerOrder> for TakerOrder {
             // The "buy" taker order is recreated with reversed pair as Maker order is always considered as "sell"
             TakerAction::Buy => MakerOrder {
                 price: (self.request.get_base_amount() / self.request.get_rel_amount()),
-                max_base_vol: self.request.get_rel_amount(),
+                max_base_vol: self.request.get_rel_amount().clone(),
                 min_base_vol: 0.into(),
                 created_at: now_ms(),
                 base: self.request.rel,
@@ -1338,7 +1322,6 @@ impl Into<MakerOrder> for TakerOrder {
 pub struct TakerConnect {
     taker_order_uuid: Uuid,
     maker_order_uuid: Uuid,
-    method: String,
     sender_pubkey: H256Json,
     dest_pub_key: H256Json,
 }
@@ -1348,7 +1331,6 @@ impl From<new_protocol::TakerConnect> for TakerConnect {
         TakerConnect {
             taker_order_uuid: message.taker_order_uuid.into(),
             maker_order_uuid: message.maker_order_uuid.into(),
-            method: "".to_string(),
             sender_pubkey: Default::default(),
             dest_pub_key: Default::default(),
         }
@@ -1373,43 +1355,29 @@ pub struct MakerReserved {
     rel_amount: MmNumber,
     taker_order_uuid: Uuid,
     maker_order_uuid: Uuid,
-    method: String,
     sender_pubkey: H256Json,
     dest_pub_key: H256Json,
     conf_settings: Option<OrderConfirmationsSettings>,
 }
 
 impl MakerReserved {
-    fn get_base_amount(&self) -> MmNumber {
-        match &self.base_amount_rat {
-            Some(r) => r.clone().into(),
-            None => self.base_amount.clone().into(),
-        }
-    }
+    fn get_base_amount(&self) -> &MmNumber { &self.base_amount }
 
-    fn get_rel_amount(&self) -> MmNumber {
-        match &self.rel_amount_rat {
-            Some(r) => r.clone().into(),
-            None => self.rel_amount.clone().into(),
-        }
-    }
+    fn get_rel_amount(&self) -> &MmNumber { &self.rel_amount }
 }
 
 impl MakerReserved {
     fn from_new_proto_and_pubkey(message: new_protocol::MakerReserved, sender_pubkey: H256Json) -> Self {
-        let base_amount_mm = MmNumber::from(message.base_amount);
-        let rel_amount_mm = MmNumber::from(message.rel_amount);
+        let base_amount = MmNumber::from(message.base_amount);
+        let rel_amount = MmNumber::from(message.rel_amount);
 
         MakerReserved {
             base: message.base,
             rel: message.rel,
-            base_amount: base_amount_mm.to_decimal(),
-            rel_amount: rel_amount_mm.to_decimal(),
-            base_amount_rat: Some(base_amount_mm.into()),
-            rel_amount_rat: Some(rel_amount_mm.into()),
+            base_amount,
+            rel_amount,
             taker_order_uuid: message.taker_order_uuid.into(),
             maker_order_uuid: message.maker_order_uuid.into(),
-            method: "".to_string(),
             sender_pubkey,
             dest_pub_key: Default::default(),
             conf_settings: Some(message.conf_settings),
@@ -1420,8 +1388,8 @@ impl MakerReserved {
 impl Into<new_protocol::OrdermatchMessage> for MakerReserved {
     fn into(self) -> new_protocol::OrdermatchMessage {
         new_protocol::OrdermatchMessage::MakerReserved(new_protocol::MakerReserved {
-            base_amount: self.get_base_amount().into(),
-            rel_amount: self.get_rel_amount().into(),
+            base_amount: self.get_base_amount().to_ratio(),
+            rel_amount: self.get_rel_amount().to_ratio(),
             base: self.base,
             rel: self.rel,
             taker_order_uuid: self.taker_order_uuid.into(),
@@ -1653,8 +1621,8 @@ fn lp_connect_start_bob(ctx: MmArc, maker_match: MakerMatch, maker_order: MakerO
         };
         let mut alice = bits256::default();
         alice.bytes = maker_match.request.sender_pubkey.0;
-        let maker_amount = maker_match.reserved.get_base_amount().into();
-        let taker_amount = maker_match.reserved.get_rel_amount().into();
+        let maker_amount = maker_match.reserved.get_base_amount().to_decimal();
+        let taker_amount = maker_match.reserved.get_rel_amount().to_decimal();
         let privkey = &ctx.secp256k1_key_pair().private().secret;
         let my_persistent_pub = unwrap!(compressed_pub_key_from_priv_raw(&privkey[..], ChecksumType::DSHA256));
         let uuid = maker_match.request.uuid;
@@ -1725,8 +1693,8 @@ fn lp_connected_alice(ctx: MmArc, taker_request: TakerRequest, taker_match: Take
 
         let privkey = &ctx.secp256k1_key_pair().private().secret;
         let my_persistent_pub = unwrap!(compressed_pub_key_from_priv_raw(&privkey[..], ChecksumType::DSHA256));
-        let maker_amount = taker_match.reserved.get_base_amount().into();
-        let taker_amount = taker_match.reserved.get_rel_amount().into();
+        let maker_amount = taker_match.reserved.get_base_amount().to_decimal();
+        let taker_amount = taker_match.reserved.get_rel_amount().to_decimal();
         let uuid = taker_match.reserved.taker_order_uuid;
 
         let my_conf_settings =
@@ -1890,7 +1858,6 @@ async fn process_maker_reserved(ctx: MmArc, reserved_msg: MakerReserved) {
         let connect = TakerConnect {
             sender_pubkey: H256Json::from(our_public_id.bytes),
             dest_pub_key: reserved_msg.sender_pubkey.clone(),
-            method: "connect".into(),
             taker_order_uuid: reserved_msg.taker_order_uuid,
             maker_order_uuid: reserved_msg.maker_order_uuid,
         };
@@ -1980,12 +1947,9 @@ async fn process_taker_request(ctx: MmArc, taker_request: TakerRequest) {
                     dest_pub_key: taker_request.sender_pubkey.clone(),
                     sender_pubkey: our_public_id,
                     base: order.base.clone(),
-                    base_amount: base_amount.clone().into(),
-                    base_amount_rat: Some(base_amount.into()),
-                    rel_amount: rel_amount.clone().into(),
-                    rel_amount_rat: Some(rel_amount.into()),
+                    base_amount: base_amount.clone(),
+                    rel_amount: rel_amount.clone(),
                     rel: order.rel.clone(),
-                    method: "reserved".into(),
                     taker_order_uuid: taker_request.uuid,
                     maker_order_uuid: *uuid,
                     conf_settings: order.conf_settings.or_else(|| {
@@ -2970,22 +2934,6 @@ pub async fn orderbook(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
     };
     let responseʲ = try_s!(json::to_vec(&response));
     Ok(try_s!(Response::builder().body(responseʲ)))
-}
-
-pub fn migrate_saved_orders(ctx: &MmArc) -> Result<(), String> {
-    let taker_entries: Vec<DirEntry> = try_s!(json_dir_entries(&my_taker_orders_dir(&ctx)));
-    taker_entries.iter().for_each(|entry| {
-        if let Ok(mut order) = json::from_slice::<TakerOrder>(&slurp(&entry.path())) {
-            if order.request.base_amount_rat.is_none() {
-                order.request.base_amount_rat = Some(from_dec_to_ratio(order.request.base_amount.clone()));
-            }
-            if order.request.rel_amount_rat.is_none() {
-                order.request.rel_amount_rat = Some(from_dec_to_ratio(order.request.rel_amount.clone()));
-            }
-            save_my_taker_order(ctx, &order)
-        }
-    });
-    Ok(())
 }
 
 fn choose_maker_confs_and_notas(

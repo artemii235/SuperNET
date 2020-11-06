@@ -45,7 +45,7 @@ impl Into<BigRational> for Fraction {
 }
 
 impl From<BigDecimal> for Fraction {
-    fn from(dec: BigDecimal) -> Fraction { from_dec_to_ratio(dec).into() }
+    fn from(dec: BigDecimal) -> Fraction { from_dec_to_ratio(&dec).into() }
 }
 
 impl<'de> Deserialize<'de> for Fraction {
@@ -75,7 +75,7 @@ pub fn from_ratio_to_dec(r: &BigRational) -> BigDecimal {
     BigDecimal::from(r.numer().clone()) / BigDecimal::from(r.denom().clone())
 }
 
-pub fn from_dec_to_ratio(d: BigDecimal) -> BigRational {
+pub fn from_dec_to_ratio(d: &BigDecimal) -> BigRational {
     let (num, scale) = d.as_bigint_and_exponent();
     let ten = BigInt::from(10);
     if scale >= 0 {
@@ -99,7 +99,7 @@ impl<'de> Deserialize<'de> for MmNumber {
         let raw: Box<RawValue> = Deserialize::deserialize(deserializer)?;
 
         match BigDecimal::from_str(&raw.get().trim_matches('"')) {
-            Ok(dec) => return Ok(MmNumber(from_dec_to_ratio(dec))),
+            Ok(dec) => return Ok(MmNumber(from_dec_to_ratio(&dec))),
             Err(_) => (),
         };
 
@@ -125,7 +125,7 @@ impl std::fmt::Display for MmNumber {
 }
 
 impl From<BigDecimal> for MmNumber {
-    fn from(n: BigDecimal) -> MmNumber { from_dec_to_ratio(n).into() }
+    fn from(n: BigDecimal) -> MmNumber { from_dec_to_ratio(&n).into() }
 }
 
 impl From<BigRational> for MmNumber {
@@ -210,15 +210,12 @@ impl Div for &MmNumber {
 
 impl PartialOrd<BigDecimal> for MmNumber {
     fn partial_cmp(&self, other: &BigDecimal) -> Option<std::cmp::Ordering> {
-        Some(from_ratio_to_dec(&self.0).cmp(other))
+        Some(self.0.cmp(&from_dec_to_ratio(other)))
     }
 }
 
 impl PartialEq<BigDecimal> for MmNumber {
-    fn eq(&self, rhs: &BigDecimal) -> bool {
-        let dec = from_ratio_to_dec(&self.0);
-        &dec == rhs
-    }
+    fn eq(&self, rhs: &BigDecimal) -> bool { self.0 == from_dec_to_ratio(rhs) }
 }
 
 impl Default for MmNumber {
@@ -266,17 +263,17 @@ mod tests {
     #[test]
     fn test_from_dec_to_ratio() {
         let number: BigDecimal = "11.00000000000000000000000000000000000000".parse().unwrap();
-        let rational = from_dec_to_ratio(number);
+        let rational = from_dec_to_ratio(&number);
         assert_eq!(*rational.numer(), 11.into());
         assert_eq!(*rational.denom(), 1.into());
 
         let number: BigDecimal = "0.00000001".parse().unwrap();
-        let rational = from_dec_to_ratio(number);
+        let rational = from_dec_to_ratio(&number);
         assert_eq!(*rational.numer(), 1.into());
         assert_eq!(*rational.denom(), 100000000.into());
 
         let number: BigDecimal = 1.into();
-        let rational = from_dec_to_ratio(number);
+        let rational = from_dec_to_ratio(&number);
         assert_eq!(*rational.numer(), 1.into());
         assert_eq!(*rational.denom(), 1.into());
     }
@@ -296,7 +293,7 @@ mod tests {
 
         for num in vals {
             let decimal: BigDecimal = BigDecimal::from_str(num).unwrap();
-            let expected: MmNumber = from_dec_to_ratio(decimal).into();
+            let expected: MmNumber = from_dec_to_ratio(&decimal).into();
             let actual: MmNumber = json::from_str(&num).unwrap();
             assert_eq!(expected, actual);
         }

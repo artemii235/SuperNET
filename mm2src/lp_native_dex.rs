@@ -41,8 +41,8 @@ use crate::common::mm_ctx::{MmArc, MmCtx};
 use crate::common::privkey::key_pair_from_seed;
 use crate::common::{slurp_url, MM_DATETIME, MM_VERSION};
 use crate::mm2::lp_network::{p2p_event_process_loop, P2PContext};
-use crate::mm2::lp_ordermatch::{broadcast_maker_keep_alives_loop, lp_ordermatch_loop, migrate_saved_orders,
-                                orders_kick_start, BalanceUpdateOrdermatchHandler};
+use crate::mm2::lp_ordermatch::{broadcast_maker_keep_alives_loop, lp_ordermatch_loop, orders_kick_start,
+                                BalanceUpdateOrdermatchHandler};
 use crate::mm2::lp_swap::{running_swaps_num, swap_kick_starts};
 use crate::mm2::rpc::spawn_rpc;
 
@@ -252,10 +252,7 @@ fn migrate_db(ctx: &MmArc) -> Result<(), String> {
 }
 
 #[cfg(feature = "native")]
-fn migration_1(ctx: &MmArc) -> Result<(), String> {
-    try_s!(migrate_saved_orders(ctx));
-    Ok(())
-}
+fn migration_1(_ctx: &MmArc) -> Result<(), String> { Ok(()) }
 
 /// Resets the context (most of which resides currently in `lp::G` but eventually would move into `MmCtx`).
 /// Restarts the peer connections.
