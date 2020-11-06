@@ -10,6 +10,7 @@ use mm2_libp2p::{decode_message, PeerId};
 use mocktopus::mocking::*;
 use rand::Rng;
 use std::collections::HashSet;
+use std::iter::{self, FromIterator};
 
 #[test]
 fn test_match_maker_order_and_taker_request() {
@@ -1586,8 +1587,8 @@ fn test_process_order_keep_alive_requested_from_peer() {
     )
     .unwrap();
 
-    let expected_request = P2PRequest::Ordermatch(OrdermatchRequest::GetOrder {
-        uuid: uuid.clone(),
+    let expected_request = P2PRequest::Ordermatch(OrdermatchRequest::GetOrders {
+        pairs: vec![("RICK".into(), "MORTY".into())],
         from_pubkey: pubkey.clone(),
     });
     let from_peer = peer.clone();
@@ -1605,11 +1606,11 @@ fn test_process_order_keep_alive_requested_from_peer() {
         assert_eq!(actual, expected_request);
 
         // create a response with the initial_message and random from_peer
-        let response = new_protocol::OrderInitialMessage {
+        let response = vec![new_protocol::OrderInitialMessage {
             initial_message,
             from_peer: from_peer.clone(),
             update_messages: Vec::new(),
-        };
+        }];
 
         let response = AdexResponse::Ok {
             response: encode_message(&response).unwrap(),
@@ -1617,13 +1618,13 @@ fn test_process_order_keep_alive_requested_from_peer() {
         response_tx.send(vec![(PeerId::random(), response)]).unwrap();
     });
 
-    let keep_alive = new_protocol::MakerOrderKeepAlive {
-        uuid: uuid.clone().into(),
+    let keep_alive = new_protocol::MakerOrdersKeepAlive {
         timestamp: now_ms(),
+        num_orders: HashMap::from_iter(iter::once((("RICK".into(), "MORTY".into()), 1))),
     };
 
-    // process_order_keep_alive() should return true because an order should be requested from a peer.
-    assert!(block_on(process_order_keep_alive(
+    // process_order_keep_alive() should return true because an order was successfully requested from a peer.
+    assert!(block_on(process_orders_keep_alive(
         ctx,
         peer.clone(),
         pubkey.clone(),
@@ -1863,5 +1864,9 @@ fn test_orderbook_insert_or_update_order() {
     let peer = PeerId::random();
     let order = make_random_orders(pubkey.clone(), &secret, peer.to_string(), "C1".into(), "C2".into(), 1).remove(0);
 
-    orderbook.insert_or_update_order(order);
+    orderbook.insert_or_update_order(order.clone());
+
+    let expected = HashSet::from_iter(iter::once(order.uuid));
+    let actual = orderbook.pubkey_to_uuid.get(&pubkey).unwrap();
+    assert_eq!(expected, *actual);
 }

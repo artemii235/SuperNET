@@ -26,7 +26,7 @@ use coins::utxo::{compressed_pub_key_from_priv_raw, ChecksumType};
 use coins::{lp_coinfindᵃ, BalanceTradeFeeUpdatedHandler, MmCoinEnum, TradeFee};
 use common::executor::{spawn, Timer};
 use common::mm_ctx::{from_ctx, MmArc, MmWeak};
-use common::mm_number::{from_dec_to_ratio, Fraction, MmNumber};
+use common::mm_number::{Fraction, MmNumber};
 use common::{bits256, block_on, json_dir_entries, new_uuid, now_ms, remove_file, write};
 use either::Either;
 use futures::{compat::Future01CompatExt, lock::Mutex as AsyncMutex, StreamExt};
@@ -72,22 +72,23 @@ const ORDERBOOK_REQUESTING_TIMEOUT: u64 = MIN_ORDER_KEEP_ALIVE_INTERVAL * 2;
 const INACTIVE_ORDER_TIMEOUT: u64 = 240;
 const MIN_TRADING_VOL: &str = "0.00777";
 
+pub type OrderbookPair = (String, String);
+
 impl From<(new_protocol::MakerOrderCreated, Vec<u8>, String, String)> for OrderbookItem {
     fn from(tuple: (new_protocol::MakerOrderCreated, Vec<u8>, String, String)) -> OrderbookItem {
-        let (order, initial_message, pubsecp, peer_id) = tuple;
+        let (order, initial_message, pubkey, peer_id) = tuple;
         let price = MmNumber::from(order.price);
         let max_volume = MmNumber::from(order.max_volume);
         let min_volume = MmNumber::from(order.min_volume);
 
         OrderbookItem {
-            pubkey: "".to_string(),
+            pubkey,
             base: order.base,
             rel: order.rel,
             price,
             max_volume,
             min_volume,
             timestamp: now_ms() / 1000,
-            pubsecp,
             uuid: order.uuid.into(),
             peer_id,
             initial_message,
@@ -96,13 +97,20 @@ impl From<(new_protocol::MakerOrderCreated, Vec<u8>, String, String)> for Orderb
     }
 }
 
-async fn process_order_keep_alive(
+async fn process_orders_keep_alive(
     ctx: MmArc,
     propagated_from_peer: String,
     from_pubkey: String,
-    keep_alive: new_protocol::MakerOrderKeepAlive,
+    keep_alive: new_protocol::MakerOrdersKeepAlive,
 ) -> bool {
     let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
+    let to_request_pairs = ordermatch_ctx
+        .orderbook
+        .lock()
+        .await
+        .process_keep_alive(&from_pubkey, keep_alive);
+    true
+    /*
     let uuid = keep_alive.uuid.into();
     if let Some(order) = ordermatch_ctx
         .orderbook
@@ -132,6 +140,7 @@ async fn process_order_keep_alive(
     log!("Skip the order "[uuid]);
 
     false
+    */
 }
 
 async fn process_maker_order_updated(
@@ -207,6 +216,47 @@ async fn request_order(
                 order.from_peer,
             ));
             Ok(Some(order))
+        },
+        None => Ok(None),
+    }
+}
+
+async fn request_orders(
+    ctx: MmArc,
+    pairs: Vec<OrderbookPair>,
+    propagated_from_peer: String,
+    from_pubkey: &str,
+) -> Result<Option<Vec<OrderbookItem>>, String> {
+    let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
+    if ordermatch_ctx
+        .order_requests_tracker
+        .lock()
+        .await
+        .limit_reached(&propagated_from_peer)
+    {
+        return ERR!("Reached requests per second limit to peer {}", propagated_from_peer);
+    }
+
+    ordermatch_ctx
+        .order_requests_tracker
+        .lock()
+        .await
+        .peer_requested(&propagated_from_peer);
+
+    let get_orders = OrdermatchRequest::GetOrders {
+        pairs,
+        from_pubkey: from_pubkey.to_string(),
+    };
+    let req = P2PRequest::Ordermatch(get_orders);
+    match try_s!(request_one_peer::<Vec<new_protocol::OrderInitialMessage>>(ctx, req, propagated_from_peer).await) {
+        Some(orders) => {
+            let orders: Result<Vec<_>, _> = orders
+                .into_iter()
+                .map(|order| {
+                    OrderbookItem::from_initial_msg(order.initial_message, order.update_messages, order.from_peer)
+                })
+                .collect();
+            Ok(Some(try_s!(orders)))
         },
         None => Ok(None),
     }
@@ -298,7 +348,9 @@ async fn request_and_fill_orderbook(
 }
 
 /// Processes keep alive message of our own node, returns whether operation was successful (order exists)
-async fn process_my_order_keep_alive(ctx: &MmArc, keep_alive: &new_protocol::MakerOrderKeepAlive) -> bool {
+async fn process_my_orders_keep_alive(ctx: &MmArc, keep_alive: &new_protocol::MakerOrdersKeepAlive) -> bool {
+    true
+    /*
     let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
     let mut orderbook = ordermatch_ctx.orderbook.lock().await;
 
@@ -309,6 +361,7 @@ async fn process_my_order_keep_alive(ctx: &MmArc, keep_alive: &new_protocol::Mak
     }
 
     false
+    */
 }
 
 /// Insert or update an order `req`.
@@ -325,7 +378,7 @@ async fn delete_order(ctx: &MmArc, pubkey: &str, uuid: Uuid) {
     let mut inactive = ordermatch_ctx.inactive_orders.lock().await;
     match inactive.get(&uuid) {
         // don't remove the order if the pubkey is not equal
-        Some(order) if order.pubsecp != pubkey => (),
+        Some(order) if order.pubkey != pubkey => (),
         Some(_) => {
             inactive.remove(&uuid);
         },
@@ -335,7 +388,7 @@ async fn delete_order(ctx: &MmArc, pubkey: &str, uuid: Uuid) {
     let mut orderbook = ordermatch_ctx.orderbook.lock().await;
     match orderbook.order_set.get(&uuid) {
         // don't remove the order if the pubkey is not equal
-        Some(order) if order.pubsecp != pubkey => (),
+        Some(order) if order.pubkey != pubkey => (),
         Some(_) => {
             orderbook.remove_order(uuid);
         },
@@ -364,8 +417,8 @@ pub async fn process_msg(ctx: MmArc, _initial_topic: &str, from_peer: String, ms
                 insert_or_update_order(&ctx, order).await;
                 true
             },
-            new_protocol::OrdermatchMessage::MakerOrderKeepAlive(keep_alive) => {
-                process_order_keep_alive(ctx, from_peer, pubkey.to_hex(), keep_alive).await
+            new_protocol::OrdermatchMessage::MakerOrdersKeepAlive(keep_alive) => {
+                process_orders_keep_alive(ctx, from_peer, pubkey.to_hex(), keep_alive).await
             },
             new_protocol::OrdermatchMessage::TakerRequest(taker_request) => {
                 let msg = TakerRequest::from_new_proto_and_pubkey(taker_request, pubkey.unprefixed().into());
@@ -405,6 +458,11 @@ pub enum OrdermatchRequest {
     /// Get an order using uuid and the order maker's pubkey.
     /// Actual we expect to receive [`OrderInitialMessage`] that will be parsed into [`OrdermatchMessage::MakerOrderCreated`].
     GetOrder { uuid: Uuid, from_pubkey: String },
+    /// Get orders using pairs and the order creator pubkey
+    GetOrders {
+        pairs: Vec<OrderbookPair>,
+        from_pubkey: String,
+    },
     /// Get an orderbook for the given pair.
     GetOrderbook {
         base: String,
@@ -420,6 +478,9 @@ pub async fn process_peer_request(ctx: MmArc, request: OrdermatchRequest) -> Res
     println!("Got ordermatch request {:?}", request);
     match request {
         OrdermatchRequest::GetOrder { uuid, from_pubkey } => process_get_order_request(ctx, uuid, from_pubkey).await,
+        OrdermatchRequest::GetOrders { pairs, from_pubkey } => {
+            process_get_orders_request(ctx, pairs, from_pubkey).await
+        },
         OrdermatchRequest::GetOrderbook {
             base,
             rel,
@@ -440,6 +501,29 @@ async fn process_get_order_request(ctx: MmArc, uuid: Uuid, from_pubkey: String) 
         },
         None => Ok(None),
     }
+}
+
+async fn process_get_orders_request(
+    ctx: MmArc,
+    pairs: Vec<OrderbookPair>,
+    from_pubkey: String,
+) -> Result<Option<Vec<u8>>, String> {
+    let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
+    let orderbook = ordermatch_ctx.orderbook.lock().await;
+    let mut initial_messages: Vec<new_protocol::OrderInitialMessage> = vec![];
+
+    if let Some(uuids) = orderbook.pubkey_to_uuid.get(&from_pubkey) {
+        for uuid in uuids {
+            if let Some(order) = orderbook.order_set.get(uuid) {
+                if pairs.contains(&(order.base, order.rel)) {
+                    initial_messages.push(order.clone().into());
+                }
+            }
+        }
+    }
+
+    let encoded = try_s!(encode_message(&initial_messages));
+    Ok(Some(encoded))
 }
 
 async fn process_get_orderbook_request(
@@ -1429,7 +1513,7 @@ impl Into<new_protocol::OrdermatchMessage> for MakerConnected {
     }
 }
 
-pub async fn broadcast_maker_keep_alives_loop(ctx: MmArc) {
+pub async fn broadcast_maker_orders_keep_alive_loop(ctx: MmArc) {
     let interval = MIN_ORDER_KEEP_ALIVE_INTERVAL as f64;
     while !ctx.is_stopping() {
         let ordermatch_ctx: Arc<OrdermatchContext> = OrdermatchContext::from_ctx(&ctx).unwrap();
@@ -1446,11 +1530,11 @@ pub async fn broadcast_maker_keep_alives_loop(ctx: MmArc) {
             let to_sleep = interval / to_keep_alive.len() as f64;
             for (uuid, topic) in to_keep_alive {
                 Timer::sleep(to_sleep).await;
-                let msg = new_protocol::MakerOrderKeepAlive {
-                    uuid: uuid.into(),
+                let msg = new_protocol::MakerOrdersKeepAlive {
                     timestamp: now_ms() / 1000,
+                    num_orders: HashMap::new(),
                 };
-                if process_my_order_keep_alive(&ctx, &msg).await {
+                if process_my_orders_keep_alive(&ctx, &msg).await {
                     broadcast_ordermatch_message(&ctx, topic, msg.into());
                 } else {
                     if let Some(order) = ordermatch_ctx.my_maker_orders.lock().await.get(&uuid) {
@@ -1490,20 +1574,16 @@ struct Orderbook {
     /// A map from (base, rel).
     unordered: HashMap<(String, String), HashSet<Uuid>>,
     order_set: HashMap<Uuid, OrderbookItem>,
-    /// a map of order UUIDs owned by specific pubkey
+    /// a map of order UUIDs created by specific pubkey
     pubkey_to_uuid: HashMap<String, HashSet<Uuid>>,
     topics_subscribed_to: HashMap<String, OrderbookRequestingState>,
 }
 
 impl Orderbook {
     fn find_order_by_uuid_and_pubkey(&mut self, uuid: &Uuid, from_pubkey: &str) -> Option<&mut OrderbookItem> {
-        self.order_set.get_mut(uuid).and_then(|order| {
-            if order.pubsecp == from_pubkey {
-                Some(order)
-            } else {
-                None
-            }
-        })
+        self.order_set
+            .get_mut(uuid)
+            .and_then(|order| if order.pubkey == from_pubkey { Some(order) } else { None })
     }
 
     fn find_order_by_uuid(&mut self, uuid: &Uuid) -> Option<&mut OrderbookItem> { self.order_set.get_mut(uuid) }
@@ -1527,6 +1607,11 @@ impl Orderbook {
 
         self.unordered
             .entry(base_rel)
+            .or_insert_with(HashSet::new)
+            .insert(order.uuid);
+
+        self.pubkey_to_uuid
+            .entry(order.pubkey.clone())
             .or_insert_with(HashSet::new)
             .insert(order.uuid);
 
@@ -1562,6 +1647,40 @@ impl Orderbook {
         }
 
         Some(order)
+    }
+
+    fn is_subscribed_to(&self, topic: &str) -> bool { self.topics_subscribed_to.contains_key(topic) }
+
+    fn process_keep_alive(
+        &mut self,
+        from_pubkey: &str,
+        message: new_protocol::MakerOrdersKeepAlive,
+    ) -> Vec<OrderbookPair> {
+        let timestamp = message.timestamp;
+
+        let mut required_to_request = Vec::new();
+
+        for (pair, num) in message.num_orders {
+            if !self.is_subscribed_to(&orderbook_topic(&pair.0, &pair.1)) {
+                continue;
+            }
+
+            match self.pubkey_to_uuid.get(from_pubkey) {
+                Some(uuids) => {
+                    if uuids.len() != num {
+                        required_to_request.push(pair);
+                    }
+                    for uuid in uuids {
+                        if let Some(order) = self.order_set.get_mut(uuid) {
+                            order.timestamp = timestamp;
+                        }
+                    }
+                },
+                None => required_to_request.push(pair),
+            }
+        }
+
+        required_to_request
     }
 }
 
@@ -2177,7 +2296,6 @@ struct OrderbookItem {
     rel: String,
     price: MmNumber,
     timestamp: u64,
-    pubsecp: String,
     max_volume: MmNumber,
     min_volume: MmNumber,
     uuid: Uuid,
@@ -2240,8 +2358,6 @@ impl OrderbookItem {
     }
 }
 
-fn one() -> u8 { 1 }
-
 fn get_true() -> bool { true }
 
 fn min_volume() -> MmNumber { MmNumber::from(MIN_TRADING_VOL) }
@@ -2253,9 +2369,6 @@ struct SetPriceReq {
     price: MmNumber,
     #[serde(default)]
     max: bool,
-    #[allow(dead_code)]
-    #[serde(default = "one")]
-    broadcast: u8,
     #[serde(default)]
     volume: MmNumber,
     #[serde(default = "min_volume")]
@@ -2864,7 +2977,7 @@ pub async fn orderbook(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
                 ))?;
                 orderbook_entries.push(OrderbookEntry {
                     coin: req.base.clone(),
-                    address: try_s!(base_coin.address_from_pubkey_str(&ask.pubsecp)),
+                    address: try_s!(base_coin.address_from_pubkey_str(&ask.pubkey)),
                     price: ask.price.to_decimal(),
                     price_rat: ask.price.to_ratio(),
                     price_fraction: ask.price.to_fraction(),
@@ -2878,7 +2991,7 @@ pub async fn orderbook(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
                     age: (now_ms() as i64 / 1000) - ask.timestamp as i64,
                     zcredits: 0,
                     uuid: *uuid,
-                    is_mine: my_pubsecp == ask.pubsecp,
+                    is_mine: my_pubsecp == ask.pubkey,
                 })
             }
             orderbook_entries
@@ -2897,7 +3010,7 @@ pub async fn orderbook(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
                 let price_mm = &MmNumber::from(1i32) / &bid.price;
                 orderbook_entries.push(OrderbookEntry {
                     coin: req.rel.clone(),
-                    address: try_s!(rel_coin.address_from_pubkey_str(&bid.pubsecp)),
+                    address: try_s!(rel_coin.address_from_pubkey_str(&bid.pubkey)),
                     // NB: 1/x can not be represented as a decimal and introduces a rounding error
                     // cf. https://github.com/KomodoPlatform/atomicDEX-API/issues/495#issuecomment-516365682
                     price: price_mm.to_decimal(),
@@ -2913,7 +3026,7 @@ pub async fn orderbook(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
                     age: (now_ms() as i64 / 1000) - bid.timestamp as i64,
                     zcredits: 0,
                     uuid: *uuid,
-                    is_mine: my_pubsecp == bid.pubsecp,
+                    is_mine: my_pubsecp == bid.pubkey,
                 })
             }
             orderbook_entries

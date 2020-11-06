@@ -1,9 +1,9 @@
-use super::{MatchBy as SuperMatchBy, OrderbookItem, TakerAction};
+use super::{MatchBy as SuperMatchBy, OrderbookItem, OrderbookPair, TakerAction};
 use crate::mm2::lp_ordermatch::OrderConfirmationsSettings;
 use common::mm_number::MmNumber;
 use compact_uuid::CompactUuid;
 use num_rational::BigRational;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -11,7 +11,7 @@ use uuid::Uuid;
 pub enum OrdermatchMessage {
     MakerOrderCreated(MakerOrderCreated),
     MakerOrderUpdated(MakerOrderUpdated),
-    MakerOrderKeepAlive(MakerOrderKeepAlive),
+    MakerOrdersKeepAlive(MakerOrdersKeepAlive),
     MakerOrderCancelled(MakerOrderCancelled),
     TakerRequest(TakerRequest),
     MakerReserved(MakerReserved),
@@ -44,8 +44,8 @@ pub struct Orderbook {
     pub bids: Vec<OrderInitialMessage>,
 }
 
-impl From<MakerOrderKeepAlive> for OrdermatchMessage {
-    fn from(keep_alive: MakerOrderKeepAlive) -> Self { OrdermatchMessage::MakerOrderKeepAlive(keep_alive) }
+impl From<MakerOrdersKeepAlive> for OrdermatchMessage {
+    fn from(keep_alive: MakerOrdersKeepAlive) -> Self { OrdermatchMessage::MakerOrdersKeepAlive(keep_alive) }
 }
 
 impl From<MakerOrderUpdated> for OrdermatchMessage {
@@ -145,9 +145,9 @@ pub struct MakerOrderCreated {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-pub struct MakerOrderKeepAlive {
-    pub uuid: CompactUuid,
+pub struct MakerOrdersKeepAlive {
     pub timestamp: u64,
+    pub num_orders: HashMap<OrderbookPair, usize>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

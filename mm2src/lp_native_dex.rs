@@ -41,28 +41,10 @@ use crate::common::mm_ctx::{MmArc, MmCtx};
 use crate::common::privkey::key_pair_from_seed;
 use crate::common::{slurp_url, MM_DATETIME, MM_VERSION};
 use crate::mm2::lp_network::{p2p_event_process_loop, P2PContext};
-use crate::mm2::lp_ordermatch::{broadcast_maker_keep_alives_loop, lp_ordermatch_loop, orders_kick_start,
+use crate::mm2::lp_ordermatch::{broadcast_maker_orders_keep_alive_loop, lp_ordermatch_loop, orders_kick_start,
                                 BalanceUpdateOrdermatchHandler};
 use crate::mm2::lp_swap::{running_swaps_num, swap_kick_starts};
 use crate::mm2::rpc::spawn_rpc;
-
-// TODO: Use MM2-nightly seed nodes.
-//       MM1 nodes no longer compatible due to the UTXO reforms in particular.
-//       We might also diverge in how we handle the p2p communication in the future.
-
-/// Aka `default_LPnodes`. Initial nodes of the peer-to-peer network.
-#[allow(dead_code)]
-const P2P_SEED_NODES: [&str; 5] = [
-    "5.9.253.195",
-    "173.212.225.176",
-    "136.243.45.140",
-    "23.254.202.142",
-    "45.32.19.196",
-];
-
-/// Default seed nodes for netid 9999 that is used for MM2 testing
-#[allow(dead_code)]
-const P2P_SEED_NODES_9999: [&str; 3] = ["195.201.116.176", "46.4.87.18", "46.4.78.11"];
 
 pub fn lp_ports(netid: u16) -> Result<(u16, u16, u16), String> {
     const LP_RPCPORT: u16 = 7783;
@@ -511,7 +493,7 @@ pub async fn lp_init(mypubport: u16, ctx: MmArc) -> Result<(), String> {
     spawn(lp_ordermatch_loop(ctxʹ));
 
     let ctxʹ = ctx.clone();
-    spawn(broadcast_maker_keep_alives_loop(ctxʹ));
+    spawn(broadcast_maker_orders_keep_alive_loop(ctxʹ));
 
     #[cfg(not(feature = "native"))]
     {
