@@ -156,16 +156,6 @@ impl SwapOps for TestCoin {
         unimplemented!()
     }
 
-    fn check_if_my_payment_completed(
-        &self,
-        payment_tx: &[u8],
-        time_lock: u32,
-        other_pub: &[u8],
-        secret_hash: &[u8],
-    ) -> Box<dyn Future<Item = (), Error = String> + Send> {
-        unimplemented!()
-    }
-
     fn search_for_swap_tx_spend_my(
         &self,
         time_lock: u32,

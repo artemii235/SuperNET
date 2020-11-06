@@ -729,26 +729,6 @@ impl SwapOps for EthCoin {
         Box::new(fut.boxed().compat())
     }
 
-    fn check_if_my_payment_completed(
-        &self,
-        _payment_tx: &[u8],
-        time_lock: u32,
-        _other_pub: &[u8],
-        secret_hash: &[u8],
-    ) -> Box<dyn Future<Item = (), Error = String> + Send> {
-        let id = self.etomic_swap_id(time_lock, secret_hash);
-        let selfi = self.clone();
-        let fut = async move {
-            let status = try_s!(selfi.payment_status(Token::FixedBytes(id.clone())).compat().await);
-            if status == PAYMENT_STATE_SENT.into() {
-                Ok(())
-            } else {
-                return ERR!("Payment state is not PAYMENT_STATE_SENT, got {}", status);
-            }
-        };
-        Box::new(fut.boxed().compat())
-    }
-
     fn search_for_swap_tx_spend_my(
         &self,
         _time_lock: u32,

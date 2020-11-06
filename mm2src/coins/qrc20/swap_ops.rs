@@ -312,21 +312,6 @@ impl Qrc20Coin {
         Ok(found)
     }
 
-    pub async fn check_if_my_payment_completed_impl(&self, payment_tx: UtxoTx) -> Result<(), String> {
-        let Erc20PaymentDetails {
-            swap_id,
-            swap_contract_address,
-            ..
-        } = try_s!(self.erc20_payment_details_from_tx(&payment_tx).await);
-
-        let status = try_s!(self.payment_status(&swap_contract_address, swap_id.clone()).await);
-        if status != eth::PAYMENT_STATE_SENT.into() {
-            return ERR!("Payment state is not PAYMENT_STATE_SENT, got {}", status);
-        }
-
-        Ok(())
-    }
-
     pub fn extract_secret_impl(&self, secret_hash: &[u8], spend_tx: &[u8]) -> Result<Vec<u8>, String> {
         let spend_tx: UtxoTx = try_s!(deserialize(spend_tx).map_err(|e| ERRL!("{:?}", e)));
         let spend_tx_hash: H256Json = spend_tx.hash().reversed().into();

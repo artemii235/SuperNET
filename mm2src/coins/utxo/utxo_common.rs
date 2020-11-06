@@ -976,12 +976,6 @@ where
     Box::new(fut.boxed().compat())
 }
 
-pub fn check_if_my_payment_completed() -> Box<dyn Future<Item = (), Error = String> + Send> {
-    // As we first wait for payment confirmation during swap before `check_if_my_payment_completed`,
-    // we can simply return Ok here.
-    Box::new(futures01::future::ok(()))
-}
-
 pub fn search_for_swap_tx_spend_my(
     coin: &UtxoCoinFields,
     time_lock: u32,

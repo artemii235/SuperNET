@@ -690,20 +690,6 @@ impl SwapOps for Qrc20Coin {
         Box::new(fut.boxed().compat())
     }
 
-    fn check_if_my_payment_completed(
-        &self,
-        payment_tx: &[u8],
-        _time_lock: u32,
-        _other_pub: &[u8],
-        _secret_hash: &[u8],
-    ) -> Box<dyn Future<Item = (), Error = String> + Send> {
-        let payment_tx: UtxoTx = try_fus!(deserialize(payment_tx).map_err(|e| ERRL!("{:?}", e)));
-
-        let selfi = self.clone();
-        let fut = async move { selfi.check_if_my_payment_completed_impl(payment_tx).await };
-        Box::new(fut.boxed().compat())
-    }
-
     fn search_for_swap_tx_spend_my(
         &self,
         time_lock: u32,

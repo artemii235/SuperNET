@@ -64,7 +64,6 @@ fn save_my_taker_swap_event(ctx: &MmArc, swap: &TakerSwap, event: TakerSavedEven
                 "MakerPaymentWaitConfirmFailed".into(),
                 "TakerPaymentTransactionFailed".into(),
                 "TakerPaymentWaitConfirmFailed".into(),
-                "TakerPaymentCompleteFailed".into(),
                 "TakerPaymentDataSendFailed".into(),
                 "TakerPaymentWaitForSpendFailed".into(),
                 "MakerPaymentSpendFailed".into(),
@@ -115,7 +114,6 @@ impl TakerSavedEvent {
             TakerSwapEvent::TakerPaymentSpent(_) => Some(TakerSwapCommand::SpendMakerPayment),
             TakerSwapEvent::TakerPaymentWaitForSpendFailed(_) => Some(TakerSwapCommand::RefundTakerPayment),
             TakerSwapEvent::TakerPaymentWaitConfirmFailed(_) => Some(TakerSwapCommand::RefundTakerPayment),
-            TakerSwapEvent::TakerPaymentCompleteFailed(_) => Some(TakerSwapCommand::RefundTakerPayment),
             TakerSwapEvent::MakerPaymentSpent(_) => Some(TakerSwapCommand::Finish),
             TakerSwapEvent::MakerPaymentSpendFailed(_) => Some(TakerSwapCommand::RefundTakerPayment),
             TakerSwapEvent::TakerPaymentWaitRefundStarted { .. } => Some(TakerSwapCommand::RefundTakerPayment),
@@ -433,7 +431,6 @@ pub enum TakerSwapEvent {
     TakerPaymentTransactionFailed(SwapError),
     TakerPaymentDataSendFailed(SwapError),
     TakerPaymentWaitConfirmFailed(SwapError),
-    TakerPaymentCompleteFailed(SwapError),
     TakerPaymentSpent(TakerPaymentSpentData),
     TakerPaymentWaitForSpendFailed(SwapError),
     MakerPaymentSpent(TransactionIdentifier),
@@ -466,7 +463,6 @@ impl TakerSwapEvent {
             TakerSwapEvent::TakerPaymentWaitConfirmFailed(_) => {
                 "Taker payment wait for confirmation failed...".to_owned()
             },
-            TakerSwapEvent::TakerPaymentCompleteFailed(_) => "Taker payment complete failed...".to_owned(),
             TakerSwapEvent::TakerPaymentSpent(_) => "Taker payment spent...".to_owned(),
             TakerSwapEvent::TakerPaymentWaitForSpendFailed(_) => "Taker payment wait for spend failed...".to_owned(),
             TakerSwapEvent::MakerPaymentSpent(_) => "Maker payment spent...".to_owned(),
@@ -534,7 +530,6 @@ impl TakerSwap {
             TakerSwapEvent::TakerPaymentTransactionFailed(err) => self.errors.lock().push(err),
             TakerSwapEvent::TakerPaymentDataSendFailed(err) => self.errors.lock().push(err),
             TakerSwapEvent::TakerPaymentWaitConfirmFailed(err) => self.errors.lock().push(err),
-            TakerSwapEvent::TakerPaymentCompleteFailed(err) => self.errors.lock().push(err),
             TakerSwapEvent::TakerPaymentSpent(data) => {
                 self.w().taker_payment_spend = Some(data.transaction);
                 self.w().secret = data.secret;
@@ -993,32 +988,6 @@ impl TakerSwap {
                     wait_until: self.wait_refund_until(),
                 },
             ]));
-        }
-
-        let mut attempts = 0;
-        loop {
-            let f = self.taker_coin.check_if_my_payment_completed(
-                &unwrap!(self.r().taker_payment.clone()).tx_hex,
-                self.r().data.taker_payment_lock as u32,
-                &*self.r().other_persistent_pub,
-                &self.r().secret_hash.0,
-            );
-            match f.compat().await {
-                Ok(_) => break,
-                Err(err) => {
-                    if attempts >= 3 {
-                        // Try to refund the payment.
-                        return Ok((Some(TakerSwapCommand::RefundTakerPayment), vec![
-                            TakerSwapEvent::TakerPaymentCompleteFailed(ERRL!("{}", err).into()),
-                            TakerSwapEvent::TakerPaymentWaitRefundStarted {
-                                wait_until: self.wait_refund_until(),
-                            },
-                        ]));
-                    }
-                    attempts += 1;
-                    Timer::sleep(10.).await;
-                },
-            }
         }
 
         let f = self.taker_coin.wait_for_tx_spend(
