@@ -1715,7 +1715,7 @@ pub async fn ordered_mature_unspents<T>(coin: T, address: Address) -> Result<Vec
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps,
 {
-    fn calc_actual_tx_confirmations(tx: &RpcTransaction, block_count: u64) -> Result<u32, String> {
+    fn calc_actual_cached_tx_confirmations(tx: &RpcTransaction, block_count: u64) -> Result<u32, String> {
         let tx_height = tx
             .height
             .ok_or(ERRL!(r#"Warning, height of cached "{:?}" tx is unknown"#, tx.txid))?;
@@ -1762,7 +1762,7 @@ where
                 if unspent.height.is_some() {
                     tx.height = unspent.height;
                 }
-                match calc_actual_tx_confirmations(&tx, block_count) {
+                match calc_actual_cached_tx_confirmations(&tx, block_count) {
                     Ok(conf) => tx.confirmations = conf,
                     // do not skip the transaction with unknown confirmations,
                     // because the transaction can be matured
