@@ -501,6 +501,10 @@ impl UtxoCommonOps for Qrc20Coin {
         let fut = async move { utxo_common::get_verbose_transaction_from_cache_or_rpc(&selfi.utxo, txid).await };
         Box::new(fut.boxed().compat())
     }
+
+    async fn cache_transaction_if_possible(&self, tx: &RpcTransaction) -> Result<(), String> {
+        utxo_common::cache_transaction_if_possible(&self.utxo, tx).await
+    }
 }
 
 impl SwapOps for Qrc20Coin {

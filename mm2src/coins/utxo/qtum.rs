@@ -119,6 +119,10 @@ impl UtxoCommonOps for QtumCoin {
         let fut = async move { utxo_common::get_verbose_transaction_from_cache_or_rpc(&selfi.utxo_arc, txid).await };
         Box::new(fut.boxed().compat())
     }
+
+    async fn cache_transaction_if_possible(&self, tx: &RpcTransaction) -> Result<(), String> {
+        utxo_common::cache_transaction_if_possible(&self.utxo_arc, tx).await
+    }
 }
 
 #[async_trait]

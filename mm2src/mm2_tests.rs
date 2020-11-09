@@ -2727,7 +2727,7 @@ fn test_withdraw_cashaddresses() {
             "netid": 9998,
             "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
             "rpcip": env::var ("BOB_TRADE_IP") .ok(),
-            "passphrase": "face pin block number add byte put seek mime test note password sin tab multiple",
+            "passphrase": "face pin lock number add byte put seek mime test note password sin tab multiple",
             "coins": coins,
             "i_am_seed": true,
             "rpc_password": "pass",
@@ -2741,8 +2741,6 @@ fn test_withdraw_cashaddresses() {
         mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
 
-    // Enable BCH electrum client with tx_history loop.
-    // Enable RICK electrum client with tx_history loop.
     let electrum = unwrap!(block_on(mm.rpc(json! ({
         "userpass": mm.userpass,
         "method": "electrum",
@@ -2781,7 +2779,7 @@ fn test_withdraw_cashaddresses() {
         .iter()
         .map(|v| v.as_str().unwrap())
         .collect();
-    assert_eq!(from, vec!["bchtest:qze8g4gx3z428jjcxzpycpxl7ke7d947gca2a7n2la"]);
+    assert_eq!(from, vec!["bchtest:qqgp9xh3435xamv7ghct8emer2s2erzj8gx3gnhwkq"]);
 
     // check "to" addresses
     let to: Vec<&str> = withdraw_json["to"]

@@ -319,6 +319,9 @@ pub trait UtxoCommonOps {
         &self,
         txid: H256Json,
     ) -> Box<dyn Future<Item = VerboseTransactionFrom, Error = String> + Send>;
+
+    /// Cache transaction if the coin supports `TX_CACHE` and tx height is set and not zero.
+    async fn cache_transaction_if_possible(&self, tx: &RpcTransaction) -> Result<(), String>;
 }
 
 #[async_trait]

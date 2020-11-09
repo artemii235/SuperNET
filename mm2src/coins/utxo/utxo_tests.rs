@@ -1463,3 +1463,184 @@ fn test_tx_history_path_colon_should_be_escaped_for_cash_address() {
     let path = coin.tx_history_path(&ctx);
     assert!(!path.display().to_string().contains(":"));
 }
+
+fn test_ordered_mature_unspents_from_cache_impl(
+    unspent_height: Option<u64>,
+    cached_height: Option<u64>,
+    cached_confs: u32,
+    block_count: u64,
+    expected_height: Option<u64>,
+    expected_confs: u32,
+) {
+    const TX_HASH: &str = "0a0fda88364b960000f445351fe7678317a1e0c80584de0413377ede00ba696f";
+    let tx_hash: H256Json = hex::decode(TX_HASH).unwrap().as_slice().into();
+    let client = electrum_client_for_test(&["electrum1.cipig.net:10017"]);
+    let mut verbose = client.get_verbose_transaction(tx_hash.clone()).wait().unwrap();
+    verbose.confirmations = cached_confs;
+    verbose.height = cached_height;
+
+    // prepare mocks
+    ElectrumClient::list_unspent_ordered.mock_safe(move |_, _| {
+        let unspents = vec![UnspentInfo {
+            outpoint: OutPoint {
+                hash: H256::from_reversed_str(TX_HASH),
+                index: 0,
+            },
+            value: 1000000000,
+            height: unspent_height,
+        }];
+        MockResult::Return(Box::new(futures01::future::ok(unspents)))
+    });
+    ElectrumClient::get_block_count
+        .mock_safe(move |_| MockResult::Return(Box::new(futures01::future::ok(block_count))));
+    UtxoStandardCoin::get_verbose_transaction_from_cache_or_rpc.mock_safe(move |_, txid| {
+        assert_eq!(txid, tx_hash);
+        MockResult::Return(Box::new(futures01::future::ok(VerboseTransactionFrom::Cache(
+            verbose.clone(),
+        ))))
+    });
+    static mut IS_UNSPENT_MATURE_CALLED: bool = false;
+    UtxoStandardCoin::is_unspent_mature.mock_safe(move |_, tx: &RpcTransaction| {
+        // check if the transaction height and confirmations are expected
+        assert_eq!(tx.height, expected_height);
+        assert_eq!(tx.confirmations, expected_confs);
+        unsafe { IS_UNSPENT_MATURE_CALLED = true }
+        MockResult::Return(false)
+    });
+
+    // run test
+    let coin = utxo_coin_for_test(UtxoRpcClientEnum::Electrum(client), None);
+    let unspents = coin
+        .ordered_mature_unspents(&Address::from("R9o9xTocqr6CeEDGDH6mEYpwLoMz6jNjMW"))
+        .wait()
+        .expect("Expected an empty unspent list");
+    // unspents should be empty because `is_unspent_mature()` always returns false
+    assert!(unspents.is_empty());
+    assert!(unsafe { IS_UNSPENT_MATURE_CALLED == true });
+}
+
+#[test]
+fn test_ordered_mature_unspents_from_cache() {
+    let unspent_height = None;
+    let cached_height = None;
+    let cached_confs = 0;
+    let block_count = 1000;
+    let expected_height = None; // is unknown
+    let expected_confs = 0; // is not changed because height is unknown
+    test_ordered_mature_unspents_from_cache_impl(
+        unspent_height,
+        cached_height,
+        cached_confs,
+        block_count,
+        expected_height,
+        expected_confs,
+    );
+
+    let unspent_height = None;
+    let cached_height = None;
+    let cached_confs = 5;
+    let block_count = 1000;
+    let expected_height = None; // is unknown
+    let expected_confs = 5; // is not changed because height is unknown
+    test_ordered_mature_unspents_from_cache_impl(
+        unspent_height,
+        cached_height,
+        cached_confs,
+        block_count,
+        expected_height,
+        expected_confs,
+    );
+
+    let unspent_height = Some(998);
+    let cached_height = None;
+    let cached_confs = 0;
+    let block_count = 1000;
+    let expected_height = Some(998); // as the unspent_height
+    let expected_confs = 3; // 1000 - 998 + 1
+    test_ordered_mature_unspents_from_cache_impl(
+        unspent_height,
+        cached_height,
+        cached_confs,
+        block_count,
+        expected_height,
+        expected_confs,
+    );
+
+    let unspent_height = None;
+    let cached_height = Some(998);
+    let cached_confs = 0;
+    let block_count = 1000;
+    let expected_height = Some(998); // as the cached_height
+    let expected_confs = 3; // 1000 - 998 + 1
+    test_ordered_mature_unspents_from_cache_impl(
+        unspent_height,
+        cached_height,
+        cached_confs,
+        block_count,
+        expected_height,
+        expected_confs,
+    );
+
+    let unspent_height = Some(998);
+    let cached_height = Some(997);
+    let cached_confs = 0;
+    let block_count = 1000;
+    let expected_height = Some(998); // as the unspent_height
+    let expected_confs = 3; // 1000 - 998 + 1
+    test_ordered_mature_unspents_from_cache_impl(
+        unspent_height,
+        cached_height,
+        cached_confs,
+        block_count,
+        expected_height,
+        expected_confs,
+    );
+
+    // block_count < tx_height
+    let unspent_height = None;
+    let cached_height = Some(1000);
+    let cached_confs = 1;
+    let block_count = 999;
+    let expected_height = Some(1000); // as the cached_height
+    let expected_confs = 1; // is not changed because height cannot be calculated
+    test_ordered_mature_unspents_from_cache_impl(
+        unspent_height,
+        cached_height,
+        cached_confs,
+        block_count,
+        expected_height,
+        expected_confs,
+    );
+
+    // block_count == tx_height
+    let unspent_height = None;
+    let cached_height = Some(1000);
+    let cached_confs = 1;
+    let block_count = 1000;
+    let expected_height = Some(1000); // as the cached_height
+    let expected_confs = 1; // 1000 - 1000 + 1
+    test_ordered_mature_unspents_from_cache_impl(
+        unspent_height,
+        cached_height,
+        cached_confs,
+        block_count,
+        expected_height,
+        expected_confs,
+    );
+
+    // tx_height == 0
+    let unspent_height = Some(0);
+    let cached_height = None;
+    let cached_confs = 1;
+    let block_count = 1000;
+    let expected_height = Some(0); // as the cached_height
+    let expected_confs = 1; // is not changed because tx_height is expected to be not zero
+    test_ordered_mature_unspents_from_cache_impl(
+        unspent_height,
+        cached_height,
+        cached_confs,
+        block_count,
+        expected_height,
+        expected_confs,
+    );
+}

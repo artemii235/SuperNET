@@ -1715,6 +1715,30 @@ pub async fn ordered_mature_unspents<T>(coin: T, address: Address) -> Result<Vec
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps,
 {
+    fn calc_actual_tx_confirmations(tx: &RpcTransaction, block_count: u64) -> Result<u32, String> {
+        let tx_height = tx
+            .height
+            .ok_or(ERRL!(r#"Warning, height of cached "{:?}" tx is unknown"#, tx.txid))?;
+        // utxo_common::cache_transaction_if_possible() shouldn't cache transaction with height == 0
+        if tx_height == 0 {
+            return ERR!(
+                r#"Warning, height of cached "{:?}" tx is expected to be non-zero"#,
+                tx.txid
+            );
+        }
+        if block_count < tx_height {
+            return ERR!(
+                r#"Warning, actual block_count {} less than cached tx_height {} of {:?}"#,
+                block_count,
+                tx_height,
+                tx.txid
+            );
+        }
+
+        let confirmations = block_count - tx_height + 1;
+        Ok(confirmations as u32)
+    }
+
     let unspents = try_s!(coin.as_ref().rpc_client.list_unspent_ordered(&address).compat().await);
     let block_count = try_s!(coin.as_ref().rpc_client.get_block_count().compat().await);
 
@@ -1735,25 +1759,26 @@ where
 
         let tx_info = match tx_info {
             VerboseTransactionFrom::Cache(mut tx) => {
+                if unspent.height.is_some() {
+                    tx.height = unspent.height;
+                }
+                match calc_actual_tx_confirmations(&tx, block_count) {
+                    Ok(conf) => tx.confirmations = conf,
+                    // do not skip the transaction with unknown confirmations,
+                    // because the transaction can be matured
+                    Err(e) => log!((e)),
+                }
+                tx
+            },
+            VerboseTransactionFrom::Rpc(mut tx) => {
                 if tx.height.is_none() {
                     tx.height = unspent.height;
                 }
-                if let Some(tx_height) = tx.height {
-                    // refresh confirmations for the cached transaction:
-                    // use the up-to-date block_count and tx_height.
-                    tx.confirmations = (block_count - tx_height + 1) as u32;
-                    if tx.confirmations == 0 {
-                        log!("Warning, " [tx.txid] " transaction confirmations == 0");
-                    }
-                } else {
-                    // else do not skip the transaction with unknown height,
-                    // because the transaction may be old enough.
-                    log!("Warning, unknown transaction (" [tx_hash] ") height");
+                if let Err(e) = coin.cache_transaction_if_possible(&tx).await {
+                    log!((e));
                 }
-
                 tx
             },
-            VerboseTransactionFrom::Rpc(tx) => tx,
         };
 
         if coin.is_unspent_mature(&tx_info) {
@@ -1790,9 +1815,8 @@ pub async fn get_verbose_transaction_from_cache_or_rpc(
         _ => (),
     }
 
-    request_and_cache_transaction(coin, &tx_cache_path, txid)
-        .await
-        .map(VerboseTransactionFrom::Rpc)
+    let tx = try_s!(coin.rpc_client.get_verbose_transaction(txid).compat().await);
+    Ok(VerboseTransactionFrom::Rpc(tx))
 }
 
 #[cfg(not(feature = "native"))]
@@ -1802,6 +1826,31 @@ pub async fn get_verbose_transaction_from_cache_or_rpc(
 ) -> Result<VerboseTransactionFrom, String> {
     let tx = try_s!(coin.rpc_client.get_verbose_transaction(txid.clone()).compat().await);
     Ok(VerboseTransactionFrom::Rpc(tx))
+}
+
+#[cfg(feature = "native")]
+pub async fn cache_transaction_if_possible(coin: &UtxoCoinFields, tx: &RpcTransaction) -> Result<(), String> {
+    let tx_cache_path = match &coin.tx_cache_directory {
+        Some(p) => p.clone(),
+        _ => {
+            return Ok(());
+        },
+    };
+    // check if the transaction height is set and not zero
+    match tx.height {
+        Some(0) => return Ok(()),
+        Some(_) => (),
+        None => return Ok(()),
+    }
+
+    tx_cache::cache_transaction(&tx_cache_path, &tx)
+        .await
+        .map_err(|e| ERRL!("Error {:?} on caching transaction {:?}", e, tx.txid))
+}
+
+#[cfg(not(feature = "native"))]
+pub async fn cache_transaction_if_possible(_coin: &UtxoCoinFields, _tx: &RpcTransaction) -> Result<(), String> {
+    Ok(())
 }
 
 pub async fn my_unspendable_balance<T>(coin: T) -> Result<BigDecimal, String>
@@ -2051,17 +2100,4 @@ fn p2sh_spend(
         script_witness: vec![],
         previous_output: signer.inputs[input_index].previous_output.clone(),
     })
-}
-
-#[cfg(feature = "native")]
-async fn request_and_cache_transaction(
-    coin: &UtxoCoinFields,
-    tx_cache_path: &PathBuf,
-    txid: H256Json,
-) -> Result<RpcTransaction, String> {
-    let tx = try_s!(coin.rpc_client.get_verbose_transaction(txid.clone()).compat().await);
-    if let Err(e) = tx_cache::cache_transaction(tx_cache_path, &tx).await {
-        log!("Error " (e) " on caching transaction " [txid]);
-    };
-    Ok(tx)
 }
