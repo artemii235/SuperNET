@@ -919,6 +919,8 @@ async fn trade_base_rel_electrum(pairs: Vec<(&'static str, &'static str)>) {
         "TakerPaymentWaitConfirmStarted",
         "TakerPaymentValidatedAndConfirmed",
         "TakerPaymentSpent",
+        "TakerPaymentSpendConfirmStarted",
+        "TakerPaymentSpendConfirmed",
         "Finished",
     ];
 
@@ -932,6 +934,7 @@ async fn trade_base_rel_electrum(pairs: Vec<(&'static str, &'static str)>) {
         "TakerPaymentValidateFailed",
         "TakerPaymentWaitConfirmFailed",
         "TakerPaymentSpendFailed",
+        "TakerPaymentSpendConfirmFailed",
         "MakerPaymentWaitRefundStarted",
         "MakerPaymentRefunded",
         "MakerPaymentRefundFailed",
