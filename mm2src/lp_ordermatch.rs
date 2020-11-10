@@ -57,6 +57,8 @@ use crate::mm2::{lp_network::{broadcast_p2p_msg, request_one_peer, request_relay
 #[path = "lp_ordermatch/order_requests_tracker.rs"]
 mod order_requests_tracker;
 use order_requests_tracker::OrderRequestsTracker;
+use sp_trie::{generate_trie_proof, verify_trie_proof, DBValue, HashDBT, MemoryDB, TrieConfiguration, TrieDBMut,
+              TrieHash};
 
 #[cfg(test)]
 #[cfg(feature = "native")]
@@ -515,7 +517,7 @@ async fn process_get_orders_request(
     if let Some(uuids) = orderbook.pubkey_to_uuid.get(&from_pubkey) {
         for uuid in uuids {
             if let Some(order) = orderbook.order_set.get(uuid) {
-                if pairs.contains(&(order.base, order.rel)) {
+                if pairs.contains(&(order.base.clone(), order.rel.clone())) {
                     initial_messages.push(order.clone().into());
                 }
             }
@@ -3157,4 +3159,52 @@ fn choose_taker_confs_and_notas(
         taker_coin_confs,
         taker_coin_nota,
     }
+}
+
+#[test]
+fn try_patricia_trie() {
+    use hex_literal::hex;
+    use sp_core::Blake2Hasher;
+    use sp_trie::{self, read_trie_value, TrieMut};
+
+    type Layout = sp_trie::Layout<Blake2Hasher>;
+
+    fn populate_trie<'db, T: TrieConfiguration>(
+        db: &'db mut dyn HashDBT<T::Hash, DBValue>,
+        root: &'db mut TrieHash<T>,
+        v: &[(Vec<u8>, Vec<u8>)],
+    ) -> TrieDBMut<'db, T> {
+        let mut t = TrieDBMut::<T>::new(db, root);
+        for i in 0..v.len() {
+            let key: &[u8] = &v[i].0;
+            let val: &[u8] = &v[i].1;
+            t.insert(key, val).unwrap();
+        }
+        t
+    }
+
+    let pairs = vec![
+        (hex!("0102").to_vec(), hex!("01").to_vec()),
+        (hex!("0203").to_vec(), hex!("0405").to_vec()),
+    ];
+
+    let mut memdb = MemoryDB::default();
+    let mut root = Default::default();
+    log!("Root "[root]);
+
+    populate_trie::<Layout>(&mut memdb, &mut root, &pairs);
+    let pairs = vec![(hex!("0304").to_vec(), hex!("01").to_vec())];
+    println!("Root {:?}", root);
+
+    populate_trie::<Layout>(&mut memdb, &mut root, &pairs);
+    println!("Root {:?}", root);
+
+    let proof = generate_trie_proof::<Layout, _, _, _>(&memdb, root, vec![&hex!("0102").to_vec()]).unwrap();
+
+    // Check that a K, V included into the proof are verified.
+    assert!(verify_trie_proof::<Layout, _, _, _>(&root, &proof, &vec![(
+        hex!("0102").to_vec(),
+        Some(hex!("01").to_vec())
+    )])
+    .is_ok());
 }

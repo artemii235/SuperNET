@@ -89,6 +89,7 @@ futures-timer = "0.1"
 futures = { version = "0.3.1", package = "futures", features = ["compat", "async-await"] }
 gstuff = { version = "0.6", features = ["nightly"] }
 hex = "0.3.2"
+hex-literal = "0.3.1"
 http = "0.2"
 hyper = { version = "0.13", optional = true }
 hyper-rustls = { version = "0.21", optional = true }
@@ -116,6 +117,8 @@ serde_json = { version = "1.0", features = ["preserve_order"] }
 serde_derive = "1.0"
 serialization = { git = "https://github.com/artemii235/parity-bitcoin.git" }
 serialization_derive = { git = "https://github.com/artemii235/parity-bitcoin.git" }
+sp-core = "2.0.0"
+sp-trie = "2.0.0"
 
 # Pin `term` to 0.5.1 because `dirs` is not portable, cf.
 # https://github.com/Stebalien/term/commit/84cfdb51775b327fedf21784749d862fdffa10b4#diff-80398c5faae3c069e4e6aa2ed11b28c0
