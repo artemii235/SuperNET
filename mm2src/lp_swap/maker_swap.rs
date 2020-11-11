@@ -718,13 +718,6 @@ impl MakerSwap {
     }
 
     async fn confirm_taker_payment_spend(&self) -> Result<(Option<MakerSwapCommand>, Vec<MakerSwapEvent>), String> {
-        // check if the taker coin requires confirmations
-        if self.r().data.taker_payment_confirmations < 1 {
-            return Ok((Some(MakerSwapCommand::Finish), vec![
-                MakerSwapEvent::TakerPaymentSpendConfirmed,
-            ]));
-        }
-
         // we should wait for only one confirmation to make sure our spend transaction is not failed
         let confirmations = 1;
         let requires_nota = false;
