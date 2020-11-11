@@ -773,7 +773,14 @@ impl MarketCoinOps for Qrc20Coin {
         wait_until: u64,
         check_every: u64,
     ) -> Box<dyn Future<Item = (), Error = String> + Send> {
-        utxo_common::wait_for_confirmations(&self.utxo, tx, confirmations, requires_nota, wait_until, check_every)
+        let tx: UtxoTx = try_fus!(deserialize(tx).map_err(|e| ERRL!("{:?}", e)));
+        let selfi = self.clone();
+        let fut = async move {
+            selfi
+                .wait_for_confirmations_and_check_result(tx, confirmations, requires_nota, wait_until, check_every)
+                .await
+        };
+        Box::new(fut.boxed().compat())
     }
 
     fn wait_for_tx_spend(&self, transaction: &[u8], wait_until: u64, from_block: u64) -> TransactionFut {

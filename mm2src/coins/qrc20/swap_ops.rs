@@ -384,6 +384,56 @@ impl Qrc20Coin {
         }
     }
 
+    pub async fn wait_for_confirmations_and_check_result(
+        &self,
+        qtum_tx: UtxoTx,
+        confirmations: u64,
+        requires_nota: bool,
+        wait_until: u64,
+        check_every: u64,
+    ) -> Result<(), String> {
+        try_s!(
+            self.utxo
+                .rpc_client
+                .wait_for_confirmations(&qtum_tx, confirmations as u32, requires_nota, wait_until, check_every)
+                .compat()
+                .await
+        );
+        let tx_hash = qtum_tx.hash().reversed().into();
+        let receipts = match self.utxo.rpc_client {
+            UtxoRpcClientEnum::Electrum(ref electrum) => {
+                try_s!(electrum.blochchain_transaction_get_receipt(&tx_hash).compat().await)
+            },
+            UtxoRpcClientEnum::Native(_) => return ERR!("Electrum client expected"),
+        };
+
+        for receipt in receipts {
+            let output = try_s!(qtum_tx
+                .outputs
+                .get(receipt.output_index as usize)
+                .ok_or(ERRL!("TxReceipt::output_index out of bounds")));
+            let script_pubkey: Script = output.script_pubkey.clone().into();
+            if !is_contract_call(&script_pubkey) {
+                continue;
+            }
+
+            let contract_call_bytes = try_s!(extract_contract_call_from_script(&script_pubkey));
+
+            let call_type = try_s!(ContractCallType::from_script_pubkey(&contract_call_bytes));
+            log!([call_type]);
+            match call_type {
+                Some(ContractCallType::Erc20Payment)
+                | Some(ContractCallType::ReceiverSpend)
+                | Some(ContractCallType::SenderRefund) => (),
+                _ => continue, // skip not etomic swap contract calls
+            }
+
+            try_s!(check_if_contract_call_completed(&receipt));
+        }
+
+        Ok(())
+    }
+
     async fn allowance(&self, spender: H160) -> Result<U256, String> {
         let tokens = try_s!(
             self.rpc_contract_call(RpcContractCallType::Allowance, &self.contract_address, &[
@@ -596,17 +646,7 @@ impl Qrc20Coin {
                 _ => continue, // skip non-erc20Payment contract calls
             }
 
-            // check if the contract call was excepted
-            match receipt.excepted.clone() {
-                Some(ex) if ex != "None" && ex != "none" => {
-                    let msg = match receipt.excepted_message {
-                        Some(m) => format!(": {}", m),
-                        None => String::default(),
-                    };
-                    return ERR!("'erc20Payment' payment failed with an error: {}{}", ex, msg);
-                },
-                _ => (),
-            }
+            try_s!(check_if_contract_call_completed(&receipt));
 
             let function = try_s!(eth::SWAP_CONTRACT.function("erc20Payment"));
             let decoded = try_s!(function.decode_input(&contract_call_bytes));
@@ -911,4 +951,17 @@ fn find_swap_contract_call_with_swap_id(
     }
 
     None
+}
+
+fn check_if_contract_call_completed(receipt: &TxReceipt) -> Result<(), String> {
+    match receipt.excepted {
+        Some(ref ex) if ex != "None" && ex != "none" => {
+            let msg = match receipt.excepted_message {
+                Some(ref m) => format!(": {}", m),
+                None => String::default(),
+            };
+            ERR!("Contract call failed with an error: {}{}", ex, msg)
+        },
+        _ => Ok(()),
+    }
 }
