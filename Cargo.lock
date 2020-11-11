@@ -416,15 +416,13 @@ dependencies = [
 
 [[package]]
 name = "blake2"
-version = "0.9.0"
+version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "84ce5b6108f8e154604bd4eb76a2f726066c3464d5a552a4229262a18c9bb471"
+checksum = "10a5720225ef5daecf08657f23791354e1685a8c91a4c60c7f3d3b2892f978f4"
 dependencies = [
- "byte-tools 0.3.1",
- "byteorder 1.3.4",
  "crypto-mac 0.8.0",
  "digest 0.9.0",
- "opaque-debug 0.2.3",
+ "opaque-debug 0.3.0",
 ]
 
 [[package]]
@@ -2931,6 +2929,7 @@ dependencies = [
  "atomic 0.4.6",
  "bigdecimal",
  "bitcrypto",
+ "blake2",
  "bytes 0.4.12",
  "chain",
  "coins",
@@ -2948,6 +2947,8 @@ dependencies = [
  "futures-cpupool",
  "futures-timer 0.1.1",
  "gstuff",
+ "hash-db",
+ "hash256-std-hasher",
  "hex 0.3.2",
  "hex-literal",
  "http 0.2.1",
@@ -2968,6 +2969,7 @@ dependencies = [
  "rand 0.4.6",
  "rand 0.7.3",
  "regex",
+ "rmp-serde",
  "rpc",
  "script",
  "serde",
@@ -2976,7 +2978,6 @@ dependencies = [
  "serde_json",
  "serialization",
  "serialization_derive",
- "sp-core",
  "sp-trie",
  "term 0.5.1",
  "testcontainers",

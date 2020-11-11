@@ -11,7 +11,7 @@ use uuid::Uuid;
 pub enum OrdermatchMessage {
     MakerOrderCreated(MakerOrderCreated),
     MakerOrderUpdated(MakerOrderUpdated),
-    MakerOrdersKeepAlive(MakerOrdersKeepAlive),
+    PubkeyKeepAlive(PubkeyKeepAlive),
     MakerOrderCancelled(MakerOrderCancelled),
     TakerRequest(TakerRequest),
     MakerReserved(MakerReserved),
@@ -19,33 +19,8 @@ pub enum OrdermatchMessage {
     MakerConnected(MakerConnected),
 }
 
-/// Get an order using uuid and the order maker's pubkey.
-/// Actual we expect to receive [`OrdermatchMessage::MakerOrderCreated`] that will be parsed into [`OrderbookItem`].
-#[derive(Debug, Deserialize, Serialize)]
-pub struct OrderInitialMessage {
-    pub initial_message: Vec<u8>,
-    pub update_messages: Vec<Vec<u8>>,
-    pub from_peer: String,
-}
-
-impl From<OrderbookItem> for OrderInitialMessage {
-    fn from(order: OrderbookItem) -> Self {
-        OrderInitialMessage {
-            initial_message: order.initial_message,
-            update_messages: order.update_messages,
-            from_peer: order.peer_id,
-        }
-    }
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct Orderbook {
-    pub asks: Vec<OrderInitialMessage>,
-    pub bids: Vec<OrderInitialMessage>,
-}
-
-impl From<MakerOrdersKeepAlive> for OrdermatchMessage {
-    fn from(keep_alive: MakerOrdersKeepAlive) -> Self { OrdermatchMessage::MakerOrdersKeepAlive(keep_alive) }
+impl From<PubkeyKeepAlive> for OrdermatchMessage {
+    fn from(keep_alive: PubkeyKeepAlive) -> Self { OrdermatchMessage::PubkeyKeepAlive(keep_alive) }
 }
 
 impl From<MakerOrderUpdated> for OrdermatchMessage {
@@ -145,8 +120,8 @@ pub struct MakerOrderCreated {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-pub struct MakerOrdersKeepAlive {
-    pub timestamp: u64,
+pub struct PubkeyKeepAlive {
+    pub prev_root_hash: u64,
     pub num_orders: HashMap<OrderbookPair, usize>,
 }
 
