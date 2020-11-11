@@ -29,7 +29,7 @@ pub struct TxHistoryItem {
 
 /// The structure is the same as Qtum Core RPC gettransactionreceipt returned data.
 /// https://docs.qtum.site/en/Qtum-RPC-API/#gettransactionreceipt
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
 pub struct TxReceipt {
     /// Hash of the block this transaction was included within.
     #[serde(rename = "blockHash")]
@@ -69,7 +69,7 @@ pub struct TxReceipt {
     pub excepted_message: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
 pub struct LogEntry {
     /// Contract address.
     pub address: String,
@@ -90,6 +90,16 @@ impl LogEntry {
     }
 }
 
+#[derive(Clone, Debug)]
+pub enum TopicFilter {
+    Match(String),
+    Skip,
+}
+
+impl From<&str> for TopicFilter {
+    fn from(topic: &str) -> Self { TopicFilter::Match(topic.to_string()) }
+}
+
 /// Qrc20 specific RPC ops
 pub trait Qrc20RpcOps {
     /// This can be used to get the basic information(name, decimals, total_supply, symbol) of a QRC20 token.
@@ -98,7 +108,7 @@ pub trait Qrc20RpcOps {
 
     fn blockchain_contract_call(&self, contract_addr: &H160Json, data: BytesJson) -> RpcRes<ContractCallResult>;
 
-    /// this can be used to retrieve QRC20 token transfer history, params are the same as blockchain.contract.event.subscribe,
+    /// This can be used to retrieve QRC20 token transfer history, params are the same as blockchain.contract.event.subscribe,
     /// and it returns a list of map{tx_hash, height, log_index}, where log_index is the position for this event log in its transaction.
     /// https://github.com/qtumproject/qtum-electrumx-server/blob/master/docs/qrc20-integration.md#blockchaincontracteventget_historyhash160-contract_addr-topic
     fn blockchain_contract_event_get_history(
@@ -108,7 +118,61 @@ pub trait Qrc20RpcOps {
         topic: &str,
     ) -> RpcRes<Vec<TxHistoryItem>>;
 
+    /// This can be used to get eventlogs in the transaction, the returned data is the same as Qtum Core RPC gettransactionreceipt.
+    /// from the eventlogs, we can get QRC20 Token transafer informations(from, to, amount).
+    /// https://github.com/qtumproject/qtum-electrumx-server/blob/master/docs/qrc20-integration.md#blochchaintransactionget_receipttxid
     fn blochchain_transaction_get_receipt(&self, hash: &H256Json) -> RpcRes<Vec<TxReceipt>>;
+}
+
+pub trait Qrc20NativeOps {
+    /// https://docs.qtum.site/en/Qtum-RPC-API/#callcontract
+    fn call_contract(&self, contract_addr: &H160Json, data: BytesJson) -> RpcRes<ContractCallResult>;
+
+    /// Similar to [`Qrc20RpcOps::blochchain_transaction_get_receipt`]
+    /// https://docs.qtum.site/en/Qtum-RPC-API/#gettransactionreceipt
+    fn get_transaction_receipt(&self, hash: &H256Json) -> RpcRes<Vec<TxReceipt>>;
+
+    /// This can be used to retrieve QRC20 transaction history.
+    /// https://docs.qtum.site/en/Qtum-RPC-API/#searchlogs
+    fn search_logs(
+        &self,
+        from_block: u64,
+        to_block: Option<u64>,
+        addresses: Vec<H160Json>,
+        topics: Vec<TopicFilter>,
+    ) -> RpcRes<Vec<TxReceipt>>;
+}
+
+impl Qrc20NativeOps for NativeClient {
+    fn call_contract(&self, contract_addr: &H160Json, data: BytesJson) -> RpcRes<ContractCallResult> {
+        rpc_func!(self, "callcontract", contract_addr, data)
+    }
+
+    fn get_transaction_receipt(&self, hash: &H256Json) -> RpcRes<Vec<TxReceipt>> {
+        rpc_func!(self, "gettransactionreceipt", hash)
+    }
+
+    fn search_logs(
+        &self,
+        from_block: u64,
+        to_block: Option<u64>,
+        addresses: Vec<H160Json>,
+        topics: Vec<TopicFilter>,
+    ) -> RpcRes<Vec<TxReceipt>> {
+        let to_block = to_block.map(|x| x as i64).unwrap_or(-1);
+        let addr_block = json!({ "addresses": addresses });
+        let topics: Vec<Json> = topics
+            .into_iter()
+            .map(|t| match t {
+                TopicFilter::Match(s) => Json::String(s),
+                TopicFilter::Skip => Json::Null,
+            })
+            .collect();
+        let topic_block = json!({
+            "topics": topics,
+        });
+        rpc_func!(self, "searchlogs", from_block, to_block, addr_block, topic_block)
+    }
 }
 
 impl Qrc20RpcOps for ElectrumClient {

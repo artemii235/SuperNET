@@ -1,6 +1,7 @@
 use crate::eth::{self, u256_to_big_decimal, wei_from_big_decimal};
-use crate::qrc20::rpc_electrum::{ContractCallResult, LogEntry, Qrc20RpcOps, TxHistoryItem, TxReceipt};
-use crate::utxo::rpc_clients::{ElectrumClient, UnspentInfo, UtxoRpcClientEnum, UtxoRpcClientOps};
+use crate::qrc20::rpc_electrum::{ContractCallResult, LogEntry, Qrc20NativeOps, Qrc20RpcOps, TopicFilter,
+                                 TxHistoryItem, TxReceipt};
+use crate::utxo::rpc_clients::{ElectrumClient, NativeClient, UnspentInfo, UtxoRpcClientEnum, UtxoRpcClientOps};
 use crate::utxo::utxo_common::{self, big_decimal_from_sat};
 use crate::utxo::{qtum, sign_tx, utxo_fields_from_conf_and_request, ActualTxFee, AdditionalTxData, FeePolicy,
                   GenerateTransactionError, UtxoAddressFormat, UtxoCoinFields, UtxoCommonOps, UtxoTx,
@@ -49,10 +50,9 @@ const QRC20_SWAP_GAS_REQUIRED: u64 = QRC20_GAS_LIMIT_DEFAULT * 3;
 const QRC20_DUST: u64 = 0;
 // Keccak-256 hash of `Transfer` event
 const QRC20_TRANSFER_TOPIC: &str = "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
-#[allow(dead_code)]
-const QRC20_APPROVE_TOPIC: &str = "8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925";
-#[allow(dead_code)]
 const QRC20_PAYMENT_SENT_TOPIC: &str = "ccc9c05183599bd3135da606eaaf535daffe256e9de33c048014cffcccd4ad57";
+const QRC20_RECEIVER_SPENT_TOPIC: &str = "36c177bcb01c6d568244f05261e2946c8c977fa50822f3fa098c470770ee1f3e";
+const QRC20_SENDER_REFUNDED_TOPIC: &str = "1797d500133f8e427eb9da9523aa4a25cb40f50ebc7dbda3c7c81778973f35ba";
 
 pub async fn qrc20_coin_from_conf_and_request(
     ctx: &MmArc,
@@ -63,9 +63,6 @@ pub async fn qrc20_coin_from_conf_and_request(
     priv_key: &[u8],
     contract_address: H160,
 ) -> Result<Qrc20Coin, String> {
-    if let Some("enable") = req["method"].as_str() {
-        return ERR!("Native mode not supported yet for QRC20");
-    }
     let swap_contract_address = match req["swap_contract_address"].as_str() {
         Some(address) => try_s!(qrc20_addr_from_str(address)),
         None => return ERR!("\"swap_contract_address\" field is expected"),
@@ -74,19 +71,12 @@ pub async fn qrc20_coin_from_conf_and_request(
     let mut utxo = try_s!(utxo_fields_from_conf_and_request(ctx, ticker, conf, req, priv_key, QRC20_DUST).await);
     match &utxo.address_format {
         UtxoAddressFormat::Standard => (),
-        _ => return ERR!("Expect standard UTXO address format"),
+        _ => return ERR!("Standard UTXO address format is expected"),
     }
 
     // if `decimals` is not set in config then we have to request it from contract
     if conf["decimals"].as_u64().is_none() {
-        let contract_addr = qrc20_addr_into_rpc_format(&contract_address);
-        let token_info = match utxo.rpc_client {
-            UtxoRpcClientEnum::Electrum(ref electrum) => {
-                try_s!(electrum.blockchain_token_get_info(&contract_addr).compat().await)
-            },
-            UtxoRpcClientEnum::Native(_) => return ERR!("Electrum client expected"),
-        };
-        utxo.decimals = token_info.decimals;
+        utxo.decimals = try_s!(request_token_decimals(&utxo.rpc_client, &contract_address).await);
     }
 
     let platform = platform.to_owned();
@@ -119,11 +109,13 @@ impl AsRef<UtxoCoinFields> for Qrc20Coin {
     fn as_ref(&self) -> &UtxoCoinFields { &self.utxo }
 }
 
-enum RpcContractCallType {
+pub enum RpcContractCallType {
     /// Erc20 function.
     BalanceOf,
     /// Erc20 function.
     Allowance,
+    /// Erc20 function.
+    Decimals,
     /// EtomicSwap function.
     Payments,
 }
@@ -133,13 +125,14 @@ impl RpcContractCallType {
         match self {
             RpcContractCallType::BalanceOf => "balanceOf",
             RpcContractCallType::Allowance => "allowance",
+            RpcContractCallType::Decimals => "decimals",
             RpcContractCallType::Payments => "payments",
         }
     }
 
     fn as_function(&self) -> &'static Function {
         match self {
-            RpcContractCallType::BalanceOf | RpcContractCallType::Allowance => {
+            RpcContractCallType::BalanceOf | RpcContractCallType::Allowance | RpcContractCallType::Decimals => {
                 unwrap!(eth::ERC20_CONTRACT.function(self.as_function_name()))
             },
             RpcContractCallType::Payments => unwrap!(eth::SWAP_CONTRACT.function(self.as_function_name())),
@@ -245,28 +238,13 @@ struct GenerateQrc20TxResult {
 }
 
 impl Qrc20Coin {
-    async fn rpc_contract_call(
+    pub async fn rpc_contract_call(
         &self,
         func: RpcContractCallType,
         contract_addr: &H160,
         tokens: &[Token],
     ) -> Result<Vec<Token>, String> {
-        let function = func.as_function();
-        let params = try_s!(function.encode_input(tokens));
-        let contract_addr = qrc20_addr_into_rpc_format(contract_addr);
-
-        let electrum = match self.utxo.rpc_client {
-            UtxoRpcClientEnum::Electrum(ref electrum) => electrum,
-            _ => return ERR!("Electrum client expected"),
-        };
-
-        let result: ContractCallResult = try_s!(
-            electrum
-                .blockchain_contract_call(&contract_addr, params.into())
-                .compat()
-                .await
-        );
-        Ok(try_s!(function.decode_output(&result.execution_result.output)))
+        qrc20_rpc_contract_call(&self.utxo.rpc_client, func, contract_addr, tokens).await
     }
 
     pub fn utxo_address_from_qrc20(&self, address: H160) -> UtxoAddress {
@@ -893,6 +871,43 @@ impl MmCoin for Qrc20Coin {
     }
 }
 
+async fn qrc20_rpc_contract_call(
+    rpc_client: &UtxoRpcClientEnum,
+    func: RpcContractCallType,
+    contract_addr: &H160,
+    tokens: &[Token],
+) -> Result<Vec<Token>, String> {
+    let function = func.as_function();
+    let params = try_s!(function.encode_input(tokens));
+    let contract_addr = qrc20_addr_into_rpc_format(contract_addr);
+
+    let result: ContractCallResult = match rpc_client {
+        UtxoRpcClientEnum::Native(native) => try_s!(native.call_contract(&contract_addr, params.into()).compat().await),
+        UtxoRpcClientEnum::Electrum(electrum) => try_s!(
+            electrum
+                .blockchain_contract_call(&contract_addr, params.into())
+                .compat()
+                .await
+        ),
+    };
+    Ok(try_s!(function.decode_output(&result.execution_result.output)))
+}
+
+/// Do `decimals` ERC20 contract call.
+async fn request_token_decimals(rpc_client: &UtxoRpcClientEnum, token_address: &H160) -> Result<u8, String> {
+    let tokens = try_s!(qrc20_rpc_contract_call(rpc_client, RpcContractCallType::Decimals, token_address, &[]).await);
+    let decimals = match tokens.first() {
+        Some(Token::Uint(decimals)) => decimals.as_u64(),
+        Some(_) => return ERR!(r#"Expected Uint as "decimals" result but got {:?}"#, tokens),
+        None => return ERR!(r#"Expected Uint as "decimals" result but got nothing"#),
+    };
+    if decimals <= (std::u8::MAX as u64) {
+        Ok(decimals as u8)
+    } else {
+        ERR!("decimals {} is not u8", decimals)
+    }
+}
+
 pub fn qrc20_swap_id(time_lock: u32, secret_hash: &[u8]) -> Vec<u8> {
     let mut input = vec![];
     input.extend_from_slice(&time_lock.to_le_bytes());
@@ -1028,6 +1043,13 @@ fn address_from_log_topic(topic: &str) -> Result<H160, String> {
     // https://github.com/qtumproject/qtum-electrum/blob/v4.0.2/electrum/wallet.py#L2112
     let hash = try_s!(H160Json::from_str(&topic[24..]));
     Ok(hash.0.into())
+}
+
+fn address_to_log_topic(address: &H160) -> String {
+    let zeros = std::str::from_utf8(&[b'0'; 24]).expect("Expected a valid str from slice of '0' chars");
+    let mut topic = format!("{:02x}", address);
+    topic.insert_str(0, zeros);
+    topic
 }
 
 pub struct TransferEventDetails {
