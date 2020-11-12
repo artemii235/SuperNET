@@ -123,6 +123,7 @@ pub struct MakerOrderCreated {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct PubkeyKeepAlive {
     pub orders_root_hash: [u8; 8],
+    pub timestamp: u64,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

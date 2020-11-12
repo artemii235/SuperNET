@@ -31,7 +31,7 @@ use common::mm_ctx::{from_ctx, MmArc, MmWeak};
 use common::mm_number::{Fraction, MmNumber};
 use common::{bits256, block_on, json_dir_entries, new_uuid, now_ms, remove_file, write};
 use either::Either;
-use futures::{compat::Future01CompatExt, lock::Mutex as AsyncMutex, StreamExt};
+use futures::{compat::Future01CompatExt, lock::Mutex as AsyncMutex, Stream, StreamExt};
 use gstuff::slurp;
 use hash256_std_hasher::Hash256StdHasher;
 use hash_db::Hasher;
@@ -42,6 +42,8 @@ use num_rational::BigRational;
 use num_traits::identities::Zero;
 use rpc::v1::types::H256 as H256Json;
 use serde_json::{self as json, Value as Json};
+use sp_trie::{child_trie_root, delta_trie_root, generate_trie_proof, verify_trie_proof, DBValue, HashDBT, MemoryDB,
+              NodeCodec, Trie, TrieConfiguration, TrieDBMut, TrieHash, TrieMut, TrieStream};
 use std::collections::hash_map::{Entry, HashMap, RawEntryMut};
 use std::collections::{BTreeSet, HashSet};
 use std::fmt;
@@ -61,8 +63,6 @@ use crate::mm2::{lp_network::{broadcast_p2p_msg, request_one_peer, request_relay
 #[path = "lp_ordermatch/order_requests_tracker.rs"]
 mod order_requests_tracker;
 use order_requests_tracker::OrderRequestsTracker;
-use sp_trie::{delta_trie_root, generate_trie_proof, verify_trie_proof, DBValue, HashDBT, MemoryDB, NodeCodec, Trie,
-              TrieConfiguration, TrieDBMut, TrieHash, TrieMut};
 
 #[cfg(test)]
 #[cfg(feature = "native")]
@@ -601,7 +601,11 @@ fn alb_ordered_pair(base: &str, rel: &str) -> AlbOrderedOrderbookPair {
     res
 }
 
-fn orderbook_topic(base: &str, rel: &str) -> String { pub_sub_topic(ORDERBOOK_PREFIX, &alb_ordered_pair(base, rel)) }
+fn orderbook_topic_from_base_rel(base: &str, rel: &str) -> String {
+    pub_sub_topic(ORDERBOOK_PREFIX, &alb_ordered_pair(base, rel))
+}
+
+fn orderbook_topic_from_ordered_pair(pair: &str) -> String { pub_sub_topic(ORDERBOOK_PREFIX, pair) }
 
 #[test]
 fn test_alb_ordered_pair() {
@@ -641,7 +645,7 @@ fn test_parse_orderbook_pair_from_topic() {
 }
 
 async fn maker_order_created_p2p_notify(ctx: MmArc, order: &MakerOrder) {
-    let topic = orderbook_topic(&order.base, &order.rel);
+    let topic = orderbook_topic_from_base_rel(&order.base, &order.rel);
     let message = new_protocol::MakerOrderCreated {
         uuid: order.uuid.into(),
         base: order.base.clone(),
@@ -675,7 +679,7 @@ async fn process_my_maker_order_updated(ctx: &MmArc, message: &new_protocol::Mak
 
 async fn maker_order_updated_p2p_notify(ctx: MmArc, base: &str, rel: &str, message: new_protocol::MakerOrderUpdated) {
     let msg: new_protocol::OrdermatchMessage = message.clone().into();
-    let topic = orderbook_topic(base, rel);
+    let topic = orderbook_topic_from_base_rel(base, rel);
     let key_pair = ctx.secp256k1_key_pair.or(&&|| panic!());
     let encoded_msg = encode_and_sign(&msg, &*key_pair.private().secret).unwrap();
     process_my_maker_order_updated(&ctx, &message, encoded_msg.clone()).await;
@@ -688,7 +692,11 @@ async fn maker_order_cancelled_p2p_notify(ctx: MmArc, order: &MakerOrder) {
     });
     delete_my_order(&ctx, order.uuid).await;
     println!("maker_order_cancelled_p2p_notify called, message {:?}", message);
-    broadcast_ordermatch_message(&ctx, orderbook_topic(&order.base, &order.rel), message);
+    broadcast_ordermatch_message(
+        &ctx,
+        vec![orderbook_topic_from_base_rel(&order.base, &order.rel)],
+        message,
+    );
 }
 
 pub struct BalanceUpdateOrdermatchHandler {
@@ -1528,17 +1536,27 @@ pub async fn broadcast_maker_orders_keep_alive_loop(ctx: MmArc) {
         if let Some(state) = ordermatch_ctx.orderbook.lock().await.pubkeys_state.get(&my_pubsecp) {
             let message = new_protocol::PubkeyKeepAlive {
                 orders_root_hash: state.orders_trie_root,
+                timestamp: now_ms() / 1000,
             };
 
-            broadcast_p2p_msg()
+            let topics: HashSet<_> = state
+                .orders_uuids
+                .iter()
+                .map(|(_, pair)| orderbook_topic_from_ordered_pair(pair))
+                .collect();
+            broadcast_ordermatch_message(&ctx, topics, message.into());
         };
     }
 }
 
-fn broadcast_ordermatch_message(ctx: &MmArc, topic: String, msg: new_protocol::OrdermatchMessage) {
+fn broadcast_ordermatch_message(
+    ctx: &MmArc,
+    topics: impl IntoIterator<Item = String>,
+    msg: new_protocol::OrdermatchMessage,
+) {
     let key_pair = ctx.secp256k1_key_pair.or(&&|| panic!());
     let encoded_msg = encode_and_sign(&msg, &*key_pair.private().secret).unwrap();
-    broadcast_p2p_msg(ctx, vec![topic], encoded_msg);
+    broadcast_p2p_msg(ctx, topics.into_iter().collect(), encoded_msg);
 }
 
 /// The order is ordered by [`OrderbookItem::price`] and [`OrderbookItem::uuid`].
@@ -2060,8 +2078,8 @@ async fn process_maker_reserved(ctx: MmArc, reserved_msg: MakerReserved) {
             taker_order_uuid: reserved_msg.taker_order_uuid,
             maker_order_uuid: reserved_msg.maker_order_uuid,
         };
-        let topic = orderbook_topic(&my_order.request.base, &my_order.request.rel);
-        broadcast_ordermatch_message(&ctx, topic, connect.clone().into());
+        let topic = orderbook_topic_from_base_rel(&my_order.request.base, &my_order.request.rel);
+        broadcast_ordermatch_message(&ctx, vec![topic], connect.clone().into());
         let taker_match = TakerMatch {
             reserved: reserved_msg,
             connect,
@@ -2160,9 +2178,9 @@ async fn process_taker_request(ctx: MmArc, taker_request: TakerRequest) {
                         })
                     }),
                 };
-                let topic = orderbook_topic(&order.base, &order.rel);
+                let topic = orderbook_topic_from_base_rel(&order.base, &order.rel);
                 log!({"Request matched sending reserved {:?}", reserved});
-                broadcast_ordermatch_message(&ctx, topic, reserved.clone().into());
+                broadcast_ordermatch_message(&ctx, vec![topic], reserved.clone().into());
                 let maker_match = MakerMatch {
                     request: taker_request,
                     reserved,
@@ -2214,8 +2232,8 @@ async fn process_taker_connect(ctx: MmArc, sender_pubkey: H256Json, connect_msg:
             maker_order_uuid: connect_msg.maker_order_uuid,
             method: "connected".into(),
         };
-        let topic = orderbook_topic(&my_order.base, &my_order.rel);
-        broadcast_ordermatch_message(&ctx, topic, connected.clone().into());
+        let topic = orderbook_topic_from_base_rel(&my_order.base, &my_order.rel);
+        broadcast_ordermatch_message(&ctx, vec![topic], connected.clone().into());
         order_match.connect = Some(connect_msg);
         order_match.connected = Some(connected);
         my_order.started_swaps.push(order_match.request.uuid);
@@ -2355,7 +2373,11 @@ pub async fn lp_auto_buy(
         .with_conf_settings(conf_settings)
         .with_sender_pubkey(H256Json::from(our_public_id.bytes));
     let request = try_s!(request_builder.build());
-    broadcast_ordermatch_message(&ctx, orderbook_topic(&input.base, &input.rel), request.clone().into());
+    broadcast_ordermatch_message(
+        &ctx,
+        vec![orderbook_topic_from_base_rel(&input.base, &input.rel)],
+        request.clone().into(),
+    );
     let result = json!({ "result": request }).to_string();
     let order = TakerOrder {
         created_at: now_ms(),
@@ -2934,7 +2956,7 @@ async fn subscribe_to_orderbook_topic(
     const BIDS_NUMBER: Option<usize> = Some(20);
 
     let current_timestamp = now_ms() / 1000;
-    let topic = orderbook_topic(base, rel);
+    let topic = orderbook_topic_from_base_rel(base, rel);
     let is_orderbook_filled = {
         let ordermatch_ctx = try_s!(OrdermatchContext::from_ctx(ctx));
         let mut orderbook = ordermatch_ctx.orderbook.lock().await;
@@ -3240,9 +3262,16 @@ fn try_patricia_trie() {
     use hex_literal::hex;
     use sp_trie::{self, read_trie_value, TrieDB, TrieMut};
     use trie_db::NodeCodec as NodeCodecT;
+    use trie_root::trie_root;
 
-    let pairs = vec![(hex!("0203").to_vec(), Some(hex!("0405").to_vec()))];
-
+    // let pairs = vec![(hex!("0203").to_vec(), Some(hex!("0405").to_vec()))];
+    let pairs = vec![
+        (hex!("01").to_vec(), Some(hex!("01").to_vec())),
+        (hex!("0102").to_vec(), Some(hex!("01").to_vec())),
+        (hex!("0304").to_vec(), Some(hex!("01").to_vec())),
+        (hex!("0203").to_vec(), Some(hex!("01").to_vec())),
+        (hex!("0405").to_vec(), Some(hex!("01").to_vec())),
+    ];
     let mut memdb = MemoryDB::default();
     let mut root = Default::default();
     log!("Root "[root]);
@@ -3255,10 +3284,26 @@ fn try_patricia_trie() {
         (hex!("0304").to_vec(), Some(hex!("01").to_vec())),
         (hex!("0203").to_vec(), Some(hex!("01").to_vec())),
         (hex!("0405").to_vec(), Some(hex!("01").to_vec())),
+        (hex!("01").to_vec(), Some(hex!("01").to_vec())),
     ];
 
     root = delta_trie_root::<Layout, _, _, _, _, _>(&mut memdb, root, pairs).unwrap();
     log!("Root "[root]);
+
+    let pairs = vec![
+        (hex!("0102").to_vec(), hex!("01").to_vec()),
+        (hex!("0304").to_vec(), hex!("01").to_vec()),
+        (hex!("0203").to_vec(), hex!("01").to_vec()),
+        (hex!("0405").to_vec(), hex!("01").to_vec()),
+        (hex!("01").to_vec(), hex!("01").to_vec()),
+    ];
+
+    log!([pairs]);
+
+    use reference_trie::ReferenceTrieStream;
+
+    let root_from_trie_root = trie_root::<Blake2Hasher64, ReferenceTrieStream, _, _, _>(pairs);
+    log!("Root from trie root"[root_from_trie_root]);
 
     let pairs = vec![(hex!("0405").to_vec(), None::<Vec<u8>>)];
     root = delta_trie_root::<Layout, _, _, _, _, _>(&mut memdb, root, pairs).unwrap();
