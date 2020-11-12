@@ -2982,6 +2982,7 @@ dependencies = [
  "term 0.5.1",
  "testcontainers",
  "tokio",
+ "trie-db",
  "unwrap",
  "uuid",
  "wasm-bindgen",

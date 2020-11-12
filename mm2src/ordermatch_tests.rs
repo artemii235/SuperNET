@@ -1298,6 +1298,7 @@ fn make_random_orders(
             max_volume: BigRational::from_integer(1.into()),
             min_volume: BigRational::from_integer(0.into()),
             conf_settings: OrderConfirmationsSettings::default(),
+            created_at: now_ms() / 1000,
         };
 
         // create an initial_message and encode it with the secret
@@ -1856,16 +1857,10 @@ fn test_taker_request_can_match_with_uuid() {
 
 #[test]
 fn test_orderbook_insert_or_update_order() {
-    /*
     let (_, pubkey, secret) = make_ctx_for_tests();
     let mut orderbook = Orderbook::default();
     let peer = PeerId::random();
     let order = make_random_orders(pubkey.clone(), &secret, peer.to_string(), "C1".into(), "C2".into(), 1).remove(0);
 
-    orderbook.insert_or_update_order(order.clone());
-
-    let expected = HashSet::from_iter(iter::once(order.uuid));
-    let actual = orderbook.pubkey_to_uuid.get(&pubkey).unwrap();
-    assert_eq!(expected, *actual);
-    */
+    orderbook.insert_or_update_order(order.clone(), true);
 }

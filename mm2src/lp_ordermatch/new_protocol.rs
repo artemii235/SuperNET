@@ -116,13 +116,13 @@ pub struct MakerOrderCreated {
     pub price: BigRational,
     pub max_volume: BigRational,
     pub min_volume: BigRational,
+    pub created_at: u64,
     pub conf_settings: OrderConfirmationsSettings,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct PubkeyKeepAlive {
-    pub prev_root_hash: u64,
-    pub num_orders: HashMap<OrderbookPair, usize>,
+    pub orders_root_hash: [u8; 8],
 }
 
 #[derive(Debug, Deserialize, Serialize)]
