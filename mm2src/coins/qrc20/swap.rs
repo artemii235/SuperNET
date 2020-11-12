@@ -788,38 +788,54 @@ impl TransferHistoryBuilder {
         self
     }
 
-    pub async fn build(self) -> Result<Vec<TxReceipt>, String> {
+    pub async fn build(self) -> Result<Vec<TxReceipt>, JsonRpcError> {
         match self.coin.utxo.rpc_client {
-            UtxoRpcClientEnum::Native(ref native) => self.build_with_native(native).await,
-            UtxoRpcClientEnum::Electrum(ref electrum) => self.build_with_electrum(electrum).await,
+            UtxoRpcClientEnum::Native(ref native) => self.build_receipts_with_native(native).await,
+            UtxoRpcClientEnum::Electrum(ref electrum) => self.build_receipts_with_electrum(electrum).await,
         }
     }
 
-    async fn build_with_electrum(&self, electrum: &ElectrumClient) -> Result<Vec<TxReceipt>, String> {
+    pub async fn build_tx_idents(self) -> Result<Vec<(H256Json, u64)>, JsonRpcError> {
+        match self.coin.utxo.rpc_client {
+            UtxoRpcClientEnum::Native(ref native) => self.build_tx_ident_with_native(native).await,
+            UtxoRpcClientEnum::Electrum(ref electrum) => self.build_tx_idents_with_electrum(electrum).await,
+        }
+    }
+
+    async fn build_tx_idents_with_electrum(
+        &self,
+        electrum: &ElectrumClient,
+    ) -> Result<Vec<(H256Json, u64)>, JsonRpcError> {
         let address = qrc20_addr_into_rpc_format(&self.address);
         let token_address = qrc20_addr_into_rpc_format(&self.token_address);
-        let mut history = try_s!(
-            electrum
-                .blockchain_contract_event_get_history(&address, &token_address, QRC20_TRANSFER_TOPIC)
-                .compat()
-                .await
-        );
+        let history = electrum
+            .blockchain_contract_event_get_history(&address, &token_address, QRC20_TRANSFER_TOPIC)
+            .compat()
+            .await?;
 
-        if self.from_block != 0 {
-            history = history
-                .into_iter()
-                .filter(|item| self.from_block <= item.height)
-                .collect();
-        }
-
-        let history_iter = history
+        Ok(history
             .into_iter()
             .filter(|item| self.from_block <= item.height)
-            .unique_by(|tx| tx.tx_hash.clone());
+            .map(|tx| (tx.tx_hash, tx.height))
+            .unique()
+            .collect())
+    }
+
+    async fn build_tx_ident_with_native(&self, native: &NativeClient) -> Result<Vec<(H256Json, u64)>, JsonRpcError> {
+        let receipts = self.build_receipts_with_native(native).await?;
+        Ok(receipts
+            .into_iter()
+            .map(|receipt| (receipt.transaction_hash, receipt.block_number))
+            .unique()
+            .collect())
+    }
+
+    async fn build_receipts_with_electrum(&self, electrum: &ElectrumClient) -> Result<Vec<TxReceipt>, JsonRpcError> {
+        let tx_idents = self.build_tx_idents_with_electrum(electrum).await?;
 
         let mut receipts = Vec::new();
-        for TxHistoryItem { tx_hash, .. } in history_iter {
-            let mut tx_receipts = try_s!(electrum.blochchain_transaction_get_receipt(&tx_hash).compat().await);
+        for (tx_hash, _height) in tx_idents {
+            let mut tx_receipts = electrum.blochchain_transaction_get_receipt(&tx_hash).compat().await?;
             // remove receipts of contract calls didn't emit at least one `Transfer` event
             tx_receipts.retain(|receipt| receipt.log.iter().any(is_transfer_event_log));
             receipts.extend(tx_receipts.into_iter());
@@ -828,7 +844,7 @@ impl TransferHistoryBuilder {
         Ok(receipts)
     }
 
-    async fn build_with_native(&self, native: &NativeClient) -> Result<Vec<TxReceipt>, String> {
+    async fn build_receipts_with_native(&self, native: &NativeClient) -> Result<Vec<TxReceipt>, JsonRpcError> {
         // TODO set to 100
         const SEARCH_LOGS_STEP: u64 = 5000;
 
@@ -847,18 +863,16 @@ impl TransferHistoryBuilder {
             TopicFilter::Match(address_topic.clone()), // `receiver` address in `Transfer` event
         ];
 
-        let block_count = try_s!(native.get_block_count().compat().await);
+        let block_count = native.get_block_count().compat().await?;
 
         let mut result = Vec::new();
         let mut from_block = self.from_block;
         while from_block <= block_count {
             let to_block = from_block + SEARCH_LOGS_STEP - 1;
-            let mut receipts = try_s!(
-                native
-                    .search_logs(from_block, Some(to_block), vec![token_address.clone()], topics.clone())
-                    .compat()
-                    .await
-            );
+            let mut receipts = native
+                .search_logs(from_block, Some(to_block), vec![token_address.clone()], topics.clone())
+                .compat()
+                .await?;
 
             // remove receipts of transaction that didn't emit at least one `Transfer` event
             receipts.retain(|receipt| receipt.log.iter().any(is_transfer_event_log));
