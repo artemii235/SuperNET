@@ -1,5 +1,5 @@
+use super::history::TransferHistoryBuilder;
 use super::*;
-use itertools::Itertools;
 use script_pubkey::{extract_contract_addr_from_script, extract_contract_call_from_script, is_contract_call};
 
 /// `erc20Payment` call details consist of values obtained from [`TransactionOutput::script_pubkey`] and [`TxReceipt::logs`].
@@ -752,138 +752,6 @@ impl Qrc20Coin {
     }
 }
 
-pub struct TransferHistoryBuilder {
-    coin: Qrc20Coin,
-    from_block: u64,
-    address: H160,
-    token_address: H160,
-}
-
-impl TransferHistoryBuilder {
-    pub fn new(coin: Qrc20Coin) -> TransferHistoryBuilder {
-        let address = qrc20_addr_from_utxo_addr(coin.utxo.my_address.clone());
-        let token_address = coin.contract_address;
-        TransferHistoryBuilder {
-            coin,
-            from_block: 0,
-            address,
-            token_address,
-        }
-    }
-
-    #[allow(clippy::wrong_self_convention)]
-    pub fn from_block(mut self, from_block: u64) -> TransferHistoryBuilder {
-        self.from_block = from_block;
-        self
-    }
-
-    pub fn address(mut self, address: H160) -> TransferHistoryBuilder {
-        self.address = address;
-        self
-    }
-
-    #[allow(dead_code)]
-    pub fn token_address(mut self, token_address: H160) -> TransferHistoryBuilder {
-        self.token_address = token_address;
-        self
-    }
-
-    pub async fn build(self) -> Result<Vec<TxReceipt>, JsonRpcError> {
-        match self.coin.utxo.rpc_client {
-            UtxoRpcClientEnum::Native(ref native) => self.build_receipts_with_native(native).await,
-            UtxoRpcClientEnum::Electrum(ref electrum) => self.build_receipts_with_electrum(electrum).await,
-        }
-    }
-
-    pub async fn build_tx_idents(self) -> Result<Vec<(H256Json, u64)>, JsonRpcError> {
-        match self.coin.utxo.rpc_client {
-            UtxoRpcClientEnum::Native(ref native) => self.build_tx_ident_with_native(native).await,
-            UtxoRpcClientEnum::Electrum(ref electrum) => self.build_tx_idents_with_electrum(electrum).await,
-        }
-    }
-
-    async fn build_tx_idents_with_electrum(
-        &self,
-        electrum: &ElectrumClient,
-    ) -> Result<Vec<(H256Json, u64)>, JsonRpcError> {
-        let address = qrc20_addr_into_rpc_format(&self.address);
-        let token_address = qrc20_addr_into_rpc_format(&self.token_address);
-        let history = electrum
-            .blockchain_contract_event_get_history(&address, &token_address, QRC20_TRANSFER_TOPIC)
-            .compat()
-            .await?;
-
-        Ok(history
-            .into_iter()
-            .filter(|item| self.from_block <= item.height)
-            .map(|tx| (tx.tx_hash, tx.height))
-            .unique()
-            .collect())
-    }
-
-    async fn build_tx_ident_with_native(&self, native: &NativeClient) -> Result<Vec<(H256Json, u64)>, JsonRpcError> {
-        let receipts = self.build_receipts_with_native(native).await?;
-        Ok(receipts
-            .into_iter()
-            .map(|receipt| (receipt.transaction_hash, receipt.block_number))
-            .unique()
-            .collect())
-    }
-
-    async fn build_receipts_with_electrum(&self, electrum: &ElectrumClient) -> Result<Vec<TxReceipt>, JsonRpcError> {
-        let tx_idents = self.build_tx_idents_with_electrum(electrum).await?;
-
-        let mut receipts = Vec::new();
-        for (tx_hash, _height) in tx_idents {
-            let mut tx_receipts = electrum.blochchain_transaction_get_receipt(&tx_hash).compat().await?;
-            // remove receipts of contract calls didn't emit at least one `Transfer` event
-            tx_receipts.retain(|receipt| receipt.log.iter().any(is_transfer_event_log));
-            receipts.extend(tx_receipts.into_iter());
-        }
-
-        Ok(receipts)
-    }
-
-    async fn build_receipts_with_native(&self, native: &NativeClient) -> Result<Vec<TxReceipt>, JsonRpcError> {
-        // TODO set to 100
-        const SEARCH_LOGS_STEP: u64 = 5000;
-
-        let token_address = qrc20_addr_into_rpc_format(&self.token_address);
-        let address_topic = address_to_log_topic(&self.address);
-
-        // «Skip the log if none of the topics are matched»
-        // https://github.com/qtumproject/qtum-enterprise/blob/qtumx_beta_0.16.0/src/rpc/blockchain.cpp#L1590
-        //
-        // It means disjunction of topics (binary `OR`).
-        // So we cannot specify `Transfer` event signature in the first topic,
-        // but we can specify either `sender` or `receiver` in `Transfer` event.
-        let topics = vec![
-            TopicFilter::Skip,                         // event signature
-            TopicFilter::Match(address_topic.clone()), // `sender` address in `Transfer` event
-            TopicFilter::Match(address_topic.clone()), // `receiver` address in `Transfer` event
-        ];
-
-        let block_count = native.get_block_count().compat().await?;
-
-        let mut result = Vec::new();
-        let mut from_block = self.from_block;
-        while from_block <= block_count {
-            let to_block = from_block + SEARCH_LOGS_STEP - 1;
-            let mut receipts = native
-                .search_logs(from_block, Some(to_block), vec![token_address.clone()], topics.clone())
-                .compat()
-                .await?;
-
-            // remove receipts of transaction that didn't emit at least one `Transfer` event
-            receipts.retain(|receipt| receipt.log.iter().any(is_transfer_event_log));
-
-            result.extend(receipts.into_iter());
-            from_block += SEARCH_LOGS_STEP;
-        }
-        Ok(result)
-    }
-}
-
 /// Get `Transfer` events details from [`TxReceipt::logs`].
 fn transfer_events_from_receipt(receipt: &TxReceipt) -> Result<Vec<TransferEventDetails>, String> {
     receipt
@@ -1101,13 +969,6 @@ fn check_if_contract_call_completed(receipt: &TxReceipt) -> Result<(), String> {
             ERR!("Contract call failed with an error: {}{}", ex, msg)
         },
         _ => Ok(()),
-    }
-}
-
-fn is_transfer_event_log(log: &LogEntry) -> bool {
-    match log.topics.first() {
-        Some(first_topic) => first_topic == QRC20_TRANSFER_TOPIC,
-        None => false,
     }
 }
 

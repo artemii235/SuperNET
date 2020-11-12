@@ -1,6 +1,5 @@
 use crate::eth::{self, u256_to_big_decimal, wei_from_big_decimal};
-use crate::qrc20::rpc_client::{ContractCallResult, LogEntry, Qrc20NativeOps, Qrc20RpcOps, TopicFilter, TxHistoryItem,
-                               TxReceipt};
+use crate::qrc20::rpc_client::{ContractCallResult, LogEntry, Qrc20NativeOps, Qrc20RpcOps, TopicFilter, TxReceipt};
 use crate::utxo::rpc_clients::{ElectrumClient, NativeClient, UnspentInfo, UtxoRpcClientEnum, UtxoRpcClientOps};
 use crate::utxo::utxo_common::{self, big_decimal_from_sat};
 use crate::utxo::{qtum, sign_tx, utxo_fields_from_conf_and_request, ActualTxFee, AdditionalTxData, FeePolicy,
@@ -317,6 +316,14 @@ impl Qrc20Coin {
                 .await
         );
         Ok(signed.into())
+    }
+
+    pub async fn get_transaction_receipts(&self, tx_hash: &H256Json) -> Result<Vec<TxReceipt>, String> {
+        let fut = match self.utxo.rpc_client {
+            UtxoRpcClientEnum::Electrum(ref electrum) => electrum.blochchain_transaction_get_receipt(tx_hash),
+            UtxoRpcClientEnum::Native(ref native) => native.get_transaction_receipt(tx_hash),
+        };
+        Ok(try_s!(fut.compat().await))
     }
 
     /// Generate Qtum UTXO transaction with contract calls.
