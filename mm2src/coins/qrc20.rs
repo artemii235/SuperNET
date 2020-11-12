@@ -1,6 +1,6 @@
 use crate::eth::{self, u256_to_big_decimal, wei_from_big_decimal};
-use crate::qrc20::rpc_electrum::{ContractCallResult, LogEntry, Qrc20NativeOps, Qrc20RpcOps, TopicFilter,
-                                 TxHistoryItem, TxReceipt};
+use crate::qrc20::rpc_client::{ContractCallResult, LogEntry, Qrc20NativeOps, Qrc20RpcOps, TopicFilter, TxHistoryItem,
+                               TxReceipt};
 use crate::utxo::rpc_clients::{ElectrumClient, NativeClient, UnspentInfo, UtxoRpcClientEnum, UtxoRpcClientOps};
 use crate::utxo::utxo_common::{self, big_decimal_from_sat};
 use crate::utxo::{qtum, sign_tx, utxo_fields_from_conf_and_request, ActualTxFee, AdditionalTxData, FeePolicy,
@@ -37,9 +37,9 @@ use std::sync::Arc;
 
 mod history;
 #[cfg(test)] mod qrc20_tests;
-pub mod rpc_electrum;
+pub mod rpc_client;
 mod script_pubkey;
-mod swap_ops;
+mod swap;
 
 /// Qtum amount is always 0 for the QRC20 UTXO outputs,
 /// because we should pay only a fee in Qtum to send the QRC20 transaction.
