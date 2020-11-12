@@ -163,10 +163,7 @@ impl Qrc20Coin {
         fee_addr: H160,
         expected_value: U256,
     ) -> Result<(), String> {
-        let verbose_tx = match self.utxo.rpc_client {
-            UtxoRpcClientEnum::Electrum(ref rpc) => try_s!(rpc.get_verbose_transaction(fee_tx_hash).compat().await),
-            UtxoRpcClientEnum::Native(_) => return ERR!("Electrum client expected"),
-        };
+        let verbose_tx = try_s!(self.utxo.rpc_client.get_verbose_transaction(fee_tx_hash).compat().await);
         let qtum_tx: UtxoTx = try_s!(deserialize(verbose_tx.hex.as_slice()).map_err(|e| ERRL!("{:?}", e)));
 
         // The transaction could not being mined, just check the transfer tokens.
@@ -212,16 +209,8 @@ impl Qrc20Coin {
         tx: UtxoTx,
         search_from_block: u64,
     ) -> Result<Option<FoundSwapTxSpend>, String> {
-        let electrum = match self.utxo.rpc_client {
-            UtxoRpcClientEnum::Electrum(ref rpc_cln) => rpc_cln,
-
-            UtxoRpcClientEnum::Native(_) => {
-                return ERR!("Native mode not supported");
-            },
-        };
-
         let tx_hash = tx.hash().reversed().into();
-        let verbose_tx = try_s!(electrum.get_verbose_transaction(tx_hash).compat().await);
+        let verbose_tx = try_s!(self.utxo.rpc_client.get_verbose_transaction(tx_hash).compat().await);
         if verbose_tx.confirmations < 1 {
             return ERR!("'erc20Payment' was not confirmed yet. Please wait for at least one confirmation");
         }
@@ -351,12 +340,7 @@ impl Qrc20Coin {
                 .await
         );
         let tx_hash = qtum_tx.hash().reversed().into();
-        let receipts = match self.utxo.rpc_client {
-            UtxoRpcClientEnum::Electrum(ref electrum) => {
-                try_s!(electrum.blochchain_transaction_get_receipt(&tx_hash).compat().await)
-            },
-            UtxoRpcClientEnum::Native(_) => return ERR!("Electrum client expected"),
-        };
+        let receipts = try_s!(self.get_transaction_receipts(&tx_hash).await);
 
         for receipt in receipts {
             let output = try_s!(qtum_tx
@@ -572,12 +556,7 @@ impl Qrc20Coin {
     /// Note returns an error if the contract call was excepted.
     async fn erc20_payment_details_from_tx(&self, qtum_tx: &UtxoTx) -> Result<Erc20PaymentDetails, String> {
         let tx_hash: H256Json = qtum_tx.hash().reversed().into();
-        let receipts = match self.utxo.rpc_client {
-            UtxoRpcClientEnum::Electrum(ref rpc) => {
-                try_s!(rpc.blochchain_transaction_get_receipt(&tx_hash).compat().await)
-            },
-            UtxoRpcClientEnum::Native(_) => return ERR!("Electrum client expected"),
-        };
+        let receipts = try_s!(self.get_transaction_receipts(&tx_hash).await);
 
         for receipt in receipts {
             let output = try_s!(qtum_tx
