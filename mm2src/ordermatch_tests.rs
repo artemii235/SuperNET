@@ -1278,14 +1278,7 @@ fn make_ctx_for_tests() -> (MmArc, String, [u8; 32]) {
     (ctx, pubkey, secret)
 }
 
-fn make_random_orders(
-    pubkey: String,
-    secret: &[u8; 32],
-    peer_id: String,
-    base: String,
-    rel: String,
-    n: usize,
-) -> Vec<OrderbookItem> {
+fn make_random_orders(pubkey: String, secret: &[u8; 32], base: String, rel: String, n: usize) -> Vec<OrderbookItem> {
     let mut rng = rand::thread_rng();
     let mut orders = Vec::with_capacity(n);
     for _i in 0..n {
@@ -1859,8 +1852,97 @@ fn test_taker_request_can_match_with_uuid() {
 fn test_orderbook_insert_or_update_order() {
     let (_, pubkey, secret) = make_ctx_for_tests();
     let mut orderbook = Orderbook::default();
-    let peer = PeerId::random();
-    let order = make_random_orders(pubkey.clone(), &secret, peer.to_string(), "C1".into(), "C2".into(), 1).remove(0);
+    let order = make_random_orders(pubkey.clone(), &secret, "C1".into(), "C2".into(), 1).remove(0);
 
     orderbook.insert_or_update_order(order.clone(), true);
+}
+
+fn all_orders_trie_root_by_pub(ctx: &MmArc, pubkey: &str) -> H64 {
+    let ordermatch_ctx = OrdermatchContext::from_ctx(ctx).unwrap();
+    let orderbook = block_on(ordermatch_ctx.orderbook.lock());
+    orderbook.pubkeys_state.get(pubkey).unwrap().all_orders_trie_root
+}
+
+fn pair_trie_root_by_pub(ctx: &MmArc, pubkey: &str, pair: &str) -> H64 {
+    let ordermatch_ctx = OrdermatchContext::from_ctx(ctx).unwrap();
+    let orderbook = block_on(ordermatch_ctx.orderbook.lock());
+    *orderbook
+        .pubkeys_state
+        .get(pubkey)
+        .unwrap()
+        .order_pairs_trie_roots
+        .get(pair)
+        .unwrap()
+}
+
+fn clone_orderbook_memory_db(ctx: &MmArc) -> MemoryDB<Blake2Hasher64> {
+    let ordermatch_ctx = OrdermatchContext::from_ctx(ctx).unwrap();
+    let orderbook = block_on(ordermatch_ctx.orderbook.lock());
+    orderbook.memory_db.clone()
+}
+
+#[test]
+fn test_process_sync_pubkey_orderbook_state_after_new_orders_added() {
+    let (ctx, pubkey, secret) = make_ctx_for_tests();
+    let orders = make_random_orders(pubkey.clone(), &secret, "C1".into(), "C2".into(), 100);
+
+    for order in orders {
+        block_on(insert_or_update_order(&ctx, order, true));
+    }
+
+    let alb_ordered_pair = alb_ordered_pair("C1", "C2");
+    let current_root_hash = all_orders_trie_root_by_pub(&ctx, &pubkey);
+    let pair_trie_root = pair_trie_root_by_pub(&ctx, &pubkey, &alb_ordered_pair);
+
+    let prev_pairs_state = HashMap::from_iter(iter::once((alb_ordered_pair.clone(), pair_trie_root)));
+
+    let mut old_mem_db = clone_orderbook_memory_db(&ctx);
+
+    let new_orders = make_random_orders(pubkey.clone(), &secret, "C1".into(), "C2".into(), 100);
+    for order in new_orders {
+        block_on(insert_or_update_order(&ctx, order.clone(), true));
+    }
+
+    let expected_root_hash = all_orders_trie_root_by_pub(&ctx, &pubkey);
+    let mut result = block_on(process_sync_pubkey_orderbook_state(
+        ctx.clone(),
+        pubkey.clone(),
+        current_root_hash,
+        expected_root_hash,
+        prev_pairs_state,
+    ))
+    .unwrap()
+    .unwrap();
+
+    // check all orders trie root first
+    let delta = match result.all_orders_diff {
+        DeltaOrFullTrie::Delta(delta) => delta,
+        DeltaOrFullTrie::FullTrie(_) => panic!("Must be DeltaOrFullTrie::Delta"),
+    };
+
+    let actual_root_hash = delta_trie_root::<Layout, _, _, _, _, _>(
+        &mut old_mem_db,
+        current_root_hash,
+        delta.into_iter().map(|(pair, hash)| (pair.into_bytes(), hash)),
+    )
+    .unwrap();
+    assert_eq!(expected_root_hash, actual_root_hash);
+
+    // check pair trie root
+    let expected_root_hash = pair_trie_root_by_pub(&ctx, &pubkey, &alb_ordered_pair);
+
+    let delta = match result.pair_orders_diff.remove(&alb_ordered_pair).unwrap() {
+        DeltaOrFullTrie::Delta(delta) => delta,
+        DeltaOrFullTrie::FullTrie(_) => panic!("Must be DeltaOrFullTrie::Delta"),
+    };
+
+    let actual_root_hash = delta_trie_root::<Layout, _, _, _, _, _>(
+        &mut old_mem_db,
+        pair_trie_root,
+        delta
+            .into_iter()
+            .map(|(uuid, order)| (*uuid.as_bytes(), order.map(|o| encode_message(&o).unwrap()))),
+    )
+    .unwrap();
+    assert_eq!(expected_root_hash, actual_root_hash);
 }
