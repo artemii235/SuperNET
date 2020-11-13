@@ -2275,17 +2275,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "keccak-hasher"
-version = "0.15.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "711adba9940a039f4374fc5724c0a5eaca84a2d558cce62256bfe26f0dbef05e"
-dependencies = [
- "hash-db",
- "hash256-std-hasher",
- "tiny-keccak 2.0.2",
-]
-
-[[package]]
 name = "kernel32-sys"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2979,7 +2968,6 @@ dependencies = [
  "primitives",
  "rand 0.4.6",
  "rand 0.7.3",
- "reference-trie",
  "regex",
  "rmp-serde",
  "rpc",
@@ -3946,20 +3934,6 @@ dependencies = [
  "proc-macro2 1.0.18",
  "quote 1.0.7",
  "syn 1.0.33",
-]
-
-[[package]]
-name = "reference-trie"
-version = "0.22.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e665ff3dc1dfac29203c0c7b6ef2eba7fb91c009f77cd4fc40d8c1be6d2f431b"
-dependencies = [
- "hash-db",
- "hash256-std-hasher",
- "keccak-hasher",
- "parity-scale-codec",
- "trie-db",
- "trie-root",
 ]
 
 [[package]]

@@ -103,7 +103,7 @@ async fn process_p2p_message(
         let mut split = topic.as_str().split(TOPIC_SEPARATOR);
         match split.next() {
             Some(lp_ordermatch::ORDERBOOK_PREFIX) => {
-                if lp_ordermatch::process_msg(ctx.clone(), topic.as_str(), peer_id.to_string(), &message.data).await {
+                if lp_ordermatch::process_msg(ctx.clone(), vec![], peer_id.to_string(), &message.data).await {
                     to_propagate = true;
                 }
             },

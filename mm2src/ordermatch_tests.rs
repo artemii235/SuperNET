@@ -1854,7 +1854,7 @@ fn test_orderbook_insert_or_update_order() {
     let mut orderbook = Orderbook::default();
     let order = make_random_orders(pubkey.clone(), &secret, "C1".into(), "C2".into(), 1).remove(0);
 
-    orderbook.insert_or_update_order(order.clone(), true);
+    orderbook.insert_or_update_order_update_trie(order.clone(), true);
 }
 
 fn all_orders_trie_root_by_pub(ctx: &MmArc, pubkey: &str) -> H64 {
