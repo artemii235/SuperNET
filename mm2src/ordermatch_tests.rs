@@ -1853,8 +1853,7 @@ fn test_orderbook_insert_or_update_order() {
     let (_, pubkey, secret) = make_ctx_for_tests();
     let mut orderbook = Orderbook::default();
     let order = make_random_orders(pubkey.clone(), &secret, "C1".into(), "C2".into(), 1).remove(0);
-
-    orderbook.insert_or_update_order_update_trie(order.clone(), true);
+    orderbook.insert_or_update_order_update_trie(order.clone());
 }
 
 fn all_orders_trie_root_by_pub(ctx: &MmArc, pubkey: &str) -> H64 {
@@ -1887,7 +1886,7 @@ fn test_process_sync_pubkey_orderbook_state_after_new_orders_added() {
     let orders = make_random_orders(pubkey.clone(), &secret, "C1".into(), "C2".into(), 100);
 
     for order in orders {
-        block_on(insert_or_update_order(&ctx, order, true));
+        block_on(insert_or_update_order(&ctx, order));
     }
 
     let alb_ordered_pair = alb_ordered_pair("C1", "C2");
@@ -1900,7 +1899,7 @@ fn test_process_sync_pubkey_orderbook_state_after_new_orders_added() {
 
     let new_orders = make_random_orders(pubkey.clone(), &secret, "C1".into(), "C2".into(), 100);
     for order in new_orders {
-        block_on(insert_or_update_order(&ctx, order.clone(), true));
+        block_on(insert_or_update_order(&ctx, order.clone()));
     }
 
     let expected_root_hash = all_orders_trie_root_by_pub(&ctx, &pubkey);

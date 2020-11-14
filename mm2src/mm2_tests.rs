@@ -303,14 +303,6 @@ fn alice_can_see_the_active_order_after_connection() {
     }))));
     assert!(rc.0.is_success(), "!setprice: {}", rc.1);
 
-    log!("Get RICK/MORTY orderbook on Eve side to trigger subscription");
-    let rc = unwrap!(block_on(mm_eve.rpc(json! ({
-        "userpass": mm_eve.userpass,
-        "method": "orderbook",
-        "base": "RICK",
-        "rel": "MORTY",
-    }))));
-    assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
     thread::sleep(Duration::from_secs(40));
     log!("Get RICK/MORTY orderbook on Eve side");
     let rc = unwrap!(block_on(mm_eve.rpc(json! ({
@@ -1625,8 +1617,16 @@ fn test_cancel_order() {
     // Enable coins on Alice side. Print the replies in case we need the "address".
     log! ({"enable_coins (alice): {:?}", block_on (enable_coins_eth_electrum (&mm_alice, vec!["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b"]))});
 
-    log!("Give Alice 15 seconds to import the order…");
-    thread::sleep(Duration::from_secs(15));
+    log!("Get RICK/MORTY orderbook on Alice side to trigger subscription");
+    let rc = unwrap!(block_on(mm_alice.rpc(json! ({
+        "userpass": mm_alice.userpass,
+        "method": "orderbook",
+        "base": "RICK",
+        "rel": "MORTY",
+    }))));
+    assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
+    log!("Give Alice 40 seconds to import the order…");
+    thread::sleep(Duration::from_secs(40));
 
     log!("Get RICK/MORTY orderbook on Alice side");
     let rc = unwrap!(block_on(mm_alice.rpc(json! ({
@@ -1969,6 +1969,15 @@ fn test_order_should_not_be_displayed_when_node_is_down() {
         ]))]
     );
 
+    log!("Get RICK/MORTY orderbook on Alice side to trigger subscription");
+    let rc = unwrap!(block_on(mm_alice.rpc(json! ({
+        "userpass": mm_alice.userpass,
+        "method": "orderbook",
+        "base": "RICK",
+        "rel": "MORTY",
+    }))));
+    assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
+
     // issue sell request on Bob side by setting base/rel price
     log!("Issue bob sell request");
     let rc = unwrap!(block_on(mm_bob.rpc(json! ({
@@ -1981,7 +1990,7 @@ fn test_order_should_not_be_displayed_when_node_is_down() {
     }))));
     assert!(rc.0.is_success(), "!setprice: {}", rc.1);
 
-    thread::sleep(Duration::from_secs(12));
+    thread::sleep(Duration::from_secs(2));
 
     log!("Get RICK/MORTY orderbook on Alice side");
     let rc = unwrap!(block_on(mm_alice.rpc(json! ({
@@ -2549,6 +2558,7 @@ fn setprice_min_volume_should_be_displayed_in_orderbook() {
     }))));
     assert!(rc.0.is_success(), "!setprice: {}", rc.1);
 
+    thread::sleep(Duration::from_secs(2));
     log!("Get ETH/JST orderbook on Bob side");
     let rc = unwrap!(block_on(mm_bob.rpc(json! ({
         "userpass": mm_bob.userpass,
@@ -2920,8 +2930,17 @@ fn set_price_with_cancel_previous_should_broadcast_cancelled_message() {
     // Enable coins on Alice side. Print the replies in case we need the "address".
     log! ({"enable_coins (alice): {:?}", block_on (enable_coins_eth_electrum (&mm_alice, vec!["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b"]))});
 
-    log!("Give Alice 15 seconds to import the order…");
-    thread::sleep(Duration::from_secs(15));
+    log!("Get RICK/MORTY orderbook on Alice side to trigger subscription");
+    let rc = unwrap!(block_on(mm_alice.rpc(json! ({
+        "userpass": mm_alice.userpass,
+        "method": "orderbook",
+        "base": "RICK",
+        "rel": "MORTY",
+    }))));
+    assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
+
+    log!("Give Alice 40 seconds to import the order…");
+    thread::sleep(Duration::from_secs(40));
 
     log!("Get RICK/MORTY orderbook on Alice side");
     let rc = unwrap!(block_on(mm_alice.rpc(json! ({

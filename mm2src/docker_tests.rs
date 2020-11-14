@@ -634,6 +634,15 @@ mod docker_tests {
         log!([block_on(enable_native(&mm_alice, "MYCOIN", vec![]))]);
         log!([block_on(enable_native(&mm_alice, "MYCOIN1", vec![]))]);
 
+        log!("Get MYCOIN/MYCOIN1 orderbook on Alice side to trigger subscription");
+        let rc = unwrap!(block_on(mm_alice.rpc(json! ({
+            "userpass": mm_alice.userpass,
+            "method": "orderbook",
+            "base": "MYCOIN",
+            "rel": "MYCOIN1",
+        }))));
+        assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
+
         let rc = unwrap!(block_on(mm_bob.rpc(json! ({
             "userpass": mm_bob.userpass,
             "method": "setprice",
@@ -768,6 +777,15 @@ mod docker_tests {
         log!([block_on(enable_native(&mm_alice, "MYCOIN", vec![]))]);
         log!([block_on(enable_native(&mm_alice, "MYCOIN1", vec![]))]);
 
+        log!("Get MYCOIN/MYCOIN1 orderbook on Alice side to trigger subscription");
+        let rc = unwrap!(block_on(mm_alice.rpc(json! ({
+            "userpass": mm_alice.userpass,
+            "method": "orderbook",
+            "base": "MYCOIN",
+            "rel": "MYCOIN1",
+        }))));
+        assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
+
         let rc = unwrap!(block_on(mm_bob.rpc(json! ({
             "userpass": mm_bob.userpass,
             "method": "setprice",
@@ -792,6 +810,7 @@ mod docker_tests {
         let asks = bob_orderbook["asks"].as_array().unwrap();
         assert_eq!(asks.len(), 1, "Bob MYCOIN/MYCOIN1 orderbook must have exactly 1 ask");
 
+        thread::sleep(Duration::from_secs(2));
         log!("Get MYCOIN/MYCOIN1 orderbook on Alice side");
         let rc = unwrap!(block_on(mm_alice.rpc(json! ({
             "userpass": mm_alice.userpass,
@@ -913,6 +932,15 @@ mod docker_tests {
         log!([block_on(enable_native(&mm_bob, "MYCOIN1", vec![]))]);
         log!([block_on(enable_native(&mm_alice, "MYCOIN", vec![]))]);
         log!([block_on(enable_native(&mm_alice, "MYCOIN1", vec![]))]);
+        log!("Get MYCOIN/MYCOIN1 orderbook on Alice side to trigger subscription");
+        let rc = unwrap!(block_on(mm_alice.rpc(json! ({
+            "userpass": mm_alice.userpass,
+            "method": "orderbook",
+            "base": "MYCOIN",
+            "rel": "MYCOIN1",
+        }))));
+        assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
+
         let rc = unwrap!(block_on(mm_bob.rpc(json! ({
             "userpass": mm_bob.userpass,
             "method": "setprice",
