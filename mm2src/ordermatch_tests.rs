@@ -1880,6 +1880,12 @@ fn clone_orderbook_memory_db(ctx: &MmArc) -> MemoryDB<Blake2Hasher64> {
     orderbook.memory_db.clone()
 }
 
+fn remove_order(ctx: &MmArc, uuid: Uuid) {
+    let ordermatch_ctx = OrdermatchContext::from_ctx(ctx).unwrap();
+    let mut orderbook = block_on(ordermatch_ctx.orderbook.lock());
+    orderbook.remove_order_trie_update(uuid);
+}
+
 #[test]
 fn test_process_sync_pubkey_orderbook_state_after_new_orders_added() {
     let (ctx, pubkey, secret) = make_ctx_for_tests();
@@ -1900,6 +1906,76 @@ fn test_process_sync_pubkey_orderbook_state_after_new_orders_added() {
     let new_orders = make_random_orders(pubkey.clone(), &secret, "C1".into(), "C2".into(), 100);
     for order in new_orders {
         block_on(insert_or_update_order(&ctx, order.clone()));
+    }
+
+    let expected_root_hash = all_orders_trie_root_by_pub(&ctx, &pubkey);
+    let mut result = block_on(process_sync_pubkey_orderbook_state(
+        ctx.clone(),
+        pubkey.clone(),
+        current_root_hash,
+        expected_root_hash,
+        prev_pairs_state,
+    ))
+    .unwrap()
+    .unwrap();
+
+    // check all orders trie root first
+    let delta = match result.all_orders_diff {
+        DeltaOrFullTrie::Delta(delta) => delta,
+        DeltaOrFullTrie::FullTrie(_) => panic!("Must be DeltaOrFullTrie::Delta"),
+    };
+
+    let actual_root_hash = delta_trie_root::<Layout, _, _, _, _, _>(
+        &mut old_mem_db,
+        current_root_hash,
+        delta.into_iter().map(|(pair, hash)| (pair.into_bytes(), hash)),
+    )
+    .unwrap();
+    assert_eq!(expected_root_hash, actual_root_hash);
+
+    // check pair trie root
+    let expected_root_hash = pair_trie_root_by_pub(&ctx, &pubkey, &alb_ordered_pair);
+
+    let delta = match result.pair_orders_diff.remove(&alb_ordered_pair).unwrap() {
+        DeltaOrFullTrie::Delta(delta) => delta,
+        DeltaOrFullTrie::FullTrie(_) => panic!("Must be DeltaOrFullTrie::Delta"),
+    };
+
+    let actual_root_hash = delta_trie_root::<Layout, _, _, _, _, _>(
+        &mut old_mem_db,
+        pair_trie_root,
+        delta
+            .into_iter()
+            .map(|(uuid, order)| (*uuid.as_bytes(), order.map(|o| encode_message(&o).unwrap()))),
+    )
+    .unwrap();
+    assert_eq!(expected_root_hash, actual_root_hash);
+}
+
+#[test]
+fn test_process_sync_pubkey_orderbook_state_after_orders_removed() {
+    use rand::{seq::SliceRandom, thread_rng};
+
+    let (ctx, pubkey, secret) = make_ctx_for_tests();
+    let orders = make_random_orders(pubkey.clone(), &secret, "C1".into(), "C2".into(), 100);
+
+    for order in orders.clone() {
+        block_on(insert_or_update_order(&ctx, order));
+    }
+
+    let alb_ordered_pair = alb_ordered_pair("C1", "C2");
+    let current_root_hash = all_orders_trie_root_by_pub(&ctx, &pubkey);
+    let pair_trie_root = pair_trie_root_by_pub(&ctx, &pubkey, &alb_ordered_pair);
+
+    let prev_pairs_state = HashMap::from_iter(iter::once((alb_ordered_pair.clone(), pair_trie_root)));
+
+    let mut old_mem_db = clone_orderbook_memory_db(&ctx);
+
+    // pick 10 orders at random and remove them
+    let mut rng = thread_rng();
+    let to_remove = orders.choose_multiple(&mut rng, 10);
+    for order in to_remove {
+        remove_order(&ctx, order.uuid);
     }
 
     let expected_root_hash = all_orders_trie_root_by_pub(&ctx, &pubkey);

@@ -1727,6 +1727,12 @@ pub async fn broadcast_maker_orders_keep_alive_loop(ctx: MmArc) {
         Timer::sleep(MIN_ORDER_KEEP_ALIVE_INTERVAL as f64).await;
         let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
         if let Some(state) = ordermatch_ctx.orderbook.lock().await.pubkeys_state.get(&my_pubsecp) {
+            if state.all_orders_trie_root == H64::default()
+                || state.all_orders_trie_root == hashed_null_node::<Layout>()
+            {
+                continue;
+            }
+
             let message = new_protocol::PubkeyKeepAlive {
                 orders_trie_root: state.all_orders_trie_root,
                 timestamp: now_ms() / 1000,
@@ -1737,8 +1743,6 @@ pub async fn broadcast_maker_orders_keep_alive_loop(ctx: MmArc) {
                 .iter()
                 .map(|(_, pair)| orderbook_topic_from_ordered_pair(pair))
                 .collect();
-            log!("Sending keep alive"[message]);
-            log!("Sending keep alive topics"[topics]);
             broadcast_ordermatch_message(&ctx, topics, message.into());
         };
     }
@@ -2041,24 +2045,39 @@ impl Orderbook {
         let alb_ordered = alb_ordered_pair(&order.base, &order.rel);
         let pubkey_state = pubkey_state_mut(&mut self.pubkeys_state, &order.pubkey);
         let pair_state = order_pair_root_mut(&mut pubkey_state.order_pairs_trie_roots, &alb_ordered);
+        let old_state = *pair_state;
         *pair_state = delta_trie_root::<Layout, _, _, _, _, _>(&mut self.memory_db, *pair_state, vec![(
             *order.uuid.as_bytes(),
             None::<Vec<u8>>,
         )])
         .unwrap();
 
+        pubkey_state.order_pairs_trie_state_history.insert(old_state, TrieDiff {
+            delta: vec![(uuid, None)],
+            next_root: *pair_state,
+        });
+
         let all_orders_delta = if *pair_state == hashed_null_node::<Layout>() {
-            vec![(alb_ordered.into_bytes(), None)]
+            vec![(alb_ordered, None)]
         } else {
-            vec![(alb_ordered.into_bytes(), Some(*pair_state))]
+            vec![(alb_ordered, Some(*pair_state))]
         };
 
+        let old_state = pubkey_state.all_orders_trie_root;
         pubkey_state.all_orders_trie_root = delta_trie_root::<Layout, _, _, _, _, _>(
             &mut self.memory_db,
             pubkey_state.all_orders_trie_root,
-            all_orders_delta,
+            all_orders_delta
+                .clone()
+                .into_iter()
+                .map(|(pair, value)| (pair.into_bytes(), value)),
         )
         .unwrap();
+
+        pubkey_state.orders_trie_state_history.insert(old_state, TrieDiff {
+            delta: all_orders_delta,
+            next_root: pubkey_state.all_orders_trie_root,
+        });
         Some(order)
     }
 
