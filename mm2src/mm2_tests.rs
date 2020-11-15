@@ -2027,6 +2027,86 @@ fn test_order_should_not_be_displayed_when_node_is_down() {
 
 #[test]
 #[cfg(feature = "native")]
+fn test_own_orders_should_not_be_removed_from_orderbook() {
+    let coins = json!([
+        {"coin":"RICK","asset":"RICK","protocol":{"type":"UTXO"}},
+        {"coin":"MORTY","asset":"MORTY","protocol":{"type":"UTXO"}},
+    ]);
+
+    // start bob and immediately place the order
+    let mut mm_bob = unwrap!(MarketMakerIt::start(
+        json! ({
+            "gui": "nogui",
+            "netid": 9998,
+            "dht": "on",  // Enable DHT without delay.
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| unwrap! (s.parse::<i64>())),
+            "passphrase": "bob passphrase",
+            "coins": coins,
+            "i_am_seed": true,
+            "rpc_password": "pass",
+        }),
+        "pass".into(),
+        match var("LOCAL_THREAD_MM") {
+            Ok(ref e) if e == "bob" => Some(local_start()),
+            _ => None,
+        }
+    ));
+    let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
+    log!({"Bob log path: {}", mm_bob.log_path.display()});
+    unwrap!(block_on(
+        mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
+    ));
+
+    log!(
+        "Bob enable RICK "[block_on(enable_electrum(&mm_bob, "RICK", vec![
+            "electrum3.cipig.net:10017",
+            "electrum2.cipig.net:10017",
+            "electrum1.cipig.net:10017",
+        ]))]
+    );
+
+    log!(
+        "Bob enable MORTY "[block_on(enable_electrum(&mm_bob, "MORTY", vec![
+            "electrum3.cipig.net:10018",
+            "electrum2.cipig.net:10018",
+            "electrum1.cipig.net:10018",
+        ]))]
+    );
+
+    // issue sell request on Bob side by setting base/rel price
+    log!("Issue bob sell request");
+    let rc = unwrap!(block_on(mm_bob.rpc(json! ({
+        "userpass": mm_bob.userpass,
+        "method": "setprice",
+        "base": "RICK",
+        "rel": "MORTY",
+        "price": 0.9,
+        "volume": "0.9",
+    }))));
+    assert!(rc.0.is_success(), "!setprice: {}", rc.1);
+
+    thread::sleep(Duration::from_secs(95));
+
+    let rc = unwrap!(block_on(mm_bob.rpc(json! ({
+        "userpass": mm_bob.userpass,
+        "method": "orderbook",
+        "base": "RICK",
+        "rel": "MORTY",
+    }))));
+    assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
+
+    let bob_orderbook: Json = unwrap!(json::from_str(&rc.1));
+    log!("Bob orderbook "[bob_orderbook]);
+    let asks = unwrap!(bob_orderbook["asks"].as_array());
+    assert_eq!(asks.len(), 1, "Bob RICK/MORTY orderbook must have exactly 1 ask");
+
+    unwrap!(block_on(mm_bob.stop()));
+}
+
+#[test]
+#[cfg(feature = "native")]
 // https://github.com/KomodoPlatform/atomicDEX-API/issues/511
 fn test_all_orders_per_pair_per_node_must_be_displayed_in_orderbook() {
     let coins = json!([

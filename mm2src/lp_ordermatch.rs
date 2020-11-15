@@ -2279,6 +2279,7 @@ fn lp_connected_alice(ctx: MmArc, taker_request: TakerRequest, taker_match: Take
 }
 
 pub async fn lp_ordermatch_loop(ctx: MmArc) {
+    let my_pubsecp = hex::encode(&**ctx.secp256k1_key_pair().public());
     loop {
         if ctx.is_stopping() {
             break;
@@ -2344,7 +2345,7 @@ pub async fn lp_ordermatch_loop(ctx: MmArc) {
             let mut uuids_to_remove = vec![];
             let mut keys_to_remove = vec![];
             orderbook.pubkeys_state.retain(|pubkey, state| {
-                let to_retain = state.last_keep_alive + MAKER_ORDER_TIMEOUT > now_ms() / 1000;
+                let to_retain = pubkey == &my_pubsecp || state.last_keep_alive + MAKER_ORDER_TIMEOUT > now_ms() / 1000;
                 if !to_retain {
                     for (uuid, _) in &state.orders_uuids {
                         uuids_to_remove.push(*uuid);
