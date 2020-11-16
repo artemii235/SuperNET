@@ -1560,4 +1560,69 @@ mod docker_tests {
             })));
         }
     }
+
+    #[test]
+    fn test_maker_order_should_kick_start_and_appear_in_orderbook_on_restart() {
+        let (_ctx, _, bob_priv_key) = generate_coin_with_random_privkey("MYCOIN", 1000);
+        let (_ctx, _, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN1", 2000);
+        let coins = json! ([
+            {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
+            {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
+        ]);
+        let mut bob_conf = json! ({
+            "gui": "nogui",
+            "netid": 9000,
+            "dht": "on",  // Enable DHT without delay.
+            "passphrase": format!("0x{}", hex::encode(bob_priv_key)),
+            "coins": coins,
+            "rpc_password": "pass",
+            "i_am_seed": true,
+        });
+        let mut mm_bob = unwrap!(MarketMakerIt::start(bob_conf.clone(), "pass".to_string(), None,));
+        let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
+        unwrap!(block_on(
+            mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
+        ));
+
+        log!([block_on(enable_native(&mm_bob, "MYCOIN", vec![]))]);
+        log!([block_on(enable_native(&mm_bob, "MYCOIN1", vec![]))]);
+        let rc = unwrap!(block_on(mm_bob.rpc(json! ({
+            "userpass": mm_bob.userpass,
+            "method": "setprice",
+            "base": "MYCOIN",
+            "rel": "MYCOIN1",
+            "price": 1,
+            "max": true,
+        }))));
+        assert!(rc.0.is_success(), "!setprice: {}", rc.1);
+
+        // mm_bob using same DB dir that should kick start the order
+        bob_conf["dbdir"] = mm_bob.folder.join("DB").to_str().unwrap().into();
+        bob_conf["log"] = mm_bob.folder.join("mm2_dup.log").to_str().unwrap().into();
+        unwrap!(block_on(mm_bob.stop()));
+
+        let mut mm_bob_dup = unwrap!(MarketMakerIt::start(bob_conf, "pass".to_string(), None,));
+        let (_bob_dup_dump_log, _bob_dup_dump_dashboard) = mm_dump(&mm_bob_dup.log_path);
+        unwrap!(block_on(
+            mm_bob_dup.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
+        ));
+        log!([block_on(enable_native(&mm_bob_dup, "MYCOIN", vec![]))]);
+        log!([block_on(enable_native(&mm_bob_dup, "MYCOIN1", vec![]))]);
+
+        thread::sleep(Duration::from_secs(2));
+
+        log!("Get RICK/MORTY orderbook on Bob side");
+        let rc = unwrap!(block_on(mm_bob_dup.rpc(json! ({
+            "userpass": mm_bob_dup.userpass,
+            "method": "orderbook",
+            "base": "MYCOIN",
+            "rel": "MYCOIN1",
+        }))));
+        assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
+
+        let bob_orderbook: Json = unwrap!(json::from_str(&rc.1));
+        log!("Bob orderbook "[bob_orderbook]);
+        let asks = bob_orderbook["asks"].as_array().unwrap();
+        assert_eq!(asks.len(), 1, "Bob MYCOIN/MYCOIN1 orderbook must have exactly 1 asks");
+    }
 }

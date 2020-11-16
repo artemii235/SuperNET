@@ -845,7 +845,7 @@ async fn maker_order_created_p2p_notify(ctx: MmArc, order: &MakerOrder) {
         base: order.base.clone(),
         rel: order.rel.clone(),
         price: order.price.to_ratio(),
-        max_volume: order.max_base_vol.to_ratio(),
+        max_volume: order.available_amount().to_ratio(),
         min_volume: order.min_base_vol.to_ratio(),
         conf_settings: order.conf_settings.unwrap(),
         created_at: now_ms() / 1000,
@@ -2366,6 +2366,19 @@ pub async fn lp_ordermatch_loop(ctx: MmArc) {
             }
             mm_gauge!(ctx.metrics, "orderbook.len", orderbook.order_set.len() as i64);
             // mm_gauge!(ctx.metrics, "inactive_orders.len", inactive.len() as i64);
+        }
+
+        {
+            let my_maker_orders = ordermatch_ctx.my_maker_orders.lock().await;
+            for (uuid, order) in my_maker_orders.iter() {
+                if !ordermatch_ctx.orderbook.lock().await.order_set.contains_key(uuid) {
+                    if let Ok(Some(_)) = lp_coinfindᵃ(&ctx, &order.base).await {
+                        if let Ok(Some(_)) = lp_coinfindᵃ(&ctx, &order.rel).await {
+                            maker_order_created_p2p_notify(ctx.clone(), order).await;
+                        }
+                    }
+                }
+            }
         }
 
         Timer::sleep(0.777).await;
