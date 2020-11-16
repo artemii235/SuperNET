@@ -2002,7 +2002,11 @@ impl Orderbook {
     ) -> Option<OrdermatchRequest> {
         let pubkey_state = pubkey_state_mut(&mut self.pubkeys_state, from_pubkey);
         for pair in pairs {
-            if !pubkey_state.order_pairs_trie_roots.contains_key(&pair) {
+            if !pubkey_state.order_pairs_trie_roots.contains_key(&pair)
+                && self
+                    .topics_subscribed_to
+                    .contains_key(&orderbook_topic_from_ordered_pair(&pair))
+            {
                 pubkey_state.order_pairs_trie_roots.insert(pair, H64::default());
             }
         }
@@ -2678,7 +2682,7 @@ impl OrderbookItem {
             msg => return ERR!("Expected MakerOrderCreated, found {:?}", msg),
         };
 
-        let mut req: OrderbookItem = (order, hex::encode(init_pubkey.to_bytes().as_slice())).into();
+        let req: OrderbookItem = (order, hex::encode(init_pubkey.to_bytes().as_slice())).into();
         Ok(req)
     }
 

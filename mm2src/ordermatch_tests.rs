@@ -1,5 +1,6 @@
 use super::*;
 use crate::mm2::lp_network::P2PContext;
+use crate::mm2::lp_ordermatch::new_protocol::PubkeyKeepAlive;
 use coins::{MmCoin, TestCoin};
 use common::{executor::spawn,
              mm_ctx::{MmArc, MmCtx, MmCtxBuilder},
@@ -2020,4 +2021,28 @@ fn test_process_sync_pubkey_orderbook_state_after_orders_removed() {
     )
     .unwrap();
     assert_eq!(expected_root_hash, actual_root_hash);
+}
+
+#[test]
+fn test_orderbook_pubkey_sync_request() {
+    let mut orderbook = Orderbook::default();
+    orderbook.topics_subscribed_to.insert(
+        orderbook_topic_from_base_rel("C1", "C2"),
+        OrderbookRequestingState::Requested,
+    );
+    let pairs = vec!["C1:C2".into(), "C2:C3".into()];
+    let pubkey = "pubkey";
+    let message = PubkeyKeepAlive {
+        orders_trie_root: [1; 8],
+        timestamp: now_ms() / 1000,
+    };
+
+    let request = orderbook.process_keep_alive(pubkey, pairs, message).unwrap();
+    match request {
+        OrdermatchRequest::SyncPubkeyOrderbookState { pairs_trie_roots, .. } => {
+            assert!(pairs_trie_roots.contains_key("C1:C2"));
+            assert!(!pairs_trie_roots.contains_key("C2:C3"));
+        },
+        _ => panic!("Invalid request {:?}", request),
+    }
 }
