@@ -1,4 +1,4 @@
-use super::{MatchBy as SuperMatchBy, OrderbookItem, OrderbookPair, TakerAction};
+use super::{MatchBy as SuperMatchBy, OrderbookItem, TakerAction};
 use crate::mm2::lp_ordermatch::OrderConfirmationsSettings;
 use common::mm_number::MmNumber;
 use compact_uuid::CompactUuid;

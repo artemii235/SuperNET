@@ -31,7 +31,7 @@ use common::mm_ctx::{from_ctx, MmArc, MmWeak};
 use common::mm_number::{Fraction, MmNumber};
 use common::{bits256, block_on, json_dir_entries, new_uuid, now_ms, remove_file, write};
 use either::Either;
-use futures::{compat::Future01CompatExt, lock::Mutex as AsyncMutex, Stream, StreamExt};
+use futures::{compat::Future01CompatExt, lock::Mutex as AsyncMutex, StreamExt};
 use gstuff::slurp;
 use hash256_std_hasher::Hash256StdHasher;
 use hash_db::{Hasher, EMPTY_PREFIX};
@@ -42,11 +42,11 @@ use num_rational::BigRational;
 use num_traits::identities::Zero;
 use rpc::v1::types::H256 as H256Json;
 use serde_json::{self as json, Value as Json};
-use sp_trie::{child_trie_root, delta_trie_root, generate_trie_proof, verify_trie_proof, DBValue, HashDBT, MemoryDB,
-              NodeCodec, Trie, TrieConfiguration, TrieDB, TrieDBMut, TrieHash, TrieMut, TrieStream};
+use sp_trie::{delta_trie_root, DBValue, HashDBT, MemoryDB, Trie, TrieConfiguration, TrieDB, TrieDBMut, TrieHash,
+              TrieMut};
 use std::collections::hash_map::{Entry, HashMap, RawEntryMut};
 use std::collections::{BTreeSet, HashSet};
-use std::convert::{TryFrom, TryInto};
+use std::convert::TryInto;
 use std::fmt;
 use std::fs::DirEntry;
 use std::path::PathBuf;
@@ -80,8 +80,6 @@ const ORDERBOOK_REQUESTING_TIMEOUT: u64 = MIN_ORDER_KEEP_ALIVE_INTERVAL * 2;
 const INACTIVE_ORDER_TIMEOUT: u64 = 240;
 const MIN_TRADING_VOL: &str = "0.00777";
 
-pub type OrderbookPair = (String, String);
-
 /// Alphabetically ordered orderbook pair
 type AlbOrderedOrderbookPair = String;
 
@@ -109,7 +107,7 @@ async fn process_orders_keep_alive(
     topics: Vec<String>,
     keep_alive: new_protocol::PubkeyKeepAlive,
 ) -> bool {
-    let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
+    let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).expect("from_ctx failed");
     let to_request = ordermatch_ctx
         .orderbook
         .lock()
@@ -122,11 +120,10 @@ async fn process_orders_keep_alive(
         None => return true,
     };
 
-    log!("Sending req "[req]);
     let resp =
         request_one_peer::<SyncPubkeyOrderbookStateRes>(ctx.clone(), P2PRequest::Ordermatch(req), propagated_from_peer)
             .await;
-    log!("Response "[resp]);
+
     let response = match resp {
         Ok(Some(resp)) => resp,
         _ => return false,
@@ -137,7 +134,8 @@ async fn process_orders_keep_alive(
     let new_orders_root = match response.all_orders_diff {
         DeltaOrFullTrie::Delta(delta) => {
             let delta = delta.into_iter().map(|(pair, hash)| (pair.into_bytes(), hash));
-            delta_trie_root::<Layout, _, _, _, _, _>(&mut orderbook.memory_db, all_orders_root, delta).unwrap()
+            delta_trie_root::<Layout, _, _, _, _, _>(&mut orderbook.memory_db, all_orders_root, delta)
+                .expect("All orders trie should always exist")
         },
         DeltaOrFullTrie::FullTrie(values) => {
             orderbook.memory_db.remove_and_purge(&all_orders_root, EMPTY_PREFIX);
@@ -147,7 +145,10 @@ async fn process_orders_keep_alive(
                 .into_iter()
                 .map(|(pair, hash)| (pair.into_bytes(), hash.to_vec()))
                 .collect();
-            populate_trie::<Layout>(&mut orderbook.memory_db, &mut new_root, &values);
+            if let Err(e) = populate_trie::<Layout>(&mut orderbook.memory_db, &mut new_root, &values) {
+                log!("Error " (e) " on trie population with values " [values]);
+                return false;
+            }
 
             new_root
         },
@@ -158,17 +159,21 @@ async fn process_orders_keep_alive(
         let old_root = orderbook
             .pubkeys_state
             .get(&from_pubkey)
-            .unwrap()
+            .expect("Pubkey state always exists at this point")
             .order_pairs_trie_roots
             .get(&pair)
             .map(|val| *val)
             .unwrap_or(H64::default());
         let new_root = match diff {
             DeltaOrFullTrie::Delta(delta) => {
-                let delta = delta
-                    .into_iter()
-                    .map(|(uuid, order)| (*uuid.as_bytes(), order.map(|o| rmp_serde::to_vec(&o).unwrap())));
-                delta_trie_root::<Layout, _, _, _, _, _>(&mut orderbook.memory_db, old_root, delta).unwrap()
+                let delta = delta.into_iter().map(|(uuid, order)| {
+                    (
+                        *uuid.as_bytes(),
+                        order.map(|o| rmp_serde::to_vec(&o).expect("Serialization failed")),
+                    )
+                });
+                delta_trie_root::<Layout, _, _, _, _, _>(&mut orderbook.memory_db, old_root, delta)
+                    .expect("Pair trie should always exist")
             },
             DeltaOrFullTrie::FullTrie(values) => {
                 orderbook.memory_db.remove_and_purge(&old_root, EMPTY_PREFIX);
@@ -176,10 +181,17 @@ async fn process_orders_keep_alive(
                 let mut new_root = H64::default();
                 let trie_values: Vec<_> = values
                     .iter()
-                    .map(|(uuid, order)| (uuid.as_bytes().to_vec(), rmp_serde::to_vec(&order).unwrap()))
+                    .map(|(uuid, order)| {
+                        (
+                            uuid.as_bytes().to_vec(),
+                            rmp_serde::to_vec(&order).expect("Serialization failed"),
+                        )
+                    })
                     .collect();
-                populate_trie::<Layout>(&mut orderbook.memory_db, &mut new_root, &trie_values);
-
+                if let Err(e) = populate_trie::<Layout>(&mut orderbook.memory_db, &mut new_root, &trie_values) {
+                    log!("Error " (e) " on trie population with values " [trie_values]);
+                    return false;
+                }
                 for value in values {
                     orderbook.insert_or_update_order(value.1);
                 }
@@ -189,7 +201,7 @@ async fn process_orders_keep_alive(
         orderbook
             .pubkeys_state
             .get_mut(&from_pubkey)
-            .unwrap()
+            .expect("Pubkey state always exists at this point")
             .order_pairs_trie_roots
             .insert(pair, new_root);
     }
@@ -203,7 +215,7 @@ async fn process_maker_order_updated(
     updated_msg: new_protocol::MakerOrderUpdated,
     serialized: Vec<u8>,
 ) -> bool {
-    let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
+    let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).expect("from_ctx failed");
     let uuid = updated_msg.uuid();
     let mut orderbook = ordermatch_ctx.orderbook.lock().await;
     match orderbook.find_order_by_uuid_and_pubkey(&uuid, &from_pubkey) {
@@ -307,33 +319,16 @@ async fn request_and_fill_orderbook(
     Ok(())
 }
 
-/// Processes keep alive message of our own node, returns whether operation was successful (order exists)
-async fn process_my_orders_keep_alive(ctx: &MmArc, keep_alive: &new_protocol::PubkeyKeepAlive) -> bool {
-    true
-    /*
-    let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
-    let mut orderbook = ordermatch_ctx.orderbook.lock().await;
-
-    let uuid = keep_alive.uuid.into();
-    if let Some(mut order) = orderbook.find_order_by_uuid(&uuid) {
-        order.timestamp = keep_alive.timestamp;
-        return true;
-    }
-
-    false
-    */
-}
-
 /// Insert or update an order `req`.
 /// Note this function locks the [`OrdermatchContext::orderbook`] async mutex.
 async fn insert_or_update_order(ctx: &MmArc, item: OrderbookItem) {
-    let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
+    let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).expect("from_ctx failed");
     let mut orderbook = ordermatch_ctx.orderbook.lock().await;
     orderbook.insert_or_update_order_update_trie(item)
 }
 
 async fn delete_order(ctx: &MmArc, pubkey: &str, uuid: Uuid) {
-    let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
+    let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).expect("from_ctx failed");
 
     let mut inactive = ordermatch_ctx.inactive_orders.lock().await;
     match inactive.get(&uuid) {
@@ -357,7 +352,7 @@ async fn delete_order(ctx: &MmArc, pubkey: &str, uuid: Uuid) {
 }
 
 async fn delete_my_order(ctx: &MmArc, uuid: Uuid) {
-    let ordermatch_ctx: Arc<OrdermatchContext> = OrdermatchContext::from_ctx(&ctx).unwrap();
+    let ordermatch_ctx: Arc<OrdermatchContext> = OrdermatchContext::from_ctx(&ctx).expect("from_ctx failed");
     let mut orderbook = ordermatch_ctx.orderbook.lock().await;
     orderbook.remove_order_trie_update(uuid);
 }
@@ -409,14 +404,6 @@ pub async fn process_msg(ctx: MmArc, topics: Vec<String>, from_peer: String, msg
 
 #[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum OrdermatchRequest {
-    /// Get an order using uuid and the order maker's pubkey.
-    /// Actual we expect to receive [`OrderInitialMessage`] that will be parsed into [`OrdermatchMessage::MakerOrderCreated`].
-    GetOrder { uuid: Uuid, from_pubkey: String },
-    /// Get orders using pairs and the order creator pubkey
-    GetOrders {
-        pairs: Vec<OrderbookPair>,
-        from_pubkey: String,
-    },
     /// Get an orderbook for the given pair.
     GetOrderbook {
         base: String,
@@ -438,37 +425,46 @@ pub enum OrdermatchRequest {
     },
 }
 
+#[derive(Debug)]
+struct TryFromBytesError(String);
+
+impl From<String> for TryFromBytesError {
+    fn from(string: String) -> Self { TryFromBytesError(string) }
+}
+
 trait TryFromBytes {
-    fn try_from_bytes(bytes: Vec<u8>) -> Result<Self, String>
+    fn try_from_bytes(bytes: Vec<u8>) -> Result<Self, TryFromBytesError>
     where
         Self: Sized;
 }
 
 impl TryFromBytes for String {
-    fn try_from_bytes(bytes: Vec<u8>) -> Result<Self, String> { String::from_utf8(bytes).map_err(|e| ERRL!("{}", e)) }
+    fn try_from_bytes(bytes: Vec<u8>) -> Result<Self, TryFromBytesError> {
+        String::from_utf8(bytes).map_err(|e| ERRL!("{}", e).into())
+    }
 }
 
 impl TryFromBytes for OrderbookItem {
-    fn try_from_bytes(bytes: Vec<u8>) -> Result<Self, String> {
-        rmp_serde::from_read(bytes.as_slice()).map_err(|e| ERRL!("{}", e))
+    fn try_from_bytes(bytes: Vec<u8>) -> Result<Self, TryFromBytesError> {
+        rmp_serde::from_read(bytes.as_slice()).map_err(|e| ERRL!("{}", e).into())
     }
 }
 
 impl TryFromBytes for H64 {
-    fn try_from_bytes(bytes: Vec<u8>) -> Result<Self, String> { bytes.try_into().map_err(|e| ERRL!("{:?}", e)) }
+    fn try_from_bytes(bytes: Vec<u8>) -> Result<Self, TryFromBytesError> {
+        bytes.try_into().map_err(|e| ERRL!("{:?}", e).into())
+    }
 }
 
 impl TryFromBytes for Uuid {
-    fn try_from_bytes(bytes: Vec<u8>) -> Result<Self, String> { Uuid::from_slice(&bytes).map_err(|e| ERRL!("{}", e)) }
+    fn try_from_bytes(bytes: Vec<u8>) -> Result<Self, TryFromBytesError> {
+        Uuid::from_slice(&bytes).map_err(|e| ERRL!("{}", e).into())
+    }
 }
 
 pub async fn process_peer_request(ctx: MmArc, request: OrdermatchRequest) -> Result<Option<Vec<u8>>, String> {
     println!("Got ordermatch request {:?}", request);
     match request {
-        OrdermatchRequest::GetOrder { uuid, from_pubkey } => process_get_order_request(ctx, uuid, from_pubkey).await,
-        OrdermatchRequest::GetOrders { pairs, from_pubkey } => {
-            process_get_orders_request(ctx, pairs, from_pubkey).await
-        },
         OrdermatchRequest::GetOrderbook {
             base,
             rel,
@@ -489,53 +485,9 @@ pub async fn process_peer_request(ctx: MmArc, request: OrdermatchRequest) -> Res
                 pairs_trie_roots,
             )
             .await;
-            response.map(|res| res.map(|r| encode_message(&r).unwrap()))
+            response.map(|res| res.map(|r| encode_message(&r).expect("Serialization failed")))
         },
     }
-}
-
-async fn process_get_order_request(ctx: MmArc, uuid: Uuid, from_pubkey: String) -> Result<Option<Vec<u8>>, String> {
-    /*
-    let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
-    let mut orderbook = ordermatch_ctx.orderbook.lock().await;
-    match orderbook.find_order_by_uuid_and_pubkey(&uuid, &from_pubkey) {
-        Some(order) => {
-            let response: new_protocol::OrderInitialMessage = order.clone().into();
-            let encoded = try_s!(encode_message(&response));
-            Ok(Some(encoded))
-        },
-        None => Ok(None),
-    }
-
-     */
-    Ok(None)
-}
-
-async fn process_get_orders_request(
-    ctx: MmArc,
-    pairs: Vec<OrderbookPair>,
-    from_pubkey: String,
-) -> Result<Option<Vec<u8>>, String> {
-    /*
-    let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
-    let orderbook = ordermatch_ctx.orderbook.lock().await;
-    let mut initial_messages: Vec<new_protocol::OrderInitialMessage> = vec![];
-
-    if let Some(uuids) = orderbook.pubkey_to_uuid.get(&from_pubkey) {
-        for uuid in uuids {
-            if let Some(order) = orderbook.order_set.get(uuid) {
-                if pairs.contains(&(order.base.clone(), order.rel.clone())) {
-                    initial_messages.push(order.clone().into());
-                }
-            }
-        }
-    }
-
-    let encoded = try_s!(encode_message(&initial_messages));
-    Ok(Some(encoded))
-
-     */
-    Ok(None)
 }
 
 async fn process_get_orderbook_request(
@@ -610,13 +562,33 @@ enum DeltaOrFullTrie<Key: Eq + std::hash::Hash, Value> {
     FullTrie(Vec<(Key, Value)>),
 }
 
+#[derive(Debug)]
+enum TrieDiffHistoryError {
+    TrieDbError(Box<trie_db::TrieError<H64, sp_trie::Error>>),
+    TryFromBytesError(TryFromBytesError),
+}
+
+impl std::fmt::Display for TrieDiffHistoryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result { write!(f, "({:?})", self) }
+}
+
+impl From<TryFromBytesError> for TrieDiffHistoryError {
+    fn from(error: TryFromBytesError) -> TrieDiffHistoryError { TrieDiffHistoryError::TryFromBytesError(error) }
+}
+
+impl From<Box<trie_db::TrieError<H64, sp_trie::Error>>> for TrieDiffHistoryError {
+    fn from(error: Box<trie_db::TrieError<H64, sp_trie::Error>>) -> TrieDiffHistoryError {
+        TrieDiffHistoryError::TrieDbError(error)
+    }
+}
+
 impl<Key: Clone + Eq + std::hash::Hash + TryFromBytes, Value: Clone + TryFromBytes> DeltaOrFullTrie<Key, Value> {
     fn from_history(
         history: &TrieDiffHistory<Key, Value>,
         from_hash: H64,
         trie_from_hash: H64,
         db: &MemoryDB<Blake2Hasher64>,
-    ) -> DeltaOrFullTrie<Key, Value> {
+    ) -> Result<DeltaOrFullTrie<Key, Value>, TrieDiffHistoryError> {
         match history.get(&from_hash) {
             Some(delta) => {
                 let mut current_delta = delta;
@@ -630,22 +602,18 @@ impl<Key: Clone + Eq + std::hash::Hash + TryFromBytes, Value: Clone + TryFromByt
                         total_delta.insert(key.clone(), new_value.clone());
                     }
                 }
-                DeltaOrFullTrie::Delta(total_delta)
+                Ok(DeltaOrFullTrie::Delta(total_delta))
             },
             None => {
-                let trie = TrieDB::<Layout>::new(db, &trie_from_hash).unwrap();
-                let trie = trie
-                    .iter()
-                    .unwrap()
+                let trie = TrieDB::<Layout>::new(db, &trie_from_hash)?;
+                let trie: Result<Vec<_>, TrieDiffHistoryError> = trie
+                    .iter()?
                     .map(|key_value| {
-                        let (key, value) = key_value.unwrap();
-                        (
-                            TryFromBytes::try_from_bytes(key).unwrap(),
-                            TryFromBytes::try_from_bytes(value).unwrap(),
-                        )
+                        let (key, value) = key_value?;
+                        Ok((TryFromBytes::try_from_bytes(key)?, TryFromBytes::try_from_bytes(value)?))
                     })
                     .collect();
-                DeltaOrFullTrie::FullTrie(trie)
+                Ok(DeltaOrFullTrie::FullTrie(trie?))
             },
         }
     }
@@ -671,26 +639,30 @@ async fn process_sync_pubkey_orderbook_state(
         None => return Ok(None),
     };
 
-    let all_orders_diff = DeltaOrFullTrie::from_history(
+    let all_orders_diff = try_s!(DeltaOrFullTrie::from_history(
         &pubkey_state.orders_trie_state_history,
         current_orders_trie_root,
         pubkey_state.all_orders_trie_root,
         &orderbook.memory_db,
-    );
+    ));
 
-    let pair_orders_diff = pairs_trie_roots
+    let pair_orders_diff: Result<_, _> = pairs_trie_roots
         .into_iter()
         .map(|(pair, root)| {
-            let delta = DeltaOrFullTrie::from_history(
+            let pair_root = try_s!(pubkey_state
+                .order_pairs_trie_roots
+                .get(&pair)
+                .ok_or(format!("No pair trie root for {}", pair)));
+            let delta = try_s!(DeltaOrFullTrie::from_history(
                 &pubkey_state.order_pairs_trie_state_history,
                 root,
-                *pubkey_state.order_pairs_trie_roots.get(&pair).unwrap(),
+                *pair_root,
                 &orderbook.memory_db,
-            );
-            (pair, delta)
+            ));
+            Ok((pair, delta))
         })
         .collect();
-
+    let pair_orders_diff = try_s!(pair_orders_diff);
     let result = SyncPubkeyOrderbookStateRes {
         all_orders_diff,
         pair_orders_diff,
@@ -771,7 +743,7 @@ async fn maker_order_created_p2p_notify(ctx: MmArc, order: &MakerOrder) {
 }
 
 async fn process_my_maker_order_updated(ctx: &MmArc, message: &new_protocol::MakerOrderUpdated, serialized: Vec<u8>) {
-    let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
+    let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).expect("from_ctx failed");
     let mut orderbook = ordermatch_ctx.orderbook.lock().await;
 
     let uuid = message.uuid();
@@ -1052,7 +1024,7 @@ impl TakerRequestBuilder {
 
     /// Validate fields and build
     fn build(self) -> Result<TakerRequest, TakerRequestBuildError> {
-        let min_vol = MmNumber::from(MIN_TRADING_VOL.parse::<BigDecimal>().unwrap());
+        let min_vol = MmNumber::from(MIN_TRADING_VOL);
 
         if self.base.is_empty() {
             return Err(TakerRequestBuildError::BaseCoinEmpty);
@@ -1636,7 +1608,7 @@ pub async fn broadcast_maker_orders_keep_alive_loop(ctx: MmArc) {
     let my_pubsecp = hex::encode(&**ctx.secp256k1_key_pair().public());
     while !ctx.is_stopping() {
         Timer::sleep(MIN_ORDER_KEEP_ALIVE_INTERVAL as f64).await;
-        let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
+        let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).expect("from_ctx failed");
         if let Some(state) = ordermatch_ctx.orderbook.lock().await.pubkeys_state.get(&my_pubsecp) {
             if state.all_orders_trie_root == H64::default()
                 || state.all_orders_trie_root == hashed_null_node::<Layout>()
@@ -1805,43 +1777,25 @@ fn order_pair_root_mut<'a>(state: &'a mut HashMap<AlbOrderedOrderbookPair, H64>,
 fn populate_pubkey_trie<'db, T: TrieConfiguration>(
     db: &'db mut dyn HashDBT<T::Hash, DBValue>,
     root: &'db mut TrieHash<T>,
-    v: &[(Vec<u8>, Option<H64>)],
-) -> TrieDBMut<'db, T> {
+    v: &[(Vec<u8>, H64)],
+) -> Result<TrieDBMut<'db, T>, String> {
     let mut t = TrieDBMut::<T>::new(db, root);
-    for i in 0..v.len() {
-        let key: &[u8] = &v[i].0;
-        let val: &[u8] = v[i].1.as_ref().unwrap();
-        t.insert(key, val).unwrap();
+    for (key, val) in v {
+        try_s!(t.insert(key, val));
     }
-    t
-}
-
-fn populate_trie_delta<'db, T: TrieConfiguration>(
-    db: &'db mut dyn HashDBT<T::Hash, DBValue>,
-    root: &'db mut TrieHash<T>,
-    v: &[(Vec<u8>, Option<Vec<u8>>)],
-) -> TrieDBMut<'db, T> {
-    let mut t = TrieDBMut::<T>::new(db, root);
-    for i in 0..v.len() {
-        let key: &[u8] = &v[i].0;
-        let val: &[u8] = v[i].1.as_ref().unwrap();
-        t.insert(key, val).unwrap();
-    }
-    t
+    Ok(t)
 }
 
 fn populate_trie<'db, T: TrieConfiguration>(
     db: &'db mut dyn HashDBT<T::Hash, DBValue>,
     root: &'db mut TrieHash<T>,
     v: &[(Vec<u8>, Vec<u8>)],
-) -> TrieDBMut<'db, T> {
+) -> Result<TrieDBMut<'db, T>, String> {
     let mut t = TrieDBMut::<T>::new(db, root);
-    for i in 0..v.len() {
-        let key: &[u8] = &v[i].0;
-        let val: &[u8] = &v[i].1;
-        t.insert(key, val).unwrap();
+    for (key, val) in v {
+        try_s!(t.insert(key, val));
     }
-    t
+    Ok(t)
 }
 
 #[derive(Default)]
@@ -1892,11 +1846,18 @@ impl Orderbook {
 
         pubkey_state.orders_uuids.insert((order.uuid, alb_ordered.clone()));
 
-        let mut pair_trie = get_trie_mut(&mut self.memory_db, pair_root).unwrap();
-        pair_trie.insert(
-            order.uuid.as_bytes(),
-            &rmp_serde::to_vec(&order).expect("Serialization should never fail"),
-        );
+        let mut pair_trie = match get_trie_mut(&mut self.memory_db, pair_root) {
+            Ok(trie) => trie,
+            Err(e) => {
+                log!("Error getting "(e)" trie with root "[prev_root]);
+                return;
+            },
+        };
+        let order_bytes = rmp_serde::to_vec(&order).expect("Serialization should never fail");
+        if let Err(e) = pair_trie.insert(order.uuid.as_bytes(), &order_bytes) {
+            log!("Error " (e) " on insertion to trie. Key " (order.uuid) ", value " [order_bytes]);
+            return;
+        };
         drop(pair_trie);
 
         if prev_root != H64::default() {
@@ -1910,17 +1871,27 @@ impl Orderbook {
 
         let old_root = pubkey_state.all_orders_trie_root;
         let delta = vec![(alb_ordered.clone(), Some(pair_root.clone()))];
-        let delta_bytes = vec![(alb_ordered.into_bytes(), Some(pair_root.clone()))];
 
         if old_root == H64::default() {
-            populate_pubkey_trie::<Layout>(
+            let to_populate = vec![(alb_ordered.into_bytes(), pair_root.clone())];
+            if let Err(e) = populate_pubkey_trie::<Layout>(
                 &mut self.memory_db,
                 &mut pubkey_state.all_orders_trie_root,
-                &delta_bytes,
-            );
+                &to_populate,
+            ) {
+                log!("Failed to populate trie: "(e) ", to_populate: "[to_populate]);
+                return;
+            };
         } else {
+            let delta_bytes = vec![(alb_ordered.into_bytes(), Some(pair_root.clone()))];
             pubkey_state.all_orders_trie_root =
-                delta_trie_root::<Layout, _, _, _, _, _>(&mut self.memory_db, old_root, delta_bytes).unwrap();
+                match delta_trie_root::<Layout, _, _, _, _, _>(&mut self.memory_db, old_root, delta_bytes) {
+                    Ok(root) => root,
+                    Err(e) => {
+                        log!("Failed to get existing trie for "[old_root]", error: "(e));
+                        return;
+                    },
+                };
         }
 
         if old_root != H64::default() {
@@ -2021,11 +1992,16 @@ impl Orderbook {
         let pubkey_state = pubkey_state_mut(&mut self.pubkeys_state, &order.pubkey);
         let pair_state = order_pair_root_mut(&mut pubkey_state.order_pairs_trie_roots, &alb_ordered);
         let old_state = *pair_state;
-        *pair_state = delta_trie_root::<Layout, _, _, _, _, _>(&mut self.memory_db, *pair_state, vec![(
+        *pair_state = match delta_trie_root::<Layout, _, _, _, _, _>(&mut self.memory_db, *pair_state, vec![(
             *order.uuid.as_bytes(),
             None::<Vec<u8>>,
-        )])
-        .unwrap();
+        )]) {
+            Ok(root) => root,
+            Err(_) => {
+                log!("Failed to get existing trie with root "[pair_state]);
+                return Some(order);
+            },
+        };
 
         pubkey_state
             .order_pairs_trie_state_history
@@ -2041,15 +2017,20 @@ impl Orderbook {
         };
 
         let old_state = pubkey_state.all_orders_trie_root;
-        pubkey_state.all_orders_trie_root = delta_trie_root::<Layout, _, _, _, _, _>(
+        pubkey_state.all_orders_trie_root = match delta_trie_root::<Layout, _, _, _, _, _>(
             &mut self.memory_db,
             pubkey_state.all_orders_trie_root,
             all_orders_delta
                 .clone()
                 .into_iter()
                 .map(|(pair, value)| (pair.into_bytes(), value)),
-        )
-        .unwrap();
+        ) {
+            Ok(root) => root,
+            Err(_) => {
+                log!("Failed to get existing trie with root "[pubkey_state.all_orders_trie_root]);
+                return Some(order);
+            },
+        };
 
         pubkey_state
             .orders_trie_state_history
@@ -2937,7 +2918,7 @@ pub async fn order_status(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, St
             "order": MakerOrderForRpc::from(order),
         });
         return Response::builder()
-            .body(json::to_vec(&res).unwrap())
+            .body(json::to_vec(&res).expect("Serialization failed"))
             .map_err(|e| ERRL!("{}", e));
     }
 
@@ -2948,7 +2929,7 @@ pub async fn order_status(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, St
             "order": TakerOrderForRpc::from(order),
         });
         return Response::builder()
-            .body(json::to_vec(&res).unwrap())
+            .body(json::to_vec(&res).expect("Serialization failed"))
             .map_err(|e| ERRL!("{}", e));
     }
 
@@ -2957,7 +2938,7 @@ pub async fn order_status(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, St
     });
     Response::builder()
         .status(404)
-        .body(json::to_vec(&res).unwrap())
+        .body(json::to_vec(&res).expect("Serialization failed"))
         .map_err(|e| ERRL!("{}", e))
 }
 
@@ -2982,7 +2963,7 @@ pub async fn cancel_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, St
                 "result": "success"
             });
             return Response::builder()
-                .body(json::to_vec(&res).unwrap())
+                .body(json::to_vec(&res).expect("Serialization failed"))
                 .map_err(|e| ERRL!("{}", e));
         },
         // look for taker order with provided uuid
@@ -3001,7 +2982,7 @@ pub async fn cancel_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, St
                 "result": "success"
             });
             return Response::builder()
-                .body(json::to_vec(&res).unwrap())
+                .body(json::to_vec(&res).expect("Serialization failed"))
                 .map_err(|e| ERRL!("{}", e));
         },
         // error is returned
@@ -3013,7 +2994,7 @@ pub async fn cancel_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, St
     });
     Response::builder()
         .status(404)
-        .body(json::to_vec(&res).unwrap())
+        .body(json::to_vec(&res).expect("Serialization failed"))
         .map_err(|e| ERRL!("{}", e))
 }
 
@@ -3070,7 +3051,7 @@ pub async fn my_orders(ctx: MmArc) -> Result<Response<Vec<u8>>, String> {
         }
     });
     Response::builder()
-        .body(json::to_vec(&res).unwrap())
+        .body(json::to_vec(&res).expect("Serialization failed"))
         .map_err(|e| ERRL!("{}", e))
 }
 
@@ -3254,7 +3235,7 @@ pub async fn cancel_all_orders(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>
         }
     });
     Response::builder()
-        .body(json::to_vec(&res).unwrap())
+        .body(json::to_vec(&res).expect("Serialization failed"))
         .map_err(|e| ERRL!("{}", e))
 }
 
@@ -3574,88 +3555,4 @@ fn choose_taker_confs_and_notas(
         taker_coin_confs,
         taker_coin_nota,
     }
-}
-
-#[test]
-fn try_patricia_trie() {
-    use hex_literal::hex;
-    use sp_trie::{self, read_trie_value, TrieDB, TrieMut};
-    use trie_root::trie_root;
-
-    // let pairs = vec![(hex!("0203").to_vec(), Some(hex!("0405").to_vec()))];
-    let pairs = vec![
-        (hex!("01").to_vec(), Some(hex!("01").to_vec())),
-        (hex!("0102").to_vec(), Some(hex!("01").to_vec())),
-        (hex!("0304").to_vec(), Some(hex!("01").to_vec())),
-        (hex!("0203").to_vec(), Some(hex!("01").to_vec())),
-        (hex!("0405").to_vec(), Some(hex!("01").to_vec())),
-    ];
-    let mut memdb = MemoryDB::default();
-    let mut root = Default::default();
-    log!("Root "[root]);
-
-    populate_trie_delta::<Layout>(&mut memdb, &mut root, &pairs);
-    log!("Root "[root]);
-
-    let pairs = vec![
-        (hex!("0102").to_vec(), Some(hex!("01").to_vec())),
-        (hex!("0304").to_vec(), Some(hex!("01").to_vec())),
-        (hex!("0203").to_vec(), Some(hex!("01").to_vec())),
-        (hex!("0405").to_vec(), Some(hex!("01").to_vec())),
-        (hex!("01").to_vec(), Some(hex!("01").to_vec())),
-    ];
-
-    root = delta_trie_root::<Layout, _, _, _, _, _>(&mut memdb, root, pairs).unwrap();
-    log!("Root "[root]);
-
-    let pairs = vec![
-        (hex!("0102").to_vec(), hex!("01").to_vec()),
-        (hex!("0304").to_vec(), hex!("01").to_vec()),
-        (hex!("0203").to_vec(), hex!("01").to_vec()),
-        (hex!("0405").to_vec(), hex!("01").to_vec()),
-        (hex!("01").to_vec(), hex!("01").to_vec()),
-    ];
-
-    log!([pairs]);
-
-    let pairs = vec![(hex!("0405").to_vec(), None::<Vec<u8>>)];
-    root = delta_trie_root::<Layout, _, _, _, _, _>(&mut memdb, root, pairs).unwrap();
-    log!("Root "[root]);
-
-    let proof = generate_trie_proof::<Layout, _, _, _>(&memdb, root, vec![&hex!("0102").to_vec()]).unwrap();
-    // Check that a K, V included into the proof are verified.
-    assert!(verify_trie_proof::<Layout, _, _, _>(&root, &proof, &vec![(
-        hex!("0102").to_vec(),
-        Some(hex!("01").to_vec())
-    )])
-    .is_ok());
-
-    let trie = TrieDB::<Layout>::new(&memdb, &root).unwrap();
-    for value in trie.iter().unwrap() {
-        log!([value]);
-    }
-    drop(trie);
-
-    fn unpopulate_trie<'db, T: TrieConfiguration>(t: &mut TrieDBMut<'db, T>, v: &[Vec<u8>]) {
-        for i in v {
-            let key: &[u8] = &i;
-            t.remove(key).unwrap();
-        }
-    }
-
-    let pairs = vec![
-        (hex!("0102").to_vec(), None::<Vec<u8>>),
-        (hex!("0304").to_vec(), None::<Vec<u8>>),
-        (hex!("0203").to_vec(), None::<Vec<u8>>),
-    ];
-    root = delta_trie_root::<Layout, _, _, _, _, _>(&mut memdb, root, pairs).unwrap();
-    log!("Root "[root]);
-
-    let trie = TrieDB::<Layout>::new(&memdb, &root).unwrap();
-    for value in trie.iter().unwrap() {
-        log!([value]);
-    }
-    drop(trie);
-
-    log!([hashed_null_node::<Layout>()]);
 }
