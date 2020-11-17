@@ -1691,7 +1691,67 @@ struct TrieDiff<Key, Value> {
     next_root: H64,
 }
 
-type TrieDiffHistory<Key, Value> = HashMap<H64, TrieDiff<Key, Value>>;
+impl<Key: std::fmt::Debug, Value: std::fmt::Debug> std::fmt::Debug for TrieDiff<Key, Value> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TrieDiff")
+            .field("delta", &self.delta)
+            .field("next_root", &self.next_root)
+            .finish()
+    }
+}
+
+impl<Key: PartialEq, Value: PartialEq> PartialEq for TrieDiff<Key, Value> {
+    fn eq(&self, other: &TrieDiff<Key, Value>) -> bool {
+        self.delta == other.delta && self.next_root == other.next_root
+    }
+}
+
+impl<Key: Eq, Value: Eq> Eq for TrieDiff<Key, Value> {}
+
+#[derive(Eq, PartialEq)]
+struct TrieDiffHistory<Key, Value> {
+    inner: HashMap<H64, TrieDiff<Key, Value>>,
+}
+
+impl<Key, Value> Default for TrieDiffHistory<Key, Value> {
+    fn default() -> Self {
+        TrieDiffHistory {
+            inner: Default::default(),
+        }
+    }
+}
+
+impl<Key: std::fmt::Debug, Value: std::fmt::Debug> std::fmt::Debug for TrieDiffHistory<Key, Value> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TrieDiffHistory").field("inner", &self.inner).finish()
+    }
+}
+
+impl<Key, Value> TrieDiffHistory<Key, Value> {
+    fn insert_new_diff(&mut self, insert_at: H64, diff: TrieDiff<Key, Value>) {
+        if insert_at == diff.next_root {
+            // do nothing to avoid cycles in diff history
+            return;
+        }
+
+        match self.inner.remove(&diff.next_root) {
+            Some(mut diff) => {
+                // we reached a state that was already reached previously
+                // history can be cleaned up to this state hash
+                while let Some(next_diff) = self.inner.remove(&diff.next_root) {
+                    diff = next_diff;
+                }
+            },
+            None => {
+                self.inner.insert(insert_at, diff);
+            },
+        };
+    }
+
+    fn contains_key(&self, key: &H64) -> bool { self.inner.contains_key(key) }
+
+    fn get(&self, key: &H64) -> Option<&TrieDiff<Key, Value>> { self.inner.get(key) }
+}
 
 #[derive(Default)]
 struct OrderbookPubkeyState {
@@ -1840,10 +1900,12 @@ impl Orderbook {
         drop(pair_trie);
 
         if prev_root != H64::default() {
-            pubkey_state.order_pairs_trie_state_history.insert(prev_root, TrieDiff {
-                delta: vec![(order.uuid, Some(order.clone()))],
-                next_root: *pair_root,
-            });
+            pubkey_state
+                .order_pairs_trie_state_history
+                .insert_new_diff(prev_root, TrieDiff {
+                    delta: vec![(order.uuid, Some(order.clone()))],
+                    next_root: *pair_root,
+                });
         }
 
         let old_root = pubkey_state.all_orders_trie_root;
@@ -1862,10 +1924,12 @@ impl Orderbook {
         }
 
         if old_root != H64::default() {
-            pubkey_state.orders_trie_state_history.insert(old_root, TrieDiff {
-                delta,
-                next_root: pubkey_state.all_orders_trie_root,
-            });
+            pubkey_state
+                .orders_trie_state_history
+                .insert_new_diff(old_root, TrieDiff {
+                    delta,
+                    next_root: pubkey_state.all_orders_trie_root,
+                });
         }
     }
 
@@ -1963,10 +2027,12 @@ impl Orderbook {
         )])
         .unwrap();
 
-        pubkey_state.order_pairs_trie_state_history.insert(old_state, TrieDiff {
-            delta: vec![(uuid, None)],
-            next_root: *pair_state,
-        });
+        pubkey_state
+            .order_pairs_trie_state_history
+            .insert_new_diff(old_state, TrieDiff {
+                delta: vec![(uuid, None)],
+                next_root: *pair_state,
+            });
 
         let all_orders_delta = if *pair_state == hashed_null_node::<Layout>() {
             vec![(alb_ordered, None)]
@@ -1985,10 +2051,12 @@ impl Orderbook {
         )
         .unwrap();
 
-        pubkey_state.orders_trie_state_history.insert(old_state, TrieDiff {
-            delta: all_orders_delta,
-            next_root: pubkey_state.all_orders_trie_root,
-        });
+        pubkey_state
+            .orders_trie_state_history
+            .insert_new_diff(old_state, TrieDiff {
+                delta: all_orders_delta,
+                next_root: pubkey_state.all_orders_trie_root,
+            });
         Some(order)
     }
 

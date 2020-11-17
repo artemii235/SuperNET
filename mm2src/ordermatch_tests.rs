@@ -9,7 +9,7 @@ use futures::{channel::mpsc, lock::Mutex as AsyncMutex, StreamExt};
 use mm2_libp2p::atomicdex_behaviour::{AdexBehaviourCmd, AdexResponse};
 use mm2_libp2p::{decode_message, PeerId};
 use mocktopus::mocking::*;
-use rand::Rng;
+use rand::{seq::SliceRandom, thread_rng, Rng};
 use std::collections::HashSet;
 use std::iter::{self, FromIterator};
 
@@ -1954,9 +1954,34 @@ fn test_process_sync_pubkey_orderbook_state_after_new_orders_added() {
 }
 
 #[test]
-fn test_process_sync_pubkey_orderbook_state_after_orders_removed() {
-    use rand::{seq::SliceRandom, thread_rng};
+fn test_diff_should_not_be_written_if_hash_not_changed_on_insert() {
+    let (ctx, pubkey, secret) = make_ctx_for_tests();
+    let orders = make_random_orders(pubkey.clone(), &secret, "C1".into(), "C2".into(), 100);
 
+    for order in orders.clone() {
+        block_on(insert_or_update_order(&ctx, order));
+    }
+
+    let alb_ordered_pair = alb_ordered_pair("C1", "C2");
+    let current_root_hash = all_orders_trie_root_by_pub(&ctx, &pubkey);
+    let pair_trie_root = pair_trie_root_by_pub(&ctx, &pubkey, &alb_ordered_pair);
+    for order in orders.clone() {
+        block_on(insert_or_update_order(&ctx, order));
+    }
+
+    let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
+    let orderbook = block_on(ordermatch_ctx.orderbook.lock());
+    let pubkey_state = orderbook.pubkeys_state.get(&pubkey).unwrap();
+    assert!(!pubkey_state
+        .order_pairs_trie_state_history
+        .contains_key(&current_root_hash));
+    assert!(!pubkey_state
+        .order_pairs_trie_state_history
+        .contains_key(&pair_trie_root));
+}
+
+#[test]
+fn test_process_sync_pubkey_orderbook_state_after_orders_removed() {
     let (ctx, pubkey, secret) = make_ctx_for_tests();
     let orders = make_random_orders(pubkey.clone(), &secret, "C1".into(), "C2".into(), 100);
 
@@ -2024,6 +2049,41 @@ fn test_process_sync_pubkey_orderbook_state_after_orders_removed() {
 }
 
 #[test]
+fn test_diff_should_not_be_written_if_hash_not_changed_on_remove() {
+    let (ctx, pubkey, secret) = make_ctx_for_tests();
+    let orders = make_random_orders(pubkey.clone(), &secret, "C1".into(), "C2".into(), 100);
+
+    for order in orders.clone() {
+        block_on(insert_or_update_order(&ctx, order));
+    }
+
+    let to_remove: Vec<_> = orders
+        .choose_multiple(&mut thread_rng(), 10)
+        .map(|order| order.uuid)
+        .collect();
+    for uuid in &to_remove {
+        remove_order(&ctx, *uuid);
+    }
+    for uuid in &to_remove {
+        remove_order(&ctx, *uuid);
+    }
+
+    let alb_ordered_pair = alb_ordered_pair("C1", "C2");
+    let current_root_hash = all_orders_trie_root_by_pub(&ctx, &pubkey);
+    let pair_trie_root = pair_trie_root_by_pub(&ctx, &pubkey, &alb_ordered_pair);
+
+    let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
+    let orderbook = block_on(ordermatch_ctx.orderbook.lock());
+    let pubkey_state = orderbook.pubkeys_state.get(&pubkey).unwrap();
+    assert!(!pubkey_state
+        .order_pairs_trie_state_history
+        .contains_key(&current_root_hash));
+    assert!(!pubkey_state
+        .order_pairs_trie_state_history
+        .contains_key(&pair_trie_root));
+}
+
+#[test]
 fn test_orderbook_pubkey_sync_request() {
     let mut orderbook = Orderbook::default();
     orderbook.topics_subscribed_to.insert(
@@ -2045,4 +2105,42 @@ fn test_orderbook_pubkey_sync_request() {
         },
         _ => panic!("Invalid request {:?}", request),
     }
+}
+
+#[test]
+fn test_trie_diff_avoid_cycle_on_insertion() {
+    let mut history = TrieDiffHistory::<String, String>::default();
+    history.insert_new_diff([1; 8], TrieDiff {
+        delta: vec![],
+        next_root: [2; 8],
+    });
+
+    history.insert_new_diff([2; 8], TrieDiff {
+        delta: vec![],
+        next_root: [3; 8],
+    });
+
+    history.insert_new_diff([3; 8], TrieDiff {
+        delta: vec![],
+        next_root: [4; 8],
+    });
+
+    history.insert_new_diff([4; 8], TrieDiff {
+        delta: vec![],
+        next_root: [5; 8],
+    });
+
+    history.insert_new_diff([5; 8], TrieDiff {
+        delta: vec![],
+        next_root: [2; 8],
+    });
+
+    let expected = TrieDiffHistory {
+        inner: HashMap::from_iter(iter::once(([1; 8], TrieDiff {
+            delta: vec![],
+            next_root: [2; 8],
+        }))),
+    };
+
+    assert_eq!(expected, history);
 }
