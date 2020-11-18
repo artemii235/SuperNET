@@ -1658,29 +1658,13 @@ enum OrderbookRequestingState {
 
 type H64 = [u8; 8];
 
+#[derive(Debug, Eq, PartialEq)]
 struct TrieDiff<Key, Value> {
     delta: Vec<(Key, Option<Value>)>,
     next_root: H64,
 }
 
-impl<Key: std::fmt::Debug, Value: std::fmt::Debug> std::fmt::Debug for TrieDiff<Key, Value> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("TrieDiff")
-            .field("delta", &self.delta)
-            .field("next_root", &self.next_root)
-            .finish()
-    }
-}
-
-impl<Key: PartialEq, Value: PartialEq> PartialEq for TrieDiff<Key, Value> {
-    fn eq(&self, other: &TrieDiff<Key, Value>) -> bool {
-        self.delta == other.delta && self.next_root == other.next_root
-    }
-}
-
-impl<Key: Eq, Value: Eq> Eq for TrieDiff<Key, Value> {}
-
-#[derive(Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 struct TrieDiffHistory<Key, Value> {
     inner: HashMap<H64, TrieDiff<Key, Value>>,
 }
@@ -1690,12 +1674,6 @@ impl<Key, Value> Default for TrieDiffHistory<Key, Value> {
         TrieDiffHistory {
             inner: Default::default(),
         }
-    }
-}
-
-impl<Key: std::fmt::Debug, Value: std::fmt::Debug> std::fmt::Debug for TrieDiffHistory<Key, Value> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("TrieDiffHistory").field("inner", &self.inner).finish()
     }
 }
 
@@ -3353,6 +3331,7 @@ pub async fn orderbook(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
     let rel_coin = try_s!(rel_coin.ok_or("Rel coin is not found or inactive"));
     let base_coin = try_s!(lp_coinfindᵃ(&ctx, &req.base).await);
     let base_coin: MmCoinEnum = try_s!(base_coin.ok_or("Base coin is not found or inactive"));
+    // TODO change this to `true` when orderbook request is reimplemented using tries
     let request_orderbook = false;
     try_s!(subscribe_to_orderbook_topic(&ctx, &req.base, &req.rel, request_orderbook).await);
     let ordermatch_ctx: Arc<OrdermatchContext> = try_s!(OrdermatchContext::from_ctx(&ctx));

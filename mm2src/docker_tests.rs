@@ -932,6 +932,7 @@ mod docker_tests {
         log!([block_on(enable_native(&mm_bob, "MYCOIN1", vec![]))]);
         log!([block_on(enable_native(&mm_alice, "MYCOIN", vec![]))]);
         log!([block_on(enable_native(&mm_alice, "MYCOIN1", vec![]))]);
+        // TODO remove this request when orderbook request is reimplemented using tries
         log!("Get MYCOIN/MYCOIN1 orderbook on Alice side to trigger subscription");
         let rc = unwrap!(block_on(mm_alice.rpc(json! ({
             "userpass": mm_alice.userpass,
