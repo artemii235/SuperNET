@@ -42,8 +42,8 @@ use num_rational::BigRational;
 use num_traits::identities::Zero;
 use rpc::v1::types::H256 as H256Json;
 use serde_json::{self as json, Value as Json};
-use sp_trie::{delta_trie_root, DBValue, HashDBT, MemoryDB, Trie, TrieConfiguration, TrieDB, TrieDBMut, TrieHash,
-              TrieMut};
+use sp_trie::{delta_trie_root, generate_trie_proof, verify_trie_proof, DBValue, HashDBT, MemoryDB, Trie,
+              TrieConfiguration, TrieDB, TrieDBMut, TrieHash, TrieMut};
 use std::collections::hash_map::{Entry, HashMap, RawEntryMut};
 use std::collections::{BTreeSet, HashSet};
 use std::convert::TryInto;
@@ -490,6 +490,28 @@ pub async fn process_peer_request(ctx: MmArc, request: OrdermatchRequest) -> Res
     }
 }
 
+type TrieProof = Vec<Vec<u8>>;
+
+#[derive(Debug, Deserialize, Serialize)]
+struct GetOrderbookPubkeyItem {
+    /// Timestamp of the latest keep alive message received.
+    last_keep_alive: u64,
+    /// First - root hash of trie where the key - `AlbOrderedOrderbookPair`, value - `H64` root hash of the pair orders.
+    /// Second - proof for the `pair_orders_trie_root` hash in the `orders_trie_root` trie.
+    orders_trie_root: (H64, TrieProof),
+    /// First - root hash of the requested pair orders trie, where the key - `Uuid`, value - `OrderbookItem`.
+    /// Second - proof for the given `orders` in the `pair_orders_trie_root` trie.
+    pair_orders_trie_root: (H64, TrieProof),
+    /// Requested orders.
+    orders: Vec<(Uuid, OrderbookItem)>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct GetOrderbookRes {
+    /// Asks and bids grouped by pubkey.
+    pubkey_orders: HashMap<String, GetOrderbookPubkeyItem>,
+}
+
 async fn process_get_orderbook_request(
     ctx: MmArc,
     base: String,
@@ -497,7 +519,6 @@ async fn process_get_orderbook_request(
     asks_num: Option<usize>,
     bids_num: Option<usize>,
 ) -> Result<Option<Vec<u8>>, String> {
-    /*
     enum PriceOrdering {
         LowestToHighest,
         HighestToLowest,
@@ -508,30 +529,32 @@ async fn process_get_orderbook_request(
         rel: String,
         n: Option<usize>,
         ordering: PriceOrdering,
-    ) -> Vec<new_protocol::OrderInitialMessage> {
+    ) -> HashMap<String, Vec<(Uuid, OrderbookItem)>> {
         let order_uuids = match orderbook.ordered.get(&(base, rel)) {
             Some(uuids) => uuids,
-            None => return Vec::new(),
+            None => return HashMap::new(),
         };
 
         let n = n.unwrap_or_else(|| order_uuids.len());
-        match ordering {
+        let order_uuids = match ordering {
             PriceOrdering::LowestToHighest => Either::Left(order_uuids.iter()),
             PriceOrdering::HighestToLowest => Either::Right(order_uuids.iter().rev()),
         }
-        .take(n)
-        .map(|OrderedByPriceOrder { uuid, .. }| {
+        .take(n);
+
+        let mut uuids_by_pubkey = HashMap::new();
+        for OrderedByPriceOrder { ref uuid, .. } in order_uuids {
             let order = orderbook
                 .order_set
                 .get(uuid)
                 .expect("Orderbook::ordered contains an uuid that is not in Orderbook::order_set");
-            new_protocol::OrderInitialMessage {
-                initial_message: order.initial_message.clone(),
-                from_peer: order.peer_id.clone(),
-                update_messages: order.update_messages.clone(),
-            }
-        })
-        .collect()
+            let uuids = uuids_by_pubkey
+                .entry(order.pubkey.clone())
+                .or_insert_with(|| Vec::new());
+            uuids.push((uuid.clone(), order.clone()))
+        }
+
+        uuids_by_pubkey
     }
 
     let ordermatch_ctx = unwrap!(OrdermatchContext::from_ctx(&ctx));
@@ -546,14 +569,66 @@ async fn process_get_orderbook_request(
         PriceOrdering::LowestToHighest,
     );
     // get best `bids_num` bids that means bids with the highest prices (from highest to lowest prices)
-    let bids = get_n_orders(&orderbook, rel, base, bids_num, PriceOrdering::HighestToLowest);
+    let bids = get_n_orders(
+        &orderbook,
+        rel.clone(),
+        base.clone(),
+        bids_num,
+        PriceOrdering::HighestToLowest,
+    );
 
-    let response = new_protocol::Orderbook { asks, bids };
+    // merge asks and bids
+    let mut orders_to_send = asks;
+    for (pubkey, uuids) in bids {
+        orders_to_send
+            .entry(pubkey)
+            .or_insert_with(|| Vec::new())
+            .extend(uuids.into_iter());
+    }
+
+    let alb_pair = alb_ordered_pair(&base, &rel);
+    let mut result = HashMap::new();
+    for (pubkey, orders) in orders_to_send {
+        let pubkey_state = orderbook.pubkeys_state.get(&pubkey).ok_or(ERRL!(
+            "Orderbook::pubkeys_state is expected to contain the {:?} pubkey",
+            pubkey
+        ))?;
+
+        let pair_orders_trie_root = pubkey_state.order_pairs_trie_roots.get(&alb_pair).ok_or(ERRL!(
+            "OrderbookPubkeyState::order_pairs_trie_roots is expected to contain the {:?} base-rel pair",
+            alb_pair
+        ))?;
+
+        let pair_orders_trie_root_proof = {
+            let orders_keys = orders.iter().map(|(uuid, _orderbook_item)| uuid.as_bytes());
+            try_s!(generate_trie_proof::<Layout, _, _, _>(
+                &orderbook.memory_db,
+                *pair_orders_trie_root,
+                orders_keys
+            ))
+        };
+
+        let orders_trie_root_proof = {
+            let keys = &[alb_pair.as_bytes()];
+            try_s!(generate_trie_proof::<Layout, _, _, _>(
+                &orderbook.memory_db,
+                pubkey_state.all_orders_trie_root,
+                keys
+            ))
+        };
+
+        let item = GetOrderbookPubkeyItem {
+            last_keep_alive: pubkey_state.last_keep_alive,
+            orders_trie_root: (pubkey_state.all_orders_trie_root, orders_trie_root_proof),
+            pair_orders_trie_root: (*pair_orders_trie_root, pair_orders_trie_root_proof),
+            orders,
+        };
+        result.insert(pubkey, item);
+    }
+
+    let response = GetOrderbookRes { pubkey_orders: result };
     let encoded = try_s!(encode_message(&response));
     Ok(Some(encoded))
-
-     */
-    Ok(None)
 }
 
 #[derive(Debug, Deserialize, Serialize)]

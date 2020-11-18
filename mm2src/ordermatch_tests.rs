@@ -1308,6 +1308,13 @@ fn make_random_orders(pubkey: String, secret: &[u8; 32], base: String, rel: Stri
     orders
 }
 
+fn pubkey_and_secret_for_test(passphrase: &str) -> (String, [u8; 32]) {
+    let key_pair = key_pair_from_seed(passphrase).unwrap();
+    let pubkey = hex::encode(&**key_pair.public());
+    let secret = (&*key_pair.private().secret).clone();
+    (pubkey, secret)
+}
+
 fn p2p_context_mock() -> (mpsc::Sender<AdexBehaviourCmd>, mpsc::Receiver<AdexBehaviourCmd>) {
     let (cmd_tx, cmd_rx) = mpsc::channel(10);
     let cmd_sender = cmd_tx.clone();
@@ -1319,107 +1326,124 @@ fn p2p_context_mock() -> (mpsc::Sender<AdexBehaviourCmd>, mpsc::Receiver<AdexBeh
     (cmd_tx, cmd_rx)
 }
 
-/*
 #[test]
 fn test_process_get_orderbook_request() {
-    let (ctx, pubkey, secret) = make_ctx_for_tests();
+    const ASKS_NUM: usize = 5;
+    const BIDS_NUM: usize = 5;
+    const PUBKEYS_NUM: usize = 3;
+
+    let (ctx, _pubkey, _secret) = make_ctx_for_tests();
+    let other_pubkeys: Vec<(String, [u8; 32])> = (0..PUBKEYS_NUM)
+        .map(|idx| {
+            let passphrase = format!("passphrase-{}", idx);
+            pubkey_and_secret_for_test(&passphrase)
+        })
+        .collect();
+
     let ordermatch_ctx = Arc::new(OrdermatchContext::default());
     let ordermatch_ctx_clone = ordermatch_ctx.clone();
     OrdermatchContext::from_ctx.mock_safe(move |_| MockResult::Return(Ok(ordermatch_ctx_clone.clone())));
 
     let mut orderbook = block_on(ordermatch_ctx.orderbook.lock());
-    let peer = PeerId::random().to_string();
 
-    let order1 = new_protocol::MakerOrderCreated {
-        uuid: Uuid::new_v4().into(),
-        base: "RICK".into(),
-        rel: "MORTY".into(),
-        price: BigRational::from_integer(1000000.into()),
-        max_volume: BigRational::from_integer(2000000.into()),
-        min_volume: BigRational::from_integer(2000000.into()),
-        conf_settings: OrderConfirmationsSettings::default(),
+    let mut asks: Vec<OrderbookItem> = other_pubkeys
+        .iter()
+        .map(|(pubkey, secret)| make_random_orders(pubkey.clone(), &secret, "RICK".into(), "MORTY".into(), 10))
+        .flatten()
+        .collect();
+
+    let mut bids: Vec<OrderbookItem> = other_pubkeys
+        .iter()
+        .map(|(pubkey, secret)| make_random_orders(pubkey.clone(), &secret, "MORTY".into(), "RICK".into(), 10))
+        .flatten()
+        .collect();
+
+    for order in asks.iter().chain(bids.iter()) {
+        orderbook.insert_or_update_order_update_trie(order.clone());
+    }
+
+    // get best RICK:MORTY asks (with lowest prices)
+    let best_asks: Vec<OrderbookItem> = {
+        asks.sort_unstable_by(|x, y| x.price.cmp(&y.price));
+        asks.into_iter().take(ASKS_NUM).collect()
     };
-    let order2 = new_protocol::MakerOrderCreated {
-        uuid: Uuid::new_v4().into(),
-        base: "RICK".into(),
-        rel: "MORTY".into(),
-        price: BigRational::from_integer(500000.into()),
-        max_volume: BigRational::from_integer(2000000.into()),
-        min_volume: BigRational::from_integer(2000000.into()),
-        conf_settings: OrderConfirmationsSettings::default(),
+
+    // get best MORTY:RICK bids (with highest prices)
+    let best_bids: Vec<OrderbookItem> = {
+        bids.sort_unstable_by(|x, y| y.price.cmp(&x.price));
+        bids.into_iter().take(BIDS_NUM).collect()
     };
 
-    // create an initial_message and encode it with the secret
-    let initial_message1 = encode_and_sign(
-        &new_protocol::OrdermatchMessage::MakerOrderCreated(order1.clone()),
-        &secret,
-    )
-    .unwrap();
-
-    let initial_message2 = encode_and_sign(
-        &new_protocol::OrdermatchMessage::MakerOrderCreated(order2.clone()),
-        &secret,
-    )
-    .unwrap();
-
-    // the first ping request has best MORTY:RICK price (1000000 highest price), therefore is the best bid
-    let price_ping_request1: OrderbookItem = (order1, pubkey.clone()).into();
-    // the second ping request has best RICK:MORTY price (500000 lowest price), therefore is the best ask
-    let price_ping_request2: OrderbookItem = (order2, pubkey.clone()).into();
-
-    orderbook.insert_or_update_order(price_ping_request1.clone());
-    orderbook.insert_or_update_order(price_ping_request2.clone());
+    let mut best_orders_by_pubkeys = HashMap::new();
+    for order in best_asks.iter().chain(best_bids.iter()) {
+        let pubkey_orders = best_orders_by_pubkeys
+            .entry(order.pubkey.clone())
+            .or_insert_with(Vec::new);
+        pubkey_orders.push(order.clone());
+    }
+    // sort by uuids
+    for (_pubkey, orders) in best_orders_by_pubkeys.iter_mut() {
+        orders.sort_unstable_by(|x, y| x.uuid.cmp(&y.uuid));
+    }
 
     // avoid dead lock on orderbook as process_get_orderbook_request also acquires it
     drop(orderbook);
-
-    // test RICK:MORTY orderbook
 
     let encoded = block_on(process_get_orderbook_request(
         ctx.clone(),
         "RICK".into(),
         "MORTY".into(),
-        // get one best ask
-        Some(1),
-        // get one best bid
-        Some(1),
+        Some(ASKS_NUM),
+        Some(BIDS_NUM),
     ))
     .unwrap()
     .unwrap();
 
-    let orderbook = decode_message::<new_protocol::Orderbook>(&encoded).unwrap();
-    assert!(orderbook.bids.is_empty());
-    let asks: Vec<OrderbookItem> = orderbook
-        .asks
-        .into_iter()
-        .map(|order| OrderbookItem::from_initial_msg(order.initial_message, order.from_peer).unwrap())
-        .collect();
-    assert_eq!(asks, vec![price_ping_request2]);
+    fn verify_orders(orders_root: &H64, proof: &TrieProof, order_pairs: &[(Uuid, OrderbookItem)]) {
+        log!("Verify "[order_pairs.len()]" orders with "[orders_root]" root");
+        let keys: Vec<(Vec<u8>, Option<Vec<u8>>)> = order_pairs
+            .iter()
+            .map(|(uuid, order)| {
+                let order_bytes = rmp_serde::to_vec(&order).expect("Serialization should never fail");
+                (uuid.as_bytes().to_vec(), Some(order_bytes))
+            })
+            .collect();
+        verify_trie_proof::<Layout, _, _, _>(orders_root, proof, &keys).expect("!verify_trie_proof");
+    }
 
-    // test MORTY:RICK orderbook
+    fn verify_pairs_root(all_pairs_root: &H64, proof: &TrieProof, alb_pair: &String, pair_root: &H64) {
+        log!("Verify "[all_pairs_root]" root");
+        let keys = vec![(alb_pair.as_bytes(), Some(pair_root))];
+        verify_trie_proof::<Layout, _, _, _>(all_pairs_root, proof, &keys).expect("!verify_trie_proof");
+    }
 
-    let encoded = block_on(process_get_orderbook_request(
-        ctx,
-        "MORTY".into(),
-        "RICK".into(),
-        // get one best ask
-        Some(1),
-        // get one best bid
-        Some(1),
-    ))
-    .unwrap()
-    .unwrap();
-    let orderbook = decode_message::<new_protocol::Orderbook>(&encoded).unwrap();
-    assert!(orderbook.asks.is_empty());
+    let alb_pair = alb_ordered_pair("RICK", "MORTY");
+    let orderbook = decode_message::<GetOrderbookRes>(&encoded).unwrap();
+    for (pubkey, item) in orderbook.pubkey_orders {
+        let expected = best_orders_by_pubkeys
+            .get(&pubkey)
+            .expect(&format!("!best_orders_by_pubkeys is expected to contain {:?}", pubkey));
 
-    let bids: Vec<OrderbookItem> = orderbook
-        .bids
-        .into_iter()
-        .map(|order| OrderbookItem::from_initial_msg(order.initial_message, order.from_peer).unwrap())
-        .collect();
-    assert_eq!(bids, vec![price_ping_request1]);
+        verify_orders(
+            &item.pair_orders_trie_root.0,
+            &item.pair_orders_trie_root.1,
+            &item.orders,
+        );
+        verify_pairs_root(
+            &item.orders_trie_root.0,
+            &item.orders_trie_root.1,
+            &alb_pair,
+            &item.pair_orders_trie_root.0,
+        );
+
+        let mut actual: Vec<OrderbookItem> = item.orders.iter().map(|(_uuid, order)| order.clone()).collect();
+        actual.sort_unstable_by(|x, y| x.uuid.cmp(&y.uuid));
+        log!([pubkey]"-"[actual.len()]);
+        assert_eq!(actual, *expected);
+    }
 }
 
+/*
 #[test]
 fn test_request_and_fill_orderbook() {
     let (ctx, pubkey, secret) = make_ctx_for_tests();

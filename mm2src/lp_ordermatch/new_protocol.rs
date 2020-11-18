@@ -1,9 +1,9 @@
-use super::{MatchBy as SuperMatchBy, OrderbookItem, TakerAction};
+use super::{MatchBy as SuperMatchBy, TakerAction};
 use crate::mm2::lp_ordermatch::OrderConfirmationsSettings;
 use common::mm_number::MmNumber;
 use compact_uuid::CompactUuid;
 use num_rational::BigRational;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use uuid::Uuid;
 
 #[derive(Debug, Deserialize, Serialize)]
