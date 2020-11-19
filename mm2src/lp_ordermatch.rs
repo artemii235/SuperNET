@@ -231,6 +231,55 @@ async fn process_maker_order_updated(
     }
 }
 
+// fn purge_pubkey_state_for_pair(pubkey_state: &OrderbookPubkeyState, base: &str, rel: &str) {
+//     let s = pubkey_state.order_pairs_trie_state_history.
+// }
+//
+fn verify_pubkey_orderbook(orderbook: &GetOrderbookPubkeyItem, base: &str, rel: &str) -> Result<(), String> {
+    fn verify_orders(
+        orders_root: &H64,
+        proof: &TrieProof,
+        order_pairs: &[(Uuid, OrderbookItem)],
+    ) -> Result<(), String> {
+        let keys: Vec<(_, _)> = order_pairs
+            .iter()
+            .map(|(uuid, order)| {
+                let order_bytes = rmp_serde::to_vec(&order).expect("Serialization should never fail");
+                (uuid.as_bytes(), Some(order_bytes))
+            })
+            .collect();
+        try_s!(verify_trie_proof::<Layout, _, _, _>(orders_root, proof, &keys));
+        Ok(())
+    }
+
+    fn verify_pairs_root(
+        all_pairs_root: &H64,
+        proof: &TrieProof,
+        alb_pair: &String,
+        pair_root: &H64,
+    ) -> Result<(), String> {
+        let keys = &[(alb_pair.as_bytes(), Some(pair_root))];
+        try_s!(verify_trie_proof::<Layout, _, _, _>(all_pairs_root, proof, keys));
+        Ok(())
+    }
+
+    let alb_pair = alb_ordered_pair(base, rel);
+    verify_orders(
+        &orderbook.pair_orders_trie_root.0,
+        &orderbook.pair_orders_trie_root.1,
+        &orderbook.orders,
+    )
+    .map_err(|e| ERRL!("Error on pair_orders_trie_root verification: {}", e))?;
+    verify_pairs_root(
+        &orderbook.orders_trie_root.0,
+        &orderbook.orders_trie_root.1,
+        &alb_pair,
+        &orderbook.pair_orders_trie_root.0,
+    )
+    .map_err(|e| ERRL!("Error on orders_trie_root verification: {}", e))?;
+    Ok(())
+}
+
 /// Request best asks and bids for the given `base` and `rel` coins from relays.
 /// Set `asks_num` and/or `bids_num` to get corresponding number of best asks and bids or None to get all of the available orders.
 ///
@@ -405,14 +454,7 @@ pub async fn process_msg(ctx: MmArc, topics: Vec<String>, from_peer: String, msg
 #[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum OrdermatchRequest {
     /// Get an orderbook for the given pair.
-    GetOrderbook {
-        base: String,
-        rel: String,
-        /// Get the given number of best asks if the `asks_num` is some, else get all of the asks.
-        asks_num: Option<usize>,
-        /// Get the given number of best bids if the `bids_num` is some, else get all of the bids.
-        bids_num: Option<usize>,
-    },
+    GetOrderbook { base: String, rel: String },
     /// Sync specific pubkey orderbook state if our known Patricia trie state doesn't match the latest keep alive message
     SyncPubkeyOrderbookState {
         pubkey: String,
@@ -465,12 +507,7 @@ impl TryFromBytes for Uuid {
 pub async fn process_peer_request(ctx: MmArc, request: OrdermatchRequest) -> Result<Option<Vec<u8>>, String> {
     println!("Got ordermatch request {:?}", request);
     match request {
-        OrdermatchRequest::GetOrderbook {
-            base,
-            rel,
-            asks_num,
-            bids_num,
-        } => process_get_orderbook_request(ctx, base, rel, asks_num, bids_num).await,
+        OrdermatchRequest::GetOrderbook { base, rel } => process_get_orderbook_request(ctx, base, rel).await,
         OrdermatchRequest::SyncPubkeyOrderbookState {
             pubkey,
             current_orders_trie_root,
@@ -512,38 +549,19 @@ struct GetOrderbookRes {
     pubkey_orders: HashMap<String, GetOrderbookPubkeyItem>,
 }
 
-async fn process_get_orderbook_request(
-    ctx: MmArc,
-    base: String,
-    rel: String,
-    asks_num: Option<usize>,
-    bids_num: Option<usize>,
-) -> Result<Option<Vec<u8>>, String> {
-    enum PriceOrdering {
-        LowestToHighest,
-        HighestToLowest,
-    }
-    fn get_n_orders(
+async fn process_get_orderbook_request(ctx: MmArc, base: String, rel: String) -> Result<Option<Vec<u8>>, String> {
+    fn get_pubkeys_orders(
         orderbook: &Orderbook,
         base: String,
         rel: String,
-        n: Option<usize>,
-        ordering: PriceOrdering,
     ) -> HashMap<String, Vec<(Uuid, OrderbookItem)>> {
-        let order_uuids = match orderbook.ordered.get(&(base, rel)) {
+        let order_uuids = match orderbook.unordered.get(&(base, rel)) {
             Some(uuids) => uuids,
             None => return HashMap::new(),
         };
 
-        let n = n.unwrap_or_else(|| order_uuids.len());
-        let order_uuids = match ordering {
-            PriceOrdering::LowestToHighest => Either::Left(order_uuids.iter()),
-            PriceOrdering::HighestToLowest => Either::Right(order_uuids.iter().rev()),
-        }
-        .take(n);
-
         let mut uuids_by_pubkey = HashMap::new();
-        for OrderedByPriceOrder { ref uuid, .. } in order_uuids {
+        for uuid in order_uuids.iter() {
             let order = orderbook
                 .order_set
                 .get(uuid)
@@ -560,31 +578,7 @@ async fn process_get_orderbook_request(
     let ordermatch_ctx = unwrap!(OrdermatchContext::from_ctx(&ctx));
     let orderbook = ordermatch_ctx.orderbook.lock().await;
 
-    // get best `asks_num` asks that means asks with the highest prices (from lowest to highest prices)
-    let asks = get_n_orders(
-        &orderbook,
-        base.clone(),
-        rel.clone(),
-        asks_num,
-        PriceOrdering::LowestToHighest,
-    );
-    // get best `bids_num` bids that means bids with the highest prices (from highest to lowest prices)
-    let bids = get_n_orders(
-        &orderbook,
-        rel.clone(),
-        base.clone(),
-        bids_num,
-        PriceOrdering::HighestToLowest,
-    );
-
-    // merge asks and bids
-    let mut orders_to_send = asks;
-    for (pubkey, uuids) in bids {
-        orders_to_send
-            .entry(pubkey)
-            .or_insert_with(|| Vec::new())
-            .extend(uuids.into_iter());
-    }
+    let orders_to_send = get_pubkeys_orders(&orderbook, base.clone(), rel.clone());
 
     let alb_pair = alb_ordered_pair(&base, &rel);
     let mut result = HashMap::new();

@@ -1328,12 +1328,11 @@ fn p2p_context_mock() -> (mpsc::Sender<AdexBehaviourCmd>, mpsc::Receiver<AdexBeh
 
 #[test]
 fn test_process_get_orderbook_request() {
-    const ASKS_NUM: usize = 5;
-    const BIDS_NUM: usize = 5;
-    const PUBKEYS_NUM: usize = 3;
+    const PUBKEYS_NUMBER: usize = 5;
+    const ORDERS_NUMBER: usize = 10;
 
     let (ctx, _pubkey, _secret) = make_ctx_for_tests();
-    let other_pubkeys: Vec<(String, [u8; 32])> = (0..PUBKEYS_NUM)
+    let other_pubkeys: Vec<(String, [u8; 32])> = (0..PUBKEYS_NUMBER)
         .map(|idx| {
             let passphrase = format!("passphrase-{}", idx);
             pubkey_and_secret_for_test(&passphrase)
@@ -1346,43 +1345,24 @@ fn test_process_get_orderbook_request() {
 
     let mut orderbook = block_on(ordermatch_ctx.orderbook.lock());
 
-    let mut asks: Vec<OrderbookItem> = other_pubkeys
+    let mut orders: Vec<OrderbookItem> = other_pubkeys
         .iter()
-        .map(|(pubkey, secret)| make_random_orders(pubkey.clone(), &secret, "RICK".into(), "MORTY".into(), 10))
+        .map(|(pubkey, secret)| {
+            make_random_orders(pubkey.clone(), &secret, "RICK".into(), "MORTY".into(), ORDERS_NUMBER)
+        })
         .flatten()
         .collect();
 
-    let mut bids: Vec<OrderbookItem> = other_pubkeys
-        .iter()
-        .map(|(pubkey, secret)| make_random_orders(pubkey.clone(), &secret, "MORTY".into(), "RICK".into(), 10))
-        .flatten()
-        .collect();
-
-    for order in asks.iter().chain(bids.iter()) {
+    let mut orders_by_pubkeys = HashMap::new();
+    for order in orders.iter() {
         orderbook.insert_or_update_order_update_trie(order.clone());
-    }
 
-    // get best RICK:MORTY asks (with lowest prices)
-    let best_asks: Vec<OrderbookItem> = {
-        asks.sort_unstable_by(|x, y| x.price.cmp(&y.price));
-        asks.into_iter().take(ASKS_NUM).collect()
-    };
-
-    // get best MORTY:RICK bids (with highest prices)
-    let best_bids: Vec<OrderbookItem> = {
-        bids.sort_unstable_by(|x, y| y.price.cmp(&x.price));
-        bids.into_iter().take(BIDS_NUM).collect()
-    };
-
-    let mut best_orders_by_pubkeys = HashMap::new();
-    for order in best_asks.iter().chain(best_bids.iter()) {
-        let pubkey_orders = best_orders_by_pubkeys
-            .entry(order.pubkey.clone())
-            .or_insert_with(Vec::new);
+        let pubkey_orders = orders_by_pubkeys.entry(order.pubkey.clone()).or_insert_with(Vec::new);
         pubkey_orders.push(order.clone());
     }
+
     // sort by uuids
-    for (_pubkey, orders) in best_orders_by_pubkeys.iter_mut() {
+    for (_pubkey, orders) in orders_by_pubkeys.iter_mut() {
         orders.sort_unstable_by(|x, y| x.uuid.cmp(&y.uuid));
     }
 
@@ -1393,48 +1373,18 @@ fn test_process_get_orderbook_request() {
         ctx.clone(),
         "RICK".into(),
         "MORTY".into(),
-        Some(ASKS_NUM),
-        Some(BIDS_NUM),
     ))
     .unwrap()
     .unwrap();
 
-    fn verify_orders(orders_root: &H64, proof: &TrieProof, order_pairs: &[(Uuid, OrderbookItem)]) {
-        log!("Verify "[order_pairs.len()]" orders with "[orders_root]" root");
-        let keys: Vec<(Vec<u8>, Option<Vec<u8>>)> = order_pairs
-            .iter()
-            .map(|(uuid, order)| {
-                let order_bytes = rmp_serde::to_vec(&order).expect("Serialization should never fail");
-                (uuid.as_bytes().to_vec(), Some(order_bytes))
-            })
-            .collect();
-        verify_trie_proof::<Layout, _, _, _>(orders_root, proof, &keys).expect("!verify_trie_proof");
-    }
-
-    fn verify_pairs_root(all_pairs_root: &H64, proof: &TrieProof, alb_pair: &String, pair_root: &H64) {
-        log!("Verify "[all_pairs_root]" root");
-        let keys = vec![(alb_pair.as_bytes(), Some(pair_root))];
-        verify_trie_proof::<Layout, _, _, _>(all_pairs_root, proof, &keys).expect("!verify_trie_proof");
-    }
-
     let alb_pair = alb_ordered_pair("RICK", "MORTY");
     let orderbook = decode_message::<GetOrderbookRes>(&encoded).unwrap();
     for (pubkey, item) in orderbook.pubkey_orders {
-        let expected = best_orders_by_pubkeys
+        let expected = orders_by_pubkeys
             .get(&pubkey)
             .expect(&format!("!best_orders_by_pubkeys is expected to contain {:?}", pubkey));
 
-        verify_orders(
-            &item.pair_orders_trie_root.0,
-            &item.pair_orders_trie_root.1,
-            &item.orders,
-        );
-        verify_pairs_root(
-            &item.orders_trie_root.0,
-            &item.orders_trie_root.1,
-            &alb_pair,
-            &item.pair_orders_trie_root.0,
-        );
+        verify_pubkey_orderbook(&item, "RICK", "MORTY").expect("!verify_pubkey_orderbook");
 
         let mut actual: Vec<OrderbookItem> = item.orders.iter().map(|(_uuid, order)| order.clone()).collect();
         actual.sort_unstable_by(|x, y| x.uuid.cmp(&y.uuid));
