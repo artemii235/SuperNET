@@ -231,52 +231,23 @@ async fn process_maker_order_updated(
     }
 }
 
+// TODO
 // fn purge_pubkey_state_for_pair(pubkey_state: &OrderbookPubkeyState, base: &str, rel: &str) {
 //     let s = pubkey_state.order_pairs_trie_state_history.
 // }
 //
-fn verify_pubkey_orderbook(orderbook: &GetOrderbookPubkeyItem, base: &str, rel: &str) -> Result<(), String> {
-    fn verify_orders(
-        orders_root: &H64,
-        proof: &TrieProof,
-        order_pairs: &[(Uuid, OrderbookItem)],
-    ) -> Result<(), String> {
-        let keys: Vec<(_, _)> = order_pairs
-            .iter()
-            .map(|(uuid, order)| {
-                let order_bytes = rmp_serde::to_vec(&order).expect("Serialization should never fail");
-                (uuid.as_bytes(), Some(order_bytes))
-            })
-            .collect();
-        try_s!(verify_trie_proof::<Layout, _, _, _>(orders_root, proof, &keys));
-        Ok(())
-    }
-
-    fn verify_pairs_root(
-        all_pairs_root: &H64,
-        proof: &TrieProof,
-        alb_pair: &String,
-        pair_root: &H64,
-    ) -> Result<(), String> {
-        let keys = &[(alb_pair.as_bytes(), Some(pair_root))];
-        try_s!(verify_trie_proof::<Layout, _, _, _>(all_pairs_root, proof, keys));
-        Ok(())
-    }
-
-    let alb_pair = alb_ordered_pair(base, rel);
-    verify_orders(
-        &orderbook.pair_orders_trie_root.0,
-        &orderbook.pair_orders_trie_root.1,
-        &orderbook.orders,
-    )
-    .map_err(|e| ERRL!("Error on pair_orders_trie_root verification: {}", e))?;
-    verify_pairs_root(
-        &orderbook.orders_trie_root.0,
-        &orderbook.orders_trie_root.1,
-        &alb_pair,
-        &orderbook.pair_orders_trie_root.0,
-    )
-    .map_err(|e| ERRL!("Error on orders_trie_root verification: {}", e))?;
+fn verify_pubkey_orderbook(orderbook: &GetOrderbookPubkeyItem) -> Result<(), String> {
+    let keys: Vec<(_, _)> = orderbook
+        .orders
+        .iter()
+        .map(|(uuid, order)| {
+            let order_bytes = rmp_serde::to_vec(&order).expect("Serialization should never fail");
+            (uuid.as_bytes(), Some(order_bytes))
+        })
+        .collect();
+    let (orders_root, proof) = &orderbook.pair_orders_trie_root;
+    verify_trie_proof::<Layout, _, _, _>(orders_root, proof, &keys)
+        .map_err(|e| ERRL!("Error on pair_orders_trie_root verification: {}", e))?;
     Ok(())
 }
 
@@ -533,11 +504,8 @@ type TrieProof = Vec<Vec<u8>>;
 struct GetOrderbookPubkeyItem {
     /// Timestamp of the latest keep alive message received.
     last_keep_alive: u64,
-    /// First - root hash of trie where the key - `AlbOrderedOrderbookPair`, value - `H64` root hash of the pair orders.
-    /// Second - proof for the `pair_orders_trie_root` hash in the `orders_trie_root` trie.
-    orders_trie_root: (H64, TrieProof),
     /// First - root hash of the requested pair orders trie, where the key - `Uuid`, value - `OrderbookItem`.
-    /// Second - proof for the given `orders` in the `pair_orders_trie_root` trie.
+    /// Second - proof for the given `orders` in the trie.
     pair_orders_trie_root: (H64, TrieProof),
     /// Requested orders.
     orders: Vec<(Uuid, OrderbookItem)>,
@@ -602,18 +570,8 @@ async fn process_get_orderbook_request(ctx: MmArc, base: String, rel: String) ->
             ))
         };
 
-        let orders_trie_root_proof = {
-            let keys = &[alb_pair.as_bytes()];
-            try_s!(generate_trie_proof::<Layout, _, _, _>(
-                &orderbook.memory_db,
-                pubkey_state.all_orders_trie_root,
-                keys
-            ))
-        };
-
         let item = GetOrderbookPubkeyItem {
             last_keep_alive: pubkey_state.last_keep_alive,
-            orders_trie_root: (pubkey_state.all_orders_trie_root, orders_trie_root_proof),
             pair_orders_trie_root: (*pair_orders_trie_root, pair_orders_trie_root_proof),
             orders,
         };
