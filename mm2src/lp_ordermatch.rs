@@ -210,20 +210,20 @@ async fn process_maker_order_updated(
 //     let s = pubkey_state.order_pairs_trie_state_history.
 // }
 //
-fn verify_pubkey_orderbook(orderbook: &GetOrderbookPubkeyItem) -> Result<(), String> {
-    let keys: Vec<(_, _)> = orderbook
-        .orders
-        .iter()
-        .map(|(uuid, order)| {
-            let order_bytes = rmp_serde::to_vec(&order).expect("Serialization should never fail");
-            (uuid.as_bytes(), Some(order_bytes))
-        })
-        .collect();
-    let (orders_root, proof) = &orderbook.pair_orders_trie_root;
-    verify_trie_proof::<Layout, _, _, _>(orders_root, proof, &keys)
-        .map_err(|e| ERRL!("Error on pair_orders_trie_root verification: {}", e))?;
-    Ok(())
-}
+// fn verify_pubkey_orderbook(orderbook: &GetOrderbookPubkeyItem) -> Result<(), String> {
+//     let keys: Vec<(_, _)> = orderbook
+//         .orders
+//         .iter()
+//         .map(|(uuid, order)| {
+//             let order_bytes = rmp_serde::to_vec(&order).expect("Serialization should never fail");
+//             (uuid.as_bytes(), Some(order_bytes))
+//         })
+//         .collect();
+//     let (orders_root, proof) = &orderbook.pair_orders_trie_root;
+//     verify_trie_proof::<Layout, _, _, _>(orders_root, proof, &keys)
+//         .map_err(|e| ERRL!("Error on pair_orders_trie_root verification: {}", e))?;
+//     Ok(())
+// }
 
 /// Request best asks and bids for the given `base` and `rel` coins from relays.
 /// Set `asks_num` and/or `bids_num` to get corresponding number of best asks and bids or None to get all of the available orders.
@@ -462,9 +462,6 @@ type TrieProof = Vec<Vec<u8>>;
 struct GetOrderbookPubkeyItem {
     /// Timestamp of the latest keep alive message received.
     last_keep_alive: u64,
-    /// First - root hash of the requested pair orders trie, where the key - `Uuid`, value - `OrderbookItem`.
-    /// Second - proof for the given `orders` in the trie.
-    pair_orders_trie_root: (H64, TrieProof),
     /// Requested orders.
     orders: Vec<(Uuid, OrderbookItem)>,
 }
@@ -504,39 +501,28 @@ async fn process_get_orderbook_request(ctx: MmArc, base: String, rel: String) ->
     let ordermatch_ctx = unwrap!(OrdermatchContext::from_ctx(&ctx));
     let orderbook = ordermatch_ctx.orderbook.lock().await;
 
-    let orders_to_send = get_pubkeys_orders(&orderbook, base.clone(), rel.clone());
-
     let alb_pair = alb_ordered_pair(&base, &rel);
-    let mut result = HashMap::new();
-    for (pubkey, orders) in orders_to_send {
-        let pubkey_state = orderbook.pubkeys_state.get(&pubkey).ok_or(ERRL!(
-            "Orderbook::pubkeys_state is expected to contain the {:?} pubkey",
-            pubkey
-        ))?;
+    let orders_to_send = get_pubkeys_orders(&orderbook, base, rel);
 
-        let pair_orders_trie_root = pubkey_state.trie_roots.get(&alb_pair).ok_or(ERRL!(
-            "OrderbookPubkeyState::order_pairs_trie_roots is expected to contain the {:?} base-rel pair",
-            alb_pair
-        ))?;
+    let orders_to_send: Result<HashMap<_, _>, String> = orders_to_send
+        .into_iter()
+        .map(|(pubkey, orders)| {
+            let pubkey_state = orderbook.pubkeys_state.get(&pubkey).ok_or(ERRL!(
+                "Orderbook::pubkeys_state is expected to contain the {:?} pubkey",
+                pubkey
+            ))?;
 
-        let pair_orders_trie_root_proof = {
-            let orders_keys = orders.iter().map(|(uuid, _orderbook_item)| uuid.as_bytes());
-            try_s!(generate_trie_proof::<Layout, _, _, _>(
-                &orderbook.memory_db,
-                *pair_orders_trie_root,
-                orders_keys
-            ))
-        };
+            let item = GetOrderbookPubkeyItem {
+                last_keep_alive: pubkey_state.last_keep_alive,
+                orders,
+            };
 
-        let item = GetOrderbookPubkeyItem {
-            last_keep_alive: pubkey_state.last_keep_alive,
-            pair_orders_trie_root: (*pair_orders_trie_root, pair_orders_trie_root_proof),
-            orders,
-        };
-        result.insert(pubkey, item);
-    }
+            Ok((pubkey, item))
+        })
+        .collect();
 
-    let response = GetOrderbookRes { pubkey_orders: result };
+    let pubkey_orders = orders_to_send?;
+    let response = GetOrderbookRes { pubkey_orders };
     let encoded = try_s!(encode_message(&response));
     Ok(Some(encoded))
 }

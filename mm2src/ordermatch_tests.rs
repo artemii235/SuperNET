@@ -1376,8 +1376,6 @@ fn test_process_get_orderbook_request() {
             .get(&pubkey)
             .expect(&format!("!best_orders_by_pubkeys is expected to contain {:?}", pubkey));
 
-        verify_pubkey_orderbook(&item).expect("!verify_pubkey_orderbook");
-
         let mut actual: Vec<OrderbookItem> = item.orders.iter().map(|(_uuid, order)| order.clone()).collect();
         actual.sort_unstable_by(|x, y| x.uuid.cmp(&y.uuid));
         log!([pubkey]"-"[actual.len()]);
