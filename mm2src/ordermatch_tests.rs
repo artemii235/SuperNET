@@ -1295,13 +1295,6 @@ fn make_random_orders(pubkey: String, secret: &[u8; 32], base: String, rel: Stri
             created_at: now_ms() / 1000,
         };
 
-        // create an initial_message and encode it with the secret
-        let initial_message = encode_and_sign(
-            &new_protocol::OrdermatchMessage::MakerOrderCreated(order.clone()),
-            &secret,
-        )
-        .unwrap();
-
         orders.push((order, pubkey.clone()).into());
     }
 
@@ -1345,7 +1338,7 @@ fn test_process_get_orderbook_request() {
 
     let mut orderbook = block_on(ordermatch_ctx.orderbook.lock());
 
-    let mut orders: Vec<OrderbookItem> = other_pubkeys
+    let orders: Vec<OrderbookItem> = other_pubkeys
         .iter()
         .map(|(pubkey, secret)| {
             make_random_orders(pubkey.clone(), &secret, "RICK".into(), "MORTY".into(), ORDERS_NUMBER)
@@ -1377,7 +1370,6 @@ fn test_process_get_orderbook_request() {
     .unwrap()
     .unwrap();
 
-    let alb_pair = alb_ordered_pair("RICK", "MORTY");
     let orderbook = decode_message::<GetOrderbookRes>(&encoded).unwrap();
     for (pubkey, item) in orderbook.pubkey_orders {
         let expected = orders_by_pubkeys
@@ -1831,12 +1823,6 @@ fn test_orderbook_insert_or_update_order() {
     orderbook.insert_or_update_order_update_trie(order.clone());
 }
 
-fn all_orders_trie_root_by_pub(ctx: &MmArc, pubkey: &str) -> H64 {
-    let ordermatch_ctx = OrdermatchContext::from_ctx(ctx).unwrap();
-    let orderbook = block_on(ordermatch_ctx.orderbook.lock());
-    orderbook.pubkeys_state.get(pubkey).unwrap().all_orders_trie_root
-}
-
 fn pair_trie_root_by_pub(ctx: &MmArc, pubkey: &str, pair: &str) -> H64 {
     let ordermatch_ctx = OrdermatchContext::from_ctx(ctx).unwrap();
     let orderbook = block_on(ordermatch_ctx.orderbook.lock());
@@ -1844,7 +1830,7 @@ fn pair_trie_root_by_pub(ctx: &MmArc, pubkey: &str, pair: &str) -> H64 {
         .pubkeys_state
         .get(pubkey)
         .unwrap()
-        .order_pairs_trie_roots
+        .trie_roots
         .get(pair)
         .unwrap()
 }
@@ -1871,7 +1857,6 @@ fn test_process_sync_pubkey_orderbook_state_after_new_orders_added() {
     }
 
     let alb_ordered_pair = alb_ordered_pair("C1", "C2");
-    let current_root_hash = all_orders_trie_root_by_pub(&ctx, &pubkey);
     let pair_trie_root = pair_trie_root_by_pub(&ctx, &pubkey, &alb_ordered_pair);
 
     let prev_pairs_state = HashMap::from_iter(iter::once((alb_ordered_pair.clone(), pair_trie_root)));
@@ -1883,30 +1868,13 @@ fn test_process_sync_pubkey_orderbook_state_after_new_orders_added() {
         block_on(insert_or_update_order(&ctx, order.clone()));
     }
 
-    let expected_root_hash = all_orders_trie_root_by_pub(&ctx, &pubkey);
     let mut result = block_on(process_sync_pubkey_orderbook_state(
         ctx.clone(),
         pubkey.clone(),
-        current_root_hash,
-        expected_root_hash,
         prev_pairs_state,
     ))
     .unwrap()
     .unwrap();
-
-    // check all orders trie root first
-    let delta = match result.all_orders_diff {
-        DeltaOrFullTrie::Delta(delta) => delta,
-        DeltaOrFullTrie::FullTrie(_) => panic!("Must be DeltaOrFullTrie::Delta"),
-    };
-
-    let actual_root_hash = delta_trie_root::<Layout, _, _, _, _, _>(
-        &mut old_mem_db,
-        current_root_hash,
-        delta.into_iter().map(|(pair, hash)| (pair.into_bytes(), hash)),
-    )
-    .unwrap();
-    assert_eq!(expected_root_hash, actual_root_hash);
 
     // check pair trie root
     let expected_root_hash = pair_trie_root_by_pub(&ctx, &pubkey, &alb_ordered_pair);
@@ -1937,7 +1905,6 @@ fn test_diff_should_not_be_written_if_hash_not_changed_on_insert() {
     }
 
     let alb_ordered_pair = alb_ordered_pair("C1", "C2");
-    let current_root_hash = all_orders_trie_root_by_pub(&ctx, &pubkey);
     let pair_trie_root = pair_trie_root_by_pub(&ctx, &pubkey, &alb_ordered_pair);
     for order in orders.clone() {
         block_on(insert_or_update_order(&ctx, order));
@@ -1946,9 +1913,6 @@ fn test_diff_should_not_be_written_if_hash_not_changed_on_insert() {
     let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
     let orderbook = block_on(ordermatch_ctx.orderbook.lock());
     let pubkey_state = orderbook.pubkeys_state.get(&pubkey).unwrap();
-    assert!(!pubkey_state
-        .order_pairs_trie_state_history
-        .contains_key(&current_root_hash));
     assert!(!pubkey_state
         .order_pairs_trie_state_history
         .contains_key(&pair_trie_root));
@@ -1964,7 +1928,6 @@ fn test_process_sync_pubkey_orderbook_state_after_orders_removed() {
     }
 
     let alb_ordered_pair = alb_ordered_pair("C1", "C2");
-    let current_root_hash = all_orders_trie_root_by_pub(&ctx, &pubkey);
     let pair_trie_root = pair_trie_root_by_pub(&ctx, &pubkey, &alb_ordered_pair);
 
     let prev_pairs_state = HashMap::from_iter(iter::once((alb_ordered_pair.clone(), pair_trie_root)));
@@ -1978,30 +1941,13 @@ fn test_process_sync_pubkey_orderbook_state_after_orders_removed() {
         remove_order(&ctx, order.uuid);
     }
 
-    let expected_root_hash = all_orders_trie_root_by_pub(&ctx, &pubkey);
     let mut result = block_on(process_sync_pubkey_orderbook_state(
         ctx.clone(),
         pubkey.clone(),
-        current_root_hash,
-        expected_root_hash,
         prev_pairs_state,
     ))
     .unwrap()
     .unwrap();
-
-    // check all orders trie root first
-    let delta = match result.all_orders_diff {
-        DeltaOrFullTrie::Delta(delta) => delta,
-        DeltaOrFullTrie::FullTrie(_) => panic!("Must be DeltaOrFullTrie::Delta"),
-    };
-
-    let actual_root_hash = delta_trie_root::<Layout, _, _, _, _, _>(
-        &mut old_mem_db,
-        current_root_hash,
-        delta.into_iter().map(|(pair, hash)| (pair.into_bytes(), hash)),
-    )
-    .unwrap();
-    assert_eq!(expected_root_hash, actual_root_hash);
 
     // check pair trie root
     let expected_root_hash = pair_trie_root_by_pub(&ctx, &pubkey, &alb_ordered_pair);
@@ -2043,15 +1989,11 @@ fn test_diff_should_not_be_written_if_hash_not_changed_on_remove() {
     }
 
     let alb_ordered_pair = alb_ordered_pair("C1", "C2");
-    let current_root_hash = all_orders_trie_root_by_pub(&ctx, &pubkey);
     let pair_trie_root = pair_trie_root_by_pub(&ctx, &pubkey, &alb_ordered_pair);
 
     let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
     let orderbook = block_on(ordermatch_ctx.orderbook.lock());
     let pubkey_state = orderbook.pubkeys_state.get(&pubkey).unwrap();
-    assert!(!pubkey_state
-        .order_pairs_trie_state_history
-        .contains_key(&current_root_hash));
     assert!(!pubkey_state
         .order_pairs_trie_state_history
         .contains_key(&pair_trie_root));
@@ -2064,16 +2006,23 @@ fn test_orderbook_pubkey_sync_request() {
         orderbook_topic_from_base_rel("C1", "C2"),
         OrderbookRequestingState::Requested,
     );
-    let pairs = vec!["C1:C2".into(), "C2:C3".into()];
     let pubkey = "pubkey";
+
+    let mut trie_roots = HashMap::new();
+    trie_roots.insert("C1:C2".to_owned(), [1; 8]);
+    trie_roots.insert("C2:C3".to_owned(), [1; 8]);
+
     let message = PubkeyKeepAlive {
-        orders_trie_root: [1; 8],
+        trie_roots,
         timestamp: now_ms() / 1000,
     };
 
-    let request = orderbook.process_keep_alive(pubkey, pairs, message).unwrap();
+    let request = orderbook.process_keep_alive(pubkey, message).unwrap();
     match request {
-        OrdermatchRequest::SyncPubkeyOrderbookState { pairs_trie_roots, .. } => {
+        OrdermatchRequest::SyncPubkeyOrderbookState {
+            trie_roots: pairs_trie_roots,
+            ..
+        } => {
             assert!(pairs_trie_roots.contains_key("C1:C2"));
             assert!(!pairs_trie_roots.contains_key("C2:C3"));
         },

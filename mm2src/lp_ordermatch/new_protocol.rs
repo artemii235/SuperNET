@@ -1,9 +1,9 @@
 use super::{MatchBy as SuperMatchBy, TakerAction};
-use crate::mm2::lp_ordermatch::OrderConfirmationsSettings;
+use crate::mm2::lp_ordermatch::{AlbOrderedOrderbookPair, OrderConfirmationsSettings, H64};
 use common::mm_number::MmNumber;
 use compact_uuid::CompactUuid;
 use num_rational::BigRational;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -122,7 +122,7 @@ pub struct MakerOrderCreated {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct PubkeyKeepAlive {
-    pub orders_trie_root: [u8; 8],
+    pub trie_roots: HashMap<AlbOrderedOrderbookPair, H64>,
     pub timestamp: u64,
 }
 
