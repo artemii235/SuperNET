@@ -179,7 +179,6 @@ pub async fn subscribe_to_topic(ctx: &MmArc, topic: String) {
 }
 
 #[cfg(feature = "native")]
-#[allow(dead_code)]
 pub async fn request_any_relay<T: de::DeserializeOwned>(
     ctx: MmArc,
     req: P2PRequest,
@@ -209,6 +208,7 @@ pub enum PeerDecodedResponse<T> {
 }
 
 #[cfg(feature = "native")]
+#[allow(dead_code)]
 pub async fn request_relays<T: de::DeserializeOwned>(
     ctx: MmArc,
     req: P2PRequest,

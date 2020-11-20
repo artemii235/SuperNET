@@ -6,7 +6,7 @@ use common::{executor::spawn,
              mm_ctx::{MmArc, MmCtx, MmCtxBuilder},
              privkey::key_pair_from_seed};
 use futures::{channel::mpsc, lock::Mutex as AsyncMutex, StreamExt};
-use mm2_libp2p::atomicdex_behaviour::{AdexBehaviourCmd, AdexResponse};
+use mm2_libp2p::atomicdex_behaviour::AdexBehaviourCmd;
 use mm2_libp2p::{decode_message, PeerId};
 use mocktopus::mocking::*;
 use rand::{seq::SliceRandom, thread_rng, Rng};
@@ -1279,7 +1279,7 @@ fn make_ctx_for_tests() -> (MmArc, String, [u8; 32]) {
     (ctx, pubkey, secret)
 }
 
-fn make_random_orders(pubkey: String, secret: &[u8; 32], base: String, rel: String, n: usize) -> Vec<OrderbookItem> {
+fn make_random_orders(pubkey: String, _secret: &[u8; 32], base: String, rel: String, n: usize) -> Vec<OrderbookItem> {
     let mut rng = rand::thread_rng();
     let mut orders = Vec::with_capacity(n);
     for _i in 0..n {
@@ -1383,68 +1383,49 @@ fn test_process_get_orderbook_request() {
     }
 }
 
-/*
 #[test]
 fn test_request_and_fill_orderbook() {
-    let (ctx, pubkey, secret) = make_ctx_for_tests();
+    const PUBKEYS_NUMBER: usize = 3;
+    const ORDERS_NUMBER: usize = 10;
+
+    let (ctx, _pubkey, _secret) = make_ctx_for_tests();
     let (_, mut cmd_rx) = p2p_context_mock();
 
-    let peer1 = PeerId::random();
-    let peer2 = PeerId::random();
-    let asks1 = make_random_orders(
-        pubkey.clone(),
-        &secret,
-        peer1.to_string(),
-        "RICK".into(),
-        "MORTY".into(),
-        2,
-    );
-    let asks2 = make_random_orders(
-        pubkey.clone(),
-        &secret,
-        peer2.to_string(),
-        "RICK".into(),
-        "MORTY".into(),
-        2,
-    );
-    let bids1 = make_random_orders(
-        pubkey.clone(),
-        &secret,
-        peer1.to_string(),
-        "MORTY".into(),
-        "RICK".into(),
-        2,
-    );
-    let bids2 = make_random_orders(
-        pubkey.clone(),
-        &secret,
-        peer2.to_string(),
-        "MORTY".into(),
-        "RICK".into(),
-        2,
-    );
+    let other_pubkeys: Vec<(String, [u8; 32])> = (0..PUBKEYS_NUMBER)
+        .map(|idx| {
+            let passphrase = format!("passphrase-{}", idx);
+            pubkey_and_secret_for_test(&passphrase)
+        })
+        .collect();
+    let expected_orders: HashMap<String, Vec<(Uuid, OrderbookItem)>> = other_pubkeys
+        .iter()
+        .map(|(pubkey, secret)| {
+            let orders: Vec<_> =
+                make_random_orders(pubkey.clone(), &secret, "RICK".into(), "MORTY".into(), ORDERS_NUMBER)
+                    .into_iter()
+                    .map(|order| (order.uuid, order))
+                    .collect();
+            (pubkey.clone(), orders)
+        })
+        .collect();
+
+    // insert extra (RICK, MORTY) orders that must be removed from our trie before the orderbook is filled
+    {
+        let (pubkey, secret) = &other_pubkeys[0];
+        for extra_order in make_random_orders(pubkey.clone(), secret, "RICK".into(), "MORTY".into(), 2) {
+            block_on(insert_or_update_order(&ctx, extra_order));
+        }
+    }
 
     let expected_request = P2PRequest::Ordermatch(OrdermatchRequest::GetOrderbook {
         base: "RICK".into(),
         rel: "MORTY".into(),
-        asks_num: Some(3),
-        bids_num: None,
     });
 
-    let mut expected_asks = asks1.clone();
-    expected_asks.extend(asks2.clone().into_iter());
-    expected_asks.sort_by(|x, y| x.price.cmp(&y.price));
-    // must be the same as asks_num
-    expected_asks.truncate(3);
-
-    let mut expected_bids = bids1.clone();
-    expected_bids.extend(bids2.clone().into_iter());
-    expected_bids.sort_by(|x, y| y.price.cmp(&x.price));
-    // keep all of the bids, because bids_num is None
-
+    let orders = expected_orders.clone();
     spawn(async move {
         let cmd = cmd_rx.next().await.unwrap();
-        let (req, response_tx) = if let AdexBehaviourCmd::RequestRelays { req, response_tx } = cmd {
+        let (req, response_tx) = if let AdexBehaviourCmd::RequestAnyRelay { req, response_tx } = cmd {
             (req, response_tx)
         } else {
             panic!("Unexpected cmd");
@@ -1454,71 +1435,102 @@ fn test_request_and_fill_orderbook() {
         let actual = decode_message::<P2PRequest>(&req).unwrap();
         assert_eq!(actual, expected_request);
 
-        let mut responses = Vec::new();
-
-        // make, encode and push a response from peer1
-        let orderbook = new_protocol::Orderbook {
-            asks: asks1.into_iter().map(|ask| ask.into()).collect(),
-            bids: bids1.into_iter().map(|bid| bid.into()).collect(),
-        };
+        let result = orders
+            .into_iter()
+            .map(|(pubkey, orders)| {
+                let item = GetOrderbookPubkeyItem {
+                    orders,
+                    last_keep_alive: now_ms() / 1000,
+                };
+                (pubkey, item)
+            })
+            .collect();
+        let orderbook = GetOrderbookRes { pubkey_orders: result };
         let encoded = encode_message(&orderbook).unwrap();
-        let response = AdexResponse::Ok { response: encoded };
 
-        responses.push((peer1, response));
-
-        // make, encode and push a response from peer2
-        let orderbook = new_protocol::Orderbook {
-            asks: asks2.into_iter().map(|ask| ask.into()).collect(),
-            bids: bids2.into_iter().map(|bid| bid.into()).collect(),
-        };
-        let encoded = encode_message(&orderbook).unwrap();
-        let response = AdexResponse::Ok { response: encoded };
-
-        responses.push((peer2, response));
-
-        // send the responses through the response channel
-        response_tx.send(responses).unwrap();
+        // send the response through the response channel
+        response_tx.send(Some((PeerId::random(), encoded))).unwrap();
     });
 
-    block_on(request_and_fill_orderbook(&ctx, "RICK", "MORTY", Some(3), None)).unwrap();
+    block_on(request_and_fill_orderbook(&ctx, "RICK", "MORTY")).unwrap();
 
     // check if the best asks and bids are in the orderbook
     let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
     let orderbook = block_on(ordermatch_ctx.orderbook.lock());
-    let asks: Vec<OrderbookItem> = orderbook
-        .ordered
-        .get(&("RICK".into(), "MORTY".into()))
-        .unwrap()
-        .iter()
-        // the best asks are with the lowest prices (from lowest to highest prices)
-        .map(|OrderedByPriceOrder { uuid, .. }| {
-            orderbook
-                .order_set
-                .get(uuid)
-                .expect("Orderbook::ordered contains an uuid that is not in Orderbook::order_set")
-                .clone()
-        })
-        .collect();
-    let bids: Vec<OrderbookItem> = orderbook
-        .ordered
-        .get(&("MORTY".into(), "RICK".into()))
-        .unwrap()
-        .iter()
-        // the best bids are with the highest prices (from highest to lowest prices)
-        .rev()
-        .map(|OrderedByPriceOrder { uuid, .. }| {
-            orderbook
-                .order_set
-                .get(uuid)
-                .expect("Orderbook::ordered contains an uuid that is not in Orderbook::order_set")
-                .clone()
-        })
-        .collect();
 
-    assert_eq!(asks, expected_asks);
-    assert_eq!(bids, expected_bids);
+    let expected = expected_orders
+        .iter()
+        .map(|(_pubkey, orders)| orders.clone())
+        .flatten()
+        .collect();
+    assert_eq!(orderbook.order_set, expected);
+
+    let expected = expected_orders
+        .iter()
+        .map(|(_pubkey, orders)| orders)
+        .flatten()
+        .map(|(uuid, _order)| *uuid)
+        .collect();
+    let unordered = orderbook
+        .unordered
+        .get(&("RICK".to_owned(), "MORTY".to_owned()))
+        .expect("No (RICK, MORTY) in unordered container");
+    assert_eq!(*unordered, expected);
+
+    let expected = expected_orders
+        .iter()
+        .map(|(_pubkey, orders)| orders)
+        .flatten()
+        .map(|(uuid, order)| OrderedByPriceOrder {
+            uuid: *uuid,
+            price: order.price.clone().into(),
+        })
+        .collect();
+    let ordered = orderbook
+        .ordered
+        .get(&("RICK".to_owned(), "MORTY".to_owned()))
+        .expect("No (RICK, MORTY) in unordered container");
+    assert_eq!(*ordered, expected);
+
+    let rick_morty_pair = alb_ordered_pair("RICK", "MORTY");
+    for (pubkey, orders) in expected_orders {
+        let pubkey_state = orderbook
+            .pubkeys_state
+            .get(&pubkey)
+            .expect(&format!("!pubkey_state.get() {} pubkey", pubkey));
+
+        let expected = orders
+            .iter()
+            .map(|(uuid, _order)| (*uuid, rick_morty_pair.clone()))
+            .collect();
+        assert_eq!(pubkey_state.orders_uuids, expected);
+
+        let root = pubkey_state
+            .trie_roots
+            .get(&rick_morty_pair)
+            .expect(&format!("!pubkey_state.trie_roots.get() {}", rick_morty_pair));
+
+        // check if the root contains only expected orders
+        let trie = TrieDB::<Layout>::new(&orderbook.memory_db, root).expect("!TrieDB::new()");
+        let mut in_trie: Vec<(Uuid, OrderbookItem)> = trie
+            .iter()
+            .expect("!TrieDB::iter()")
+            .map(|key_value| {
+                let (key, value) = key_value.expect("Iterator returned an error");
+                let key = TryFromBytes::try_from_bytes(key).expect("!try_from_bytes() key");
+                let value = TryFromBytes::try_from_bytes(value).expect("!try_from_bytes() val");
+                (key, value)
+            })
+            .collect();
+
+        in_trie.sort_by(|x, y| x.0.cmp(&y.0));
+        let mut expected = orders;
+        expected.sort_by(|x, y| x.0.cmp(&y.0));
+        assert_eq!(in_trie, expected);
+    }
 }
 
+/*
 #[test]
 fn test_process_order_keep_alive_requested_from_peer() {
     let ordermatch_ctx = Arc::new(OrdermatchContext::default());
