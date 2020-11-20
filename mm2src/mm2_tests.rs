@@ -3301,6 +3301,7 @@ fn test_electrum_tx_history() {
     assert_eq!(get_tx_history_request_count(&mm), 2);
 }
 
+#[allow(dead_code)]
 fn spin_n_nodes(seednodes: &[&str], coins: &Json, n: usize) -> Vec<(MarketMakerIt, RaiiDump, RaiiDump)> {
     let mut mm_nodes = Vec::with_capacity(n);
     for i in 0..n {
