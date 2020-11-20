@@ -29,7 +29,6 @@ use libp2p_core::{connection::ConnectionId, ConnectedPoint, Multiaddr, PeerId};
 use libp2p_swarm::{NetworkBehaviour, NetworkBehaviourAction, NotifyHandler, PollParameters, ProtocolsHandler};
 use log::{debug, error, info, trace, warn};
 use lru::LruCache;
-use rand;
 use rand::{seq::SliceRandom, thread_rng};
 use smallvec::SmallVec;
 use std::time::Duration;
@@ -725,7 +724,7 @@ impl Gossipsub {
                     |peer| !peers.contains(peer)
                 });
                 for peer in &peer_list {
-                    let current_topic = to_graft.entry(peer.clone()).or_insert_with(|| vec![]);
+                    let current_topic = to_graft.entry(peer.clone()).or_insert_with(Vec::new);
                     current_topic.push(topic_hash.clone());
                 }
                 // update the mesh
@@ -748,7 +747,7 @@ impl Gossipsub {
                 // remove the first excess_peer_no peers adding them to to_prune
                 for _ in 0..excess_peer_no {
                     let peer = peers.pop().expect("There should always be enough peers to remove");
-                    let current_topic = to_prune.entry(peer).or_insert_with(|| vec![]);
+                    let current_topic = to_prune.entry(peer).or_insert_with(Vec::new);
                     current_topic.push(topic_hash.clone());
                 }
             }
@@ -865,7 +864,7 @@ impl Gossipsub {
                 .collect();
             let mut prunes: Vec<GossipsubControlAction> = to_prune
                 .remove(peer)
-                .unwrap_or_else(|| vec![])
+                .unwrap_or_else(Vec::new)
                 .iter()
                 .map(|topic_hash| GossipsubControlAction::Prune {
                     topic_hash: topic_hash.clone(),
@@ -1074,11 +1073,11 @@ impl Gossipsub {
     }
 
     pub fn get_mesh_peers(&self, topic: &TopicHash) -> Vec<PeerId> {
-        self.mesh.get(&topic).cloned().unwrap_or_else(|| vec![])
+        self.mesh.get(&topic).cloned().unwrap_or_else(Vec::new)
     }
 
     pub fn get_topic_peers(&self, topic: &TopicHash) -> Vec<PeerId> {
-        self.topic_peers.get(&topic).cloned().unwrap_or_else(|| vec![])
+        self.topic_peers.get(&topic).cloned().unwrap_or_else(Vec::new)
     }
 
     pub fn get_num_peers(&self) -> usize { self.peer_topics.len() }
@@ -1108,8 +1107,9 @@ impl Gossipsub {
         }
     }
 
+    #[allow(dead_code)]
     fn remove_peer_from_relay_mesh(&mut self, peer: &PeerId) {
-        if let Some(_) = self.relays_mesh.remove(peer) {
+        if self.relays_mesh.remove(peer).is_some() {
             self.notify_excluded_from_relay_mesh(peer.clone())
         }
     }
@@ -1192,7 +1192,7 @@ impl Gossipsub {
         }
 
         let size = self.relays_mesh.len();
-        for (relay, _) in &self.relays_mesh {
+        for relay in self.relays_mesh.keys() {
             Self::control_pool_add(
                 &mut self.control_pool,
                 relay.clone(),

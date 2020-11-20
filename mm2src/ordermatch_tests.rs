@@ -2,9 +2,7 @@ use super::*;
 use crate::mm2::lp_network::P2PContext;
 use crate::mm2::lp_ordermatch::new_protocol::PubkeyKeepAlive;
 use coins::{MmCoin, TestCoin};
-use common::{executor::spawn,
-             mm_ctx::{MmArc, MmCtx, MmCtxBuilder},
-             privkey::key_pair_from_seed};
+use common::{executor::spawn, mm_ctx::{MmArc, MmCtx, MmCtxBuilder}, privkey::key_pair_from_seed, block_on};
 use futures::{channel::mpsc, lock::Mutex as AsyncMutex, StreamExt};
 use mm2_libp2p::atomicdex_behaviour::AdexBehaviourCmd;
 use mm2_libp2p::{decode_message, PeerId};

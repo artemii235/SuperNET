@@ -424,8 +424,6 @@ impl MmArc {
             while !ctx.dropped() {
                 Timer::sleep(0.5).await
             }
-
-            ()
         };
 
         prometheus::spawn_prometheus_exporter(self.metrics.weak(), address, shutdown_detector, credentials)

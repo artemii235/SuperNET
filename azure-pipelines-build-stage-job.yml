@@ -37,7 +37,7 @@ jobs:
       - bash: |
           rm -rf upload
           mkdir upload
-          echo 2.0.$(Build.BuildId)_$(Build.SourceBranchName)_$(COMMIT_HASH)_$(Agent.OS)_Release > MM_VERSION
+          echo 2.1.$(Build.BuildId)_$(Build.SourceBranchName)_$(COMMIT_HASH)_$(Agent.OS)_Release > MM_VERSION
           cat MM_VERSION
           touch mm2src/common/build.rs
           cargo +nightly build --features native --release
@@ -54,9 +54,9 @@ jobs:
           ALICE_USERPASS: $(${{ parameters.alice_userpass }})
         enabled: false
       - bash: |
-          cargo clippy --features native -- -D warnings
+          cargo +nightly clippy --features native -- -D warnings
         displayName: 'Check Clippy warnings'
-        condition: false
+        condition: eq( variables['Agent.OS'], 'Linux' )
       - bash: |
           cargo +nightly fmt -- --check
         displayName: 'Check rustfmt warnings'

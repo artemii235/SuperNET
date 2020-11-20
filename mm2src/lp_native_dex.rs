@@ -16,7 +16,6 @@
 //  lp_native_dex.rs
 //  marketmaker
 //
-#![allow(uncommon_codepoints)]
 #![cfg_attr(not(feature = "native"), allow(dead_code))]
 #![cfg_attr(not(feature = "native"), allow(unused_imports))]
 #![cfg_attr(not(feature = "native"), allow(unused_variables))]

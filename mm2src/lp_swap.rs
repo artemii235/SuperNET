@@ -54,7 +54,6 @@
 //  lp_swap.rs
 //  marketmaker
 //
-#![allow(uncommon_codepoints)]
 #![cfg_attr(not(feature = "native"), allow(dead_code))]
 
 use crate::mm2::lp_network::broadcast_p2p_msg;
@@ -558,6 +557,14 @@ struct SwapNegotiationData {
     payment_locktime: u64,
     secret_hash: H160,
     persistent_pubkey: H264,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct TransactionIdentifier {
+    /// Raw bytes of signed transaction in hexadecimal string, this should be sent as is to send_raw_transaction RPC to broadcast the transaction
+    tx_hex: BytesJson,
+    /// Transaction hash in hexadecimal format
+    tx_hash: BytesJson,
 }
 
 fn my_swaps_dir(ctx: &MmArc) -> PathBuf { ctx.dbdir().join("SWAPS").join("MY") }

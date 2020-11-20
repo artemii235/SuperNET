@@ -149,6 +149,7 @@ impl MakerOrderUpdated {
         }
     }
 
+    #[allow(dead_code)]
     pub fn with_new_price(mut self, new_price: BigRational) -> Self {
         self.new_price = Some(new_price);
         self
@@ -159,6 +160,7 @@ impl MakerOrderUpdated {
         self
     }
 
+    #[allow(dead_code)]
     pub fn with_new_min_volume(mut self, new_min_volume: BigRational) -> Self {
         self.new_min_volume = Some(new_min_volume);
         self

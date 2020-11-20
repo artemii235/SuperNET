@@ -61,7 +61,7 @@ mod docker_tests {
     use chain::OutPoint;
     use coins::utxo::rpc_clients::{UnspentInfo, UtxoRpcClientEnum, UtxoRpcClientOps};
     use coins::utxo::utxo_standard::{utxo_standard_coin_from_conf_and_request, UtxoStandardCoin};
-    use coins::utxo::{coin_daemon_data_dir, dhash160, zcash_params_path, UtxoCoinCommonOps};
+    use coins::utxo::{coin_daemon_data_dir, dhash160, zcash_params_path, UtxoCommonOps};
     use coins::{FoundSwapTxSpend, MarketCoinOps, SwapOps, TransactionEnum};
     use common::block_on;
     use common::{file_lock::FileLock,

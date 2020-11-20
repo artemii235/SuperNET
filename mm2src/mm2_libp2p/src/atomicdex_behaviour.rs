@@ -260,8 +260,7 @@ impl AtomicDexBehaviour {
                 self.gossipsub.subscribe(topic);
             },
             AdexBehaviourCmd::PublishMsg { topics, msg } => {
-                self.gossipsub
-                    .publish_many(topics.into_iter().map(|topic| Topic::new(topic)), msg);
+                self.gossipsub.publish_many(topics.into_iter().map(Topic::new), msg);
             },
             AdexBehaviourCmd::RequestAnyRelay { req, response_tx } => {
                 let relays = self.gossipsub.get_relay_mesh();
@@ -531,7 +530,7 @@ pub fn start_gossipsub(
     to_dial: Option<Vec<String>>,
     my_privkey: &mut [u8],
     i_am_relay: bool,
-    on_poll: impl Fn(&AtomicDexSwarm) -> () + Send + 'static,
+    on_poll: impl Fn(&AtomicDexSwarm) + Send + 'static,
 ) -> (Sender<AdexBehaviourCmd>, AdexEventRx, PeerId) {
     let privkey = identity::secp256k1::SecretKey::from_bytes(my_privkey).unwrap();
     let local_key = identity::Keypair::Secp256k1(privkey.into());

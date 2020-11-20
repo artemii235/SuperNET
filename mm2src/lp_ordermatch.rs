@@ -17,8 +17,9 @@
 //  lp_ordermatch.rs
 //  marketmaker
 //
-#![allow(uncommon_codepoints)]
 #![cfg_attr(not(feature = "native"), allow(dead_code))]
+// TODO remove after refactoring
+#![allow(dead_code, unused_variables)]
 
 use async_trait::async_trait;
 use bigdecimal::BigDecimal;
@@ -29,8 +30,7 @@ use coins::{lp_coinfindᵃ, BalanceTradeFeeUpdatedHandler, MmCoinEnum, TradeFee}
 use common::executor::{spawn, Timer};
 use common::mm_ctx::{from_ctx, MmArc, MmWeak};
 use common::mm_number::{Fraction, MmNumber};
-use common::{bits256, block_on, json_dir_entries, new_uuid, now_ms, remove_file, write};
-use either::Either;
+use common::{bits256, json_dir_entries, new_uuid, now_ms, remove_file, write};
 use futures::{compat::Future01CompatExt, lock::Mutex as AsyncMutex, StreamExt};
 use gstuff::slurp;
 use hash256_std_hasher::Hash256StdHasher;
@@ -42,8 +42,8 @@ use num_rational::BigRational;
 use num_traits::identities::Zero;
 use rpc::v1::types::H256 as H256Json;
 use serde_json::{self as json, Value as Json};
-use sp_trie::{delta_trie_root, generate_trie_proof, verify_trie_proof, DBValue, HashDBT, MemoryDB, Trie,
-              TrieConfiguration, TrieDB, TrieDBMut, TrieHash, TrieMut};
+use sp_trie::{delta_trie_root, DBValue, HashDBT, MemoryDB, Trie, TrieConfiguration, TrieDB, TrieDBMut, TrieHash,
+              TrieMut};
 use std::collections::hash_map::{Entry, HashMap, RawEntryMut};
 use std::collections::{BTreeSet, HashSet};
 use std::convert::TryInto;
@@ -76,6 +76,7 @@ const MAKER_ORDER_TIMEOUT: u64 = MIN_ORDER_KEEP_ALIVE_INTERVAL * 3;
 const TAKER_ORDER_TIMEOUT: u64 = 30;
 const ORDER_MATCH_TIMEOUT: u64 = 30;
 const ORDERBOOK_REQUESTING_TIMEOUT: u64 = MIN_ORDER_KEEP_ALIVE_INTERVAL * 2;
+#[allow(dead_code)]
 const INACTIVE_ORDER_TIMEOUT: u64 = 240;
 const MIN_TRADING_VOL: &str = "0.00777";
 
@@ -101,7 +102,7 @@ impl From<(new_protocol::MakerOrderCreated, String)> for OrderbookItem {
 
 fn process_pubkey_full_trie(
     orderbook: &mut Orderbook,
-    pubkey: &String,
+    pubkey: &str,
     alb_pair: AlbOrderedOrderbookPair,
     new_trie_orders: Vec<(Uuid, OrderbookItem)>,
 ) -> Result<H64, String> {
@@ -137,15 +138,15 @@ fn process_pubkey_full_trie(
 
 fn process_trie_delta(
     orderbook: &mut Orderbook,
-    pubkey: &String,
+    pubkey: &str,
     alb_pair: AlbOrderedOrderbookPair,
     delta: HashMap<Uuid, Option<OrderbookItem>>,
 ) -> Result<H64, String> {
     let old_root = pubkey_state_mut(&mut orderbook.pubkeys_state, pubkey)
         .trie_roots
         .get(&alb_pair)
-        .map(|val| *val)
-        .unwrap_or(H64::default());
+        .copied()
+        .unwrap_or_default();
 
     let delta = delta.into_iter().map(|(uuid, order)| {
         (
@@ -204,10 +205,8 @@ async fn process_orders_keep_alive(
 
 async fn process_maker_order_updated(
     ctx: MmArc,
-    propagated_from_peer: String,
     from_pubkey: String,
     updated_msg: new_protocol::MakerOrderUpdated,
-    serialized: Vec<u8>,
 ) -> bool {
     let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).expect("from_ctx failed");
     let uuid = updated_msg.uuid();
@@ -312,7 +311,7 @@ async fn delete_my_order(ctx: &MmArc, uuid: Uuid) {
     orderbook.remove_order_trie_update(uuid);
 }
 
-fn remove_and_purge_pubkey_pair_orders(orderbook: &mut Orderbook, pubkey: &String, alb_pair: &AlbOrderedOrderbookPair) {
+fn remove_and_purge_pubkey_pair_orders(orderbook: &mut Orderbook, pubkey: &str, alb_pair: &str) {
     let pubkey_state = match orderbook.pubkeys_state.get_mut(pubkey) {
         Some(state) => state,
         None => return,
@@ -373,7 +372,7 @@ pub async fn process_msg(ctx: MmArc, _topics: Vec<String>, from_peer: String, ms
                 true
             },
             new_protocol::OrdermatchMessage::MakerOrderUpdated(updated_msg) => {
-                process_maker_order_updated(ctx, from_peer, pubkey.to_hex(), updated_msg, msg.to_owned()).await
+                process_maker_order_updated(ctx, pubkey.to_hex(), updated_msg).await
             },
         },
         Err(e) => {
@@ -477,10 +476,8 @@ async fn process_get_orderbook_request(ctx: MmArc, base: String, rel: String) ->
                 .order_set
                 .get(uuid)
                 .expect("Orderbook::ordered contains an uuid that is not in Orderbook::order_set");
-            let uuids = uuids_by_pubkey
-                .entry(order.pubkey.clone())
-                .or_insert_with(|| Vec::new());
-            uuids.push((uuid.clone(), order.clone()))
+            let uuids = uuids_by_pubkey.entry(order.pubkey.clone()).or_insert_with(Vec::new);
+            uuids.push((*uuid, order.clone()))
         }
 
         uuids_by_pubkey
@@ -1049,7 +1046,7 @@ impl Default for MatchBy {
     fn default() -> Self { MatchBy::Any }
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Copy, Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", content = "data")]
 enum OrderType {
     FillOrKill,
@@ -1599,6 +1596,7 @@ struct OrderedByPriceOrder {
 #[derive(Clone, Debug, PartialEq)]
 enum OrderbookRequestingState {
     /// The orderbook was requested from relays.
+    #[allow(dead_code)]
     Requested,
     /// We subscribed to a topic at `subscribed_at` time, but the orderbook was not requested.
     NotRequested { subscribed_at: u64 },
@@ -1738,9 +1736,7 @@ impl Orderbook {
         })
     }
 
-    fn find_order_by_uuid(&self, uuid: &Uuid) -> Option<OrderbookItem> {
-        self.order_set.get(uuid).map(|order| order.clone())
-    }
+    fn find_order_by_uuid(&self, uuid: &Uuid) -> Option<OrderbookItem> { self.order_set.get(uuid).cloned() }
 
     fn insert_or_update_order_update_trie(&mut self, order: OrderbookItem) {
         let zero = BigRational::from_integer(0.into());
@@ -1913,7 +1909,7 @@ impl Orderbook {
             let actual_trie_root = pubkey_state
                 .trie_roots
                 .entry(alb_pair.clone())
-                .or_insert_with(|| H64::default());
+                .or_insert_with(H64::default);
 
             if *actual_trie_root != trie_root {
                 trie_roots_to_request.insert(alb_pair, trie_root);
@@ -2172,7 +2168,7 @@ pub async fn lp_ordermatch_loop(ctx: MmArc) {
                     for (uuid, _) in &state.orders_uuids {
                         uuids_to_remove.push(*uuid);
                     }
-                    for (_, root) in &state.trie_roots {
+                    for root in state.trie_roots.values() {
                         keys_to_remove.push(*root);
                     }
                 }
@@ -2493,6 +2489,13 @@ struct TakerMatch {
     last_updated: u64,
 }
 
+#[derive(Serialize)]
+struct LpautobuyResult<'a> {
+    #[serde(flatten)]
+    request: &'a TakerRequest,
+    order_type: OrderType,
+}
+
 pub async fn lp_auto_buy(
     ctx: &MmArc,
     base_coin: &MmCoinEnum,
@@ -2535,7 +2538,11 @@ pub async fn lp_auto_buy(
         vec![orderbook_topic_from_base_rel(&input.base, &input.rel)],
         request.clone().into(),
     );
-    let result = json!({ "result": request }).to_string();
+
+    let result = json!({ "result": LpautobuyResult {
+        request: &request,
+        order_type: input.order_type,
+    } });
     let order = TakerOrder {
         created_at: now_ms(),
         matches: HashMap::new(),
@@ -2545,7 +2552,7 @@ pub async fn lp_auto_buy(
     save_my_taker_order(ctx, &order);
     my_taker_orders.insert(order.request.uuid, order);
     drop(my_taker_orders);
-    Ok(result)
+    Ok(result.to_string())
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

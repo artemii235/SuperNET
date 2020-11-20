@@ -763,6 +763,7 @@ dependencies = [
  "gstuff",
  "hex 0.3.2",
  "http 0.2.1",
+ "itertools 0.9.0",
  "js-sys",
  "jsonrpc-core",
  "keys",
@@ -803,6 +804,7 @@ version = "0.1.0"
 dependencies = [
  "arrayref",
  "async-std",
+ "async-trait",
  "atomic 0.4.6",
  "backtrace",
  "base64 0.10.1",
@@ -828,7 +830,7 @@ dependencies = [
  "http-body 0.1.0",
  "hyper",
  "hyper-rustls 0.20.0",
- "itertools",
+ "itertools 0.8.2",
  "keys",
  "lazy_static",
  "libc",
@@ -2232,6 +2234,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "itertools"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "284f18f85651fe11e8a991b2adb42cb078325c996ed026d994719efcfca1d54b"
+dependencies = [
+ "either",
+]
+
+[[package]]
 name = "itoa"
 version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3583,7 +3594,7 @@ checksum = "02b10678c913ecbd69350e8535c3aef91a8676c0773fc1d7b95cdd196d7f2f26"
 dependencies = [
  "bytes 0.5.6",
  "heck",
- "itertools",
+ "itertools 0.8.2",
  "log 0.4.11",
  "multimap",
  "petgraph",
@@ -3600,7 +3611,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "537aa19b95acde10a12fec4301466386f757403de4cd4e5b4fa78fb5ecb18f72"
 dependencies = [
  "anyhow",
- "itertools",
+ "itertools 0.8.2",
  "proc-macro2 1.0.18",
  "quote 1.0.7",
  "syn 1.0.33",

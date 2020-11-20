@@ -331,6 +331,8 @@ pub enum EstimateFeeMethod {
     SmartFee,
 }
 
+pub type RpcReqSub<T> = async_oneshot::Sender<Result<T, JsonRpcError>>;
+
 /// RPC client for UTXO based coins
 /// https://bitcoin.org/en/developer-reference#rpc-quick-reference - Bitcoin RPC API reference
 /// Other coins have additional methods or miss some of these
@@ -347,7 +349,7 @@ pub struct NativeClientImpl {
     pub event_handlers: Vec<RpcTransportEventHandlerShared>,
     pub request_id: AtomicU64,
     pub list_unspent_in_progress: AtomicBool,
-    pub list_unspent_subs: AsyncMutex<Vec<async_oneshot::Sender<Result<Vec<NativeUnspent>, JsonRpcError>>>>,
+    pub list_unspent_subs: AsyncMutex<Vec<RpcReqSub<Vec<NativeUnspent>>>>,
     /// coin decimals used to convert the decimal amount returned from daemon to correct satoshis amount
     pub coin_decimals: u8,
 }
@@ -1030,10 +1032,11 @@ pub struct RpcRequestWrapper<Key, Response> {
 impl<Key, Response> RpcRequestWrapper<Key, Response> {
     fn new() -> Self { RpcRequestWrapper { inner: HashMap::new() } }
 
+    #[allow(dead_code)]
     async fn wrap_request(
         &mut self,
-        key: Key,
-        request: impl Future<Item = Response, Error = JsonRpcError>,
+        _key: Key,
+        _request: impl Future<Item = Response, Error = JsonRpcError>,
     ) -> Result<Response, JsonRpcError> {
         unimplemented!()
     }
@@ -1049,7 +1052,7 @@ pub struct ElectrumClientImpl {
     get_balance_wrapper: RpcRequestWrapper<Address, ElectrumBalance>,
     list_unspent_wrapper: RpcRequestWrapper<Address, Vec<ElectrumUnspent>>,
     list_unspent_in_progress: AtomicBool,
-    list_unspent_subs: AsyncMutex<Vec<async_oneshot::Sender<Result<Vec<ElectrumUnspent>, JsonRpcError>>>>,
+    list_unspent_subs: AsyncMutex<Vec<RpcReqSub<Vec<ElectrumUnspent>>>>,
     get_balance_in_progress: AtomicBool,
     get_balance_subs: AsyncMutex<Vec<async_oneshot::Sender<Result<ElectrumBalance, JsonRpcError>>>>,
 }
@@ -1661,7 +1664,7 @@ macro_rules! try_loop {
 
 /// The enum wrapping possible variants of underlying Streams
 #[cfg(feature = "native")]
-#[allow(dead_code)]
+#[allow(clippy::large_enum_variant)]
 enum ElectrumStream {
     Tcp(TcpStream),
     Tls(TlsStream<TcpStream>),
@@ -1810,12 +1813,8 @@ async fn connect_loop(
             let addr = addr.clone();
             let mut rx = rx.compat();
             async move {
-                loop {
-                    let msg = match rx.next().await {
-                        Some(Ok(bytes)) => bytes,
-                        _ => break,
-                    };
-                    if let Err(e) = write.write_all(&msg).await {
+                while let Some(Ok(bytes)) = rx.next().await {
+                    if let Err(e) = write.write_all(&bytes).await {
                         log!("Write error "(e) " to " (addr));
                     }
                 }

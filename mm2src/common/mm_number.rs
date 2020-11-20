@@ -98,19 +98,16 @@ impl<'de> Deserialize<'de> for MmNumber {
     {
         let raw: Box<RawValue> = Deserialize::deserialize(deserializer)?;
 
-        match BigDecimal::from_str(&raw.get().trim_matches('"')) {
-            Ok(dec) => return Ok(MmNumber(from_dec_to_ratio(&dec))),
-            Err(_) => (),
+        if let Ok(dec) = BigDecimal::from_str(&raw.get().trim_matches('"')) {
+            return Ok(MmNumber(from_dec_to_ratio(&dec)));
         };
 
-        match serde_json::from_str::<BigRational>(raw.get()) {
-            Ok(rat) => return Ok(MmNumber(rat)),
-            Err(_) => (),
+        if let Ok(rat) = serde_json::from_str::<BigRational>(raw.get()) {
+            return Ok(MmNumber(rat));
         };
 
-        match serde_json::from_str::<Fraction>(raw.get()) {
-            Ok(rat) => return Ok(MmNumber(rat.into())),
-            Err(_) => (),
+        if let Ok(fraction) = serde_json::from_str::<Fraction>(raw.get()) {
+            return Ok(MmNumber(fraction.into()));
         };
 
         Err(de::Error::custom(format!(
