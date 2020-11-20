@@ -415,6 +415,14 @@ struct SwapNegotiationData {
     persistent_pubkey: H264,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct TransactionIdentifier {
+    /// Raw bytes of signed transaction in hexadecimal string, this should be sent as is to send_raw_transaction RPC to broadcast the transaction
+    tx_hex: BytesJson,
+    /// Transaction hash in hexadecimal format
+    tx_hash: BytesJson,
+}
+
 fn my_swaps_dir(ctx: &MmArc) -> PathBuf { ctx.dbdir().join("SWAPS").join("MY") }
 
 pub fn my_swap_file_path(ctx: &MmArc, uuid: &str) -> PathBuf { my_swaps_dir(ctx).join(format!("{}.json", uuid)) }

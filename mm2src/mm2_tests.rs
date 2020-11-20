@@ -5,9 +5,10 @@ use super::lp_main;
 use bigdecimal::BigDecimal;
 #[cfg(not(feature = "native"))] use common::call_back;
 use common::executor::Timer;
+use common::for_tests::enable_qrc20;
 #[cfg(feature = "native")] use common::for_tests::mm_dump;
-use common::for_tests::{enable_electrum, enable_native, from_env_file, get_passphrase, mm_spat, LocalStart,
-                        MarketMakerIt};
+use common::for_tests::{enable_electrum, enable_native, find_metrics_in_json, from_env_file, get_passphrase, mm_spat,
+                        LocalStart, MarketMakerIt};
 #[cfg(not(feature = "native"))] use common::mm_ctx::MmArc;
 use common::mm_metrics::{MetricType, MetricsJson};
 use common::mm_number::Fraction;
@@ -918,6 +919,8 @@ async fn trade_base_rel_electrum(pairs: Vec<(&'static str, &'static str)>) {
         "TakerPaymentWaitConfirmStarted",
         "TakerPaymentValidatedAndConfirmed",
         "TakerPaymentSpent",
+        "TakerPaymentSpendConfirmStarted",
+        "TakerPaymentSpendConfirmed",
         "Finished",
     ];
 
@@ -931,6 +934,7 @@ async fn trade_base_rel_electrum(pairs: Vec<(&'static str, &'static str)>) {
         "TakerPaymentValidateFailed",
         "TakerPaymentWaitConfirmFailed",
         "TakerPaymentSpendFailed",
+        "TakerPaymentSpendConfirmFailed",
         "MakerPaymentWaitRefundStarted",
         "MakerPaymentRefunded",
         "MakerPaymentRefundFailed",
@@ -2578,32 +2582,6 @@ fn request_metrics(mm: &MarketMakerIt) -> MetricsJson {
     unwrap!(json::from_str(&metrics))
 }
 
-fn find_metric(metrics: MetricsJson, search_key: &str, search_labels: &Vec<(&str, &str)>) -> Option<MetricType> {
-    metrics.metrics.into_iter().find(|metric| {
-        let (key, labels) = match metric {
-            MetricType::Counter { key, labels, .. } => (key, labels),
-            _ => return false,
-        };
-
-        if key != search_key {
-            return false;
-        }
-
-        for (s_label_key, s_label_value) in search_labels.iter() {
-            let label_value = match labels.get(&s_label_key.to_string()) {
-                Some(x) => x,
-                _ => return false,
-            };
-
-            if s_label_value != label_value {
-                return false;
-            }
-        }
-
-        true
-    })
-}
-
 #[test]
 #[cfg(feature = "native")]
 fn test_metrics_method() {
@@ -2643,7 +2621,7 @@ fn test_metrics_method() {
     log!("Received metrics:");
     log!([metrics]);
 
-    find_metric(metrics, "rpc_client.traffic.out", &vec![("coin", "RICK")])
+    find_metrics_in_json(metrics, "rpc_client.traffic.out", &[("coin", "RICK")])
         .expect(r#"Couldn't find a metric with key = "traffic.out" and label: coin = "RICK" in received json"#);
 }
 
@@ -2653,7 +2631,7 @@ fn test_metrics_method() {
 fn test_electrum_tx_history() {
     fn get_tx_history_request_count(mm: &MarketMakerIt) -> u64 {
         let metrics = request_metrics(&mm);
-        match find_metric(metrics, "tx.history.request.count", &vec![
+        match find_metrics_in_json(metrics, "tx.history.request.count", &[
             ("coin", "RICK"),
             ("method", "blockchain.scripthash.get_history"),
         ])
@@ -2752,7 +2730,7 @@ fn test_withdraw_cashaddresses() {
             "netid": 9998,
             "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
             "rpcip": env::var ("BOB_TRADE_IP") .ok(),
-            "passphrase": "face pin block number add byte put seek mime test note password sin tab multiple",
+            "passphrase": "face pin lock number add byte put seek mime test note password sin tab multiple",
             "coins": coins,
             "i_am_seed": true,
             "rpc_password": "pass",
@@ -2766,8 +2744,6 @@ fn test_withdraw_cashaddresses() {
         mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
 
-    // Enable BCH electrum client with tx_history loop.
-    // Enable RICK electrum client with tx_history loop.
     let electrum = unwrap!(block_on(mm.rpc(json! ({
         "userpass": mm.userpass,
         "method": "electrum",
@@ -2806,7 +2782,7 @@ fn test_withdraw_cashaddresses() {
         .iter()
         .map(|v| v.as_str().unwrap())
         .collect();
-    assert_eq!(from, vec!["bchtest:qze8g4gx3z428jjcxzpycpxl7ke7d947gca2a7n2la"]);
+    assert_eq!(from, vec!["bchtest:qqgp9xh3435xamv7ghct8emer2s2erzj8gx3gnhwkq"]);
 
     // check "to" addresses
     let to: Vec<&str> = withdraw_json["to"]
@@ -3125,6 +3101,143 @@ fn test_convert_eth_address() {
 }
 
 #[test]
+fn test_convert_qrc20_address() {
+    let passphrase = "cV463HpebE2djP9ugJry5wZ9st5cc6AbkHXGryZVPXMH1XJK8cVU";
+    let coins = json! ([
+        {"coin":"QRC20","required_confirmations":0,"pubtype": 120,"p2shtype": 50,"wiftype": 128,"segwit": true,"txfee": 0,"mm2": 1,"mature_confirmations":500,
+         "protocol":{"type":"QRC20","protocol_data":{"platform":"QTUM","contract_address":"0xd362e096e873eb7907e205fadc6175c6fec7bc44"}}},
+    ]);
+
+    let mut mm = unwrap!(MarketMakerIt::start(
+        json! ({
+            "gui": "nogui",
+            "netid": 8999,
+            "dht": "on",  // Enable DHT without delay.
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| unwrap! (s.parse::<i64>())),
+            "passphrase": passphrase,
+            "coins": coins,
+            "rpc_password": "password",
+            "i_am_seed": true,
+        }),
+        "password".into(),
+        local_start!("bob")
+    ));
+
+    let (_bob_dump_log, _bob_dump_dashboard) = mm.mm_dump();
+    log! ({"Bob log path: {}", mm.log_path.display()});
+    unwrap!(block_on(
+        mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
+    ));
+    let _electrum = block_on(enable_qrc20(
+        &mm,
+        "QRC20",
+        &["95.217.83.126:10001"],
+        "0xd362e096e873eb7907e205fadc6175c6fec7bc44",
+    ));
+
+    // test wallet to contract
+    let rc = unwrap!(block_on(mm.rpc(json! ({
+        "userpass": mm.userpass,
+        "method": "convertaddress",
+        "coin": "QRC20",
+        "from": "qKVvtDqpnFGDxsDzck5jmLwdnD2jRH6aM8",
+        "to_address_format":{"format":"contract"},
+    }))));
+    assert_eq!(
+        rc.0,
+        StatusCode::OK,
+        "RPC «convertaddress» failed with status «{}»",
+        rc.0
+    );
+    let actual: Json = unwrap!(json::from_str(&rc.1));
+
+    let expected = json!({
+        "result": {
+            "address": "0x1549128bbfb33b997949b4105b6a6371c998e212",
+        },
+    });
+    assert_eq!(actual, expected);
+
+    // test contract to wallet
+    let rc = unwrap!(block_on(mm.rpc(json! ({
+        "userpass": mm.userpass,
+        "method": "convertaddress",
+        "coin": "QRC20",
+        "from": "0x1549128bbfb33b997949b4105b6a6371c998e212",
+        "to_address_format":{"format":"wallet"},
+    }))));
+    assert_eq!(
+        rc.0,
+        StatusCode::OK,
+        "RPC «convertaddress» failed with status «{}»",
+        rc.0
+    );
+    let actual: Json = unwrap!(json::from_str(&rc.1));
+
+    let expected = json!({
+        "result": {
+            "address": "qKVvtDqpnFGDxsDzck5jmLwdnD2jRH6aM8",
+        },
+    });
+    assert_eq!(actual, expected);
+
+    // test wallet to wallet
+    let rc = unwrap!(block_on(mm.rpc(json! ({
+        "userpass": mm.userpass,
+        "method": "convertaddress",
+        "coin": "QRC20",
+        "from": "qKVvtDqpnFGDxsDzck5jmLwdnD2jRH6aM8",
+        "to_address_format":{"format":"wallet"},
+    }))));
+    assert_eq!(
+        rc.0,
+        StatusCode::OK,
+        "RPC «convertaddress» failed with status «{}»",
+        rc.0
+    );
+    let actual: Json = unwrap!(json::from_str(&rc.1));
+
+    let expected = json!({
+        "result": {
+            "address": "qKVvtDqpnFGDxsDzck5jmLwdnD2jRH6aM8",
+        },
+    });
+    assert_eq!(actual, expected);
+
+    // test invalid address (invalid prefixes)
+    let rc = unwrap!(block_on(mm.rpc(json! ({
+        "userpass": mm.userpass,
+        "method": "convertaddress",
+        "coin": "QRC20",
+        "from": "RRnMcSeKiLrNdbp91qNVQwwXx5azD4S4CD",
+        "to_address_format":{"format":"contract"},
+    }))));
+    assert!(
+        rc.0.is_server_error(),
+        "!convertaddress success but should be error: {}",
+        rc.1
+    );
+    log!((rc.1));
+    assert!(rc.1.contains("Address has invalid prefixes"));
+
+    // test invalid address
+    let rc = unwrap!(block_on(mm.rpc(json! ({
+        "userpass": mm.userpass,
+        "method": "convertaddress",
+        "coin": "QRC20",
+        "from": "0000000000000000000000000000000000",
+        "to_address_format":{"format":"wallet"},
+    }))));
+    assert!(
+        rc.0.is_server_error(),
+        "!convertaddress success but should be error: {}",
+        rc.1
+    );
+}
+
+#[test]
 fn test_validateaddress() {
     let coins = json!([
         {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
@@ -3212,7 +3325,7 @@ fn test_validateaddress() {
     });
     assert_eq!(actual, expected);
 
-    // test invalid RICK address
+    // test invalid RICK address (legacy address format activated)
 
     let rc = unwrap!(block_on(mm.rpc(json! ({
         "userpass": mm.userpass,
@@ -3233,6 +3346,29 @@ fn test_validateaddress() {
     let reason = result["reason"].as_str().unwrap();
     log!((reason));
     assert!(reason.contains("Legacy address format activated for RICK, but cashaddress format used instead"));
+
+    // test invalid RICK address (invalid prefixes)
+
+    let rc = unwrap!(block_on(mm.rpc(json! ({
+        "userpass": mm.userpass,
+        "method": "validateaddress",
+        "coin": "RICK",
+        "address": "1DmFp16U73RrVZtYUbo2Ectt8mAnYScpqM",
+    }))));
+    assert_eq!(
+        rc.0,
+        StatusCode::OK,
+        "RPC «validateaddress» failed with status «{}»",
+        rc.0
+    );
+
+    let json: Json = unwrap!(json::from_str(&rc.1));
+    let result = &json["result"];
+
+    assert!(!result["is_valid"].as_bool().unwrap());
+    let reason = result["reason"].as_str().unwrap();
+    log!((reason));
+    assert!(reason.contains("Address 1DmFp16U73RrVZtYUbo2Ectt8mAnYScpqM has invalid"));
 
     // test invalid ETH address
 
@@ -3287,22 +3423,12 @@ fn qrc20_activate_electrum() {
     unwrap!(block_on(
         mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
-
-    let electrum = unwrap!(block_on(mm.rpc(json! ({
-        "userpass": mm.userpass,
-        "method": "electrum",
-        "coin": "QRC20",
-        "servers": [{"url":"95.217.83.126:10001"}],
-        "mm2": 1,
-    }))));
-    assert_eq!(
-        electrum.0,
-        StatusCode::OK,
-        "RPC «electrum» failed with status «{}», response «{}»",
-        electrum.0,
-        electrum.1
-    );
-    let electrum_json: Json = json::from_str(&electrum.1).unwrap();
+    let electrum_json = block_on(enable_qrc20(
+        &mm,
+        "QRC20",
+        &["95.217.83.126:10001"],
+        "0xd362e096e873eb7907e205fadc6175c6fec7bc44",
+    ));
     assert_eq!(
         electrum_json["address"].as_str(),
         Some("qKEDGuogDhtH9zBnc71QtqT1KDamaR1KJ3")
@@ -3312,6 +3438,7 @@ fn qrc20_activate_electrum() {
 
 #[test]
 fn test_qrc20_withdraw() {
+    // corresponding private key: [3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144, 72, 172, 110, 180, 13, 123, 179, 10, 49]
     let passphrase = "cMhHM3PMpMrChygR4bLF7QsTdenhWpFrrmf2UezBG3eeFsz41rtL";
     let coins = json!([
         {"coin":"QRC20","required_confirmations":0,"pubtype": 120,"p2shtype": 50,"wiftype": 128,"segwit": true,"txfee": 0,"mm2": 1,"mature_confirmations":500,
@@ -3341,21 +3468,12 @@ fn test_qrc20_withdraw() {
         mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
 
-    let electrum = unwrap!(block_on(mm.rpc(json! ({
-        "userpass": mm.userpass,
-        "method": "electrum",
-        "coin": "QRC20",
-        "servers": [{"url":"95.217.83.126:10001"}],
-        "mm2": 1,
-    }))));
-    assert_eq!(
-        electrum.0,
-        StatusCode::OK,
-        "RPC «electrum» failed with status «{}», response «{}»",
-        electrum.0,
-        electrum.1
-    );
-    let electrum_json: Json = json::from_str(&electrum.1).unwrap();
+    let electrum_json = block_on(enable_qrc20(
+        &mm,
+        "QRC20",
+        &["95.217.83.126:10001"],
+        "0xd362e096e873eb7907e205fadc6175c6fec7bc44",
+    ));
     assert_eq!(
         electrum_json["address"].as_str(),
         Some("qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG")
@@ -3396,14 +3514,11 @@ fn test_qrc20_withdraw() {
 }
 
 #[test]
-/// Test if the setprice/buy/sell returns an error on attempt to swap QRC20
-/// Note: remove the test after the QRC20 supports swaps
-fn test_qrc20_wallet_only() {
-    let passphrase = "cMhHM3PMpMrChygR4bLF7QsTdenhWpFrrmf2UezBG3eeFsz41rtL";
+fn test_qrc20_withdraw_error() {
+    let passphrase = "album hollow help heart use bird response large lounge fat elbow coral";
     let coins = json!([
         {"coin":"QRC20","required_confirmations":0,"pubtype": 120,"p2shtype": 50,"wiftype": 128,"segwit": true,"txfee": 0,"mm2": 1,"mature_confirmations":500,
          "protocol":{"type":"QRC20","protocol_data":{"platform":"QTUM","contract_address":"0xd362e096e873eb7907e205fadc6175c6fec7bc44"}}},
-        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
     ]);
 
     let mut mm = unwrap!(MarketMakerIt::start(
@@ -3428,96 +3543,82 @@ fn test_qrc20_wallet_only() {
         mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
 
-    let _electrum = block_on(enable_electrum(&mm, "RICK", vec![
-        "electrum1.cipig.net:10017",
-        "electrum2.cipig.net:10017",
-        "electrum3.cipig.net:10017",
-    ]));
-    let electrum = unwrap!(block_on(mm.rpc(json!({
+    let electrum_json = block_on(enable_qrc20(
+        &mm,
+        "QRC20",
+        &["95.217.83.126:10001"],
+        "0xd362e096e873eb7907e205fadc6175c6fec7bc44",
+    ));
+    let balance = electrum_json["balance"].as_str().unwrap();
+    assert_eq!(balance, "10");
+
+    // try to transfer too low amount
+    let withdraw = unwrap!(block_on(mm.rpc(json! ({
         "userpass": mm.userpass,
-        "method": "electrum",
+        "method": "withdraw",
         "coin": "QRC20",
-        "servers": [{"url":"95.217.83.126:10001"}],
-        "mm2": 1,
+        "to": "qHmJ3KA6ZAjR9wGjpFASn4gtUSeFAqdZgs",
+        "amount": 0,
     }))));
-    assert_eq!(
-        electrum.0,
-        StatusCode::OK,
-        "RPC «electrum» failed with status «{}», response «{}»",
-        electrum.0,
-        electrum.1
+    assert!(
+        withdraw.0.is_server_error(),
+        "withdraw should have failed, but got {:?}",
+        withdraw
     );
-    let electrum_json: Json = json::from_str(&electrum.1).unwrap();
-    assert_eq!(
-        electrum_json["address"].as_str(),
-        Some("qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG")
+    log!([withdraw.1]);
+    assert!(withdraw.1.contains("The amount 0 is too small"));
+
+    // try to transfer amount with more than 8 decimals
+    let withdraw = unwrap!(block_on(mm.rpc(json! ({
+        "userpass": mm.userpass,
+        "method": "withdraw",
+        "coin": "QRC20",
+        "to": "qHmJ3KA6ZAjR9wGjpFASn4gtUSeFAqdZgs",
+        "amount": "0.0000000001",
+    }))));
+    assert!(
+        withdraw.0.is_server_error(),
+        "withdraw should have failed, but got {:?}",
+        withdraw
     );
+    log!([withdraw.1]);
+    assert!(withdraw.1.contains("The amount 0.0000000001 is too small"));
 
-    let rc = unwrap!(block_on(mm.rpc(json!({
+    // try to transfer more than balance
+    let withdraw = unwrap!(block_on(mm.rpc(json! ({
         "userpass": mm.userpass,
-        "method": "setprice",
-        "base": "QRC20",
-        "rel": "RICK",
-        "price": 0.9,
-        "volume": "0.9",
+        "method": "withdraw",
+        "coin": "QRC20",
+        "to": "qHmJ3KA6ZAjR9wGjpFASn4gtUSeFAqdZgs",
+        "amount": "11",
     }))));
-    assert!(rc.0.is_server_error(), "setprice should have failed, but got {:?}", rc);
-    assert!(rc.1.contains("Base coin is wallet only"));
+    assert!(
+        withdraw.0.is_server_error(),
+        "withdraw should have failed, but got {:?}",
+        withdraw
+    );
+    log!([withdraw.1]);
+    assert!(withdraw
+        .1
+        .contains("The amount 11 to withdraw is larger than balance 10"));
 
-    let rc = unwrap!(block_on(mm.rpc(json!({
+    // try to transfer with zero QTUM balance
+    let withdraw = unwrap!(block_on(mm.rpc(json! ({
         "userpass": mm.userpass,
-        "method": "setprice",
-        "base": "RICK",
-        "rel": "QRC20",
-        "price": 0.9,
-        "volume": "0.9",
+        "method": "withdraw",
+        "coin": "QRC20",
+        "to": "qHmJ3KA6ZAjR9wGjpFASn4gtUSeFAqdZgs",
+        "amount": "2",
     }))));
-    assert!(rc.0.is_server_error(), "setprice should have failed, but got {:?}", rc);
-    assert!(rc.1.contains("Rel coin is wallet only"));
-
-    let rc = unwrap!(block_on(mm.rpc(json!({
-        "userpass": mm.userpass,
-        "method": "buy",
-        "base": "QRC20",
-        "rel": "RICK",
-        "price": 0.9,
-        "volume": "0.9",
-    }))));
-    assert!(rc.0.is_server_error(), "buy should have failed, but got {:?}", rc);
-    assert!(rc.1.contains("Base coin is wallet only"));
-
-    let rc = unwrap!(block_on(mm.rpc(json!({
-        "userpass": mm.userpass,
-        "method": "buy",
-        "base": "RICK",
-        "rel": "QRC20",
-        "price": 0.9,
-        "volume": "0.9",
-    }))));
-    assert!(rc.0.is_server_error(), "buy should have failed, but got {:?}", rc);
-    assert!(rc.1.contains("Rel coin is wallet only"));
-
-    let rc = unwrap!(block_on(mm.rpc(json!({
-        "userpass": mm.userpass,
-        "method": "sell",
-        "base": "QRC20",
-        "rel": "RICK",
-        "price": 0.9,
-        "volume": "0.9",
-    }))));
-    assert!(rc.0.is_server_error(), "sell should have failed, but got {:?}", rc);
-    assert!(rc.1.contains("Base coin is wallet only"));
-
-    let rc = unwrap!(block_on(mm.rpc(json!({
-        "userpass": mm.userpass,
-        "method": "sell",
-        "base": "RICK",
-        "rel": "QRC20",
-        "price": 0.9,
-        "volume": "0.9",
-    }))));
-    assert!(rc.0.is_server_error(), "sell should have failed, but got {:?}", rc);
-    assert!(rc.1.contains("Rel coin is wallet only"));
+    assert!(
+        withdraw.0.is_server_error(),
+        "withdraw should have failed, but got {:?}",
+        withdraw
+    );
+    log!([withdraw.1]);
+    assert!(withdraw
+        .1
+        .contains("Not enough QTUM to Pay Fee: Couldn't generate tx from empty UTXOs set"));
 }
 
 #[test]
@@ -3557,6 +3658,7 @@ fn test_qrc20_tx_history() {
         "servers": [{"url":"95.217.83.126:10001"}],
         "mm2": 1,
         "tx_history": true,
+        "swap_contract_address": "0xd362e096e873eb7907e205fadc6175c6fec7bc44",
     }))));
     assert_eq!(
         electrum.0,
@@ -3589,24 +3691,36 @@ fn test_qrc20_tx_history() {
         tx_history.0,
         tx_history.1
     );
+    log!([tx_history.1]);
     let tx_history_json: Json = json::from_str(&tx_history.1).unwrap();
-    log!([tx_history_json]);
     let tx_history_result = &tx_history_json["result"];
 
     let mut expected = vec![
-        /// https://testnet.qtum.info/tx/39104d29d77ba83c5c6c63ab7a0f096301c443b4538dc6b30140453a40caa80a
-        "39104d29d77ba83c5c6c63ab7a0f096301c443b4538dc6b30140453a40caa80a",
-        /// https://testnet.qtum.info/tx/d9965e3496a8a4af2d462424b989694b3146d78c61654b99bbadba64464f75cb
-        "d9965e3496a8a4af2d462424b989694b3146d78c61654b99bbadba64464f75cb",
-        /// https://testnet.qtum.info/tx/c2f346d3d2aadc35f5343d0d493a139b2579175496d685ec30734d161e62f7a1
-        "c2f346d3d2aadc35f5343d0d493a139b2579175496d685ec30734d161e62f7a1",
+        // https://testnet.qtum.info/tx/45d722e615feb853d608033ffc20fd51c9ee86e2321cfa814ba5961190fb57d2
+        "45d722e615feb853d608033ffc20fd51c9ee86e2321cfa814ba5961190fb57d200000000000000020000000000000000",
+        // https://testnet.qtum.info/tx/45d722e615feb853d608033ffc20fd51c9ee86e2321cfa814ba5961190fb57d2
+        "45d722e615feb853d608033ffc20fd51c9ee86e2321cfa814ba5961190fb57d200000000000000020000000000000001",
+        // https://testnet.qtum.info/tx/abcb51963e720fdfed7b889cea79947ba3cabd7b8b384f6b5adb41a3f4b5d61b
+        "abcb51963e720fdfed7b889cea79947ba3cabd7b8b384f6b5adb41a3f4b5d61b00000000000000020000000000000000",
+        // https://testnet.qtum.info/tx/4ea5392d03a9c35126d2d5a8294c3c3102cfc6d65235897c92ca04c5515f6be5
+        "4ea5392d03a9c35126d2d5a8294c3c3102cfc6d65235897c92ca04c5515f6be500000000000000020000000000000000",
+        // https://testnet.qtum.info/tx/9156f5f1d3652c27dca0216c63177da38de5c9e9f03a5cfa278bf82882d2d3d8
+        "9156f5f1d3652c27dca0216c63177da38de5c9e9f03a5cfa278bf82882d2d3d800000000000000020000000000000000",
+        // https://testnet.qtum.info/tx/35e03bc529528a853ee75dde28f27eec8ed7b152b6af7ab6dfa5d55ea46f25ac
+        "35e03bc529528a853ee75dde28f27eec8ed7b152b6af7ab6dfa5d55ea46f25ac00000000000000010000000000000000",
+        // https://testnet.qtum.info/tx/39104d29d77ba83c5c6c63ab7a0f096301c443b4538dc6b30140453a40caa80a
+        "39104d29d77ba83c5c6c63ab7a0f096301c443b4538dc6b30140453a40caa80a00000000000000000000000000000000",
+        // https://testnet.qtum.info/tx/d9965e3496a8a4af2d462424b989694b3146d78c61654b99bbadba64464f75cb
+        "d9965e3496a8a4af2d462424b989694b3146d78c61654b99bbadba64464f75cb00000000000000000000000000000000",
+        // https://testnet.qtum.info/tx/c2f346d3d2aadc35f5343d0d493a139b2579175496d685ec30734d161e62f7a1
+        "c2f346d3d2aadc35f5343d0d493a139b2579175496d685ec30734d161e62f7a100000000000000000000000000000000",
     ];
 
-    assert_eq!(tx_history_result["total"].as_u64().unwrap(), 3);
+    assert_eq!(tx_history_result["total"].as_u64().unwrap(), expected.len() as u64);
     for tx in tx_history_result["transactions"].as_array().unwrap() {
         // pop front item
         let expected_tx = expected.remove(0);
-        assert_eq!(tx["tx_hash"].as_str().unwrap(), expected_tx);
+        assert_eq!(tx["internal_id"].as_str().unwrap(), expected_tx);
     }
 }
 

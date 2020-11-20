@@ -1,9 +1,8 @@
 use super::rpc_clients::{ElectrumProtocol, ListSinceBlockRes, NetworkInfo};
 use super::*;
-use crate::utxo::qrc20::{qrc20_coin_from_conf_and_request, Qrc20Coin, Qrc20FeeDetails};
 use crate::utxo::rpc_clients::UtxoRpcClientOps;
 use crate::utxo::utxo_standard::{utxo_standard_coin_from_conf_and_request, UtxoStandardCoin, UTXO_STANDARD_DUST};
-use crate::{SwapOps, TxFeeDetails, WithdrawFee};
+use crate::{SwapOps, WithdrawFee};
 use bigdecimal::BigDecimal;
 use chain::OutPoint;
 use common::mm_ctx::MmCtxBuilder;
@@ -125,10 +124,14 @@ fn utxo_coin_for_test(rpc_client: UtxoRpcClientEnum, force_seed: Option<&str>) -
 
 #[test]
 fn test_extract_secret() {
-    let tx: UtxoTx = "0100000001de7aa8d29524906b2b54ee2e0281f3607f75662cbc9080df81d1047b78e21dbc00000000d7473044022079b6c50820040b1fbbe9251ced32ab334d33830f6f8d0bf0a40c7f1336b67d5b0220142ccf723ddabb34e542ed65c395abc1fbf5b6c3e730396f15d25c49b668a1a401209da937e5609680cb30bff4a7661364ca1d1851c2506fa80c443f00a3d3bf7365004c6b6304f62b0e5cb175210270e75970bb20029b3879ec76c4acd320a8d0589e003636264d01a7d566504bfbac6782012088a9142fb610d856c19fd57f2d0cffe8dff689074b3d8a882103f368228456c940ac113e53dad5c104cf209f2f102a409207269383b6ab9b03deac68ffffffff01d0dc9800000000001976a9146d9d2b554d768232320587df75c4338ecc8bf37d88ac40280e5c".into();
-    let secret = tx.extract_secret().unwrap();
+    let client = electrum_client_for_test(&["electrum1.cipig.net:10017"]);
+    let coin = utxo_coin_for_test(client.into(), None);
+
+    let tx_hex = hex::decode("0100000001de7aa8d29524906b2b54ee2e0281f3607f75662cbc9080df81d1047b78e21dbc00000000d7473044022079b6c50820040b1fbbe9251ced32ab334d33830f6f8d0bf0a40c7f1336b67d5b0220142ccf723ddabb34e542ed65c395abc1fbf5b6c3e730396f15d25c49b668a1a401209da937e5609680cb30bff4a7661364ca1d1851c2506fa80c443f00a3d3bf7365004c6b6304f62b0e5cb175210270e75970bb20029b3879ec76c4acd320a8d0589e003636264d01a7d566504bfbac6782012088a9142fb610d856c19fd57f2d0cffe8dff689074b3d8a882103f368228456c940ac113e53dad5c104cf209f2f102a409207269383b6ab9b03deac68ffffffff01d0dc9800000000001976a9146d9d2b554d768232320587df75c4338ecc8bf37d88ac40280e5c").unwrap();
     let expected_secret = hex::decode("9da937e5609680cb30bff4a7661364ca1d1851c2506fa80c443f00a3d3bf7365").unwrap();
-    assert_eq!(expected_secret, secret);
+    let secret_hash = &*dhash160(&expected_secret);
+    let secret = unwrap!(coin.extract_secret(secret_hash, &tx_hex));
+    assert_eq!(secret, expected_secret);
 }
 
 #[test]
@@ -728,78 +731,6 @@ fn test_withdraw_impl_sat_per_kb_fee_max() {
 }
 
 #[test]
-fn test_qrc20_withdraw_impl_fee_details() {
-    Qrc20Coin::ordered_mature_unspents.mock_safe(|_, _| {
-        let unspents = vec![UnspentInfo {
-            outpoint: OutPoint {
-                hash: 1.into(),
-                index: 0,
-            },
-            value: 1000000000,
-            height: Default::default(),
-        }];
-        MockResult::Return(Box::new(futures01::future::ok(unspents)))
-    });
-
-    let conf = json!({
-        "coin":"QRC20",
-        "required_confirmations":0,
-        "pubtype":120,
-        "p2shtype":50,
-        "wiftype":128,
-        "segwit":true,
-        "mm2":1,
-        "mature_confirmations":500,
-    });
-    let req = json!({
-        "method": "electrum",
-        "servers": [{"url":"95.217.83.126:10001"}],
-    });
-    let priv_key = [
-        3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144, 72,
-        172, 110, 180, 13, 123, 179, 10, 49,
-    ];
-    let contract_address = "0xd362e096e873eb7907e205fadc6175c6fec7bc44".into();
-
-    let ctx = MmCtxBuilder::new().into_mm_arc();
-
-    let coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
-        &ctx,
-        "QRC20",
-        "QTUM",
-        &conf,
-        &req,
-        &priv_key,
-        contract_address
-    )));
-
-    let withdraw_req = WithdrawRequest {
-        amount: 10.into(),
-        to: "qHmJ3KA6ZAjR9wGjpFASn4gtUSeFAqdZgs".into(),
-        coin: "QRC20".into(),
-        max: false,
-        fee: Some(WithdrawFee::Qrc20Gas {
-            gas_limit: 2_500_000,
-            gas_price: 40,
-        }),
-    };
-    let tx_details = unwrap!(coin.withdraw(withdraw_req).wait());
-
-    let expected: Qrc20FeeDetails = unwrap!(json::from_value(json!({
-        "coin": "QTUM",
-        // (1000 + total_gas_fee) from satoshi,
-        // where decimals = 8,
-        //       1000 is fixed fee
-        "miner_fee": "1.00001",
-        "gas_limit": 2_500_000,
-        "gas_price": 40,
-        // (gas_limit * gas_price) from satoshi in Qtum
-        "total_gas_fee": "1",
-    })));
-    assert_eq!(Some(TxFeeDetails::Qrc20(expected)), tx_details.fee_details);
-}
-
-#[test]
 fn test_ordered_mature_unspents_without_tx_cache() {
     let client = electrum_client_for_test(&["electrum1.cipig.net:10017", "electrum2.cipig.net:10017"]);
     let coin = utxo_coin_for_test(
@@ -878,7 +809,7 @@ fn get_tx_details_doge() {
         log!((block));
         let hash = hex::decode("99caab76bd025d189f10856dc649aad1a191b1cfd9b139ece457c5fedac58132").unwrap();
         loop {
-            let tx_details = coin1.tx_details_by_hash(&hash).compat().await.unwrap();
+            let tx_details = coin1.tx_details_by_hash(&hash).await.unwrap();
             log!([tx_details]);
             Timer::sleep(1.).await;
         }
@@ -888,7 +819,7 @@ fn get_tx_details_doge() {
         log!((block));
         let hash = hex::decode("99caab76bd025d189f10856dc649aad1a191b1cfd9b139ece457c5fedac58132").unwrap();
         loop {
-            let tx_details = coin2.tx_details_by_hash(&hash).compat().await.unwrap();
+            let tx_details = coin2.tx_details_by_hash(&hash).await.unwrap();
             log!([tx_details]);
             Timer::sleep(1.).await;
         }
@@ -915,7 +846,7 @@ fn get_tx_details_coinbase_transaction() {
         // hash of coinbase transaction https://morty.explorer.dexstats.info/tx/b59b093ed97c1798f2a88ee3375a0c11d0822b6e4468478777f899891abd34a5
         let hash = hex::decode("b59b093ed97c1798f2a88ee3375a0c11d0822b6e4468478777f899891abd34a5").unwrap();
 
-        let tx_details = coin.tx_details_by_hash(&hash).compat().await.unwrap();
+        let tx_details = coin.tx_details_by_hash(&hash).await.unwrap();
         assert!(tx_details.from.is_empty());
     };
 
@@ -1224,7 +1155,7 @@ fn test_cashaddresses_in_tx_details_by_hash() {
 
     let hash = hex::decode("0f2f6e0c8f440c641895023782783426c3aca1acc78d7c0db7751995e8aa5751").unwrap();
     let fut = async {
-        let tx_details = coin.tx_details_by_hash(&hash).compat().await.unwrap();
+        let tx_details = coin.tx_details_by_hash(&hash).await.unwrap();
         log!([tx_details]);
 
         assert!(tx_details
@@ -1533,72 +1464,183 @@ fn test_tx_history_path_colon_should_be_escaped_for_cash_address() {
     assert!(!path.display().to_string().contains(":"));
 }
 
+fn test_ordered_mature_unspents_from_cache_impl(
+    unspent_height: Option<u64>,
+    cached_height: Option<u64>,
+    cached_confs: u32,
+    block_count: u64,
+    expected_height: Option<u64>,
+    expected_confs: u32,
+) {
+    const TX_HASH: &str = "0a0fda88364b960000f445351fe7678317a1e0c80584de0413377ede00ba696f";
+    let tx_hash: H256Json = hex::decode(TX_HASH).unwrap().as_slice().into();
+    let client = electrum_client_for_test(&["electrum1.cipig.net:10017"]);
+    let mut verbose = client.get_verbose_transaction(tx_hash.clone()).wait().unwrap();
+    verbose.confirmations = cached_confs;
+    verbose.height = cached_height;
+
+    // prepare mocks
+    ElectrumClient::list_unspent_ordered.mock_safe(move |_, _| {
+        let unspents = vec![UnspentInfo {
+            outpoint: OutPoint {
+                hash: H256::from_reversed_str(TX_HASH),
+                index: 0,
+            },
+            value: 1000000000,
+            height: unspent_height,
+        }];
+        MockResult::Return(Box::new(futures01::future::ok(unspents)))
+    });
+    ElectrumClient::get_block_count
+        .mock_safe(move |_| MockResult::Return(Box::new(futures01::future::ok(block_count))));
+    UtxoStandardCoin::get_verbose_transaction_from_cache_or_rpc.mock_safe(move |_, txid| {
+        assert_eq!(txid, tx_hash);
+        MockResult::Return(Box::new(futures01::future::ok(VerboseTransactionFrom::Cache(
+            verbose.clone(),
+        ))))
+    });
+    static mut IS_UNSPENT_MATURE_CALLED: bool = false;
+    UtxoStandardCoin::is_unspent_mature.mock_safe(move |_, tx: &RpcTransaction| {
+        // check if the transaction height and confirmations are expected
+        assert_eq!(tx.height, expected_height);
+        assert_eq!(tx.confirmations, expected_confs);
+        unsafe { IS_UNSPENT_MATURE_CALLED = true }
+        MockResult::Return(false)
+    });
+
+    // run test
+    let coin = utxo_coin_for_test(UtxoRpcClientEnum::Electrum(client), None);
+    let unspents = coin
+        .ordered_mature_unspents(&Address::from("R9o9xTocqr6CeEDGDH6mEYpwLoMz6jNjMW"))
+        .wait()
+        .expect("Expected an empty unspent list");
+    // unspents should be empty because `is_unspent_mature()` always returns false
+    assert!(unspents.is_empty());
+    assert!(unsafe { IS_UNSPENT_MATURE_CALLED == true });
+}
+
 #[test]
-fn test_qrc20_tx_details_by_hash() {
-    let conf = json!({
-        "coin":"QRC20",
-        "required_confirmations":0,
-        "pubtype":120,
-        "p2shtype":50,
-        "wiftype":128,
-        "segwit":true,
-        "mm2":1,
-        "mature_confirmations":500,
-    });
-    let req = json!({
-        "method": "electrum",
-        "servers": [{"url":"95.217.83.126:10001"}],
-    });
-    let priv_key = [
-        192, 240, 176, 226, 14, 170, 226, 96, 107, 47, 166, 243, 154, 48, 28, 243, 18, 144, 240, 1, 79, 103, 178, 42,
-        32, 161, 106, 119, 241, 227, 42, 102,
-    ];
-    let contract_address = "0xd362e096e873eb7907e205fadc6175c6fec7bc44".into();
+fn test_ordered_mature_unspents_from_cache() {
+    let unspent_height = None;
+    let cached_height = None;
+    let cached_confs = 0;
+    let block_count = 1000;
+    let expected_height = None; // is unknown
+    let expected_confs = 0; // is not changed because height is unknown
+    test_ordered_mature_unspents_from_cache_impl(
+        unspent_height,
+        cached_height,
+        cached_confs,
+        block_count,
+        expected_height,
+        expected_confs,
+    );
 
-    let ctx = MmCtxBuilder::new().into_mm_arc();
+    let unspent_height = None;
+    let cached_height = None;
+    let cached_confs = 5;
+    let block_count = 1000;
+    let expected_height = None; // is unknown
+    let expected_confs = 5; // is not changed because height is unknown
+    test_ordered_mature_unspents_from_cache_impl(
+        unspent_height,
+        cached_height,
+        cached_confs,
+        block_count,
+        expected_height,
+        expected_confs,
+    );
 
-    let coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
-        &ctx,
-        "QRC20",
-        "QTUM",
-        &conf,
-        &req,
-        &priv_key,
-        contract_address
-    )));
+    let unspent_height = Some(998);
+    let cached_height = None;
+    let cached_confs = 0;
+    let block_count = 1000;
+    let expected_height = Some(998); // as the unspent_height
+    let expected_confs = 3; // 1000 - 998 + 1
+    test_ordered_mature_unspents_from_cache_impl(
+        unspent_height,
+        cached_height,
+        cached_confs,
+        block_count,
+        expected_height,
+        expected_confs,
+    );
 
-    let expected = json!({
-        "tx_hex":"0100000001fcaaf1343a392cc96c93ac6f5e84399a69cf52c29ac70254f17ac484169110b7000000006a47304402201b31345c1f377b2a19603d922796726940e4c8068e64e21d551534799ffacaf002207d382f49c9c069dcdd18c90a51687a346a99857ce8b82b91a6cb1ee391811aee012102cd7745ea1c03c9a1ebbcdb7ab9ee19d4e4d306f44665295d996db7c38527da6bffffffff020000000000000000625403a02526012844a9059cbb0000000000000000000000009e032d4b0090a11dc40fe6c47601499a35d55fbb0000000000000000000000000000000000000000000000000000000011e1a30014d362e096e873eb7907e205fadc6175c6fec7bc44c23540a753010000001976a914f36e14131c70e5f15a3f92b1d7e8622a62e570d888ac13f9ff5e",
-        "tx_hash":"39104d29d77ba83c5c6c63ab7a0f096301c443b4538dc6b30140453a40caa80a",
-        "from":[
-            "qfkXE2cNFEwPFQqvBcqs8m9KrkNa9KV4xi"
-        ],
-        "to":[
-            "qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG"
-        ],
-        "total_amount":"3",
-        "spent_by_me":"3",
-        "received_by_me":"0",
-        "my_balance_change":"-3",
-        "block_height":628164,
-        "timestamp":1593833808,
-        "fee_details":{
-            "coin":"QTUM",
-            "miner_fee":"1.01526596",
-            "gas_limit":2_500_000,
-            "gas_price":40,
-            "total_gas_fee":"0.00036231",
-        },
-        "coin":"QRC20",
-        "internal_id":""
-    });
-    let expected = json::from_value(expected).unwrap();
+    let unspent_height = None;
+    let cached_height = Some(998);
+    let cached_confs = 0;
+    let block_count = 1000;
+    let expected_height = Some(998); // as the cached_height
+    let expected_confs = 3; // 1000 - 998 + 1
+    test_ordered_mature_unspents_from_cache_impl(
+        unspent_height,
+        cached_height,
+        cached_confs,
+        block_count,
+        expected_height,
+        expected_confs,
+    );
 
-    let hash = hex::decode("39104d29d77ba83c5c6c63ab7a0f096301c443b4538dc6b30140453a40caa80a").unwrap();
-    let actual = unwrap!(coin.tx_details_by_hash(&hash).wait());
+    let unspent_height = Some(998);
+    let cached_height = Some(997);
+    let cached_confs = 0;
+    let block_count = 1000;
+    let expected_height = Some(998); // as the unspent_height
+    let expected_confs = 3; // 1000 - 998 + 1
+    test_ordered_mature_unspents_from_cache_impl(
+        unspent_height,
+        cached_height,
+        cached_confs,
+        block_count,
+        expected_height,
+        expected_confs,
+    );
 
-    let st = json::to_string(&actual).unwrap();
-    println!("{}", st);
+    // block_count < tx_height
+    let unspent_height = None;
+    let cached_height = Some(1000);
+    let cached_confs = 1;
+    let block_count = 999;
+    let expected_height = Some(1000); // as the cached_height
+    let expected_confs = 1; // is not changed because height cannot be calculated
+    test_ordered_mature_unspents_from_cache_impl(
+        unspent_height,
+        cached_height,
+        cached_confs,
+        block_count,
+        expected_height,
+        expected_confs,
+    );
 
-    assert_eq!(actual, expected);
+    // block_count == tx_height
+    let unspent_height = None;
+    let cached_height = Some(1000);
+    let cached_confs = 1;
+    let block_count = 1000;
+    let expected_height = Some(1000); // as the cached_height
+    let expected_confs = 1; // 1000 - 1000 + 1
+    test_ordered_mature_unspents_from_cache_impl(
+        unspent_height,
+        cached_height,
+        cached_confs,
+        block_count,
+        expected_height,
+        expected_confs,
+    );
+
+    // tx_height == 0
+    let unspent_height = Some(0);
+    let cached_height = None;
+    let cached_confs = 1;
+    let block_count = 1000;
+    let expected_height = Some(0); // as the cached_height
+    let expected_confs = 1; // is not changed because tx_height is expected to be not zero
+    test_ordered_mature_unspents_from_cache_impl(
+        unspent_height,
+        cached_height,
+        cached_confs,
+        block_count,
+        expected_height,
+        expected_confs,
+    );
 }

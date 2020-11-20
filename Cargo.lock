@@ -204,7 +204,7 @@ dependencies = [
 [[package]]
 name = "bitcrypto"
 version = "0.1.0"
-source = "git+https://github.com/artemii235/parity-bitcoin.git#35280bd9f06ad036f81e2e99d641d5d4ed9a7dfc"
+source = "git+https://github.com/artemii235/parity-bitcoin.git#8118bd974189e30c36ad5963fc691c77eb15c5af"
 dependencies = [
  "groestl 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "primitives 0.1.0 (git+https://github.com/artemii235/parity-bitcoin.git)",
@@ -382,7 +382,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 [[package]]
 name = "chain"
 version = "0.1.0"
-source = "git+https://github.com/artemii235/parity-bitcoin.git#35280bd9f06ad036f81e2e99d641d5d4ed9a7dfc"
+source = "git+https://github.com/artemii235/parity-bitcoin.git#8118bd974189e30c36ad5963fc691c77eb15c5af"
 dependencies = [
  "bitcrypto 0.1.0 (git+https://github.com/artemii235/parity-bitcoin.git)",
  "primitives 0.1.0 (git+https://github.com/artemii235/parity-bitcoin.git)",
@@ -457,6 +457,7 @@ dependencies = [
  "gstuff 0.6.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "hex 0.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "http 0.1.17 (registry+https://github.com/rust-lang/crates.io-index)",
+ "itertools 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "js-sys 0.3.28 (registry+https://github.com/rust-lang/crates.io-index)",
  "jsonrpc-core 8.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "keys 0.1.0 (git+https://github.com/artemii235/parity-bitcoin.git)",
@@ -499,6 +500,7 @@ version = "0.1.0"
 dependencies = [
  "arrayref 0.3.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "async-std 1.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "async-trait 0.1.31 (registry+https://github.com/rust-lang/crates.io-index)",
  "atomic 0.4.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "backtrace 0.3.32 (git+https://github.com/artemii235/backtrace-rs.git)",
  "base64 0.10.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -524,7 +526,7 @@ dependencies = [
  "http-body 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "hyper 0.12.31 (registry+https://github.com/rust-lang/crates.io-index)",
  "hyper-rustls 0.16.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "itertools 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "itertools 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "keys 0.1.0 (git+https://github.com/artemii235/parity-bitcoin.git)",
  "lazy_static 1.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc 0.2.67 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -1480,15 +1482,7 @@ dependencies = [
 
 [[package]]
 name = "itertools"
-version = "0.7.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-dependencies = [
- "either 1.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
-name = "itertools"
-version = "0.8.0"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "either 1.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -1545,7 +1539,7 @@ dependencies = [
 [[package]]
 name = "keys"
 version = "0.1.0"
-source = "git+https://github.com/artemii235/parity-bitcoin.git#35280bd9f06ad036f81e2e99d641d5d4ed9a7dfc"
+source = "git+https://github.com/artemii235/parity-bitcoin.git#8118bd974189e30c36ad5963fc691c77eb15c5af"
 dependencies = [
  "base58 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "bitcrypto 0.1.0 (git+https://github.com/artemii235/parity-bitcoin.git)",
@@ -2060,7 +2054,7 @@ dependencies = [
  "http 0.1.17 (registry+https://github.com/rust-lang/crates.io-index)",
  "http-body 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "hyper 0.12.31 (registry+https://github.com/rust-lang/crates.io-index)",
- "itertools 0.7.11 (registry+https://github.com/rust-lang/crates.io-index)",
+ "itertools 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "lazy_static 1.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc 0.2.67 (registry+https://github.com/rust-lang/crates.io-index)",
  "rand 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -2098,7 +2092,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 [[package]]
 name = "primitives"
 version = "0.1.0"
-source = "git+https://github.com/artemii235/parity-bitcoin.git#35280bd9f06ad036f81e2e99d641d5d4ed9a7dfc"
+source = "git+https://github.com/artemii235/parity-bitcoin.git#8118bd974189e30c36ad5963fc691c77eb15c5af"
 dependencies = [
  "bigint 4.4.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "byteorder 1.3.1 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -2417,7 +2411,7 @@ dependencies = [
 [[package]]
 name = "rpc"
 version = "0.1.0"
-source = "git+https://github.com/artemii235/parity-bitcoin.git#35280bd9f06ad036f81e2e99d641d5d4ed9a7dfc"
+source = "git+https://github.com/artemii235/parity-bitcoin.git#8118bd974189e30c36ad5963fc691c77eb15c5af"
 dependencies = [
  "chain 0.1.0 (git+https://github.com/artemii235/parity-bitcoin.git)",
  "keys 0.1.0 (git+https://github.com/artemii235/parity-bitcoin.git)",
@@ -2520,7 +2514,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 [[package]]
 name = "script"
 version = "0.1.0"
-source = "git+https://github.com/artemii235/parity-bitcoin.git#35280bd9f06ad036f81e2e99d641d5d4ed9a7dfc"
+source = "git+https://github.com/artemii235/parity-bitcoin.git#8118bd974189e30c36ad5963fc691c77eb15c5af"
 dependencies = [
  "bitcrypto 0.1.0 (git+https://github.com/artemii235/parity-bitcoin.git)",
  "blake2b_simd 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -2610,7 +2604,7 @@ dependencies = [
 [[package]]
 name = "serialization"
 version = "0.1.0"
-source = "git+https://github.com/artemii235/parity-bitcoin.git#35280bd9f06ad036f81e2e99d641d5d4ed9a7dfc"
+source = "git+https://github.com/artemii235/parity-bitcoin.git#8118bd974189e30c36ad5963fc691c77eb15c5af"
 dependencies = [
  "byteorder 1.3.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "primitives 0.1.0 (git+https://github.com/artemii235/parity-bitcoin.git)",
@@ -2619,7 +2613,7 @@ dependencies = [
 [[package]]
 name = "serialization_derive"
 version = "0.1.0"
-source = "git+https://github.com/artemii235/parity-bitcoin.git#35280bd9f06ad036f81e2e99d641d5d4ed9a7dfc"
+source = "git+https://github.com/artemii235/parity-bitcoin.git#8118bd974189e30c36ad5963fc691c77eb15c5af"
 dependencies = [
  "quote 0.3.15 (registry+https://github.com/rust-lang/crates.io-index)",
  "syn 0.11.11 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -3733,8 +3727,7 @@ dependencies = [
 "checksum im 12.3.4 (registry+https://github.com/rust-lang/crates.io-index)" = "de38d1511a0ce7677538acb1e31b5df605147c458e061b2cdb89858afb1cd182"
 "checksum indexmap 1.0.2 (registry+https://github.com/rust-lang/crates.io-index)" = "7e81a7c05f79578dbc15793d8b619db9ba32b4577003ef3af1a91c416798c58d"
 "checksum iovec 0.1.4 (registry+https://github.com/rust-lang/crates.io-index)" = "b2b3ea6ff95e175473f8ffe6a7eb7c00d054240321b84c57051175fe3c1e075e"
-"checksum itertools 0.7.11 (registry+https://github.com/rust-lang/crates.io-index)" = "0d47946d458e94a1b7bcabbf6521ea7c037062c81f534615abcad76e84d4970d"
-"checksum itertools 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)" = "5b8467d9c1cebe26feb08c640139247fac215782d35371ade9a2136ed6085358"
+"checksum itertools 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)" = "284f18f85651fe11e8a991b2adb42cb078325c996ed026d994719efcfca1d54b"
 "checksum itoa 0.4.3 (registry+https://github.com/rust-lang/crates.io-index)" = "1306f3464951f30e30d12373d31c79fbd52d236e5e896fd92f96ec7babbbe60b"
 "checksum js-sys 0.3.28 (registry+https://github.com/rust-lang/crates.io-index)" = "2cc9a97d7cec30128fd8b28a7c1f9df1c001ceb9b441e2b755e24130a6b43c79"
 "checksum jsonrpc-core 8.0.1 (registry+https://github.com/rust-lang/crates.io-index)" = "ddf83704f4e79979a424d1082dd2c1e52683058056c9280efa19ac5f6bc9033c"

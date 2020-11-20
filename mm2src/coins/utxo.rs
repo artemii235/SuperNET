@@ -21,7 +21,6 @@
 
 #![cfg_attr(not(feature = "native"), allow(unused_imports))]
 
-pub mod qrc20;
 pub mod qtum;
 pub mod rpc_clients;
 pub mod utxo_common;
@@ -47,12 +46,12 @@ use futures::stream::StreamExt;
 use futures01::Future;
 use keys::bytes::Bytes;
 use keys::{Address, KeyPair, Private, Public, Secret};
-use mocktopus::macros::*;
+#[cfg(test)] use mocktopus::macros::*;
 use num_traits::ToPrimitive;
 use primitives::hash::{H256, H264, H512};
 use rand::seq::SliceRandom;
 use rpc::v1::types::{Bytes as BytesJson, Transaction as RpcTransaction, H256 as H256Json};
-use script::{Builder, Opcode, Script, SignatureVersion, TransactionInputSigner};
+use script::{Builder, Script, SignatureVersion, TransactionInputSigner};
 use serde_json::{self as json, Value as Json};
 use serialization::serialize;
 use std::convert::TryInto;
@@ -115,17 +114,6 @@ fn get_special_folder_path() -> PathBuf { panic!("!windows") }
 impl Transaction for UtxoTx {
     fn tx_hex(&self) -> Vec<u8> { serialize(self).into() }
 
-    fn extract_secret(&self) -> Result<Vec<u8>, String> {
-        let script: Script = self.inputs[0].script_sig.clone().into();
-        for (i, instr) in script.iter().enumerate() {
-            let instruction = instr.unwrap();
-            if i == 1 && instruction.opcode == Opcode::OP_PUSHBYTES_32 {
-                return Ok(instruction.data.unwrap().to_vec());
-            }
-        }
-        ERR!("Couldn't extract secret")
-    }
-
     fn tx_hash(&self) -> BytesJson { self.hash().reversed().to_vec().into() }
 }
 
@@ -134,14 +122,14 @@ impl Transaction for UtxoTx {
 /// and check output values
 #[derive(Debug)]
 pub struct AdditionalTxData {
-    received_by_me: u64,
-    spent_by_me: u64,
-    fee_amount: u64,
+    pub received_by_me: u64,
+    pub spent_by_me: u64,
+    pub fee_amount: u64,
 }
 
 /// The fee set from coins config
 #[derive(Debug)]
-enum TxFee {
+pub enum TxFee {
     /// Tell the coin that it has fixed tx fee not depending on transaction size
     Fixed(u64),
     /// Tell the coin that it should request the fee from daemon RPC and calculate it relying on tx size
@@ -149,7 +137,7 @@ enum TxFee {
 }
 
 /// The actual "runtime" fee that is received from RPC in case of dynamic calculation
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum ActualTxFee {
     /// fixed tx fee not depending on transaction size
     Fixed(u64),
@@ -184,87 +172,88 @@ impl Default for UtxoAddressFormat {
 
 #[derive(Debug)]
 pub struct UtxoCoinFields {
-    ticker: String,
+    pub ticker: String,
     /// https://en.bitcoin.it/wiki/List_of_address_prefixes
     /// https://github.com/jl777/coins/blob/master/coins
-    pub_addr_prefix: u8,
-    p2sh_addr_prefix: u8,
-    wif_prefix: u8,
-    pub_t_addr_prefix: u8,
-    p2sh_t_addr_prefix: u8,
+    pub pub_addr_prefix: u8,
+    pub p2sh_addr_prefix: u8,
+    pub wif_prefix: u8,
+    pub pub_t_addr_prefix: u8,
+    pub p2sh_t_addr_prefix: u8,
     /// True if coins uses Proof of Stake consensus algo
     /// Proof of Work is expected by default
     /// https://en.bitcoin.it/wiki/Proof_of_Stake
     /// https://en.bitcoin.it/wiki/Proof_of_work
     /// The actual meaning of this is nTime field is used in transaction
-    is_pos: bool,
+    pub is_pos: bool,
     /// Special field for Zcash and it's forks
     /// Defines if Overwinter network upgrade was activated
     /// https://z.cash/upgrade/overwinter/
-    overwintered: bool,
+    pub overwintered: bool,
     /// The tx version used to detect the transaction ser/de/signing algo
     /// For now it's mostly used for Zcash and forks because they changed the algo in
     /// Overwinter and then Sapling upgrades
     /// https://github.com/zcash/zips/blob/master/zip-0243.rst
-    tx_version: i32,
+    pub tx_version: i32,
     /// If true - allow coins withdraw to P2SH addresses (Segwit).
     /// the flag will also affect the address that MM2 generates by default in the future
     /// will be the Segwit (starting from 3 for BTC case) instead of legacy
     /// https://en.bitcoin.it/wiki/Segregated_Witness
-    segwit: bool,
+    pub segwit: bool,
     /// Default decimals amount is 8 (BTC and almost all other UTXO coins)
     /// But there are forks which have different decimals:
     /// Peercoin has 6
     /// Emercoin has 6
     /// Bitcoin Diamond has 7
-    decimals: u8,
+    pub decimals: u8,
     /// Does coin require transactions to be notarized to be considered as confirmed?
     /// https://komodoplatform.com/security-delayed-proof-of-work-dpow/
-    requires_notarization: AtomicBool,
+    pub requires_notarization: AtomicBool,
     /// RPC client
     pub rpc_client: UtxoRpcClientEnum,
     /// ECDSA key pair
-    key_pair: KeyPair,
+    pub key_pair: KeyPair,
     /// Lock the mutex when we deal with address utxos
-    my_address: Address,
+    pub my_address: Address,
     /// The address format indicates how to parse and display UTXO addresses over RPC calls
-    address_format: UtxoAddressFormat,
+    pub address_format: UtxoAddressFormat,
     /// Is current coin KMD asset chain?
     /// https://komodoplatform.atlassian.net/wiki/spaces/KPSD/pages/71729160/What+is+a+Parallel+Chain+Asset+Chain
-    asset_chain: bool,
-    tx_fee: TxFee,
+    pub asset_chain: bool,
+    pub tx_fee: TxFee,
     /// Transaction version group id for Zcash transactions since Overwinter: https://github.com/zcash/zips/blob/master/zip-0202.rst
-    version_group_id: u32,
+    pub version_group_id: u32,
     /// Consensus branch id for Zcash transactions since Overwinter: https://github.com/zcash/zcash/blob/master/src/consensus/upgrades.cpp#L11
     /// used in transaction sig hash calculation
-    consensus_branch_id: u32,
+    pub consensus_branch_id: u32,
     /// Defines if coin uses Zcash transaction format
-    zcash: bool,
+    pub zcash: bool,
     /// Address and privkey checksum type
-    checksum_type: ChecksumType,
+    pub checksum_type: ChecksumType,
     /// Fork id used in sighash
-    fork_id: u32,
+    pub fork_id: u32,
     /// Signature version
-    signature_version: SignatureVersion,
-    history_sync_state: Mutex<HistorySyncState>,
-    required_confirmations: AtomicU64,
+    pub signature_version: SignatureVersion,
+    pub history_sync_state: Mutex<HistorySyncState>,
+    pub required_confirmations: AtomicU64,
     /// if set to true MM2 will check whether calculated fee is lower than relay fee and use
     /// relay fee amount instead of calculated
     /// https://github.com/KomodoPlatform/atomicDEX-API/issues/617
-    force_min_relay_fee: bool,
+    pub force_min_relay_fee: bool,
     /// Block count for median time past calculation
-    mtp_block_count: NonZeroU64,
-    estimate_fee_mode: Option<EstimateFeeMode>,
+    pub mtp_block_count: NonZeroU64,
+    pub estimate_fee_mode: Option<EstimateFeeMode>,
     /// Minimum transaction value at which the value is not less than fee
-    dust_amount: u64,
+    pub dust_amount: u64,
     /// Minimum number of confirmations at which a transaction is considered mature
-    mature_confirmations: u32,
+    pub mature_confirmations: u32,
     /// Path to the TX cache directory
-    tx_cache_directory: Option<PathBuf>,
+    pub tx_cache_directory: Option<PathBuf>,
 }
 
+#[cfg_attr(test, mockable)]
 #[async_trait]
-pub trait UtxoCoinCommonOps {
+pub trait UtxoCommonOps {
     async fn get_tx_fee(&self) -> Result<ActualTxFee, JsonRpcError>;
 
     async fn get_htlc_spend_fee(&self) -> Result<u64, String>;
@@ -273,24 +262,11 @@ pub trait UtxoCoinCommonOps {
 
     fn denominate_satoshis(&self, satoshi: i64) -> f64;
 
-    fn search_for_swap_tx_spend(
-        &self,
-        time_lock: u32,
-        first_pub: &Public,
-        second_pub: &Public,
-        secret_hash: &[u8],
-        tx: &[u8],
-        search_from_block: u64,
-    ) -> Result<Option<FoundSwapTxSpend>, String>;
-
     fn my_public_key(&self) -> &Public;
 
     fn display_address(&self, address: &Address) -> Result<String, String>;
 
-    /// Try to convert either standard address or cashaddress.
-    fn try_address_from_str(&self, from: &str) -> Result<Address, String>;
-
-    /// Try to parse address from string using specified format
+    /// Try to parse address from string using specified on asset enable format,
     /// and if it failed inform user that he used a wrong format.
     fn address_from_str(&self, address: &str) -> Result<Address, String>;
 
@@ -298,39 +274,6 @@ pub trait UtxoCoinCommonOps {
 
     /// Check if the output is spendable (is not coinbase or it has enough confirmations).
     fn is_unspent_mature(&self, output: &RpcTransaction) -> bool;
-}
-
-#[derive(Clone, Debug)]
-pub struct UtxoArc(Arc<UtxoCoinFields>);
-impl Deref for UtxoArc {
-    type Target = UtxoCoinFields;
-    fn deref(&self) -> &UtxoCoinFields { &*self.0 }
-}
-
-impl From<UtxoCoinFields> for UtxoArc {
-    fn from(coin: UtxoCoinFields) -> UtxoArc { UtxoArc(Arc::new(coin)) }
-}
-
-// We can use a shared UTXO lock for all UTXO coins at 1 time.
-// It's highly likely that we won't experience any issues with it as we won't need to send "a lot" of transactions concurrently.
-lazy_static! {
-    pub static ref UTXO_LOCK: AsyncMutex<()> = AsyncMutex::new(());
-}
-
-#[mockable]
-#[async_trait]
-pub trait UtxoArcCommonOps {
-    fn send_outputs_from_my_address(&self, outputs: Vec<TransactionOutput>) -> TransactionFut;
-
-    fn validate_payment(
-        &self,
-        payment_tx: &[u8],
-        time_lock: u32,
-        first_pub0: &Public,
-        second_pub0: &Public,
-        priv_bn_hash: &[u8],
-        amount: BigDecimal,
-    ) -> Box<dyn Future<Item = (), Error = String> + Send>;
 
     /// Generates unsigned transaction (TransactionInputSigner) from specified utxos and outputs.
     /// This function expects that utxos are sorted by amounts in ascending order
@@ -344,7 +287,7 @@ pub trait UtxoArcCommonOps {
         fee_policy: FeePolicy,
         fee: Option<ActualTxFee>,
         gas_fee: Option<u64>,
-    ) -> Result<(TransactionInputSigner, AdditionalTxData), String>;
+    ) -> Result<(TransactionInputSigner, AdditionalTxData), GenerateTransactionError>;
 
     /// Calculates interest if the coin is KMD
     /// Adds the value to existing output to my_script_pub or creates additional interest output
@@ -377,8 +320,67 @@ pub trait UtxoArcCommonOps {
         txid: H256Json,
     ) -> Box<dyn Future<Item = VerboseTransactionFrom, Error = String> + Send>;
 
+    /// Cache transaction if the coin supports `TX_CACHE` and tx height is set and not zero.
+    async fn cache_transaction_if_possible(&self, tx: &RpcTransaction) -> Result<(), String>;
+}
+
+#[async_trait]
+pub trait UtxoStandardOps {
+    /// Gets tx details by hash requesting the coin RPC if required
+    async fn tx_details_by_hash(&self, hash: &[u8]) -> Result<TransactionDetails, String>;
+
     async fn request_tx_history(&self, metrics: MetricsArc) -> RequestTxHistoryResult;
 }
+
+#[derive(Clone, Debug)]
+pub struct UtxoArc(Arc<UtxoCoinFields>);
+impl Deref for UtxoArc {
+    type Target = UtxoCoinFields;
+    fn deref(&self) -> &UtxoCoinFields { &*self.0 }
+}
+
+impl From<UtxoCoinFields> for UtxoArc {
+    fn from(coin: UtxoCoinFields) -> UtxoArc { UtxoArc(Arc::new(coin)) }
+}
+
+// We can use a shared UTXO lock for all UTXO coins at 1 time.
+// It's highly likely that we won't experience any issues with it as we won't need to send "a lot" of transactions concurrently.
+lazy_static! {
+    pub static ref UTXO_LOCK: AsyncMutex<()> = AsyncMutex::new(());
+}
+
+#[derive(Debug)]
+pub enum GenerateTransactionError {
+    EmptyUtxoSet,
+    EmptyOutputs,
+    OutputValueLessThanDust { value: u64, dust: u64 },
+    TooLargeGasFee,
+    DeductFeeFromOutputFailed { description: String },
+    NotSufficientBalance { description: String },
+    Other(String),
+}
+
+impl std::fmt::Display for GenerateTransactionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GenerateTransactionError::EmptyUtxoSet => write!(f, "Couldn't generate tx from empty UTXOs set"),
+            GenerateTransactionError::EmptyOutputs => write!(f, "Couldn't generate tx with empty output set"),
+            GenerateTransactionError::OutputValueLessThanDust { value, dust } => {
+                write!(f, "Output value {} less than dust amount {}", value, dust)
+            },
+            GenerateTransactionError::TooLargeGasFee => write!(f, "Too large gas_fee"),
+            GenerateTransactionError::DeductFeeFromOutputFailed { description } => {
+                write!(f, "Error on deduct fee from an output: {:?}", description)
+            },
+            GenerateTransactionError::NotSufficientBalance { description } => {
+                write!(f, "Not sufficient balance: {}", description)
+            },
+            GenerateTransactionError::Other(e) => write!(f, "{}", e),
+        }
+    }
+}
+
+impl std::error::Error for GenerateTransactionError {}
 
 pub enum RequestTxHistoryResult {
     Ok(Vec<(H256Json, u64)>),
@@ -413,7 +415,7 @@ pub fn compressed_pub_key_from_priv_raw(raw_priv: &[u8], sum_type: ChecksumType)
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct UtxoFeeDetails {
-    amount: BigDecimal,
+    pub amount: BigDecimal,
 }
 
 #[cfg(feature = "native")]
@@ -584,6 +586,19 @@ pub async fn utxo_arc_from_conf_and_request(
     priv_key: &[u8],
     dust_amount: u64,
 ) -> Result<UtxoArc, String> {
+    utxo_fields_from_conf_and_request(ctx, ticker, conf, req, priv_key, dust_amount)
+        .await
+        .map(|coin| UtxoArc(Arc::new(coin)))
+}
+
+pub async fn utxo_fields_from_conf_and_request(
+    ctx: &MmArc,
+    ticker: &str,
+    conf: &Json,
+    req: &Json,
+    priv_key: &[u8],
+    dust_amount: u64,
+) -> Result<UtxoCoinFields, String> {
     let checksum_type = if ticker == "GRS" {
         ChecksumType::DGROESTL512
     } else if ticker == "SMART" {
@@ -678,13 +693,14 @@ pub async fn utxo_arc_from_conf_and_request(
             let client = Arc::new(client);
 
             let weak_client = Arc::downgrade(&client);
-            spawn_electrum_ping_loop(weak_client, servers);
-
-            let weak_client = Arc::downgrade(&client);
             let client_name = format!("{} GUI/MM2 {}", ctx.gui().unwrap_or("UNKNOWN"), MM_VERSION);
             spawn_electrum_version_loop(weak_client, on_connect_rx, client_name);
 
             try_s!(wait_for_protocol_version_checked(&client).await);
+
+            let weak_client = Arc::downgrade(&client);
+            spawn_electrum_ping_loop(weak_client, servers);
+
             UtxoRpcClientEnum::Electrum(ElectrumClient(client))
         },
         _ => return ERR!("utxo_arc_from_conf_and_request should be called only by enable or electrum requests"),
@@ -805,7 +821,7 @@ pub async fn utxo_arc_from_conf_and_request(
         mature_confirmations,
         tx_cache_directory,
     };
-    Ok(UtxoArc(Arc::new(coin)))
+    Ok(coin)
 }
 
 /// Ping the electrum servers every 30 seconds to prevent them from disconnecting us.
@@ -1035,7 +1051,7 @@ pub struct KmdRewardsInfoElement {
 /// The list is ordered by the output value.
 pub async fn kmd_rewards_info<T>(coin: &T) -> Result<Vec<KmdRewardsInfoElement>, String>
 where
-    T: AsRef<UtxoArc> + UtxoCoinCommonOps,
+    T: AsRef<UtxoCoinFields> + UtxoCommonOps,
 {
     if coin.as_ref().ticker != "KMD" {
         return ERR!("rewards info can be obtained for KMD only");
@@ -1149,7 +1165,7 @@ pub(crate) fn sign_tx(
 
 async fn send_outputs_from_my_address_impl<T>(coin: T, outputs: Vec<TransactionOutput>) -> Result<UtxoTx, String>
 where
-    T: AsRef<UtxoArc> + UtxoArcCommonOps,
+    T: AsRef<UtxoCoinFields> + UtxoCommonOps,
 {
     let _utxo_lock = UTXO_LOCK.lock().await;
     let unspents = try_s!(
