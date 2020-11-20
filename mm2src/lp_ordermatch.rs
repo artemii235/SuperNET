@@ -103,65 +103,46 @@ impl From<(new_protocol::MakerOrderCreated, String)> for OrderbookItem {
 fn process_pubkey_full_trie(
     orderbook: &mut Orderbook,
     pubkey: &str,
-    alb_pair: AlbOrderedOrderbookPair,
+    alb_pair: &str,
     new_trie_orders: Vec<(Uuid, OrderbookItem)>,
 ) -> Result<H64, String> {
-    remove_and_purge_pubkey_pair_orders(orderbook, pubkey, &alb_pair);
+    remove_and_purge_pubkey_pair_orders(orderbook, pubkey, alb_pair);
 
-    let mut new_root = H64::default();
-    let trie_values: Vec<_> = new_trie_orders
-        .iter()
-        .map(|(uuid, order)| {
-            (
-                uuid.as_bytes().to_vec(),
-                rmp_serde::to_vec(&order).expect("Serialization failed"),
-            )
-        })
-        .collect();
-
-    if let Err(e) = populate_trie::<Layout>(&mut orderbook.memory_db, &mut new_root, &trie_values) {
-        return ERR!("Error on trie population with values {:?}: {}", trie_values, e);
-    }
-    for (_uuid, order) in new_trie_orders.iter() {
-        orderbook.insert_or_update_order(order.clone());
+    for (_uuid, order) in new_trie_orders {
+        orderbook.insert_or_update_order_update_trie(order);
     }
 
-    let pubkey_state = pubkey_state_mut(&mut orderbook.pubkeys_state, pubkey);
-    pubkey_state.trie_roots.insert(alb_pair, new_root);
-    for (uuid, order) in new_trie_orders {
-        let alb_pair = alb_ordered_pair(&order.base, &order.rel);
-        pubkey_state.orders_uuids.insert((uuid, alb_pair));
-    }
-
+    let new_root = pubkey_state_mut(&mut orderbook.pubkeys_state, pubkey)
+        .trie_roots
+        .get(alb_pair)
+        .copied()
+        .unwrap_or_else(H64::default);
     Ok(new_root)
 }
 
 fn process_trie_delta(
     orderbook: &mut Orderbook,
     pubkey: &str,
-    alb_pair: AlbOrderedOrderbookPair,
-    delta: HashMap<Uuid, Option<OrderbookItem>>,
+    alb_pair: &str,
+    delta_orders: HashMap<Uuid, Option<OrderbookItem>>,
 ) -> Result<H64, String> {
-    let old_root = pubkey_state_mut(&mut orderbook.pubkeys_state, pubkey)
-        .trie_roots
-        .get(&alb_pair)
-        .copied()
-        .unwrap_or_default();
+    for (uuid, order) in delta_orders {
+        match order {
+            Some(order) => orderbook.insert_or_update_order_update_trie(order),
+            None => {
+                orderbook.remove_order_trie_update(uuid);
+            },
+        }
+    }
 
-    let delta = delta.into_iter().map(|(uuid, order)| {
-        (
-            *uuid.as_bytes(),
-            order.map(|o| rmp_serde::to_vec(&o).expect("Serialization failed")),
-        )
-    });
-    let new_root = delta_trie_root::<Layout, _, _, _, _, _>(&mut orderbook.memory_db, old_root, delta)
-        .expect("Pair trie should always exist");
-
-    // replace old_root with new_root in trie_roots
-    pubkey_state_mut(&mut orderbook.pubkeys_state, &pubkey)
-        .trie_roots
-        .insert(alb_pair, new_root);
-    // TODO consider to use insert_or_update_order()
+    let new_root = match orderbook.pubkeys_state.get(pubkey) {
+        Some(pubkey_state) => pubkey_state
+            .trie_roots
+            .get(alb_pair)
+            .copied()
+            .unwrap_or_else(H64::default),
+        None => H64::default(),
+    };
     Ok(new_root)
 }
 
@@ -196,8 +177,8 @@ async fn process_orders_keep_alive(
     let mut orderbook = ordermatch_ctx.orderbook.lock().await;
     for (pair, diff) in response.pair_orders_diff {
         let _new_root = match diff {
-            DeltaOrFullTrie::Delta(delta) => process_trie_delta(&mut orderbook, &from_pubkey, pair, delta),
-            DeltaOrFullTrie::FullTrie(values) => process_pubkey_full_trie(&mut orderbook, &from_pubkey, pair, values),
+            DeltaOrFullTrie::Delta(delta) => process_trie_delta(&mut orderbook, &from_pubkey, &pair, delta),
+            DeltaOrFullTrie::FullTrie(values) => process_pubkey_full_trie(&mut orderbook, &from_pubkey, &pair, values),
         };
     }
     true
@@ -265,7 +246,7 @@ async fn request_and_fill_orderbook(ctx: &MmArc, base: &str, rel: &str) -> Resul
         let _new_root = try_s!(process_pubkey_full_trie(
             &mut orderbook,
             &pubkey,
-            alb_pair.clone(),
+            &alb_pair,
             item.orders
         ));
     }
@@ -539,37 +520,37 @@ impl<Key: Clone + Eq + std::hash::Hash + TryFromBytes, Value: Clone + TryFromByt
     fn from_history(
         history: &TrieDiffHistory<Key, Value>,
         from_hash: H64,
-        trie_from_hash: H64,
+        actual_trie_root: H64,
         db: &MemoryDB<Blake2Hasher64>,
     ) -> Result<DeltaOrFullTrie<Key, Value>, TrieDiffHistoryError> {
-        match history.get(&from_hash) {
-            Some(delta) => {
-                let mut current_delta = delta;
-                let mut total_delta = HashMap::new();
-                for (key, new_value) in &delta.delta {
+        if let Some(delta) = history.get(&from_hash) {
+            let mut current_delta = delta;
+            let mut total_delta = HashMap::new();
+            for (key, new_value) in &delta.delta {
+                total_delta.insert(key.clone(), new_value.clone());
+            }
+            while let Some(cur) = history.get(&current_delta.next_root) {
+                current_delta = cur;
+                for (key, new_value) in &current_delta.delta {
                     total_delta.insert(key.clone(), new_value.clone());
                 }
-                while let Some(cur) = history.get(&current_delta.next_root) {
-                    current_delta = cur;
-                    for (key, new_value) in &current_delta.delta {
-                        total_delta.insert(key.clone(), new_value.clone());
-                    }
-                }
-                // TODO check if the last diff has next_root == trie_from_hash
-                Ok(DeltaOrFullTrie::Delta(total_delta))
-            },
-            None => {
-                let trie = TrieDB::<Layout>::new(db, &trie_from_hash)?;
-                let trie: Result<Vec<_>, TrieDiffHistoryError> = trie
-                    .iter()?
-                    .map(|key_value| {
-                        let (key, value) = key_value?;
-                        Ok((TryFromBytes::try_from_bytes(key)?, TryFromBytes::try_from_bytes(value)?))
-                    })
-                    .collect();
-                Ok(DeltaOrFullTrie::FullTrie(trie?))
-            },
+            }
+            if current_delta.next_root == actual_trie_root {
+                return Ok(DeltaOrFullTrie::Delta(total_delta));
+            }
+
+            log!("History started from "[from_hash]" ends with not up-to-date trie root "[actual_trie_root]);
         }
+
+        let trie = TrieDB::<Layout>::new(db, &actual_trie_root)?;
+        let trie: Result<Vec<_>, TrieDiffHistoryError> = trie
+            .iter()?
+            .map(|key_value| {
+                let (key, value) = key_value?;
+                Ok((TryFromBytes::try_from_bytes(key)?, TryFromBytes::try_from_bytes(value)?))
+            })
+            .collect();
+        Ok(DeltaOrFullTrie::FullTrie(trie?))
     }
 }
 
@@ -593,14 +574,14 @@ async fn process_sync_pubkey_orderbook_state(
     let pair_orders_diff: Result<_, _> = trie_roots
         .into_iter()
         .map(|(pair, root)| {
-            let pair_root = pubkey_state
+            let actual_pair_root = pubkey_state
                 .trie_roots
                 .get(&pair)
                 .ok_or(ERRL!("No pair trie root for {}", pair))?;
             let delta = try_s!(DeltaOrFullTrie::from_history(
                 &pubkey_state.order_pairs_trie_state_history,
                 root,
-                *pair_root,
+                *actual_pair_root,
                 &orderbook.memory_db,
             ));
             Ok((pair, delta))
@@ -1697,6 +1678,7 @@ fn order_pair_root_mut<'a>(state: &'a mut HashMap<AlbOrderedOrderbookPair, H64>,
     }
 }
 
+#[allow(dead_code)]
 fn populate_trie<'db, T: TrieConfiguration>(
     db: &'db mut dyn HashDBT<T::Hash, DBValue>,
     root: &'db mut TrieHash<T>,
@@ -1867,6 +1849,10 @@ impl Orderbook {
         let pubkey_state = pubkey_state_mut(&mut self.pubkeys_state, &order.pubkey);
         let pair_state = order_pair_root_mut(&mut pubkey_state.trie_roots, &alb_ordered);
         let old_state = *pair_state;
+
+        let to_remove = &(uuid, alb_ordered.clone());
+        pubkey_state.orders_uuids.remove(to_remove);
+
         *pair_state = match delta_trie_root::<Layout, _, _, _, _, _>(&mut self.memory_db, *pair_state, vec![(
             *order.uuid.as_bytes(),
             None::<Vec<u8>>,

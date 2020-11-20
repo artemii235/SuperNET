@@ -2,7 +2,10 @@ use super::*;
 use crate::mm2::lp_network::P2PContext;
 use crate::mm2::lp_ordermatch::new_protocol::PubkeyKeepAlive;
 use coins::{MmCoin, TestCoin};
-use common::{executor::spawn, mm_ctx::{MmArc, MmCtx, MmCtxBuilder}, privkey::key_pair_from_seed, block_on};
+use common::{block_on,
+             executor::spawn,
+             mm_ctx::{MmArc, MmCtx, MmCtxBuilder},
+             privkey::key_pair_from_seed};
 use futures::{channel::mpsc, lock::Mutex as AsyncMutex, StreamExt};
 use mm2_libp2p::atomicdex_behaviour::AdexBehaviourCmd;
 use mm2_libp2p::{decode_message, PeerId};
@@ -2074,4 +2077,72 @@ fn test_trie_diff_avoid_cycle_on_insertion() {
     };
 
     assert_eq!(expected, history);
+}
+
+#[test]
+fn test_process_sync_pubkey_orderbook_state_points_to_not_uptodate_trie_root() {
+    let (ctx, pubkey, secret) = make_ctx_for_tests();
+    let orders = make_random_orders(pubkey.clone(), &secret, "RICK".into(), "MORTY".into(), 10);
+    let new_order = make_random_orders(pubkey.clone(), &secret, "RICK".into(), "MORTY".into(), 1)
+        .pop()
+        .expect("Expected one order");
+
+    for order in orders.iter() {
+        block_on(insert_or_update_order(&ctx, order.clone()));
+    }
+
+    let alb_pair = alb_ordered_pair("RICK", "MORTY");
+
+    // update trie root by adding a new order and do not update history
+    let (old_root, new_root) = {
+        let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
+        let mut orderbook = block_on(ordermatch_ctx.orderbook.lock());
+
+        log!([pubkey]", found "[orderbook.pubkeys_state.keys()]);
+        let old_root = *orderbook
+            .pubkeys_state
+            .get_mut(&pubkey)
+            .expect("!pubkeys_state")
+            .trie_roots
+            .get(&alb_pair)
+            .expect("MORTY:RICK must be in trie_roots");
+
+        let order_bytes = rmp_serde::to_vec(&new_order).expect("Serialization should never fail");
+        let mut new_root = old_root;
+        let mut trie = get_trie_mut(&mut orderbook.memory_db, &mut new_root).expect("!get_trie_mut");
+        trie.insert(new_order.uuid.as_bytes(), &order_bytes)
+            .expect("Error on order insertion");
+        drop(trie);
+
+        // update root in orderbook trie_roots
+        orderbook
+            .pubkeys_state
+            .get_mut(&pubkey)
+            .expect("!pubkeys_state")
+            .trie_roots
+            .insert(alb_pair.clone(), new_root);
+
+        (old_root, new_root)
+    };
+
+    let mut roots = HashMap::new();
+    roots.insert(alb_pair.clone(), old_root);
+
+    let propagated_from_peer = String::default();
+    let SyncPubkeyOrderbookStateRes { mut pair_orders_diff } =
+        block_on(process_sync_pubkey_orderbook_state(ctx.clone(), pubkey, roots))
+            .expect("!process_sync_pubkey_orderbook_state")
+            .expect("Expected MORTY:RICK delta, returned None");
+
+    let delta = pair_orders_diff.remove(&alb_pair).expect("Expected MORTY:RICK delta");
+    let mut full_trie = match delta {
+        DeltaOrFullTrie::Delta(_) => panic!("Expected FullTrie, found Delta"),
+        DeltaOrFullTrie::FullTrie(full_trie) => full_trie,
+    };
+
+    let mut expected: Vec<_> = orders.into_iter().map(|order| (order.uuid, order)).collect();
+    expected.push((new_order.uuid, new_order));
+    full_trie.sort_by(|x, y| x.0.cmp(&y.0));
+    expected.sort_by(|x, y| x.0.cmp(&y.0));
+    assert_eq!(full_trie, expected);
 }
