@@ -301,6 +301,7 @@ fn remove_and_purge_pubkey_pair_orders(orderbook: &mut Orderbook, pubkey: &str, 
         Some(root) => root,
         None => return,
     };
+    pubkey_state.order_pairs_trie_state_history.remove(alb_pair);
 
     let mut orders_to_remove = Vec::with_capacity(pubkey_state.orders_uuids.len());
     pubkey_state.orders_uuids.retain(|(uuid, alb)| {
@@ -315,6 +316,7 @@ fn remove_and_purge_pubkey_pair_orders(orderbook: &mut Orderbook, pubkey: &str, 
     for order in orders_to_remove {
         orderbook.remove_order(order);
     }
+
     orderbook.memory_db.remove_and_purge(&pair_root, EMPTY_PREFIX);
 }
 
@@ -516,6 +518,25 @@ impl From<Box<trie_db::TrieError<H64, sp_trie::Error>>> for TrieDiffHistoryError
     }
 }
 
+fn get_full_trie<Key, Value>(
+    trie_root: &H64,
+    db: &MemoryDB<Blake2Hasher64>,
+) -> Result<Vec<(Key, Value)>, TrieDiffHistoryError>
+where
+    Key: Clone + Eq + std::hash::Hash + TryFromBytes,
+    Value: Clone + TryFromBytes,
+{
+    let trie = TrieDB::<Layout>::new(db, trie_root)?;
+    let trie: Result<Vec<_>, TrieDiffHistoryError> = trie
+        .iter()?
+        .map(|key_value| {
+            let (key, value) = key_value?;
+            Ok((TryFromBytes::try_from_bytes(key)?, TryFromBytes::try_from_bytes(value)?))
+        })
+        .collect();
+    trie
+}
+
 impl<Key: Clone + Eq + std::hash::Hash + TryFromBytes, Value: Clone + TryFromBytes> DeltaOrFullTrie<Key, Value> {
     fn from_history(
         history: &TrieDiffHistory<Key, Value>,
@@ -542,15 +563,8 @@ impl<Key: Clone + Eq + std::hash::Hash + TryFromBytes, Value: Clone + TryFromByt
             log!("History started from "[from_hash]" ends with not up-to-date trie root "[actual_trie_root]);
         }
 
-        let trie = TrieDB::<Layout>::new(db, &actual_trie_root)?;
-        let trie: Result<Vec<_>, TrieDiffHistoryError> = trie
-            .iter()?
-            .map(|key_value| {
-                let (key, value) = key_value?;
-                Ok((TryFromBytes::try_from_bytes(key)?, TryFromBytes::try_from_bytes(value)?))
-            })
-            .collect();
-        Ok(DeltaOrFullTrie::FullTrie(trie?))
+        let trie = get_full_trie(&actual_trie_root, db)?;
+        Ok(DeltaOrFullTrie::FullTrie(trie))
     }
 }
 
@@ -578,12 +592,13 @@ async fn process_sync_pubkey_orderbook_state(
                 .trie_roots
                 .get(&pair)
                 .ok_or(ERRL!("No pair trie root for {}", pair))?;
-            let delta = try_s!(DeltaOrFullTrie::from_history(
-                &pubkey_state.order_pairs_trie_state_history,
-                root,
-                *actual_pair_root,
-                &orderbook.memory_db,
-            ));
+
+            let delta_result = match pubkey_state.order_pairs_trie_state_history.get(&pair) {
+                Some(history) => DeltaOrFullTrie::from_history(history, root, *actual_pair_root, &orderbook.memory_db),
+                None => get_full_trie(actual_pair_root, &orderbook.memory_db).map(DeltaOrFullTrie::FullTrie),
+            };
+
+            let delta = try_s!(delta_result);
             Ok((pair, delta))
         })
         .collect();
@@ -1633,13 +1648,15 @@ impl<Key, Value> TrieDiffHistory<Key, Value> {
     fn get(&self, key: &H64) -> Option<&TrieDiff<Key, Value>> { self.inner.get(key) }
 }
 
+type TrieOrderHistory = TrieDiffHistory<Uuid, OrderbookItem>;
+
 #[derive(Default)]
 struct OrderbookPubkeyState {
     /// Timestamp of the latest keep alive message received
     last_keep_alive: u64,
     /// The map storing historical data about specific pair subtrie changes
     /// Used to get diffs of orders of pair between specific root hashes
-    order_pairs_trie_state_history: TrieDiffHistory<Uuid, OrderbookItem>,
+    order_pairs_trie_state_history: HashMap<AlbOrderedOrderbookPair, TrieOrderHistory>,
     /// The known UUIDs owned by pubkey with alphabetically ordered pair to ease the lookup during pubkey orderbook requests
     orders_uuids: HashSet<(Uuid, AlbOrderedOrderbookPair)>,
     /// The map storing alphabetically ordered pair with trie root hash of orders owned by pubkey.
@@ -1675,6 +1692,16 @@ fn order_pair_root_mut<'a>(state: &'a mut HashMap<AlbOrderedOrderbookPair, H64>,
     match state.raw_entry_mut().from_key(pair) {
         RawEntryMut::Occupied(e) => e.into_mut(),
         RawEntryMut::Vacant(e) => e.insert(pair.to_string(), Default::default()).1,
+    }
+}
+
+fn pair_history_mut<'a>(
+    state: &'a mut HashMap<AlbOrderedOrderbookPair, TrieOrderHistory>,
+    pair: &str,
+) -> &'a mut TrieOrderHistory {
+    match state.raw_entry_mut().from_key(pair) {
+        RawEntryMut::Occupied(e) => e.into_mut(),
+        RawEntryMut::Vacant(e) => e.insert(pair.to_owned(), Default::default()).1,
     }
 }
 
@@ -1752,12 +1779,11 @@ impl Orderbook {
         drop(pair_trie);
 
         if prev_root != H64::default() {
-            pubkey_state
-                .order_pairs_trie_state_history
-                .insert_new_diff(prev_root, TrieDiff {
-                    delta: vec![(order.uuid, Some(order.clone()))],
-                    next_root: *pair_root,
-                });
+            let history = pair_history_mut(&mut pubkey_state.order_pairs_trie_state_history, &alb_ordered);
+            history.insert_new_diff(prev_root, TrieDiff {
+                delta: vec![(order.uuid, Some(order.clone()))],
+                next_root: *pair_root,
+            });
         }
     }
 
@@ -1864,13 +1890,11 @@ impl Orderbook {
             },
         };
 
-        pubkey_state
-            .order_pairs_trie_state_history
-            .insert_new_diff(old_state, TrieDiff {
-                delta: vec![(uuid, None)],
-                next_root: *pair_state,
-            });
-        // TODO consider to remove this order from orders_uuids
+        let history = pair_history_mut(&mut pubkey_state.order_pairs_trie_state_history, &alb_ordered);
+        history.insert_new_diff(old_state, TrieDiff {
+            delta: vec![(uuid, None)],
+            next_root: *pair_state,
+        });
         Some(order)
     }
 

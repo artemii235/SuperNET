@@ -1926,6 +1926,8 @@ fn test_diff_should_not_be_written_if_hash_not_changed_on_insert() {
     let pubkey_state = orderbook.pubkeys_state.get(&pubkey).unwrap();
     assert!(!pubkey_state
         .order_pairs_trie_state_history
+        .get(&alb_ordered_pair)
+        .expect("Must contain C1:C2 pair")
         .contains_key(&pair_trie_root));
 }
 
@@ -2007,6 +2009,8 @@ fn test_diff_should_not_be_written_if_hash_not_changed_on_remove() {
     let pubkey_state = orderbook.pubkeys_state.get(&pubkey).unwrap();
     assert!(!pubkey_state
         .order_pairs_trie_state_history
+        .get(&alb_ordered_pair)
+        .expect("Must contain C1:C2 pair")
         .contains_key(&pair_trie_root));
 }
 
