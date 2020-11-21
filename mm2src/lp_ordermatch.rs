@@ -2731,7 +2731,7 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
         .with_conf_settings(conf_settings);
 
     let new_order = try_s!(builder.build());
-    let request_orderbook = true;
+    let request_orderbook = false;
     try_s!(subscribe_to_orderbook_topic(&ctx, &new_order.base, &new_order.rel, request_orderbook).await);
     save_my_maker_order(&ctx, &new_order);
     maker_order_created_p2p_notify(ctx.clone(), &new_order).await;
@@ -3224,8 +3224,7 @@ pub async fn orderbook(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
     let rel_coin = try_s!(rel_coin.ok_or("Rel coin is not found or inactive"));
     let base_coin = try_s!(lp_coinfindᵃ(&ctx, &req.base).await);
     let base_coin: MmCoinEnum = try_s!(base_coin.ok_or("Base coin is not found or inactive"));
-    // TODO change this to `true` when orderbook request is reimplemented using tries
-    let request_orderbook = false;
+    let request_orderbook = true;
     try_s!(subscribe_to_orderbook_topic(&ctx, &req.base, &req.rel, request_orderbook).await);
     let ordermatch_ctx: Arc<OrdermatchContext> = try_s!(OrdermatchContext::from_ctx(&ctx));
     let orderbook = ordermatch_ctx.orderbook.lock().await;
