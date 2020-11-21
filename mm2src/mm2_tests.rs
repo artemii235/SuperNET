@@ -57,6 +57,10 @@ async fn enable_coins_eth_electrum(mm: &MarketMakerIt, eth_urls: Vec<&str>) -> H
 
 fn addr_from_enable(enable_response: &Json) -> Json { enable_response["address"].clone() }
 
+fn rmd160_from_passphrase(passphrase: &str) -> [u8; 20] {
+    key_pair_from_seed(passphrase).unwrap().public().address_hash().take()
+}
+
 /*
 portfolio is removed from dependencies temporary
 #[test]
@@ -317,6 +321,8 @@ fn alice_can_see_the_active_order_after_connection() {
     let asks = eve_orderbook["asks"].as_array().unwrap();
     assert_eq!(asks.len(), 2, "Eve RICK/MORTY orderbook must have exactly 2 asks");
 
+    log!("Give Bob 2 seconds to import Eve order");
+    thread::sleep(Duration::from_secs(2));
     log!("Get RICK/MORTY orderbook on Bob side");
     let rc = unwrap!(block_on(mm_bob.rpc(json! ({
         "userpass": mm_bob.userpass,
@@ -2785,7 +2791,8 @@ fn test_gtc_taker_order_should_transform_to_maker() {
     assert_eq!(1, my_maker_orders.len(), "maker_orders must have exactly 1 order");
     assert!(my_taker_orders.is_empty(), "taker_orders must be empty");
     let order_path = mm_bob.folder.join(format!(
-        "DB/05aab5342166f8594baf17a7d9bef5d567443327/ORDERS/MY/MAKER/{}.json",
+        "DB/{}/ORDERS/MY/MAKER/{}.json",
+        hex::encode(rmd160_from_passphrase(&bob_passphrase)),
         uuid
     ));
     log!("Order path "(order_path.display()));
@@ -2843,7 +2850,8 @@ fn test_set_price_must_save_order_to_db() {
     let rc_json: Json = json::from_str(&rc.1).unwrap();
     let uuid: Uuid = json::from_value(rc_json["result"]["uuid"].clone()).unwrap();
     let order_path = mm_bob.folder.join(format!(
-        "DB/05aab5342166f8594baf17a7d9bef5d567443327/ORDERS/MY/MAKER/{}.json",
+        "DB/{}/ORDERS/MY/MAKER/{}.json",
+        hex::encode(rmd160_from_passphrase(&bob_passphrase)),
         uuid
     ));
     assert!(order_path.exists());
