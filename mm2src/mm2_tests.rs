@@ -1610,17 +1610,6 @@ fn test_cancel_order() {
     // Enable coins on Alice side. Print the replies in case we need the "address".
     log! ({"enable_coins (alice): {:?}", block_on (enable_coins_eth_electrum (&mm_alice, vec!["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b"]))});
 
-    log!("Get RICK/MORTY orderbook on Alice side to trigger subscription");
-    let rc = unwrap!(block_on(mm_alice.rpc(json! ({
-        "userpass": mm_alice.userpass,
-        "method": "orderbook",
-        "base": "RICK",
-        "rel": "MORTY",
-    }))));
-    assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
-    log!("Give Alice 40 seconds to import the order…");
-    thread::sleep(Duration::from_secs(40));
-
     log!("Get RICK/MORTY orderbook on Alice side");
     let rc = unwrap!(block_on(mm_alice.rpc(json! ({
         "userpass": mm_alice.userpass,
@@ -1961,15 +1950,6 @@ fn test_order_should_not_be_displayed_when_node_is_down() {
             "electrum1.cipig.net:10018",
         ]))]
     );
-
-    log!("Get RICK/MORTY orderbook on Alice side to trigger subscription");
-    let rc = unwrap!(block_on(mm_alice.rpc(json! ({
-        "userpass": mm_alice.userpass,
-        "method": "orderbook",
-        "base": "RICK",
-        "rel": "MORTY",
-    }))));
-    assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
 
     // issue sell request on Bob side by setting base/rel price
     log!("Issue bob sell request");
@@ -3006,18 +2986,6 @@ fn set_price_with_cancel_previous_should_broadcast_cancelled_message() {
 
     // Enable coins on Alice side. Print the replies in case we need the "address".
     log! ({"enable_coins (alice): {:?}", block_on (enable_coins_eth_electrum (&mm_alice, vec!["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b"]))});
-
-    log!("Get RICK/MORTY orderbook on Alice side to trigger subscription");
-    let rc = unwrap!(block_on(mm_alice.rpc(json! ({
-        "userpass": mm_alice.userpass,
-        "method": "orderbook",
-        "base": "RICK",
-        "rel": "MORTY",
-    }))));
-    assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
-
-    log!("Give Alice 40 seconds to import the order…");
-    thread::sleep(Duration::from_secs(40));
 
     log!("Get RICK/MORTY orderbook on Alice side");
     let rc = unwrap!(block_on(mm_alice.rpc(json! ({
