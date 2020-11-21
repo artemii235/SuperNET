@@ -44,7 +44,7 @@ jobs:
         displayName: 'Build MM2 Debug'
       # Explicit --test-threads=16 makes testing process slightly faster on agents that have <16 CPU cores.
       - bash: |
-          cargo test --features native --all -- --test-threads=16
+          cargo +nightly test --features native --all -- --test-threads=16
         displayName: 'Test MM2'
         timeoutInMinutes: 22
         env:
