@@ -1294,6 +1294,8 @@ fn make_random_orders(pubkey: String, _secret: &[u8; 32], base: String, rel: Str
             min_volume: BigRational::from_integer(0.into()),
             conf_settings: OrderConfirmationsSettings::default(),
             created_at: now_ms() / 1000,
+            timestamp: now_ms() / 1000,
+            pair_trie_root: H64::default(),
         };
 
         orders.push((order, pubkey.clone()).into());

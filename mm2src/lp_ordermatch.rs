@@ -670,6 +670,8 @@ async fn maker_order_created_p2p_notify(ctx: MmArc, order: &MakerOrder) {
         min_volume: order.min_base_vol.to_ratio(),
         conf_settings: order.conf_settings.unwrap(),
         created_at: now_ms() / 1000,
+        timestamp: now_ms() / 1000,
+        pair_trie_root: H64::default(),
     };
 
     let key_pair = ctx.secp256k1_key_pair.or(&&|| panic!());
@@ -703,6 +705,8 @@ async fn maker_order_updated_p2p_notify(ctx: MmArc, base: &str, rel: &str, messa
 async fn maker_order_cancelled_p2p_notify(ctx: MmArc, order: &MakerOrder) {
     let message = new_protocol::OrdermatchMessage::MakerOrderCancelled(new_protocol::MakerOrderCancelled {
         uuid: order.uuid.into(),
+        timestamp: now_ms() / 1000,
+        pair_trie_root: H64::default(),
     });
     delete_my_order(&ctx, order.uuid).await;
     println!("maker_order_cancelled_p2p_notify called, message {:?}", message);
