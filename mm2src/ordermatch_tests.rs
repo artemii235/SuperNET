@@ -2035,7 +2035,7 @@ fn test_orderbook_pubkey_sync_request() {
         timestamp: now_ms() / 1000,
     };
 
-    let request = orderbook.process_keep_alive(pubkey, message).unwrap();
+    let request = orderbook.process_keep_alive(pubkey, message, false).unwrap();
     match request {
         OrdermatchRequest::SyncPubkeyOrderbookState {
             trie_roots: pairs_trie_roots,
@@ -2043,6 +2043,37 @@ fn test_orderbook_pubkey_sync_request() {
         } => {
             assert!(pairs_trie_roots.contains_key("C1:C2"));
             assert!(!pairs_trie_roots.contains_key("C2:C3"));
+        },
+        _ => panic!("Invalid request {:?}", request),
+    }
+}
+
+#[test]
+fn test_orderbook_pubkey_sync_request_relay() {
+    let mut orderbook = Orderbook::default();
+    orderbook.topics_subscribed_to.insert(
+        orderbook_topic_from_base_rel("C1", "C2"),
+        OrderbookRequestingState::Requested,
+    );
+    let pubkey = "pubkey";
+
+    let mut trie_roots = HashMap::new();
+    trie_roots.insert("C1:C2".to_owned(), [1; 8]);
+    trie_roots.insert("C2:C3".to_owned(), [1; 8]);
+
+    let message = PubkeyKeepAlive {
+        trie_roots,
+        timestamp: now_ms() / 1000,
+    };
+
+    let request = orderbook.process_keep_alive(pubkey, message, true).unwrap();
+    match request {
+        OrdermatchRequest::SyncPubkeyOrderbookState {
+            trie_roots: pairs_trie_roots,
+            ..
+        } => {
+            assert!(pairs_trie_roots.contains_key("C1:C2"));
+            assert!(pairs_trie_roots.contains_key("C2:C3"));
         },
         _ => panic!("Invalid request {:?}", request),
     }

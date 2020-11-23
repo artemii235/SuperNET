@@ -151,13 +151,14 @@ async fn process_orders_keep_alive(
     propagated_from_peer: String,
     from_pubkey: String,
     keep_alive: new_protocol::PubkeyKeepAlive,
+    i_am_relay: bool,
 ) -> bool {
     let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).expect("from_ctx failed");
     let to_request = ordermatch_ctx
         .orderbook
         .lock()
         .await
-        .process_keep_alive(&from_pubkey, keep_alive);
+        .process_keep_alive(&from_pubkey, keep_alive, i_am_relay);
 
     let req = match to_request {
         Some(req) => req,
@@ -321,7 +322,7 @@ fn remove_and_purge_pubkey_pair_orders(orderbook: &mut Orderbook, pubkey: &str, 
 }
 
 /// Attempts to decode a message and process it returning whether the message is valid and worth rebroadcasting
-pub async fn process_msg(ctx: MmArc, _topics: Vec<String>, from_peer: String, msg: &[u8]) -> bool {
+pub async fn process_msg(ctx: MmArc, _topics: Vec<String>, from_peer: String, msg: &[u8], i_am_relay: bool) -> bool {
     match decode_signed::<new_protocol::OrdermatchMessage>(msg) {
         Ok((message, _sig, pubkey)) => match message {
             new_protocol::OrdermatchMessage::MakerOrderCreated(created_msg) => {
@@ -330,7 +331,7 @@ pub async fn process_msg(ctx: MmArc, _topics: Vec<String>, from_peer: String, ms
                 true
             },
             new_protocol::OrdermatchMessage::PubkeyKeepAlive(keep_alive) => {
-                process_orders_keep_alive(ctx, from_peer, pubkey.to_hex(), keep_alive).await
+                process_orders_keep_alive(ctx, from_peer, pubkey.to_hex(), keep_alive, i_am_relay).await
             },
             new_protocol::OrdermatchMessage::TakerRequest(taker_request) => {
                 let msg = TakerRequest::from_new_proto_and_pubkey(taker_request, pubkey.unprefixed().into());
@@ -1918,15 +1919,16 @@ impl Orderbook {
         &mut self,
         from_pubkey: &str,
         message: new_protocol::PubkeyKeepAlive,
+        i_am_relay: bool,
     ) -> Option<OrdermatchRequest> {
         let pubkey_state = pubkey_state_mut(&mut self.pubkeys_state, from_pubkey);
 
         let mut trie_roots_to_request = HashMap::new();
         for (alb_pair, trie_root) in message.trie_roots {
-            if !self
+            let subscribed = self
                 .topics_subscribed_to
-                .contains_key(&orderbook_topic_from_ordered_pair(&alb_pair))
-            {
+                .contains_key(&orderbook_topic_from_ordered_pair(&alb_pair));
+            if !subscribed && !i_am_relay {
                 continue;
             }
 

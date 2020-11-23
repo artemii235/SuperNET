@@ -116,7 +116,13 @@ async fn process_p2p_message(
     }
 
     if !orderbook_pairs.is_empty() {
-        let process_fut = lp_ordermatch::process_msg(ctx.clone(), orderbook_pairs, peer_id.to_string(), &message.data);
+        let process_fut = lp_ordermatch::process_msg(
+            ctx.clone(),
+            orderbook_pairs,
+            peer_id.to_string(),
+            &message.data,
+            i_am_relay,
+        );
         if process_fut.await {
             to_propagate = true;
         }
