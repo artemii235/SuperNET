@@ -1444,6 +1444,7 @@ fn test_request_and_fill_orderbook() {
                 let item = GetOrderbookPubkeyItem {
                     orders,
                     last_keep_alive: now_ms() / 1000,
+                    last_signed_pubkey_payload: vec![],
                 };
                 (pubkey, item)
             })
@@ -2135,10 +2136,11 @@ fn test_process_sync_pubkey_orderbook_state_points_to_not_uptodate_trie_root() {
     roots.insert(alb_pair.clone(), old_root);
 
     let propagated_from_peer = String::default();
-    let SyncPubkeyOrderbookStateRes { mut pair_orders_diff } =
-        block_on(process_sync_pubkey_orderbook_state(ctx.clone(), pubkey, roots))
-            .expect("!process_sync_pubkey_orderbook_state")
-            .expect("Expected MORTY:RICK delta, returned None");
+    let SyncPubkeyOrderbookStateRes {
+        mut pair_orders_diff, ..
+    } = block_on(process_sync_pubkey_orderbook_state(ctx.clone(), pubkey, roots))
+        .expect("!process_sync_pubkey_orderbook_state")
+        .expect("Expected MORTY:RICK delta, returned None");
 
     let delta = pair_orders_diff.remove(&alb_pair).expect("Expected MORTY:RICK delta");
     let mut full_trie = match delta {

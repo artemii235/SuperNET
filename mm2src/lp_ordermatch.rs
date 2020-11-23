@@ -432,6 +432,8 @@ type TrieProof = Vec<Vec<u8>>;
 struct GetOrderbookPubkeyItem {
     /// Timestamp of the latest keep alive message received.
     last_keep_alive: u64,
+    /// last signed OrdermatchMessage payload
+    last_signed_pubkey_payload: Vec<u8>,
     /// Requested orders.
     orders: Vec<(Uuid, OrderbookItem)>,
 }
@@ -480,6 +482,8 @@ async fn process_get_orderbook_request(ctx: MmArc, base: String, rel: String) ->
             let item = GetOrderbookPubkeyItem {
                 last_keep_alive: pubkey_state.last_keep_alive,
                 orders,
+                // TODO save last signed payload to pubkey state
+                last_signed_pubkey_payload: vec![],
             };
 
             Ok((pubkey, item))
@@ -570,6 +574,8 @@ impl<Key: Clone + Eq + std::hash::Hash + TryFromBytes, Value: Clone + TryFromByt
 
 #[derive(Debug, Deserialize, Serialize)]
 struct SyncPubkeyOrderbookStateRes {
+    /// last signed OrdermatchMessage payload from pubkey
+    last_signed_pubkey_payload: Vec<u8>,
     pair_orders_diff: HashMap<AlbOrderedOrderbookPair, DeltaOrFullTrie<Uuid, OrderbookItem>>,
 }
 
@@ -604,7 +610,11 @@ async fn process_sync_pubkey_orderbook_state(
         .collect();
 
     let pair_orders_diff = try_s!(pair_orders_diff);
-    let result = SyncPubkeyOrderbookStateRes { pair_orders_diff };
+    let last_signed_pubkey_payload = vec![];
+    let result = SyncPubkeyOrderbookStateRes {
+        last_signed_pubkey_payload,
+        pair_orders_diff,
+    };
     Ok(Some(result))
 }
 
