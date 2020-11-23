@@ -2,8 +2,8 @@
 
 use super::{ban_pubkey, broadcast_my_swap_status, dex_fee_amount, get_locked_amount, get_locked_amount_by_other_swaps,
             my_swap_file_path, my_swaps_dir, AtomicSwap, LockedAmount, MySwapInfo, RecoveredSwap, RecoveredSwapAction,
-            SavedSwap, SwapConfirmationsSettings, SwapError, SwapNegotiationData, SwapsContext, TransactionIdentifier,
-            BASIC_COMM_TIMEOUT, WAIT_CONFIRM_INTERVAL};
+            SavedSwap, SwapConfirmationsSettings, SwapError, SwapsContext, TransactionIdentifier,
+            WAIT_CONFIRM_INTERVAL};
 use crate::mm2::lp_network::subscribe_to_topic;
 use crate::mm2::lp_swap::{broadcast_swap_message_every, dex_fee_rate, recv_swap_msg, swap_topic, NegotiationDataMsg,
                           SwapMsg};
