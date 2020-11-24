@@ -105,7 +105,7 @@ fn process_pubkey_full_trie(
     pubkey: &str,
     alb_pair: &str,
     new_trie_orders: Vec<(Uuid, OrderbookItem)>,
-) -> Result<H64, String> {
+) -> H64 {
     remove_and_purge_pubkey_pair_orders(orderbook, pubkey, alb_pair);
 
     for (_uuid, order) in new_trie_orders {
@@ -117,7 +117,7 @@ fn process_pubkey_full_trie(
         .get(alb_pair)
         .copied()
         .unwrap_or_else(H64::default);
-    Ok(new_root)
+    new_root
 }
 
 fn process_trie_delta(
@@ -125,7 +125,7 @@ fn process_trie_delta(
     pubkey: &str,
     alb_pair: &str,
     delta_orders: HashMap<Uuid, Option<OrderbookItem>>,
-) -> Result<H64, String> {
+) -> H64 {
     for (uuid, order) in delta_orders {
         match order {
             Some(order) => orderbook.insert_or_update_order_update_trie(order),
@@ -143,7 +143,7 @@ fn process_trie_delta(
             .unwrap_or_else(H64::default),
         None => H64::default(),
     };
-    Ok(new_root)
+    new_root
 }
 
 async fn process_orders_keep_alive(
@@ -243,14 +243,14 @@ async fn request_and_fill_orderbook(ctx: &MmArc, base: &str, rel: &str) -> Resul
     };
 
     let alb_pair = alb_ordered_pair(base, rel);
-    for (pubkey, item) in pubkey_orders {
-        let _new_root = try_s!(process_pubkey_full_trie(
-            &mut orderbook,
-            &pubkey,
-            &alb_pair,
-            item.orders
-        ));
+    for (pubkey, GetOrderbookPubkeyItem { orders, .. }) in pubkey_orders {
+        let _new_root = process_pubkey_full_trie(&mut orderbook, &pubkey, &alb_pair, orders);
     }
+
+    let topic = orderbook_topic_from_base_rel(base, rel);
+    orderbook
+        .topics_subscribed_to
+        .insert(topic, OrderbookRequestingState::Requested);
 
     Ok(())
 }
@@ -318,7 +318,9 @@ fn remove_and_purge_pubkey_pair_orders(orderbook: &mut Orderbook, pubkey: &str, 
         orderbook.remove_order(order);
     }
 
-    orderbook.memory_db.remove_and_purge(&pair_root, EMPTY_PREFIX);
+    if orderbook.memory_db.remove_and_purge(&pair_root, EMPTY_PREFIX).is_none() {
+        log!("Warning: couldn't find "[pair_root]" hash root in memory_db");
+    }
 }
 
 /// Attempts to decode a message and process it returning whether the message is valid and worth rebroadcasting
@@ -552,14 +554,10 @@ impl<Key: Clone + Eq + std::hash::Hash + TryFromBytes, Value: Clone + TryFromByt
         if let Some(delta) = history.get(&from_hash) {
             let mut current_delta = delta;
             let mut total_delta = HashMap::new();
-            for (key, new_value) in &delta.delta {
-                total_delta.insert(key.clone(), new_value.clone());
-            }
+            total_delta.extend(delta.delta.iter().cloned());
             while let Some(cur) = history.get(&current_delta.next_root) {
                 current_delta = cur;
-                for (key, new_value) in &current_delta.delta {
-                    total_delta.insert(key.clone(), new_value.clone());
-                }
+                total_delta.extend(current_delta.delta.iter().cloned());
             }
             if current_delta.next_root == actual_trie_root {
                 return Ok(DeltaOrFullTrie::Delta(total_delta));
@@ -1570,12 +1568,12 @@ pub async fn broadcast_maker_orders_keep_alive_loop(ctx: MmArc) {
 
         let mut trie_roots = HashMap::new();
         let mut topics = HashSet::new();
-        for (alb_pair, root) in state.trie_roots.clone() {
-            if root == H64::default() && root == hashed_null_node::<Layout>() {
+        for (alb_pair, root) in state.trie_roots.iter() {
+            if *root == H64::default() && *root == hashed_null_node::<Layout>() {
                 continue;
             }
-            topics.insert(orderbook_topic_from_ordered_pair(&alb_pair));
-            trie_roots.insert(alb_pair, root);
+            topics.insert(orderbook_topic_from_ordered_pair(alb_pair));
+            trie_roots.insert(alb_pair.clone(), *root);
         }
 
         let message = new_protocol::PubkeyKeepAlive {
@@ -1932,11 +1930,7 @@ impl Orderbook {
                 continue;
             }
 
-            let actual_trie_root = pubkey_state
-                .trie_roots
-                .entry(alb_pair.clone())
-                .or_insert_with(H64::default);
-
+            let actual_trie_root = order_pair_root_mut(&mut pubkey_state.trie_roots, &alb_pair);
             if *actual_trie_root != trie_root {
                 trie_roots_to_request.insert(alb_pair, trie_root);
             }
@@ -1948,7 +1942,7 @@ impl Orderbook {
         }
 
         Some(OrdermatchRequest::SyncPubkeyOrderbookState {
-            pubkey: from_pubkey.into(),
+            pubkey: from_pubkey.to_owned(),
             trie_roots: trie_roots_to_request,
         })
     }
@@ -3167,7 +3161,7 @@ async fn subscribe_to_orderbook_topic(
                     if *subscribed_at + ORDERBOOK_REQUESTING_TIMEOUT < current_timestamp =>
                 {
                     // We are subscribed to the topic. Also we didn't request the orderbook,
-                    // but enough time has passed for the orderbook to fill by OrdermatchMessage::MakerOrderKeepAlive messages.
+                    // but enough time has passed for the orderbook to fill by OrdermatchRequest::SyncPubkeyOrderbookState.
                     true
                 }
                 OrderbookRequestingState::NotRequested { .. } => {

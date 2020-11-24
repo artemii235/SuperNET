@@ -2185,3 +2185,102 @@ fn test_process_sync_pubkey_orderbook_state_points_to_not_uptodate_trie_root() {
     expected.sort_by(|x, y| x.0.cmp(&y.0));
     assert_eq!(full_trie, expected);
 }
+
+fn check_if_orderbook_contains_only(orderbook: &Orderbook, pubkey: &str, orders: &Vec<OrderbookItem>) {
+    let pubkey_state = orderbook.pubkeys_state.get(pubkey).expect("!pubkeys_state");
+
+    // order_set
+    let expected_set: HashMap<_, _> = orders.iter().map(|order| (order.uuid, order.clone())).collect();
+    assert_eq!(orderbook.order_set, expected_set);
+
+    // ordered
+    let mut expected_ordered = HashMap::new();
+    for order in orders.iter() {
+        let item = OrderedByPriceOrder {
+            uuid: order.uuid,
+            price: order.price.clone().into(),
+        };
+        let set = expected_ordered
+            .entry((order.base.clone(), order.rel.clone()))
+            .or_insert_with(BTreeSet::default);
+        set.insert(item);
+    }
+    assert_eq!(orderbook.ordered, expected_ordered);
+
+    // unordered
+    let mut expected_unordered = HashMap::new();
+    for order in orders.iter() {
+        let set = expected_unordered
+            .entry((order.base.clone(), order.rel.clone()))
+            .or_insert_with(HashSet::default);
+        set.insert(order.uuid);
+    }
+    assert_eq!(orderbook.unordered, expected_unordered);
+
+    // history
+    let actual_keys: HashSet<_> = pubkey_state.order_pairs_trie_state_history.keys().cloned().collect();
+    let expected_keys: HashSet<_> = orders
+        .iter()
+        .map(|order| alb_ordered_pair(&order.base, &order.rel))
+        .collect();
+    assert_eq!(actual_keys, expected_keys);
+
+    // orders_uuids
+    let expected_uuids: HashSet<_> = orders
+        .iter()
+        .map(|order| (order.uuid, alb_ordered_pair(&order.base, &order.rel)))
+        .collect();
+    assert_eq!(pubkey_state.orders_uuids, expected_uuids);
+
+    // trie_roots
+    let actual_trie_orders: HashMap<_, _> = pubkey_state
+        .trie_roots
+        .iter()
+        .map(|(alb_pair, trie_root)| {
+            let trie = TrieDB::<Layout>::new(&orderbook.memory_db, trie_root).expect("!TrieDB::new");
+            let mut trie: Vec<(Uuid, OrderbookItem)> = trie
+                .iter()
+                .expect("!TrieDB::iter")
+                .map(|key_value| {
+                    let (key, value) = key_value.expect("Iterator returned an error");
+                    let key = TryFromBytes::try_from_bytes(key).expect("!try_from_bytes() key");
+                    let value = TryFromBytes::try_from_bytes(value).expect("!try_from_bytes() val");
+                    (key, value)
+                })
+                .collect();
+            trie.sort_by(|(uuid_x, _), (uuid_y, _)| uuid_x.cmp(uuid_y));
+            (alb_pair.clone(), trie)
+        })
+        .collect();
+    let mut expected_trie_orders = HashMap::new();
+    for order in orders.iter() {
+        let trie = expected_trie_orders
+            .entry(alb_ordered_pair(&order.base, &order.rel))
+            .or_insert_with(Vec::default);
+        trie.push((order.uuid, order.clone()));
+    }
+    for (_alb_pair, trie) in expected_trie_orders.iter_mut() {
+        trie.sort_by(|(uuid_x, _), (uuid_y, _)| uuid_x.cmp(uuid_y));
+    }
+    assert_eq!(actual_trie_orders, expected_trie_orders);
+}
+
+#[test]
+fn test_remove_and_purge_pubkey_pair_orders() {
+    let (ctx, pubkey, secret) = make_ctx_for_tests();
+    let rick_morty_orders = make_random_orders(pubkey.clone(), &secret, "RICK".into(), "MORTY".into(), 10);
+    let rick_kmd_orders = make_random_orders(pubkey.clone(), &secret, "RICK".into(), "KMD".into(), 10);
+
+    for order in rick_morty_orders.iter().chain(rick_kmd_orders.iter()) {
+        block_on(insert_or_update_order(&ctx, order.clone()));
+    }
+
+    let rick_morty_pair = alb_ordered_pair("RICK", "MORTY");
+    let rick_kmd_pair = alb_ordered_pair("RICK", "KMD");
+
+    let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
+    let mut orderbook = block_on(ordermatch_ctx.orderbook.lock());
+
+    remove_and_purge_pubkey_pair_orders(&mut orderbook, &pubkey, &rick_morty_pair);
+    check_if_orderbook_contains_only(&orderbook, &pubkey, &rick_kmd_orders);
+}
