@@ -460,7 +460,7 @@ async fn process_get_orderbook_request(ctx: MmArc, base: String, rel: String) ->
         let total_orders_number = asks_num + bids_num;
 
         // flatten Option(asks) and Option(bids) to avoid cloning
-        let orders = asks.iter().chain(bids.iter()).map(|orders| *orders).flatten();
+        let orders = asks.iter().chain(bids.iter()).copied().flatten();
 
         let mut uuids_by_pubkey = HashMap::new();
         for uuid in orders {
