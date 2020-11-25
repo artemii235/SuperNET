@@ -79,9 +79,11 @@ const ORDERBOOK_REQUESTING_TIMEOUT: u64 = MIN_ORDER_KEEP_ALIVE_INTERVAL * 2;
 #[allow(dead_code)]
 const INACTIVE_ORDER_TIMEOUT: u64 = 240;
 const MIN_TRADING_VOL: &str = "0.00777";
+const MAX_ORDERS_NUMBER_IN_ORDERBOOK_RESPONSE: usize = 1000;
 
 /// Alphabetically ordered orderbook pair
 type AlbOrderedOrderbookPair = String;
+type PubkeyOrders = Vec<(Uuid, OrderbookItem)>;
 
 impl From<(new_protocol::MakerOrderCreated, String)> for OrderbookItem {
     fn from(tuple: (new_protocol::MakerOrderCreated, String)) -> OrderbookItem {
@@ -104,7 +106,7 @@ fn process_pubkey_full_trie(
     orderbook: &mut Orderbook,
     pubkey: &str,
     alb_pair: &str,
-    new_trie_orders: Vec<(Uuid, OrderbookItem)>,
+    new_trie_orders: PubkeyOrders,
 ) -> H64 {
     remove_and_purge_pubkey_pair_orders(orderbook, pubkey, alb_pair);
 
@@ -438,7 +440,7 @@ struct GetOrderbookPubkeyItem {
     /// last signed OrdermatchMessage payload
     last_signed_pubkey_payload: Vec<u8>,
     /// Requested orders.
-    orders: Vec<(Uuid, OrderbookItem)>,
+    orders: PubkeyOrders,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -448,18 +450,19 @@ struct GetOrderbookRes {
 }
 
 async fn process_get_orderbook_request(ctx: MmArc, base: String, rel: String) -> Result<Option<Vec<u8>>, String> {
-    fn get_pubkeys_orders(
-        orderbook: &Orderbook,
-        base: String,
-        rel: String,
-    ) -> HashMap<String, Vec<(Uuid, OrderbookItem)>> {
-        let order_uuids = match orderbook.unordered.get(&(base, rel)) {
-            Some(uuids) => uuids,
-            None => return HashMap::new(),
-        };
+    fn get_pubkeys_orders(orderbook: &Orderbook, base: String, rel: String) -> (usize, HashMap<String, PubkeyOrders>) {
+        let asks = orderbook.unordered.get(&(base.clone(), rel.clone()));
+        let bids = orderbook.unordered.get(&(rel, base));
+
+        let asks_num = asks.map(|x| x.len()).unwrap_or(0);
+        let bids_num = bids.map(|x| x.len()).unwrap_or(0);
+        let total_orders_number = asks_num + bids_num;
+
+        // flatten Option(asks) and Option(bids) to avoid cloning
+        let orders = asks.iter().chain(bids.iter()).map(|orders| *orders).flatten();
 
         let mut uuids_by_pubkey = HashMap::new();
-        for uuid in order_uuids.iter() {
+        for uuid in orders {
             let order = orderbook
                 .order_set
                 .get(uuid)
@@ -468,13 +471,18 @@ async fn process_get_orderbook_request(ctx: MmArc, base: String, rel: String) ->
             uuids.push((*uuid, order.clone()))
         }
 
-        uuids_by_pubkey
+        (total_orders_number, uuids_by_pubkey)
     }
 
     let ordermatch_ctx = unwrap!(OrdermatchContext::from_ctx(&ctx));
     let orderbook = ordermatch_ctx.orderbook.lock().await;
 
-    let orders_to_send: Result<HashMap<_, _>, String> = get_pubkeys_orders(&orderbook, base, rel)
+    let (total_orders_number, orders) = get_pubkeys_orders(&orderbook, base, rel);
+    if total_orders_number > MAX_ORDERS_NUMBER_IN_ORDERBOOK_RESPONSE {
+        return ERR!("Orderbook too large");
+    }
+
+    let orders_to_send: Result<HashMap<_, _>, String> = orders
         .into_iter()
         .map(|(pubkey, orders)| {
             let pubkey_state = orderbook.pubkeys_state.get(&pubkey).ok_or(ERRL!(

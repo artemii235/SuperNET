@@ -1324,16 +1324,35 @@ fn p2p_context_mock() -> (mpsc::Sender<AdexBehaviourCmd>, mpsc::Receiver<AdexBeh
 
 #[test]
 fn test_process_get_orderbook_request() {
-    const PUBKEYS_NUMBER: usize = 5;
     const ORDERS_NUMBER: usize = 10;
 
     let (ctx, _pubkey, _secret) = make_ctx_for_tests();
-    let other_pubkeys: Vec<(String, [u8; 32])> = (0..PUBKEYS_NUMBER)
-        .map(|idx| {
-            let passphrase = format!("passphrase-{}", idx);
-            pubkey_and_secret_for_test(&passphrase)
-        })
-        .collect();
+    let (pubkey1, secret1) = pubkey_and_secret_for_test("passphrase-1");
+    let (pubkey2, secret2) = pubkey_and_secret_for_test("passphrase-2");
+    let (pubkey3, secret3) = pubkey_and_secret_for_test("passphrase-3");
+
+    let mut pubkey1_orders =
+        make_random_orders(pubkey1.clone(), &secret1, "RICK".into(), "MORTY".into(), ORDERS_NUMBER);
+    let mut pubkey2_orders =
+        make_random_orders(pubkey2.clone(), &secret2, "MORTY".into(), "RICK".into(), ORDERS_NUMBER);
+    let mut pubkey3_orders =
+        make_random_orders(pubkey3.clone(), &secret3, "RICK".into(), "MORTY".into(), ORDERS_NUMBER);
+    pubkey3_orders.extend_from_slice(&make_random_orders(
+        pubkey3.clone(),
+        &secret3,
+        "MORTY".into(),
+        "RICK".into(),
+        ORDERS_NUMBER,
+    ));
+
+    pubkey1_orders.sort_unstable_by(|x, y| x.uuid.cmp(&y.uuid));
+    pubkey2_orders.sort_unstable_by(|x, y| x.uuid.cmp(&y.uuid));
+    pubkey3_orders.sort_unstable_by(|x, y| x.uuid.cmp(&y.uuid));
+
+    let mut orders_by_pubkeys = HashMap::new();
+    orders_by_pubkeys.insert(pubkey1, pubkey1_orders);
+    orders_by_pubkeys.insert(pubkey2, pubkey2_orders);
+    orders_by_pubkeys.insert(pubkey3, pubkey3_orders);
 
     let ordermatch_ctx = Arc::new(OrdermatchContext::default());
     let ordermatch_ctx_clone = ordermatch_ctx.clone();
@@ -1341,25 +1360,8 @@ fn test_process_get_orderbook_request() {
 
     let mut orderbook = block_on(ordermatch_ctx.orderbook.lock());
 
-    let orders: Vec<OrderbookItem> = other_pubkeys
-        .iter()
-        .map(|(pubkey, secret)| {
-            make_random_orders(pubkey.clone(), &secret, "RICK".into(), "MORTY".into(), ORDERS_NUMBER)
-        })
-        .flatten()
-        .collect();
-
-    let mut orders_by_pubkeys = HashMap::new();
-    for order in orders.iter() {
+    for order in orders_by_pubkeys.iter().map(|(_pubkey, orders)| orders).flatten() {
         orderbook.insert_or_update_order_update_trie(order.clone());
-
-        let pubkey_orders = orders_by_pubkeys.entry(order.pubkey.clone()).or_insert_with(Vec::new);
-        pubkey_orders.push(order.clone());
-    }
-
-    // sort by uuids
-    for (_pubkey, orders) in orders_by_pubkeys.iter_mut() {
-        orders.sort_unstable_by(|x, y| x.uuid.cmp(&y.uuid));
     }
 
     // avoid dead lock on orderbook as process_get_orderbook_request also acquires it
@@ -1384,6 +1386,43 @@ fn test_process_get_orderbook_request() {
         log!([pubkey]"-"[actual.len()]);
         assert_eq!(actual, *expected);
     }
+}
+
+#[test]
+fn test_process_get_orderbook_request_limit() {
+    let (ctx, pubkey, secret) = make_ctx_for_tests();
+
+    let ordermatch_ctx = Arc::new(OrdermatchContext::default());
+    let ordermatch_ctx_clone = ordermatch_ctx.clone();
+    OrdermatchContext::from_ctx.mock_safe(move |_| MockResult::Return(Ok(ordermatch_ctx_clone.clone())));
+
+    let mut orderbook = block_on(ordermatch_ctx.orderbook.lock());
+
+    let orders = make_random_orders(
+        pubkey.clone(),
+        &secret,
+        "RICK".into(),
+        "MORTY".into(),
+        MAX_ORDERS_NUMBER_IN_ORDERBOOK_RESPONSE + 1,
+    );
+
+    for order in orders {
+        orderbook.insert_or_update_order_update_trie(order);
+    }
+
+    // avoid dead lock on orderbook as process_get_orderbook_request also acquires it
+    drop(orderbook);
+
+    let err = block_on(process_get_orderbook_request(
+        ctx.clone(),
+        "RICK".into(),
+        "MORTY".into(),
+    ))
+    .err()
+    .expect("Expected an error");
+
+    log!("error: "(err));
+    assert!(err.contains("Orderbook too large"));
 }
 
 #[test]
