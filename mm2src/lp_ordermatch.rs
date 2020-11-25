@@ -40,6 +40,7 @@ use mm2_libp2p::{decode_signed, encode_and_sign, encode_message, pub_sub_topic, 
 #[cfg(test)] use mocktopus::macros::*;
 use num_rational::BigRational;
 use num_traits::identities::Zero;
+use parity_util_mem::malloc_size;
 use rpc::v1::types::H256 as H256Json;
 use serde_json::{self as json, Value as Json};
 use sp_trie::{delta_trie_root, DBValue, HashDBT, MemoryDB, Trie, TrieConfiguration, TrieDB, TrieDBMut, TrieHash,
@@ -1739,6 +1740,26 @@ fn populate_trie<'db, T: TrieConfiguration>(
     Ok(t)
 }
 
+fn collect_orderbook_metrics(ctx: &MmArc, orderbook: &Orderbook) {
+    fn history_committed_changes(history: &HashMap<AlbOrderedOrderbookPair, TrieOrderHistory>) -> i64 {
+        let total = history
+            .iter()
+            .fold(0usize, |total, (_alb_pair, history)| total + history.inner.len());
+        total as i64
+    }
+
+    let memory_db_size = malloc_size(&orderbook.memory_db);
+    mm_gauge!(ctx.metrics, "orderbook.len", orderbook.order_set.len() as i64);
+    mm_gauge!(ctx.metrics, "orderbook.memory_db", memory_db_size as i64);
+    // mm_gauge!(ctx.metrics, "inactive_orders.len", inactive.len() as i64);
+
+    // TODO remove metrics below after testing
+    for (pubkey, pubkey_state) in orderbook.pubkeys_state.iter() {
+        mm_gauge!(ctx.metrics, "orders_uuids", pubkey_state.orders_uuids.len() as i64, "pubkey" => pubkey.clone());
+        mm_gauge!(ctx.metrics, "history.commited_changes", history_committed_changes(&pubkey_state.order_pairs_trie_state_history), "pubkey" => pubkey.clone());
+    }
+}
+
 #[derive(Default)]
 struct Orderbook {
     /// A map from (base, rel).
@@ -2209,8 +2230,8 @@ pub async fn lp_ordermatch_loop(ctx: MmArc) {
             for key in keys_to_remove {
                 orderbook.memory_db.remove_and_purge(&key, EMPTY_PREFIX);
             }
-            mm_gauge!(ctx.metrics, "orderbook.len", orderbook.order_set.len() as i64);
-            // mm_gauge!(ctx.metrics, "inactive_orders.len", inactive.len() as i64);
+
+            collect_orderbook_metrics(&ctx, &orderbook);
         }
 
         {
