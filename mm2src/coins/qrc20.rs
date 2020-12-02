@@ -2,8 +2,8 @@ use crate::eth::{self, u256_to_big_decimal, wei_from_big_decimal};
 use crate::qrc20::rpc_client::{ContractCallResult, LogEntry, Qrc20NativeOps, Qrc20RpcOps, TopicFilter, TxReceipt};
 use crate::utxo::rpc_clients::{ElectrumClient, NativeClient, UnspentInfo, UtxoRpcClientEnum, UtxoRpcClientOps};
 use crate::utxo::utxo_common::{self, big_decimal_from_sat};
-use crate::utxo::{qtum, sign_tx, utxo_fields_from_conf_and_request, ActualTxFee, AdditionalTxData, FeePolicy,
-                  GenerateTransactionError, UtxoAddressFormat, UtxoCoinFields, UtxoCommonOps, UtxoTx,
+use crate::utxo::{coin_daemon_data_dir, qtum, sign_tx, ActualTxFee, AdditionalTxData, FeePolicy,
+                  GenerateTransactionError, UtxoAddressFormat, UtxoCoinBuilder, UtxoCoinFields, UtxoCommonOps, UtxoTx,
                   VerboseTransactionFrom, UTXO_LOCK};
 use crate::{FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeFee, TransactionDetails,
             TransactionEnum, TransactionFut, ValidateAddressResult, WithdrawFee, WithdrawRequest};
@@ -31,6 +31,7 @@ use serde_json::{self as json, Value as Json};
 use serialization::deserialize;
 use serialization::serialize;
 use std::ops::{Deref, Neg};
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -53,6 +54,114 @@ const QRC20_PAYMENT_SENT_TOPIC: &str = "ccc9c05183599bd3135da606eaaf535daffe256e
 const QRC20_RECEIVER_SPENT_TOPIC: &str = "36c177bcb01c6d568244f05261e2946c8c977fa50822f3fa098c470770ee1f3e";
 const QRC20_SENDER_REFUNDED_TOPIC: &str = "1797d500133f8e427eb9da9523aa4a25cb40f50ebc7dbda3c7c81778973f35ba";
 
+struct Qrc20CoinBuilder<'a> {
+    ctx: &'a MmArc,
+    ticker: &'a str,
+    conf: &'a Json,
+    req: &'a Json,
+    priv_key: &'a [u8],
+    platform: String,
+    contract_address: H160,
+}
+
+impl<'a> Qrc20CoinBuilder<'a> {
+    pub fn new(
+        ctx: &'a MmArc,
+        ticker: &'a str,
+        conf: &'a Json,
+        req: &'a Json,
+        priv_key: &'a [u8],
+        platform: String,
+        contract_address: H160,
+    ) -> Qrc20CoinBuilder<'a> {
+        Qrc20CoinBuilder {
+            ctx,
+            ticker,
+            conf,
+            req,
+            priv_key,
+            platform,
+            contract_address,
+        }
+    }
+}
+
+#[async_trait]
+impl<'a> UtxoCoinBuilder for Qrc20CoinBuilder<'a> {
+    type ResultCoin = Qrc20Coin;
+
+    async fn build(self) -> Result<Self::ResultCoin, String> {
+        let swap_contract_address = match self.req()["swap_contract_address"].as_str() {
+            Some(address) => try_s!(qrc20_addr_from_str(address)),
+            None => return ERR!("\"swap_contract_address\" field is expected"),
+        };
+        let utxo = try_s!(self.build_utxo_fields().await);
+        let inner = Qrc20CoinFields {
+            utxo,
+            platform: self.platform,
+            contract_address: self.contract_address,
+            swap_contract_address,
+        };
+        Ok(Qrc20Coin(Arc::new(inner)))
+    }
+
+    fn ctx(&self) -> &MmArc { self.ctx }
+
+    fn conf(&self) -> &Json { self.conf }
+
+    fn req(&self) -> &Json { self.req }
+
+    fn ticker(&self) -> &str { self.ticker }
+
+    fn priv_key(&self) -> &[u8] { self.priv_key }
+
+    fn address_format(&self) -> Result<UtxoAddressFormat, String> { Ok(UtxoAddressFormat::Standard) }
+
+    async fn decimals(&self, rpc_client: &UtxoRpcClientEnum) -> Result<u8, String> {
+        if let Some(d) = self.conf()["decimals"].as_u64() {
+            return Ok(d as u8);
+        }
+
+        request_token_decimals(rpc_client, &self.contract_address)
+            .await
+            .map_err(|e| ERRL!("{}", e))
+    }
+
+    fn dust_amount(&self) -> u64 { QRC20_DUST }
+
+    #[cfg(feature = "native")]
+    fn confpath(&self) -> Result<PathBuf, String> {
+        // Documented at https://github.com/jl777/coins#bitcoin-protocol-specific-json
+        // "USERHOME/" prefix should be replaced with the user's home folder.
+        let declared_confpath = match self.conf()["confpath"].as_str() {
+            Some(path) if !path.is_empty() => path.trim(),
+            _ => {
+                let is_asset_chain = false;
+                // TODO platform is tQTUM or QTUM, but the QTUM datadir usually is `.qtum`
+                let data_dir = coin_daemon_data_dir(&self.platform, is_asset_chain);
+
+                let confname = format!("{}.conf", self.platform);
+                return Ok(data_dir.join(&confname[..]));
+            },
+        };
+
+        let (confpath, rel_to_home) = if declared_confpath.starts_with("~/") {
+            (&declared_confpath[2..], true)
+        } else if declared_confpath.starts_with("USERHOME/") {
+            (&declared_confpath[9..], true)
+        } else {
+            (declared_confpath, false)
+        };
+
+        if rel_to_home {
+            let home = try_s!(dirs::home_dir().ok_or("Can not detect the user home directory"));
+            Ok(home.join(confpath))
+        } else {
+            Ok(confpath.into())
+        }
+    }
+}
+
 pub async fn qrc20_coin_from_conf_and_request(
     ctx: &MmArc,
     ticker: &str,
@@ -62,30 +171,8 @@ pub async fn qrc20_coin_from_conf_and_request(
     priv_key: &[u8],
     contract_address: H160,
 ) -> Result<Qrc20Coin, String> {
-    let swap_contract_address = match req["swap_contract_address"].as_str() {
-        Some(address) => try_s!(qrc20_addr_from_str(address)),
-        None => return ERR!("\"swap_contract_address\" field is expected"),
-    };
-
-    let mut utxo = try_s!(utxo_fields_from_conf_and_request(ctx, ticker, conf, req, priv_key, QRC20_DUST).await);
-    match &utxo.address_format {
-        UtxoAddressFormat::Standard => (),
-        _ => return ERR!("Standard UTXO address format is expected"),
-    }
-
-    // if `decimals` is not set in config then we have to request it from contract
-    if conf["decimals"].as_u64().is_none() {
-        utxo.decimals = try_s!(request_token_decimals(&utxo.rpc_client, &contract_address).await);
-    }
-
-    let platform = platform.to_owned();
-    let inner = Qrc20CoinFields {
-        utxo,
-        platform,
-        contract_address,
-        swap_contract_address,
-    };
-    Ok(Qrc20Coin(Arc::new(inner)))
+    let builder = Qrc20CoinBuilder::new(ctx, ticker, conf, req, priv_key, platform.to_owned(), contract_address);
+    builder.build().await
 }
 
 #[derive(Debug)]

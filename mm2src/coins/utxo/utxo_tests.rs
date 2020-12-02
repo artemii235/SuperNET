@@ -1,7 +1,7 @@
 use super::rpc_clients::{ElectrumProtocol, ListSinceBlockRes, NetworkInfo};
 use super::*;
 use crate::utxo::rpc_clients::UtxoRpcClientOps;
-use crate::utxo::utxo_standard::{utxo_standard_coin_from_conf_and_request, UtxoStandardCoin, UTXO_STANDARD_DUST};
+use crate::utxo::utxo_standard::{utxo_standard_coin_from_conf_and_request, UtxoStandardCoin};
 use crate::{SwapOps, WithdrawFee};
 use bigdecimal::BigDecimal;
 use chain::OutPoint;
@@ -107,7 +107,7 @@ fn utxo_coin_fields_for_test(rpc_client: UtxoRpcClientEnum, force_seed: Option<&
         force_min_relay_fee: false,
         mtp_block_count: NonZeroU64::new(11).unwrap(),
         estimate_fee_mode: None,
-        dust_amount: UTXO_STANDARD_DUST,
+        dust_amount: UTXO_DUST_AMOUNT,
         mature_confirmations: MATURE_CONFIRMATIONS_DEFAULT,
         tx_cache_directory: None,
     }

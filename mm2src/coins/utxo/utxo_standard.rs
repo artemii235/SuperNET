@@ -3,8 +3,6 @@ use crate::{SwapOps, ValidateAddressResult};
 use common::mm_metrics::MetricsArc;
 use futures::{FutureExt, TryFutureExt};
 
-pub const UTXO_STANDARD_DUST: u64 = 1000;
-
 #[derive(Clone, Debug)]
 pub struct UtxoStandardCoin {
     utxo_arc: UtxoArc,
@@ -29,7 +27,7 @@ pub async fn utxo_standard_coin_from_conf_and_request(
     req: &Json,
     priv_key: &[u8],
 ) -> Result<UtxoStandardCoin, String> {
-    let inner = try_s!(utxo_arc_from_conf_and_request(ctx, ticker, conf, req, priv_key, UTXO_STANDARD_DUST).await);
+    let inner = try_s!(utxo_common::utxo_arc_from_conf_and_request(ctx, ticker, conf, req, priv_key).await);
     Ok(inner.into())
 }
 

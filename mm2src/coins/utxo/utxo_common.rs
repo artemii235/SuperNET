@@ -51,6 +51,63 @@ lazy_static! {
 
 pub const HISTORY_TOO_LARGE_ERR_CODE: i64 = -1;
 
+pub struct UtxoArcBuilder<'a> {
+    ctx: &'a MmArc,
+    ticker: &'a str,
+    conf: &'a Json,
+    req: &'a Json,
+    priv_key: &'a [u8],
+}
+
+impl<'a> UtxoArcBuilder<'a> {
+    pub fn new(
+        ctx: &'a MmArc,
+        ticker: &'a str,
+        conf: &'a Json,
+        req: &'a Json,
+        priv_key: &'a [u8],
+    ) -> UtxoArcBuilder<'a> {
+        UtxoArcBuilder {
+            ctx,
+            ticker,
+            conf,
+            req,
+            priv_key,
+        }
+    }
+}
+
+#[async_trait]
+impl<'a> UtxoCoinBuilder for UtxoArcBuilder<'a> {
+    type ResultCoin = UtxoArc;
+
+    async fn build(self) -> Result<Self::ResultCoin, String> {
+        let utxo = try_s!(self.build_utxo_fields().await);
+        Ok(UtxoArc(Arc::new(utxo)))
+    }
+
+    fn ctx(&self) -> &MmArc { self.ctx }
+
+    fn conf(&self) -> &Json { self.conf }
+
+    fn req(&self) -> &Json { self.req }
+
+    fn ticker(&self) -> &str { self.ticker }
+
+    fn priv_key(&self) -> &[u8] { self.priv_key }
+}
+
+pub async fn utxo_arc_from_conf_and_request(
+    ctx: &MmArc,
+    ticker: &str,
+    conf: &Json,
+    req: &Json,
+    priv_key: &[u8],
+) -> Result<UtxoArc, String> {
+    let builder = UtxoArcBuilder::new(ctx, ticker, conf, req, priv_key);
+    builder.build().await
+}
+
 pub async fn get_tx_fee(coin: &UtxoCoinFields) -> Result<ActualTxFee, JsonRpcError> {
     match &coin.tx_fee {
         TxFee::Fixed(fee) => Ok(ActualTxFee::Fixed(*fee)),
