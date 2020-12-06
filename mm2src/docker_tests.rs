@@ -119,12 +119,17 @@ mod docker_tests {
                     .expect("Failed to execute docker command");
             }
 
-            let utxo_node = utxo_docker_node(&docker, "MYCOIN", 7000);
-            let utxo_node1 = utxo_docker_node(&docker, "MYCOIN1", 8000);
-            utxo_node.wait_ready();
-            utxo_node1.wait_ready();
+            let utxo_node = utxo_asset_docker_node(&docker, "MYCOIN", 7000);
+            let utxo_node1 = utxo_asset_docker_node(&docker, "MYCOIN1", 8000);
+            let qtum_node = qtum_docker_node(&docker, 9000);
+
+            wait_asset_ready(&utxo_node);
+            wait_asset_ready(&utxo_node1);
+            wait_utxo_ready(&qtum_node);
+
             containers.push(utxo_node);
             containers.push(utxo_node1);
+            containers.push(qtum_node);
         }
         // detect if docker is installed
         // skip the tests that use docker if not installed
@@ -154,38 +159,47 @@ mod docker_tests {
         port: u16,
     }
 
-    impl<'a> UtxoDockerNode<'a> {
-        pub fn wait_ready(&self) {
-            let ctx = MmCtxBuilder::new().into_mm_arc();
-            let conf = json!({"asset":self.ticker, "txfee": 1000});
-            let req = json!({"method":"enable"});
-            let priv_key = unwrap!(hex::decode(
-                "809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f"
-            ));
-            let coin = unwrap!(block_on(utxo_standard_coin_from_conf_and_request(
-                &ctx,
-                &self.ticker,
-                &conf,
-                &req,
-                &priv_key
-            )));
-            let timeout = now_ms() + 30000;
-            loop {
-                match coin.as_ref().rpc_client.get_block_count().wait() {
-                    Ok(n) => {
-                        if n > 1 {
-                            break;
-                        }
-                    },
-                    Err(e) => log!([e]),
-                }
-                assert!(now_ms() < timeout, "Test timed out");
-                thread::sleep(Duration::from_secs(1));
+    fn wait_ready(ticker: &str, conf: &Json, req: &Json, priv_key: &[u8]) {
+        let ctx = MmCtxBuilder::new().into_mm_arc();
+        let coin = unwrap!(block_on(utxo_standard_coin_from_conf_and_request(
+            &ctx, ticker, conf, req, priv_key,
+        )));
+        let timeout = now_ms() + 30000;
+        loop {
+            match coin.as_ref().rpc_client.get_block_count().wait() {
+                Ok(n) => {
+                    if n > 1 {
+                        break;
+                    }
+                },
+                Err(e) => log!([e]),
             }
+            assert!(now_ms() < timeout, "Test timed out");
+            thread::sleep(Duration::from_secs(1));
         }
     }
 
-    fn utxo_docker_node<'a>(docker: &'a Cli, ticker: &'static str, port: u16) -> UtxoDockerNode<'a> {
+    fn wait_utxo_ready(node: &UtxoDockerNode) {
+        let conf = json!({"decimals":8,"name": node.ticker.to_lowercase()});
+        let req = json!({
+            "method": "enable",
+        });
+        let priv_key = unwrap!(hex::decode(
+            "809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f"
+        ));
+        wait_ready(&node.ticker, &conf, &req, &priv_key)
+    }
+
+    fn wait_asset_ready(node: &UtxoDockerNode) {
+        let conf = json!({"asset":node.ticker, "txfee": 1000});
+        let req = json!({"method":"enable"});
+        let priv_key = unwrap!(hex::decode(
+            "809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f"
+        ));
+        wait_ready(&node.ticker, &conf, &req, &priv_key)
+    }
+
+    fn utxo_asset_docker_node<'a>(docker: &'a Cli, ticker: &'static str, port: u16) -> UtxoDockerNode<'a> {
         let args = vec![
             "-v".into(),
             format!("{}:/data/.zcash-params", zcash_params_path().display()),
@@ -226,6 +240,41 @@ mod docker_tests {
         UtxoDockerNode {
             container,
             ticker: ticker.into(),
+            port,
+        }
+    }
+
+    fn qtum_docker_node<'a>(docker: &'a Cli, port: u16) -> UtxoDockerNode<'a> {
+        let args = vec!["-p".into(), format!("127.0.0.1:{}:{}", port, port).into()];
+        // TODO give a name for the image
+        let image = GenericImage::new("18841aee47d4")
+            .with_args(args)
+            .with_env_var("CLIENTS", "2")
+            .with_env_var("COIN_RPC_PORT", port.to_string())
+            .with_wait_for(WaitFor::message_on_stdout("config is ready"));
+        let container = docker.run(image);
+
+        let name = "qtum";
+        let is_asset_chain = false;
+        let mut conf_path = coin_daemon_data_dir(name, is_asset_chain);
+        unwrap!(std::fs::create_dir_all(&conf_path));
+        conf_path.push(format!("{}.conf", name));
+        Command::new("docker")
+            .arg("cp")
+            .arg(format!("{}:/data/node_0/{}.conf", container.id(), name))
+            .arg(&conf_path)
+            .status()
+            .expect("Failed to execute docker command");
+        let timeout = now_ms() + 3000;
+        loop {
+            if conf_path.exists() {
+                break;
+            };
+            assert!(now_ms() < timeout, "Test timed out");
+        }
+        UtxoDockerNode {
+            container,
+            ticker: name.to_owned(),
             port,
         }
     }
