@@ -27,6 +27,28 @@ pub struct TxHistoryItem {
     pub log_index: u64,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ContractCreateResult {
+    /// The transaction id.
+    pub txid: H256Json,
+    /// QTUM address of the sender.
+    pub sender: String,
+    /// ripemd-160 hash of the sender.
+    pub hash160: H160Json,
+    /// Expected contract address.
+    pub address: H160Json,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SendToContractResult {
+    /// The transaction id.
+    pub txid: H256Json,
+    /// QTUM address of the sender.
+    pub sender: String,
+    /// ripemd-160 hash of the sender.
+    pub hash160: H160Json,
+}
+
 /// The structure is the same as Qtum Core RPC gettransactionreceipt returned data.
 /// https://docs.qtum.site/en/Qtum-RPC-API/#gettransactionreceipt
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
@@ -143,6 +165,33 @@ pub trait Qrc20NativeOps {
     ) -> RpcRes<Vec<TxReceipt>>;
 }
 
+/// QRC20 Native RPC operations that may change the wallet state.
+pub trait Qrc20NativeWalletOps {
+    /// https://docs.qtum.site/en/Qtum-RPC-API/#createcontract
+    fn create_contract(&self, bytecode: &BytesJson) -> RpcRes<ContractCreateResult>;
+
+    /// Send data to a contract.
+    /// https://docs.qtum.site/en/Qtum-RPC-API/#sendtocontract
+    fn send_to_contract(&self, contract_addr: &H160Json, bytecode: &BytesJson) -> RpcRes<SendToContractResult>;
+
+    /// Send `transfer` contract call to the `token_addr`.
+    /// This method uses [`Qrc20NativeWallerOps::send_to_contract`] to send the encoded contract call params.
+    fn transfer_tokens(
+        &self,
+        token_addr: &H160,
+        to_addr: H160,
+        amount: U256,
+    ) -> Box<dyn Future<Item = SendToContractResult, Error = String> + Send> {
+        let token_addr = qrc20_addr_into_rpc_format(token_addr);
+        let function = try_fus!(eth::ERC20_CONTRACT.function("transfer"));
+        let params = try_fus!(function.encode_input(&[Token::Address(to_addr), Token::Uint(amount)]));
+        Box::new(
+            self.send_to_contract(&token_addr, &params.into())
+                .map_err(|e| ERRL!("{}", e)),
+        )
+    }
+}
+
 impl Qrc20NativeOps for NativeClient {
     fn call_contract(&self, contract_addr: &H160Json, data: BytesJson) -> RpcRes<ContractCallResult> {
         rpc_func!(self, "callcontract", contract_addr, data)
@@ -172,6 +221,16 @@ impl Qrc20NativeOps for NativeClient {
             "topics": topics,
         });
         rpc_func!(self, "searchlogs", from_block, to_block, addr_block, topic_block)
+    }
+}
+
+impl Qrc20NativeWalletOps for NativeClient {
+    fn create_contract(&self, bytecode: &BytesJson) -> RpcRes<ContractCreateResult> {
+        rpc_func!(self, "createcontract", bytecode)
+    }
+
+    fn send_to_contract(&self, contract_addr: &H160Json, bytecode: &BytesJson) -> RpcRes<SendToContractResult> {
+        rpc_func!(self, "sendtocontract", contract_addr, bytecode)
     }
 }
 

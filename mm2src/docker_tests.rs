@@ -56,14 +56,19 @@ mod docker_tests {
     mod swaps_file_lock_tests;
 
     use bitcrypto::ChecksumType;
+    use coins::qrc20::rpc_client::Qrc20NativeWalletOps;
+    use coins::qrc20::{qrc20_coin_from_conf_and_request, Qrc20Coin};
+    use coins::utxo::qtum::{qtum_coin_from_conf_and_request, QtumCoin};
     use coins::utxo::rpc_clients::{UtxoRpcClientEnum, UtxoRpcClientOps};
     use coins::utxo::utxo_standard::{utxo_standard_coin_from_conf_and_request, UtxoStandardCoin};
-    use coins::utxo::{coin_daemon_data_dir, dhash160, zcash_params_path, UtxoCommonOps};
+    use coins::utxo::{coin_daemon_data_dir, dhash160, zcash_params_path, UtxoCoinFields, UtxoCommonOps};
     use coins::{FoundSwapTxSpend, MarketCoinOps, SwapOps};
     use common::block_on;
+    use common::executor::Timer;
     use common::{file_lock::FileLock,
                  for_tests::{enable_native, mm_dump, new_mm2_temp_folder_path, MarketMakerIt},
                  mm_ctx::{MmArc, MmCtxBuilder}};
+    use ethereum_types::H160;
     use futures01::Future;
     use gstuff::now_ms;
     use keys::{KeyPair, Private};
@@ -80,6 +85,13 @@ mod docker_tests {
     use testcontainers::images::generic::{GenericImage, WaitFor};
     use testcontainers::{Container, Docker, Image};
 
+    const QRC20_TOKEN_BYTES: &str = "6080604052600860ff16600a0a633b9aca000260005534801561002157600080fd5b50600054600160003373ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff16815260200190815260200160002081905550610c69806100776000396000f3006080604052600436106100a4576000357c0100000000000000000000000000000000000000000000000000000000900463ffffffff16806306fdde03146100a9578063095ea7b31461013957806318160ddd1461019e57806323b872dd146101c9578063313ce5671461024e5780635a3b7e421461027f57806370a082311461030f57806395d89b4114610366578063a9059cbb146103f6578063dd62ed3e1461045b575b600080fd5b3480156100b557600080fd5b506100be6104d2565b6040518080602001828103825283818151815260200191508051906020019080838360005b838110156100fe5780820151818401526020810190506100e3565b50505050905090810190601f16801561012b5780820380516001836020036101000a031916815260200191505b509250505060405180910390f35b34801561014557600080fd5b50610184600480360381019080803573ffffffffffffffffffffffffffffffffffffffff1690602001909291908035906020019092919050505061050b565b604051808215151515815260200191505060405180910390f35b3480156101aa57600080fd5b506101b36106bb565b6040518082815260200191505060405180910390f35b3480156101d557600080fd5b50610234600480360381019080803573ffffffffffffffffffffffffffffffffffffffff169060200190929190803573ffffffffffffffffffffffffffffffffffffffff169060200190929190803590602001909291905050506106c1565b604051808215151515815260200191505060405180910390f35b34801561025a57600080fd5b506102636109a1565b604051808260ff1660ff16815260200191505060405180910390f35b34801561028b57600080fd5b506102946109a6565b6040518080602001828103825283818151815260200191508051906020019080838360005b838110156102d45780820151818401526020810190506102b9565b50505050905090810190601f1680156103015780820380516001836020036101000a031916815260200191505b509250505060405180910390f35b34801561031b57600080fd5b50610350600480360381019080803573ffffffffffffffffffffffffffffffffffffffff1690602001909291905050506109df565b6040518082815260200191505060405180910390f35b34801561037257600080fd5b5061037b6109f7565b6040518080602001828103825283818151815260200191508051906020019080838360005b838110156103bb5780820151818401526020810190506103a0565b50505050905090810190601f1680156103e85780820380516001836020036101000a031916815260200191505b509250505060405180910390f35b34801561040257600080fd5b50610441600480360381019080803573ffffffffffffffffffffffffffffffffffffffff16906020019092919080359060200190929190505050610a30565b604051808215151515815260200191505060405180910390f35b34801561046757600080fd5b506104bc600480360381019080803573ffffffffffffffffffffffffffffffffffffffff169060200190929190803573ffffffffffffffffffffffffffffffffffffffff169060200190929190505050610be1565b6040518082815260200191505060405180910390f35b6040805190810160405280600881526020017f515243205445535400000000000000000000000000000000000000000000000081525081565b60008260008173ffffffffffffffffffffffffffffffffffffffff161415151561053457600080fd5b60008314806105bf57506000600260003373ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff16815260200190815260200160002060008673ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff16815260200190815260200160002054145b15156105ca57600080fd5b82600260003373ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff16815260200190815260200160002060008673ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff168152602001908152602001600020819055508373ffffffffffffffffffffffffffffffffffffffff163373ffffffffffffffffffffffffffffffffffffffff167f8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925856040518082815260200191505060405180910390a3600191505092915050565b60005481565b60008360008173ffffffffffffffffffffffffffffffffffffffff16141515156106ea57600080fd5b8360008173ffffffffffffffffffffffffffffffffffffffff161415151561071157600080fd5b610797600260008873ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff16815260200190815260200160002060003373ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1681526020019081526020016000205485610c06565b600260008873ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff16815260200190815260200160002060003373ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff16815260200190815260200160002081905550610860600160008873ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1681526020019081526020016000205485610c06565b600160008873ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff168152602001908152602001600020819055506108ec600160008773ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1681526020019081526020016000205485610c1f565b600160008773ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff168152602001908152602001600020819055508473ffffffffffffffffffffffffffffffffffffffff168673ffffffffffffffffffffffffffffffffffffffff167fddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef866040518082815260200191505060405180910390a36001925050509392505050565b600881565b6040805190810160405280600981526020017f546f6b656e20302e31000000000000000000000000000000000000000000000081525081565b60016020528060005260406000206000915090505481565b6040805190810160405280600381526020017f515443000000000000000000000000000000000000000000000000000000000081525081565b60008260008173ffffffffffffffffffffffffffffffffffffffff1614151515610a5957600080fd5b610aa2600160003373ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1681526020019081526020016000205484610c06565b600160003373ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff16815260200190815260200160002081905550610b2e600160008673ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1681526020019081526020016000205484610c1f565b600160008673ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff168152602001908152602001600020819055508373ffffffffffffffffffffffffffffffffffffffff163373ffffffffffffffffffffffffffffffffffffffff167fddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef856040518082815260200191505060405180910390a3600191505092915050565b6002602052816000526040600020602052806000526040600020600091509150505481565b6000818310151515610c1457fe5b818303905092915050565b6000808284019050838110151515610c3357fe5b80915050929150505600a165627a7a723058207f2e5248b61b80365ea08a0f6d11ac0b47374c4dfd538de76bc2f19591bbbba40029";
+    const QRC20_SWAP_CONTRACT_BYTES: &str = "608060405234801561001057600080fd5b50611437806100206000396000f3fe60806040526004361061004a5760003560e01c806302ed292b1461004f5780630716326d146100de578063152cf3af1461017b57806346fc0294146101f65780639b415b2a14610294575b600080fd5b34801561005b57600080fd5b506100dc600480360360a081101561007257600080fd5b81019080803590602001909291908035906020019092919080359060200190929190803573ffffffffffffffffffffffffffffffffffffffff169060200190929190803573ffffffffffffffffffffffffffffffffffffffff169060200190929190505050610339565b005b3480156100ea57600080fd5b506101176004803603602081101561010157600080fd5b8101908080359060200190929190505050610867565b60405180846bffffffffffffffffffffffff19166bffffffffffffffffffffffff191681526020018367ffffffffffffffff1667ffffffffffffffff16815260200182600381111561016557fe5b60ff168152602001935050505060405180910390f35b6101f46004803603608081101561019157600080fd5b8101908080359060200190929190803573ffffffffffffffffffffffffffffffffffffffff16906020019092919080356bffffffffffffffffffffffff19169060200190929190803567ffffffffffffffff1690602001909291905050506108bf565b005b34801561020257600080fd5b50610292600480360360a081101561021957600080fd5b81019080803590602001909291908035906020019092919080356bffffffffffffffffffffffff19169060200190929190803573ffffffffffffffffffffffffffffffffffffffff169060200190929190803573ffffffffffffffffffffffffffffffffffffffff169060200190929190505050610bd9565b005b610337600480360360c08110156102aa57600080fd5b810190808035906020019092919080359060200190929190803573ffffffffffffffffffffffffffffffffffffffff169060200190929190803573ffffffffffffffffffffffffffffffffffffffff16906020019092919080356bffffffffffffffffffffffff19169060200190929190803567ffffffffffffffff169060200190929190505050610fe2565b005b6001600381111561034657fe5b600080878152602001908152602001600020600001601c9054906101000a900460ff16600381111561037457fe5b1461037e57600080fd5b6000600333836003600288604051602001808281526020019150506040516020818303038152906040526040518082805190602001908083835b602083106103db57805182526020820191506020810190506020830392506103b8565b6001836020036101000a038019825116818451168082178552505050505050905001915050602060405180830381855afa15801561041d573d6000803e3d6000fd5b5050506040513d602081101561043257600080fd5b8101908080519060200190929190505050604051602001808281526020019150506040516020818303038152906040526040518082805190602001908083835b602083106104955780518252602082019150602081019050602083039250610472565b6001836020036101000a038019825116818451168082178552505050505050905001915050602060405180830381855afa1580156104d7573d6000803e3d6000fd5b5050506040515160601b8689604051602001808673ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1660601b81526014018573ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1660601b8152601401846bffffffffffffffffffffffff19166bffffffffffffffffffffffff191681526014018373ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1660601b8152601401828152602001955050505050506040516020818303038152906040526040518082805190602001908083835b602083106105fc57805182526020820191506020810190506020830392506105d9565b6001836020036101000a038019825116818451168082178552505050505050905001915050602060405180830381855afa15801561063e573d6000803e3d6000fd5b5050506040515160601b905060008087815260200190815260200160002060000160009054906101000a900460601b6bffffffffffffffffffffffff1916816bffffffffffffffffffffffff19161461069657600080fd5b6002600080888152602001908152602001600020600001601c6101000a81548160ff021916908360038111156106c857fe5b0217905550600073ffffffffffffffffffffffffffffffffffffffff168373ffffffffffffffffffffffffffffffffffffffff16141561074e573373ffffffffffffffffffffffffffffffffffffffff166108fc869081150290604051600060405180830381858888f19350505050158015610748573d6000803e3d6000fd5b50610820565b60008390508073ffffffffffffffffffffffffffffffffffffffff1663a9059cbb33886040518363ffffffff1660e01b8152600401808373ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff16815260200182815260200192505050602060405180830381600087803b1580156107da57600080fd5b505af11580156107ee573d6000803e3d6000fd5b505050506040513d602081101561080457600080fd5b810190808051906020019092919050505061081e57600080fd5b505b7f36c177bcb01c6d568244f05261e2946c8c977fa50822f3fa098c470770ee1f3e8685604051808381526020018281526020019250505060405180910390a1505050505050565b60006020528060005260406000206000915090508060000160009054906101000a900460601b908060000160149054906101000a900467ffffffffffffffff169080600001601c9054906101000a900460ff16905083565b600073ffffffffffffffffffffffffffffffffffffffff168373ffffffffffffffffffffffffffffffffffffffff16141580156108fc5750600034115b801561094057506000600381111561091057fe5b600080868152602001908152602001600020600001601c9054906101000a900460ff16600381111561093e57fe5b145b61094957600080fd5b60006003843385600034604051602001808673ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1660601b81526014018573ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1660601b8152601401846bffffffffffffffffffffffff19166bffffffffffffffffffffffff191681526014018373ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1660601b8152601401828152602001955050505050506040516020818303038152906040526040518082805190602001908083835b60208310610a6c5780518252602082019150602081019050602083039250610a49565b6001836020036101000a038019825116818451168082178552505050505050905001915050602060405180830381855afa158015610aae573d6000803e3d6000fd5b5050506040515160601b90506040518060600160405280826bffffffffffffffffffffffff191681526020018367ffffffffffffffff16815260200160016003811115610af757fe5b81525060008087815260200190815260200160002060008201518160000160006101000a81548173ffffffffffffffffffffffffffffffffffffffff021916908360601c021790555060208201518160000160146101000a81548167ffffffffffffffff021916908367ffffffffffffffff160217905550604082015181600001601c6101000a81548160ff02191690836003811115610b9357fe5b02179055509050507fccc9c05183599bd3135da606eaaf535daffe256e9de33c048014cffcccd4ad57856040518082815260200191505060405180910390a15050505050565b60016003811115610be657fe5b600080878152602001908152602001600020600001601c9054906101000a900460ff166003811115610c1457fe5b14610c1e57600080fd5b600060038233868689604051602001808673ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1660601b81526014018573ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1660601b8152601401846bffffffffffffffffffffffff19166bffffffffffffffffffffffff191681526014018373ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1660601b8152601401828152602001955050505050506040516020818303038152906040526040518082805190602001908083835b60208310610d405780518252602082019150602081019050602083039250610d1d565b6001836020036101000a038019825116818451168082178552505050505050905001915050602060405180830381855afa158015610d82573d6000803e3d6000fd5b5050506040515160601b905060008087815260200190815260200160002060000160009054906101000a900460601b6bffffffffffffffffffffffff1916816bffffffffffffffffffffffff1916148015610e10575060008087815260200190815260200160002060000160149054906101000a900467ffffffffffffffff1667ffffffffffffffff164210155b610e1957600080fd5b6003600080888152602001908152602001600020600001601c6101000a81548160ff02191690836003811115610e4b57fe5b0217905550600073ffffffffffffffffffffffffffffffffffffffff168373ffffffffffffffffffffffffffffffffffffffff161415610ed1573373ffffffffffffffffffffffffffffffffffffffff166108fc869081150290604051600060405180830381858888f19350505050158015610ecb573d6000803e3d6000fd5b50610fa3565b60008390508073ffffffffffffffffffffffffffffffffffffffff1663a9059cbb33886040518363ffffffff1660e01b8152600401808373ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff16815260200182815260200192505050602060405180830381600087803b158015610f5d57600080fd5b505af1158015610f71573d6000803e3d6000fd5b505050506040513d6020811015610f8757600080fd5b8101908080519060200190929190505050610fa157600080fd5b505b7f1797d500133f8e427eb9da9523aa4a25cb40f50ebc7dbda3c7c81778973f35ba866040518082815260200191505060405180910390a1505050505050565b600073ffffffffffffffffffffffffffffffffffffffff168373ffffffffffffffffffffffffffffffffffffffff161415801561101f5750600085115b801561106357506000600381111561103357fe5b600080888152602001908152602001600020600001601c9054906101000a900460ff16600381111561106157fe5b145b61106c57600080fd5b60006003843385888a604051602001808673ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1660601b81526014018573ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1660601b8152601401846bffffffffffffffffffffffff19166bffffffffffffffffffffffff191681526014018373ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1660601b8152601401828152602001955050505050506040516020818303038152906040526040518082805190602001908083835b6020831061118e578051825260208201915060208101905060208303925061116b565b6001836020036101000a038019825116818451168082178552505050505050905001915050602060405180830381855afa1580156111d0573d6000803e3d6000fd5b5050506040515160601b90506040518060600160405280826bffffffffffffffffffffffff191681526020018367ffffffffffffffff1681526020016001600381111561121957fe5b81525060008089815260200190815260200160002060008201518160000160006101000a81548173ffffffffffffffffffffffffffffffffffffffff021916908360601c021790555060208201518160000160146101000a81548167ffffffffffffffff021916908367ffffffffffffffff160217905550604082015181600001601c6101000a81548160ff021916908360038111156112b557fe5b021790555090505060008590508073ffffffffffffffffffffffffffffffffffffffff166323b872dd33308a6040518463ffffffff1660e01b8152600401808473ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1681526020018373ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1681526020018281526020019350505050602060405180830381600087803b15801561137d57600080fd5b505af1158015611391573d6000803e3d6000fd5b505050506040513d60208110156113a757600080fd5b81019080805190602001909291905050506113c157600080fd5b7fccc9c05183599bd3135da606eaaf535daffe256e9de33c048014cffcccd4ad57886040518082815260200191505060405180910390a1505050505050505056fea265627a7a723158208c83db436905afce0b7be1012be64818c49323c12d451fe2ab6bce76ff6421c964736f6c63430005110032";
+
+    static mut QICK_TOKEN_ADDRESS: Option<H160> = None;
+    static mut QORTY_TOKEN_ADDRESS: Option<H160> = None;
+    static mut QRC20_SWAP_CONTRACT_ADDRESS: Option<H160> = None;
+
     // AP: custom test runner is intended to initialize the required environment (e.g. coin daemons in the docker containers)
     // and then gracefully clear it by dropping the RAII docker container handlers
     // I've tried to use static for such singleton initialization but it turned out that despite
@@ -94,38 +106,26 @@ mod docker_tests {
         let mut containers = vec![];
         // skip Docker containers initialization if we are intended to run test_mm_start only
         if std::env::var("_MM2_TEST_CONF").is_err() {
-            Command::new("docker")
-                .arg("pull")
-                .arg("artempikulin/testblockchain")
-                .status()
-                .expect("Failed to execute docker command");
-
-            let stdout = Command::new("docker")
-                .arg("ps")
-                .arg("-f")
-                .arg("ancestor=artempikulin/testblockchain")
-                .arg("-q")
-                .output()
-                .expect("Failed to execute docker command");
-
-            let reader = BufReader::new(stdout.stdout.as_slice());
-            let ids: Vec<_> = reader.lines().map(|line| line.unwrap()).collect();
-            if !ids.is_empty() {
-                Command::new("docker")
-                    .arg("rm")
-                    .arg("-f")
-                    .args(ids)
-                    .status()
-                    .expect("Failed to execute docker command");
-            }
+            pull_docker_container("artempikulin/testblockchain");
+            remove_docker_containers("artempikulin/testblockchain");
 
             let utxo_node = utxo_asset_docker_node(&docker, "MYCOIN", 7000);
             let utxo_node1 = utxo_asset_docker_node(&docker, "MYCOIN1", 8000);
             let qtum_node = qtum_docker_node(&docker, 9000);
 
-            wait_asset_ready(&utxo_node);
-            wait_asset_ready(&utxo_node1);
-            wait_utxo_ready(&qtum_node);
+            let utxo_ops = UtxoAssetDockerOps::from_ticker("MYCOIN");
+            utxo_ops.wait_ready();
+
+            let utxo_ops1 = UtxoAssetDockerOps::from_ticker("MYCOIN1");
+            utxo_ops1.wait_ready();
+
+            let qtum_ops = QtumDockerOps::new();
+            qtum_ops.wait_ready();
+            unsafe {
+                QICK_TOKEN_ADDRESS = Some(qtum_ops.create_contract(QRC20_TOKEN_BYTES));
+                QORTY_TOKEN_ADDRESS = Some(qtum_ops.create_contract(QRC20_TOKEN_BYTES));
+                QRC20_SWAP_CONTRACT_ADDRESS = Some(qtum_ops.create_contract(QRC20_SWAP_CONTRACT_BYTES));
+            };
 
             containers.push(utxo_node);
             containers.push(utxo_node1);
@@ -151,52 +151,129 @@ mod docker_tests {
         let _exit_code = test_main(&args, owned_tests, None);
     }
 
-    struct UtxoDockerNode<'a> {
-        #[allow(dead_code)]
-        container: Container<'a, Cli, GenericImage>,
-        ticker: String,
-        #[allow(dead_code)]
-        port: u16,
+    fn pull_docker_container(name: &str) {
+        Command::new("docker")
+            .arg("pull")
+            .arg(name)
+            .status()
+            .expect("Failed to execute docker command");
     }
 
-    fn wait_ready(ticker: &str, conf: &Json, req: &Json, priv_key: &[u8]) {
-        let ctx = MmCtxBuilder::new().into_mm_arc();
-        let coin = unwrap!(block_on(utxo_standard_coin_from_conf_and_request(
-            &ctx, ticker, conf, req, priv_key,
-        )));
-        let timeout = now_ms() + 30000;
-        loop {
-            match coin.as_ref().rpc_client.get_block_count().wait() {
-                Ok(n) => {
-                    if n > 1 {
-                        break;
-                    }
-                },
-                Err(e) => log!([e]),
-            }
-            assert!(now_ms() < timeout, "Test timed out");
-            thread::sleep(Duration::from_secs(1));
+    fn remove_docker_containers(name: &str) {
+        let stdout = Command::new("docker")
+            .arg("ps")
+            .arg("-f")
+            .arg(format!("ancestor={}", name))
+            .arg("-q")
+            .output()
+            .expect("Failed to execute docker command");
+
+        let reader = BufReader::new(stdout.stdout.as_slice());
+        let ids: Vec<_> = reader.lines().map(|line| line.unwrap()).collect();
+        if !ids.is_empty() {
+            Command::new("docker")
+                .arg("rm")
+                .arg("-f")
+                .args(ids)
+                .status()
+                .expect("Failed to execute docker command");
         }
     }
 
-    fn wait_utxo_ready(node: &UtxoDockerNode) {
-        let conf = json!({"decimals":8,"name": node.ticker.to_lowercase()});
-        let req = json!({
-            "method": "enable",
-        });
-        let priv_key = unwrap!(hex::decode(
-            "809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f"
-        ));
-        wait_ready(&node.ticker, &conf, &req, &priv_key)
+    trait CoinDockerOps {
+        fn rpc_client(&self) -> &UtxoRpcClientEnum;
+
+        fn wait_ready(&self) {
+            let timeout = now_ms() + 30000;
+            loop {
+                match self.rpc_client().get_block_count().wait() {
+                    Ok(n) => {
+                        if n > 1 {
+                            break;
+                        }
+                    },
+                    Err(e) => log!([e]),
+                }
+                assert!(now_ms() < timeout, "Test timed out");
+                thread::sleep(Duration::from_secs(1));
+            }
+        }
     }
 
-    fn wait_asset_ready(node: &UtxoDockerNode) {
-        let conf = json!({"asset":node.ticker, "txfee": 1000});
-        let req = json!({"method":"enable"});
-        let priv_key = unwrap!(hex::decode(
-            "809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f"
-        ));
-        wait_ready(&node.ticker, &conf, &req, &priv_key)
+    struct UtxoAssetDockerOps {
+        #[allow(dead_code)]
+        ctx: MmArc,
+        coin: UtxoStandardCoin,
+    }
+
+    impl CoinDockerOps for UtxoAssetDockerOps {
+        fn rpc_client(&self) -> &UtxoRpcClientEnum { &self.coin.as_ref().rpc_client }
+    }
+
+    impl UtxoAssetDockerOps {
+        fn from_ticker(ticker: &str) -> UtxoAssetDockerOps {
+            let conf = json!({"asset":ticker, "txfee": 1000});
+            let req = json!({"method":"enable"});
+            let priv_key = unwrap!(hex::decode(
+                "809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f"
+            ));
+            let ctx = MmCtxBuilder::new().into_mm_arc();
+            let coin = unwrap!(block_on(utxo_standard_coin_from_conf_and_request(
+                &ctx, ticker, &conf, &req, &priv_key,
+            )));
+            UtxoAssetDockerOps { ctx, coin }
+        }
+    }
+
+    struct QtumDockerOps {
+        #[allow(dead_code)]
+        ctx: MmArc,
+        coin: QtumCoin,
+    }
+
+    impl CoinDockerOps for QtumDockerOps {
+        fn rpc_client(&self) -> &UtxoRpcClientEnum { &self.coin.as_ref().rpc_client }
+    }
+
+    impl QtumDockerOps {
+        fn new() -> QtumDockerOps {
+            let ctx = MmCtxBuilder::new().into_mm_arc();
+            let name = "qtum";
+            let conf = json!({"decimals":8,"name":name});
+            let req = json!({
+                "method": "enable",
+            });
+            let priv_key = unwrap!(hex::decode(
+                "809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f"
+            ));
+            let coin = unwrap!(block_on(qtum_coin_from_conf_and_request(
+                &ctx, name, &conf, &req, &priv_key
+            )));
+            QtumDockerOps { ctx, coin }
+        }
+
+        fn create_contract(&self, hexbytes: &str) -> H160 {
+            let bytecode = hex::decode(hexbytes).expect("Hex encoded bytes expected");
+            match self.coin.as_ref().rpc_client {
+                UtxoRpcClientEnum::Native(ref native) => {
+                    let result = native
+                        .create_contract(&bytecode.into())
+                        .wait()
+                        .expect("!createcontract");
+                    result.address.0.into()
+                },
+                UtxoRpcClientEnum::Electrum(_) => panic!("Native client expected"),
+            }
+        }
+    }
+
+    struct UtxoDockerNode<'a> {
+        #[allow(dead_code)]
+        container: Container<'a, Cli, GenericImage>,
+        #[allow(dead_code)]
+        ticker: String,
+        #[allow(dead_code)]
+        port: u16,
     }
 
     fn utxo_asset_docker_node<'a>(docker: &'a Cli, ticker: &'static str, port: u16) -> UtxoDockerNode<'a> {
@@ -297,22 +374,79 @@ mod docker_tests {
         let coin = unwrap!(block_on(utxo_standard_coin_from_conf_and_request(
             &ctx, ticker, &conf, &req, &priv_key
         )));
-        fill_address(&coin, &coin.my_address().unwrap(), balance, timeout);
+        fill_address(&coin, balance, timeout);
         (ctx, coin, priv_key)
     }
 
-    fn fill_address(coin: &UtxoStandardCoin, address: &str, amount: u64, timeout: u64) {
+    // generate random privkey, create a QRC20 coin and fill it's address with the specified balance
+    fn generate_qrc20_coin_with_random_privkey(ticker: &str, balance: u64) -> (MmArc, Qrc20Coin, [u8; 32]) {
+        let (contract_address, swap_contract_address) = unsafe {
+            let contract_address = match ticker {
+                "QICK" => QICK_TOKEN_ADDRESS
+                    .expect("QICK_TOKEN_ADDRESS must be set already")
+                    .clone(),
+                "QORTY" => QORTY_TOKEN_ADDRESS
+                    .expect("QORTY_TOKEN_ADDRESS must be set already")
+                    .clone(),
+                _ => panic!("Expected QICK or QORTY ticker"),
+            };
+            (
+                contract_address,
+                QRC20_SWAP_CONTRACT_ADDRESS
+                    .expect("QRC20_SWAP_CONTRACT_ADDRESS must be set already")
+                    .clone(),
+            )
+        };
+        // TODO qtum to tQTUM
+        let platform = "qtum";
+        let ctx = MmCtxBuilder::new().into_mm_arc();
+        let _lock = unwrap!(COINS_LOCK.lock());
+        let timeout = (now_ms() / 1000) + 40; // timeout if test takes more than 40 seconds to run
+        let conf = json!({
+            "coin":"QRC20",
+            "decimals": 8,
+            "required_confirmations":0,
+            "pubtype":120,
+            "p2shtype":50,
+            "wiftype":128,
+            "segwit":true,
+            "mm2":1,
+            "mature_confirmations":500,
+        });
+        let req = json!({
+            "method": "electrum",
+            "servers": [{"url":"95.217.83.126:10001"}],
+            "swap_contract_address": format!("{:#02x}", swap_contract_address),
+        });
+        let priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
+        let coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
+            &ctx,
+            ticker,
+            platform,
+            &conf,
+            &req,
+            &priv_key,
+            contract_address,
+        )));
+        fill_address(&coin, balance, timeout);
+        // fill_qrc20_address
+        (ctx, coin, priv_key)
+    }
+
+    fn fill_address<T>(coin: &T, amount: u64, timeout: u64)
+    where
+        T: MarketCoinOps + AsRef<UtxoCoinFields>,
+    {
+        let my_address = coin.my_address().unwrap();
         if let UtxoRpcClientEnum::Native(client) = &coin.as_ref().rpc_client {
-            unwrap!(client
-                .import_address(&coin.my_address().unwrap(), &coin.my_address().unwrap(), false)
-                .wait());
-            let hash = client.send_to_address(address, &amount.into()).wait().unwrap();
+            unwrap!(client.import_address(&my_address, &my_address, false).wait());
+            let hash = client.send_to_address(&my_address, &amount.into()).wait().unwrap();
             let tx_bytes = client.get_transaction_bytes(hash).wait().unwrap();
             unwrap!(coin.wait_for_confirmations(&tx_bytes, 1, false, timeout, 1).wait());
             log!({ "{:02x}", tx_bytes });
             loop {
                 let unspents = client
-                    .list_unspent(0, std::i32::MAX, vec![coin.my_address().unwrap()])
+                    .list_unspent(0, std::i32::MAX, vec![my_address.clone()])
                     .wait()
                     .unwrap();
                 log!([unspents]);

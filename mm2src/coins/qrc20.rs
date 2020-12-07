@@ -333,6 +333,8 @@ impl Qrc20Coin {
         qrc20_rpc_contract_call(&self.utxo.rpc_client, func, contract_addr, tokens).await
     }
 
+    pub fn my_qrc20_address(&self) -> H160 { qrc20_addr_from_utxo_addr(self.as_ref().my_address.clone()) }
+
     pub fn utxo_address_from_qrc20(&self, address: H160) -> UtxoAddress {
         let utxo = self.as_ref();
         UtxoAddress {
@@ -807,7 +809,7 @@ impl MarketCoinOps for Qrc20Coin {
     fn my_address(&self) -> Result<String, String> { utxo_common::my_address(self) }
 
     fn my_balance(&self) -> Box<dyn Future<Item = BigDecimal, Error = String> + Send> {
-        let my_address = qrc20_addr_from_utxo_addr(self.utxo.my_address.clone());
+        let my_address = self.my_qrc20_address();
         let contract_address = self.contract_address;
         let selfi = self.clone();
         let fut = async move {
