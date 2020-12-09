@@ -63,7 +63,7 @@ mod docker_tests {
 
     use bigdecimal::BigDecimal;
     use bitcrypto::ChecksumType;
-    use coins::qrc20::rpc_client::{Qrc20NativeOps, Qrc20NativeWalletOps};
+    use coins::qrc20::rpc_client::{for_tests::Qrc20NativeWalletOps, Qrc20NativeOps};
     use coins::qrc20::{qrc20_coin_from_conf_and_request, Qrc20Coin};
     use coins::utxo::qtum::{qtum_coin_from_conf_and_request, QtumCoin};
     use coins::utxo::rpc_clients::{UtxoRpcClientEnum, UtxoRpcClientOps};
