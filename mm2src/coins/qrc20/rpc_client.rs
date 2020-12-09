@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::HashMap;
 
 #[derive(Debug, Deserialize, PartialEq)]
 pub struct TokenInfo {
@@ -48,6 +49,13 @@ pub struct SendToContractResult {
     /// ripemd-160 hash of the sender.
     pub hash160: H160Json,
 }
+
+#[derive(Debug, Deserialize)]
+pub struct AddressPurpose {
+    purpose: String,
+}
+
+pub type AddressesByLabelResult = HashMap<String, AddressPurpose>;
 
 /// The structure is the same as Qtum Core RPC gettransactionreceipt returned data.
 /// https://docs.qtum.site/en/Qtum-RPC-API/#gettransactionreceipt
@@ -154,6 +162,10 @@ pub trait Qrc20NativeOps {
     /// https://docs.qtum.site/en/Qtum-RPC-API/#gettransactionreceipt
     fn get_transaction_receipt(&self, hash: &H256Json) -> RpcRes<Vec<TxReceipt>>;
 
+    /// Returns the list of addresses assigned the specified label.
+    /// https://docs.qtum.site/en/Qtum-RPC-API/#getaddressesbylabel
+    fn get_addresses_by_label(&self, label: &str) -> RpcRes<AddressesByLabelResult>;
+
     /// This can be used to retrieve QRC20 transaction history.
     /// https://docs.qtum.site/en/Qtum-RPC-API/#searchlogs
     fn search_logs(
@@ -167,27 +179,68 @@ pub trait Qrc20NativeOps {
 
 /// QRC20 Native RPC operations that may change the wallet state.
 pub trait Qrc20NativeWalletOps {
+    /// Create contract with bytecode and specified sender.
     /// https://docs.qtum.site/en/Qtum-RPC-API/#createcontract
-    fn create_contract(&self, bytecode: &BytesJson) -> RpcRes<ContractCreateResult>;
+    fn create_contract(
+        &self,
+        bytecode: &BytesJson,
+        gas_limit: u64,
+        gas_price: BigDecimal,
+        sender: &str,
+    ) -> RpcRes<ContractCreateResult>;
+
+    /// Create contract with bytecode and specified sender.
+    /// This function passes the default `gas_limit = 10 * QRC20_GAS_LIMIT_DEFAULT`, `gas_price = QRC20_GAS_PRICE_DEFAULT`
+    /// values into the [`Self::create_contract`].
+    fn create_contract_default_gas(
+        &self,
+        bytecode: &BytesJson,
+        sender: &str,
+        decimals: u8,
+    ) -> RpcRes<ContractCreateResult> {
+        let gas_price = big_decimal_from_sat(QRC20_GAS_PRICE_DEFAULT as i64, decimals);
+        self.create_contract(bytecode, 10 * QRC20_GAS_LIMIT_DEFAULT, gas_price, sender)
+    }
 
     /// Send data to a contract.
     /// https://docs.qtum.site/en/Qtum-RPC-API/#sendtocontract
-    fn send_to_contract(&self, contract_addr: &H160Json, bytecode: &BytesJson) -> RpcRes<SendToContractResult>;
+    fn send_to_contract(
+        &self,
+        contract_addr: H160Json,
+        bytecode: &BytesJson,
+        qtum_amount: u64,
+        gas_limit: u64,
+        gas_price: BigDecimal,
+        from_addr: &str,
+    ) -> RpcRes<SendToContractResult>;
 
     /// Send `transfer` contract call to the `token_addr`.
     /// This method uses [`Qrc20NativeWallerOps::send_to_contract`] to send the encoded contract call params.
+    /// Note qtum_amount = 0, gas_limit = QRC20_GAS_LIMIT_DEFAULT, gas_price = QRC20_GAS_PRICE_DEFAULT will be used.
     fn transfer_tokens(
         &self,
         token_addr: &H160,
+        from_addr: &str,
         to_addr: H160,
         amount: U256,
+        decimals: u8,
     ) -> Box<dyn Future<Item = SendToContractResult, Error = String> + Send> {
         let token_addr = qrc20_addr_into_rpc_format(token_addr);
+        let qtum_amount = 0;
+        let gas_price = big_decimal_from_sat(QRC20_GAS_PRICE_DEFAULT as i64, decimals);
+
         let function = try_fus!(eth::ERC20_CONTRACT.function("transfer"));
         let params = try_fus!(function.encode_input(&[Token::Address(to_addr), Token::Uint(amount)]));
         Box::new(
-            self.send_to_contract(&token_addr, &params.into())
-                .map_err(|e| ERRL!("{}", e)),
+            self.send_to_contract(
+                token_addr,
+                &params.into(),
+                qtum_amount,
+                QRC20_GAS_LIMIT_DEFAULT,
+                gas_price,
+                from_addr,
+            )
+            .map_err(|e| ERRL!("{}", e)),
         )
     }
 }
@@ -199,6 +252,10 @@ impl Qrc20NativeOps for NativeClient {
 
     fn get_transaction_receipt(&self, hash: &H256Json) -> RpcRes<Vec<TxReceipt>> {
         rpc_func!(self, "gettransactionreceipt", hash)
+    }
+
+    fn get_addresses_by_label(&self, label: &str) -> RpcRes<AddressesByLabelResult> {
+        rpc_func!(self, "getaddressesbylabel", label)
     }
 
     fn search_logs(
@@ -225,12 +282,35 @@ impl Qrc20NativeOps for NativeClient {
 }
 
 impl Qrc20NativeWalletOps for NativeClient {
-    fn create_contract(&self, bytecode: &BytesJson) -> RpcRes<ContractCreateResult> {
-        rpc_func!(self, "createcontract", bytecode)
+    fn create_contract(
+        &self,
+        bytecode: &BytesJson,
+        gas_limit: u64,
+        gas_price: BigDecimal,
+        sender: &str,
+    ) -> RpcRes<ContractCreateResult> {
+        rpc_func!(self, "createcontract", bytecode, gas_limit, gas_price, sender)
     }
 
-    fn send_to_contract(&self, contract_addr: &H160Json, bytecode: &BytesJson) -> RpcRes<SendToContractResult> {
-        rpc_func!(self, "sendtocontract", contract_addr, bytecode)
+    fn send_to_contract(
+        &self,
+        contract_addr: H160Json,
+        bytecode: &BytesJson,
+        qtum_amount: u64,
+        gas_limit: u64,
+        gas_price: BigDecimal,
+        sender: &str,
+    ) -> RpcRes<SendToContractResult> {
+        rpc_func!(
+            self,
+            "sendtocontract",
+            contract_addr,
+            bytecode,
+            qtum_amount,
+            gas_limit,
+            gas_price,
+            sender
+        )
     }
 }
 
