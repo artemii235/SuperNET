@@ -355,7 +355,6 @@ impl Qrc20Coin {
             let contract_call_bytes = try_s!(extract_contract_call_from_script(&script_pubkey));
 
             let call_type = try_s!(ContractCallType::from_script_pubkey(&contract_call_bytes));
-            log!([call_type]);
             match call_type {
                 Some(ContractCallType::Erc20Payment)
                 | Some(ContractCallType::ReceiverSpend)
@@ -942,8 +941,8 @@ fn check_if_contract_call_completed(receipt: &TxReceipt) -> Result<(), String> {
     match receipt.excepted {
         Some(ref ex) if ex != "None" && ex != "none" => {
             let msg = match receipt.excepted_message {
-                Some(ref m) => format!(": {}", m),
-                None => String::default(),
+                Some(ref m) if !m.is_empty() => format!(": {}", m),
+                _ => String::default(),
             };
             ERR!("Contract call failed with an error: {}{}", ex, msg)
         },

@@ -87,7 +87,7 @@ impl<'a> Qrc20CoinBuilder<'a> {
 }
 
 #[async_trait]
-impl<'a> UtxoCoinBuilder for Qrc20CoinBuilder<'a> {
+impl UtxoCoinBuilder for Qrc20CoinBuilder<'_> {
     type ResultCoin = Qrc20Coin;
 
     async fn build(self) -> Result<Self::ResultCoin, String> {

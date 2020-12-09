@@ -189,19 +189,6 @@ pub trait Qrc20NativeWalletOps {
         sender: &str,
     ) -> RpcRes<ContractCreateResult>;
 
-    /// Create contract with bytecode and specified sender.
-    /// This function passes the default `gas_limit = 10 * QRC20_GAS_LIMIT_DEFAULT`, `gas_price = QRC20_GAS_PRICE_DEFAULT`
-    /// values into the [`Self::create_contract`].
-    fn create_contract_default_gas(
-        &self,
-        bytecode: &BytesJson,
-        sender: &str,
-        decimals: u8,
-    ) -> RpcRes<ContractCreateResult> {
-        let gas_price = big_decimal_from_sat(QRC20_GAS_PRICE_DEFAULT as i64, decimals);
-        self.create_contract(bytecode, 10 * QRC20_GAS_LIMIT_DEFAULT, gas_price, sender)
-    }
-
     /// Send data to a contract.
     /// https://docs.qtum.site/en/Qtum-RPC-API/#sendtocontract
     fn send_to_contract(

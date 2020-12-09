@@ -78,7 +78,7 @@ impl<'a> UtxoArcBuilder<'a> {
 }
 
 #[async_trait]
-impl<'a> UtxoCoinBuilder for UtxoArcBuilder<'a> {
+impl UtxoCoinBuilder for UtxoArcBuilder<'_> {
     type ResultCoin = UtxoArc;
 
     async fn build(self) -> Result<Self::ResultCoin, String> {
