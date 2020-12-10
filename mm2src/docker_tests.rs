@@ -79,7 +79,7 @@ mod docker_tests {
     use futures01::Future;
     use gstuff::now_ms;
     use keys::{KeyPair, Private};
-    use qrc20_tests::{qtum_docker_node, QtumDockerOps};
+    use qrc20_tests::{qtum_docker_node, QtumDockerOps, QTUM_REGTEST_DOCKER_IMAGE};
     use secp256k1::SecretKey;
     use serde_json::{self as json, Value as Json};
     use std::env;
@@ -93,6 +93,8 @@ mod docker_tests {
     use testcontainers::clients::Cli;
     use testcontainers::images::generic::{GenericImage, WaitFor};
     use testcontainers::{Container, Docker, Image};
+
+    const UTXO_ASSET_DOCKER_IMAGE: &str = "artempikulin/testblockchain";
 
     // AP: custom test runner is intended to initialize the required environment (e.g. coin daemons in the docker containers)
     // and then gracefully clear it by dropping the RAII docker container handlers
@@ -108,8 +110,10 @@ mod docker_tests {
         let mut containers = vec![];
         // skip Docker containers initialization if we are intended to run test_mm_start only
         if std::env::var("_MM2_TEST_CONF").is_err() {
-            pull_docker_container("artempikulin/testblockchain");
-            remove_docker_containers("artempikulin/testblockchain");
+            pull_docker_image(UTXO_ASSET_DOCKER_IMAGE);
+            pull_docker_image(QTUM_REGTEST_DOCKER_IMAGE);
+            remove_docker_containers(UTXO_ASSET_DOCKER_IMAGE);
+            remove_docker_containers(QTUM_REGTEST_DOCKER_IMAGE);
 
             let utxo_node = utxo_asset_docker_node(&docker, "MYCOIN", 7000);
             let utxo_node1 = utxo_asset_docker_node(&docker, "MYCOIN1", 8000);
@@ -148,7 +152,7 @@ mod docker_tests {
         let _exit_code = test_main(&args, owned_tests, None);
     }
 
-    fn pull_docker_container(name: &str) {
+    fn pull_docker_image(name: &str) {
         Command::new("docker")
             .arg("pull")
             .arg(name)
@@ -238,7 +242,7 @@ mod docker_tests {
             "-p".into(),
             format!("127.0.0.1:{}:{}", port, port).into(),
         ];
-        let image = GenericImage::new("artempikulin/testblockchain")
+        let image = GenericImage::new(UTXO_ASSET_DOCKER_IMAGE)
             .with_args(args)
             .with_env_var("CLIENTS", "2")
             .with_env_var("CHAIN", ticker)
