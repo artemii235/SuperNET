@@ -213,7 +213,7 @@ mod docker_tests {
 
     impl UtxoAssetDockerOps {
         fn from_ticker(ticker: &str) -> UtxoAssetDockerOps {
-            let conf = json!({"asset":ticker, "txfee": 1000});
+            let conf = json!({"asset": ticker, "txfee": 1000, "network": "regtest"});
             let req = json!({"method":"enable"});
             let priv_key = unwrap!(hex::decode(
                 "809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f"
@@ -292,7 +292,7 @@ mod docker_tests {
         let ctx = MmCtxBuilder::new().into_mm_arc();
         let _lock = unwrap!(COINS_LOCK.lock());
         let timeout = (now_ms() / 1000) + 120; // timeout if test takes more than 120 seconds to run
-        let conf = json!({"asset":ticker,"txversion":4,"overwintered":1,"txfee":1000});
+        let conf = json!({"asset":ticker,"txversion":4,"overwintered":1,"txfee":1000,"network":"regtest"});
         let req = json!({"method":"enable"});
         let priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
         let coin = unwrap!(block_on(utxo_standard_coin_from_conf_and_request(

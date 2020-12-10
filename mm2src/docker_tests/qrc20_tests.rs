@@ -24,7 +24,7 @@ impl QtumDockerOps {
     pub fn new() -> QtumDockerOps {
         let ctx = MmCtxBuilder::new().into_mm_arc();
         let name = "qtum";
-        let conf = json!({"decimals":8,"name":name});
+        let conf = json!({"decimals":8,"name":name,"network":"regtest"});
         let req = json!({
             "method": "enable",
         });
@@ -137,6 +137,7 @@ fn generate_qrc20_coin_with_random_privkey(
         "segwit":true,
         "mm2":1,
         "mature_confirmations":500,
+        "network":"regtest",
     });
     let req = json!({
         "method": "enable",

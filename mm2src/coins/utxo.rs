@@ -171,6 +171,16 @@ impl Default for UtxoAddressFormat {
     fn default() -> Self { UtxoAddressFormat::Standard }
 }
 
+#[derive(Debug, Deserialize)]
+pub enum BlockchainNetwork {
+    #[serde(rename = "mainnet")]
+    Mainnet,
+    #[serde(rename = "testnet")]
+    Testnet,
+    #[serde(rename = "regtest")]
+    Regtest,
+}
+
 #[derive(Debug)]
 pub struct UtxoCoinFields {
     pub ticker: String,
@@ -477,8 +487,22 @@ pub fn coin_daemon_data_dir(_name: &str, _is_asset_chain: bool) -> PathBuf { uni
 
 /// Attempts to parse native daemon conf file and return rpcport, rpcuser and rpcpassword
 #[cfg(feature = "native")]
-fn read_native_mode_conf(filename: &dyn AsRef<Path>) -> Result<(Option<u16>, String, String), String> {
+fn read_native_mode_conf(
+    filename: &dyn AsRef<Path>,
+    network: &BlockchainNetwork,
+) -> Result<(Option<u16>, String, String), String> {
     use ini::Ini;
+
+    fn read_property<'a>(conf: &'a ini::Ini, network: &BlockchainNetwork, property: &str) -> Option<&'a String> {
+        let subsection = match network {
+            BlockchainNetwork::Mainnet => None,
+            BlockchainNetwork::Testnet => conf.section(Some("test")),
+            BlockchainNetwork::Regtest => conf.section(Some("regtest")),
+        };
+        subsection
+            .and_then(|props| props.get(property))
+            .or(conf.general_section().get(property))
+    }
 
     let conf: Ini = match Ini::load_from_file(&filename) {
         Ok(ini) => ini,
@@ -490,16 +514,15 @@ fn read_native_mode_conf(filename: &dyn AsRef<Path>) -> Result<(Option<u16>, Str
             )
         },
     };
-    let section = conf.general_section();
-    let rpc_port = match section.get("rpcport") {
+    let rpc_port = match read_property(&conf, network, "rpcport") {
         Some(port) => port.parse::<u16>().ok(),
         None => None,
     };
-    let rpc_user = try_s!(section.get("rpcuser").ok_or(ERRL!(
+    let rpc_user = try_s!(read_property(&conf, network, "rpcuser").ok_or(ERRL!(
         "Conf file {} doesn't have the rpcuser key",
         filename.as_ref().display()
     )));
-    let rpc_password = try_s!(section.get("rpcpassword").ok_or(ERRL!(
+    let rpc_password = try_s!(read_property(&conf, network, "rpcpassword").ok_or(ERRL!(
         "Conf file {} doesn't have the rpcpassword key",
         filename.as_ref().display()
     )));
@@ -507,7 +530,10 @@ fn read_native_mode_conf(filename: &dyn AsRef<Path>) -> Result<(Option<u16>, Str
 }
 
 #[cfg(not(feature = "native"))]
-fn read_native_mode_conf(_filename: &dyn AsRef<Path>) -> Result<(Option<u16>, String, String), String> {
+fn read_native_mode_conf(
+    _filename: &dyn AsRef<Path>,
+    network: &BlockchainNetwork,
+) -> Result<(Option<u16>, String, String), String> {
     unimplemented!()
 }
 
@@ -800,6 +826,14 @@ pub trait UtxoCoinBuilder {
 
     fn dust_amount(&self) -> u64 { UTXO_DUST_AMOUNT }
 
+    fn network(&self) -> Result<BlockchainNetwork, String> {
+        let conf = self.conf();
+        if !conf["network"].is_null() {
+            return json::from_value(conf["network"].clone()).map_err(|e| ERRL!("{}", e));
+        }
+        return Ok(BlockchainNetwork::Mainnet);
+    }
+
     async fn rpc_client(&self) -> Result<UtxoRpcClientEnum, String> {
         match self.req()["method"].as_str() {
             Some("enable") => {
@@ -864,7 +898,8 @@ pub trait UtxoCoinBuilder {
     #[cfg(feature = "native")]
     fn native_client(&self) -> Result<NativeClient, String> {
         let native_conf_path = try_s!(self.confpath());
-        let (rpc_port, rpc_user, rpc_password) = try_s!(read_native_mode_conf(&native_conf_path));
+        let network = try_s!(self.network());
+        let (rpc_port, rpc_user, rpc_password) = try_s!(read_native_mode_conf(&native_conf_path, &network));
         let auth_str = fomat!((rpc_user)":"(rpc_password));
         let rpc_port = match rpc_port {
             Some(p) => p,
