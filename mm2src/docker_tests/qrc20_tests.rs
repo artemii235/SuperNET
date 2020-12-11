@@ -6,7 +6,9 @@ use coins::utxo::qtum::QtumBasedCoin;
 use coins::utxo::qtum::{qtum_coin_from_conf_and_request, QtumCoin};
 use coins::utxo::sat_from_big_decimal;
 use coins::TransactionEnum;
-use ethereum_types::{H160, U256};
+use common::temp_dir;
+use ethereum_types::H160;
+use std::path::PathBuf;
 use std::str::FromStr;
 
 pub const QTUM_REGTEST_DOCKER_IMAGE: &str = "sergeyboyko/qtumregtest";
@@ -18,6 +20,7 @@ const QTUM_ADDRESS_LABEL: &str = "MM2_ADDRESS_LABEL";
 static mut QICK_TOKEN_ADDRESS: Option<H160> = None;
 static mut QORTY_TOKEN_ADDRESS: Option<H160> = None;
 static mut QRC20_SWAP_CONTRACT_ADDRESS: Option<H160> = None;
+static mut QTUM_CONF_PATH: Option<PathBuf> = None;
 
 pub struct QtumDockerOps {
     #[allow(dead_code)]
@@ -32,8 +35,8 @@ impl CoinDockerOps for QtumDockerOps {
 impl QtumDockerOps {
     pub fn new() -> QtumDockerOps {
         let ctx = MmCtxBuilder::new().into_mm_arc();
-        let name = "qtum";
-        let conf = json!({"decimals":8,"name":name,"network":"regtest"});
+        let confpath = unsafe { QTUM_CONF_PATH.as_ref().expect("Qtum config is not set yet") };
+        let conf = json!({"decimals":8,"network":"regtest","confpath":confpath});
         let req = json!({
             "method": "enable",
         });
@@ -41,7 +44,7 @@ impl QtumDockerOps {
             "809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f"
         ));
         let coin = unwrap!(block_on(qtum_coin_from_conf_and_request(
-            &ctx, name, &conf, &req, &priv_key
+            &ctx, "QTUM", &conf, &req, &priv_key
         )));
         QtumDockerOps { ctx, coin }
     }
@@ -84,8 +87,7 @@ pub fn qtum_docker_node<'a>(docker: &'a Cli, port: u16) -> UtxoDockerNode<'a> {
     let container = docker.run(image);
 
     let name = "qtum";
-    let is_asset_chain = false;
-    let mut conf_path = coin_daemon_data_dir(name, is_asset_chain);
+    let mut conf_path = temp_dir().join("qtum-regtest");
     unwrap!(std::fs::create_dir_all(&conf_path));
     conf_path.push(format!("{}.conf", name));
     Command::new("docker")
@@ -101,6 +103,8 @@ pub fn qtum_docker_node<'a>(docker: &'a Cli, port: u16) -> UtxoDockerNode<'a> {
         };
         assert!(now_ms() < timeout, "Test timed out");
     }
+
+    unsafe { QTUM_CONF_PATH = Some(conf_path) };
     UtxoDockerNode {
         container,
         ticker: name.to_owned(),
@@ -108,7 +112,6 @@ pub fn qtum_docker_node<'a>(docker: &'a Cli, port: u16) -> UtxoDockerNode<'a> {
     }
 }
 
-/// TODO qtum_balance, qrc20_balance make BigDecimal
 // generate random privkey, create a QRC20 coin and fill it's address with the specified balance
 fn generate_qrc20_coin_with_random_privkey(
     ticker: &str,
@@ -132,11 +135,11 @@ fn generate_qrc20_coin_with_random_privkey(
                 .clone(),
         )
     };
-    // TODO qtum to tQTUM
-    let platform = "qtum";
+    let platform = "QTUM";
     let ctx = MmCtxBuilder::new().into_mm_arc();
     let _lock = unwrap!(COINS_LOCK.lock());
     let timeout = (now_ms() / 1000) + 40; // timeout if test takes more than 40 seconds to run
+    let confpath = unsafe { QTUM_CONF_PATH.as_ref().expect("Qtum config is not set yet") };
     let conf = json!({
         "coin":"QRC20",
         "decimals": 8,
@@ -148,6 +151,7 @@ fn generate_qrc20_coin_with_random_privkey(
         "mm2":1,
         "mature_confirmations":500,
         "network":"regtest",
+        "confpath": confpath,
     });
     let req = json!({
         "method": "enable",
