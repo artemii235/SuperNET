@@ -501,7 +501,7 @@ fn read_native_mode_conf(
         };
         subsection
             .and_then(|props| props.get(property))
-            .or(conf.general_section().get(property))
+            .or_else(|| conf.general_section().get(property))
     }
 
     let conf: Ini = match Ini::load_from_file(&filename) {
@@ -831,7 +831,7 @@ pub trait UtxoCoinBuilder {
         if !conf["network"].is_null() {
             return json::from_value(conf["network"].clone()).map_err(|e| ERRL!("{}", e));
         }
-        return Ok(BlockchainNetwork::Mainnet);
+        Ok(BlockchainNetwork::Mainnet)
     }
 
     async fn rpc_client(&self) -> Result<UtxoRpcClientEnum, String> {

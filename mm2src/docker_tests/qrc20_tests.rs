@@ -1,4 +1,13 @@
 use super::*;
+use bigdecimal::BigDecimal;
+use coins::qrc20::rpc_client::{for_tests::Qrc20NativeWalletOps, Qrc20NativeOps};
+use coins::qrc20::{qrc20_coin_from_conf_and_request, Qrc20Coin};
+use coins::utxo::qtum::QtumBasedCoin;
+use coins::utxo::qtum::{qtum_coin_from_conf_and_request, QtumCoin};
+use coins::utxo::sat_from_big_decimal;
+use coins::TransactionEnum;
+use ethereum_types::H160;
+use std::str::FromStr;
 
 pub const QTUM_REGTEST_DOCKER_IMAGE: &str = "sergeyboyko/qtumregtest";
 
@@ -188,7 +197,7 @@ fn fill_qrc20_address(coin: &Qrc20Coin, amount: u64, timeout: u64) {
     };
 
     let from_addr = get_address_by_label(coin, QTUM_ADDRESS_LABEL);
-    let to_addr = coin.my_qrc20_address();
+    let to_addr = coin.my_addr_as_contract_addr();
     let decimals = coin.as_ref().decimals;
     let satoshis = sat_from_big_decimal(&amount.into(), decimals).expect("!sat_from_big_decimal");
 

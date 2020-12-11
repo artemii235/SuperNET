@@ -61,21 +61,15 @@ mod docker_tests {
     #[rustfmt::skip]
     mod qrc20_tests;
 
-    use bigdecimal::BigDecimal;
     use bitcrypto::ChecksumType;
-    use coins::qrc20::rpc_client::{for_tests::Qrc20NativeWalletOps, Qrc20NativeOps};
-    use coins::qrc20::{qrc20_coin_from_conf_and_request, Qrc20Coin};
-    use coins::utxo::qtum::{qtum_coin_from_conf_and_request, QtumCoin};
     use coins::utxo::rpc_clients::{UtxoRpcClientEnum, UtxoRpcClientOps};
     use coins::utxo::utxo_standard::{utxo_standard_coin_from_conf_and_request, UtxoStandardCoin};
-    use coins::utxo::{coin_daemon_data_dir, dhash160, sat_from_big_decimal, zcash_params_path, UtxoCoinFields,
-                      UtxoCommonOps};
-    use coins::{FoundSwapTxSpend, MarketCoinOps, SwapOps, TransactionEnum};
+    use coins::utxo::{coin_daemon_data_dir, dhash160, zcash_params_path, UtxoCoinFields, UtxoCommonOps};
+    use coins::{FoundSwapTxSpend, MarketCoinOps, SwapOps};
     use common::block_on;
     use common::{file_lock::FileLock,
                  for_tests::{enable_native, mm_dump, new_mm2_temp_folder_path, MarketMakerIt},
                  mm_ctx::{MmArc, MmCtxBuilder}};
-    use ethereum_types::H160;
     use futures01::Future;
     use gstuff::now_ms;
     use keys::{KeyPair, Private};
@@ -85,7 +79,6 @@ mod docker_tests {
     use std::env;
     use std::io::{BufRead, BufReader};
     use std::process::Command;
-    use std::str::FromStr;
     use std::sync::Mutex;
     use std::thread;
     use std::time::Duration;

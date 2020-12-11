@@ -270,8 +270,8 @@ impl Qrc20Coin {
                     continue;
                 }
                 let amount = try_s!(u256_to_big_decimal(event.amount, self.decimals()));
-                let from = self.utxo_address_from_qrc20(event.sender);
-                let to = self.utxo_address_from_qrc20(event.receiver);
+                let from = self.utxo_addr_from_contract_addr(event.sender);
+                let to = self.utxo_addr_from_contract_addr(event.receiver);
                 (amount, from, to)
             };
 
@@ -298,13 +298,13 @@ impl Qrc20Coin {
             let internal_id = TxInternalId::new(tx_hash.clone(), receipt.output_index, log_index as u64);
 
             let from = if is_sender_contract(&script_pubkey) {
-                display_contract_address(from)
+                qtum::display_as_contract_address(from)
             } else {
                 try_s!(self.display_address(&from))
             };
 
             let to = if is_receiver_contract(&script_pubkey) {
-                display_contract_address(to)
+                qtum::display_as_contract_address(to)
             } else {
                 try_s!(self.display_address(&to))
             };
@@ -545,7 +545,7 @@ pub struct TransferHistoryBuilder {
 
 impl TransferHistoryBuilder {
     pub fn new(coin: Qrc20Coin) -> TransferHistoryBuilder {
-        let address = qrc20_addr_from_utxo_addr(coin.utxo.my_address.clone());
+        let address = qtum::contract_addr_from_utxo_addr(coin.utxo.my_address.clone());
         let token_address = coin.contract_address;
         TransferHistoryBuilder {
             coin,
@@ -590,8 +590,8 @@ impl TransferHistoryBuilder {
         &self,
         electrum: &ElectrumClient,
     ) -> Result<Vec<(H256Json, u64)>, JsonRpcError> {
-        let address = qrc20_addr_into_rpc_format(&self.address);
-        let token_address = qrc20_addr_into_rpc_format(&self.token_address);
+        let address = contract_addr_into_rpc_format(&self.address);
+        let token_address = contract_addr_into_rpc_format(&self.token_address);
         let history = electrum
             .blockchain_contract_event_get_history(&address, &token_address, QRC20_TRANSFER_TOPIC)
             .compat()
@@ -632,7 +632,7 @@ impl TransferHistoryBuilder {
         // TODO set to 100
         const SEARCH_LOGS_STEP: u64 = 5000;
 
-        let token_address = qrc20_addr_into_rpc_format(&self.token_address);
+        let token_address = contract_addr_into_rpc_format(&self.token_address);
         let address_topic = address_to_log_topic(&self.address);
 
         // «Skip the log if none of the topics are matched»

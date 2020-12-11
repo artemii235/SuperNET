@@ -67,9 +67,9 @@ pub mod eth;
 use self::eth::{eth_coin_from_conf_and_request, EthCoin, EthTxFeeDetails, SignedEthTx};
 pub mod utxo;
 use self::utxo::utxo_standard::{utxo_standard_coin_from_conf_and_request, UtxoStandardCoin};
-use self::utxo::{UtxoFeeDetails, UtxoTx};
+use self::utxo::{qtum, UtxoFeeDetails, UtxoTx};
 pub mod qrc20;
-use qrc20::{qrc20_addr_from_str, qrc20_coin_from_conf_and_request, Qrc20Coin, Qrc20FeeDetails};
+use qrc20::{qrc20_coin_from_conf_and_request, Qrc20Coin, Qrc20FeeDetails};
 #[doc(hidden)]
 #[allow(unused_variables)]
 pub mod test_coin;
@@ -696,7 +696,7 @@ pub async fn lp_coininit(ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoin
             platform,
             contract_address,
         } => {
-            let contract_address = try_s!(qrc20_addr_from_str(&contract_address));
+            let contract_address = try_s!(qtum::contract_addr_from_str(&contract_address));
             try_s!(
                 qrc20_coin_from_conf_and_request(ctx, ticker, &platform, coins_en, req, secret, contract_address).await
             )

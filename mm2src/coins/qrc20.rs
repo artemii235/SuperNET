@@ -1,5 +1,6 @@
 use crate::eth::{self, u256_to_big_decimal, wei_from_big_decimal};
 use crate::qrc20::rpc_client::{ContractCallResult, LogEntry, Qrc20NativeOps, Qrc20RpcOps, TopicFilter, TxReceipt};
+use crate::utxo::qtum::QtumBasedCoin;
 use crate::utxo::rpc_clients::{ElectrumClient, NativeClient, UnspentInfo, UtxoRpcClientEnum, UtxoRpcClientOps};
 use crate::utxo::utxo_common::{self, big_decimal_from_sat};
 use crate::utxo::{coin_daemon_data_dir, qtum, sign_tx, ActualTxFee, AdditionalTxData, FeePolicy,
@@ -92,7 +93,7 @@ impl UtxoCoinBuilder for Qrc20CoinBuilder<'_> {
 
     async fn build(self) -> Result<Self::ResultCoin, String> {
         let swap_contract_address = match self.req()["swap_contract_address"].as_str() {
-            Some(address) => try_s!(qrc20_addr_from_str(address)),
+            Some(address) => try_s!(qtum::contract_addr_from_str(address)),
             None => return ERR!("\"swap_contract_address\" field is expected"),
         };
         let utxo = try_s!(self.build_utxo_fields().await);
@@ -195,6 +196,8 @@ impl AsRef<UtxoCoinFields> for Qrc20Coin {
     fn as_ref(&self) -> &UtxoCoinFields { &self.utxo }
 }
 
+impl qtum::QtumBasedCoin for Qrc20Coin {}
+
 pub enum RpcContractCallType {
     /// Erc20 function.
     BalanceOf,
@@ -241,18 +244,6 @@ impl From<ContractCallOutput> for TransactionOutput {
             script_pubkey: out.script_pubkey,
         }
     }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "format")]
-pub enum Qrc20AddressFormat {
-    /// Standard Qtum/UTXO address format.
-    #[serde(rename = "wallet")]
-    Wallet,
-    /// Contract address format. The same as used in ETH/ERC20.
-    /// Note starts with "0x" prefix.
-    #[serde(rename = "contract")]
-    Contract,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -331,56 +322,6 @@ impl Qrc20Coin {
         tokens: &[Token],
     ) -> Result<Vec<Token>, String> {
         qrc20_rpc_contract_call(&self.utxo.rpc_client, func, contract_addr, tokens).await
-    }
-
-    pub fn my_qrc20_address(&self) -> H160 { qrc20_addr_from_utxo_addr(self.as_ref().my_address.clone()) }
-
-    pub fn utxo_address_from_qrc20(&self, address: H160) -> UtxoAddress {
-        let utxo = self.as_ref();
-        UtxoAddress {
-            prefix: utxo.pub_addr_prefix,
-            t_addr_prefix: utxo.pub_t_addr_prefix,
-            hash: address.0.into(),
-            checksum_type: utxo.checksum_type,
-        }
-    }
-
-    pub fn utxo_address_from_raw_pubkey(&self, pubkey: &[u8]) -> Result<UtxoAddress, String> {
-        Ok(try_s!(utxo_common::address_from_raw_pubkey(
-            pubkey,
-            self.utxo.pub_addr_prefix,
-            self.utxo.pub_t_addr_prefix,
-            self.utxo.checksum_type
-        )))
-    }
-
-    pub fn qrc20_address_from_raw_pubkey(&self, pubkey: &[u8]) -> Result<H160, String> {
-        let qtum_address = try_s!(self.utxo_address_from_raw_pubkey(pubkey));
-        Ok(qrc20_addr_from_utxo_addr(qtum_address))
-    }
-
-    /// Try to parse address from either wallet (UTXO) format or contract (QRC20) format.
-    pub fn utxo_address_from_any_format(&self, from: &str) -> Result<UtxoAddress, String> {
-        let utxo_err = match UtxoAddress::from_str(from) {
-            Ok(addr) => {
-                let is_p2pkh =
-                    addr.prefix == self.utxo.pub_addr_prefix && addr.t_addr_prefix == self.utxo.pub_t_addr_prefix;
-                if is_p2pkh {
-                    return Ok(addr);
-                }
-                "Address has invalid prefixes".to_string()
-            },
-            Err(e) => e.to_string(),
-        };
-        let qrc20_err = match qrc20_addr_from_str(from) {
-            Ok(qrc20_addr) => return Ok(self.utxo_address_from_qrc20(qrc20_addr)),
-            Err(e) => e,
-        };
-        ERR!(
-            "error on parse wallet address: {:?}, error on parse contract address: {:?}",
-            utxo_err,
-            qrc20_err,
-        )
     }
 
     /// `gas_fee` should be calculated by: gas_limit * gas_price * (count of contract calls),
@@ -513,9 +454,7 @@ impl UtxoCommonOps for Qrc20Coin {
 
     async fn get_current_mtp(&self) -> Result<u32, String> { utxo_common::get_current_mtp(&self.utxo).await }
 
-    fn is_unspent_mature(&self, output: &RpcTransaction) -> bool {
-        qtum::is_qtum_unspent_mature(self.utxo.mature_confirmations, output)
-    }
+    fn is_unspent_mature(&self, output: &RpcTransaction) -> bool { self.is_qtum_unspent_mature(output) }
 
     /// Generate UTXO transaction with specified unspent inputs and specified outputs.
     async fn generate_transaction(
@@ -583,7 +522,7 @@ impl UtxoCommonOps for Qrc20Coin {
 
 impl SwapOps for Qrc20Coin {
     fn send_taker_fee(&self, fee_addr: &[u8], amount: BigDecimal) -> TransactionFut {
-        let to_address = try_fus!(self.qrc20_address_from_raw_pubkey(fee_addr));
+        let to_address = try_fus!(self.contract_address_from_raw_pubkey(fee_addr));
         let amount = try_fus!(wei_from_big_decimal(&amount, self.utxo.decimals));
         let transfer_output =
             try_fus!(self.transfer_output(to_address, amount, QRC20_GAS_LIMIT_DEFAULT, QRC20_GAS_PRICE_DEFAULT));
@@ -602,7 +541,7 @@ impl SwapOps for Qrc20Coin {
         secret_hash: &[u8],
         amount: BigDecimal,
     ) -> TransactionFut {
-        let taker_addr = try_fus!(self.qrc20_address_from_raw_pubkey(taker_pub));
+        let taker_addr = try_fus!(self.contract_address_from_raw_pubkey(taker_pub));
         let id = qrc20_swap_id(time_lock, secret_hash);
         let value = try_fus!(wei_from_big_decimal(&amount, self.utxo.decimals));
         let secret_hash = Vec::from(secret_hash);
@@ -623,7 +562,7 @@ impl SwapOps for Qrc20Coin {
         secret_hash: &[u8],
         amount: BigDecimal,
     ) -> TransactionFut {
-        let maker_addr = try_fus!(self.qrc20_address_from_raw_pubkey(maker_pub));
+        let maker_addr = try_fus!(self.contract_address_from_raw_pubkey(maker_pub));
         let id = qrc20_swap_id(time_lock, secret_hash);
         let value = try_fus!(wei_from_big_decimal(&amount, self.utxo.decimals));
         let secret_hash = Vec::from(secret_hash);
@@ -704,7 +643,7 @@ impl SwapOps for Qrc20Coin {
             TransactionEnum::UtxoTx(tx) => tx.hash().reversed().into(),
             _ => panic!("Unexpected TransactionEnum"),
         };
-        let fee_addr = try_fus!(self.qrc20_address_from_raw_pubkey(fee_addr));
+        let fee_addr = try_fus!(self.contract_address_from_raw_pubkey(fee_addr));
         let expected_value = try_fus!(wei_from_big_decimal(amount, self.utxo.decimals));
 
         let selfi = self.clone();
@@ -721,7 +660,7 @@ impl SwapOps for Qrc20Coin {
         amount: BigDecimal,
     ) -> Box<dyn Future<Item = (), Error = String> + Send> {
         let payment_tx: UtxoTx = try_fus!(deserialize(payment_tx).map_err(|e| ERRL!("{:?}", e)));
-        let sender = try_fus!(self.qrc20_address_from_raw_pubkey(maker_pub));
+        let sender = try_fus!(self.contract_address_from_raw_pubkey(maker_pub));
         let secret_hash = secret_hash.to_vec();
 
         let selfi = self.clone();
@@ -742,7 +681,7 @@ impl SwapOps for Qrc20Coin {
         amount: BigDecimal,
     ) -> Box<dyn Future<Item = (), Error = String> + Send> {
         let payment_tx: UtxoTx = try_fus!(deserialize(payment_tx).map_err(|e| ERRL!("{:?}", e)));
-        let sender = try_fus!(self.qrc20_address_from_raw_pubkey(taker_pub));
+        let sender = try_fus!(self.contract_address_from_raw_pubkey(taker_pub));
         let secret_hash = secret_hash.to_vec();
 
         let selfi = self.clone();
@@ -809,7 +748,7 @@ impl MarketCoinOps for Qrc20Coin {
     fn my_address(&self) -> Result<String, String> { utxo_common::my_address(self) }
 
     fn my_balance(&self) -> Box<dyn Future<Item = BigDecimal, Error = String> + Send> {
-        let my_address = self.my_qrc20_address();
+        let my_address = self.my_addr_as_contract_addr();
         let contract_address = self.contract_address;
         let selfi = self.clone();
         let fut = async move {
@@ -917,13 +856,7 @@ impl MmCoin for Qrc20Coin {
     fn decimals(&self) -> u8 { utxo_common::decimals(&self.utxo) }
 
     fn convert_to_address(&self, from: &str, to_address_format: Json) -> Result<String, String> {
-        let to_address_format: Qrc20AddressFormat =
-            json::from_value(to_address_format).map_err(|e| ERRL!("Error on parse QRC20 address format {:?}", e))?;
-        let from_address = try_s!(self.utxo_address_from_any_format(from));
-        match to_address_format {
-            Qrc20AddressFormat::Wallet => Ok(from_address.to_string()),
-            Qrc20AddressFormat::Contract => Ok(display_contract_address(from_address)),
-        }
+        qtum::QtumBasedCoin::convert_to_address(self, from, to_address_format)
     }
 
     fn validate_address(&self, address: &str) -> ValidateAddressResult { utxo_common::validate_address(self, address) }
@@ -975,7 +908,7 @@ async fn qrc20_rpc_contract_call(
 ) -> Result<Vec<Token>, String> {
     let function = func.as_function();
     let params = try_s!(function.encode_input(tokens));
-    let contract_addr = qrc20_addr_into_rpc_format(contract_addr);
+    let contract_addr = contract_addr_into_rpc_format(contract_addr);
 
     let result: ContractCallResult = match rpc_client {
         UtxoRpcClientEnum::Native(native) => try_s!(native.call_contract(&contract_addr, params.into()).compat().await),
@@ -1011,16 +944,7 @@ pub fn qrc20_swap_id(time_lock: u32, secret_hash: &[u8]) -> Vec<u8> {
     sha256(&input).to_vec()
 }
 
-/// Parse QRC20 address (H160) from string.
-/// QRC20 addresses have another checksum verification algorithm, because of this do not use [`eth::valid_addr_from_str`].
-pub fn qrc20_addr_from_str(addr: &str) -> Result<H160, String> { eth::addr_from_str(addr) }
-
-pub fn qrc20_addr_from_utxo_addr(address: UtxoAddress) -> H160 { address.hash.take().into() }
-
-#[allow(dead_code)]
-fn utxo_addr_into_rpc_format(address: UtxoAddress) -> H160Json { address.hash.take().into() }
-
-fn qrc20_addr_into_rpc_format(address: &H160) -> H160Json { address.to_vec().as_slice().into() }
+fn contract_addr_into_rpc_format(address: &H160) -> H160Json { address.to_vec().as_slice().into() }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Qrc20FeeDetails {
@@ -1080,7 +1004,7 @@ async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> Result<Transac
     };
 
     let transfer_output = try_s!(coin.transfer_output(
-        qrc20_addr_from_utxo_addr(to_addr.clone()),
+        qtum::contract_addr_from_utxo_addr(to_addr.clone()),
         qrc20_amount_sat,
         gas_limit,
         gas_price
@@ -1157,10 +1081,10 @@ pub struct TransferEventDetails {
 
 fn transfer_event_from_log(log: &LogEntry) -> Result<TransferEventDetails, String> {
     let contract_address = if log.address.starts_with("0x") {
-        try_s!(qrc20_addr_from_str(&log.address))
+        try_s!(qtum::contract_addr_from_str(&log.address))
     } else {
         let address = format!("0x{}", log.address);
-        try_s!(qrc20_addr_from_str(&address))
+        try_s!(qtum::contract_addr_from_str(&address))
     };
 
     if log.topics.len() != 3 {
@@ -1180,9 +1104,4 @@ fn transfer_event_from_log(log: &LogEntry) -> Result<TransferEventDetails, Strin
         sender,
         receiver,
     })
-}
-
-fn display_contract_address(address: UtxoAddress) -> String {
-    let address = qrc20_addr_from_utxo_addr(address);
-    format!("{:#02x}", address)
 }

@@ -1644,3 +1644,69 @@ fn test_ordered_mature_unspents_from_cache() {
         expected_confs,
     );
 }
+
+#[test]
+fn test_qtum_is_unspent_mature() {
+    use crate::utxo::qtum::{QtumBasedCoin, QtumCoin};
+    use rpc::v1::types::{ScriptType, SignedTransactionOutput, TransactionOutputScript};
+
+    let mut coin_fields = utxo_coin_fields_for_test(UtxoRpcClientEnum::Native(native_client_for_test()), None);
+    // Qtum's mature confirmations is 500 blocks
+    coin_fields.mature_confirmations = 500;
+    let arc: UtxoArc = coin_fields.into();
+    let coin = QtumCoin::from(arc);
+
+    let empty_output = SignedTransactionOutput {
+        value: 0.,
+        n: 0,
+        script: TransactionOutputScript {
+            asm: "".into(),
+            hex: "".into(),
+            req_sigs: 0,
+            script_type: ScriptType::NonStandard,
+            addresses: vec![],
+        },
+    };
+    let real_output = SignedTransactionOutput {
+        value: 117.02430015,
+        n: 1,
+        script: TransactionOutputScript {
+            asm: "03e71b9c152bb233ddfe58f20056715c51b054a1823e0aba108e6f1cea0ceb89c8 OP_CHECKSIG".into(),
+            hex: "2103e71b9c152bb233ddfe58f20056715c51b054a1823e0aba108e6f1cea0ceb89c8ac".into(),
+            req_sigs: 0,
+            script_type: ScriptType::PubKey,
+            addresses: vec![],
+        },
+    };
+
+    let mut tx = RpcTransaction {
+        hex: Default::default(),
+        txid: "47d983175720ba2a67f36d0e1115a129351a2f340bdde6ecb6d6029e138fe920".into(),
+        hash: None,
+        size: Default::default(),
+        vsize: Default::default(),
+        version: 2,
+        locktime: 0,
+        vin: vec![],
+        vout: vec![empty_output, real_output],
+        blockhash: "c23882939ff695be36546ea998eb585e962b043396e4d91959477b9796ceb9e1".into(),
+        confirmations: 421,
+        rawconfirmations: None,
+        time: 1590671504,
+        blocktime: 1590671504,
+        height: None,
+    };
+
+    // output is coinbase and has confirmations < QTUM_MATURE_CONFIRMATIONS
+    assert!(!coin.is_qtum_unspent_mature(&tx));
+
+    tx.confirmations = 501;
+    // output is coinbase but has confirmations > QTUM_MATURE_CONFIRMATIONS
+    assert!(coin.is_qtum_unspent_mature(&tx));
+
+    tx.confirmations = 421;
+    // remove empty output
+    tx.vout.remove(0);
+    // output is not coinbase
+    assert!(coin.is_qtum_unspent_mature(&tx));
+}

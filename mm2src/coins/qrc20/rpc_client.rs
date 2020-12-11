@@ -61,7 +61,7 @@ pub mod for_tests {
             amount: U256,
             decimals: u8,
         ) -> Box<dyn Future<Item = SendToContractResult, Error = String> + Send> {
-            let token_addr = qrc20_addr_into_rpc_format(token_addr);
+            let token_addr = contract_addr_into_rpc_format(token_addr);
             let qtum_amount = 0;
             let gas_price = big_decimal_from_sat(QRC20_GAS_PRICE_DEFAULT as i64, decimals);
 
@@ -204,10 +204,10 @@ pub struct LogEntry {
 impl LogEntry {
     pub fn parse_address(&self) -> Result<H160, String> {
         if self.address.starts_with("0x") {
-            qrc20_addr_from_str(&self.address)
+            qtum::contract_addr_from_str(&self.address)
         } else {
             let address = format!("0x{}", self.address);
-            qrc20_addr_from_str(&address)
+            qtum::contract_addr_from_str(&address)
         }
     }
 }
