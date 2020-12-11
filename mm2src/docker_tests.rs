@@ -61,12 +61,14 @@ mod docker_tests {
     #[rustfmt::skip]
     mod qrc20_tests;
 
+    use bigdecimal::BigDecimal;
     use bitcrypto::ChecksumType;
     use coins::utxo::rpc_clients::{UtxoRpcClientEnum, UtxoRpcClientOps};
     use coins::utxo::utxo_standard::{utxo_standard_coin_from_conf_and_request, UtxoStandardCoin};
     use coins::utxo::{coin_daemon_data_dir, dhash160, zcash_params_path, UtxoCoinFields, UtxoCommonOps};
     use coins::{FoundSwapTxSpend, MarketCoinOps, SwapOps};
     use common::block_on;
+    use common::for_tests::enable_electrum;
     use common::{file_lock::FileLock,
                  for_tests::{enable_native, mm_dump, new_mm2_temp_folder_path, MarketMakerIt},
                  mm_ctx::{MmArc, MmCtxBuilder}};
@@ -278,7 +280,7 @@ mod docker_tests {
     }
 
     // generate random privkey, create a coin and fill it's address with 1000 coins
-    fn generate_coin_with_random_privkey(ticker: &str, balance: u64) -> (MmArc, UtxoStandardCoin, [u8; 32]) {
+    fn generate_coin_with_random_privkey(ticker: &str, balance: BigDecimal) -> (MmArc, UtxoStandardCoin, [u8; 32]) {
         // prevent concurrent initialization since daemon RPC returns errors if send_to_address
         // is called concurrently (insufficient funds) and it also may return other errors
         // if previous transaction is not confirmed yet
@@ -309,14 +311,14 @@ mod docker_tests {
         }
     }
 
-    fn fill_address<T>(coin: &T, amount: u64, timeout: u64)
+    fn fill_address<T>(coin: &T, amount: BigDecimal, timeout: u64)
     where
         T: MarketCoinOps + AsRef<UtxoCoinFields>,
     {
         let my_address = coin.my_address().unwrap();
         if let UtxoRpcClientEnum::Native(client) = &coin.as_ref().rpc_client {
             unwrap!(client.import_address(&my_address, &my_address, false).wait());
-            let hash = client.send_to_address(&my_address, &amount.into()).wait().unwrap();
+            let hash = client.send_to_address(&my_address, &amount).wait().unwrap();
             let tx_bytes = client.get_transaction_bytes(hash).wait().unwrap();
             unwrap!(coin.wait_for_confirmations(&tx_bytes, 1, false, timeout, 1).wait());
             log!({ "{:02x}", tx_bytes });
@@ -338,7 +340,7 @@ mod docker_tests {
     #[test]
     fn test_search_for_swap_tx_spend_native_was_refunded_taker() {
         let timeout = (now_ms() / 1000) + 120; // timeout if test takes more than 120 seconds to run
-        let (_ctx, coin, _) = generate_coin_with_random_privkey("MYCOIN", 1000);
+        let (_ctx, coin, _) = generate_coin_with_random_privkey("MYCOIN", 1000.into());
 
         let time_lock = (now_ms() / 1000) as u32 - 3600;
         let tx = coin
@@ -370,7 +372,7 @@ mod docker_tests {
     #[test]
     fn test_search_for_swap_tx_spend_native_was_refunded_maker() {
         let timeout = (now_ms() / 1000) + 120; // timeout if test takes more than 120 seconds to run
-        let (_ctx, coin, _) = generate_coin_with_random_privkey("MYCOIN", 1000);
+        let (_ctx, coin, _) = generate_coin_with_random_privkey("MYCOIN", 1000.into());
 
         let time_lock = (now_ms() / 1000) as u32 - 3600;
         let tx = coin
@@ -402,7 +404,7 @@ mod docker_tests {
     #[test]
     fn test_search_for_taker_swap_tx_spend_native_was_spent_by_maker() {
         let timeout = (now_ms() / 1000) + 120; // timeout if test takes more than 120 seconds to run
-        let (_ctx, coin, _) = generate_coin_with_random_privkey("MYCOIN", 1000);
+        let (_ctx, coin, _) = generate_coin_with_random_privkey("MYCOIN", 1000.into());
         let secret = [0; 32];
 
         let time_lock = (now_ms() / 1000) as u32 - 3600;
@@ -435,7 +437,7 @@ mod docker_tests {
     #[test]
     fn test_search_for_maker_swap_tx_spend_native_was_spent_by_taker() {
         let timeout = (now_ms() / 1000) + 120; // timeout if test takes more than 120 seconds to run
-        let (_ctx, coin, _) = generate_coin_with_random_privkey("MYCOIN", 1000);
+        let (_ctx, coin, _) = generate_coin_with_random_privkey("MYCOIN", 1000.into());
         let secret = [0; 32];
 
         let time_lock = (now_ms() / 1000) as u32 - 3600;
@@ -468,7 +470,7 @@ mod docker_tests {
     // https://github.com/KomodoPlatform/atomicDEX-API/issues/554
     #[test]
     fn order_should_be_cancelled_when_entire_balance_is_withdrawn() {
-        let (_ctx, _, priv_key) = generate_coin_with_random_privkey("MYCOIN", 1000);
+        let (_ctx, _, priv_key) = generate_coin_with_random_privkey("MYCOIN", 1000.into());
         let coins = json! ([
             {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
             {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
@@ -575,8 +577,8 @@ mod docker_tests {
     // https://github.com/KomodoPlatform/atomicDEX-API/issues/471
     #[test]
     fn test_match_and_trade_max() {
-        let (_ctx, _, bob_priv_key) = generate_coin_with_random_privkey("MYCOIN", 1000);
-        let (_ctx, _, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN1", 2000);
+        let (_ctx, _, bob_priv_key) = generate_coin_with_random_privkey("MYCOIN", 1000.into());
+        let (_ctx, _, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN1", 2000.into());
         let coins = json! ([
             {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
             {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
@@ -670,8 +672,8 @@ mod docker_tests {
 
     #[test]
     fn test_buy_when_coins_locked_by_other_swap() {
-        let (_ctx, _, bob_priv_key) = generate_coin_with_random_privkey("MYCOIN", 1000);
-        let (_ctx, _, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN1", 2);
+        let (_ctx, _, bob_priv_key) = generate_coin_with_random_privkey("MYCOIN", 1000.into());
+        let (_ctx, _, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN1", 2.into());
         let coins = json! ([
             {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
             {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
@@ -768,8 +770,8 @@ mod docker_tests {
 
     #[test]
     fn test_sell_when_coins_locked_by_other_swap() {
-        let (_ctx, _, bob_priv_key) = generate_coin_with_random_privkey("MYCOIN", 1000);
-        let (_ctx, _, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN1", 2);
+        let (_ctx, _, bob_priv_key) = generate_coin_with_random_privkey("MYCOIN", 1000.into());
+        let (_ctx, _, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN1", 2.into());
         let coins = json! ([
             {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
             {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
@@ -866,7 +868,7 @@ mod docker_tests {
 
     #[test]
     fn test_buy_max() {
-        let (_ctx, _, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN1", 1);
+        let (_ctx, _, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN1", 1.into());
         let coins = json! ([
             {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
             {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
@@ -924,7 +926,7 @@ mod docker_tests {
 
     #[test]
     fn test_get_max_taker_vol() {
-        let (_ctx, _, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN1", 1);
+        let (_ctx, _, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN1", 1.into());
         let coins = json! ([
             {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
             {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
@@ -948,6 +950,7 @@ mod docker_tests {
         ));
 
         log!([block_on(enable_native(&mm_alice, "MYCOIN1", vec![]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN", vec![]))]);
         let rc = unwrap!(block_on(mm_alice.rpc(json! ({
             "userpass": mm_alice.userpass,
             "method": "max_taker_vol",
@@ -958,12 +961,142 @@ mod docker_tests {
         // the result of equation x + x / 777 + 0.00002 = 1
         assert_eq!(json["result"]["numer"], Json::from("38849223"));
         assert_eq!(json["result"]["denom"], Json::from("38900000"));
+
+        let rc = unwrap!(block_on(mm_alice.rpc(json! ({
+            "userpass": mm_alice.userpass,
+            "method": "sell",
+            "base": "MYCOIN1",
+            "rel": "MYCOIN",
+            "price": 1,
+            "volume": {
+                "numer": json["result"]["numer"],
+                "denom": json["result"]["denom"],
+            }
+        }))));
+        assert!(rc.0.is_success(), "!sell: {}", rc.1);
+
+        unwrap!(block_on(mm_alice.stop()));
+    }
+
+    // https://github.com/KomodoPlatform/atomicDEX-API/issues/733
+    #[test]
+    fn test_get_max_taker_vol_dex_fee_threshold() {
+        let (_ctx, _, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN1", "0.05328455".parse().unwrap());
+        let coins = json! ([
+            {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":10000,"protocol":{"type":"UTXO"}},
+            {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":10000,"protocol":{"type":"UTXO"}},
+        ]);
+        let mut mm_alice = unwrap!(MarketMakerIt::start(
+            json! ({
+                "gui": "nogui",
+                "netid": 9000,
+                "dht": "on",  // Enable DHT without delay.
+                "passphrase": format!("0x{}", hex::encode(alice_priv_key)),
+                "coins": coins,
+                "rpc_password": "pass",
+                "i_am_see": true,
+            }),
+            "pass".to_string(),
+            None,
+        ));
+        let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
+        unwrap!(block_on(
+            mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
+        ));
+
+        log!([block_on(enable_native(&mm_alice, "MYCOIN1", vec![]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN", vec![]))]);
+        let rc = unwrap!(block_on(mm_alice.rpc(json! ({
+            "userpass": mm_alice.userpass,
+            "method": "max_taker_vol",
+            "coin": "MYCOIN1",
+        }))));
+        assert!(rc.0.is_success(), "!max_taker_vol: {}", rc.1);
+        let json: Json = json::from_str(&rc.1).unwrap();
+        // the result of equation x + 0.0001 (dex fee) + 0.0002 (miner fee * 2) = 0.05328455
+        assert_eq!(json["result"]["numer"], Json::from("1059691"));
+        assert_eq!(json["result"]["denom"], Json::from("20000000"));
+
+        let rc = unwrap!(block_on(mm_alice.rpc(json! ({
+            "userpass": mm_alice.userpass,
+            "method": "sell",
+            "base": "MYCOIN1",
+            "rel": "MYCOIN",
+            "price": 1,
+            "volume": {
+                "numer": json["result"]["numer"],
+                "denom": json["result"]["denom"],
+            }
+        }))));
+        assert!(rc.0.is_success(), "!sell: {}", rc.1);
+
+        unwrap!(block_on(mm_alice.stop()));
+    }
+
+    #[test]
+    fn test_get_max_taker_vol_with_kmd() {
+        let (_ctx, _, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN1", 1.into());
+        let coins = json! ([
+            {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":10000,"protocol":{"type":"UTXO"}},
+            {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":10000,"protocol":{"type":"UTXO"}},
+            {"coin":"KMD","txversion":4,"overwintered":1,"txfee":10000,"protocol":{"type":"UTXO"}},
+        ]);
+        let mut mm_alice = unwrap!(MarketMakerIt::start(
+            json! ({
+                "gui": "nogui",
+                "netid": 9000,
+                "dht": "on",  // Enable DHT without delay.
+                "passphrase": format!("0x{}", hex::encode(alice_priv_key)),
+                "coins": coins,
+                "rpc_password": "pass",
+                "i_am_see": true,
+            }),
+            "pass".to_string(),
+            None,
+        ));
+        let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
+        unwrap!(block_on(
+            mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
+        ));
+
+        log!([block_on(enable_native(&mm_alice, "MYCOIN1", vec![]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN", vec![]))]);
+        log!([block_on(enable_electrum(&mm_alice, "KMD", vec![
+            "electrum1.cipig.net:10001",
+            "electrum2.cipig.net:10001",
+            "electrum3.cipig.net:10001"
+        ]))]);
+        let rc = unwrap!(block_on(mm_alice.rpc(json! ({
+            "userpass": mm_alice.userpass,
+            "method": "max_taker_vol",
+            "coin": "MYCOIN1",
+            "trade_with": "KMD",
+        }))));
+        assert!(rc.0.is_success(), "!max_taker_vol: {}", rc.1);
+        let json: Json = json::from_str(&rc.1).unwrap();
+        // the result of equation x + x * 9 / 7770 + 0.0002 = 1
+        assert_eq!(json["result"]["numer"], Json::from("1294741"));
+        assert_eq!(json["result"]["denom"], Json::from("1296500"));
+
+        let rc = unwrap!(block_on(mm_alice.rpc(json! ({
+            "userpass": mm_alice.userpass,
+            "method": "sell",
+            "base": "MYCOIN1",
+            "rel": "KMD",
+            "price": 1,
+            "volume": {
+                "numer": json["result"]["numer"],
+                "denom": json["result"]["denom"],
+            }
+        }))));
+        assert!(rc.0.is_success(), "!sell: {}", rc.1);
+
         unwrap!(block_on(mm_alice.stop()));
     }
 
     #[test]
     fn test_set_price_max() {
-        let (_ctx, _, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN", 1);
+        let (_ctx, _, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN", 1.into());
         let coins = json! ([
             {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
             {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
@@ -1020,8 +1153,8 @@ mod docker_tests {
 
     #[test]
     fn swaps_should_stop_on_stop_rpc() {
-        let (_ctx, _, bob_priv_key) = generate_coin_with_random_privkey("MYCOIN", 1000);
-        let (_ctx, _, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN1", 2000);
+        let (_ctx, _, bob_priv_key) = generate_coin_with_random_privkey("MYCOIN", 1000.into());
+        let (_ctx, _, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN1", 2000.into());
         let coins = json! ([
             {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
             {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},

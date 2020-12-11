@@ -4,6 +4,7 @@ use super::{ban_pubkey, broadcast_my_swap_status, dex_fee_amount, get_locked_amo
             my_swap_file_path, my_swaps_dir, AtomicSwap, LockedAmount, MySwapInfo, RecoveredSwap, RecoveredSwapAction,
             SavedSwap, SwapConfirmationsSettings, SwapError, SwapNegotiationData, SwapsContext, TransactionIdentifier,
             BASIC_COMM_TIMEOUT, WAIT_CONFIRM_INTERVAL};
+use crate::mm2::lp_swap::dex_fee_rate;
 use atomic::Atomic;
 use bigdecimal::BigDecimal;
 use coins::{lp_coinfindᵃ, FoundSwapTxSpend, MmCoinEnum, TradeFee};
@@ -1400,12 +1401,18 @@ pub async fn check_balance_for_taker_swap(
     }
 }
 
+#[derive(Deserialize)]
+struct MaxTakerVolRequest {
+    coin: String,
+    trade_with: Option<String>,
+}
+
 pub async fn max_taker_vol(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
-    let ticker = try_s!(req["coin"].as_str().ok_or("No 'coin' field")).to_owned();
-    let coin = match lp_coinfindᵃ(&ctx, &ticker).await {
+    let req: MaxTakerVolRequest = try_s!(json::from_value(req));
+    let coin = match lp_coinfindᵃ(&ctx, &req.coin).await {
         Ok(Some(t)) => t,
-        Ok(None) => return ERR!("No such coin: {}", ticker),
-        Err(err) => return ERR!("!lp_coinfind({}): {}", ticker, err),
+        Ok(None) => return ERR!("No such coin: {}", req.coin),
+        Err(err) => return ERR!("!lp_coinfind({}): {}", req.coin, err),
     };
     let balance = try_s!(coin.my_balance().compat().await);
     let fee_info = try_s!(coin.get_trade_fee().compat().await);
@@ -1414,7 +1421,14 @@ pub async fn max_taker_vol(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, S
     if fee_info.coin == coin.ticker() {
         available_vol = available_vol - fee_info.amount * 2.into();
     }
-    available_vol = available_vol * 777.into() / 778.into();
+    let dex_fee_rate = dex_fee_rate(coin.ticker(), req.trade_with.as_ref().unwrap_or(&req.coin));
+    let fee_threshold = MmNumber::from("0.0001");
+    let threshold_coef = &(&MmNumber::from(1) + &dex_fee_rate) / &dex_fee_rate;
+    if available_vol > &fee_threshold * &threshold_coef {
+        available_vol = available_vol / (MmNumber::from(1) + dex_fee_rate);
+    } else {
+        available_vol = available_vol - fee_threshold;
+    }
 
     let res = try_s!(json::to_vec(&json!({
         "result": available_vol.to_fraction()

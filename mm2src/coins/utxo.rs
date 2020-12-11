@@ -885,13 +885,14 @@ pub trait UtxoCoinBuilder {
         let client = Arc::new(client);
 
         let weak_client = Arc::downgrade(&client);
-        spawn_electrum_ping_loop(weak_client, servers);
-
-        let weak_client = Arc::downgrade(&client);
         let client_name = format!("{} GUI/MM2 {}", ctx.gui().unwrap_or("UNKNOWN"), MM_VERSION);
         spawn_electrum_version_loop(weak_client, on_connect_rx, client_name);
 
         try_s!(wait_for_protocol_version_checked(&client).await);
+
+        let weak_client = Arc::downgrade(&client);
+        spawn_electrum_ping_loop(weak_client, servers);
+
         Ok(ElectrumClient(client))
     }
 
