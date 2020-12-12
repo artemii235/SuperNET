@@ -1,5 +1,5 @@
 use crate::eth::{self, u256_to_big_decimal, wei_from_big_decimal};
-use crate::qrc20::rpc_client::{ContractCallResult, LogEntry, Qrc20NativeOps, Qrc20RpcOps, TopicFilter, TxReceipt};
+use crate::qrc20::rpc_clients::{ContractCallResult, LogEntry, Qrc20NativeOps, Qrc20RpcOps, TopicFilter, TxReceipt};
 use crate::utxo::qtum::QtumBasedCoin;
 use crate::utxo::rpc_clients::{ElectrumClient, NativeClient, UnspentInfo, UtxoRpcClientEnum, UtxoRpcClientOps};
 use crate::utxo::utxo_common::{self, big_decimal_from_sat};
@@ -38,7 +38,7 @@ use std::sync::Arc;
 
 mod history;
 #[cfg(test)] mod qrc20_tests;
-pub mod rpc_client;
+pub mod rpc_clients;
 mod script_pubkey;
 mod swap;
 
