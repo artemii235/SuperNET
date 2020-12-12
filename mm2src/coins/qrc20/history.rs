@@ -629,8 +629,7 @@ impl TransferHistoryBuilder {
     }
 
     async fn build_receipts_with_native(&self, native: &NativeClient) -> Result<Vec<TxReceipt>, JsonRpcError> {
-        // TODO set to 100
-        const SEARCH_LOGS_STEP: u64 = 5000;
+        const SEARCH_LOGS_STEP: u64 = 100;
 
         let token_address = contract_addr_into_rpc_format(&self.token_address);
         let address_topic = address_to_log_topic(&self.address);

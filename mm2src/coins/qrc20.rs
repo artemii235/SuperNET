@@ -87,15 +87,21 @@ impl<'a> Qrc20CoinBuilder<'a> {
     }
 }
 
+impl Qrc20CoinBuilder<'_> {
+    fn swap_contract_address(&self) -> Result<H160, String> {
+        match self.req()["swap_contract_address"].as_str() {
+            Some(address) => qtum::contract_addr_from_str(address).map_err(|e| ERRL!("{}", e)),
+            None => return ERR!("\"swap_contract_address\" field is expected"),
+        }
+    }
+}
+
 #[async_trait]
 impl UtxoCoinBuilder for Qrc20CoinBuilder<'_> {
     type ResultCoin = Qrc20Coin;
 
     async fn build(self) -> Result<Self::ResultCoin, String> {
-        let swap_contract_address = match self.req()["swap_contract_address"].as_str() {
-            Some(address) => try_s!(qtum::contract_addr_from_str(address)),
-            None => return ERR!("\"swap_contract_address\" field is expected"),
-        };
+        let swap_contract_address = try_s!(self.swap_contract_address());
         let utxo = try_s!(self.build_utxo_fields().await);
         let inner = Qrc20CoinFields {
             utxo,
@@ -138,8 +144,8 @@ impl UtxoCoinBuilder for Qrc20CoinBuilder<'_> {
             Some(path) if !path.is_empty() => path.trim(),
             _ => {
                 let is_asset_chain = false;
-                // TODO platform is tQTUM or QTUM, but the QTUM datadir usually is `.qtum`
-                let data_dir = coin_daemon_data_dir(&self.platform, is_asset_chain);
+                let platform = self.platform.to_lowercase();
+                let data_dir = coin_daemon_data_dir(&platform, is_asset_chain);
 
                 let confname = format!("{}.conf", self.platform);
                 return Ok(data_dir.join(&confname[..]));
