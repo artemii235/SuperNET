@@ -758,7 +758,9 @@ impl NativeClientImpl {
     }
 
     /// https://developer.bitcoin.org/reference/rpc/getblockhash.html
-    pub fn get_block_hash(&self, block_number: u64) -> RpcRes<H256Json> { rpc_func!(self, "getblockhash", block_number) }
+    pub fn get_block_hash(&self, block_number: u64) -> RpcRes<H256Json> {
+        rpc_func!(self, "getblockhash", block_number)
+    }
 
     /// https://developer.bitcoin.org/reference/rpc/sendtoaddress.html
     pub fn send_to_address(&self, addr: &str, amount: &BigDecimal) -> RpcRes<H256Json> {
