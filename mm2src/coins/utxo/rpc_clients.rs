@@ -672,7 +672,7 @@ impl NativeClientImpl {
 
     /// https://developer.bitcoin.org/reference/rpc/getrawtransaction.html
     /// Always returns transaction bytes
-    fn get_raw_transaction_bytes(&self, txid: H256Json) -> RpcRes<BytesJson> {
+    pub fn get_raw_transaction_bytes(&self, txid: H256Json) -> RpcRes<BytesJson> {
         let verbose = 0;
         rpc_func!(self, "getrawtransaction", txid, verbose)
     }
@@ -745,7 +745,7 @@ impl NativeClientImpl {
 
     /// https://developer.bitcoin.org/reference/rpc/listsinceblock.html
     /// uses default target confirmations 1 and always includes watch_only addresses
-    fn list_since_block(&self, block_hash: H256Json) -> RpcRes<ListSinceBlockRes> {
+    pub fn list_since_block(&self, block_hash: H256Json) -> RpcRes<ListSinceBlockRes> {
         let target_confirmations = 1;
         let include_watch_only = true;
         rpc_func!(
@@ -758,7 +758,7 @@ impl NativeClientImpl {
     }
 
     /// https://developer.bitcoin.org/reference/rpc/getblockhash.html
-    fn get_block_hash(&self, block_number: u64) -> RpcRes<H256Json> { rpc_func!(self, "getblockhash", block_number) }
+    pub fn get_block_hash(&self, block_number: u64) -> RpcRes<H256Json> { rpc_func!(self, "getblockhash", block_number) }
 
     /// https://developer.bitcoin.org/reference/rpc/sendtoaddress.html
     pub fn send_to_address(&self, addr: &str, amount: &BigDecimal) -> RpcRes<H256Json> {
