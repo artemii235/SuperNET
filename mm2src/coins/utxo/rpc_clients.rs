@@ -261,6 +261,14 @@ pub struct ListTransactionsItem {
     #[serde(default)]
     pub txid: H256Json,
     pub timereceived: u64,
+    #[serde(default)]
+    pub walletconflicts: Vec<String>,
+}
+
+impl ListTransactionsItem {
+    /// Checks if the transaction is conflicting.
+    /// It means the transaction has conflicts or has negative confirmations.
+    pub fn is_conflicting(&self) -> bool { self.confirmations < 0 || !self.walletconflicts.is_empty() }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -534,7 +542,11 @@ impl UtxoRpcClientOps for NativeClient {
         let fut = async move {
             let from_block_hash = try_s!(selfi.get_block_hash(from_block).compat().await);
             let list_since_block: ListSinceBlockRes = try_s!(selfi.list_since_block(from_block_hash).compat().await);
-            for transaction in list_since_block.transactions {
+            for transaction in list_since_block
+                .transactions
+                .into_iter()
+                .filter(|tx| !tx.is_conflicting())
+            {
                 let maybe_spend_tx_bytes = try_s!(selfi.get_raw_transaction_bytes(transaction.txid).compat().await);
                 let maybe_spend_tx: UtxoTx =
                     try_s!(deserialize(maybe_spend_tx_bytes.as_slice()).map_err(|e| ERRL!("{:?}", e)));
