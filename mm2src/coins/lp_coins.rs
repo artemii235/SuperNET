@@ -66,8 +66,9 @@ pub mod coins_tests;
 pub mod eth;
 use self::eth::{eth_coin_from_conf_and_request, EthCoin, EthTxFeeDetails, SignedEthTx};
 pub mod utxo;
+use self::utxo::qtum::{self, qtum_coin_from_conf_and_request, QtumCoin};
 use self::utxo::utxo_standard::{utxo_standard_coin_from_conf_and_request, UtxoStandardCoin};
-use self::utxo::{qtum, UtxoFeeDetails, UtxoTx};
+use self::utxo::{UtxoFeeDetails, UtxoTx};
 pub mod qrc20;
 use qrc20::{qrc20_coin_from_conf_and_request, Qrc20Coin, Qrc20FeeDetails};
 #[doc(hidden)]
@@ -463,6 +464,7 @@ pub trait MmCoin: SwapOps + MarketCoinOps + fmt::Debug + Send + Sync + 'static {
 #[derive(Clone, Debug)]
 pub enum MmCoinEnum {
     UtxoCoin(UtxoStandardCoin),
+    QtumCoin(QtumCoin),
     Qrc20Coin(Qrc20Coin),
     EthCoin(EthCoin),
     Test(TestCoin),
@@ -480,6 +482,10 @@ impl From<TestCoin> for MmCoinEnum {
     fn from(c: TestCoin) -> MmCoinEnum { MmCoinEnum::Test(c) }
 }
 
+impl From<QtumCoin> for MmCoinEnum {
+    fn from(coin: QtumCoin) -> Self { MmCoinEnum::QtumCoin(coin) }
+}
+
 impl From<Qrc20Coin> for MmCoinEnum {
     fn from(c: Qrc20Coin) -> MmCoinEnum { MmCoinEnum::Qrc20Coin(c) }
 }
@@ -490,6 +496,7 @@ impl Deref for MmCoinEnum {
     fn deref(&self) -> &dyn MmCoin {
         match self {
             MmCoinEnum::UtxoCoin(ref c) => c,
+            MmCoinEnum::QtumCoin(ref c) => c,
             MmCoinEnum::Qrc20Coin(ref c) => c,
             MmCoinEnum::EthCoin(ref c) => c,
             MmCoinEnum::Test(ref c) => c,
@@ -517,6 +524,7 @@ impl CoinsContext {
 #[serde(tag = "type", content = "protocol_data")]
 pub enum CoinProtocol {
     UTXO,
+    QTUM,
     QRC20 { platform: String, contract_address: String },
     ETH,
     ERC20 { platform: String, contract_address: String },
@@ -689,6 +697,7 @@ pub async fn lp_coininit(ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoin
         CoinProtocol::UTXO => {
             try_s!(utxo_standard_coin_from_conf_and_request(ctx, ticker, coins_en, req, secret).await).into()
         },
+        CoinProtocol::QTUM => try_s!(qtum_coin_from_conf_and_request(ctx, ticker, coins_en, req, secret).await).into(),
         CoinProtocol::ETH | CoinProtocol::ERC20 { .. } => {
             try_s!(eth_coin_from_conf_and_request(ctx, ticker, coins_en, req, secret, protocol).await).into()
         },
