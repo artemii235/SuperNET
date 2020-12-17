@@ -19,7 +19,6 @@ The current state can be considered as very early alpha.
     rustup default nightly-2020-10-25
     rustup component add rustfmt-preview
     ```
-1. (Optional) Win: run `marketmaker_build_depends.cmd` to build dependencies.
 1. Run `cargo build --features native` (or `cargo build --features native -vv` to get verbose build output).
 
 ## Help and troubleshooting
