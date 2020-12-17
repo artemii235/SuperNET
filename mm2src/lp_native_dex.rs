@@ -25,17 +25,14 @@ use mm2_libp2p::start_gossipsub;
 use rand::rngs::SmallRng;
 use rand::{random, Rng, SeedableRng};
 use serde_json::{self as json};
-use std::ffi::CString;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, ToSocketAddrs};
-use std::os::raw::c_char;
 use std::path::Path;
 use std::str;
 use std::str::from_utf8;
 
 use crate::common::executor::{spawn, spawn_boxed, Timer};
-#[cfg(feature = "native")] use crate::common::lp;
 use crate::common::mm_ctx::{MmArc, MmCtx};
 use crate::common::privkey::key_pair_from_seed;
 use crate::common::{slurp_url, MM_DATETIME, MM_VERSION};
@@ -66,13 +63,13 @@ pub fn lp_ports(netid: u16) -> Result<(u16, u16, u16), String> {
 /// Invokes `OS_ensure_directory`,
 /// then prints an error and returns `false` if the directory is not writable.
 fn ensure_dir_is_writable(dir_path: &Path) -> bool {
-    #[cfg(feature = "native")]
-    unsafe {
-        let c_dir_path = unwrap!(dir_path.to_str());
-        let c_dir_path = unwrap!(CString::new(c_dir_path));
-        lp::OS_ensure_directory(c_dir_path.as_ptr() as *mut c_char)
-    };
-
+    if dir_path.exists() && !dir_path.is_dir() {
+        common::log::error!("The {} is not a directory", dir_path.display());
+        return false;
+    } else if let Err(e) = std::fs::create_dir_all(dir_path) {
+        common::log::error!("Could not create dir {}, error {}", dir_path.display(), e);
+        return false;
+    }
     let r: [u8; 32] = random();
     let mut check: Vec<u8> = Vec::with_capacity(r.len());
     let fname = dir_path.join("checkval");
@@ -129,13 +126,6 @@ fn ensure_file_is_writable(file_path: &Path) -> Result<(), String> {
 fn fix_directories(ctx: &MmCtx) -> Result<(), String> {
     let dbdir = ctx.dbdir();
     try_s!(std::fs::create_dir_all(&dbdir));
-
-    unsafe {
-        let dbdir = ctx.dbdir();
-        let dbdir = try_s!(dbdir.to_str().ok_or("Bad dbdir"));
-        let dbdir = try_s!(CString::new(dbdir));
-        lp::OS_ensure_directory(dbdir.as_ptr() as *mut c_char)
-    };
 
     if !ensure_dir_is_writable(&dbdir.join("SWAPS")) {
         return ERR!("SWAPS db dir is not writable");
