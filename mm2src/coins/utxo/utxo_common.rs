@@ -1940,6 +1940,9 @@ where
     }
 }
 
+/// Swap contract address is not used by standard UTXO coins.
+pub fn swap_contract_address() -> Option<BytesJson> { None }
+
 /// Convert satoshis to BigDecimal amount of coin units
 pub fn big_decimal_from_sat(satoshis: i64, decimals: u8) -> BigDecimal {
     BigDecimal::from(satoshis) / BigDecimal::from(10u64.pow(decimals as u32))

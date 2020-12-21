@@ -145,6 +145,7 @@ impl SwapOps for UtxoStandardCoin {
         taker_pub: &[u8],
         secret_hash: &[u8],
         amount: BigDecimal,
+        _swap_contract_address: &Option<BytesJson>,
     ) -> TransactionFut {
         utxo_common::send_maker_payment(self.clone(), time_lock, taker_pub, secret_hash, amount)
     }
@@ -155,6 +156,7 @@ impl SwapOps for UtxoStandardCoin {
         maker_pub: &[u8],
         secret_hash: &[u8],
         amount: BigDecimal,
+        _swap_contract_address: &Option<BytesJson>,
     ) -> TransactionFut {
         utxo_common::send_taker_payment(self.clone(), time_lock, maker_pub, secret_hash, amount)
     }
@@ -165,6 +167,7 @@ impl SwapOps for UtxoStandardCoin {
         time_lock: u32,
         taker_pub: &[u8],
         secret: &[u8],
+        _swap_contract_address: &Option<BytesJson>,
     ) -> TransactionFut {
         utxo_common::send_maker_spends_taker_payment(self.clone(), taker_payment_tx, time_lock, taker_pub, secret)
     }
@@ -175,6 +178,7 @@ impl SwapOps for UtxoStandardCoin {
         time_lock: u32,
         maker_pub: &[u8],
         secret: &[u8],
+        _swap_contract_address: &Option<BytesJson>,
     ) -> TransactionFut {
         utxo_common::send_taker_spends_maker_payment(self.clone(), maker_payment_tx, time_lock, maker_pub, secret)
     }
@@ -185,6 +189,7 @@ impl SwapOps for UtxoStandardCoin {
         time_lock: u32,
         maker_pub: &[u8],
         secret_hash: &[u8],
+        _swap_contract_address: &Option<BytesJson>,
     ) -> TransactionFut {
         utxo_common::send_taker_refunds_payment(self.clone(), taker_payment_tx, time_lock, maker_pub, secret_hash)
     }
@@ -195,6 +200,7 @@ impl SwapOps for UtxoStandardCoin {
         time_lock: u32,
         taker_pub: &[u8],
         secret_hash: &[u8],
+        _swap_contract_address: &Option<BytesJson>,
     ) -> TransactionFut {
         utxo_common::send_maker_refunds_payment(self.clone(), maker_payment_tx, time_lock, taker_pub, secret_hash)
     }
@@ -215,6 +221,7 @@ impl SwapOps for UtxoStandardCoin {
         maker_pub: &[u8],
         priv_bn_hash: &[u8],
         amount: BigDecimal,
+        _swap_contract_address: &Option<BytesJson>,
     ) -> Box<dyn Future<Item = (), Error = String> + Send> {
         utxo_common::validate_maker_payment(self, payment_tx, time_lock, maker_pub, priv_bn_hash, amount)
     }
@@ -226,6 +233,7 @@ impl SwapOps for UtxoStandardCoin {
         taker_pub: &[u8],
         priv_bn_hash: &[u8],
         amount: BigDecimal,
+        _swap_contract_address: &Option<BytesJson>,
     ) -> Box<dyn Future<Item = (), Error = String> + Send> {
         utxo_common::validate_taker_payment(self, payment_tx, time_lock, taker_pub, priv_bn_hash, amount)
     }
@@ -236,6 +244,7 @@ impl SwapOps for UtxoStandardCoin {
         other_pub: &[u8],
         secret_hash: &[u8],
         _search_from_block: u64,
+        _swap_contract_address: &Option<BytesJson>,
     ) -> Box<dyn Future<Item = Option<TransactionEnum>, Error = String> + Send> {
         utxo_common::check_if_my_payment_sent(self.clone(), time_lock, other_pub, secret_hash)
     }
@@ -247,6 +256,7 @@ impl SwapOps for UtxoStandardCoin {
         secret_hash: &[u8],
         tx: &[u8],
         search_from_block: u64,
+        _swap_contract_address: &Option<BytesJson>,
     ) -> Result<Option<FoundSwapTxSpend>, String> {
         utxo_common::search_for_swap_tx_spend_my(
             &self.utxo_arc,
@@ -265,6 +275,7 @@ impl SwapOps for UtxoStandardCoin {
         secret_hash: &[u8],
         tx: &[u8],
         search_from_block: u64,
+        _swap_contract_address: &Option<BytesJson>,
     ) -> Result<Option<FoundSwapTxSpend>, String> {
         utxo_common::search_for_swap_tx_spend_other(
             &self.utxo_arc,
@@ -316,7 +327,13 @@ impl MarketCoinOps for UtxoStandardCoin {
         )
     }
 
-    fn wait_for_tx_spend(&self, transaction: &[u8], wait_until: u64, from_block: u64) -> TransactionFut {
+    fn wait_for_tx_spend(
+        &self,
+        transaction: &[u8],
+        wait_until: u64,
+        from_block: u64,
+        _swap_contract_address: &Option<BytesJson>,
+    ) -> TransactionFut {
         utxo_common::wait_for_tx_spend(&self.utxo_arc, transaction, wait_until, from_block)
     }
 
@@ -379,4 +396,6 @@ impl MmCoin for UtxoStandardCoin {
     fn my_unspendable_balance(&self) -> Box<dyn Future<Item = BigDecimal, Error = String> + Send> {
         Box::new(utxo_common::my_unspendable_balance(self.clone()).boxed().compat())
     }
+
+    fn swap_contract_address(&self) -> Option<BytesJson> { utxo_common::swap_contract_address() }
 }

@@ -153,12 +153,26 @@ fn test_validate_maker_payment() {
     let amount = BigDecimal::from_str("0.2").unwrap();
 
     unwrap!(coin
-        .validate_maker_payment(&payment_tx, time_lock, &maker_pub, secret_hash, amount.clone())
+        .validate_maker_payment(
+            &payment_tx,
+            time_lock,
+            &maker_pub,
+            secret_hash,
+            amount.clone(),
+            &coin.swap_contract_address()
+        )
         .wait());
 
     let maker_pub_dif = hex::decode("022b00078841f37b5d30a6a1defb82b3af4d4e2d24dd4204d41f0c9ce1e875de1a").unwrap();
     let error = unwrap!(coin
-        .validate_maker_payment(&payment_tx, time_lock, &maker_pub_dif, secret_hash, amount.clone())
+        .validate_maker_payment(
+            &payment_tx,
+            time_lock,
+            &maker_pub_dif,
+            secret_hash,
+            amount.clone(),
+            &coin.swap_contract_address()
+        )
         .wait()
         .err());
     log!("error: "[error]);
@@ -168,7 +182,14 @@ fn test_validate_maker_payment() {
 
     let amount_dif = BigDecimal::from_str("0.3").unwrap();
     let error = unwrap!(coin
-        .validate_maker_payment(&payment_tx, time_lock, &maker_pub, secret_hash, amount_dif)
+        .validate_maker_payment(
+            &payment_tx,
+            time_lock,
+            &maker_pub,
+            secret_hash,
+            amount_dif,
+            &coin.swap_contract_address()
+        )
         .wait()
         .err());
     log!("error: "[error]);
@@ -176,7 +197,14 @@ fn test_validate_maker_payment() {
 
     let secret_hash_dif = &[2; 20];
     let error = unwrap!(coin
-        .validate_maker_payment(&payment_tx, time_lock, &maker_pub, secret_hash_dif, amount.clone())
+        .validate_maker_payment(
+            &payment_tx,
+            time_lock,
+            &maker_pub,
+            secret_hash_dif,
+            amount.clone(),
+            &coin.swap_contract_address()
+        )
         .wait()
         .err());
     log!("error: "[error]);
@@ -184,7 +212,14 @@ fn test_validate_maker_payment() {
 
     let time_lock_dif = 123;
     let error = unwrap!(coin
-        .validate_maker_payment(&payment_tx, time_lock_dif, &maker_pub, secret_hash, amount)
+        .validate_maker_payment(
+            &payment_tx,
+            time_lock_dif,
+            &maker_pub,
+            secret_hash,
+            amount,
+            &coin.swap_contract_address()
+        )
         .wait()
         .err());
     log!("error: "[error]);
@@ -323,7 +358,9 @@ fn test_wait_for_tx_spend_malicious() {
     let payment_tx = hex::decode("01000000016601daa208531d20532c460d0c86b74a275f4a126bbffcf4eafdf33835af2859010000006a47304402205825657548bc1b5acf3f4bb2f89635a02b04f3228cd08126e63c5834888e7ac402207ca05fa0a629a31908a97a508e15076e925f8e621b155312b7526a6666b06a76012103693bff1b39e8b5a306810023c29b95397eb395530b106b1820ea235fd81d9ce9ffffffff020000000000000000e35403a0860101284cc49b415b2a8620ad3b72361a5aeba5dffd333fb64750089d935a1ec974d6a91ef4f24ff6ba0000000000000000000000000000000000000000000000000000000001312d00000000000000000000000000d362e096e873eb7907e205fadc6175c6fec7bc44000000000000000000000000783cf0be521101942da509846ea476e683aad8324b6b2e5444c2639cc0fb7bcea5afba3f3cdce239000000000000000000000000000000000000000000000000000000000000000000000000000000005f855c7614ba8b71f3544b93e2f681f996da519a98ace0107ac2203de400000000001976a9149e032d4b0090a11dc40fe6c47601499a35d55fbb88ac415d855f").unwrap();
     let wait_until = (now_ms() / 1000) + 1;
     let from_block = 696245;
-    let found = unwrap!(coin.wait_for_tx_spend(&payment_tx, wait_until, from_block).wait());
+    let found = unwrap!(coin
+        .wait_for_tx_spend(&payment_tx, wait_until, from_block, &coin.swap_contract_address())
+        .wait());
 
     let spend_tx = match found {
         TransactionEnum::UtxoTx(tx) => tx,
@@ -683,7 +720,14 @@ fn test_validate_maker_payment_malicious() {
     let secret_hash = &*dhash160(secret);
     let amount = BigDecimal::from_str("1").unwrap();
     let error = coin
-        .validate_maker_payment(&payment_tx, time_lock, &maker_pub, secret_hash, amount)
+        .validate_maker_payment(
+            &payment_tx,
+            time_lock,
+            &maker_pub,
+            secret_hash,
+            amount,
+            &coin.swap_contract_address(),
+        )
         .wait()
         .err()
         .expect("'erc20Payment' was called from another swap contract, expected an error");

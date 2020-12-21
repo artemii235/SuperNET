@@ -81,7 +81,7 @@ mod docker_tests {
     use std::env;
     use std::io::{BufRead, BufReader};
     use std::process::Command;
-    use std::sync::Mutex;
+    use std::sync::{Mutex, MutexGuard};
     use std::thread;
     use std::time::Duration;
     use test::{test_main, StaticBenchFn, StaticTestFn, TestDescAndFn};
@@ -279,21 +279,29 @@ mod docker_tests {
         static ref COINS_LOCK: Mutex<()> = Mutex::new(());
     }
 
-    // generate random privkey, create a coin and fill it's address with 1000 coins
-    fn generate_coin_with_random_privkey(ticker: &str, balance: BigDecimal) -> (MmArc, UtxoStandardCoin, [u8; 32]) {
-        // prevent concurrent initialization since daemon RPC returns errors if send_to_address
-        // is called concurrently (insufficient funds) and it also may return other errors
-        // if previous transaction is not confirmed yet
+    /// Build asset `UtxoStandardCoin` from ticker and privkey without filling the balance.
+    ///
+    /// Note this function takes the locked `COINS_LOCK` to prevent concurrent initialization.
+    /// It's required since daemon RPC returns errors if send_to_address
+    /// is called concurrently (insufficient funds) and it also may return other errors
+    /// if previous transaction is not confirmed yet.
+    fn asset_coin_from_privkey(ticker: &str, priv_key: &[u8], _lock: &MutexGuard<'_, ()>) -> (MmArc, UtxoStandardCoin) {
         let ctx = MmCtxBuilder::new().into_mm_arc();
-        let _lock = unwrap!(COINS_LOCK.lock());
-        let timeout = (now_ms() / 1000) + 120; // timeout if test takes more than 120 seconds to run
         let conf = json!({"asset":ticker,"txversion":4,"overwintered":1,"txfee":1000,"network":"regtest"});
         let req = json!({"method":"enable"});
-        let priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
         let coin = unwrap!(block_on(utxo_standard_coin_from_conf_and_request(
-            &ctx, ticker, &conf, &req, &priv_key
+            &ctx, ticker, &conf, &req, priv_key
         )));
         import_address(&coin);
+        (ctx, coin)
+    }
+
+    // generate random privkey, create a coin and fill it's address with 1000 coins
+    fn generate_coin_with_random_privkey(ticker: &str, balance: BigDecimal) -> (MmArc, UtxoStandardCoin, [u8; 32]) {
+        let lock = unwrap!(COINS_LOCK.lock());
+        let priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
+        let (ctx, coin) = asset_coin_from_privkey(ticker, &priv_key, &lock);
+        let timeout = (now_ms() / 1000) + 120; // timeout if test takes more than 120 seconds to run
         fill_address(&coin, balance, timeout);
         (ctx, coin, priv_key)
     }
@@ -344,14 +352,14 @@ mod docker_tests {
 
         let time_lock = (now_ms() / 1000) as u32 - 3600;
         let tx = coin
-            .send_taker_payment(time_lock, &*coin.my_public_key(), &[0; 20], 1.into())
+            .send_taker_payment(time_lock, &*coin.my_public_key(), &[0; 20], 1.into(), &None)
             .wait()
             .unwrap();
 
         unwrap!(coin.wait_for_confirmations(&tx.tx_hex(), 1, false, timeout, 1).wait());
 
         let refund_tx = coin
-            .send_taker_refunds_payment(&tx.tx_hex(), time_lock, &*coin.my_public_key(), &[0; 20])
+            .send_taker_refunds_payment(&tx.tx_hex(), time_lock, &*coin.my_public_key(), &[0; 20], &None)
             .wait()
             .unwrap();
 
@@ -365,6 +373,7 @@ mod docker_tests {
             &[0; 20],
             &tx.tx_hex(),
             0,
+            &None
         )));
         assert_eq!(FoundSwapTxSpend::Refunded(refund_tx), found);
     }
@@ -376,14 +385,14 @@ mod docker_tests {
 
         let time_lock = (now_ms() / 1000) as u32 - 3600;
         let tx = coin
-            .send_maker_payment(time_lock, &*coin.my_public_key(), &[0; 20], 1.into())
+            .send_maker_payment(time_lock, &*coin.my_public_key(), &[0; 20], 1.into(), &None)
             .wait()
             .unwrap();
 
         unwrap!(coin.wait_for_confirmations(&tx.tx_hex(), 1, false, timeout, 1).wait());
 
         let refund_tx = coin
-            .send_maker_refunds_payment(&tx.tx_hex(), time_lock, &*coin.my_public_key(), &[0; 20])
+            .send_maker_refunds_payment(&tx.tx_hex(), time_lock, &*coin.my_public_key(), &[0; 20], &None)
             .wait()
             .unwrap();
 
@@ -397,6 +406,7 @@ mod docker_tests {
             &[0; 20],
             &tx.tx_hex(),
             0,
+            &None
         )));
         assert_eq!(FoundSwapTxSpend::Refunded(refund_tx), found);
     }
@@ -409,14 +419,14 @@ mod docker_tests {
 
         let time_lock = (now_ms() / 1000) as u32 - 3600;
         let tx = coin
-            .send_taker_payment(time_lock, &*coin.my_public_key(), &*dhash160(&secret), 1.into())
+            .send_taker_payment(time_lock, &*coin.my_public_key(), &*dhash160(&secret), 1.into(), &None)
             .wait()
             .unwrap();
 
         unwrap!(coin.wait_for_confirmations(&tx.tx_hex(), 1, false, timeout, 1).wait());
 
         let spend_tx = coin
-            .send_maker_spends_taker_payment(&tx.tx_hex(), time_lock, &*coin.my_public_key(), &secret)
+            .send_maker_spends_taker_payment(&tx.tx_hex(), time_lock, &*coin.my_public_key(), &secret, &None)
             .wait()
             .unwrap();
 
@@ -430,6 +440,7 @@ mod docker_tests {
             &*dhash160(&secret),
             &tx.tx_hex(),
             0,
+            &None
         )));
         assert_eq!(FoundSwapTxSpend::Spent(spend_tx), found);
     }
@@ -442,14 +453,14 @@ mod docker_tests {
 
         let time_lock = (now_ms() / 1000) as u32 - 3600;
         let tx = coin
-            .send_maker_payment(time_lock, &*coin.my_public_key(), &*dhash160(&secret), 1.into())
+            .send_maker_payment(time_lock, &*coin.my_public_key(), &*dhash160(&secret), 1.into(), &None)
             .wait()
             .unwrap();
 
         unwrap!(coin.wait_for_confirmations(&tx.tx_hex(), 1, false, timeout, 1).wait());
 
         let spend_tx = coin
-            .send_taker_spends_maker_payment(&tx.tx_hex(), time_lock, &*coin.my_public_key(), &secret)
+            .send_taker_spends_maker_payment(&tx.tx_hex(), time_lock, &*coin.my_public_key(), &secret, &None)
             .wait()
             .unwrap();
 
@@ -463,6 +474,7 @@ mod docker_tests {
             &*dhash160(&secret),
             &tx.tx_hex(),
             0,
+            &None
         )));
         assert_eq!(FoundSwapTxSpend::Spent(spend_tx), found);
     }

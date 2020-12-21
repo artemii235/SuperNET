@@ -5,9 +5,13 @@ use coins::qrc20::{qrc20_coin_from_conf_and_request, Qrc20Coin};
 use coins::utxo::qtum::QtumBasedCoin;
 use coins::utxo::qtum::{qtum_coin_from_conf_and_request, QtumCoin};
 use coins::utxo::sat_from_big_decimal;
-use coins::TransactionEnum;
+use coins::{MmCoin, TransactionEnum};
+use common::for_tests::{check_my_swap_status, check_recent_swaps, check_stats_swap_status, MAKER_ERROR_EVENTS,
+                        MAKER_SUCCESS_EVENTS, TAKER_ERROR_EVENTS, TAKER_SUCCESS_EVENTS};
+use common::mm_ctx::MmArc;
 use common::temp_dir;
 use ethereum_types::H160;
+use http::StatusCode;
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -112,12 +116,13 @@ pub fn qtum_docker_node<'a>(docker: &'a Cli, port: u16) -> UtxoDockerNode<'a> {
     }
 }
 
-// generate random privkey, create a QRC20 coin and fill it's address with the specified balance
-fn generate_qrc20_coin_with_random_privkey(
-    ticker: &str,
-    qtum_balance: BigDecimal,
-    qrc20_balance: BigDecimal,
-) -> (MmArc, Qrc20Coin, [u8; 32]) {
+/// Build `Qrc20Coin` from ticker and privkey without filling the balance.
+///
+/// Note this function takes the locked `COINS_LOCK` to prevent concurrent initialization.
+/// It's required since daemon RPC returns errors if send_to_address
+/// is called concurrently (insufficient funds) and it also may return other errors
+/// if previous transaction is not confirmed yet.
+fn qrc20_coin_from_privkey(ticker: &str, priv_key: &[u8], _lock: &MutexGuard<'_, ()>) -> (MmArc, Qrc20Coin) {
     let (contract_address, swap_contract_address) = unsafe {
         let contract_address = match ticker {
             "QICK" => QICK_TOKEN_ADDRESS
@@ -137,11 +142,9 @@ fn generate_qrc20_coin_with_random_privkey(
     };
     let platform = "QTUM";
     let ctx = MmCtxBuilder::new().into_mm_arc();
-    let _lock = unwrap!(COINS_LOCK.lock());
-    let timeout = (now_ms() / 1000) + 40; // timeout if test takes more than 40 seconds to run
     let confpath = unsafe { QTUM_CONF_PATH.as_ref().expect("Qtum config is not set yet") };
     let conf = json!({
-        "coin":"QRC20",
+        "coin":ticker,
         "decimals": 8,
         "required_confirmations":0,
         "pubtype":120,
@@ -157,7 +160,6 @@ fn generate_qrc20_coin_with_random_privkey(
         "method": "enable",
         "swap_contract_address": format!("{:#02x}", swap_contract_address),
     });
-    let priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
     let coin = unwrap!(block_on(qrc20_coin_from_conf_and_request(
         &ctx,
         ticker,
@@ -169,6 +171,20 @@ fn generate_qrc20_coin_with_random_privkey(
     )));
 
     import_address(&coin);
+    (ctx, coin)
+}
+
+// generate random privkey, create a QRC20 coin and fill it's address with the specified balance
+fn generate_qrc20_coin_with_random_privkey(
+    ticker: &str,
+    qtum_balance: BigDecimal,
+    qrc20_balance: BigDecimal,
+) -> (MmArc, Qrc20Coin, [u8; 32]) {
+    let lock = unwrap!(COINS_LOCK.lock());
+    let priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
+    let (ctx, coin) = qrc20_coin_from_privkey(ticker, &priv_key, &lock);
+
+    let timeout = (now_ms() / 1000) + 40; // timeout if test takes more than 40 seconds to run
     fill_address(&coin, qtum_balance, timeout);
     fill_qrc20_address(&coin, qrc20_balance, timeout);
     (ctx, coin, priv_key)
@@ -222,6 +238,224 @@ fn fill_qrc20_address(coin: &Qrc20Coin, amount: BigDecimal, timeout: u64) {
     unwrap!(coin.wait_for_confirmations(&tx_bytes, 1, false, timeout, 1).wait());
 }
 
+pub async fn enable_qrc20_native(mm: &MarketMakerIt, coin: &str) -> Json {
+    let swap_contract_address = unsafe {
+        QRC20_SWAP_CONTRACT_ADDRESS
+            .expect("QRC20_SWAP_CONTRACT_ADDRESS must be set already")
+            .clone()
+    };
+
+    let native = unwrap!(
+        mm.rpc(json! ({
+            "userpass": mm.userpass,
+            "method": "enable",
+            "coin": coin,
+            "swap_contract_address": format!("{:#02x}", swap_contract_address),
+            "mm2": 1,
+        }))
+        .await
+    );
+    assert_eq!(native.0, StatusCode::OK, "'enable' failed: {}", native.1);
+    unwrap!(json::from_str(&native.1))
+}
+
+fn qrc20_coin_conf_item(ticker: &str) -> Json {
+    let contract_address = unsafe {
+        match ticker {
+            "QICK" => QICK_TOKEN_ADDRESS
+                .expect("QICK_TOKEN_ADDRESS must be set already")
+                .clone(),
+            "QORTY" => QORTY_TOKEN_ADDRESS
+                .expect("QORTY_TOKEN_ADDRESS must be set already")
+                .clone(),
+            _ => panic!("Expected either QICK or QORTY ticker, found {}", ticker),
+        }
+    };
+    let contract_address = format!("{:#02x}", contract_address);
+
+    let confpath = unsafe { QTUM_CONF_PATH.as_ref().expect("Qtum config is not set yet") };
+    json!({
+        "coin":ticker,
+        "required_confirmations":1,
+        "pubtype":120,
+        "p2shtype":50,
+        "wiftype":128,
+        "segwit":true,
+        "mature_confirmations":500,
+        "confpath":confpath,
+        "network":"regtest",
+        "protocol":{"type":"QRC20","protocol_data":{"platform":"QTUM","contract_address":contract_address}}})
+}
+
+fn trade_base_rel((base, rel): (&str, &str)) {
+    /// Generate a wallet with the random private key and fill the wallet with Qtum (required by gas_fee) and specified in `ticker` coin.
+    fn generate_and_fill_priv_key(ticker: &str) -> [u8; 32] {
+        let lock = unwrap!(COINS_LOCK.lock());
+        let priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
+        let timeout = (now_ms() / 1000) + 80; // timeout if test takes more than 40 seconds to run
+
+        match ticker {
+            "QICK" | "QORTY" => {
+                let (_ctx, coin) = qrc20_coin_from_privkey(ticker, &priv_key, &lock);
+                fill_address(&coin, 10.into(), timeout);
+                fill_qrc20_address(&coin, 10.into(), timeout);
+            },
+            "MYCOIN" | "MYCOIN1" => {
+                let (_ctx, coin) = asset_coin_from_privkey(ticker, &priv_key, &lock);
+                fill_address(&coin, 10.into(), timeout);
+                // also fill the Qtum
+                let (_ctx, coin) = qrc20_coin_from_privkey("QICK", &priv_key, &lock);
+                fill_address(&coin, 10.into(), timeout);
+            },
+            _ => panic!("Expected either QICK or QORTY or MYCOIN or MYCOIN1, found {}", ticker),
+        }
+
+        priv_key
+    }
+
+    let bob_priv_key = generate_and_fill_priv_key(base);
+    let alice_priv_key = generate_and_fill_priv_key(rel);
+
+    let coins = json! ([
+        qrc20_coin_conf_item("QICK"),
+        qrc20_coin_conf_item("QORTY"),
+        {"coin":"MYCOIN","asset":"MYCOIN","required_confirmations":0,"txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
+        {"coin":"MYCOIN1","asset":"MYCOIN1","required_confirmations":0,"txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
+    ]);
+    let mut mm_bob = unwrap!(MarketMakerIt::start(
+        json! ({
+            "gui": "nogui",
+            "netid": 9000,
+            "dht": "on",  // Enable DHT without delay.
+            "passphrase": format!("0x{}", hex::encode(bob_priv_key)),
+            "coins": coins,
+            "rpc_password": "pass",
+            "i_am_seed": true,
+        }),
+        "pass".to_string(),
+        None,
+    ));
+    let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
+    unwrap!(block_on(
+        mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
+    ));
+
+    let mut mm_alice = unwrap!(MarketMakerIt::start(
+        json! ({
+            "gui": "nogui",
+            "netid": 9000,
+            "dht": "on",  // Enable DHT without delay.
+            "passphrase": format!("0x{}", hex::encode(alice_priv_key)),
+            "coins": coins,
+            "rpc_password": "pass",
+            "seednodes": vec![format!("{}", mm_bob.ip)],
+        }),
+        "pass".to_string(),
+        None,
+    ));
+    let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
+    unwrap!(block_on(
+        mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
+    ));
+
+    log!([block_on(enable_qrc20_native(&mm_bob, "QICK"))]);
+    log!([block_on(enable_qrc20_native(&mm_bob, "QORTY"))]);
+    log!([block_on(enable_native(&mm_bob, "MYCOIN", vec![]))]);
+    log!([block_on(enable_native(&mm_bob, "MYCOIN1", vec![]))]);
+
+    log!([block_on(enable_qrc20_native(&mm_alice, "QICK"))]);
+    log!([block_on(enable_qrc20_native(&mm_alice, "QORTY"))]);
+    log!([block_on(enable_native(&mm_alice, "MYCOIN", vec![]))]);
+    log!([block_on(enable_native(&mm_alice, "MYCOIN1", vec![]))]);
+    let rc = unwrap!(block_on(mm_bob.rpc(json! ({
+        "userpass": mm_bob.userpass,
+        "method": "setprice",
+        "base": base,
+        "rel": rel,
+        "price": 1,
+        "volume": "3",
+    }))));
+    assert!(rc.0.is_success(), "!setprice: {}", rc.1);
+
+    thread::sleep(Duration::from_secs(12));
+
+    log!("Issue alice " (base) "/" (rel) " buy request");
+    let rc = unwrap!(block_on(mm_alice.rpc(json! ({
+        "userpass": mm_alice.userpass,
+        "method": "buy",
+        "base": base,
+        "rel": rel,
+        "price": 1,
+        "volume": "2",
+    }))));
+    assert!(rc.0.is_success(), "!buy: {}", rc.1);
+    let buy_json: Json = unwrap!(serde_json::from_str(&rc.1));
+    let uuid = buy_json["result"]["uuid"].as_str().unwrap().to_owned();
+
+    // ensure the swaps are started
+    unwrap!(block_on(mm_bob.wait_for_log(22., |log| {
+        log.contains(&format!("Entering the maker_swap_loop {}/{}", base, rel))
+    })));
+    unwrap!(block_on(mm_alice.wait_for_log(22., |log| {
+        log.contains(&format!("Entering the taker_swap_loop {}/{}", base, rel))
+    })));
+
+    // ensure the swaps are finished
+    unwrap!(block_on(mm_bob.wait_for_log(600., |log| {
+        log.contains(&format!("[swap uuid={}] Finished", uuid))
+    })));
+    unwrap!(block_on(mm_alice.wait_for_log(600., |log| {
+        log.contains(&format!("[swap uuid={}] Finished", uuid))
+    })));
+
+    log!("Checking alice/taker status..");
+    block_on(check_my_swap_status(
+        &mm_alice,
+        &uuid,
+        &TAKER_SUCCESS_EVENTS,
+        &TAKER_ERROR_EVENTS,
+        "2".parse().unwrap(),
+        "2".parse().unwrap(),
+    ));
+
+    log!("Checking bob/maker status..");
+    block_on(check_my_swap_status(
+        &mm_bob,
+        &uuid,
+        &MAKER_SUCCESS_EVENTS,
+        &MAKER_ERROR_EVENTS,
+        "2".parse().unwrap(),
+        "2".parse().unwrap(),
+    ));
+
+    log!("Waiting 3 seconds for nodes to broadcast their swaps data..");
+    thread::sleep(Duration::from_secs(3));
+
+    log!("Checking alice status..");
+    block_on(check_stats_swap_status(
+        &mm_alice,
+        &uuid,
+        &MAKER_SUCCESS_EVENTS,
+        &TAKER_SUCCESS_EVENTS,
+    ));
+
+    log!("Checking bob status..");
+    block_on(check_stats_swap_status(
+        &mm_bob,
+        &uuid,
+        &MAKER_SUCCESS_EVENTS,
+        &TAKER_SUCCESS_EVENTS,
+    ));
+
+    log!("Checking alice recent swaps..");
+    block_on(check_recent_swaps(&mm_alice, 1));
+    log!("Checking bob recent swaps..");
+    block_on(check_recent_swaps(&mm_bob, 1));
+
+    unwrap!(block_on(mm_bob.stop()));
+    unwrap!(block_on(mm_alice.stop()));
+}
+
 #[test]
 fn test_taker_spends_maker_payment() {
     let (_ctx, maker_coin, _priv_key) = generate_qrc20_coin_with_random_privkey("QICK", 20.into(), 10.into());
@@ -239,7 +473,13 @@ fn test_taker_spends_maker_payment() {
     let amount = BigDecimal::from(0.2);
 
     let payment = maker_coin
-        .send_maker_payment(timelock, taker_pub, secret_hash, amount.clone())
+        .send_maker_payment(
+            timelock,
+            taker_pub,
+            secret_hash,
+            amount.clone(),
+            &maker_coin.swap_contract_address(),
+        )
         .wait()
         .unwrap();
     let payment_tx_hash = payment.tx_hash();
@@ -255,11 +495,24 @@ fn test_taker_spends_maker_payment() {
         .wait());
 
     unwrap!(taker_coin
-        .validate_maker_payment(&payment_tx_hex, timelock, maker_pub, secret_hash, amount.clone())
+        .validate_maker_payment(
+            &payment_tx_hex,
+            timelock,
+            maker_pub,
+            secret_hash,
+            amount.clone(),
+            &taker_coin.swap_contract_address(),
+        )
         .wait());
 
     let spend = unwrap!(taker_coin
-        .send_taker_spends_maker_payment(&payment_tx_hex, timelock, maker_pub, secret)
+        .send_taker_spends_maker_payment(
+            &payment_tx_hex,
+            timelock,
+            maker_pub,
+            secret,
+            &taker_coin.swap_contract_address(),
+        )
         .wait());
     let spend_tx_hash = spend.tx_hash();
     let spend_tx_hex = spend.tx_hex();
@@ -293,7 +546,13 @@ fn test_maker_spends_taker_payment() {
     let amount = BigDecimal::from(0.2);
 
     let payment = taker_coin
-        .send_taker_payment(timelock, maker_pub, secret_hash, amount.clone())
+        .send_taker_payment(
+            timelock,
+            maker_pub,
+            secret_hash,
+            amount.clone(),
+            &taker_coin.swap_contract_address(),
+        )
         .wait()
         .unwrap();
     let payment_tx_hash = payment.tx_hash();
@@ -309,11 +568,24 @@ fn test_maker_spends_taker_payment() {
         .wait());
 
     unwrap!(maker_coin
-        .validate_taker_payment(&payment_tx_hex, timelock, taker_pub, secret_hash, amount.clone())
+        .validate_taker_payment(
+            &payment_tx_hex,
+            timelock,
+            taker_pub,
+            secret_hash,
+            amount.clone(),
+            &maker_coin.swap_contract_address(),
+        )
         .wait());
 
     let spend = unwrap!(maker_coin
-        .send_maker_spends_taker_payment(&payment_tx_hex, timelock, taker_pub, secret)
+        .send_maker_spends_taker_payment(
+            &payment_tx_hex,
+            timelock,
+            taker_pub,
+            secret,
+            &maker_coin.swap_contract_address(),
+        )
         .wait());
     let spend_tx_hash = spend.tx_hash();
     let spend_tx_hex = spend.tx_hex();
@@ -342,7 +614,13 @@ fn test_maker_refunds_payment() {
     let amount = BigDecimal::from_str("0.2").unwrap();
 
     let payment = coin
-        .send_maker_payment(timelock, &taker_pub, secret_hash, amount.clone())
+        .send_maker_payment(
+            timelock,
+            &taker_pub,
+            secret_hash,
+            amount.clone(),
+            &coin.swap_contract_address(),
+        )
         .wait()
         .unwrap();
     let payment_tx_hash = payment.tx_hash();
@@ -361,7 +639,13 @@ fn test_maker_refunds_payment() {
     assert_eq!(expected_balance.clone() - amount, balance_after_payment);
 
     let refund = unwrap!(coin
-        .send_maker_refunds_payment(&payment_tx_hex, timelock, &taker_pub, secret_hash)
+        .send_maker_refunds_payment(
+            &payment_tx_hex,
+            timelock,
+            &taker_pub,
+            secret_hash,
+            &coin.swap_contract_address(),
+        )
         .wait());
     let refund_tx_hash = refund.tx_hash();
     let refund_tx_hex = refund.tx_hex();
@@ -388,7 +672,13 @@ fn test_taker_refunds_payment() {
     let amount = BigDecimal::from_str("0.2").unwrap();
 
     let payment = coin
-        .send_taker_payment(timelock, &maker_pub, secret_hash, amount.clone())
+        .send_taker_payment(
+            timelock,
+            &maker_pub,
+            secret_hash,
+            amount.clone(),
+            &coin.swap_contract_address(),
+        )
         .wait()
         .unwrap();
     let payment_tx_hash = payment.tx_hash();
@@ -407,7 +697,13 @@ fn test_taker_refunds_payment() {
     assert_eq!(expected_balance.clone() - amount, balance_after_payment);
 
     let refund = unwrap!(coin
-        .send_taker_refunds_payment(&payment_tx_hex, timelock, &maker_pub, secret_hash)
+        .send_taker_refunds_payment(
+            &payment_tx_hex,
+            timelock,
+            &maker_pub,
+            secret_hash,
+            &coin.swap_contract_address(),
+        )
         .wait());
     let refund_tx_hash = refund.tx_hash();
     let refund_tx_hex = refund.tx_hex();
@@ -431,7 +727,13 @@ fn test_check_if_my_payment_sent() {
     let amount = BigDecimal::from_str("0.2").unwrap();
 
     let payment = coin
-        .send_maker_payment(timelock, &taker_pub, secret_hash, amount.clone())
+        .send_maker_payment(
+            timelock,
+            &taker_pub,
+            secret_hash,
+            amount.clone(),
+            &coin.swap_contract_address(),
+        )
         .wait()
         .unwrap();
     let payment_tx_hash = payment.tx_hash();
@@ -448,7 +750,13 @@ fn test_check_if_my_payment_sent() {
 
     let search_from_block = coin.current_block().wait().expect("!current_block") - 10;
     let found = unwrap!(coin
-        .check_if_my_payment_sent(timelock, &taker_pub, secret_hash, search_from_block)
+        .check_if_my_payment_sent(
+            timelock,
+            &taker_pub,
+            secret_hash,
+            search_from_block,
+            &coin.swap_contract_address(),
+        )
         .wait());
     assert_eq!(found, Some(payment));
 }
@@ -467,7 +775,13 @@ fn test_search_for_swap_tx_spend_taker_spent() {
     let amount = BigDecimal::from(0.2);
 
     let payment = maker_coin
-        .send_maker_payment(timelock, taker_pub, secret_hash, amount.clone())
+        .send_maker_payment(
+            timelock,
+            taker_pub,
+            secret_hash,
+            amount.clone(),
+            &maker_coin.swap_contract_address(),
+        )
         .wait()
         .unwrap();
     let payment_tx_hash = payment.tx_hash();
@@ -483,7 +797,13 @@ fn test_search_for_swap_tx_spend_taker_spent() {
         .wait());
 
     let spend = unwrap!(taker_coin
-        .send_taker_spends_maker_payment(&payment_tx_hex, timelock, maker_pub, secret)
+        .send_taker_spends_maker_payment(
+            &payment_tx_hex,
+            timelock,
+            maker_pub,
+            secret,
+            &taker_coin.swap_contract_address(),
+        )
         .wait());
     let spend_tx_hash = spend.tx_hash();
     let spend_tx_hex = spend.tx_hex();
@@ -494,8 +814,14 @@ fn test_search_for_swap_tx_spend_taker_spent() {
         .wait_for_confirmations(&spend_tx_hex, confirmations, requires_nota, wait_until, check_every)
         .wait());
 
-    let actual =
-        maker_coin.search_for_swap_tx_spend_my(timelock, taker_pub, secret_hash, &payment_tx_hex, search_from_block);
+    let actual = maker_coin.search_for_swap_tx_spend_my(
+        timelock,
+        taker_pub,
+        secret_hash,
+        &payment_tx_hex,
+        search_from_block,
+        &maker_coin.swap_contract_address(),
+    );
     let expected = Ok(Some(FoundSwapTxSpend::Spent(spend)));
     assert_eq!(actual, expected);
 }
@@ -512,7 +838,13 @@ fn test_search_for_swap_tx_spend_maker_refunded() {
     let amount = BigDecimal::from(0.2);
 
     let payment = maker_coin
-        .send_maker_payment(timelock, &taker_pub, secret_hash, amount.clone())
+        .send_maker_payment(
+            timelock,
+            &taker_pub,
+            secret_hash,
+            amount.clone(),
+            &maker_coin.swap_contract_address(),
+        )
         .wait()
         .unwrap();
     let payment_tx_hash = payment.tx_hash();
@@ -528,7 +860,13 @@ fn test_search_for_swap_tx_spend_maker_refunded() {
         .wait());
 
     let refund = unwrap!(maker_coin
-        .send_maker_refunds_payment(&payment_tx_hex, timelock, &taker_pub, secret_hash)
+        .send_maker_refunds_payment(
+            &payment_tx_hex,
+            timelock,
+            &taker_pub,
+            secret_hash,
+            &maker_coin.swap_contract_address(),
+        )
         .wait());
     let refund_tx_hash = refund.tx_hash();
     let refund_tx_hex = refund.tx_hex();
@@ -539,8 +877,14 @@ fn test_search_for_swap_tx_spend_maker_refunded() {
         .wait_for_confirmations(&refund_tx_hex, confirmations, requires_nota, wait_until, check_every)
         .wait());
 
-    let actual =
-        maker_coin.search_for_swap_tx_spend_my(timelock, &taker_pub, secret_hash, &payment_tx_hex, search_from_block);
+    let actual = maker_coin.search_for_swap_tx_spend_my(
+        timelock,
+        &taker_pub,
+        secret_hash,
+        &payment_tx_hex,
+        search_from_block,
+        &maker_coin.swap_contract_address(),
+    );
     let expected = Ok(Some(FoundSwapTxSpend::Refunded(refund)));
     assert_eq!(actual, expected);
 }
@@ -557,7 +901,13 @@ fn test_search_for_swap_tx_spend_not_spent() {
     let amount = BigDecimal::from(0.2);
 
     let payment = maker_coin
-        .send_maker_payment(timelock, &taker_pub, secret_hash, amount.clone())
+        .send_maker_payment(
+            timelock,
+            &taker_pub,
+            secret_hash,
+            amount.clone(),
+            &maker_coin.swap_contract_address(),
+        )
         .wait()
         .unwrap();
     let payment_tx_hash = payment.tx_hash();
@@ -572,8 +922,14 @@ fn test_search_for_swap_tx_spend_not_spent() {
         .wait_for_confirmations(&payment_tx_hex, confirmations, requires_nota, wait_until, check_every)
         .wait());
 
-    let actual =
-        maker_coin.search_for_swap_tx_spend_my(timelock, &taker_pub, secret_hash, &payment_tx_hex, search_from_block);
+    let actual = maker_coin.search_for_swap_tx_spend_my(
+        timelock,
+        &taker_pub,
+        secret_hash,
+        &payment_tx_hex,
+        search_from_block,
+        &maker_coin.swap_contract_address(),
+    );
     // maker payment hasn't been spent or refunded yet
     assert_eq!(actual, Ok(None));
 }
@@ -592,7 +948,13 @@ fn test_wait_for_tx_spend() {
     let amount = BigDecimal::from(0.2);
 
     let payment = maker_coin
-        .send_maker_payment(timelock, taker_pub, secret_hash, amount.clone())
+        .send_maker_payment(
+            timelock,
+            taker_pub,
+            secret_hash,
+            amount.clone(),
+            &maker_coin.swap_contract_address(),
+        )
         .wait()
         .unwrap();
     let payment_tx_hash = payment.tx_hash();
@@ -610,7 +972,12 @@ fn test_wait_for_tx_spend() {
     // first try to check if the wait_for_tx_spend() returns an error correctly
     let wait_until = (now_ms() / 1000) + 5;
     let err = maker_coin
-        .wait_for_tx_spend(&payment_tx_hex, wait_until, from_block)
+        .wait_for_tx_spend(
+            &payment_tx_hex,
+            wait_until,
+            from_block,
+            &maker_coin.swap_contract_address(),
+        )
         .wait()
         .expect_err("Expected 'Waited too long' error");
     log!("error: "[err]);
@@ -625,15 +992,37 @@ fn test_wait_for_tx_spend() {
         thread::sleep(Duration::from_secs(5));
 
         let spend = unwrap!(taker_coin
-            .send_taker_spends_maker_payment(&payment_hex, timelock, &maker_pub_c, secret)
+            .send_taker_spends_maker_payment(
+                &payment_hex,
+                timelock,
+                &maker_pub_c,
+                secret,
+                &taker_coin.swap_contract_address(),
+            )
             .wait());
         unsafe { SPEND_TX = Some(spend) }
     });
 
     let wait_until = (now_ms() / 1000) + 120;
     let found = unwrap!(maker_coin
-        .wait_for_tx_spend(&payment_tx_hex, wait_until, from_block)
+        .wait_for_tx_spend(
+            &payment_tx_hex,
+            wait_until,
+            from_block,
+            &maker_coin.swap_contract_address(),
+        )
         .wait());
 
     unsafe { assert_eq!(Some(found), SPEND_TX) }
 }
+
+#[test]
+fn test_trade_qrc20() { trade_base_rel(("QICK", "QORTY")); }
+
+#[test]
+#[ignore]
+fn test_trade_qrc20_utxo() { trade_base_rel(("QICK", "MYCOIN")); }
+
+#[test]
+#[ignore]
+fn test_trade_utxo_qrc20() { trade_base_rel(("MYCOIN", "QICK")); }

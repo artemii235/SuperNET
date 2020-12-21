@@ -1,4 +1,4 @@
-use crate::eth::{self, u256_to_big_decimal, wei_from_big_decimal};
+use crate::eth::{self, u256_to_big_decimal, wei_from_big_decimal, TryToAddress};
 use crate::qrc20::rpc_clients::{ContractCallResult, LogEntry, Qrc20NativeOps, Qrc20RpcOps, TopicFilter, TxReceipt};
 use crate::utxo::qtum::QtumBasedCoin;
 use crate::utxo::rpc_clients::{ElectrumClient, NativeClient, UnspentInfo, UtxoRpcClientEnum, UtxoRpcClientOps};
@@ -546,16 +546,18 @@ impl SwapOps for Qrc20Coin {
         taker_pub: &[u8],
         secret_hash: &[u8],
         amount: BigDecimal,
+        swap_contract_address: &Option<BytesJson>,
     ) -> TransactionFut {
         let taker_addr = try_fus!(self.contract_address_from_raw_pubkey(taker_pub));
         let id = qrc20_swap_id(time_lock, secret_hash);
         let value = try_fus!(wei_from_big_decimal(&amount, self.utxo.decimals));
         let secret_hash = Vec::from(secret_hash);
+        let swap_contract_address = try_fus!(swap_contract_address.try_to_address());
 
         let selfi = self.clone();
         let fut = async move {
             selfi
-                .send_hash_time_locked_payment(id, value, time_lock, secret_hash, taker_addr)
+                .send_hash_time_locked_payment(id, value, time_lock, secret_hash, taker_addr, swap_contract_address)
                 .await
         };
         Box::new(fut.boxed().compat())
@@ -567,16 +569,18 @@ impl SwapOps for Qrc20Coin {
         maker_pub: &[u8],
         secret_hash: &[u8],
         amount: BigDecimal,
+        swap_contract_address: &Option<BytesJson>,
     ) -> TransactionFut {
         let maker_addr = try_fus!(self.contract_address_from_raw_pubkey(maker_pub));
         let id = qrc20_swap_id(time_lock, secret_hash);
         let value = try_fus!(wei_from_big_decimal(&amount, self.utxo.decimals));
         let secret_hash = Vec::from(secret_hash);
+        let swap_contract_address = try_fus!(swap_contract_address.try_to_address());
 
         let selfi = self.clone();
         let fut = async move {
             selfi
-                .send_hash_time_locked_payment(id, value, time_lock, secret_hash, maker_addr)
+                .send_hash_time_locked_payment(id, value, time_lock, secret_hash, maker_addr, swap_contract_address)
                 .await
         };
         Box::new(fut.boxed().compat())
@@ -588,12 +592,18 @@ impl SwapOps for Qrc20Coin {
         _time_lock: u32,
         _taker_pub: &[u8],
         secret: &[u8],
+        swap_contract_address: &Option<BytesJson>,
     ) -> TransactionFut {
         let payment_tx: UtxoTx = try_fus!(deserialize(taker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
+        let swap_contract_address = try_fus!(swap_contract_address.try_to_address());
         let secret = secret.to_vec();
 
         let selfi = self.clone();
-        let fut = async move { selfi.spend_hash_time_locked_payment(payment_tx, secret).await };
+        let fut = async move {
+            selfi
+                .spend_hash_time_locked_payment(payment_tx, swap_contract_address, secret)
+                .await
+        };
         Box::new(fut.boxed().compat())
     }
 
@@ -603,12 +613,18 @@ impl SwapOps for Qrc20Coin {
         _time_lock: u32,
         _maker_pub: &[u8],
         secret: &[u8],
+        swap_contract_address: &Option<BytesJson>,
     ) -> TransactionFut {
         let payment_tx: UtxoTx = try_fus!(deserialize(maker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
         let secret = secret.to_vec();
+        let swap_contract_address = try_fus!(swap_contract_address.try_to_address());
 
         let selfi = self.clone();
-        let fut = async move { selfi.spend_hash_time_locked_payment(payment_tx, secret).await };
+        let fut = async move {
+            selfi
+                .spend_hash_time_locked_payment(payment_tx, swap_contract_address, secret)
+                .await
+        };
         Box::new(fut.boxed().compat())
     }
 
@@ -618,10 +634,17 @@ impl SwapOps for Qrc20Coin {
         _time_lock: u32,
         _maker_pub: &[u8],
         _secret_hash: &[u8],
+        swap_contract_address: &Option<BytesJson>,
     ) -> TransactionFut {
         let payment_tx: UtxoTx = try_fus!(deserialize(taker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
+        let swap_contract_address = try_fus!(swap_contract_address.try_to_address());
+
         let selfi = self.clone();
-        let fut = async move { selfi.refund_hash_time_locked_payment(payment_tx).await };
+        let fut = async move {
+            selfi
+                .refund_hash_time_locked_payment(swap_contract_address, payment_tx)
+                .await
+        };
         Box::new(fut.boxed().compat())
     }
 
@@ -631,11 +654,17 @@ impl SwapOps for Qrc20Coin {
         _time_lock: u32,
         _taker_pub: &[u8],
         _secret_hash: &[u8],
+        swap_contract_address: &Option<BytesJson>,
     ) -> TransactionFut {
         let payment_tx: UtxoTx = try_fus!(deserialize(maker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
+        let swap_contract_address = try_fus!(swap_contract_address.try_to_address());
 
         let selfi = self.clone();
-        let fut = async move { selfi.refund_hash_time_locked_payment(payment_tx).await };
+        let fut = async move {
+            selfi
+                .refund_hash_time_locked_payment(swap_contract_address, payment_tx)
+                .await
+        };
         Box::new(fut.boxed().compat())
     }
 
@@ -664,15 +693,24 @@ impl SwapOps for Qrc20Coin {
         maker_pub: &[u8],
         secret_hash: &[u8],
         amount: BigDecimal,
+        swap_contract_address: &Option<BytesJson>,
     ) -> Box<dyn Future<Item = (), Error = String> + Send> {
         let payment_tx: UtxoTx = try_fus!(deserialize(payment_tx).map_err(|e| ERRL!("{:?}", e)));
         let sender = try_fus!(self.contract_address_from_raw_pubkey(maker_pub));
         let secret_hash = secret_hash.to_vec();
+        let swap_contract_address = try_fus!(swap_contract_address.try_to_address());
 
         let selfi = self.clone();
         let fut = async move {
             selfi
-                .validate_payment(payment_tx, time_lock, sender, secret_hash, amount)
+                .validate_payment(
+                    payment_tx,
+                    time_lock,
+                    sender,
+                    secret_hash,
+                    amount,
+                    swap_contract_address,
+                )
                 .await
         };
         Box::new(fut.boxed().compat())
@@ -685,7 +723,9 @@ impl SwapOps for Qrc20Coin {
         taker_pub: &[u8],
         secret_hash: &[u8],
         amount: BigDecimal,
+        swap_contract_address: &Option<BytesJson>,
     ) -> Box<dyn Future<Item = (), Error = String> + Send> {
+        let swap_contract_address = try_fus!(swap_contract_address.try_to_address());
         let payment_tx: UtxoTx = try_fus!(deserialize(payment_tx).map_err(|e| ERRL!("{:?}", e)));
         let sender = try_fus!(self.contract_address_from_raw_pubkey(taker_pub));
         let secret_hash = secret_hash.to_vec();
@@ -693,7 +733,14 @@ impl SwapOps for Qrc20Coin {
         let selfi = self.clone();
         let fut = async move {
             selfi
-                .validate_payment(payment_tx, time_lock, sender, secret_hash, amount)
+                .validate_payment(
+                    payment_tx,
+                    time_lock,
+                    sender,
+                    secret_hash,
+                    amount,
+                    swap_contract_address,
+                )
                 .await
         };
         Box::new(fut.boxed().compat())
@@ -705,11 +752,17 @@ impl SwapOps for Qrc20Coin {
         _other_pub: &[u8],
         secret_hash: &[u8],
         search_from_block: u64,
+        swap_contract_address: &Option<BytesJson>,
     ) -> Box<dyn Future<Item = Option<TransactionEnum>, Error = String> + Send> {
         let swap_id = qrc20_swap_id(time_lock, secret_hash);
+        let swap_contract_address = try_fus!(swap_contract_address.try_to_address());
 
         let selfi = self.clone();
-        let fut = async move { selfi.check_if_my_payment_sent_impl(swap_id, search_from_block).await };
+        let fut = async move {
+            selfi
+                .check_if_my_payment_sent_impl(swap_contract_address, swap_id, search_from_block)
+                .await
+        };
         Box::new(fut.boxed().compat())
     }
 
@@ -720,6 +773,7 @@ impl SwapOps for Qrc20Coin {
         secret_hash: &[u8],
         tx: &[u8],
         search_from_block: u64,
+        _swap_contract_address: &Option<BytesJson>,
     ) -> Result<Option<FoundSwapTxSpend>, String> {
         let tx: UtxoTx = try_s!(deserialize(tx).map_err(|e| ERRL!("{:?}", e)));
 
@@ -735,6 +789,7 @@ impl SwapOps for Qrc20Coin {
         secret_hash: &[u8],
         tx: &[u8],
         search_from_block: u64,
+        _swap_contract_address: &Option<BytesJson>,
     ) -> Result<Option<FoundSwapTxSpend>, String> {
         let tx: UtxoTx = try_s!(deserialize(tx).map_err(|e| ERRL!("{:?}", e)));
 
@@ -802,7 +857,13 @@ impl MarketCoinOps for Qrc20Coin {
         Box::new(fut.boxed().compat())
     }
 
-    fn wait_for_tx_spend(&self, transaction: &[u8], wait_until: u64, from_block: u64) -> TransactionFut {
+    fn wait_for_tx_spend(
+        &self,
+        transaction: &[u8],
+        wait_until: u64,
+        from_block: u64,
+        _swap_contract_address: &Option<BytesJson>,
+    ) -> TransactionFut {
         let tx: UtxoTx = try_fus!(deserialize(transaction).map_err(|e| ERRL!("{:?}", e)));
 
         let selfi = self.clone();
@@ -904,6 +965,10 @@ impl MmCoin for Qrc20Coin {
         // QRC20 cannot have unspendable balance
         Box::new(futures01::future::ok(0.into()))
     }
+
+    fn swap_contract_address(&self) -> Option<BytesJson> {
+        Some(BytesJson::from(self.swap_contract_address.0.as_ref()))
+    }
 }
 
 async fn qrc20_rpc_contract_call(
@@ -950,7 +1015,7 @@ pub fn qrc20_swap_id(time_lock: u32, secret_hash: &[u8]) -> Vec<u8> {
     sha256(&input).to_vec()
 }
 
-fn contract_addr_into_rpc_format(address: &H160) -> H160Json { address.to_vec().as_slice().into() }
+fn contract_addr_into_rpc_format(address: &H160) -> H160Json { H160Json::from(address.0) }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Qrc20FeeDetails {

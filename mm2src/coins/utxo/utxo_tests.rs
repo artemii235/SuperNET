@@ -371,7 +371,7 @@ fn test_wait_for_payment_spend_timeout_native() {
     let from_block = 1000;
 
     assert!(coin
-        .wait_for_tx_spend(&transaction, wait_until, from_block)
+        .wait_for_tx_spend(&transaction, wait_until, from_block, &None)
         .wait()
         .is_err());
     assert!(unsafe { OUTPUT_SPEND_CALLED });
@@ -393,7 +393,7 @@ fn test_wait_for_payment_spend_timeout_electrum() {
     let from_block = 1000;
 
     assert!(coin
-        .wait_for_tx_spend(&transaction, wait_until, from_block)
+        .wait_for_tx_spend(&transaction, wait_until, from_block, &None)
         .wait()
         .is_err());
     assert!(unsafe { OUTPUT_SPEND_CALLED });
@@ -420,7 +420,8 @@ fn test_search_for_swap_tx_spend_electrum_was_spent() {
         &*coin.my_public_key(),
         &*dhash160(&secret),
         &payment_tx_bytes,
-        0
+        0,
+        &None,
     )));
     assert_eq!(FoundSwapTxSpend::Spent(spend_tx), found);
 }
@@ -446,7 +447,8 @@ fn test_search_for_swap_tx_spend_electrum_was_refunded() {
         coin.as_ref().key_pair.public(),
         &secret,
         &payment_tx_bytes,
-        0
+        0,
+        &None,
     )));
     assert_eq!(FoundSwapTxSpend::Refunded(refund_tx), found);
 }

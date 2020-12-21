@@ -121,6 +121,7 @@ pub trait SwapOps {
         taker_pub: &[u8],
         secret_hash: &[u8],
         amount: BigDecimal,
+        swap_contract_address: &Option<BytesJson>,
     ) -> TransactionFut;
 
     fn send_taker_payment(
@@ -129,6 +130,7 @@ pub trait SwapOps {
         maker_pub: &[u8],
         secret_hash: &[u8],
         amount: BigDecimal,
+        swap_contract_address: &Option<BytesJson>,
     ) -> TransactionFut;
 
     fn send_maker_spends_taker_payment(
@@ -137,6 +139,7 @@ pub trait SwapOps {
         time_lock: u32,
         taker_pub: &[u8],
         secret: &[u8],
+        swap_contract_address: &Option<BytesJson>,
     ) -> TransactionFut;
 
     fn send_taker_spends_maker_payment(
@@ -145,6 +148,7 @@ pub trait SwapOps {
         time_lock: u32,
         maker_pub: &[u8],
         secret: &[u8],
+        swap_contract_address: &Option<BytesJson>,
     ) -> TransactionFut;
 
     fn send_taker_refunds_payment(
@@ -153,6 +157,7 @@ pub trait SwapOps {
         time_lock: u32,
         maker_pub: &[u8],
         secret_hash: &[u8],
+        swap_contract_address: &Option<BytesJson>,
     ) -> TransactionFut;
 
     fn send_maker_refunds_payment(
@@ -161,6 +166,7 @@ pub trait SwapOps {
         time_lock: u32,
         taker_pub: &[u8],
         secret_hash: &[u8],
+        swap_contract_address: &Option<BytesJson>,
     ) -> TransactionFut;
 
     fn validate_fee(
@@ -177,6 +183,7 @@ pub trait SwapOps {
         maker_pub: &[u8],
         priv_bn_hash: &[u8],
         amount: BigDecimal,
+        swap_contract_address: &Option<BytesJson>,
     ) -> Box<dyn Future<Item = (), Error = String> + Send>;
 
     fn validate_taker_payment(
@@ -186,6 +193,7 @@ pub trait SwapOps {
         taker_pub: &[u8],
         priv_bn_hash: &[u8],
         amount: BigDecimal,
+        swap_contract_address: &Option<BytesJson>,
     ) -> Box<dyn Future<Item = (), Error = String> + Send>;
 
     fn check_if_my_payment_sent(
@@ -194,6 +202,7 @@ pub trait SwapOps {
         other_pub: &[u8],
         secret_hash: &[u8],
         search_from_block: u64,
+        swap_contract_address: &Option<BytesJson>,
     ) -> Box<dyn Future<Item = Option<TransactionEnum>, Error = String> + Send>;
 
     fn search_for_swap_tx_spend_my(
@@ -203,6 +212,7 @@ pub trait SwapOps {
         secret_hash: &[u8],
         tx: &[u8],
         search_from_block: u64,
+        swap_contract_address: &Option<BytesJson>,
     ) -> Result<Option<FoundSwapTxSpend>, String>;
 
     fn search_for_swap_tx_spend_other(
@@ -212,6 +222,7 @@ pub trait SwapOps {
         secret_hash: &[u8],
         tx: &[u8],
         search_from_block: u64,
+        swap_contract_address: &Option<BytesJson>,
     ) -> Result<Option<FoundSwapTxSpend>, String>;
 
     fn extract_secret(&self, secret_hash: &[u8], spend_tx: &[u8]) -> Result<Vec<u8>, String>;
@@ -241,7 +252,13 @@ pub trait MarketCoinOps {
         check_every: u64,
     ) -> Box<dyn Future<Item = (), Error = String> + Send>;
 
-    fn wait_for_tx_spend(&self, transaction: &[u8], wait_until: u64, from_block: u64) -> TransactionFut;
+    fn wait_for_tx_spend(
+        &self,
+        transaction: &[u8],
+        wait_until: u64,
+        from_block: u64,
+        swap_contract_address: &Option<BytesJson>,
+    ) -> TransactionFut;
 
     fn tx_enum_from_bytes(&self, bytes: &[u8]) -> Result<TransactionEnum, String>;
 
@@ -459,6 +476,9 @@ pub trait MmCoin: SwapOps + MarketCoinOps + fmt::Debug + Send + Sync + 'static {
 
     /// Get unspendable balance (sum of non-mature output values).
     fn my_unspendable_balance(&self) -> Box<dyn Future<Item = BigDecimal, Error = String> + Send>;
+
+    /// Get swap contract address if the coin uses it in Atomic Swaps.
+    fn swap_contract_address(&self) -> Option<BytesJson>;
 }
 
 #[derive(Clone, Debug)]

@@ -36,8 +36,9 @@ impl Qrc20Coin {
         time_lock: u32,
         secret_hash: Vec<u8>,
         receiver_addr: H160,
+        swap_contract_address: H160,
     ) -> Result<TransactionEnum, String> {
-        let allowance = try_s!(self.allowance(self.swap_contract_address).await);
+        let allowance = try_s!(self.allowance(swap_contract_address).await);
 
         let mut outputs = Vec::default();
         // check if we should reset the allowance to 0 and raise this to the max available value (our balance)
@@ -46,10 +47,10 @@ impl Qrc20Coin {
             let balance = try_s!(wei_from_big_decimal(&balance, self.utxo.decimals));
             if allowance > U256::zero() {
                 // first reset the allowance to the 0
-                outputs.push(try_s!(self.approve_output(self.swap_contract_address, 0.into())));
+                outputs.push(try_s!(self.approve_output(swap_contract_address, 0.into())));
             }
             // set the allowance from 0 to `balance` after the previous output will be executed
-            outputs.push(try_s!(self.approve_output(self.swap_contract_address, balance)));
+            outputs.push(try_s!(self.approve_output(swap_contract_address, balance)));
         }
 
         // when this output is executed, the allowance will be sufficient already
@@ -58,7 +59,8 @@ impl Qrc20Coin {
             value,
             time_lock,
             &secret_hash,
-            receiver_addr
+            receiver_addr,
+            &swap_contract_address
         )));
 
         self.send_contract_calls(outputs).await
@@ -67,14 +69,11 @@ impl Qrc20Coin {
     pub async fn spend_hash_time_locked_payment(
         &self,
         payment_tx: UtxoTx,
+        swap_contract_address: H160,
         secret: Vec<u8>,
     ) -> Result<TransactionEnum, String> {
         let Erc20PaymentDetails {
-            swap_id,
-            value,
-            swap_contract_address,
-            sender,
-            ..
+            swap_id, value, sender, ..
         } = try_s!(self.erc20_payment_details_from_tx(&payment_tx).await);
 
         let status = try_s!(self.payment_status(&swap_contract_address, swap_id.clone()).await);
@@ -86,11 +85,14 @@ impl Qrc20Coin {
         self.send_contract_calls(vec![spend_output]).await
     }
 
-    pub async fn refund_hash_time_locked_payment(&self, payment_tx: UtxoTx) -> Result<TransactionEnum, String> {
+    pub async fn refund_hash_time_locked_payment(
+        &self,
+        swap_contract_address: H160,
+        payment_tx: UtxoTx,
+    ) -> Result<TransactionEnum, String> {
         let Erc20PaymentDetails {
             swap_id,
             value,
-            swap_contract_address,
             receiver,
             secret_hash,
             ..
@@ -113,10 +115,11 @@ impl Qrc20Coin {
         sender: H160,
         secret_hash: Vec<u8>,
         amount: BigDecimal,
+        expected_swap_contract_address: H160,
     ) -> Result<(), String> {
         let expected_swap_id = qrc20_swap_id(time_lock, &secret_hash);
         let status = try_s!(
-            self.payment_status(&self.swap_contract_address, expected_swap_id.clone())
+            self.payment_status(&expected_swap_contract_address, expected_swap_id.clone())
                 .await
         );
         if status != eth::PAYMENT_STATE_SENT.into() {
@@ -147,10 +150,10 @@ impl Qrc20Coin {
             return ERR!("Payment tx was sent from wrong address, expected {:?}", sender);
         }
 
-        if self.swap_contract_address != erc20_payment.swap_contract_address {
+        if expected_swap_contract_address != erc20_payment.swap_contract_address {
             return ERR!(
                 "Payment tx was sent to wrong address, expected {:?}",
-                self.swap_contract_address
+                expected_swap_contract_address
             );
         }
 
@@ -248,10 +251,11 @@ impl Qrc20Coin {
 
     pub async fn check_if_my_payment_sent_impl(
         &self,
+        swap_contract_address: H160,
         swap_id: Vec<u8>,
         search_from_block: u64,
     ) -> Result<Option<TransactionEnum>, String> {
-        let status = try_s!(self.payment_status(&self.swap_contract_address, swap_id.clone()).await);
+        let status = try_s!(self.payment_status(&swap_contract_address, swap_id.clone()).await);
         if status == eth::PAYMENT_STATE_UNINITIALIZED.into() {
             return Ok(None);
         };
@@ -437,6 +441,7 @@ impl Qrc20Coin {
         time_lock: u32,
         secret_hash: &[u8],
         receiver_addr: H160,
+        swap_contract_address: &H160,
     ) -> Result<ContractCallOutput, String> {
         let params = try_s!(self.erc20_payment_call_bytes(id, value, time_lock, secret_hash, receiver_addr));
 
@@ -446,7 +451,7 @@ impl Qrc20Coin {
             &params, // params of the function
             gas_limit,
             gas_price,
-            &self.swap_contract_address, // address of the contract which function will be called
+            swap_contract_address, // address of the contract which function will be called
         ))
         .to_bytes();
 
