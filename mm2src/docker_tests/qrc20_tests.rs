@@ -174,7 +174,7 @@ fn qrc20_coin_from_privkey(ticker: &str, priv_key: &[u8], _lock: &MutexGuard<'_,
     (ctx, coin)
 }
 
-// generate random privkey, create a QRC20 coin and fill it's address with the specified balance
+/// Generate random privkey, create a QRC20 coin and fill it's address with the specified balance.
 fn generate_qrc20_coin_with_random_privkey(
     ticker: &str,
     qtum_balance: BigDecimal,
@@ -301,7 +301,7 @@ fn trade_base_rel((base, rel): (&str, &str)) {
                 fill_qrc20_address(&coin, 10.into(), timeout);
             },
             "MYCOIN" | "MYCOIN1" => {
-                let (_ctx, coin) = asset_coin_from_privkey(ticker, &priv_key, &lock);
+                let (_ctx, coin) = utxo_coin_from_privkey(ticker, &priv_key, &lock);
                 fill_address(&coin, 10.into(), timeout);
                 // also fill the Qtum
                 let (_ctx, coin) = qrc20_coin_from_privkey("QICK", &priv_key, &lock);

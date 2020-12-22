@@ -147,7 +147,7 @@ impl UtxoCoinBuilder for Qrc20CoinBuilder<'_> {
                 let platform = self.platform.to_lowercase();
                 let data_dir = coin_daemon_data_dir(&platform, is_asset_chain);
 
-                let confname = format!("{}.conf", self.platform);
+                let confname = format!("{}.conf", platform);
                 return Ok(data_dir.join(&confname[..]));
             },
         };

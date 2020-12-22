@@ -285,7 +285,7 @@ mod docker_tests {
     /// It's required since daemon RPC returns errors if send_to_address
     /// is called concurrently (insufficient funds) and it also may return other errors
     /// if previous transaction is not confirmed yet.
-    fn asset_coin_from_privkey(ticker: &str, priv_key: &[u8], _lock: &MutexGuard<'_, ()>) -> (MmArc, UtxoStandardCoin) {
+    fn utxo_coin_from_privkey(ticker: &str, priv_key: &[u8], _lock: &MutexGuard<'_, ()>) -> (MmArc, UtxoStandardCoin) {
         let ctx = MmCtxBuilder::new().into_mm_arc();
         let conf = json!({"asset":ticker,"txversion":4,"overwintered":1,"txfee":1000,"network":"regtest"});
         let req = json!({"method":"enable"});
@@ -296,11 +296,11 @@ mod docker_tests {
         (ctx, coin)
     }
 
-    // generate random privkey, create a coin and fill it's address with 1000 coins
+    /// Generate random privkey, create a coin and fill it's address with the specified balance.
     fn generate_coin_with_random_privkey(ticker: &str, balance: BigDecimal) -> (MmArc, UtxoStandardCoin, [u8; 32]) {
         let lock = unwrap!(COINS_LOCK.lock());
         let priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
-        let (ctx, coin) = asset_coin_from_privkey(ticker, &priv_key, &lock);
+        let (ctx, coin) = utxo_coin_from_privkey(ticker, &priv_key, &lock);
         let timeout = (now_ms() / 1000) + 120; // timeout if test takes more than 120 seconds to run
         fill_address(&coin, balance, timeout);
         (ctx, coin, priv_key)
