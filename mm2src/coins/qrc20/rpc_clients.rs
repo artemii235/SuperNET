@@ -1,6 +1,5 @@
 use super::*;
 use rpc::v1::types::H256;
-use std::collections::HashMap;
 
 pub mod for_tests {
     use super::*;
@@ -143,13 +142,6 @@ pub struct TxHistoryItem {
     pub log_index: u64,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct AddressPurpose {
-    purpose: String,
-}
-
-pub type AddressesByLabelResult = HashMap<String, AddressPurpose>;
-
 pub enum RpcContractCallType {
     /// Erc20 function.
     BalanceOf,
@@ -286,10 +278,6 @@ pub trait Qrc20NativeOps {
     /// https://docs.qtum.site/en/Qtum-RPC-API/#gettransactionreceipt
     fn get_transaction_receipt(&self, hash: &H256Json) -> RpcRes<Vec<TxReceipt>>;
 
-    /// Returns the list of addresses assigned the specified label.
-    /// https://docs.qtum.site/en/Qtum-RPC-API/#getaddressesbylabel
-    fn get_addresses_by_label(&self, label: &str) -> RpcRes<AddressesByLabelResult>;
-
     /// This can be used to retrieve QRC20 transaction history.
     /// https://docs.qtum.site/en/Qtum-RPC-API/#searchlogs
     fn search_logs(
@@ -308,10 +296,6 @@ impl Qrc20NativeOps for NativeClient {
 
     fn get_transaction_receipt(&self, hash: &H256Json) -> RpcRes<Vec<TxReceipt>> {
         rpc_func!(self, "gettransactionreceipt", hash)
-    }
-
-    fn get_addresses_by_label(&self, label: &str) -> RpcRes<AddressesByLabelResult> {
-        rpc_func!(self, "getaddressesbylabel", label)
     }
 
     fn search_logs(

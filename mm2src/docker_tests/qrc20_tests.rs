@@ -1,6 +1,6 @@
 use super::*;
 use bigdecimal::BigDecimal;
-use coins::qrc20::rpc_clients::{for_tests::Qrc20NativeWalletOps, Qrc20NativeOps};
+use coins::qrc20::rpc_clients::for_tests::Qrc20NativeWalletOps;
 use coins::qrc20::{qrc20_coin_from_conf_and_request, Qrc20Coin};
 use coins::utxo::qtum::QtumBasedCoin;
 use coins::utxo::qtum::{qtum_coin_from_conf_and_request, QtumCoin};

@@ -55,6 +55,13 @@ use tokio_rustls::{TlsConnector, TlsStream};
 #[cfg(feature = "native")] use tokio_tcp::TcpStream;
 #[cfg(feature = "native")] use webpki_roots::TLS_SERVER_ROOTS;
 
+pub type AddressesByLabelResult = HashMap<String, AddressPurpose>;
+
+#[derive(Debug, Deserialize)]
+pub struct AddressPurpose {
+    purpose: String,
+}
+
 /// Skips the server certificate verification on TLS connection
 pub struct NoCertificateVerification {}
 
@@ -720,6 +727,12 @@ impl NativeClientImpl {
     /// https://bitcoin.org/en/developer-reference#sendtoaddress
     pub fn send_to_address(&self, addr: &str, amount: &BigDecimal) -> RpcRes<H256Json> {
         rpc_func!(self, "sendtoaddress", addr, amount)
+    }
+
+    /// Returns the list of addresses assigned the specified label.
+    /// https://developer.bitcoin.org/reference/rpc/getaddressesbylabel.html
+    pub fn get_addresses_by_label(&self, label: &str) -> RpcRes<AddressesByLabelResult> {
+        rpc_func!(self, "getaddressesbylabel", label)
     }
 
     /// https://bitcoin.org/en/developer-reference#getnetworkinfo
