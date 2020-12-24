@@ -187,7 +187,7 @@ impl Qrc20Coin {
     }
 
     pub async fn transfer_details_by_hash(&self, tx_hash: H256Json) -> Result<TxTransferMap, String> {
-        let receipts = try_s!(self.get_transaction_receipts(&tx_hash).await);
+        let receipts = try_s!(self.utxo.rpc_client.get_transaction_receipts(&tx_hash).compat().await);
         // request Qtum transaction details to get a tx_hex, timestamp, block_height and calculate a miner_fee
         let qtum_details = try_s!(utxo_common::tx_details_by_hash(self, &tx_hash.0).await);
         // Deserialize the UtxoTx to get a script pubkey

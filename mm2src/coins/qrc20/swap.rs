@@ -344,7 +344,7 @@ impl Qrc20Coin {
                 .await
         );
         let tx_hash = qtum_tx.hash().reversed().into();
-        let receipts = try_s!(self.get_transaction_receipts(&tx_hash).await);
+        let receipts = try_s!(self.utxo.rpc_client.get_transaction_receipts(&tx_hash).compat().await);
 
         for receipt in receipts {
             let output = try_s!(qtum_tx
@@ -374,11 +374,14 @@ impl Qrc20Coin {
 
     async fn allowance(&self, spender: H160) -> Result<U256, String> {
         let tokens = try_s!(
-            self.rpc_contract_call(RpcContractCallType::Allowance, &self.contract_address, &[
-                Token::Address(qtum::contract_addr_from_utxo_addr(self.utxo.my_address.clone())),
-                Token::Address(spender),
-            ])
-            .await
+            self.utxo
+                .rpc_client
+                .rpc_contract_call(RpcContractCallType::Allowance, &self.contract_address, &[
+                    Token::Address(qtum::contract_addr_from_utxo_addr(self.utxo.my_address.clone())),
+                    Token::Address(spender),
+                ])
+                .compat()
+                .await
         );
 
         match tokens.first() {
@@ -392,10 +395,13 @@ impl Qrc20Coin {
     /// Do not use self swap_contract_address, because it could be updated during restart.
     async fn payment_status(&self, swap_contract_address: &H160, swap_id: Vec<u8>) -> Result<U256, String> {
         let decoded = try_s!(
-            self.rpc_contract_call(RpcContractCallType::Payments, swap_contract_address, &[
-                Token::FixedBytes(swap_id)
-            ])
-            .await
+            self.utxo
+                .rpc_client
+                .rpc_contract_call(RpcContractCallType::Payments, swap_contract_address, &[
+                    Token::FixedBytes(swap_id)
+                ])
+                .compat()
+                .await
         );
         if decoded.len() < 3 {
             return ERR!(
@@ -560,7 +566,7 @@ impl Qrc20Coin {
     /// Note returns an error if the contract call was excepted.
     async fn erc20_payment_details_from_tx(&self, qtum_tx: &UtxoTx) -> Result<Erc20PaymentDetails, String> {
         let tx_hash: H256Json = qtum_tx.hash().reversed().into();
-        let receipts = try_s!(self.get_transaction_receipts(&tx_hash).await);
+        let receipts = try_s!(self.utxo.rpc_client.get_transaction_receipts(&tx_hash).compat().await);
 
         for receipt in receipts {
             let output = try_s!(qtum_tx

@@ -297,7 +297,6 @@ impl EthCoinImpl {
         from_block: u64,
     ) -> Box<dyn Future<Item = Vec<Log>, Error = String>> {
         let contract_event = try_fus!(SWAP_CONTRACT.event("SenderRefunded"));
-        log!([contract_event.signature()]);
         let filter = FilterBuilder::default()
             .topics(Some(vec![contract_event.signature()]), None, None, None)
             .from_block(BlockNumber::Number(from_block))

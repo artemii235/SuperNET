@@ -1,4 +1,5 @@
 use super::*;
+use rpc::v1::types::H256;
 use std::collections::HashMap;
 
 pub mod for_tests {
@@ -149,6 +150,37 @@ pub struct AddressPurpose {
 
 pub type AddressesByLabelResult = HashMap<String, AddressPurpose>;
 
+pub enum RpcContractCallType {
+    /// Erc20 function.
+    BalanceOf,
+    /// Erc20 function.
+    Allowance,
+    /// Erc20 function.
+    Decimals,
+    /// EtomicSwap function.
+    Payments,
+}
+
+impl RpcContractCallType {
+    fn as_function_name(&self) -> &'static str {
+        match self {
+            RpcContractCallType::BalanceOf => "balanceOf",
+            RpcContractCallType::Allowance => "allowance",
+            RpcContractCallType::Decimals => "decimals",
+            RpcContractCallType::Payments => "payments",
+        }
+    }
+
+    fn as_function(&self) -> &'static Function {
+        match self {
+            RpcContractCallType::BalanceOf | RpcContractCallType::Allowance | RpcContractCallType::Decimals => {
+                unwrap!(eth::ERC20_CONTRACT.function(self.as_function_name()))
+            },
+            RpcContractCallType::Payments => unwrap!(eth::SWAP_CONTRACT.function(self.as_function_name())),
+        }
+    }
+}
+
 /// The structure is the same as Qtum Core RPC gettransactionreceipt returned data.
 /// https://docs.qtum.site/en/Qtum-RPC-API/#gettransactionreceipt
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
@@ -223,7 +255,7 @@ impl From<&str> for TopicFilter {
 }
 
 /// Qrc20 specific RPC ops
-pub trait Qrc20RpcOps {
+pub trait Qrc20ElectrumOps {
     /// This can be used to get the basic information(name, decimals, total_supply, symbol) of a QRC20 token.
     /// https://github.com/qtumproject/qtum-electrumx-server/blob/master/docs/qrc20-integration.md#blockchaintokenget_infotoken_address
     fn blockchain_token_get_info(&self, token_addr: &H160Json) -> RpcRes<TokenInfo>;
@@ -250,7 +282,7 @@ pub trait Qrc20NativeOps {
     /// https://docs.qtum.site/en/Qtum-RPC-API/#callcontract
     fn call_contract(&self, contract_addr: &H160Json, data: BytesJson) -> RpcRes<ContractCallResult>;
 
-    /// Similar to [`Qrc20RpcOps::blochchain_transaction_get_receipt`]
+    /// Similar to [`Qrc20ElectrumOps::blochchain_transaction_get_receipt`]
     /// https://docs.qtum.site/en/Qtum-RPC-API/#gettransactionreceipt
     fn get_transaction_receipt(&self, hash: &H256Json) -> RpcRes<Vec<TxReceipt>>;
 
@@ -305,7 +337,7 @@ impl Qrc20NativeOps for NativeClient {
     }
 }
 
-impl Qrc20RpcOps for ElectrumClient {
+impl Qrc20ElectrumOps for ElectrumClient {
     fn blockchain_token_get_info(&self, token_addr: &H160Json) -> RpcRes<TokenInfo> {
         rpc_func!(self, "blockchain.token.get_info", token_addr)
     }
@@ -332,5 +364,66 @@ impl Qrc20RpcOps for ElectrumClient {
 
     fn blochchain_transaction_get_receipt(&self, hash: &H256Json) -> RpcRes<Vec<TxReceipt>> {
         rpc_func!(self, "blochchain.transaction.get_receipt", hash)
+    }
+}
+
+pub trait Qrc20RpcOps {
+    fn get_transaction_receipts(&self, tx_hash: &H256Json) -> RpcRes<Vec<TxReceipt>>;
+
+    fn rpc_contract_call(
+        &self,
+        func: RpcContractCallType,
+        contract_addr: &H160,
+        tokens: &[Token],
+    ) -> Box<dyn Future<Item = Vec<Token>, Error = String> + Send>;
+
+    fn token_decimals(&self, token_address: &H160) -> Box<dyn Future<Item = u8, Error = String> + Send>;
+}
+
+impl Qrc20RpcOps for UtxoRpcClientEnum {
+    fn get_transaction_receipts(&self, tx_hash: &H256) -> RpcRes<Vec<TxReceipt>> {
+        match self {
+            UtxoRpcClientEnum::Electrum(electrum) => electrum.blochchain_transaction_get_receipt(tx_hash),
+            UtxoRpcClientEnum::Native(native) => native.get_transaction_receipt(tx_hash),
+        }
+    }
+
+    fn rpc_contract_call(
+        &self,
+        func: RpcContractCallType,
+        contract_addr: &H160,
+        tokens: &[Token],
+    ) -> Box<dyn Future<Item = Vec<Token>, Error = String> + Send> {
+        let function = func.as_function().clone();
+        let params = try_fus!(function.encode_input(tokens));
+        let contract_addr = contract_addr_into_rpc_format(contract_addr);
+
+        let fut = match self {
+            UtxoRpcClientEnum::Native(native) => native.call_contract(&contract_addr, params.into()),
+            UtxoRpcClientEnum::Electrum(electrum) => electrum.blockchain_contract_call(&contract_addr, params.into()),
+        };
+        let fut = fut
+            .map_err(|e| ERRL!("{}", e))
+            .and_then(move |result| Ok(try_s!(function.decode_output(&result.execution_result.output))));
+        Box::new(fut)
+    }
+
+    fn token_decimals(&self, token_address: &H160) -> Box<dyn Future<Item = u8, Error = String> + Send> {
+        let fut = self
+            .rpc_contract_call(RpcContractCallType::Decimals, token_address, &[])
+            .map_err(|e| ERRL!("{}", e))
+            .and_then(|tokens| {
+                let decimals = match tokens.first() {
+                    Some(Token::Uint(decimals)) => decimals.as_u64(),
+                    Some(_) => return ERR!(r#"Expected Uint as "decimals" result but got {:?}"#, tokens),
+                    None => return ERR!(r#"Expected Uint as "decimals" result but got nothing"#),
+                };
+                if decimals <= (std::u8::MAX as u64) {
+                    Ok(decimals as u8)
+                } else {
+                    ERR!("decimals {} is not u8", decimals)
+                }
+            });
+        Box::new(fut)
     }
 }

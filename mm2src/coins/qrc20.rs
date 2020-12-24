@@ -1,5 +1,6 @@
 use crate::eth::{self, u256_to_big_decimal, wei_from_big_decimal, TryToAddress};
-use crate::qrc20::rpc_clients::{ContractCallResult, LogEntry, Qrc20NativeOps, Qrc20RpcOps, TopicFilter, TxReceipt};
+use crate::qrc20::rpc_clients::{LogEntry, Qrc20ElectrumOps, Qrc20NativeOps, Qrc20RpcOps, RpcContractCallType,
+                                TopicFilter, TxReceipt};
 use crate::utxo::qtum::QtumBasedCoin;
 use crate::utxo::rpc_clients::{ElectrumClient, NativeClient, UnspentInfo, UtxoRpcClientEnum, UtxoRpcClientOps};
 use crate::utxo::utxo_common::{self, big_decimal_from_sat};
@@ -129,7 +130,9 @@ impl UtxoCoinBuilder for Qrc20CoinBuilder<'_> {
             return Ok(d as u8);
         }
 
-        request_token_decimals(rpc_client, &self.contract_address)
+        rpc_client
+            .token_decimals(&self.contract_address)
+            .compat()
             .await
             .map_err(|e| ERRL!("{}", e))
     }
@@ -203,37 +206,6 @@ impl AsRef<UtxoCoinFields> for Qrc20Coin {
 }
 
 impl qtum::QtumBasedCoin for Qrc20Coin {}
-
-pub enum RpcContractCallType {
-    /// Erc20 function.
-    BalanceOf,
-    /// Erc20 function.
-    Allowance,
-    /// Erc20 function.
-    Decimals,
-    /// EtomicSwap function.
-    Payments,
-}
-
-impl RpcContractCallType {
-    fn as_function_name(&self) -> &'static str {
-        match self {
-            RpcContractCallType::BalanceOf => "balanceOf",
-            RpcContractCallType::Allowance => "allowance",
-            RpcContractCallType::Decimals => "decimals",
-            RpcContractCallType::Payments => "payments",
-        }
-    }
-
-    fn as_function(&self) -> &'static Function {
-        match self {
-            RpcContractCallType::BalanceOf | RpcContractCallType::Allowance | RpcContractCallType::Decimals => {
-                unwrap!(eth::ERC20_CONTRACT.function(self.as_function_name()))
-            },
-            RpcContractCallType::Payments => unwrap!(eth::SWAP_CONTRACT.function(self.as_function_name())),
-        }
-    }
-}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ContractCallOutput {
@@ -321,15 +293,6 @@ struct GenerateQrc20TxResult {
 }
 
 impl Qrc20Coin {
-    pub async fn rpc_contract_call(
-        &self,
-        func: RpcContractCallType,
-        contract_addr: &H160,
-        tokens: &[Token],
-    ) -> Result<Vec<Token>, String> {
-        qrc20_rpc_contract_call(&self.utxo.rpc_client, func, contract_addr, tokens).await
-    }
-
     /// `gas_fee` should be calculated by: gas_limit * gas_price * (count of contract calls),
     /// or should be sum of gas fee of all contract calls.
     pub async fn get_qrc20_tx_fee(&self, gas_fee: u64) -> Result<u64, String> {
@@ -352,14 +315,6 @@ impl Qrc20Coin {
                 .await
         );
         Ok(signed.into())
-    }
-
-    pub async fn get_transaction_receipts(&self, tx_hash: &H256Json) -> Result<Vec<TxReceipt>, String> {
-        let fut = match self.utxo.rpc_client {
-            UtxoRpcClientEnum::Electrum(ref electrum) => electrum.blochchain_transaction_get_receipt(tx_hash),
-            UtxoRpcClientEnum::Native(ref native) => native.get_transaction_receipt(tx_hash),
-        };
-        Ok(try_s!(fut.compat().await))
     }
 
     /// Generate Qtum UTXO transaction with contract calls.
@@ -810,24 +765,21 @@ impl MarketCoinOps for Qrc20Coin {
 
     fn my_balance(&self) -> Box<dyn Future<Item = BigDecimal, Error = String> + Send> {
         let my_address = self.my_addr_as_contract_addr();
+        let params = &[Token::Address(my_address)];
         let contract_address = self.contract_address;
-        let selfi = self.clone();
-        let fut = async move {
-            let params = &[Token::Address(my_address)];
-            let tokens = try_s!(
-                selfi
-                    .rpc_contract_call(RpcContractCallType::BalanceOf, &contract_address, params)
-                    .await
-            );
+        let decimals = self.utxo.decimals;
 
-            match tokens.first() {
-                Some(Token::Uint(bal)) => u256_to_big_decimal(*bal, selfi.utxo.decimals),
+        let fut = self
+            .utxo
+            .rpc_client
+            .rpc_contract_call(RpcContractCallType::BalanceOf, &contract_address, params)
+            .map_err(|e| ERRL!("{}", e))
+            .and_then(move |tokens| match tokens.first() {
+                Some(Token::Uint(bal)) => u256_to_big_decimal(*bal, decimals),
                 Some(_) => ERR!(r#"Expected Uint as "balanceOf" result but got {:?}"#, tokens),
                 None => ERR!(r#"Expected Uint as "balanceOf" result but got nothing"#),
-            }
-        };
-
-        Box::new(fut.boxed().compat())
+            });
+        Box::new(fut)
     }
 
     fn base_coin_balance(&self) -> Box<dyn Future<Item = BigDecimal, Error = String> + Send> {
@@ -968,43 +920,6 @@ impl MmCoin for Qrc20Coin {
 
     fn swap_contract_address(&self) -> Option<BytesJson> {
         Some(BytesJson::from(self.swap_contract_address.0.as_ref()))
-    }
-}
-
-async fn qrc20_rpc_contract_call(
-    rpc_client: &UtxoRpcClientEnum,
-    func: RpcContractCallType,
-    contract_addr: &H160,
-    tokens: &[Token],
-) -> Result<Vec<Token>, String> {
-    let function = func.as_function();
-    let params = try_s!(function.encode_input(tokens));
-    let contract_addr = contract_addr_into_rpc_format(contract_addr);
-
-    let result: ContractCallResult = match rpc_client {
-        UtxoRpcClientEnum::Native(native) => try_s!(native.call_contract(&contract_addr, params.into()).compat().await),
-        UtxoRpcClientEnum::Electrum(electrum) => try_s!(
-            electrum
-                .blockchain_contract_call(&contract_addr, params.into())
-                .compat()
-                .await
-        ),
-    };
-    Ok(try_s!(function.decode_output(&result.execution_result.output)))
-}
-
-/// Do `decimals` ERC20 contract call.
-async fn request_token_decimals(rpc_client: &UtxoRpcClientEnum, token_address: &H160) -> Result<u8, String> {
-    let tokens = try_s!(qrc20_rpc_contract_call(rpc_client, RpcContractCallType::Decimals, token_address, &[]).await);
-    let decimals = match tokens.first() {
-        Some(Token::Uint(decimals)) => decimals.as_u64(),
-        Some(_) => return ERR!(r#"Expected Uint as "decimals" result but got {:?}"#, tokens),
-        None => return ERR!(r#"Expected Uint as "decimals" result but got nothing"#),
-    };
-    if decimals <= (std::u8::MAX as u64) {
-        Ok(decimals as u8)
-    } else {
-        ERR!("decimals {} is not u8", decimals)
     }
 }
 
