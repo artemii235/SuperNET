@@ -1,6 +1,6 @@
 use crate::eth::{self, u256_to_big_decimal, wei_from_big_decimal, TryToAddress};
-use crate::qrc20::rpc_clients::{LogEntry, Qrc20ElectrumOps, Qrc20NativeOps, Qrc20RpcOps, RpcContractCallType,
-                                TopicFilter, TxReceipt};
+use crate::qrc20::rpc_clients::{LogEntry, Qrc20ElectrumOps, Qrc20NativeOps, Qrc20RpcOps, TopicFilter, TxReceipt,
+                                ViewContractCallType};
 use crate::utxo::qtum::QtumBasedCoin;
 use crate::utxo::rpc_clients::{ElectrumClient, NativeClient, UnspentInfo, UtxoRpcClientEnum, UtxoRpcClientOps};
 use crate::utxo::utxo_common::{self, big_decimal_from_sat};
@@ -224,34 +224,35 @@ impl From<ContractCallOutput> for TransactionOutput {
     }
 }
 
+/// Functions of ERC20/EtomicSwap smart contracts that may change the blockchain state.
 #[derive(Debug, Eq, PartialEq)]
-pub enum ContractCallType {
+pub enum MutContractCallType {
     Transfer,
     Erc20Payment,
     ReceiverSpend,
     SenderRefund,
 }
 
-impl ContractCallType {
+impl MutContractCallType {
     fn as_function_name(&self) -> &'static str {
         match self {
-            ContractCallType::Transfer => "transfer",
-            ContractCallType::Erc20Payment => "erc20Payment",
-            ContractCallType::ReceiverSpend => "receiverSpend",
-            ContractCallType::SenderRefund => "senderRefund",
+            MutContractCallType::Transfer => "transfer",
+            MutContractCallType::Erc20Payment => "erc20Payment",
+            MutContractCallType::ReceiverSpend => "receiverSpend",
+            MutContractCallType::SenderRefund => "senderRefund",
         }
     }
 
     fn as_function(&self) -> &'static Function {
         match self {
-            ContractCallType::Transfer => unwrap!(eth::ERC20_CONTRACT.function(self.as_function_name())),
-            ContractCallType::Erc20Payment | ContractCallType::ReceiverSpend | ContractCallType::SenderRefund => {
-                unwrap!(eth::SWAP_CONTRACT.function(self.as_function_name()))
-            },
+            MutContractCallType::Transfer => unwrap!(eth::ERC20_CONTRACT.function(self.as_function_name())),
+            MutContractCallType::Erc20Payment
+            | MutContractCallType::ReceiverSpend
+            | MutContractCallType::SenderRefund => unwrap!(eth::SWAP_CONTRACT.function(self.as_function_name())),
         }
     }
 
-    pub fn from_script_pubkey(script: &[u8]) -> Result<Option<ContractCallType>, String> {
+    pub fn from_script_pubkey(script: &[u8]) -> Result<Option<MutContractCallType>, String> {
         lazy_static! {
             static ref TRANSFER_SHORT_SIGN: [u8; 4] =
                 eth::ERC20_CONTRACT.function("transfer").unwrap().short_signature();
@@ -268,16 +269,16 @@ impl ContractCallType {
         }
 
         if script.starts_with(TRANSFER_SHORT_SIGN.as_ref()) {
-            return Ok(Some(ContractCallType::Transfer));
+            return Ok(Some(MutContractCallType::Transfer));
         }
         if script.starts_with(ERC20_PAYMENT_SHORT_SIGN.as_ref()) {
-            return Ok(Some(ContractCallType::Erc20Payment));
+            return Ok(Some(MutContractCallType::Erc20Payment));
         }
         if script.starts_with(RECEIVER_SPEND_SHORT_SIGN.as_ref()) {
-            return Ok(Some(ContractCallType::ReceiverSpend));
+            return Ok(Some(MutContractCallType::ReceiverSpend));
         }
         if script.starts_with(SENDER_REFUND_SHORT_SIGN.as_ref()) {
-            return Ok(Some(ContractCallType::SenderRefund));
+            return Ok(Some(MutContractCallType::SenderRefund));
         }
         Ok(None)
     }
@@ -772,7 +773,7 @@ impl MarketCoinOps for Qrc20Coin {
         let fut = self
             .utxo
             .rpc_client
-            .rpc_contract_call(RpcContractCallType::BalanceOf, &contract_address, params)
+            .rpc_contract_call(ViewContractCallType::BalanceOf, &contract_address, params)
             .map_err(|e| ERRL!("{}", e))
             .and_then(move |tokens| match tokens.first() {
                 Some(Token::Uint(bal)) => u256_to_big_decimal(*bal, decimals),

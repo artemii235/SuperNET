@@ -142,7 +142,8 @@ pub struct TxHistoryItem {
     pub log_index: u64,
 }
 
-pub enum RpcContractCallType {
+/// Functions of ERC20/EtomicSwap smart contracts that don't change the blockchain state.
+pub enum ViewContractCallType {
     /// Erc20 function.
     BalanceOf,
     /// Erc20 function.
@@ -153,22 +154,22 @@ pub enum RpcContractCallType {
     Payments,
 }
 
-impl RpcContractCallType {
+impl ViewContractCallType {
     fn as_function_name(&self) -> &'static str {
         match self {
-            RpcContractCallType::BalanceOf => "balanceOf",
-            RpcContractCallType::Allowance => "allowance",
-            RpcContractCallType::Decimals => "decimals",
-            RpcContractCallType::Payments => "payments",
+            ViewContractCallType::BalanceOf => "balanceOf",
+            ViewContractCallType::Allowance => "allowance",
+            ViewContractCallType::Decimals => "decimals",
+            ViewContractCallType::Payments => "payments",
         }
     }
 
     fn as_function(&self) -> &'static Function {
         match self {
-            RpcContractCallType::BalanceOf | RpcContractCallType::Allowance | RpcContractCallType::Decimals => {
+            ViewContractCallType::BalanceOf | ViewContractCallType::Allowance | ViewContractCallType::Decimals => {
                 unwrap!(eth::ERC20_CONTRACT.function(self.as_function_name()))
             },
-            RpcContractCallType::Payments => unwrap!(eth::SWAP_CONTRACT.function(self.as_function_name())),
+            ViewContractCallType::Payments => unwrap!(eth::SWAP_CONTRACT.function(self.as_function_name())),
         }
     }
 }
@@ -356,7 +357,7 @@ pub trait Qrc20RpcOps {
 
     fn rpc_contract_call(
         &self,
-        func: RpcContractCallType,
+        func: ViewContractCallType,
         contract_addr: &H160,
         tokens: &[Token],
     ) -> Box<dyn Future<Item = Vec<Token>, Error = String> + Send>;
@@ -374,7 +375,7 @@ impl Qrc20RpcOps for UtxoRpcClientEnum {
 
     fn rpc_contract_call(
         &self,
-        func: RpcContractCallType,
+        func: ViewContractCallType,
         contract_addr: &H160,
         tokens: &[Token],
     ) -> Box<dyn Future<Item = Vec<Token>, Error = String> + Send> {
@@ -394,7 +395,7 @@ impl Qrc20RpcOps for UtxoRpcClientEnum {
 
     fn token_decimals(&self, token_address: &H160) -> Box<dyn Future<Item = u8, Error = String> + Send> {
         let fut = self
-            .rpc_contract_call(RpcContractCallType::Decimals, token_address, &[])
+            .rpc_contract_call(ViewContractCallType::Decimals, token_address, &[])
             .map_err(|e| ERRL!("{}", e))
             .and_then(|tokens| {
                 let decimals = match tokens.first() {

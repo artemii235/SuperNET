@@ -240,7 +240,7 @@ impl Qrc20Coin {
         let sender = qtum::contract_addr_from_utxo_addr(self.utxo.my_address.clone());
         let refund_txs = try_s!(self.sender_refund_transactions(sender, search_from_block).await);
         let found = refund_txs.into_iter().find(|tx| {
-            find_swap_contract_call_with_swap_id(ContractCallType::SenderRefund, &tx, &expected_swap_id).is_some()
+            find_swap_contract_call_with_swap_id(MutContractCallType::SenderRefund, &tx, &expected_swap_id).is_some()
         });
         if let Some(refunded_tx) = found {
             return Ok(Some(FoundSwapTxSpend::Refunded(TransactionEnum::UtxoTx(refunded_tx))));
@@ -264,7 +264,7 @@ impl Qrc20Coin {
         let erc20_payment_txs = try_s!(self.erc20_payment_transactions(sender, search_from_block).await);
         let found = erc20_payment_txs
             .into_iter()
-            .find(|tx| find_swap_contract_call_with_swap_id(ContractCallType::Erc20Payment, &tx, &swap_id).is_some())
+            .find(|tx| find_swap_contract_call_with_swap_id(MutContractCallType::Erc20Payment, &tx, &swap_id).is_some())
             .map(TransactionEnum::UtxoTx);
         Ok(found)
     }
@@ -358,11 +358,11 @@ impl Qrc20Coin {
 
             let contract_call_bytes = try_s!(extract_contract_call_from_script(&script_pubkey));
 
-            let call_type = try_s!(ContractCallType::from_script_pubkey(&contract_call_bytes));
+            let call_type = try_s!(MutContractCallType::from_script_pubkey(&contract_call_bytes));
             match call_type {
-                Some(ContractCallType::Erc20Payment)
-                | Some(ContractCallType::ReceiverSpend)
-                | Some(ContractCallType::SenderRefund) => (),
+                Some(MutContractCallType::Erc20Payment)
+                | Some(MutContractCallType::ReceiverSpend)
+                | Some(MutContractCallType::SenderRefund) => (),
                 _ => continue, // skip not etomic swap contract calls
             }
 
@@ -376,7 +376,7 @@ impl Qrc20Coin {
         let tokens = try_s!(
             self.utxo
                 .rpc_client
-                .rpc_contract_call(RpcContractCallType::Allowance, &self.contract_address, &[
+                .rpc_contract_call(ViewContractCallType::Allowance, &self.contract_address, &[
                     Token::Address(qtum::contract_addr_from_utxo_addr(self.utxo.my_address.clone())),
                     Token::Address(spender),
                 ])
@@ -397,7 +397,7 @@ impl Qrc20Coin {
         let decoded = try_s!(
             self.utxo
                 .rpc_client
-                .rpc_contract_call(RpcContractCallType::Payments, swap_contract_address, &[
+                .rpc_contract_call(ViewContractCallType::Payments, swap_contract_address, &[
                     Token::FixedBytes(swap_id)
                 ])
                 .compat()
@@ -580,9 +580,9 @@ impl Qrc20Coin {
 
             let contract_call_bytes = try_s!(extract_contract_call_from_script(&script_pubkey));
 
-            let call_type = try_s!(ContractCallType::from_script_pubkey(&contract_call_bytes));
+            let call_type = try_s!(MutContractCallType::from_script_pubkey(&contract_call_bytes));
             match call_type {
-                Some(ContractCallType::Erc20Payment) => (),
+                Some(MutContractCallType::Erc20Payment) => (),
                 _ => continue, // skip non-erc20Payment contract calls
             }
 
@@ -771,9 +771,9 @@ fn transfer_call_details_from_script_pubkey(script_pubkey: &Script) -> Result<(H
     }
 
     let contract_call_bytes = try_s!(extract_contract_call_from_script(&script_pubkey));
-    let call_type = try_s!(ContractCallType::from_script_pubkey(&contract_call_bytes));
+    let call_type = try_s!(MutContractCallType::from_script_pubkey(&contract_call_bytes));
     match call_type {
-        Some(ContractCallType::Transfer) => (),
+        Some(MutContractCallType::Transfer) => (),
         _ => return ERR!("Expected 'transfer' contract call"),
     }
 
@@ -803,9 +803,9 @@ pub fn receiver_spend_call_details_from_script_pubkey(script_pubkey: &Script) ->
     }
 
     let contract_call_bytes = try_s!(extract_contract_call_from_script(script_pubkey));
-    let call_type = try_s!(ContractCallType::from_script_pubkey(&contract_call_bytes));
+    let call_type = try_s!(MutContractCallType::from_script_pubkey(&contract_call_bytes));
     match call_type {
-        Some(ContractCallType::ReceiverSpend) => (),
+        Some(MutContractCallType::ReceiverSpend) => (),
         _ => return ERR!("Expected 'receiverSpend' contract call"),
     }
 
@@ -885,7 +885,7 @@ fn find_receiver_spend_with_swap_id_and_secret_hash(
 }
 
 fn find_swap_contract_call_with_swap_id(
-    expected_call_type: ContractCallType,
+    expected_call_type: MutContractCallType,
     tx: &UtxoTx,
     expected_swap_id: &[u8],
 ) -> Option<usize> {
@@ -905,7 +905,7 @@ fn find_swap_contract_call_with_swap_id(
             },
         };
 
-        let call_type = match ContractCallType::from_script_pubkey(&contract_call_bytes) {
+        let call_type = match MutContractCallType::from_script_pubkey(&contract_call_bytes) {
             Ok(Some(t)) => t,
             Ok(None) => continue, // unknown contract call type
             Err(e) => {

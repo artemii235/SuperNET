@@ -675,7 +675,7 @@ fn is_sender_contract(script_pubkey: &Script) -> bool {
             return false;
         },
     };
-    let call_type = match ContractCallType::from_script_pubkey(&contract_call_bytes) {
+    let call_type = match MutContractCallType::from_script_pubkey(&contract_call_bytes) {
         Ok(Some(t)) => t,
         Ok(None) => return false,
         Err(e) => {
@@ -684,10 +684,10 @@ fn is_sender_contract(script_pubkey: &Script) -> bool {
         },
     };
     match call_type {
-        ContractCallType::Transfer => false,
-        ContractCallType::Erc20Payment => false,
-        ContractCallType::ReceiverSpend => true,
-        ContractCallType::SenderRefund => true,
+        MutContractCallType::Transfer => false,
+        MutContractCallType::Erc20Payment => false,
+        MutContractCallType::ReceiverSpend => true,
+        MutContractCallType::SenderRefund => true,
     }
 }
 
@@ -699,7 +699,7 @@ fn is_receiver_contract(script_pubkey: &Script) -> bool {
             return false;
         },
     };
-    let call_type = match ContractCallType::from_script_pubkey(&contract_call_bytes) {
+    let call_type = match MutContractCallType::from_script_pubkey(&contract_call_bytes) {
         Ok(Some(t)) => t,
         Ok(None) => return false,
         Err(e) => {
@@ -708,10 +708,10 @@ fn is_receiver_contract(script_pubkey: &Script) -> bool {
         },
     };
     match call_type {
-        ContractCallType::Transfer => false,
-        ContractCallType::Erc20Payment => true,
-        ContractCallType::ReceiverSpend => false,
-        ContractCallType::SenderRefund => false,
+        MutContractCallType::Transfer => false,
+        MutContractCallType::Erc20Payment => true,
+        MutContractCallType::ReceiverSpend => false,
+        MutContractCallType::SenderRefund => false,
     }
 }
 
