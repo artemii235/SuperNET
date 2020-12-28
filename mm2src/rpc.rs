@@ -21,7 +21,7 @@
 
 use coins::{convert_address, convert_utxo_address, get_enabled_coins, get_trade_fee, kmd_rewards_info, my_tx_history,
             send_raw_transaction, set_required_confirmations, set_requires_notarization, show_priv_key,
-            validate_address, withdraw};
+            trade_preimage, validate_address, withdraw};
 use common::mm_ctx::MmArc;
 #[cfg(feature = "native")] use common::wio::{CORE, CPUPOOL};
 use common::{err_to_rpc_json_string, err_tp_rpc_json, HyRes};
@@ -180,6 +180,7 @@ pub fn dispatcher(req: Json, ctx: MmArc) -> DispatcherRes {
         "setprice" => hyres(set_price(ctx, req)),
         "stats_swap_status" => stats_swap_status(ctx, req),
         "stop" => stop(ctx),
+        "trade_preimage" => hyres(trade_preimage(ctx, req)),
         "unban_pubkeys" => hyres(unban_pubkeys(ctx, req)),
         "validateaddress" => hyres(validate_address(ctx, req)),
         "version" => version(),

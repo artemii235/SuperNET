@@ -5,8 +5,8 @@ use crate::utxo::utxo_common::{self, big_decimal_from_sat};
 use crate::utxo::{qtum, sign_tx, utxo_fields_from_conf_and_request, ActualTxFee, AdditionalTxData, FeePolicy,
                   GenerateTransactionError, RecentlySpentOutPoints, UtxoAddressFormat, UtxoCoinFields, UtxoCommonOps,
                   UtxoTx, VerboseTransactionFrom, UTXO_LOCK};
-use crate::{FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeFee, TransactionDetails,
-            TransactionEnum, TransactionFut, ValidateAddressResult, WithdrawFee, WithdrawRequest};
+use crate::{FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeFee, TradePreimageValue,
+            TransactionDetails, TransactionEnum, TransactionFut, ValidateAddressResult, WithdrawFee, WithdrawRequest};
 use async_trait::async_trait;
 use bigdecimal::BigDecimal;
 use bitcrypto::{dhash160, sha256};
@@ -878,6 +878,15 @@ impl MmCoin for Qrc20Coin {
         };
         Box::new(fut.boxed().compat())
     }
+
+    fn get_sender_trade_fee(
+        &self,
+        value: TradePreimageValue,
+    ) -> Box<dyn Future<Item = TradeFee, Error = String> + Send> {
+        todo!()
+    }
+
+    fn get_receiver_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = String> + Send> { todo!() }
 
     fn required_confirmations(&self) -> u64 { utxo_common::required_confirmations(&self.utxo) }
 

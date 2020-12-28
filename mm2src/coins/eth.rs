@@ -62,7 +62,7 @@ pub use rlp;
 
 mod web3_transport;
 use self::web3_transport::Web3Transport;
-use crate::CoinProtocol;
+use crate::{CoinProtocol, TradePreimageValue};
 
 #[cfg(test)] mod eth_tests;
 
@@ -2332,6 +2332,15 @@ impl MmCoin for EthCoin {
             })
         }))
     }
+
+    fn get_sender_trade_fee(
+        &self,
+        value: TradePreimageValue,
+    ) -> Box<dyn Future<Item = TradeFee, Error = String> + Send> {
+        todo!()
+    }
+
+    fn get_receiver_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = String> + Send> { todo!() }
 
     fn required_confirmations(&self) -> u64 { self.required_confirmations.load(AtomicOrderding::Relaxed) }
 

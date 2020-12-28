@@ -1,5 +1,5 @@
 use super::*;
-use crate::{SwapOps, ValidateAddressResult};
+use crate::{SwapOps, TradePreimageValue, ValidateAddressResult};
 use common::mm_metrics::MetricsArc;
 use futures::{FutureExt, TryFutureExt};
 
@@ -372,6 +372,17 @@ impl MmCoin for QtumCoin {
 
     fn get_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = String> + Send> {
         utxo_common::get_trade_fee(self.clone())
+    }
+
+    fn get_sender_trade_fee(
+        &self,
+        value: TradePreimageValue,
+    ) -> Box<dyn Future<Item = TradeFee, Error = String> + Send> {
+        utxo_common::get_sender_trade_fee(self.clone(), value)
+    }
+
+    fn get_receiver_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = String> + Send> {
+        utxo_common::get_receiver_trade_fee(self)
     }
 
     fn required_confirmations(&self) -> u64 { utxo_common::required_confirmations(&self.utxo_arc) }

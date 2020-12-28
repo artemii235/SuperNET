@@ -31,7 +31,7 @@ pub use chain::Transaction as UtxoTx;
 
 use self::rpc_clients::{electrum_script_hash, UnspentInfo, UtxoRpcClientEnum};
 use crate::utxo::rpc_clients::UtxoRpcClientOps;
-use crate::ValidateAddressResult;
+use crate::{TradePreimageValue, ValidateAddressResult};
 use common::block_on;
 
 macro_rules! true_or {
@@ -544,45 +544,25 @@ pub fn send_maker_payment<T>(
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps + Clone + Send + Sync + 'static,
 {
-    let redeem_script = payment_script(
+    let SwapPaymentOutputsResult {
+        payment_address,
+        outputs,
+    } = try_fus!(generate_swap_payment_outputs(
+        &coin,
         time_lock,
+        taker_pub,
         secret_hash,
-        coin.as_ref().key_pair.public(),
-        &try_fus!(Public::from_slice(taker_pub)),
-    );
-    let amount = try_fus!(sat_from_big_decimal(&amount, coin.as_ref().decimals));
-    let htlc_out = TransactionOutput {
-        value: amount,
-        script_pubkey: Builder::build_p2sh(&dhash160(&redeem_script)).into(),
-    };
-    // record secret hash to blockchain too making it impossible to lose
-    // lock time may be easily brute forced so it is not mandatory to record it
-    let secret_hash_op_return_script = Builder::default()
-        .push_opcode(Opcode::OP_RETURN)
-        .push_bytes(secret_hash)
-        .into_bytes();
-    let secret_hash_op_return_out = TransactionOutput {
-        value: 0,
-        script_pubkey: secret_hash_op_return_script,
-    };
+        amount
+    ));
     let send_fut = match &coin.as_ref().rpc_client {
-        UtxoRpcClientEnum::Electrum(_) => Either::A(send_outputs_from_my_address(coin, vec![
-            htlc_out,
-            secret_hash_op_return_out,
-        ])),
+        UtxoRpcClientEnum::Electrum(_) => Either::A(send_outputs_from_my_address(coin, outputs)),
         UtxoRpcClientEnum::Native(client) => {
-            let payment_addr = Address {
-                checksum_type: coin.as_ref().checksum_type,
-                hash: dhash160(&redeem_script),
-                prefix: coin.as_ref().p2sh_addr_prefix,
-                t_addr_prefix: coin.as_ref().p2sh_t_addr_prefix,
-            };
-            let addr_string = try_fus!(coin.display_address(&payment_addr));
+            let addr_string = try_fus!(coin.display_address(&payment_address));
             Either::B(
                 client
                     .import_address(&addr_string, &addr_string, false)
                     .map_err(|e| ERRL!("{}", e))
-                    .and_then(move |_| send_outputs_from_my_address(coin, vec![htlc_out, secret_hash_op_return_out])),
+                    .and_then(move |_| send_outputs_from_my_address(coin, outputs)),
             )
         },
     };
@@ -599,47 +579,25 @@ pub fn send_taker_payment<T>(
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps + Clone + Send + Sync + 'static,
 {
-    let redeem_script = payment_script(
+    let SwapPaymentOutputsResult {
+        payment_address,
+        outputs,
+    } = try_fus!(generate_swap_payment_outputs(
+        &coin,
         time_lock,
+        maker_pub,
         secret_hash,
-        coin.as_ref().key_pair.public(),
-        &try_fus!(Public::from_slice(maker_pub)),
-    );
-
-    let amount = try_fus!(sat_from_big_decimal(&amount, coin.as_ref().decimals));
-
-    let htlc_out = TransactionOutput {
-        value: amount,
-        script_pubkey: Builder::build_p2sh(&dhash160(&redeem_script)).into(),
-    };
-    // record secret hash to blockchain too making it impossible to lose
-    // lock time may be easily brute forced so it is not mandatory to record it
-    let secret_hash_op_return_script = Builder::default()
-        .push_opcode(Opcode::OP_RETURN)
-        .push_bytes(secret_hash)
-        .into_bytes();
-    let secret_hash_op_return_out = TransactionOutput {
-        value: 0,
-        script_pubkey: secret_hash_op_return_script,
-    };
+        amount
+    ));
     let send_fut = match &coin.as_ref().rpc_client {
-        UtxoRpcClientEnum::Electrum(_) => Either::A(send_outputs_from_my_address(coin, vec![
-            htlc_out,
-            secret_hash_op_return_out,
-        ])),
+        UtxoRpcClientEnum::Electrum(_) => Either::A(send_outputs_from_my_address(coin, outputs)),
         UtxoRpcClientEnum::Native(client) => {
-            let payment_addr = Address {
-                checksum_type: coin.as_ref().checksum_type,
-                hash: dhash160(&redeem_script),
-                prefix: coin.as_ref().p2sh_addr_prefix,
-                t_addr_prefix: coin.as_ref().p2sh_t_addr_prefix,
-            };
-            let addr_string = try_fus!(coin.display_address(&payment_addr));
+            let addr_string = try_fus!(coin.display_address(&payment_address));
             Either::B(
                 client
                     .import_address(&addr_string, &addr_string, false)
                     .map_err(|e| ERRL!("{}", e))
-                    .and_then(move |_| send_outputs_from_my_address(coin, vec![htlc_out, secret_hash_op_return_out])),
+                    .and_then(move |_| send_outputs_from_my_address(coin, outputs)),
             )
         },
     };
@@ -1675,6 +1633,62 @@ where
     Box::new(fut.boxed().compat())
 }
 
+/// Maker should pay fee only for sending Maker Payment.
+/// Even if refund will be required the fee will be deducted from P2SH input.
+pub fn get_sender_trade_fee<T>(
+    coin: T,
+    value: TradePreimageValue,
+) -> Box<dyn Future<Item = TradeFee, Error = String> + Send>
+where
+    T: AsRef<UtxoCoinFields> + MarketCoinOps + UtxoCommonOps + Send + Sync + 'static,
+{
+    let fut = async move {
+        let (amount, fee_policy) = match value {
+            TradePreimageValue::Max => {
+                let balance = try_s!(coin.my_balance().compat().await);
+                (balance, FeePolicy::DeductFromOutput(0))
+            },
+            TradePreimageValue::Exact(amount) if !amount.is_zero() => (amount, FeePolicy::SendExact),
+            TradePreimageValue::Exact(_) => return ERR!("Value cannot be zero"),
+        };
+
+        // pass the dummy params
+        let time_lock = (now_ms() / 1000) as u32;
+        let other_pub = &[0; 33]; // H264 is 33 bytes
+        let secret_hash = &[0; 20]; // H160 is 20 bytes
+        let SwapPaymentOutputsResult { outputs, .. } = try_s!(generate_swap_payment_outputs(
+            &coin,
+            time_lock,
+            other_pub,
+            secret_hash,
+            amount
+        ));
+
+        let (unspents, _recently_sent_txs) = try_s!(coin.list_unspent_ordered(&coin.as_ref().my_address).await);
+        // call generate_transaction function with the same fee=None and gas_fee=None as in the swap (in particular, in send_outputs_from_my_address_impl)
+        let (_tx, data) = try_s!(generate_transaction(&coin, unspents, outputs, fee_policy, None, None).await);
+        let fee_amount = big_decimal_from_sat(data.fee_amount as i64, coin.as_ref().decimals);
+        Ok(TradeFee {
+            coin: coin.as_ref().ticker.clone(),
+            amount: fee_amount.into(),
+        })
+    };
+    Box::new(fut.boxed().compat())
+}
+
+/// Payment sender should not pay fee for sending Maker Payment.
+/// Even if refund will be required the fee will be deducted from P2SH input.
+pub fn get_receiver_trade_fee<T>(coin: &T) -> Box<dyn Future<Item = TradeFee, Error = String> + Send>
+where
+    T: AsRef<UtxoCoinFields>,
+{
+    let trade_fee = TradeFee {
+        coin: coin.as_ref().ticker.clone(),
+        amount: 0.into(),
+    };
+    Box::new(futures01::future::ok(trade_fee))
+}
+
 pub fn required_confirmations(coin: &UtxoCoinFields) -> u64 {
     coin.required_confirmations.load(AtomicOrderding::Relaxed)
 }
@@ -2024,6 +2038,57 @@ async fn search_for_swap_tx_spend(
         },
         None => Ok(None),
     }
+}
+
+struct SwapPaymentOutputsResult {
+    payment_address: Address,
+    outputs: Vec<TransactionOutput>,
+}
+
+fn generate_swap_payment_outputs<T>(
+    coin: T,
+    time_lock: u32,
+    other_pub: &[u8],
+    secret_hash: &[u8],
+    amount: BigDecimal,
+) -> Result<SwapPaymentOutputsResult, String>
+where
+    T: AsRef<UtxoCoinFields>,
+{
+    let redeem_script = payment_script(
+        time_lock,
+        secret_hash,
+        coin.as_ref().key_pair.public(),
+        &try_s!(Public::from_slice(other_pub)),
+    );
+    let redeem_script_hash = dhash160(&redeem_script);
+    let amount = try_s!(sat_from_big_decimal(&amount, coin.as_ref().decimals));
+    let htlc_out = TransactionOutput {
+        value: amount,
+        script_pubkey: Builder::build_p2sh(&redeem_script_hash).into(),
+    };
+    // record secret hash to blockchain too making it impossible to lose
+    // lock time may be easily brute forced so it is not mandatory to record it
+    let secret_hash_op_return_script = Builder::default()
+        .push_opcode(Opcode::OP_RETURN)
+        .push_bytes(secret_hash)
+        .into_bytes();
+    let secret_hash_op_return_out = TransactionOutput {
+        value: 0,
+        script_pubkey: secret_hash_op_return_script,
+    };
+
+    let payment_address = Address {
+        checksum_type: coin.as_ref().checksum_type,
+        hash: redeem_script_hash,
+        prefix: coin.as_ref().p2sh_addr_prefix,
+        t_addr_prefix: coin.as_ref().p2sh_t_addr_prefix,
+    };
+    let result = SwapPaymentOutputsResult {
+        payment_address,
+        outputs: vec![htlc_out, secret_hash_op_return_out],
+    };
+    Ok(result)
 }
 
 fn payment_script(time_lock: u32, secret_hash: &[u8], pub_0: &Public, pub_1: &Public) -> Script {
