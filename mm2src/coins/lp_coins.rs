@@ -288,7 +288,7 @@ pub struct WithdrawRequest {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(untagged)]
+#[serde(tag = "type")]
 pub enum TxFeeDetails {
     Utxo(UtxoFeeDetails),
     Eth(EthTxFeeDetails),
