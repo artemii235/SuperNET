@@ -36,6 +36,7 @@ use bigdecimal::BigDecimal;
 use common::executor::{spawn, Timer};
 use common::mm_ctx::{from_ctx, MmArc};
 use common::mm_metrics::MetricsWeak;
+use common::mm_number::MmNumber;
 use common::{block_on, calc_total_pages, rpc_err_response, rpc_response, HyRes};
 use futures::compat::Future01CompatExt;
 use futures::lock::Mutex as AsyncMutex;
@@ -43,6 +44,7 @@ use futures01::Future;
 use gstuff::slurp;
 use http::Response;
 use rpc::v1::types::Bytes as BytesJson;
+use serde::{Deserialize, Deserializer};
 use serde_json::{self as json, Value as Json};
 use std::collections::hash_map::{HashMap, RawEntryMut};
 use std::fmt;
@@ -76,8 +78,7 @@ use qrc20::{qrc20_addr_from_str, qrc20_coin_from_conf_and_request, Qrc20Coin, Qr
 #[doc(hidden)]
 #[allow(unused_variables)]
 pub mod test_coin;
-pub use self::test_coin::TestCoin;
-use common::mm_number::MmNumber;
+pub use test_coin::TestCoin;
 
 pub trait Transaction: fmt::Debug + 'static {
     /// Raw transaction bytes of the transaction
@@ -287,12 +288,36 @@ pub struct WithdrawRequest {
     fee: Option<WithdrawFee>,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(untagged)]
+/// Please note that no type should have the same structure as another type,
+/// because this enum has the `untagged` deserialization.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "type")]
 pub enum TxFeeDetails {
     Utxo(UtxoFeeDetails),
     Eth(EthTxFeeDetails),
     Qrc20(Qrc20FeeDetails),
+}
+
+/// Deserialize the TxFeeDetails as an untagged enum.
+impl<'de> Deserialize<'de> for TxFeeDetails {
+    fn deserialize<D>(deserializer: D) -> Result<Self, <D as Deserializer<'de>>::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum TxFeeDetailsUnTagged {
+            Utxo(UtxoFeeDetails),
+            Eth(EthTxFeeDetails),
+            Qrc20(Qrc20FeeDetails),
+        }
+
+        match Deserialize::deserialize(deserializer)? {
+            TxFeeDetailsUnTagged::Utxo(f) => Ok(TxFeeDetails::Utxo(f)),
+            TxFeeDetailsUnTagged::Eth(f) => Ok(TxFeeDetails::Eth(f)),
+            TxFeeDetailsUnTagged::Qrc20(f) => Ok(TxFeeDetails::Qrc20(f)),
+        }
+    }
 }
 
 impl Into<TxFeeDetails> for EthTxFeeDetails {

@@ -15,108 +15,17 @@
 #[macro_use] extern crate unwrap;
 
 use chrono::DateTime;
-use glob::{glob, Paths, PatternError};
 use gstuff::{last_modified_sec, slurp};
 use regex::Regex;
 use std::env::{self};
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{ChildStdout, Command, Stdio};
-use std::str::{from_utf8, from_utf8_unchecked};
-use std::thread;
+use std::process::Command;
+use std::str::from_utf8;
 
 /// Ongoing (RLS) builds might interfere with a precise time comparison.
 const SLIDE: f64 = 60.;
-
-fn bindgen<
-    'a,
-    TP: AsRef<Path>,
-    FI: Iterator<Item = &'a &'a str>,
-    TI: Iterator<Item = &'a &'a str>,
-    DI: Iterator<Item = &'a &'a str>,
->(
-    from: Vec<String>,
-    to: TP,
-    functions: FI,
-    types: TI,
-    defines: DI,
-) {
-    if cfg!(not(feature = "native")) {
-        return;
-    }
-
-    // We'd like to regenerate the bindings whenever the build.rs changes, in case we changed bindgen configuration here.
-    let lm_build_rs = unwrap!(last_modified_sec(&"build.rs"), "Can't stat build.rs");
-
-    let to = to.as_ref();
-
-    let mut lm_from = 0f64;
-    for header_path in &from {
-        lm_from = match last_modified_sec(&header_path) {
-            Ok(sec) => lm_from.max(sec),
-            Err(err) => panic!("Can't stat the header {:?}: {}", from, err),
-        };
-    }
-    let lm_to = last_modified_sec(&to).unwrap_or(0.);
-    if lm_from >= lm_to - SLIDE || lm_build_rs >= lm_to - SLIDE {
-        let bindings = {
-            // https://docs.rs/bindgen/0.37.*/bindgen/struct.Builder.html
-            let mut builder = bindgen::builder();
-            for header_path in from {
-                builder = builder.header(header_path)
-            }
-            builder = builder.ctypes_prefix("::libc");
-            builder = builder.whitelist_recursively(true);
-            builder = builder.layout_tests(false);
-            builder = builder.derive_default(true);
-            // Currently works for functions but not for variables such as `extern uint32_t DOCKERFLAG`.
-            builder = builder.generate_comments(true);
-            if cfg!(windows) {
-                // Normally we should be checking for `_WIN32`, but `nn_config.h` checks for `WIN32`.
-                // (Note that it's okay to have WIN32 defined for 64-bit builds,
-                // cf https://github.com/rust-lang-nursery/rust-bindgen/issues/1062#issuecomment-334804738).
-                builder = builder.clang_arg("-D WIN32");
-            }
-            for name in functions {
-                builder = builder.whitelist_function(name)
-            }
-            for name in types {
-                builder = builder.whitelist_type(name)
-            }
-            // Looks like C defines should be whitelisted both on the function and the variable levels.
-            for name in defines {
-                builder = builder.whitelist_function(name);
-                builder = builder.whitelist_var(name)
-            }
-            match builder.generate() {
-                Ok(bindings) => bindings,
-                Err(()) => panic!("Error generating the bindings for {:?}", to),
-            }
-        };
-
-        if let Err(err) = bindings.write_to_file(to) {
-            panic!("Error writing to {:?}: {}", to, err)
-        }
-    }
-}
-
-fn generate_bindings() {
-    let _ = fs::create_dir("c_headers");
-
-    bindgen(
-        vec!["../../iguana/exchanges/LP_include.h".into()],
-        "c_headers/LP_include.rs",
-        [
-            // functions
-            "OS_ensure_directory",
-        ]
-        .iter(),
-        // types
-        [].iter(),
-        [].iter(),
-    );
-}
 
 /// This function ensures that we have the “MM_VERSION” and “MM_DATETIME” variables during the build.
 ///
@@ -197,117 +106,6 @@ fn mm_version() -> String {
     version
 }
 
-/// Formats a vector of command-line arguments into a printable string, for the build log.
-fn show_args<'a, I: IntoIterator<Item = &'a String>>(args: I) -> String {
-    use std::fmt::Write;
-    let mut buf = String::new();
-    for arg in args {
-        if arg.contains(' ') {
-            let _ = write!(&mut buf, " \"{}\"", arg);
-        } else {
-            buf.push(' ');
-            buf.push_str(arg)
-        }
-    }
-    buf
-}
-
-fn forward(stdout: ChildStdout) {
-    unwrap!(thread::Builder::new().name("forward".into()).spawn(move || {
-        let mut buf = Vec::new();
-        for ch in stdout.bytes() {
-            let ch = match ch {
-                Ok(k) => k,
-                Err(_) => break,
-            };
-            if ch == b'\n' {
-                eprintln!("{}", unsafe { from_utf8_unchecked(&buf) });
-            } else {
-                buf.push(ch)
-            }
-        }
-        if !buf.is_empty() {
-            eprintln!("{}", unsafe { from_utf8_unchecked(&buf) });
-        }
-    }));
-}
-
-/// Like the `duct` `cmd!` but also prints the command into the standard error stream.
-macro_rules! ecmd {
-    ( $program:expr ) => {{
-        eprintln!("$ {}", $program);
-        let mut command = Command::new ($program);
-        command.stdout (Stdio::piped());  // Printed to `stderr` in `run!`
-        command.stderr (Stdio::inherit());  // `stderr` is directly visible with "cargo build -vv".
-        command
-    }};
-    ( @s $args: expr, $arg:expr ) => {$args.push (String::from ($arg));};
-    ( @i $args: expr, $iterable:expr ) => {for v in $iterable {ecmd! (@s $args, v)}};
-    ( @a $args: expr, i $arg:expr ) => {ecmd! (@i $args, $arg);};
-    ( @a $args: expr, i $arg:expr, $( $tail:tt )* ) => {ecmd! (@i $args, $arg); ecmd! (@a $args, $($tail)*);};
-    ( @a $args: expr, $arg:expr ) => {ecmd! (@s $args, $arg);};
-    ( @a $args: expr, $arg:expr, $( $tail:tt )* ) => {ecmd! (@s $args, $arg); ecmd! (@a $args, $($tail)*);};
-    ( $program:expr, $( $args:tt )* ) => {{
-        let mut args: Vec<String> = Vec::new();
-        ecmd! (@a &mut args, $($args)*);
-        eprintln!("$ {}{}", $program, show_args (&args));
-        let mut command = Command::new ($program);
-        command.stdout (Stdio::inherit()) .stderr (Stdio::inherit());
-        for arg in args {command.arg (arg);}
-        command
-    }};
-}
-macro_rules! run {
-    ( $command: expr ) => {
-        let mut pc = unwrap!($command.spawn());
-        if let Some(stdout) = pc.stdout.take() {
-            forward(stdout)
-        }
-        let status = unwrap!(pc.wait());
-        if !status.success() {
-            panic!("Command returned an error status: {}", status)
-        }
-    };
-}
-
-/// See if we have the required libraries.
-#[cfg(windows)]
-fn windows_requirements() {
-    use std::ffi::OsString;
-    use std::mem::MaybeUninit;
-    use std::os::windows::ffi::OsStringExt;
-    // https://msdn.microsoft.com/en-us/library/windows/desktop/ms724373(v=vs.85).aspx
-    use winapi::um::sysinfoapi::GetSystemDirectoryW;
-
-    let system = {
-        let mut buf: [u16; 1024] = unsafe { MaybeUninit::uninit().assume_init() };
-        let len = unsafe { GetSystemDirectoryW(buf.as_mut_ptr(), (buf.len() - 1) as u32) };
-        if len <= 0 {
-            panic!("!GetSystemDirectoryW")
-        }
-        let len = len as usize;
-        let system = OsString::from_wide(&buf[0..len]);
-        Path::new(&system).to_path_buf()
-    };
-    eprintln!("windows_requirements] System directory is {:?}.", system);
-
-    // `msvcr100.dll` is required by `ftp://sourceware.org/pub/pthreads-win32/prebuilt-dll-2-9-1-release/dll/x64/pthreadVC2.dll`
-    let msvcr100 = system.join("msvcr100.dll");
-    if !msvcr100.exists() {
-        panic!(
-            "msvcr100.dll is missing. \
-            You can install it from https://www.microsoft.com/en-us/download/details.aspx?id=14632."
-        );
-    }
-
-    // I don't exactly know what DLLs this download installs. Probably "msvcp140...". Might prove useful later.
-    //You can install it from https://aka.ms/vs/15/release/vc_redist.x64.exe,
-    //see https://support.microsoft.com/en-us/help/2977003/the-latest-supported-visual-c-downloads
-}
-
-#[cfg(not(windows))]
-fn windows_requirements() {}
-
 /// SuperNET's root.
 fn root() -> PathBuf {
     let common = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -363,7 +161,7 @@ fn _in_place(path: &dyn AsRef<Path>, update: &mut dyn FnMut(Vec<u8>) -> Vec<u8>)
 ///
 /// For now we're building the Structured Exception Handling code here,
 /// but in the future we might subsume the rest of the C build under build.rs.
-fn build_c_code(mm_version: &str) {
+fn build_c_code() {
     // Link in the Windows-specific crash handling code.
 
     if cfg!(windows) {
@@ -378,83 +176,8 @@ fn build_c_code(mm_version: &str) {
         println!("cargo:rustc-link-search=native={}", out_dir);
     }
 
-    // The MM1 library.
-
-    let _ = fs::create_dir(root().join("build"));
-    let _ = fs::create_dir_all(root().join("target/debug"));
-
-    // NB: With "duct 0.11.0" the `let _` variable binding is necessary in order for the build not to fall detached into background.
-    let mut cmake_prep_args: Vec<String> = Vec::new();
-    if cfg!(windows) {
-        // To flush the build problems early we explicitly specify that we want a 64-bit MSVC build and not a GNU or 32-bit one.
-        cmake_prep_args.push("-G".into());
-        cmake_prep_args.push("Visual Studio 15 2017 Win64".into());
-    }
-    cmake_prep_args.push(format!("-DMM_VERSION={}", mm_version));
-    cmake_prep_args.push("-DCMAKE_BUILD_TYPE=Debug".into());
-    cmake_prep_args.push("..".into());
-    eprintln!("$ cmake{}", show_args(&cmake_prep_args));
-    run!(ecmd!("cmake", i cmake_prep_args).current_dir(root().join("build")));
-
-    let cmake_args: Vec<String> = vec![
-        "--build".into(),
-        ".".into(),
-        "--target".into(),
-        "marketmaker-lib".into(),
-    ];
-    eprintln!("$ cmake{}", show_args(&cmake_args));
-    run!(ecmd!("cmake", i cmake_args).current_dir(root().join("build")));
-
-    println!("cargo:rustc-link-lib=static=marketmaker-lib");
-
-    if cfg!(windows) {
-        println!("cargo:rustc-link-search=native={}", path2s(rabs("x64")));
-        // When building locally with CMake 3.12.0 on Windows the artefacts are created in the "Debug" folders:
-        println!(
-            "cargo:rustc-link-search=native={}",
-            path2s(rabs("build/iguana/exchanges/Debug"))
-        );
-    // https://stackoverflow.com/a/10234077/257568
-    //println!(r"cargo:rustc-link-search=native=c:\Program Files (x86)\Microsoft Visual Studio\2017\BuildTools\VC\Tools\MSVC\14.14.26428\lib\x64");
-    } else {
-        println!(
-            "cargo:rustc-link-search=native={}",
-            path2s(rabs("build/iguana/exchanges"))
-        );
-    }
-
-    if cfg!(windows) {
-        // https://sourceware.org/pthreads-win32/
-        // ftp://sourceware.org/pub/pthreads-win32/prebuilt-dll-2-9-1-release/
-
-        let pthread_dll = root().join("x64/pthreadVC2.dll");
-        if !pthread_dll.is_file() {
-            run!(ecmd!("cmd", "/c", "marketmaker_build_depends.cmd").current_dir(&root()));
-            assert!(pthread_dll.is_file(), "Missing {:?}", pthread_dll);
-        }
-
-        println!("cargo:rustc-link-lib=pthreadVC2");
-        unwrap!(
-            fs::copy(&pthread_dll, root().join("target/debug/pthreadVC2.dll")),
-            "Can't copy {:?}",
-            pthread_dll
-        );
-    } else {
+    if !cfg!(windows) {
         println!("cargo:rustc-link-lib=crypto");
-    }
-}
-
-/// Find shell-matching paths with the pattern relative to the `root`.
-fn globʳ(root_glob: &str) -> Result<Paths, PatternError> {
-    let full_glob = root().join(root_glob);
-    let full_glob = unwrap!(full_glob.to_str());
-    glob(full_glob)
-}
-
-fn rerun_if_changed(root_glob: &str) {
-    for path in unwrap!(globʳ(root_glob)) {
-        let path = unwrap!(path);
-        println!("cargo:rerun-if-changed={}", path2s(path));
     }
 }
 
@@ -466,25 +189,9 @@ fn main() {
 
     println!("cargo:rerun-if-changed={}", path2s(rabs("MM_VERSION")));
     println!("cargo:rerun-if-changed={}", path2s(rabs("MM_DATETIME")));
-    let mm_version = mm_version();
-
     if cfg!(not(feature = "native")) {
         return;
     }
-
-    rerun_if_changed("iguana/exchanges/CMakeLists.txt");
-    rerun_if_changed("iguana/exchanges/LP_include.h");
-    rerun_if_changed("iguana/exchanges/mm.c");
-    println!("cargo:rerun-if-changed={}", path2s(rabs("CMakeLists.txt")));
-
-    // NB: Using `rerun-if-env-changed` disables the default dependency heuristics.
-    // cf. https://github.com/rust-lang/cargo/issues/4587
-    // We should avoid using it for now.
-
-    // Rebuild when we change certain features.
-    //println!("rerun-if-env-changed=CARGO_FEATURE_NOP");
-
-    windows_requirements();
-    build_c_code(&mm_version);
-    generate_bindings();
+    mm_version();
+    build_c_code();
 }
