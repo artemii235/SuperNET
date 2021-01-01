@@ -883,10 +883,73 @@ impl MmCoin for Qrc20Coin {
         &self,
         value: TradePreimageValue,
     ) -> Box<dyn Future<Item = TradeFee, Error = String> + Send> {
-        todo!()
+        let selfi = self.clone();
+        let decimals = self.utxo.decimals;
+        let fut = async move {
+            // pass the dummy params
+            let timelock = (now_ms() / 1000) as u32;
+            let secret_hash = vec![0; 20];
+            let swap_id = qrc20_swap_id(timelock, &secret_hash);
+            let receiver_addr = H160::default();
+            let value = match value {
+                TradePreimageValue::Exact(v) => v,
+                TradePreimageValue::Max => try_s!(selfi.my_balance().compat().await),
+            };
+            let value = try_s!(wei_from_big_decimal(&value, decimals));
+            let outputs = try_s!(
+                selfi
+                    .generate_swap_payment_outputs(
+                        swap_id,
+                        value,
+                        timelock,
+                        secret_hash,
+                        receiver_addr,
+                        selfi.swap_contract_address
+                    )
+                    .await
+            );
+
+            let GenerateQrc20TxResult { miner_fee, gas_fee, .. } =
+                try_s!(selfi.generate_qrc20_transaction(outputs).await);
+            let total_fee = big_decimal_from_sat((gas_fee + miner_fee) as i64, decimals);
+            Ok(TradeFee {
+                coin: selfi.platform.clone(),
+                amount: total_fee.into(),
+            })
+        };
+        Box::new(fut.boxed().compat())
     }
 
-    fn get_receiver_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = String> + Send> { todo!() }
+    fn get_receiver_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = String> + Send> {
+        let selfi = self.clone();
+        let decimals = self.utxo.decimals;
+        let fut = async move {
+            // pass the dummy params
+            let timelock = (now_ms() / 1000) as u32;
+            let secret = vec![0; 32];
+            let swap_id = qrc20_swap_id(timelock, &secret[0..20]);
+            let sender_addr = H160::default();
+            // get the max available value that we can pass into the contract call params
+            // see `generate_contract_call_script_pubkey`
+            let value = u64::max_value().into();
+            let outputs = vec![try_s!(selfi.receiver_spend_output(
+                &selfi.swap_contract_address,
+                swap_id,
+                value,
+                secret,
+                sender_addr
+            ))];
+
+            let GenerateQrc20TxResult { miner_fee, gas_fee, .. } =
+                try_s!(selfi.generate_qrc20_transaction(outputs).await);
+            let total_fee = big_decimal_from_sat((gas_fee + miner_fee) as i64, decimals);
+            Ok(TradeFee {
+                coin: selfi.platform.clone(),
+                amount: total_fee.into(),
+            })
+        };
+        Box::new(fut.boxed().compat())
+    }
 
     fn required_confirmations(&self) -> u64 { utxo_common::required_confirmations(&self.utxo) }
 
