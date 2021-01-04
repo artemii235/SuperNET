@@ -732,3 +732,193 @@ fn test_add_ten_pct_one_gwei() {
     let actual = add_ten_pct_one_gwei(num);
     assert_eq!(expected, actual);
 }
+
+#[test]
+fn get_eth_sender_trade_preimage() {
+    let (_ctx, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://dummy.dummy".into()]);
+
+    static mut MY_BALANCE: u64 = 0;
+    EthCoin::my_balance
+        .mock_safe(|_| MockResult::Return(Box::new(futures01::future::ok(unsafe { MY_BALANCE.into() }))));
+    EthCoinImpl::get_gas_price.mock_safe(|_| MockResult::Return(Box::new(futures01::future::ok(40.into()))));
+
+    // trade fee for the ETH coin is `150_000 * 40` always
+    let amount = u256_to_big_decimal((150_000 * 40).into(), 18).expect("!u256_to_big_decimal");
+    let expected_fee = TradeFee {
+        coin: "ETH".to_owned(),
+        amount: amount.into(),
+    };
+
+    unsafe { MY_BALANCE = 150_000 * 40 + 1 };
+    let actual = coin
+        .get_sender_trade_fee(TradePreimageValue::Max)
+        .wait()
+        .expect("!get_sender_trade_fee");
+    assert_eq!(actual, expected_fee);
+
+    unsafe { MY_BALANCE = 150_000 * 40 };
+    let err = coin
+        .get_sender_trade_fee(TradePreimageValue::Max)
+        .wait()
+        .expect_err("Expected an error");
+    log!("error: "(err));
+    // amount to send = balance - gas_fee, then amount = 0 that is too low
+    assert!(err.contains("ETH balance 6000000 is sufficient to cover gas fee only"));
+
+    unsafe { MY_BALANCE = 150_000 * 40 + 100 };
+    let value = u256_to_big_decimal(100.into(), 18).expect("!u256_to_big_decimal");
+    let actual = coin
+        .get_sender_trade_fee(TradePreimageValue::Exact(value))
+        .wait()
+        .expect("!get_sender_trade_fee");
+    assert_eq!(actual, expected_fee);
+
+    unsafe { MY_BALANCE = 150_000 * 40 + 99 };
+    let value = u256_to_big_decimal(100.into(), 18).expect("!u256_to_big_decimal");
+    let err = coin
+        .get_sender_trade_fee(TradePreimageValue::Exact(value))
+        .wait()
+        .expect_err("Expected an error");
+    log!("error: "(err));
+    assert!(err.contains("ETH balance 6000099 is too low to cover gas fee 6000000 and send 100 amount"));
+
+    unsafe { MY_BALANCE = 1000 };
+    let value = u256_to_big_decimal(2000.into(), 18).expect("!u256_to_big_decimal");
+    let err = coin
+        .get_sender_trade_fee(TradePreimageValue::Exact(value))
+        .wait()
+        .expect_err("Expected an error");
+    log!("error: "(err));
+    assert!(err.contains("The value 2000 is larger than balance 1000"));
+}
+
+#[test]
+fn get_erc20_sender_trade_preimage() {
+    static mut MY_BALANCE: u64 = 0;
+    EthCoin::my_balance
+        .mock_safe(|_| MockResult::Return(Box::new(futures01::future::ok(unsafe { MY_BALANCE.into() }))));
+
+    static mut MY_ETH_BALANCE: u64 = 0;
+    EthCoin::eth_balance
+        .mock_safe(|_| MockResult::Return(Box::new(futures01::future::ok(unsafe { MY_ETH_BALANCE.into() }))));
+
+    static mut ALLOWANCE: u64 = 0;
+    EthCoin::allowance
+        .mock_safe(|_, _| MockResult::Return(Box::new(futures01::future::ok(unsafe { ALLOWANCE.into() }))));
+
+    EthCoinImpl::get_gas_price.mock_safe(|_| MockResult::Return(Box::new(futures01::future::ok(40.into()))));
+
+    fn expected_trade_fee(gas_limit: u64) -> TradeFee {
+        let amount = u256_to_big_decimal((gas_limit * 40).into(), 18).expect("!u256_to_big_decimal");
+        TradeFee {
+            coin: "ETH".to_owned(),
+            amount: amount.into(),
+        }
+    }
+
+    let (_ctx, coin) = eth_coin_for_test(
+        EthCoinType::Erc20(Address::default()),
+        vec!["http://dummy.dummy".into()],
+    );
+
+    // value is allowed
+    unsafe { MY_BALANCE = 1000 };
+    unsafe { MY_ETH_BALANCE = 150_000 * 40 };
+    unsafe { ALLOWANCE = 1000 };
+    let actual = coin
+        .get_sender_trade_fee(TradePreimageValue::Max)
+        .wait()
+        .expect("!get_sender_trade_fee");
+    assert_eq!(actual, expected_trade_fee(150_000));
+
+    // value is greater than allowance
+    unsafe { MY_BALANCE = 1000 };
+    unsafe { MY_ETH_BALANCE = 300_000 * 40 };
+    unsafe { ALLOWANCE = 999 };
+    let actual = coin
+        .get_sender_trade_fee(TradePreimageValue::Max)
+        .wait()
+        .expect("!get_sender_trade_fee");
+    assert_eq!(actual, expected_trade_fee(300_000));
+
+    // value is allowed
+    unsafe { MY_BALANCE = 2000 };
+    unsafe { MY_ETH_BALANCE = 400_000 * 40 };
+    unsafe { ALLOWANCE = 1000 };
+    let value = u256_to_big_decimal(999.into(), 18).expect("u256_to_big_decimal");
+    let actual = coin
+        .get_sender_trade_fee(TradePreimageValue::Exact(value))
+        .wait()
+        .expect("!get_sender_trade_fee");
+    assert_eq!(actual, expected_trade_fee(150_000));
+
+    // value is greater than allowance
+    unsafe { MY_BALANCE = 2000 };
+    unsafe { MY_ETH_BALANCE = 400_000 * 40 };
+    unsafe { ALLOWANCE = 1000 };
+    let value = u256_to_big_decimal(1500.into(), 18).expect("u256_to_big_decimal");
+    let actual = coin
+        .get_sender_trade_fee(TradePreimageValue::Exact(value))
+        .wait()
+        .expect("!get_sender_trade_fee");
+    assert_eq!(actual, expected_trade_fee(300_000));
+
+    // insufficient eth balance
+    unsafe { MY_BALANCE = 1000 };
+    unsafe { MY_ETH_BALANCE = 150_000 * 40 - 1 };
+    unsafe { ALLOWANCE = 1000 };
+    let err = coin
+        .get_sender_trade_fee(TradePreimageValue::Max)
+        .wait()
+        .expect_err("Expected an error");
+    log!("error: "(err));
+    assert!(err.contains("ETH balance 5999999 is too low to cover gas fee, required 6000000"));
+
+    // insufficient eth balance
+    unsafe { MY_BALANCE = 1500 };
+    unsafe { MY_ETH_BALANCE = 300_000 * 40 - 1 };
+    unsafe { ALLOWANCE = 1000 };
+    let err = coin
+        .get_sender_trade_fee(TradePreimageValue::Max)
+        .wait()
+        .expect_err("Expected an error");
+    log!("error: "(err));
+    assert!(err.contains("ETH balance 11999999 is too low to cover gas fee, required 12000000"));
+
+    // insufficient token balance
+    unsafe { MY_BALANCE = 1000 };
+    unsafe { MY_ETH_BALANCE = 150_000 * 40 - 1 };
+    unsafe { ALLOWANCE = 1000 };
+    let value = u256_to_big_decimal(1500.into(), 18).expect("u256_to_big_decimal");
+    let err = coin
+        .get_sender_trade_fee(TradePreimageValue::Exact(value))
+        .wait()
+        .expect_err("Expected an error");
+    log!("error: "(err));
+    assert!(err.contains("The value 1500 is larger than balance 1000"));
+}
+
+#[test]
+fn get_receiver_trade_preimage() {
+    static mut MY_ETH_BALANCE: u64 = 0;
+    EthCoin::eth_balance
+        .mock_safe(|_| MockResult::Return(Box::new(futures01::future::ok(unsafe { MY_ETH_BALANCE.into() }))));
+
+    EthCoinImpl::get_gas_price.mock_safe(|_| MockResult::Return(Box::new(futures01::future::ok(40.into()))));
+
+    let (_ctx, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://dummy.dummy".into()]);
+    let amount = u256_to_big_decimal((150_000 * 40).into(), 18).expect("!u256_to_big_decimal");
+    let expected_fee = TradeFee {
+        coin: "ETH".to_owned(),
+        amount: amount.into(),
+    };
+
+    unsafe { MY_ETH_BALANCE = 150_000 * 40 };
+    let actual = coin.get_receiver_trade_fee().wait().expect("!get_sender_trade_fee");
+    assert_eq!(actual, expected_fee);
+
+    unsafe { MY_ETH_BALANCE = 150_000 * 40 - 1 };
+    let err = coin.get_receiver_trade_fee().wait().expect_err("Expected an error");
+    log!("error: "(err));
+    assert!(err.contains("ETH balance 5999999 is too low to cover gas fee, required 6000000"));
+}

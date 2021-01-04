@@ -266,12 +266,13 @@ impl EthCoinImpl {
     }
 
     /// Get gas price
-    fn get_gas_price(&self) -> impl Future<Item = U256, Error = String> {
-        if let Some(url) = &self.gas_station_url {
+    fn get_gas_price(&self) -> Box<dyn Future<Item = U256, Error = String> + Send> {
+        let fut = if let Some(url) = &self.gas_station_url {
             Either01::A(GasStationData::get_gas_price(&url).map(add_ten_pct_one_gwei))
         } else {
             Either01::B(self.web3.eth().gas_price().map_err(|e| ERRL!("{}", e)))
-        }
+        };
+        Box::new(fut)
     }
 
     /// Gets `ReceiverSpent` events from etomic swap smart contract (`self.swap_contract_address` ) since `from_block`
@@ -2242,6 +2243,81 @@ impl EthCoin {
     }
 }
 
+impl EthCoin {
+    async fn get_eth_sender_trade_preimage(&self, value: TradePreimageValue) -> Result<TradeFee, String> {
+        let my_balance = try_s!(self.my_balance().compat().await);
+        let gas_price = try_s!(self.get_gas_price().compat().await);
+        let fee = gas_price * U256::from(150_000);
+
+        match value {
+            TradePreimageValue::Exact(value) => {
+                let value = try_s!(wei_from_big_decimal(&value, 18));
+                if my_balance <= value {
+                    return ERR!("The value {} is larger than balance {}", value, my_balance);
+                }
+                if my_balance < value + fee {
+                    return ERR!(
+                        "ETH balance {} is too low to cover gas fee {} and send {} amount",
+                        my_balance,
+                        fee,
+                        value
+                    );
+                }
+            },
+            TradePreimageValue::Max => {
+                if my_balance < fee {
+                    return ERR!("ETH balance {} is too low to cover gas fee {}", my_balance, fee);
+                }
+                if my_balance == fee {
+                    return ERR!("ETH balance {} is sufficient to cover gas fee only", my_balance);
+                }
+            },
+        }
+
+        let amount = try_s!(u256_to_big_decimal(fee, 18));
+        Ok(TradeFee {
+            coin: "ETH".to_owned(),
+            amount: amount.into(),
+        })
+    }
+
+    async fn get_erc20_sender_trade_preimage(&self, value: TradePreimageValue) -> Result<TradeFee, String> {
+        let my_balance = try_s!(self.my_balance().compat().await);
+        let my_eth_balance = try_s!(self.base_coin_balance().compat().await);
+        let my_eth_balance = try_s!(wei_from_big_decimal(&my_eth_balance, 18));
+        let gas_price = try_s!(self.get_gas_price().compat().await);
+
+        let value = match value {
+            TradePreimageValue::Exact(value) => {
+                let value = try_s!(wei_from_big_decimal(&value, self.decimals));
+                if my_balance < value {
+                    return ERR!("The value {} is larger than balance {}", value, my_balance);
+                }
+                value
+            },
+            TradePreimageValue::Max if my_balance.is_zero() => return ERR!("Cannot trade with zero balance"),
+            TradePreimageValue::Max => my_balance,
+        };
+        let allowed = try_s!(self.allowance(self.swap_contract_address).compat().await);
+        let gas_limit = if allowed < value { 300_000 } else { 150_000 };
+        let fee = gas_price * U256::from(gas_limit);
+
+        if my_eth_balance < fee {
+            return ERR!(
+                "ETH balance {} is too low to cover gas fee, required {}",
+                my_eth_balance,
+                fee
+            );
+        }
+
+        let amount = try_s!(u256_to_big_decimal(fee, 18));
+        Ok(TradeFee {
+            coin: "ETH".to_owned(),
+            amount: amount.into(),
+        })
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct EthTxFeeDetails {
     coin: String,
@@ -2337,10 +2413,40 @@ impl MmCoin for EthCoin {
         &self,
         value: TradePreimageValue,
     ) -> Box<dyn Future<Item = TradeFee, Error = String> + Send> {
-        todo!()
+        let coin = self.clone();
+        let fut = async move {
+            match coin.coin_type {
+                EthCoinType::Eth => coin.get_eth_sender_trade_preimage(value).await,
+                EthCoinType::Erc20(_) => coin.get_erc20_sender_trade_preimage(value).await,
+            }
+        };
+        Box::new(fut.boxed().compat())
     }
 
-    fn get_receiver_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = String> + Send> { todo!() }
+    fn get_receiver_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = String> + Send> {
+        let coin = self.clone();
+        let fut = async move {
+            let my_eth_balance = try_s!(coin.base_coin_balance().compat().await);
+            let my_eth_balance = try_s!(wei_from_big_decimal(&my_eth_balance, 18));
+            let gas_price = try_s!(coin.get_gas_price().compat().await);
+
+            let fee = gas_price * U256::from(150_000);
+            if my_eth_balance < fee {
+                return ERR!(
+                    "ETH balance {} is too low to cover gas fee, required {}",
+                    my_eth_balance,
+                    fee
+                );
+            }
+
+            let amount = try_s!(u256_to_big_decimal(fee, 18));
+            Ok(TradeFee {
+                coin: "ETH".to_owned(),
+                amount: amount.into(),
+            })
+        };
+        Box::new(fut.boxed().compat())
+    }
 
     fn required_confirmations(&self) -> u64 { self.required_confirmations.load(AtomicOrderding::Relaxed) }
 
