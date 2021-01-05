@@ -604,7 +604,7 @@ impl Qrc20Coin {
         })
     }
 
-    fn sender_refund_output(
+    pub fn sender_refund_output(
         &self,
         swap_contract_address: &H160,
         id: Vec<u8>,

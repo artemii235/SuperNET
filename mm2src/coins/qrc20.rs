@@ -46,7 +46,6 @@ mod swap_ops;
 const OUTPUT_QTUM_AMOUNT: u64 = 0;
 const QRC20_GAS_LIMIT_DEFAULT: u64 = 100_000;
 const QRC20_GAS_PRICE_DEFAULT: u64 = 40;
-const QRC20_SWAP_GAS_REQUIRED: u64 = QRC20_GAS_LIMIT_DEFAULT * 3;
 const QRC20_DUST: u64 = 0;
 // Keccak-256 hash of `Transfer` event
 const QRC20_TRANSFER_TOPIC: &str = "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
@@ -865,8 +864,7 @@ impl MmCoin for Qrc20Coin {
     /// This method is called to check our QTUM balance.
     fn get_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = String> + Send> {
         // `erc20Payment` may require two `approve` contract calls in worst case,
-        // therefore use `QRC20_SWAP_GAS_REQUIRED` instead of `QRC20_GAS_LIMIT_DEFAULT`.
-        let gas_fee = QRC20_SWAP_GAS_REQUIRED * QRC20_GAS_PRICE_DEFAULT;
+        let gas_fee = 3 * QRC20_GAS_LIMIT_DEFAULT * QRC20_GAS_PRICE_DEFAULT;
 
         let selfi = self.clone();
         let fut = async move {
@@ -908,25 +906,43 @@ impl MmCoin for Qrc20Coin {
             };
 
             let value = try_s!(wei_from_big_decimal(&value, decimals));
-            let outputs = try_s!(
-                selfi
-                    .generate_swap_payment_outputs(
-                        swap_id,
-                        value,
-                        timelock,
-                        secret_hash,
-                        receiver_addr,
-                        selfi.swap_contract_address
-                    )
-                    .await
-            );
 
-            let GenerateQrc20TxResult { miner_fee, gas_fee, .. } =
-                try_s!(selfi.generate_qrc20_transaction(outputs).await);
-            let total_fee = big_decimal_from_sat((gas_fee + miner_fee) as i64, decimals);
+            let erc20_payment_fee = {
+                let erc20_payment_outputs = try_s!(
+                    selfi
+                        .generate_swap_payment_outputs(
+                            swap_id.clone(),
+                            value,
+                            timelock,
+                            secret_hash.clone(),
+                            receiver_addr,
+                            selfi.swap_contract_address
+                        )
+                        .await
+                );
+                let GenerateQrc20TxResult { miner_fee, gas_fee, .. } =
+                    try_s!(selfi.generate_qrc20_transaction(erc20_payment_outputs).await);
+                big_decimal_from_sat((gas_fee + miner_fee) as i64, decimals)
+            };
+            log!("'erc20Payment' fee: "(erc20_payment_fee));
+
+            let sender_refund_fee = {
+                let sender_refund_output = try_s!(selfi.sender_refund_output(
+                    &selfi.swap_contract_address,
+                    swap_id,
+                    value,
+                    secret_hash,
+                    receiver_addr
+                ));
+                let GenerateQrc20TxResult { miner_fee, gas_fee, .. } =
+                    try_s!(selfi.generate_qrc20_transaction(vec![sender_refund_output]).await);
+                big_decimal_from_sat((gas_fee + miner_fee) as i64, decimals)
+            };
+            log!("'senderRefund' fee: "(erc20_payment_fee));
+
             Ok(TradeFee {
                 coin: selfi.platform.clone(),
-                amount: total_fee.into(),
+                amount: (erc20_payment_fee + sender_refund_fee).into(),
             })
         };
         Box::new(fut.boxed().compat())
