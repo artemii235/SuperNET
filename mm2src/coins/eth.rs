@@ -2247,7 +2247,8 @@ impl EthCoin {
     async fn get_eth_sender_trade_preimage(&self, value: TradePreimageValue) -> Result<TradeFee, String> {
         let my_balance = try_s!(self.my_balance().compat().await);
         let gas_price = try_s!(self.get_gas_price().compat().await);
-        let fee = gas_price * U256::from(150_000);
+        // this gas_limit includes gas for `ethPayment` and `senderRefund` contract calls
+        let fee = gas_price * U256::from(300_000);
 
         match value {
             TradePreimageValue::Exact(value) => {
@@ -2299,7 +2300,13 @@ impl EthCoin {
             TradePreimageValue::Max => my_balance,
         };
         let allowed = try_s!(self.allowance(self.swap_contract_address).compat().await);
-        let gas_limit = if allowed < value { 300_000 } else { 150_000 };
+        let gas_limit = if allowed < value {
+            // this gas_limit includes gas for `approve`, `erc20Payment` and `senderRefund` contract calls
+            450_000
+        } else {
+            // this gas_limit includes gas for `erc20Payment` and `senderRefund` contract calls
+            300_000
+        };
         let fee = gas_price * U256::from(gas_limit);
 
         if my_eth_balance < fee {
