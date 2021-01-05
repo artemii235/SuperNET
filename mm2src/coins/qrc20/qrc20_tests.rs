@@ -1093,6 +1093,39 @@ fn test_sender_trade_preimage_zero_allowance() {
     assert_eq!(actual, expected);
 }
 
+/// `qcvY3cGGGSvzWoKr5ZWN4g6Z4w19VHqZFR` address has `0` balance
+#[test]
+fn test_sender_trade_preimage_invalid_value() {
+    // priv_key of qcvY3cGGGSvzWoKr5ZWN4g6Z4w19VHqZFR
+    // please note this address should have an immutable balance
+    let priv_key = [
+        0, 164, 63, 93, 64, 221, 58, 129, 8, 142, 49, 43, 9, 44, 230, 4, 29, 210, 12, 139, 46, 225, 68, 63, 161, 189,
+        153, 2, 46, 44, 207, 95,
+    ];
+    let (_ctx, coin) = qrc20_coin_for_test(&priv_key);
+
+    let err = coin
+        .get_sender_trade_fee(TradePreimageValue::Exact(1.into()))
+        .wait()
+        .expect_err("Expected an error");
+    log!("error: "(err));
+    assert!(err.contains("The value 1 is larger than balance 0"));
+
+    let err = coin
+        .get_sender_trade_fee(TradePreimageValue::Exact(0.into()))
+        .wait()
+        .expect_err("Expected an error");
+    log!("error: "(err));
+    assert!(err.contains("Expected non-zero value"));
+
+    let err = coin
+        .get_sender_trade_fee(TradePreimageValue::Max)
+        .wait()
+        .expect_err("Expected an error");
+    log!("error: "(err));
+    assert!(err.contains("Cannot trade with zero balance"));
+}
+
 /// `qeUbAVgkPiF62syqd792VJeB9BaqMtLcZV` address has `3` allowance,
 /// so if the value is `2.5`, then only one `erc20Payment` contract call should be included in the estimated trade fee,
 /// if the value is `3.5`, then two `approve` and one `erc20Payment` contract call should be included in the estimated trade fee.

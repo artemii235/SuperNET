@@ -8,7 +8,7 @@ use crate::utxo::{qtum, sign_tx, utxo_fields_from_conf_and_request, ActualTxFee,
 use crate::{FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeFee, TradePreimageValue,
             TransactionDetails, TransactionEnum, TransactionFut, ValidateAddressResult, WithdrawFee, WithdrawRequest};
 use async_trait::async_trait;
-use bigdecimal::BigDecimal;
+use bigdecimal::{BigDecimal, Zero};
 use bitcrypto::{dhash160, sha256};
 use chain::TransactionOutput;
 use common::block_on;
@@ -886,15 +886,27 @@ impl MmCoin for Qrc20Coin {
         let selfi = self.clone();
         let decimals = self.utxo.decimals;
         let fut = async move {
+            let my_balance = try_s!(selfi.my_balance().compat().await);
+
             // pass the dummy params
             let timelock = (now_ms() / 1000) as u32;
             let secret_hash = vec![0; 20];
             let swap_id = qrc20_swap_id(timelock, &secret_hash);
             let receiver_addr = H160::default();
             let value = match value {
-                TradePreimageValue::Exact(v) => v,
-                TradePreimageValue::Max => try_s!(selfi.my_balance().compat().await),
+                TradePreimageValue::Exact(value) => {
+                    if value.is_zero() {
+                        return ERR!("Expected non-zero value");
+                    }
+                    if my_balance < value {
+                        return ERR!("The value {} is larger than balance {}", value, my_balance);
+                    }
+                    value
+                },
+                TradePreimageValue::Max if my_balance.is_zero() => return ERR!("Cannot trade with zero balance"),
+                TradePreimageValue::Max => my_balance,
             };
+
             let value = try_s!(wei_from_big_decimal(&value, decimals));
             let outputs = try_s!(
                 selfi
