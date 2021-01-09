@@ -5,6 +5,18 @@ use common::mm_ctx::{MmArc, MmCtxBuilder};
 use futures::future::join_all;
 use mocktopus::mocking::*;
 
+macro_rules! trade_preimage_error_contains {
+    ($err: expr, $pat: expr) => {
+        match $err {
+            TradePreimageError::NotSufficientBalance(e) => {
+                log!("error: "(e));
+                assert!(e.contains($pat));
+            },
+            e => panic!("Expected NotSufficientBalance error, found: {:?}", e),
+        }
+    };
+}
+
 fn check_sum(addr: &str, expected: &str) {
     let actual = checksum_address(addr);
     assert_eq!(expected, actual);
@@ -761,9 +773,8 @@ fn get_eth_sender_trade_preimage() {
         .get_sender_trade_fee(TradePreimageValue::Max)
         .wait()
         .expect_err("Expected an error");
-    log!("error: "(err));
     // amount to send = balance - gas_fee, then amount = 0 that is too low
-    assert!(err.contains("ETH balance 12000000 is sufficient to cover gas fee only"));
+    trade_preimage_error_contains!(err, "ETH balance 12000000 is sufficient to cover gas fee only");
 
     unsafe { MY_BALANCE = 300_000 * 40 + 100 };
     let value = u256_to_big_decimal(100.into(), 18).expect("!u256_to_big_decimal");
@@ -779,8 +790,10 @@ fn get_eth_sender_trade_preimage() {
         .get_sender_trade_fee(TradePreimageValue::Exact(value))
         .wait()
         .expect_err("Expected an error");
-    log!("error: "(err));
-    assert!(err.contains("ETH balance 12000099 is too low to cover gas fee 12000000 and send 100 amount"));
+    trade_preimage_error_contains!(
+        err,
+        "ETH balance 12000099 is too low to cover gas fee 12000000 and send 100 amount"
+    );
 
     unsafe { MY_BALANCE = 1000 };
     let value = u256_to_big_decimal(2000.into(), 18).expect("!u256_to_big_decimal");
@@ -788,8 +801,7 @@ fn get_eth_sender_trade_preimage() {
         .get_sender_trade_fee(TradePreimageValue::Exact(value))
         .wait()
         .expect_err("Expected an error");
-    log!("error: "(err));
-    assert!(err.contains("The value 2000 is larger than balance 1000"));
+    trade_preimage_error_contains!(err, "The value 2000 is larger than balance 1000");
 }
 
 #[test]
@@ -871,8 +883,10 @@ fn get_erc20_sender_trade_preimage() {
         .get_sender_trade_fee(TradePreimageValue::Max)
         .wait()
         .expect_err("Expected an error");
-    log!("error: "(err));
-    assert!(err.contains("ETH balance 11999999 is too low to cover gas fee, required 12000000"));
+    trade_preimage_error_contains!(
+        err,
+        "ETH balance 11999999 is too low to cover gas fee, required 12000000"
+    );
 
     // insufficient eth balance
     unsafe { MY_BALANCE = 1500 };
@@ -882,8 +896,10 @@ fn get_erc20_sender_trade_preimage() {
         .get_sender_trade_fee(TradePreimageValue::Max)
         .wait()
         .expect_err("Expected an error");
-    log!("error: "(err));
-    assert!(err.contains("ETH balance 17999999 is too low to cover gas fee, required 18000000"));
+    trade_preimage_error_contains!(
+        err,
+        "ETH balance 17999999 is too low to cover gas fee, required 18000000"
+    );
 
     // insufficient token balance
     unsafe { MY_BALANCE = 1000 };
@@ -894,8 +910,7 @@ fn get_erc20_sender_trade_preimage() {
         .get_sender_trade_fee(TradePreimageValue::Exact(value))
         .wait()
         .expect_err("Expected an error");
-    log!("error: "(err));
-    assert!(err.contains("The value 1500 is larger than balance 1000"));
+    trade_preimage_error_contains!(err, "The value 1500 is larger than balance 1000");
 }
 
 #[test]
@@ -919,6 +934,5 @@ fn get_receiver_trade_preimage() {
 
     unsafe { MY_ETH_BALANCE = 150_000 * 40 - 1 };
     let err = coin.get_receiver_trade_fee().wait().expect_err("Expected an error");
-    log!("error: "(err));
-    assert!(err.contains("ETH balance 5999999 is too low to cover gas fee, required 6000000"));
+    trade_preimage_error_contains!(err, "ETH balance 5999999 is too low to cover gas fee, required 6000000");
 }

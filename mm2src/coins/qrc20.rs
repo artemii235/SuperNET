@@ -5,8 +5,9 @@ use crate::utxo::utxo_common::{self, big_decimal_from_sat};
 use crate::utxo::{qtum, sign_tx, utxo_fields_from_conf_and_request, ActualTxFee, AdditionalTxData, FeePolicy,
                   GenerateTransactionError, RecentlySpentOutPoints, UtxoAddressFormat, UtxoCoinFields, UtxoCommonOps,
                   UtxoTx, VerboseTransactionFrom, UTXO_LOCK};
-use crate::{FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeFee, TradePreimageValue,
-            TransactionDetails, TransactionEnum, TransactionFut, ValidateAddressResult, WithdrawFee, WithdrawRequest};
+use crate::{FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeFee, TradePreimageError,
+            TradePreimageValue, TransactionDetails, TransactionEnum, TransactionFut, ValidateAddressResult,
+            WithdrawFee, WithdrawRequest};
 use async_trait::async_trait;
 use bigdecimal::{BigDecimal, Zero};
 use bitcrypto::{dhash160, sha256};
@@ -53,6 +54,22 @@ const QRC20_TRANSFER_TOPIC: &str = "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4
 const QRC20_APPROVE_TOPIC: &str = "8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925";
 #[allow(dead_code)]
 const QRC20_PAYMENT_SENT_TOPIC: &str = "ccc9c05183599bd3135da606eaaf535daffe256e9de33c048014cffcccd4ad57";
+
+macro_rules! stringify_gen_tx_error {
+    ($selff: expr, $exp: expr) => {
+        match $exp {
+            GenerateTransactionError::EmptyUtxoSet => ERRL!(
+                "Not enough {} to Pay Fee: {}",
+                $selff.platform,
+                GenerateTransactionError::EmptyUtxoSet
+            ),
+            GenerateTransactionError::NotSufficientBalance { description } => {
+                ERRL!("Not enough {} to Pay Fee: {}", $selff.platform, description)
+            },
+            e => ERRL!("{}", e),
+        }
+    };
+}
 
 pub async fn qrc20_coin_from_conf_and_request(
     ctx: &MmArc,
@@ -332,7 +349,10 @@ impl Qrc20Coin {
         // Move over all QRC20 tokens should share the same cache with each other and base QTUM coin
         let _utxo_lock = UTXO_LOCK.lock().await;
 
-        let GenerateQrc20TxResult { signed, .. } = try_s!(self.generate_qrc20_transaction(outputs).await);
+        let GenerateQrc20TxResult { signed, .. } = self
+            .generate_qrc20_transaction(outputs)
+            .await
+            .map_err(|e| stringify_gen_tx_error!(self, e))?;
         let _tx = try_s!(self.utxo.rpc_client.send_transaction(&signed).compat().await);
         Ok(signed.into())
     }
@@ -342,12 +362,11 @@ impl Qrc20Coin {
     async fn generate_qrc20_transaction(
         &self,
         outputs: Vec<ContractCallOutput>,
-    ) -> Result<GenerateQrc20TxResult, String> {
-        let unspents = try_s!(self
-            .ordered_mature_unspents(&self.utxo.my_address)
-            .compat()
-            .await
-            .map_err(|e| ERRL!("{}", e)));
+    ) -> Result<GenerateQrc20TxResult, GenerateTransactionError> {
+        let unspents = try_map!(
+            self.ordered_mature_unspents(&self.utxo.my_address).compat().await,
+            GenerateTransactionError::Other
+        );
 
         // None seems that the generate_transaction() should request estimated fee for Kbyte
         let actual_tx_fee = None;
@@ -359,22 +378,18 @@ impl Qrc20Coin {
         let outputs = outputs.into_iter().map(|output| output.into()).collect();
         let (unsigned, data) = self
             .generate_transaction(unspents, outputs, fee_policy, actual_tx_fee, Some(gas_fee))
-            .await
-            .map_err(|e| match &e {
-                GenerateTransactionError::EmptyUtxoSet => ERRL!("Not enough {} to Pay Fee: {}", self.platform, e),
-                GenerateTransactionError::NotSufficientBalance { description } => {
-                    ERRL!("Not enough {} to Pay Fee: {}", self.platform, description)
-                },
-                e => ERRL!("{}", e),
-            })?;
+            .await?;
         let prev_script = ScriptBuilder::build_p2pkh(&self.utxo.my_address.hash);
-        let signed = try_s!(sign_tx(
-            unsigned,
-            &self.utxo.key_pair,
-            prev_script,
-            self.utxo.signature_version,
-            self.utxo.fork_id
-        ));
+        let signed = try_map!(
+            sign_tx(
+                unsigned,
+                &self.utxo.key_pair,
+                prev_script,
+                self.utxo.signature_version,
+                self.utxo.fork_id
+            ),
+            GenerateTransactionError::Other
+        );
         Ok(GenerateQrc20TxResult {
             signed,
             miner_fee: data.fee_amount,
@@ -813,28 +828,8 @@ impl MmCoin for Qrc20Coin {
     fn is_asset_chain(&self) -> bool { utxo_common::is_asset_chain(&self.utxo) }
 
     fn can_i_spend_other_payment(&self) -> Box<dyn Future<Item = (), Error = String> + Send> {
-        let selfi = self.clone();
-        let fut = async move {
-            let qtum_balance = try_s!(selfi.base_coin_balance().compat().await);
-            let qtum_balance_sat = try_s!(wei_from_big_decimal(&qtum_balance, selfi.utxo.decimals));
-
-            // other payment can be spend by `receiverSpend` that require only one output
-            let gas_fee = QRC20_GAS_LIMIT_DEFAULT * QRC20_GAS_PRICE_DEFAULT;
-            let min_amount: U256 = try_s!(selfi.get_qrc20_tx_fee(gas_fee).await).into();
-
-            log!("qtum_balance " [qtum_balance_sat] " min_amount " (min_amount));
-            if qtum_balance_sat < min_amount {
-                // u256_to_big_decimal() is expected to return no error
-                let min_amount = try_s!(u256_to_big_decimal(min_amount, selfi.utxo.decimals));
-                return ERR!(
-                    "Base coin balance {} is too low to cover gas fee, required {}",
-                    qtum_balance,
-                    min_amount,
-                );
-            }
-            Ok(())
-        };
-        Box::new(fut.boxed().compat())
+        // [`Qrc20Coin::get_receiver_trade_fee`] returns an error if the Eth balance is insufficient
+        Box::new(self.get_receiver_trade_fee().map(|_| ()).map_err(|e| ERRL!("{}", e)))
     }
 
     fn wallet_only(&self) -> bool { false }
@@ -880,11 +875,12 @@ impl MmCoin for Qrc20Coin {
     fn get_sender_trade_fee(
         &self,
         value: TradePreimageValue,
-    ) -> Box<dyn Future<Item = TradeFee, Error = String> + Send> {
+    ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
         let selfi = self.clone();
         let decimals = self.utxo.decimals;
         let fut = async move {
-            let my_balance = try_s!(selfi.my_balance().compat().await);
+            let my_balance = try_map!(selfi.my_balance().compat().await, TradePreimageError::Other);
+            let my_qtum_balance = try_map!(selfi.base_coin_balance().compat().await, TradePreimageError::Other);
 
             // pass the dummy params
             let timelock = (now_ms() / 1000) as u32;
@@ -894,21 +890,26 @@ impl MmCoin for Qrc20Coin {
             let value = match value {
                 TradePreimageValue::Exact(value) => {
                     if value.is_zero() {
-                        return ERR!("Expected non-zero value");
+                        return Err(TradePreimageError::Other(ERRL!("Expected non-zero value")));
                     }
                     if my_balance < value {
-                        return ERR!("The value {} is larger than balance {}", value, my_balance);
+                        let err = ERRL!("The value {} is larger than balance {}", value, my_balance);
+                        return Err(TradePreimageError::NotSufficientBalance(err));
                     }
                     value
                 },
-                TradePreimageValue::Max if my_balance.is_zero() => return ERR!("Cannot trade with zero balance"),
+                TradePreimageValue::Max if my_balance.is_zero() => {
+                    return Err(TradePreimageError::NotSufficientBalance(ERRL!(
+                        "Cannot trade with zero balance"
+                    )))
+                },
                 TradePreimageValue::Max => my_balance,
             };
 
-            let value = try_s!(wei_from_big_decimal(&value, decimals));
+            let value = try_map!(wei_from_big_decimal(&value, decimals), TradePreimageError::Other);
 
             let erc20_payment_fee = {
-                let erc20_payment_outputs = try_s!(
+                let erc20_payment_outputs = try_map!(
                     selfi
                         .generate_swap_payment_outputs(
                             swap_id.clone(),
@@ -916,39 +917,54 @@ impl MmCoin for Qrc20Coin {
                             timelock,
                             secret_hash.clone(),
                             receiver_addr,
-                            selfi.swap_contract_address
+                            selfi.swap_contract_address,
                         )
-                        .await
+                        .await,
+                    TradePreimageError::Other
                 );
                 let GenerateQrc20TxResult { miner_fee, gas_fee, .. } =
-                    try_s!(selfi.generate_qrc20_transaction(erc20_payment_outputs).await);
+                    selfi.generate_qrc20_transaction(erc20_payment_outputs).await?;
                 big_decimal_from_sat((gas_fee + miner_fee) as i64, decimals)
             };
             log!("'erc20Payment' fee: "(erc20_payment_fee));
 
             let sender_refund_fee = {
-                let sender_refund_output = try_s!(selfi.sender_refund_output(
-                    &selfi.swap_contract_address,
-                    swap_id,
-                    value,
-                    secret_hash,
-                    receiver_addr
-                ));
+                let sender_refund_output = try_map!(
+                    selfi.sender_refund_output(
+                        &selfi.swap_contract_address,
+                        swap_id,
+                        value,
+                        secret_hash,
+                        receiver_addr
+                    ),
+                    TradePreimageError::Other
+                );
                 let GenerateQrc20TxResult { miner_fee, gas_fee, .. } =
-                    try_s!(selfi.generate_qrc20_transaction(vec![sender_refund_output]).await);
+                    selfi.generate_qrc20_transaction(vec![sender_refund_output]).await?;
                 big_decimal_from_sat((gas_fee + miner_fee) as i64, decimals)
             };
             log!("'senderRefund' fee: "(erc20_payment_fee));
 
+            let total_fee = erc20_payment_fee + sender_refund_fee;
+            if my_qtum_balance < total_fee {
+                let err = ERRL!(
+                    "{} balance {} is too low to cover the contract call fee, required {}",
+                    selfi.platform,
+                    my_qtum_balance,
+                    total_fee
+                );
+                return Err(TradePreimageError::NotSufficientBalance(err));
+            }
+
             Ok(TradeFee {
                 coin: selfi.platform.clone(),
-                amount: (erc20_payment_fee + sender_refund_fee).into(),
+                amount: total_fee.into(),
             })
         };
         Box::new(fut.boxed().compat())
     }
 
-    fn get_receiver_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = String> + Send> {
+    fn get_receiver_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
         let selfi = self.clone();
         let decimals = self.utxo.decimals;
         let fut = async move {
@@ -960,16 +976,13 @@ impl MmCoin for Qrc20Coin {
             // get the max available value that we can pass into the contract call params
             // see `generate_contract_call_script_pubkey`
             let value = u64::max_value().into();
-            let outputs = vec![try_s!(selfi.receiver_spend_output(
-                &selfi.swap_contract_address,
-                swap_id,
-                value,
-                secret,
-                sender_addr
-            ))];
+            let output = try_map!(
+                selfi.receiver_spend_output(&selfi.swap_contract_address, swap_id, value, secret, sender_addr),
+                TradePreimageError::Other
+            );
 
             let GenerateQrc20TxResult { miner_fee, gas_fee, .. } =
-                try_s!(selfi.generate_qrc20_transaction(outputs).await);
+                selfi.generate_qrc20_transaction(vec![output]).await?;
             let total_fee = big_decimal_from_sat((gas_fee + miner_fee) as i64, decimals);
             Ok(TradeFee {
                 coin: selfi.platform.clone(),
@@ -1084,7 +1097,10 @@ async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> Result<Transac
         signed,
         miner_fee,
         gas_fee,
-    } = try_s!(coin.generate_qrc20_transaction(outputs).await);
+    } = coin
+        .generate_qrc20_transaction(outputs)
+        .await
+        .map_err(|e| stringify_gen_tx_error!(coin, e))?;
 
     let received_by_me = if to_addr == coin.utxo.my_address {
         qrc20_amount.clone()

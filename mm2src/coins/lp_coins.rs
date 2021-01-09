@@ -388,7 +388,7 @@ pub enum TradeInfo {
     Taker(BigDecimal),
 }
 
-#[derive(Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct TradeFee {
     pub coin: String,
     pub amount: MmNumber,
@@ -398,6 +398,21 @@ pub struct TradeFee {
 pub enum TradePreimageValue {
     Exact(BigDecimal),
     Max,
+}
+
+#[derive(Debug)]
+pub enum TradePreimageError {
+    NotSufficientBalance(String),
+    Other(String),
+}
+
+impl fmt::Display for TradePreimageError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TradePreimageError::NotSufficientBalance(e) => write!(f, "Not sufficient balance: {}", e),
+            TradePreimageError::Other(e) => write!(f, "{}", e),
+        }
+    }
 }
 
 /// NB: Implementations are expected to follow the pImpl idiom, providing cheap reference-counted cloning and garbage collection.
@@ -483,10 +498,10 @@ pub trait MmCoin: SwapOps + MarketCoinOps + fmt::Debug + Send + Sync + 'static {
     fn get_sender_trade_fee(
         &self,
         value: TradePreimageValue,
-    ) -> Box<dyn Future<Item = TradeFee, Error = String> + Send>;
+    ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send>;
 
     /// Get fee to be paid by receiver per whole swap
-    fn get_receiver_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = String> + Send>;
+    fn get_receiver_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send>;
 
     /// required transaction confirmations number to ensure double-spend safety
     fn required_confirmations(&self) -> u64;

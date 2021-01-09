@@ -114,26 +114,6 @@ fn test_can_i_spend_other_payment() {
 }
 
 #[test]
-fn test_can_i_spend_other_payment_err() {
-    ElectrumClient::display_balance.mock_safe(|_, _, decimal| {
-        // one satoshi less than required
-        let balance = big_decimal_from_sat(CONTRACT_CALL_GAS_FEE + EXPECTED_TX_FEE - 1, decimal);
-        MockResult::Return(Box::new(futures01::future::ok(balance)))
-    });
-
-    let priv_key = [
-        192, 240, 176, 226, 14, 170, 226, 96, 107, 47, 166, 243, 154, 48, 28, 243, 18, 144, 240, 1, 79, 103, 178, 42,
-        32, 161, 106, 119, 241, 227, 42, 102,
-    ];
-    let (_ctx, coin) = qrc20_coin_for_test(&priv_key);
-    check_tx_fee(&coin, ActualTxFee::Fixed(EXPECTED_TX_FEE as u64));
-
-    let error = coin.can_i_spend_other_payment().wait().err().unwrap();
-    log!([error]);
-    assert!(error.contains("Base coin balance 0.04000999 is too low to cover gas fee, required 0.04001"));
-}
-
-#[test]
 #[ignore]
 fn test_send_maker_payment() {
     // priv_key of qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG
@@ -1099,26 +1079,32 @@ fn test_sender_trade_preimage_invalid_value() {
     ];
     let (_ctx, coin) = qrc20_coin_for_test(&priv_key);
 
-    let err = coin
+    match coin
         .get_sender_trade_fee(TradePreimageValue::Exact(1.into()))
         .wait()
-        .expect_err("Expected an error");
-    log!("error: "(err));
-    assert!(err.contains("The value 1 is larger than balance 0"));
+        .expect_err("Expected an error")
+    {
+        TradePreimageError::NotSufficientBalance(e) => assert!(e.contains("The value 1 is larger than balance 0")),
+        e => panic!("Unexpected error: {}", e),
+    }
 
-    let err = coin
+    match coin
         .get_sender_trade_fee(TradePreimageValue::Exact(0.into()))
         .wait()
-        .expect_err("Expected an error");
-    log!("error: "(err));
-    assert!(err.contains("Expected non-zero value"));
+        .expect_err("Expected an error")
+    {
+        TradePreimageError::Other(e) => assert!(e.contains("Expected non-zero value")),
+        e => panic!("Unexpected error: {}", e),
+    }
 
-    let err = coin
+    match coin
         .get_sender_trade_fee(TradePreimageValue::Max)
         .wait()
-        .expect_err("Expected an error");
-    log!("error: "(err));
-    assert!(err.contains("Cannot trade with zero balance"));
+        .expect_err("Expected an error")
+    {
+        TradePreimageError::NotSufficientBalance(e) => assert!(e.contains("Cannot trade with zero balance")),
+        e => panic!("Unexpected error: {}", e),
+    }
 }
 
 /// `qeUbAVgkPiF62syqd792VJeB9BaqMtLcZV` address has `3` allowance,

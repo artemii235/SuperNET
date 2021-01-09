@@ -1,5 +1,5 @@
 use super::*;
-use crate::{SwapOps, TradePreimageValue, ValidateAddressResult};
+use crate::{SwapOps, TradePreimageError, TradePreimageValue, ValidateAddressResult};
 use common::log::{error, info};
 use common::mm_metrics::MetricsArc;
 use futures::{FutureExt, TryFutureExt};
@@ -407,11 +407,11 @@ impl MmCoin for UtxoStandardCoin {
     fn get_sender_trade_fee(
         &self,
         value: TradePreimageValue,
-    ) -> Box<dyn Future<Item = TradeFee, Error = String> + Send> {
+    ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
         utxo_common::get_sender_trade_fee(self.clone(), value)
     }
 
-    fn get_receiver_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = String> + Send> {
+    fn get_receiver_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
         utxo_common::get_receiver_trade_fee(&self)
     }
 

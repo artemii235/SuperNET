@@ -31,7 +31,7 @@ pub use chain::Transaction as UtxoTx;
 
 use self::rpc_clients::{electrum_script_hash, UnspentInfo, UtxoRpcClientEnum};
 use crate::utxo::rpc_clients::UtxoRpcClientOps;
-use crate::{TradePreimageValue, ValidateAddressResult};
+use crate::{TradePreimageError, TradePreimageValue, ValidateAddressResult};
 use common::block_on;
 
 macro_rules! true_or {
@@ -188,6 +188,7 @@ pub async fn generate_transaction<T>(
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps,
 {
+    // TODO replace try_other! with try_map!
     macro_rules! try_other {
         ($exp: expr) => {
             match $exp {
@@ -1638,35 +1639,35 @@ where
 pub fn get_sender_trade_fee<T>(
     coin: T,
     value: TradePreimageValue,
-) -> Box<dyn Future<Item = TradeFee, Error = String> + Send>
+) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send>
 where
     T: AsRef<UtxoCoinFields> + MarketCoinOps + UtxoCommonOps + Send + Sync + 'static,
 {
     let fut = async move {
         let (amount, fee_policy) = match value {
             TradePreimageValue::Max => {
-                let balance = try_s!(coin.my_balance().compat().await);
+                let balance = try_map!(coin.my_balance().compat().await, TradePreimageError::Other);
                 (balance, FeePolicy::DeductFromOutput(0))
             },
             TradePreimageValue::Exact(amount) if !amount.is_zero() => (amount, FeePolicy::SendExact),
-            TradePreimageValue::Exact(_) => return ERR!("Value cannot be zero"),
+            TradePreimageValue::Exact(_) => return Err(TradePreimageError::Other(ERRL!("Value cannot be zero"))),
         };
 
         // pass the dummy params
         let time_lock = (now_ms() / 1000) as u32;
         let other_pub = &[0; 33]; // H264 is 33 bytes
         let secret_hash = &[0; 20]; // H160 is 20 bytes
-        let SwapPaymentOutputsResult { outputs, .. } = try_s!(generate_swap_payment_outputs(
-            &coin,
-            time_lock,
-            other_pub,
-            secret_hash,
-            amount
-        ));
+        let SwapPaymentOutputsResult { outputs, .. } = try_map!(
+            generate_swap_payment_outputs(&coin, time_lock, other_pub, secret_hash, amount),
+            TradePreimageError::Other
+        );
 
-        let (unspents, _recently_sent_txs) = try_s!(coin.list_unspent_ordered(&coin.as_ref().my_address).await);
+        let (unspents, _recently_sent_txs) = try_map!(
+            coin.list_unspent_ordered(&coin.as_ref().my_address).await,
+            TradePreimageError::Other
+        );
         // call generate_transaction function with the same fee=None and gas_fee=None as in the swap (in particular, in send_outputs_from_my_address_impl)
-        let (_tx, data) = try_s!(generate_transaction(&coin, unspents, outputs, fee_policy, None, None).await);
+        let (_tx, data) = generate_transaction(&coin, unspents, outputs, fee_policy, None, None).await?;
         let fee_amount = big_decimal_from_sat(data.fee_amount as i64, coin.as_ref().decimals);
         Ok(TradeFee {
             coin: coin.as_ref().ticker.clone(),
@@ -1678,7 +1679,7 @@ where
 
 /// Payment sender should not pay fee for sending Maker Payment.
 /// Even if refund will be required the fee will be deducted from P2SH input.
-pub fn get_receiver_trade_fee<T>(coin: &T) -> Box<dyn Future<Item = TradeFee, Error = String> + Send>
+pub fn get_receiver_trade_fee<T>(coin: &T) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send>
 where
     T: AsRef<UtxoCoinFields>,
 {
