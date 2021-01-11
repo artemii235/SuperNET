@@ -992,6 +992,41 @@ impl MmCoin for Qrc20Coin {
         Box::new(fut.boxed().compat())
     }
 
+    fn get_fee_to_send_taker_fee(
+        &self,
+        dex_fee_amount: BigDecimal,
+    ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
+        let selfi = self.clone();
+        let fut = async move {
+            let my_balance = try_map!(selfi.my_balance().compat().await, TradePreimageError::Other);
+            if my_balance < dex_fee_amount {
+                let err = ERRL!("The dex fee {} is larger than balance {}", dex_fee_amount, my_balance);
+                return Err(TradePreimageError::NotSufficientBalance(err));
+            }
+
+            let amount = try_map!(
+                wei_from_big_decimal(&dex_fee_amount, selfi.utxo.decimals),
+                TradePreimageError::Other
+            );
+
+            // pass the dummy params
+            let to_addr = H160::default();
+            let transfer_output = try_map!(
+                selfi.transfer_output(to_addr, amount, QRC20_GAS_LIMIT_DEFAULT, QRC20_GAS_PRICE_DEFAULT),
+                TradePreimageError::Other
+            );
+
+            let GenerateQrc20TxResult { miner_fee, gas_fee, .. } =
+                selfi.generate_qrc20_transaction(vec![transfer_output]).await?;
+            let total_fee = big_decimal_from_sat((gas_fee + miner_fee) as i64, selfi.utxo.decimals);
+            Ok(TradeFee {
+                coin: selfi.platform.clone(),
+                amount: total_fee.into(),
+            })
+        };
+        Box::new(fut.boxed().compat())
+    }
+
     fn required_confirmations(&self) -> u64 { utxo_common::required_confirmations(&self.utxo) }
 
     fn requires_notarization(&self) -> bool { utxo_common::requires_notarization(&self.utxo) }

@@ -494,14 +494,20 @@ pub trait MmCoin: SwapOps + MarketCoinOps + fmt::Debug + Send + Sync + 'static {
     /// Note this function is deprecated.
     fn get_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = String> + Send>;
 
-    /// Get fee to be paid by sender per whole swap using the sending value
+    /// Get fee to be paid by sender per whole swap using the sending value and check if the wallet has sufficient balance to pay the fee.
     fn get_sender_trade_fee(
         &self,
         value: TradePreimageValue,
     ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send>;
 
-    /// Get fee to be paid by receiver per whole swap
+    /// Get fee to be paid by receiver per whole swap and check if the wallet has sufficient balance to pay the fee.
     fn get_receiver_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send>;
+
+    /// Get transaction fee the Taker has to pay to send a `TakerFee` transaction and check if the wallet has sufficient balance to pay the fee.
+    fn get_fee_to_send_taker_fee(
+        &self,
+        dex_fee_amount: BigDecimal,
+    ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send>;
 
     /// required transaction confirmations number to ensure double-spend safety
     fn required_confirmations(&self) -> u64;

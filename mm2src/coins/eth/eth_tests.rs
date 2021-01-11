@@ -936,3 +936,72 @@ fn get_receiver_trade_preimage() {
     let err = coin.get_receiver_trade_fee().wait().expect_err("Expected an error");
     trade_preimage_error_contains!(err, "ETH balance 5999999 is too low to cover gas fee, required 6000000");
 }
+
+#[test]
+fn get_fee_to_send_taker_fee() {
+    static mut MY_ETH_BALANCE: u64 = 0;
+    EthCoin::eth_balance
+        .mock_safe(|_| MockResult::Return(Box::new(futures01::future::ok(unsafe { MY_ETH_BALANCE.into() }))));
+    const DEX_FEE_AMOUNT: u64 = 100_000;
+
+    EthCoinImpl::get_gas_price.mock_safe(|_| MockResult::Return(Box::new(futures01::future::ok(40.into()))));
+    let (_ctx, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://dummy.dummy".into()]);
+    let amount = u256_to_big_decimal((150_000 * 40).into(), 18).expect("!u256_to_big_decimal");
+    let expected_fee = TradeFee {
+        coin: "ETH".to_owned(),
+        amount: amount.into(),
+    };
+    let dex_fee_amount = u256_to_big_decimal(DEX_FEE_AMOUNT.into(), 18).expect("!u256_to_big_decimal");
+
+    unsafe { MY_ETH_BALANCE = 150_000 * 40 + DEX_FEE_AMOUNT };
+    let actual = coin
+        .get_fee_to_send_taker_fee(dex_fee_amount.clone())
+        .wait()
+        .expect("!get_fee_to_send_taker_fee");
+    assert_eq!(actual, expected_fee);
+
+    // (dex_fee(100_000) + gas_fee(150_000)) * gas_price(40)
+    unsafe { MY_ETH_BALANCE = 150_000 * 40 + DEX_FEE_AMOUNT - 1 };
+    let err = coin
+        .get_fee_to_send_taker_fee(dex_fee_amount.clone())
+        .wait()
+        .expect_err("Expected an error");
+    trade_preimage_error_contains!(err, "ETH balance 6099999 is too low, required 6100000");
+
+    // test for ERC20 token
+
+    static mut MY_BALANCE: u64 = 0;
+    EthCoin::my_balance
+        .mock_safe(|_| MockResult::Return(Box::new(futures01::future::ok(unsafe { MY_BALANCE.into() }))));
+    let (_ctx, coin) = eth_coin_for_test(
+        EthCoinType::Erc20(Address::default()),
+        vec!["http://dummy.dummy".into()],
+    );
+
+    // gas_fee(150_000)) * gas_price(40)
+    unsafe { MY_ETH_BALANCE = 150_000 * 40 };
+    unsafe { MY_BALANCE = DEX_FEE_AMOUNT };
+    let actual = coin
+        .get_fee_to_send_taker_fee(dex_fee_amount.clone())
+        .wait()
+        .expect("!get_fee_to_send_taker_fee");
+    assert_eq!(actual, expected_fee);
+
+    // gas_fee(150_000)) * gas_price(40)
+    unsafe { MY_ETH_BALANCE = 150_000 * 40 - 1 };
+    unsafe { MY_BALANCE = DEX_FEE_AMOUNT };
+    let err = coin
+        .get_fee_to_send_taker_fee(dex_fee_amount.clone())
+        .wait()
+        .expect_err("Expected an error");
+    trade_preimage_error_contains!(err, "ETH balance 5999999 is too low, required 6000000");
+
+    // gas_fee(150_000)) * gas_price(40)
+    unsafe { MY_ETH_BALANCE = 150_000 * 40 };
+    unsafe { MY_BALANCE = DEX_FEE_AMOUNT - 1 };
+    let err = coin
+        .get_fee_to_send_taker_fee(dex_fee_amount)
+        .wait()
+        .expect_err("Expected an error");
+    trade_preimage_error_contains!(err, "The dex_fee 100000 is larger than balance 99999");
+}

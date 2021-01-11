@@ -135,6 +135,7 @@ pub fn dispatcher(req: Json, ctx: MmArc) -> DispatcherRes {
         "get_my_peer_id" => hyres(get_my_peer_id(ctx)),
         "get_peers_info" => hyres(get_peers_info(ctx)),
         "get_relay_mesh" => hyres(get_relay_mesh(ctx)),
+        // TODO add get_taker_fee
         "get_trade_fee" => hyres(get_trade_fee(ctx, req)),
         // "fundvalue" => lp_fundvalue (ctx, req, false),
         "help" => help(),

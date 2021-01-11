@@ -2464,6 +2464,51 @@ impl MmCoin for EthCoin {
         Box::new(fut.boxed().compat())
     }
 
+    fn get_fee_to_send_taker_fee(
+        &self,
+        dex_fee_amount: BigDecimal,
+    ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
+        let coin = self.clone();
+        let fut = async move {
+            let gas_price = try_map!(coin.get_gas_price().compat().await, TradePreimageError::Other);
+            let gas_fee = gas_price * U256::from(150_000);
+            let dex_fee_amount = try_map!(
+                wei_from_big_decimal(&dex_fee_amount, coin.decimals),
+                TradePreimageError::Other
+            );
+
+            let total_eth_required = match coin.coin_type {
+                EthCoinType::Eth => gas_fee + dex_fee_amount,
+                EthCoinType::Erc20(_) => {
+                    let my_balance = try_map!(coin.my_balance().compat().await, TradePreimageError::Other);
+                    if my_balance < dex_fee_amount {
+                        let err = ERRL!("The dex_fee {} is larger than balance {}", dex_fee_amount, my_balance);
+                        return Err(TradePreimageError::NotSufficientBalance(err));
+                    }
+                    gas_fee
+                },
+            };
+
+            let my_eth_balance = try_map!(coin.base_coin_balance().compat().await, TradePreimageError::Other);
+            let my_eth_balance = try_map!(wei_from_big_decimal(&my_eth_balance, 18), TradePreimageError::Other);
+            if my_eth_balance < total_eth_required {
+                let err = ERRL!(
+                    "ETH balance {} is too low, required {}",
+                    my_eth_balance,
+                    total_eth_required
+                );
+                return Err(TradePreimageError::NotSufficientBalance(err));
+            }
+
+            let amount = try_map!(u256_to_big_decimal(gas_fee, 18), TradePreimageError::Other);
+            Ok(TradeFee {
+                coin: "ETH".to_owned(),
+                amount: amount.into(),
+            })
+        };
+        Box::new(fut.boxed().compat())
+    }
+
     fn required_confirmations(&self) -> u64 { self.required_confirmations.load(AtomicOrderding::Relaxed) }
 
     fn requires_notarization(&self) -> bool { false }

@@ -218,6 +218,13 @@ impl MmCoin for TestCoin {
         unimplemented!()
     }
 
+    fn get_fee_to_send_taker_fee(
+        &self,
+        dex_fee_amount: BigDecimal,
+    ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
+        unimplemented!()
+    }
+
     fn required_confirmations(&self) -> u64 { 1 }
 
     fn requires_notarization(&self) -> bool { false }

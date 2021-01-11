@@ -1177,6 +1177,44 @@ fn test_receiver_trade_preimage() {
     assert_eq!(actual, expected);
 }
 
+/// `qeUbAVgkPiF62syqd792VJeB9BaqMtLcZV` address has `5` QRC20 tokens.
+#[test]
+fn test_taker_fee_tx_fee() {
+    // priv_key of qeUbAVgkPiF62syqd792VJeB9BaqMtLcZV
+    // please note this address should have an immutable balance
+    let priv_key = [
+        32, 192, 195, 65, 165, 53, 21, 68, 180, 241, 67, 147, 54, 54, 41, 117, 174, 253, 139, 155, 56, 101, 69, 39, 32,
+        143, 221, 19, 47, 74, 175, 100,
+    ];
+    let (_ctx, coin) = qrc20_coin_for_test(&priv_key);
+    // check if the coin's tx fee is expected
+    check_tx_fee(&coin, ActualTxFee::Fixed(EXPECTED_TX_FEE as u64));
+    assert_eq!(coin.my_balance().wait().expect("!my_balance"), BigDecimal::from(5));
+
+    let dex_fee_amount = BigDecimal::from(5);
+    let actual = coin
+        .get_fee_to_send_taker_fee(dex_fee_amount)
+        .wait()
+        .expect("!get_fee_to_send_taker_fee");
+    // only one contract call should be included into the expected trade fee
+    let expected_receiver_fee = big_decimal_from_sat(CONTRACT_CALL_GAS_FEE + EXPECTED_TX_FEE, coin.utxo.decimals);
+    let expected = TradeFee {
+        coin: "QTUM".to_owned(),
+        amount: expected_receiver_fee.into(),
+    };
+    assert_eq!(actual, expected);
+
+    let dex_fee_amount = BigDecimal::from_str("5.1").expect("!BigDecimal::from_str");
+    let err = coin
+        .get_fee_to_send_taker_fee(dex_fee_amount)
+        .wait()
+        .expect_err("Expected an error");
+    match err {
+        TradePreimageError::NotSufficientBalance(e) => assert!(e.contains("The dex fee 5.1 is larger than balance 5")),
+        e => panic!("Unexpected error: {}", e),
+    }
+}
+
 #[test]
 fn test_qrc20_coin_from_conf_without_decimals() {
     // priv_key of qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG

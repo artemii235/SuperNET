@@ -13,7 +13,7 @@ use futures01::future::Either;
 #[cfg(feature = "native")] use futures01::Future;
 use gstuff::now_ms;
 use keys::bytes::Bytes;
-use keys::{Address, KeyPair, Public, Type};
+use keys::{Address, AddressHash, KeyPair, Public, Type};
 use primitives::hash::H512;
 use rpc::v1::types::{Bytes as BytesJson, H256 as H256Json};
 use script::{Builder, Opcode, Script, ScriptAddress, SignatureVersion, TransactionInputSigner,
@@ -1688,6 +1688,40 @@ where
         amount: 0.into(),
     };
     Box::new(futures01::future::ok(trade_fee))
+}
+
+pub fn get_fee_to_send_taker_fee<T>(
+    coin: T,
+    dex_fee_amount: BigDecimal,
+) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send>
+where
+    T: AsRef<UtxoCoinFields> + MarketCoinOps + UtxoCommonOps + Send + Sync + 'static,
+{
+    let decimals = coin.as_ref().decimals;
+    let fut = async move {
+        let (unspents, _recently_sent_txs) = try_map!(
+            coin.list_unspent_ordered(&coin.as_ref().my_address).await,
+            TradePreimageError::Other
+        );
+
+        let value = try_map!(
+            sat_from_big_decimal(&dex_fee_amount, decimals),
+            TradePreimageError::Other
+        );
+        let output = TransactionOutput {
+            value,
+            script_pubkey: Builder::build_p2pkh(&AddressHash::default()).to_bytes(),
+        };
+
+        // call generate_transaction function with the same fee_policy=SendExact, fee=None and gas_fee=None as in the swap (in particular, in send_outputs_from_my_address_impl)
+        let (_tx, data) = generate_transaction(&coin, unspents, vec![output], FeePolicy::SendExact, None, None).await?;
+        let fee_amount = big_decimal_from_sat(data.fee_amount as i64, decimals);
+        Ok(TradeFee {
+            coin: coin.ticker().to_owned(),
+            amount: fee_amount.into(),
+        })
+    };
+    Box::new(fut.boxed().compat())
 }
 
 pub fn required_confirmations(coin: &UtxoCoinFields) -> u64 {

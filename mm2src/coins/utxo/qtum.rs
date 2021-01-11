@@ -385,6 +385,13 @@ impl MmCoin for QtumCoin {
         utxo_common::get_receiver_trade_fee(self)
     }
 
+    fn get_fee_to_send_taker_fee(
+        &self,
+        dex_fee_amount: BigDecimal,
+    ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
+        utxo_common::get_fee_to_send_taker_fee(self.clone(), dex_fee_amount)
+    }
+
     fn required_confirmations(&self) -> u64 { utxo_common::required_confirmations(&self.utxo_arc) }
 
     fn requires_notarization(&self) -> bool { utxo_common::requires_notarization(&self.utxo_arc) }
