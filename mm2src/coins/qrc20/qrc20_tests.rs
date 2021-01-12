@@ -1066,27 +1066,6 @@ fn test_sender_trade_preimage_zero_allowance() {
         amount: (erc20_payment_fee_with_one_approve + sender_refund_fee).into(),
     };
     assert_eq!(actual, expected);
-}
-
-/// `qcvY3cGGGSvzWoKr5ZWN4g6Z4w19VHqZFR` address has `0` balance
-#[test]
-fn test_sender_trade_preimage_invalid_value() {
-    // priv_key of qcvY3cGGGSvzWoKr5ZWN4g6Z4w19VHqZFR
-    // please note this address should have an immutable balance
-    let priv_key = [
-        0, 164, 63, 93, 64, 221, 58, 129, 8, 142, 49, 43, 9, 44, 230, 4, 29, 210, 12, 139, 46, 225, 68, 63, 161, 189,
-        153, 2, 46, 44, 207, 95,
-    ];
-    let (_ctx, coin) = qrc20_coin_for_test(&priv_key);
-
-    match coin
-        .get_sender_trade_fee(TradePreimageValue::Exact(1.into()))
-        .wait()
-        .expect_err("Expected an error")
-    {
-        TradePreimageError::NotSufficientBalance(e) => assert!(e.contains("The value 1 is larger than balance 0")),
-        e => panic!("Unexpected error: {}", e),
-    }
 
     match coin
         .get_sender_trade_fee(TradePreimageValue::Exact(0.into()))
@@ -1094,15 +1073,6 @@ fn test_sender_trade_preimage_invalid_value() {
         .expect_err("Expected an error")
     {
         TradePreimageError::Other(e) => assert!(e.contains("Expected non-zero value")),
-        e => panic!("Unexpected error: {}", e),
-    }
-
-    match coin
-        .get_sender_trade_fee(TradePreimageValue::Max)
-        .wait()
-        .expect_err("Expected an error")
-    {
-        TradePreimageError::NotSufficientBalance(e) => assert!(e.contains("Cannot trade with zero balance")),
         e => panic!("Unexpected error: {}", e),
     }
 }
@@ -1203,16 +1173,6 @@ fn test_taker_fee_tx_fee() {
         amount: expected_receiver_fee.into(),
     };
     assert_eq!(actual, expected);
-
-    let dex_fee_amount = BigDecimal::from_str("5.1").expect("!BigDecimal::from_str");
-    let err = coin
-        .get_fee_to_send_taker_fee(dex_fee_amount)
-        .wait()
-        .expect_err("Expected an error");
-    match err {
-        TradePreimageError::NotSufficientBalance(e) => assert!(e.contains("The dex fee 5.1 is larger than balance 5")),
-        e => panic!("Unexpected error: {}", e),
-    }
 }
 
 #[test]
@@ -1319,4 +1279,13 @@ fn test_validate_maker_payment_malicious() {
         .expect("'erc20Payment' was called from another swap contract, expected an error");
     log!("error: "(error));
     assert!(error.contains("Unexpected amount 1000 in 'Transfer' event, expected 100000000"));
+}
+
+#[test]
+fn print_tx() {
+    let fun = eth::ERC20_CONTRACT.function("approve").unwrap();
+    let encoded = fun
+        .encode_input(&[Token::Address(H160::default()), Token::Uint(100_000_000.into())])
+        .unwrap();
+    println!("{}", encoded.len());
 }

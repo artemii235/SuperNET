@@ -879,31 +879,23 @@ impl MmCoin for Qrc20Coin {
         let selfi = self.clone();
         let decimals = self.utxo.decimals;
         let fut = async move {
-            let my_balance = try_map!(selfi.my_balance().compat().await, TradePreimageError::Other);
-            let my_qtum_balance = try_map!(selfi.base_coin_balance().compat().await, TradePreimageError::Other);
-
             // pass the dummy params
             let timelock = (now_ms() / 1000) as u32;
             let secret_hash = vec![0; 20];
             let swap_id = qrc20_swap_id(timelock, &secret_hash);
             let receiver_addr = H160::default();
-            let value = match value {
+            // note we can avoid the requesting balance until the value is `TradePreimageValue::Max`
+            let (my_balance, value) = match value {
                 TradePreimageValue::Exact(value) => {
                     if value.is_zero() {
                         return Err(TradePreimageError::Other(ERRL!("Expected non-zero value")));
                     }
-                    if my_balance < value {
-                        let err = ERRL!("The value {} is larger than balance {}", value, my_balance);
-                        return Err(TradePreimageError::NotSufficientBalance(err));
-                    }
-                    value
+                    (None, value)
                 },
-                TradePreimageValue::Max if my_balance.is_zero() => {
-                    return Err(TradePreimageError::NotSufficientBalance(ERRL!(
-                        "Cannot trade with zero balance"
-                    )))
+                TradePreimageValue::Max => {
+                    let my_balance = try_map!(selfi.my_balance().compat().await, TradePreimageError::Other);
+                    (Some(my_balance.clone()), my_balance)
                 },
-                TradePreimageValue::Max => my_balance,
             };
 
             let value = try_map!(wei_from_big_decimal(&value, decimals), TradePreimageError::Other);
@@ -918,6 +910,7 @@ impl MmCoin for Qrc20Coin {
                             secret_hash.clone(),
                             receiver_addr,
                             selfi.swap_contract_address,
+                            my_balance,
                         )
                         .await,
                     TradePreimageError::Other
@@ -926,7 +919,6 @@ impl MmCoin for Qrc20Coin {
                     selfi.generate_qrc20_transaction(erc20_payment_outputs).await?;
                 big_decimal_from_sat((gas_fee + miner_fee) as i64, decimals)
             };
-            log!("'erc20Payment' fee: "(erc20_payment_fee));
 
             let sender_refund_fee = {
                 let sender_refund_output = try_map!(
@@ -943,19 +935,8 @@ impl MmCoin for Qrc20Coin {
                     selfi.generate_qrc20_transaction(vec![sender_refund_output]).await?;
                 big_decimal_from_sat((gas_fee + miner_fee) as i64, decimals)
             };
-            log!("'senderRefund' fee: "(erc20_payment_fee));
 
             let total_fee = erc20_payment_fee + sender_refund_fee;
-            if my_qtum_balance < total_fee {
-                let err = ERRL!(
-                    "{} balance {} is too low to cover the contract call fee, required {}",
-                    selfi.platform,
-                    my_qtum_balance,
-                    total_fee
-                );
-                return Err(TradePreimageError::NotSufficientBalance(err));
-            }
-
             Ok(TradeFee {
                 coin: selfi.platform.clone(),
                 amount: total_fee.into(),
@@ -998,12 +979,6 @@ impl MmCoin for Qrc20Coin {
     ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
         let selfi = self.clone();
         let fut = async move {
-            let my_balance = try_map!(selfi.my_balance().compat().await, TradePreimageError::Other);
-            if my_balance < dex_fee_amount {
-                let err = ERRL!("The dex fee {} is larger than balance {}", dex_fee_amount, my_balance);
-                return Err(TradePreimageError::NotSufficientBalance(err));
-            }
-
             let amount = try_map!(
                 wei_from_big_decimal(&dex_fee_amount, selfi.utxo.decimals),
                 TradePreimageError::Other
