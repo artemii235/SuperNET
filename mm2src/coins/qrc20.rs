@@ -9,7 +9,7 @@ use crate::{FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, SwapOps, 
             TradePreimageValue, TransactionDetails, TransactionEnum, TransactionFut, ValidateAddressResult,
             WithdrawFee, WithdrawRequest};
 use async_trait::async_trait;
-use bigdecimal::{BigDecimal, Zero};
+use bigdecimal::BigDecimal;
 use bitcrypto::{dhash160, sha256};
 use chain::TransactionOutput;
 use common::block_on;
@@ -887,30 +887,29 @@ impl MmCoin for Qrc20Coin {
             // note we can avoid the requesting balance until the value is `TradePreimageValue::Max`
             let (my_balance, value) = match value {
                 TradePreimageValue::Exact(value) => {
-                    if value.is_zero() {
-                        return Err(TradePreimageError::Other(ERRL!("Expected non-zero value")));
-                    }
-                    (None, value)
+                    // in this case, the real balance doesn't affect the total fee
+                    let balance = U256::max_value();
+                    let value = try_map!(wei_from_big_decimal(&value, decimals), TradePreimageError::Other);
+                    (balance, value)
                 },
                 TradePreimageValue::Max => {
                     let my_balance = try_map!(selfi.my_balance().compat().await, TradePreimageError::Other);
-                    (Some(my_balance.clone()), my_balance)
+                    let my_balance = try_map!(wei_from_big_decimal(&my_balance, decimals), TradePreimageError::Other);
+                    (my_balance, my_balance)
                 },
             };
-
-            let value = try_map!(wei_from_big_decimal(&value, decimals), TradePreimageError::Other);
 
             let erc20_payment_fee = {
                 let erc20_payment_outputs = try_map!(
                     selfi
                         .generate_swap_payment_outputs(
+                            my_balance,
                             swap_id.clone(),
                             value,
                             timelock,
                             secret_hash.clone(),
                             receiver_addr,
                             selfi.swap_contract_address,
-                            my_balance,
                         )
                         .await,
                     TradePreimageError::Other

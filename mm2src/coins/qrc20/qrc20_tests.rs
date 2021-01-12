@@ -1066,15 +1066,6 @@ fn test_sender_trade_preimage_zero_allowance() {
         amount: (erc20_payment_fee_with_one_approve + sender_refund_fee).into(),
     };
     assert_eq!(actual, expected);
-
-    match coin
-        .get_sender_trade_fee(TradePreimageValue::Exact(0.into()))
-        .wait()
-        .expect_err("Expected an error")
-    {
-        TradePreimageError::Other(e) => assert!(e.contains("Expected non-zero value")),
-        e => panic!("Unexpected error: {}", e),
-    }
 }
 
 /// `qeUbAVgkPiF62syqd792VJeB9BaqMtLcZV` address has `3` allowance,

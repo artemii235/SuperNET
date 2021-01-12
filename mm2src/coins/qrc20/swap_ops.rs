@@ -38,17 +38,18 @@ impl Qrc20Coin {
         secret_hash: Vec<u8>,
         receiver_addr: H160,
     ) -> Result<TransactionEnum, String> {
-        // the balance will be requested if it's required
-        let balance = None;
+        let balance = try_s!(self.my_balance().compat().await);
+        let balance = try_s!(wei_from_big_decimal(&balance, self.utxo.decimals));
+
         let outputs = try_s!(
             self.generate_swap_payment_outputs(
+                balance,
                 id,
                 value,
                 time_lock,
                 secret_hash,
                 receiver_addr,
                 self.swap_contract_address,
-                balance
             )
             .await
         );
@@ -427,34 +428,32 @@ impl Qrc20Coin {
 
     /// Generate `ContractCallOutput` outputs required to send a swap payment.
     /// If the wallet allowance is not enough we should set it to the wallet balance.
-    ///
-    /// Pass the `balance` if it's known before calling the method.
     pub async fn generate_swap_payment_outputs(
         &self,
+        my_balance: U256,
         id: Vec<u8>,
         value: U256,
         time_lock: u32,
         secret_hash: Vec<u8>,
         receiver_addr: H160,
         swap_contract_address: H160,
-        balance: Option<BigDecimal>,
     ) -> Result<Vec<ContractCallOutput>, String> {
+        // Check the balance to avoid unnecessary burning of gas
+        if my_balance < value {
+            return ERR!("Balance {} is less than value {}", my_balance, value);
+        }
+
         let allowance = try_s!(self.allowance(swap_contract_address).await);
 
         let mut outputs = Vec::with_capacity(3);
         // check if we should reset the allowance to 0 and raise this to the max available value (our balance)
         if allowance < value {
-            let balance = match balance {
-                Some(b) => b,
-                None => try_s!(self.my_balance().compat().await),
-            };
-            let balance = try_s!(wei_from_big_decimal(&balance, self.utxo.decimals));
             if allowance > U256::zero() {
                 // first reset the allowance to the 0
                 outputs.push(try_s!(self.approve_output(swap_contract_address, 0.into())));
             }
-            // set the allowance from 0 to `balance` after the previous output will be executed
-            outputs.push(try_s!(self.approve_output(swap_contract_address, balance)));
+            // set the allowance from 0 to `my_balance` after the previous output is executed
+            outputs.push(try_s!(self.approve_output(swap_contract_address, my_balance)));
         }
 
         // when this output is executed, the allowance will be sufficient already

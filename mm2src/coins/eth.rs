@@ -18,7 +18,7 @@
 //
 //  Copyright © 2017-2019 SuperNET. All rights reserved.
 //
-use bigdecimal::{BigDecimal, Zero};
+use bigdecimal::BigDecimal;
 use bitcrypto::sha256;
 use common::custom_futures::TimedAsyncMutex;
 use common::executor::Timer;
@@ -2243,106 +2243,6 @@ impl EthCoin {
     }
 }
 
-impl EthCoin {
-    async fn get_eth_sender_trade_preimage(&self, value: TradePreimageValue) -> Result<TradeFee, TradePreimageError> {
-        let my_balance = try_map!(self.my_balance().compat().await, TradePreimageError::Other);
-        let gas_price = try_map!(self.get_gas_price().compat().await, TradePreimageError::Other);
-        // this gas_limit includes gas for `ethPayment` and `senderRefund` contract calls
-        let fee = gas_price * U256::from(300_000);
-
-        match value {
-            TradePreimageValue::Exact(value) if value.is_zero() => {
-                return Err(TradePreimageError::Other(ERRL!("Expected non-zero value")));
-            },
-            TradePreimageValue::Exact(value) => {
-                let value = try_map!(wei_from_big_decimal(&value, 18), TradePreimageError::Other);
-                if my_balance <= value {
-                    let err = ERRL!("The value {} is larger than balance {}", value, my_balance);
-                    return Err(TradePreimageError::NotSufficientBalance(err));
-                }
-                if my_balance < value + fee {
-                    let err = ERRL!(
-                        "ETH balance {} is too low to cover gas fee {} and send {} amount",
-                        my_balance,
-                        fee,
-                        value
-                    );
-                    return Err(TradePreimageError::NotSufficientBalance(err));
-                }
-            },
-            TradePreimageValue::Max => {
-                if my_balance < fee {
-                    let err = ERRL!("ETH balance {} is too low to cover gas fee {}", my_balance, fee);
-                    return Err(TradePreimageError::NotSufficientBalance(err));
-                }
-                if my_balance == fee {
-                    let err = ERRL!("ETH balance {} is sufficient to cover gas fee only", my_balance);
-                    return Err(TradePreimageError::NotSufficientBalance(err));
-                }
-            },
-        }
-
-        let amount = try_map!(u256_to_big_decimal(fee, 18), TradePreimageError::Other);
-        Ok(TradeFee {
-            coin: "ETH".to_owned(),
-            amount: amount.into(),
-        })
-    }
-
-    async fn get_erc20_sender_trade_preimage(&self, value: TradePreimageValue) -> Result<TradeFee, TradePreimageError> {
-        let my_balance = try_map!(self.my_balance().compat().await, TradePreimageError::Other);
-        let my_eth_balance = try_map!(self.base_coin_balance().compat().await, TradePreimageError::Other);
-        let my_eth_balance = try_map!(wei_from_big_decimal(&my_eth_balance, 18), TradePreimageError::Other);
-        let gas_price = try_map!(self.get_gas_price().compat().await, TradePreimageError::Other);
-
-        let value = match value {
-            TradePreimageValue::Exact(value) if value.is_zero() => {
-                return Err(TradePreimageError::Other(ERRL!("Expected non-zero value")));
-            },
-            TradePreimageValue::Exact(value) => {
-                let value = try_map!(wei_from_big_decimal(&value, self.decimals), TradePreimageError::Other);
-                if my_balance < value {
-                    let err = ERRL!("The value {} is larger than balance {}", value, my_balance);
-                    return Err(TradePreimageError::NotSufficientBalance(err));
-                }
-                value
-            },
-            TradePreimageValue::Max if my_balance.is_zero() => {
-                let err = ERRL!("Cannot trade with zero balance");
-                return Err(TradePreimageError::NotSufficientBalance(err));
-            },
-            TradePreimageValue::Max => my_balance,
-        };
-        let allowed = try_map!(
-            self.allowance(self.swap_contract_address).compat().await,
-            TradePreimageError::Other
-        );
-        let gas_limit = if allowed < value {
-            // this gas_limit includes gas for `approve`, `erc20Payment` and `senderRefund` contract calls
-            450_000
-        } else {
-            // this gas_limit includes gas for `erc20Payment` and `senderRefund` contract calls
-            300_000
-        };
-        let fee = gas_price * U256::from(gas_limit);
-
-        if my_eth_balance < fee {
-            let err = ERRL!(
-                "ETH balance {} is too low to cover gas fee, required {}",
-                my_eth_balance,
-                fee
-            );
-            return Err(TradePreimageError::NotSufficientBalance(err));
-        }
-
-        let amount = try_map!(u256_to_big_decimal(fee, 18), TradePreimageError::Other);
-        Ok(TradeFee {
-            coin: "ETH".to_owned(),
-            amount: amount.into(),
-        })
-    }
-}
-
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct EthTxFeeDetails {
     coin: String,
@@ -2430,10 +2330,41 @@ impl MmCoin for EthCoin {
     ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
         let coin = self.clone();
         let fut = async move {
-            match coin.coin_type {
-                EthCoinType::Eth => coin.get_eth_sender_trade_preimage(value).await,
-                EthCoinType::Erc20(_) => coin.get_erc20_sender_trade_preimage(value).await,
-            }
+            let gas_price = try_map!(coin.get_gas_price().compat().await, TradePreimageError::Other);
+            let gas_limit = match coin.coin_type {
+                EthCoinType::Eth => {
+                    // this gas_limit includes gas for `ethPayment` and `senderRefund` contract calls
+                    U256::from(300_000)
+                },
+                EthCoinType::Erc20(_) => {
+                    let value = match value {
+                        TradePreimageValue::Exact(value) => {
+                            try_map!(wei_from_big_decimal(&value, coin.decimals), TradePreimageError::Other)
+                        },
+                        TradePreimageValue::Max => {
+                            try_map!(coin.my_balance().compat().await, TradePreimageError::Other)
+                        },
+                    };
+                    let allowed = try_map!(
+                        coin.allowance(coin.swap_contract_address).compat().await,
+                        TradePreimageError::Other
+                    );
+                    if allowed < value {
+                        // this gas_limit includes gas for `approve`, `erc20Payment` and `senderRefund` contract calls
+                        U256::from(450_000)
+                    } else {
+                        // this gas_limit includes gas for `erc20Payment` and `senderRefund` contract calls
+                        U256::from(300_000)
+                    }
+                },
+            };
+
+            let total_fee = gas_limit * gas_price;
+            let amount = try_map!(u256_to_big_decimal(total_fee, 18), TradePreimageError::Other);
+            Ok(TradeFee {
+                coin: "ETH".to_owned(),
+                amount: amount.into(),
+            })
         };
         Box::new(fut.boxed().compat())
     }
@@ -2441,21 +2372,9 @@ impl MmCoin for EthCoin {
     fn get_receiver_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
         let coin = self.clone();
         let fut = async move {
-            let my_eth_balance = try_map!(coin.base_coin_balance().compat().await, TradePreimageError::Other);
-            let my_eth_balance = try_map!(wei_from_big_decimal(&my_eth_balance, 18), TradePreimageError::Other);
             let gas_price = try_map!(coin.get_gas_price().compat().await, TradePreimageError::Other);
-
-            let fee = gas_price * U256::from(150_000);
-            if my_eth_balance < fee {
-                let err = ERRL!(
-                    "ETH balance {} is too low to cover gas fee, required {}",
-                    my_eth_balance,
-                    fee
-                );
-                return Err(TradePreimageError::NotSufficientBalance(err));
-            }
-
-            let amount = try_map!(u256_to_big_decimal(fee, 18), TradePreimageError::Other);
+            let total_fee = gas_price * U256::from(150_000);
+            let amount = try_map!(u256_to_big_decimal(total_fee, 18), TradePreimageError::Other);
             Ok(TradeFee {
                 coin: "ETH".to_owned(),
                 amount: amount.into(),
@@ -2466,39 +2385,12 @@ impl MmCoin for EthCoin {
 
     fn get_fee_to_send_taker_fee(
         &self,
-        dex_fee_amount: BigDecimal,
+        _dex_fee_amount: BigDecimal,
     ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
         let coin = self.clone();
         let fut = async move {
             let gas_price = try_map!(coin.get_gas_price().compat().await, TradePreimageError::Other);
             let gas_fee = gas_price * U256::from(150_000);
-            let dex_fee_amount = try_map!(
-                wei_from_big_decimal(&dex_fee_amount, coin.decimals),
-                TradePreimageError::Other
-            );
-
-            let total_eth_required = match coin.coin_type {
-                EthCoinType::Eth => gas_fee + dex_fee_amount,
-                EthCoinType::Erc20(_) => {
-                    let my_balance = try_map!(coin.my_balance().compat().await, TradePreimageError::Other);
-                    if my_balance < dex_fee_amount {
-                        let err = ERRL!("The dex_fee {} is larger than balance {}", dex_fee_amount, my_balance);
-                        return Err(TradePreimageError::NotSufficientBalance(err));
-                    }
-                    gas_fee
-                },
-            };
-
-            let my_eth_balance = try_map!(coin.base_coin_balance().compat().await, TradePreimageError::Other);
-            let my_eth_balance = try_map!(wei_from_big_decimal(&my_eth_balance, 18), TradePreimageError::Other);
-            if my_eth_balance < total_eth_required {
-                let err = ERRL!(
-                    "ETH balance {} is too low, required {}",
-                    my_eth_balance,
-                    total_eth_required
-                );
-                return Err(TradePreimageError::NotSufficientBalance(err));
-            }
 
             let amount = try_map!(u256_to_big_decimal(gas_fee, 18), TradePreimageError::Other);
             Ok(TradeFee {
