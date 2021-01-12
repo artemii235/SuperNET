@@ -1643,7 +1643,21 @@ pub fn get_sender_trade_fee<T>(
 where
     T: AsRef<UtxoCoinFields> + MarketCoinOps + UtxoCommonOps + Send + Sync + 'static,
 {
+    let decimals = coin.as_ref().decimals;
     let fut = async move {
+        let tx_fee = try_map!(coin.get_tx_fee().await, TradePreimageError::Other);
+        let actual_tx_fee = match tx_fee {
+            ActualTxFee::Fixed(fee_amount) => {
+                let amount = big_decimal_from_sat(fee_amount as i64, decimals);
+                return Ok(TradeFee {
+                    coin: coin.as_ref().ticker.clone(),
+                    amount: amount.into(),
+                });
+            },
+            // if it's dynamic fee, we should generate a swap transaction to get an actual trade fee
+            fee => fee,
+        };
+
         let (amount, fee_policy) = match value {
             TradePreimageValue::Max => {
                 let balance = try_map!(coin.my_balance().compat().await, TradePreimageError::Other);
@@ -1666,9 +1680,8 @@ where
             coin.list_unspent_ordered(&coin.as_ref().my_address).await,
             TradePreimageError::Other
         );
-        // call generate_transaction function with the same fee=None and gas_fee=None as in the swap (in particular, in send_outputs_from_my_address_impl)
-        let (_tx, data) = generate_transaction(&coin, unspents, outputs, fee_policy, None, None).await?;
-        let fee_amount = big_decimal_from_sat(data.fee_amount as i64, coin.as_ref().decimals);
+        let (_tx, data) = generate_transaction(&coin, unspents, outputs, fee_policy, Some(actual_tx_fee), None).await?;
+        let fee_amount = big_decimal_from_sat(data.fee_amount as i64, decimals);
         Ok(TradeFee {
             coin: coin.as_ref().ticker.clone(),
             amount: fee_amount.into(),
@@ -1699,6 +1712,19 @@ where
 {
     let decimals = coin.as_ref().decimals;
     let fut = async move {
+        let tx_fee = try_map!(coin.get_tx_fee().await, TradePreimageError::Other);
+        let actual_tx_fee = match tx_fee {
+            ActualTxFee::Fixed(fee_amount) => {
+                let amount = big_decimal_from_sat(fee_amount as i64, decimals);
+                return Ok(TradeFee {
+                    coin: coin.ticker().to_owned(),
+                    amount: amount.into(),
+                });
+            },
+            // if it's dynamic fee, we should generate a swap transaction to get an actual trade fee
+            fee => fee,
+        };
+
         let (unspents, _recently_sent_txs) = try_map!(
             coin.list_unspent_ordered(&coin.as_ref().my_address).await,
             TradePreimageError::Other
@@ -1713,8 +1739,15 @@ where
             script_pubkey: Builder::build_p2pkh(&AddressHash::default()).to_bytes(),
         };
 
-        // call generate_transaction function with the same fee_policy=SendExact, fee=None and gas_fee=None as in the swap (in particular, in send_outputs_from_my_address_impl)
-        let (_tx, data) = generate_transaction(&coin, unspents, vec![output], FeePolicy::SendExact, None, None).await?;
+        let (_tx, data) = generate_transaction(
+            &coin,
+            unspents,
+            vec![output],
+            FeePolicy::SendExact,
+            Some(actual_tx_fee),
+            None,
+        )
+        .await?;
         let fee_amount = big_decimal_from_sat(data.fee_amount as i64, decimals);
         Ok(TradeFee {
             coin: coin.ticker().to_owned(),

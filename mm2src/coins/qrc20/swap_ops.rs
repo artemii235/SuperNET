@@ -428,6 +428,7 @@ impl Qrc20Coin {
 
     /// Generate `ContractCallOutput` outputs required to send a swap payment.
     /// If the wallet allowance is not enough we should set it to the wallet balance.
+    #[allow(clippy::too_many_arguments)]
     pub async fn generate_swap_payment_outputs(
         &self,
         my_balance: U256,
