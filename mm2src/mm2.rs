@@ -299,3 +299,50 @@ fn on_update_config(args: &[OsString]) -> Result<(), String> {
     try_s!(std::fs::write(&dst_path, ser.into_inner()));
     Ok(())
 }
+
+#[test]
+fn test_sqlite() {
+    use rusqlite::{params, Connection, Result};
+    #[derive(Debug)]
+    struct Person {
+        id: i32,
+        name: String,
+        data: Option<Vec<u8>>,
+    }
+
+    let conn = Connection::open("MM2.db").unwrap();
+
+    conn.execute(
+        "CREATE TABLE person (
+                  id              INTEGER PRIMARY KEY,
+                  name            TEXT NOT NULL,
+                  data            BLOB
+                  )",
+        params![],
+    )
+    .unwrap();
+    let me = Person {
+        id: 0,
+        name: "Steven".to_string(),
+        data: None,
+    };
+    conn.execute("INSERT INTO person (name, data) VALUES (?1, ?2)", params![
+        me.name, me.data
+    ])
+    .unwrap();
+
+    let mut stmt = conn.prepare("SELECT id, name, data FROM person").unwrap();
+    let person_iter = stmt
+        .query_map(params![], |row| {
+            Ok(Person {
+                id: row.get(0).unwrap(),
+                name: row.get(1).unwrap(),
+                data: row.get(2).unwrap(),
+            })
+        })
+        .unwrap();
+
+    for person in person_iter {
+        println!("Found person {:?}", person.unwrap());
+    }
+}
