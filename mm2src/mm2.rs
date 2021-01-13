@@ -230,7 +230,7 @@ pub fn mm2_main() {
 /// * `ctx_cb` - Invoked with the MM context handle,
 ///              allowing the `run_lp_main` caller to communicate with MM.
 pub fn run_lp_main(first_arg: Option<&str>, ctx_cb: &dyn Fn(u32)) -> Result<(), String> {
-    use rusqlite::{params, Connection, Result};
+    use rusqlite::{params, Connection};
     #[derive(Debug)]
     struct Person {
         id: i32,
