@@ -275,6 +275,14 @@ impl EthCoinImpl {
         Box::new(fut)
     }
 
+    fn estimate_gas(
+        &self,
+        req: CallRequest,
+        block: Option<BlockNumber>,
+    ) -> Box<dyn Future<Item = U256, Error = web3::Error> + Send> {
+        Box::new(self.web3.eth().estimate_gas(req, block))
+    }
+
     /// Gets `ReceiverSpent` events from etomic swap smart contract (`self.swap_contract_address` ) since `from_block`
     fn spend_events(&self, from_block: u64) -> Box<dyn Future<Item = Vec<Log>, Error = String> + Send> {
         let contract_event = try_fus!(SWAP_CONTRACT.event("ReceiverSpent"));
@@ -398,12 +406,7 @@ async fn withdraw_impl(ctx: MmArc, coin: EthCoin, req: WithdrawRequest) -> Resul
                 // logic on gas price, e.g. TUSD: https://github.com/KomodoPlatform/atomicDEX-API/issues/643
                 gas_price: Some(gas_price),
             };
-            let gas_fut = coin
-                .web3
-                .eth()
-                .estimate_gas(estimate_gas_req, None)
-                .map_err(|e| ERRL!("{}", e))
-                .compat();
+            let gas_fut = coin.estimate_gas(estimate_gas_req, None).compat();
             (try_s!(gas_fut.await), gas_price)
         },
     };
@@ -2385,14 +2388,59 @@ impl MmCoin for EthCoin {
 
     fn get_fee_to_send_taker_fee(
         &self,
-        _dex_fee_amount: BigDecimal,
+        dex_fee_amount: BigDecimal,
     ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
+        const EXCEPTION_ERROR_CODE: i64 = -32016;
+
         let coin = self.clone();
         let fut = async move {
-            let gas_price = try_map!(coin.get_gas_price().compat().await, TradePreimageError::Other);
-            let gas_fee = gas_price * U256::from(150_000);
+            let dex_fee_amount = try_map!(
+                wei_from_big_decimal(&dex_fee_amount, coin.decimals),
+                TradePreimageError::Other
+            );
 
-            let amount = try_map!(u256_to_big_decimal(gas_fee, 18), TradePreimageError::Other);
+            // pass the dummy params
+            let to_addr = Address::random();
+            let (eth_value, data, call_addr) = match coin.coin_type {
+                EthCoinType::Eth => (dex_fee_amount, Vec::new(), to_addr),
+                EthCoinType::Erc20(token_addr) => {
+                    let function = try_map!(ERC20_CONTRACT.function("transfer"), TradePreimageError::Other);
+                    let data = try_map!(
+                        function.encode_input(&[Token::Address(to_addr), Token::Uint(dex_fee_amount)]),
+                        TradePreimageError::Other
+                    );
+                    (0.into(), data, token_addr)
+                },
+            };
+
+            let gas_price = try_map!(coin.get_gas_price().compat().await, TradePreimageError::Other);
+            let estimate_gas_req = CallRequest {
+                value: Some(eth_value),
+                data: Some(data.clone().into()),
+                from: Some(coin.my_address),
+                to: call_addr,
+                gas: None,
+                // gas price must be supplied because some smart contracts base their
+                // logic on gas price, e.g. TUSD: https://github.com/KomodoPlatform/atomicDEX-API/issues/643
+                gas_price: Some(gas_price),
+            };
+
+            let gas_limit = match coin
+                .estimate_gas(estimate_gas_req, None)
+                .compat()
+                .map_err(|e| e.0) // get a kind of the error
+                .await
+            {
+                Ok(l) => l,
+                Err(web3::ErrorKind::Rpc(e)) if e.code.code() == EXCEPTION_ERROR_CODE => {
+                    let err = ERRL!("The balance seems to be insufficient: {:?}", e);
+                    return Err(TradePreimageError::NotSufficientBalance(err));
+                },
+                Err(e) => return Err(TradePreimageError::NotSufficientBalance(ERRL!("{}", e))),
+            };
+
+            let total_fee = gas_limit * gas_price;
+            let amount = try_map!(u256_to_big_decimal(total_fee, 18), TradePreimageError::Other);
             Ok(TradeFee {
                 coin: "ETH".to_owned(),
                 amount: amount.into(),

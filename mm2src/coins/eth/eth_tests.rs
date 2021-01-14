@@ -840,21 +840,56 @@ fn get_receiver_trade_preimage() {
 }
 
 #[test]
-fn get_fee_to_send_taker_fee() {
+fn test_get_fee_to_send_taker_fee() {
     const DEX_FEE_AMOUNT: u64 = 100_000;
 
     EthCoinImpl::get_gas_price.mock_safe(|_| MockResult::Return(Box::new(futures01::future::ok(40.into()))));
-    let (_ctx, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://dummy.dummy".into()]);
-    let amount = u256_to_big_decimal((150_000 * 40).into(), 18).expect("!u256_to_big_decimal");
+    EthCoinImpl::estimate_gas.mock_safe(|_, _, _| MockResult::Return(Box::new(futures01::future::ok(100_000.into()))));
+    let amount = u256_to_big_decimal((100_000 * 40).into(), 18).expect("!u256_to_big_decimal");
     let expected_fee = TradeFee {
         coin: "ETH".to_owned(),
         amount: amount.into(),
     };
     let dex_fee_amount = u256_to_big_decimal(DEX_FEE_AMOUNT.into(), 18).expect("!u256_to_big_decimal");
 
+    let (_ctx, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://dummy.dummy".into()]);
     let actual = coin
         .get_fee_to_send_taker_fee(dex_fee_amount.clone())
         .wait()
         .expect("!get_fee_to_send_taker_fee");
     assert_eq!(actual, expected_fee);
+
+    let (_ctx, coin) = eth_coin_for_test(
+        EthCoinType::Erc20(Address::from("0xaD22f63404f7305e4713CcBd4F296f34770513f4")),
+        vec!["http://dummy.dummy".into()],
+    );
+    let actual = coin
+        .get_fee_to_send_taker_fee(dex_fee_amount.clone())
+        .wait()
+        .expect("!get_fee_to_send_taker_fee");
+    assert_eq!(actual, expected_fee);
+}
+
+/// Some ERC20 tokens return the `error: -32016, message: \"The execution failed due to an exception.\"` error
+/// if the balance is insufficient.
+/// So [`EthCoin::get_fee_to_send_taker_fee`] must return [`TradePreimageError::NotSufficientBalance`].
+#[test]
+fn test_get_fee_to_send_taker_fee_insufficient_balance() {
+    const DEX_FEE_AMOUNT: u64 = 100_000_000_000;
+
+    EthCoinImpl::get_gas_price.mock_safe(|_| MockResult::Return(Box::new(futures01::future::ok(40.into()))));
+    let (_ctx, coin) = eth_coin_for_test(
+        EthCoinType::Erc20(Address::from("0xaD22f63404f7305e4713CcBd4F296f34770513f4")),
+        vec!["http://eth1.cipig.net:8555".into()],
+    );
+    let dex_fee_amount = u256_to_big_decimal(DEX_FEE_AMOUNT.into(), 18).expect("!u256_to_big_decimal");
+
+    let err = coin
+        .get_fee_to_send_taker_fee(dex_fee_amount.clone())
+        .wait()
+        .expect_err("Expected TradePreimageError::NotSufficientBalance");
+    match err {
+        TradePreimageError::NotSufficientBalance(e) => assert!(e.contains("The balance seems to be insufficient")),
+        e => panic!("Unexpected error: {}", e),
+    }
 }
