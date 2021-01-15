@@ -104,8 +104,6 @@ use http::{HeaderMap, Request, Response, StatusCode};
 use parking_lot::{Mutex as PaMutex, MutexGuard as PaMutexGuard};
 use rand::{rngs::SmallRng, SeedableRng};
 use serde::{de, ser};
-#[cfg(not(feature = "native"))]
-use serde_bencode::de::from_bytes as bdecode;
 use serde_bytes::ByteBuf;
 use serde_json::{self as json, Value as Json};
 use std::collections::HashMap;
@@ -131,6 +129,7 @@ use uuid::Uuid;
 #[cfg(feature = "w-bindgen")] use wasm_bindgen::prelude::*;
 
 pub use num_bigint::BigInt;
+pub use rusqlite;
 
 pub const MM_DATETIME: &str = env!("MM_DATETIME");
 pub const MM_VERSION: &str = env!("MM_VERSION");

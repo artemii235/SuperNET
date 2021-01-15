@@ -102,7 +102,6 @@ rmp-serde = "0.14.3"
 # TODO: Reduce the size of regex by disabling the features we don't use.
 # cf. https://github.com/rust-lang/regex/issues/583
 regex = "1"
-rusqlite = { version = "0.24.2", features = ["bundled"] }
 script = { git = "https://github.com/artemii235/parity-bitcoin.git" }
 serde = "1.0"
 serde_bencode = "0.2"

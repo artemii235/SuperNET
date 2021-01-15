@@ -42,6 +42,7 @@ use std::str;
 use self::lp_native_dex::{lp_init, lp_ports};
 use coins::update_coins_config;
 
+#[path = "database.rs"] pub mod database;
 #[path = "lp_network.rs"] pub mod lp_network;
 
 #[path = "lp_ordermatch.rs"] pub mod lp_ordermatch;
@@ -230,51 +231,6 @@ pub fn mm2_main() {
 /// * `ctx_cb` - Invoked with the MM context handle,
 ///              allowing the `run_lp_main` caller to communicate with MM.
 pub fn run_lp_main(first_arg: Option<&str>, ctx_cb: &dyn Fn(u32)) -> Result<(), String> {
-    use rusqlite::{params, Connection};
-    #[derive(Debug)]
-    struct Person {
-        id: i32,
-        name: String,
-        data: Option<Vec<u8>>,
-    }
-
-    std::fs::remove_file("MM2.db").unwrap();
-    let conn = Connection::open("MM2.db").unwrap();
-
-    conn.execute(
-        "CREATE TABLE person (
-                  id              INTEGER PRIMARY KEY,
-                  name            TEXT NOT NULL,
-                  data            BLOB
-                  )",
-        params![],
-    )
-    .unwrap();
-    let me = Person {
-        id: 0,
-        name: "Steven".to_string(),
-        data: None,
-    };
-    conn.execute("INSERT INTO person (name, data) VALUES (?1, ?2)", params![
-        me.name, me.data
-    ])
-    .unwrap();
-
-    let mut stmt = conn.prepare("SELECT id, name, data FROM person").unwrap();
-    let person_iter = stmt
-        .query_map(params![], |row| {
-            Ok(Person {
-                id: row.get(0).unwrap(),
-                name: row.get(1).unwrap(),
-                data: row.get(2).unwrap(),
-            })
-        })
-        .unwrap();
-
-    for person in person_iter {
-        println!("Found person {:?}", person.unwrap());
-    }
-
     let conf_path = env::var("MM_CONF_PATH").unwrap_or_else(|_| "MM2.json".into());
     let conf_from_file = slurp(&conf_path);
     let conf = match first_arg {
