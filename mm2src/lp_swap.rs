@@ -601,7 +601,7 @@ fn save_stats_swap(ctx: &MmArc, swap: &SavedSwap) -> Result<(), String> {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
-enum SavedSwap {
+pub enum SavedSwap {
     Maker(MakerSavedSwap),
     Taker(TakerSavedSwap),
 }
@@ -610,11 +610,11 @@ enum SavedSwap {
 /// They won't have to parse the events themselves handling possible errors, index out of bounds etc.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MySwapInfo {
-    my_coin: String,
-    other_coin: String,
+    pub my_coin: String,
+    pub other_coin: String,
     my_amount: BigDecimal,
     other_amount: BigDecimal,
-    started_at: u64,
+    pub started_at: u64,
 }
 
 impl SavedSwap {
@@ -625,7 +625,7 @@ impl SavedSwap {
         }
     }
 
-    fn uuid(&self) -> &Uuid {
+    pub fn uuid(&self) -> &Uuid {
         match self {
             SavedSwap::Maker(swap) => &swap.uuid,
             SavedSwap::Taker(swap) => &swap.uuid,
@@ -646,7 +646,7 @@ impl SavedSwap {
         }
     }
 
-    fn get_my_info(&self) -> Option<MySwapInfo> {
+    pub fn get_my_info(&self) -> Option<MySwapInfo> {
         match self {
             SavedSwap::Maker(swap) => swap.get_my_info(),
             SavedSwap::Taker(swap) => swap.get_my_info(),
