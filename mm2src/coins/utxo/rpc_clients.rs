@@ -57,6 +57,13 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader
 use tokio_rustls::{client::TlsStream, TlsConnector};
 #[cfg(feature = "native")] use webpki_roots::TLS_SERVER_ROOTS;
 
+pub type AddressesByLabelResult = HashMap<String, AddressPurpose>;
+
+#[derive(Debug, Deserialize)]
+pub struct AddressPurpose {
+    purpose: String,
+}
+
 /// Skips the server certificate verification on TLS connection
 pub struct NoCertificateVerification {}
 
@@ -172,7 +179,7 @@ pub type UtxoRpcRes<T> = Box<dyn Future<Item = T, Error = String> + Send + 'stat
 
 /// Common operations that both types of UTXO clients have but implement them differently
 pub trait UtxoRpcClientOps: fmt::Debug + Send + Sync + 'static {
-    fn list_unspent(&self, address: &Address) -> UtxoRpcRes<Vec<UnspentInfo>>;
+    fn list_unspent(&self, address: &Address, decimals: u8) -> UtxoRpcRes<Vec<UnspentInfo>>;
 
     fn send_transaction(&self, tx: &UtxoTx) -> UtxoRpcRes<H256Json>;
 
@@ -367,8 +374,6 @@ pub struct NativeClientImpl {
     pub request_id: AtomicU64,
     pub list_unspent_in_progress: AtomicBool,
     pub list_unspent_subs: AsyncMutex<Vec<RpcReqSub<Vec<NativeUnspent>>>>,
-    /// coin decimals used to convert the decimal amount returned from daemon to correct satoshis amount
-    pub coin_decimals: u8,
 }
 
 #[cfg(test)]
@@ -382,7 +387,6 @@ impl Default for NativeClientImpl {
             request_id: Default::default(),
             list_unspent_in_progress: Default::default(),
             list_unspent_subs: Default::default(),
-            coin_decimals: 8,
         }
     }
 }
@@ -454,8 +458,7 @@ impl JsonRpcClient for NativeClientImpl {
 
 #[cfg_attr(test, mockable)]
 impl UtxoRpcClientOps for NativeClient {
-    fn list_unspent(&self, address: &Address) -> UtxoRpcRes<Vec<UnspentInfo>> {
-        let decimals = self.coin_decimals;
+    fn list_unspent(&self, address: &Address, decimals: u8) -> UtxoRpcRes<Vec<UnspentInfo>> {
         let fut = self
             .list_unspent_impl(0, std::i32::MAX, vec![address.to_string()])
             .map_err(|e| ERRL!("{}", e))
@@ -765,6 +768,12 @@ impl NativeClientImpl {
     /// https://developer.bitcoin.org/reference/rpc/sendtoaddress.html
     pub fn send_to_address(&self, addr: &str, amount: &BigDecimal) -> RpcRes<H256Json> {
         rpc_func!(self, "sendtoaddress", addr, amount)
+    }
+
+    /// Returns the list of addresses assigned the specified label.
+    /// https://developer.bitcoin.org/reference/rpc/getaddressesbylabel.html
+    pub fn get_addresses_by_label(&self, label: &str) -> RpcRes<AddressesByLabelResult> {
+        rpc_func!(self, "getaddressesbylabel", label)
     }
 
     /// https://developer.bitcoin.org/reference/rpc/getnetworkinfo.html
@@ -1457,7 +1466,7 @@ impl ElectrumClient {
 
 #[cfg_attr(test, mockable)]
 impl UtxoRpcClientOps for ElectrumClient {
-    fn list_unspent(&self, address: &Address) -> UtxoRpcRes<Vec<UnspentInfo>> {
+    fn list_unspent(&self, address: &Address, _decimals: u8) -> UtxoRpcRes<Vec<UnspentInfo>> {
         let script = Builder::build_p2pkh(&address.hash);
         let script_hash = electrum_script_hash(&script);
         Box::new(
