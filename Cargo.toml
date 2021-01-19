@@ -66,6 +66,7 @@ crc32fast = { version = "1.2", features = ["std", "nightly"] }
 crossbeam = "0.7"
 dirs = { version = "1", optional = true }
 either = "1.6"
+ethereum-types = { version = "0.4", default-features = false, features = ["std", "serialize"] }
 enum-primitive-derive = "0.1"
 fomat-macros = "0.2"
 futures01 = { version = "0.1", package = "futures" }

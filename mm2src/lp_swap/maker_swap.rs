@@ -18,7 +18,7 @@ use futures01::Future;
 use parking_lot::Mutex as PaMutex;
 use primitives::hash::H264;
 use rand::Rng;
-use rpc::v1::types::{H160 as H160Json, H256 as H256Json, H264 as H264Json};
+use rpc::v1::types::{Bytes as BytesJson, H160 as H160Json, H256 as H256Json, H264 as H264Json};
 use serde_json::{self as json};
 use std::path::PathBuf;
 use std::sync::{atomic::Ordering, Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -116,6 +116,10 @@ pub struct MakerSwapData {
     started_at: u64,
     maker_coin_start_block: u64,
     taker_coin_start_block: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    maker_coin_swap_contract_address: Option<BytesJson>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    taker_coin_swap_contract_address: Option<BytesJson>,
 }
 
 pub struct MakerSwapMut {
@@ -298,6 +302,9 @@ impl MakerSwap {
             },
         };
 
+        let maker_coin_swap_contract_address = self.maker_coin.swap_contract_address();
+        let taker_coin_swap_contract_address = self.taker_coin.swap_contract_address();
+
         let data = MakerSwapData {
             taker_coin: self.taker_coin.ticker().to_owned(),
             maker_coin: self.maker_coin.ticker().to_owned(),
@@ -317,6 +324,8 @@ impl MakerSwap {
             uuid: self.uuid,
             maker_coin_start_block,
             taker_coin_start_block,
+            maker_coin_swap_contract_address,
+            taker_coin_swap_contract_address,
         };
 
         Ok((Some(MakerSwapCommand::Negotiate), vec![MakerSwapEvent::Started(data)]))
@@ -474,6 +483,7 @@ impl MakerSwap {
                 &*self.r().other_persistent_pub,
                 &*dhash160(&self.r().data.secret.0),
                 self.r().data.maker_coin_start_block,
+                &self.r().data.maker_coin_swap_contract_address,
             )
             .compat();
         let transaction = match transaction_f.await {
@@ -491,6 +501,7 @@ impl MakerSwap {
                         &*self.r().other_persistent_pub,
                         &*dhash160(&self.r().data.secret.0),
                         self.maker_amount.clone(),
+                        &self.r().data.maker_coin_swap_contract_address,
                     );
 
                     match payment_fut.compat().await {
@@ -632,6 +643,7 @@ impl MakerSwap {
                 &*self.r().other_persistent_pub,
                 &*dhash160(&self.r().data.secret.0),
                 self.taker_amount.clone(),
+                &self.r().data.taker_coin_swap_contract_address,
             )
             .compat();
 
@@ -668,6 +680,7 @@ impl MakerSwap {
             self.taker_payment_lock.load(Ordering::Relaxed) as u32,
             &*self.r().other_persistent_pub,
             &self.r().data.secret.0,
+            &self.r().data.taker_coin_swap_contract_address,
         );
 
         let transaction = match spend_fut.compat().await {
@@ -736,6 +749,7 @@ impl MakerSwap {
             self.r().data.maker_payment_lock as u32,
             &*self.r().other_persistent_pub,
             &*dhash160(&self.r().data.secret.0),
+            &self.r().data.maker_coin_swap_contract_address,
         );
 
         let transaction = match spend_fut.compat().await {
@@ -779,47 +793,55 @@ impl MakerSwap {
         ctx: MmArc,
         maker_coin: MmCoinEnum,
         taker_coin: MmCoinEnum,
-        saved: MakerSavedSwap,
+        mut saved: MakerSavedSwap,
     ) -> Result<(Self, Option<MakerSwapCommand>), String> {
         if saved.events.is_empty() {
             return ERR!("Can't restore swap from empty events set");
         };
 
-        match &saved.events[0].event {
-            MakerSwapEvent::Started(data) => {
-                let mut taker = bits256::from([0; 32]);
-                taker.bytes = data.taker.0;
-                let my_persistent_pub = H264::from(&**ctx.secp256k1_key_pair().public());
-                let conf_settings = SwapConfirmationsSettings {
-                    maker_coin_confs: data.maker_payment_confirmations,
-                    maker_coin_nota: data
-                        .maker_payment_requires_nota
-                        .unwrap_or_else(|| maker_coin.requires_notarization()),
-                    taker_coin_confs: data.taker_payment_confirmations,
-                    taker_coin_nota: data
-                        .taker_payment_requires_nota
-                        .unwrap_or_else(|| taker_coin.requires_notarization()),
-                };
-                let swap = MakerSwap::new(
-                    ctx,
-                    taker,
-                    data.maker_amount.clone(),
-                    data.taker_amount.clone(),
-                    my_persistent_pub,
-                    saved.uuid,
-                    conf_settings,
-                    maker_coin,
-                    taker_coin,
-                    data.lock_duration,
-                );
-                let command = saved.events.last().unwrap().get_command();
-                for saved_event in saved.events {
-                    try_s!(swap.apply_event(saved_event.event));
-                }
-                Ok((swap, command))
-            },
-            _ => ERR!("First swap event must be Started"),
+        let data = match saved.events[0].event {
+            MakerSwapEvent::Started(ref mut data) => data,
+            _ => return ERR!("First swap event must be Started"),
+        };
+
+        // refresh swap contract addresses if the swap file is out-dated (doesn't contain the fields yet)
+        if data.maker_coin_swap_contract_address.is_none() {
+            data.maker_coin_swap_contract_address = maker_coin.swap_contract_address();
         }
+        if data.taker_coin_swap_contract_address.is_none() {
+            data.taker_coin_swap_contract_address = taker_coin.swap_contract_address();
+        }
+
+        let mut taker = bits256::from([0; 32]);
+        taker.bytes = data.taker.0;
+        let my_persistent_pub = H264::from(&**ctx.secp256k1_key_pair().public());
+        let conf_settings = SwapConfirmationsSettings {
+            maker_coin_confs: data.maker_payment_confirmations,
+            maker_coin_nota: data
+                .maker_payment_requires_nota
+                .unwrap_or_else(|| maker_coin.requires_notarization()),
+            taker_coin_confs: data.taker_payment_confirmations,
+            taker_coin_nota: data
+                .taker_payment_requires_nota
+                .unwrap_or_else(|| taker_coin.requires_notarization()),
+        };
+        let swap = MakerSwap::new(
+            ctx,
+            taker,
+            data.maker_amount.clone(),
+            data.taker_amount.clone(),
+            my_persistent_pub,
+            saved.uuid,
+            conf_settings,
+            maker_coin,
+            taker_coin,
+            data.lock_duration,
+        );
+        let command = saved.events.last().unwrap().get_command();
+        for saved_event in saved.events {
+            try_s!(swap.apply_event(saved_event.event));
+        }
+        Ok((swap, command))
     }
 
     pub fn recover_funds(&self) -> Result<RecoveredSwap, String> {
@@ -840,6 +862,7 @@ impl MakerSwap {
                 secret_hash,
                 taker_payment_hex,
                 selfi.r().data.taker_coin_start_block,
+                &selfi.r().data.taker_coin_swap_contract_address,
             ) {
                 Ok(Some(FoundSwapTxSpend::Spent(tx))) => {
                     return ERR!(
@@ -861,7 +884,13 @@ impl MakerSwap {
 
             selfi
                 .taker_coin
-                .send_maker_spends_taker_payment(taker_payment_hex, timelock, other_pub, &selfi.r().data.secret.0)
+                .send_maker_spends_taker_payment(
+                    taker_payment_hex,
+                    timelock,
+                    other_pub,
+                    &selfi.r().data.secret.0,
+                    &selfi.r().data.taker_coin_swap_contract_address,
+                )
                 .wait()
                 .map_err(|e| ERRL!("{}", e))
         }
@@ -891,6 +920,7 @@ impl MakerSwap {
                         &*self.r().other_persistent_pub,
                         &secret_hash.0,
                         self.r().data.maker_coin_start_block,
+                        &self.r().data.maker_coin_swap_contract_address,
                     )
                     .wait());
                 match maybe_maker_payment {
@@ -906,6 +936,7 @@ impl MakerSwap {
             &secret_hash.0,
             &maker_payment,
             self.r().data.maker_coin_start_block,
+            &self.r().data.maker_coin_swap_contract_address,
         ) {
             Ok(Some(FoundSwapTxSpend::Spent(_))) => {
                 log!("Warning: MakerPayment spent, but TakerPayment is not yet. Trying to spend TakerPayment");
@@ -940,6 +971,7 @@ impl MakerSwap {
                         self.r().data.maker_payment_lock as u32,
                         &*self.r().other_persistent_pub,
                         &secret_hash.0,
+                        &self.r().data.maker_coin_swap_contract_address,
                     )
                     .wait());
 
@@ -1391,8 +1423,8 @@ pub fn calc_max_maker_vol(ctx: &MmArc, balance: &BigDecimal, trade_fee: &TradeFe
 #[cfg(test)]
 mod maker_swap_tests {
     use super::*;
-    use coins::eth::{signed_eth_tx_from_bytes, SignedEthTx};
-    use coins::{MarketCoinOps, SwapOps, TestCoin};
+    use coins::eth::{addr_from_str, signed_eth_tx_from_bytes, SignedEthTx};
+    use coins::{MarketCoinOps, MmCoin, SwapOps, TestCoin};
     use common::mm_ctx::MmCtxBuilder;
     use common::privkey::key_pair_from_seed;
     use mocktopus::mocking::*;
@@ -1427,18 +1459,19 @@ mod maker_swap_tests {
         let ctx = MmCtxBuilder::default().with_secp256k1_key_pair(key_pair).into_mm_arc();
 
         TestCoin::ticker.mock_safe(|_| MockResult::Return("ticker"));
+        TestCoin::swap_contract_address.mock_safe(|_| MockResult::Return(None));
         static mut MY_PAYMENT_SENT_CALLED: bool = false;
-        TestCoin::check_if_my_payment_sent.mock_safe(|_, _, _, _, _| {
+        TestCoin::check_if_my_payment_sent.mock_safe(|_, _, _, _, _, _| {
             unsafe { MY_PAYMENT_SENT_CALLED = true };
             MockResult::Return(Box::new(futures01::future::ok(Some(eth_tx_for_test().into()))))
         });
 
         static mut MAKER_REFUND_CALLED: bool = false;
-        TestCoin::send_maker_refunds_payment.mock_safe(|_, _, _, _, _| {
+        TestCoin::send_maker_refunds_payment.mock_safe(|_, _, _, _, _, _| {
             unsafe { MAKER_REFUND_CALLED = true };
             MockResult::Return(Box::new(futures01::future::ok(eth_tx_for_test().into())))
         });
-        TestCoin::search_for_swap_tx_spend_my.mock_safe(|_, _, _, _, _, _| MockResult::Return(Ok(None)));
+        TestCoin::search_for_swap_tx_spend_my.mock_safe(|_, _, _, _, _, _, _| MockResult::Return(Ok(None)));
         let maker_coin = MmCoinEnum::Test(TestCoin {});
         let taker_coin = MmCoinEnum::Test(TestCoin {});
         let (maker_swap, _) = unwrap!(MakerSwap::load_from_saved(
@@ -1469,14 +1502,15 @@ mod maker_swap_tests {
         let ctx = MmCtxBuilder::default().with_secp256k1_key_pair(key_pair).into_mm_arc();
 
         TestCoin::ticker.mock_safe(|_| MockResult::Return("ticker"));
+        TestCoin::swap_contract_address.mock_safe(|_| MockResult::Return(None));
         static mut MAKER_REFUND_CALLED: bool = false;
 
-        TestCoin::send_maker_refunds_payment.mock_safe(|_, _, _, _, _| {
+        TestCoin::send_maker_refunds_payment.mock_safe(|_, _, _, _, _, _| {
             unsafe { MAKER_REFUND_CALLED = true };
             MockResult::Return(Box::new(futures01::future::ok(eth_tx_for_test().into())))
         });
 
-        TestCoin::search_for_swap_tx_spend_my.mock_safe(|_, _, _, _, _, _| MockResult::Return(Ok(None)));
+        TestCoin::search_for_swap_tx_spend_my.mock_safe(|_, _, _, _, _, _, _| MockResult::Return(Ok(None)));
         let maker_coin = MmCoinEnum::Test(TestCoin {});
         let taker_coin = MmCoinEnum::Test(TestCoin {});
         let (maker_swap, _) = unwrap!(MakerSwap::load_from_saved(
@@ -1506,7 +1540,9 @@ mod maker_swap_tests {
         let ctx = MmCtxBuilder::default().with_secp256k1_key_pair(key_pair).into_mm_arc();
 
         TestCoin::ticker.mock_safe(|_| MockResult::Return("ticker"));
-        TestCoin::search_for_swap_tx_spend_my.mock_safe(|_, _, _, _, _, _| {
+        TestCoin::swap_contract_address.mock_safe(|_| MockResult::Return(None));
+
+        TestCoin::search_for_swap_tx_spend_my.mock_safe(|_, _, _, _, _, _, _| {
             MockResult::Return(Ok(Some(FoundSwapTxSpend::Refunded(eth_tx_for_test().into()))))
         });
         let maker_coin = MmCoinEnum::Test(TestCoin {});
@@ -1531,15 +1567,16 @@ mod maker_swap_tests {
         let ctx = MmCtxBuilder::default().with_secp256k1_key_pair(key_pair).into_mm_arc();
 
         TestCoin::ticker.mock_safe(|_| MockResult::Return("ticker"));
+        TestCoin::swap_contract_address.mock_safe(|_| MockResult::Return(None));
 
         static mut SEARCH_FOR_SWAP_TX_SPEND_MY_CALLED: bool = true;
-        TestCoin::search_for_swap_tx_spend_my.mock_safe(|_, _, _, _, _, _| {
+        TestCoin::search_for_swap_tx_spend_my.mock_safe(|_, _, _, _, _, _, _| {
             unsafe { SEARCH_FOR_SWAP_TX_SPEND_MY_CALLED = true }
             MockResult::Return(Ok(Some(FoundSwapTxSpend::Spent(eth_tx_for_test().into()))))
         });
 
         static mut SEARCH_FOR_SWAP_TX_SPEND_OTHER_CALLED: bool = true;
-        TestCoin::search_for_swap_tx_spend_other.mock_safe(|_, _, _, _, _, _| {
+        TestCoin::search_for_swap_tx_spend_other.mock_safe(|_, _, _, _, _, _, _| {
             unsafe { SEARCH_FOR_SWAP_TX_SPEND_OTHER_CALLED = true }
             MockResult::Return(Ok(Some(FoundSwapTxSpend::Refunded(eth_tx_for_test().into()))))
         });
@@ -1570,12 +1607,14 @@ mod maker_swap_tests {
         let ctx = MmCtxBuilder::default().with_secp256k1_key_pair(key_pair).into_mm_arc();
 
         TestCoin::ticker.mock_safe(|_| MockResult::Return("ticker"));
+        TestCoin::swap_contract_address.mock_safe(|_| MockResult::Return(None));
+
         static mut MY_PAYMENT_SENT_CALLED: bool = false;
-        TestCoin::check_if_my_payment_sent.mock_safe(|_, _, _, _, _| {
+        TestCoin::check_if_my_payment_sent.mock_safe(|_, _, _, _, _, _| {
             unsafe { MY_PAYMENT_SENT_CALLED = true };
             MockResult::Return(Box::new(futures01::future::ok(Some(eth_tx_for_test().into()))))
         });
-        TestCoin::search_for_swap_tx_spend_my.mock_safe(|_, _, _, _, _, _| MockResult::Return(Ok(None)));
+        TestCoin::search_for_swap_tx_spend_my.mock_safe(|_, _, _, _, _, _, _| MockResult::Return(Ok(None)));
         let maker_coin = MmCoinEnum::Test(TestCoin {});
         let taker_coin = MmCoinEnum::Test(TestCoin {});
         let (maker_swap, _) = unwrap!(MakerSwap::load_from_saved(
@@ -1601,8 +1640,10 @@ mod maker_swap_tests {
         let ctx = MmCtxBuilder::default().with_secp256k1_key_pair(key_pair).into_mm_arc();
 
         TestCoin::ticker.mock_safe(|_| MockResult::Return("ticker"));
+        TestCoin::swap_contract_address.mock_safe(|_| MockResult::Return(None));
+
         static mut MY_PAYMENT_SENT_CALLED: bool = false;
-        TestCoin::check_if_my_payment_sent.mock_safe(|_, _, _, _, _| {
+        TestCoin::check_if_my_payment_sent.mock_safe(|_, _, _, _, _, _| {
             unsafe { MY_PAYMENT_SENT_CALLED = true };
             MockResult::Return(Box::new(futures01::future::ok(None)))
         });
@@ -1629,6 +1670,7 @@ mod maker_swap_tests {
         let ctx = MmCtxBuilder::default().with_secp256k1_key_pair(key_pair).into_mm_arc();
 
         TestCoin::ticker.mock_safe(|_| MockResult::Return("ticker"));
+        TestCoin::swap_contract_address.mock_safe(|_| MockResult::Return(None));
         let maker_coin = MmCoinEnum::Test(TestCoin {});
         let taker_coin = MmCoinEnum::Test(TestCoin {});
         let (maker_swap, _) = unwrap!(MakerSwap::load_from_saved(
@@ -1651,15 +1693,16 @@ mod maker_swap_tests {
         let ctx = MmCtxBuilder::default().with_secp256k1_key_pair(key_pair).into_mm_arc();
 
         TestCoin::ticker.mock_safe(|_| MockResult::Return("ticker"));
+        TestCoin::swap_contract_address.mock_safe(|_| MockResult::Return(None));
 
         static mut SEARCH_FOR_SWAP_TX_SPEND_MY_CALLED: bool = true;
-        TestCoin::search_for_swap_tx_spend_my.mock_safe(|_, _, _, _, _, _| {
+        TestCoin::search_for_swap_tx_spend_my.mock_safe(|_, _, _, _, _, _, _| {
             unsafe { SEARCH_FOR_SWAP_TX_SPEND_MY_CALLED = true }
             MockResult::Return(Ok(Some(FoundSwapTxSpend::Spent(eth_tx_for_test().into()))))
         });
 
         static mut SEARCH_FOR_SWAP_TX_SPEND_OTHER_CALLED: bool = true;
-        TestCoin::search_for_swap_tx_spend_other.mock_safe(|_, _, _, _, _, _| {
+        TestCoin::search_for_swap_tx_spend_other.mock_safe(|_, _, _, _, _, _, _| {
             unsafe { SEARCH_FOR_SWAP_TX_SPEND_OTHER_CALLED = true }
             MockResult::Return(Ok(Some(FoundSwapTxSpend::Spent(eth_tx_for_test().into()))))
         });
@@ -1690,6 +1733,7 @@ mod maker_swap_tests {
         let ctx = MmCtxBuilder::default().with_secp256k1_key_pair(key_pair).into_mm_arc();
 
         TestCoin::ticker.mock_safe(|_| MockResult::Return("ticker"));
+        TestCoin::swap_contract_address.mock_safe(|_| MockResult::Return(None));
         let maker_coin = MmCoinEnum::Test(TestCoin {});
         let taker_coin = MmCoinEnum::Test(TestCoin {});
         let (maker_swap, _) = unwrap!(MakerSwap::load_from_saved(
@@ -1714,21 +1758,22 @@ mod maker_swap_tests {
         let ctx = MmCtxBuilder::default().with_secp256k1_key_pair(key_pair).into_mm_arc();
 
         TestCoin::ticker.mock_safe(|_| MockResult::Return("ticker"));
+        TestCoin::swap_contract_address.mock_safe(|_| MockResult::Return(None));
 
         static mut SEARCH_FOR_SWAP_TX_SPEND_MY_CALLED: bool = false;
-        TestCoin::search_for_swap_tx_spend_my.mock_safe(|_, _, _, _, _, _| {
+        TestCoin::search_for_swap_tx_spend_my.mock_safe(|_, _, _, _, _, _, _| {
             unsafe { SEARCH_FOR_SWAP_TX_SPEND_MY_CALLED = true }
             MockResult::Return(Ok(Some(FoundSwapTxSpend::Spent(eth_tx_for_test().into()))))
         });
 
         static mut SEARCH_FOR_SWAP_TX_SPEND_OTHER_CALLED: bool = false;
-        TestCoin::search_for_swap_tx_spend_other.mock_safe(|_, _, _, _, _, _| {
+        TestCoin::search_for_swap_tx_spend_other.mock_safe(|_, _, _, _, _, _, _| {
             unsafe { SEARCH_FOR_SWAP_TX_SPEND_OTHER_CALLED = true }
             MockResult::Return(Ok(None))
         });
 
         static mut SEND_MAKER_SPENDS_TAKER_PAYMENT_CALLED: bool = false;
-        TestCoin::send_maker_spends_taker_payment.mock_safe(|_, _, _, _, _| {
+        TestCoin::send_maker_spends_taker_payment.mock_safe(|_, _, _, _, _, _| {
             unsafe { SEND_MAKER_SPENDS_TAKER_PAYMENT_CALLED = true }
             MockResult::Return(Box::new(futures01::future::ok(eth_tx_for_test().into())))
         });
@@ -1764,6 +1809,7 @@ mod maker_swap_tests {
         let ctx = MmCtxBuilder::default().with_secp256k1_key_pair(key_pair).into_mm_arc();
 
         TestCoin::ticker.mock_safe(|_| MockResult::Return("ticker"));
+        TestCoin::swap_contract_address.mock_safe(|_| MockResult::Return(None));
         let maker_coin = MmCoinEnum::Test(TestCoin {});
         let taker_coin = MmCoinEnum::Test(TestCoin {});
         let (_maker_swap, _) = unwrap!(MakerSwap::load_from_saved(
@@ -1777,6 +1823,77 @@ mod maker_swap_tests {
             coin: "ticker".into(),
         };
         assert_eq!(get_locked_amount(&ctx, "ticker", &trade_fee), BigDecimal::from(0));
+    }
+
+    #[test]
+    fn test_recheck_swap_contract_address_if_none() {
+        // swap file contains neither maker_coin_swap_contract_address nor taker_coin_swap_contract_address
+        let maker_saved_json = r#"{"error_events":["StartFailed","NegotiateFailed","TakerFeeValidateFailed","MakerPaymentTransactionFailed","MakerPaymentDataSendFailed","TakerPaymentValidateFailed","TakerPaymentSpendFailed","TakerPaymentSpendConfirmFailed","MakerPaymentRefunded","MakerPaymentRefundFailed"],"events":[{"event":{"data":{"lock_duration":7800,"maker_amount":"3.54932734","maker_coin":"KMD","maker_coin_start_block":1452970,"maker_payment_confirmations":1,"maker_payment_lock":1563759539,"my_persistent_pub":"031bb83b58ec130e28e0a6d5d2acf2eb01b0d3f1670e021d47d31db8a858219da8","secret":"0000000000000000000000000000000000000000000000000000000000000000","started_at":1563743939,"taker":"101ace6b08605b9424b0582b5cce044b70a3c8d8d10cb2965e039b0967ae92b9","taker_amount":"0.02004833998671660000000000","taker_coin":"ETH","taker_coin_start_block":8196380,"taker_payment_confirmations":1,"uuid":"3447b727-fe93-4357-8e5a-8cf2699b7e86"},"type":"Started"},"timestamp":1563743939211},{"event":{"data":{"taker_payment_locktime":1563751737,"taker_pubkey":"03101ace6b08605b9424b0582b5cce044b70a3c8d8d10cb2965e039b0967ae92b9"},"type":"Negotiated"},"timestamp":1563743979835},{"event":{"data":{"tx_hash":"a59203eb2328827de00bed699a29389792906e4f39fdea145eb40dc6b3821bd6","tx_hex":"f8690284ee6b280082520894d8997941dd1346e9231118d5685d866294f59e5b865af3107a4000801ca0743d2b7c9fad65805d882179062012261be328d7628ae12ee08eff8d7657d993a07eecbd051f49d35279416778faa4664962726d516ce65e18755c9b9406a9c2fd"},"type":"TakerFeeValidated"},"timestamp":1563744052878}],"success_events":["Started","Negotiated","TakerFeeValidated","MakerPaymentSent","TakerPaymentReceived","TakerPaymentWaitConfirmStarted","TakerPaymentValidatedAndConfirmed","TakerPaymentSpent","TakerPaymentSpendConfirmStarted","TakerPaymentSpendConfirmed","Finished"],"uuid":"3447b727-fe93-4357-8e5a-8cf2699b7e86"}"#;
+        let maker_saved_swap: MakerSavedSwap = unwrap!(json::from_str(maker_saved_json));
+        let key_pair = unwrap!(key_pair_from_seed(
+            "spice describe gravity federal blast come thank unfair canal monkey style afraid"
+        ));
+        let ctx = MmCtxBuilder::default().with_secp256k1_key_pair(key_pair).into_mm_arc();
+
+        TestCoin::ticker.mock_safe(|_| MockResult::Return("ticker"));
+        static mut SWAP_CONTRACT_ADDRESS_CALLED: usize = 0;
+        TestCoin::swap_contract_address.mock_safe(|_| {
+            unsafe { SWAP_CONTRACT_ADDRESS_CALLED += 1 };
+            MockResult::Return(Some(BytesJson::default()))
+        });
+        let maker_coin = MmCoinEnum::Test(TestCoin {});
+        let taker_coin = MmCoinEnum::Test(TestCoin {});
+        let (maker_swap, _) = unwrap!(MakerSwap::load_from_saved(
+            ctx.clone(),
+            maker_coin,
+            taker_coin,
+            maker_saved_swap
+        ));
+
+        assert_eq!(unsafe { SWAP_CONTRACT_ADDRESS_CALLED }, 2);
+        assert_eq!(
+            maker_swap.r().data.maker_coin_swap_contract_address,
+            Some(BytesJson::default())
+        );
+        assert_eq!(
+            maker_swap.r().data.taker_coin_swap_contract_address,
+            Some(BytesJson::default())
+        );
+    }
+
+    #[test]
+    fn test_recheck_only_one_swap_contract_address() {
+        // swap file contains only maker_coin_swap_contract_address
+        let maker_saved_json = r#"{"type":"Maker","uuid":"c52659d7-4e13-41f5-9c1a-30cc2f646033","events":[{"timestamp":1608541830095,"event":{"type":"Started","data":{"taker_coin":"JST","maker_coin":"ETH","taker":"031d4256c4bc9f99ac88bf3dba21773132281f65f9bf23a59928bce08961e2f3","secret":"dc45c1d22028970d8d30d1ddacbfc50eb92403b0d6076c94f2216c4c44512b41","secret_hash":"943e11f7c74e2d6493ef8ad01a06ef2ce9bd1fb3","my_persistent_pub":"03c6a78589e18b482aea046975e6d0acbdea7bf7dbf04d9d5bd67fda917815e3ed","lock_duration":7800,"maker_amount":"0.1","taker_amount":"0.1","maker_payment_confirmations":1,"maker_payment_requires_nota":false,"taker_payment_confirmations":1,"taker_payment_requires_nota":false,"maker_payment_lock":1608557429,"uuid":"c52659d7-4e13-41f5-9c1a-30cc2f646033","started_at":1608541829,"maker_coin_start_block":14353,"taker_coin_start_block":14353,"maker_coin_swap_contract_address":"a09ad3cd7e96586ebd05a2607ee56b56fb2db8fd"}}},{"timestamp":1608541830399,"event":{"type":"Negotiated","data":{"taker_payment_locktime":1608549629,"taker_pubkey":"02031d4256c4bc9f99ac88bf3dba21773132281f65f9bf23a59928bce08961e2f3"}}},{"timestamp":1608541831810,"event":{"type":"TakerFeeValidated","data":{"tx_hex":"f8a7821fb58083033450942b294f029fde858b2c62184e8390591755521d8e80b844a9059cbb000000000000000000000000d8997941dd1346e9231118d5685d866294f59e5b0000000000000000000000000000000000000000000000000000750d557426e01ba06ddad2dfe6933b8d70d5739beb3005c8f367bc72eac4e5609b81c2f8e5843cd9a07fa695cc42f8c6b6a7b10f6ae9e4dca3e750e37f64a85b54dec736236790f05e","tx_hash":"b13c3428f70b46d8c1d7f5863af020a27c380a8ede0927554beabf234998bcc8"}}},{"timestamp":1608541832884,"event":{"type":"MakerPaymentSent","data":{"tx_hex":"f8ef82021980830249f094a09ad3cd7e96586ebd05a2607ee56b56fb2db8fd88016345785d8a0000b884152cf3af7c7ce37fac65bd995eae3d58ccdc367d79f3a10e6ca55f609e6dcefac960982b000000000000000000000000bab36286672fbdc7b250804bf6d14be0df69fa29943e11f7c74e2d6493ef8ad01a06ef2ce9bd1fb3000000000000000000000000000000000000000000000000000000000000000000000000000000005fe0a3751ca03ab6306b8b8875c7d2cbaa71a3991eb8e7ae44e192dc9974cecc1f9dcfe5e4d6a04ec2808db06fe7b246134997fcce81ca201ced1257f1f8e93cacadd6554ca653","tx_hash":"ceba36dff0b2c7aec69cb2d5be7055858e09889959ba63f7957b45a15dceade4"}}},{"timestamp":1608541835207,"event":{"type":"TakerPaymentReceived","data":{"tx_hex":"f90127821fb680830249f094a09ad3cd7e96586ebd05a2607ee56b56fb2db8fd80b8c49b415b2a64bdf61f195a1767f547bb0886ed697f3c1a063ce928ff9a47222c0b5d099200000000000000000000000000000000000000000000000000016345785d8a00000000000000000000000000002b294f029fde858b2c62184e8390591755521d8e0000000000000000000000004b2d0d6c2c785217457b69b922a2a9cea98f71e9943e11f7c74e2d6493ef8ad01a06ef2ce9bd1fb3000000000000000000000000000000000000000000000000000000000000000000000000000000005fe084fd1ba0a5b6ef54217c5a03a588d01410ef1187ce6107bdb075306ced06a06e25a50984a03f541f1f392079ae2590d0f48f2065f8721a8b46c44a060ae53f00bfb5160118","tx_hash":"1247a1be3da89f3612ca33d83d493808388775e2897036f640c0efe69c3b162f"}}},{"timestamp":1608541835208,"event":{"type":"TakerPaymentWaitConfirmStarted"}},{"timestamp":1608541836196,"event":{"type":"TakerPaymentValidatedAndConfirmed"}},{"timestamp":1608541837173,"event":{"type":"TakerPaymentSpent","data":{"tx_hex":"f9010782021a80830249f094a09ad3cd7e96586ebd05a2607ee56b56fb2db8fd80b8a402ed292b64bdf61f195a1767f547bb0886ed697f3c1a063ce928ff9a47222c0b5d099200000000000000000000000000000000000000000000000000016345785d8a0000dc45c1d22028970d8d30d1ddacbfc50eb92403b0d6076c94f2216c4c44512b410000000000000000000000002b294f029fde858b2c62184e8390591755521d8e000000000000000000000000bab36286672fbdc7b250804bf6d14be0df69fa291ba053af89feb4ab066b26e76de9788c85ec1bf14ae6dcbdd7ff53e561e48e1b822ca043796d45bd4233500a120a1571b3fee95a34e8cc6b616c69552da4352c0d8e39","tx_hash":"d9a839c6eead3fbf538eca0a4ec39e28647104920a5c8b9c107524287dd90165"}}},{"timestamp":1608541837175,"event":{"type":"TakerPaymentSpendConfirmStarted"}},{"timestamp":1608541837612,"event":{"type":"TakerPaymentSpendConfirmed"}},{"timestamp":1608541837614,"event":{"type":"Finished"}}],"maker_amount":"0.1","maker_coin":"ETH","taker_amount":"0.1","taker_coin":"JST","gui":"nogui","mm_version":"1a6082121","success_events":["Started","Negotiated","TakerFeeValidated","MakerPaymentSent","TakerPaymentReceived","TakerPaymentWaitConfirmStarted","TakerPaymentValidatedAndConfirmed","TakerPaymentSpent","TakerPaymentSpendConfirmStarted","TakerPaymentSpendConfirmed","Finished"],"error_events":["StartFailed","NegotiateFailed","TakerFeeValidateFailed","MakerPaymentTransactionFailed","MakerPaymentDataSendFailed","MakerPaymentWaitConfirmFailed","TakerPaymentValidateFailed","TakerPaymentWaitConfirmFailed","TakerPaymentSpendFailed","TakerPaymentSpendConfirmFailed","MakerPaymentWaitRefundStarted","MakerPaymentRefunded","MakerPaymentRefundFailed"]}"#;
+        let maker_saved_swap: MakerSavedSwap = unwrap!(json::from_str(maker_saved_json));
+        let key_pair = unwrap!(key_pair_from_seed(
+            "spice describe gravity federal blast come thank unfair canal monkey style afraid"
+        ));
+        let ctx = MmCtxBuilder::default().with_secp256k1_key_pair(key_pair).into_mm_arc();
+
+        TestCoin::ticker.mock_safe(|_| MockResult::Return("ticker"));
+        static mut SWAP_CONTRACT_ADDRESS_CALLED: usize = 0;
+        TestCoin::swap_contract_address.mock_safe(|_| {
+            unsafe { SWAP_CONTRACT_ADDRESS_CALLED += 1 };
+            MockResult::Return(Some(BytesJson::default()))
+        });
+        let maker_coin = MmCoinEnum::Test(TestCoin {});
+        let taker_coin = MmCoinEnum::Test(TestCoin {});
+        let (maker_swap, _) = unwrap!(MakerSwap::load_from_saved(
+            ctx.clone(),
+            maker_coin,
+            taker_coin,
+            maker_saved_swap
+        ));
+
+        assert_eq!(unsafe { SWAP_CONTRACT_ADDRESS_CALLED }, 1);
+        let expected_addr = addr_from_str("0xa09ad3cd7e96586ebd05a2607ee56b56fb2db8fd").unwrap();
+        let expected = BytesJson::from(expected_addr.0.as_ref());
+        assert_eq!(maker_swap.r().data.maker_coin_swap_contract_address, Some(expected));
+        assert_eq!(
+            maker_swap.r().data.taker_coin_swap_contract_address,
+            Some(BytesJson::default())
+        );
     }
 
     #[test]
