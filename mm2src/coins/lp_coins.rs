@@ -37,7 +37,7 @@ use common::executor::{spawn, Timer};
 use common::mm_ctx::{from_ctx, MmArc};
 use common::mm_metrics::MetricsWeak;
 use common::mm_number::MmNumber;
-use common::{block_on, calc_total_pages, rpc_err_response, rpc_response, HyRes};
+use common::{block_on, calc_total_pages, rpc_err_response, rpc_response, HyRes, TraceSource, Traceable};
 use futures::compat::Future01CompatExt;
 use futures::lock::Mutex as AsyncMutex;
 use futures01::Future;
@@ -397,6 +397,7 @@ pub struct TradeFee {
 #[derive(Debug)]
 pub enum TradePreimageValue {
     Exact(BigDecimal),
+    /// TODO add the UpperBound(BigDecimal)
     Max,
 }
 
@@ -415,6 +416,17 @@ impl fmt::Display for TradePreimageError {
     }
 }
 
+impl Traceable for TradePreimageError {
+    fn trace(self, source: TraceSource) -> Self {
+        match self {
+            TradePreimageError::NotSufficientBalance(e) => {
+                TradePreimageError::NotSufficientBalance(source.with_msg(&e))
+            },
+            TradePreimageError::Other(e) => TradePreimageError::Other(source.with_msg(&e)),
+        }
+    }
+}
+
 /// NB: Implementations are expected to follow the pImpl idiom, providing cheap reference-counted cloning and garbage collection.
 pub trait MmCoin: SwapOps + MarketCoinOps + fmt::Debug + Send + Sync + 'static {
     // `MmCoin` is an extension fulcrum for something that doesn't fit the `MarketCoinOps`. Practical examples:
@@ -425,6 +437,7 @@ pub trait MmCoin: SwapOps + MarketCoinOps + fmt::Debug + Send + Sync + 'static {
 
     fn is_asset_chain(&self) -> bool;
 
+    /// TODO remove this
     fn can_i_spend_other_payment(&self) -> Box<dyn Future<Item = (), Error = String> + Send>;
 
     /// The coin can be initialized, but it cannot participate in the swaps.
@@ -564,7 +577,7 @@ impl Deref for MmCoinEnum {
 
 #[async_trait]
 pub trait BalanceTradeFeeUpdatedHandler {
-    async fn balance_updated(&self, ticker: &str, new_balance: &BigDecimal, trade_fee: &TradeFee);
+    async fn balance_updated(&self, coin: &MmCoinEnum, new_balance: &BigDecimal);
 }
 
 struct CoinsContext {
@@ -711,9 +724,9 @@ impl RpcTransportEventHandler for CoinTransportMetrics {
 
 #[async_trait]
 impl BalanceTradeFeeUpdatedHandler for CoinsContext {
-    async fn balance_updated(&self, ticker: &str, new_balance: &BigDecimal, trade_fee: &TradeFee) {
+    async fn balance_updated(&self, coin: &MmCoinEnum, new_balance: &BigDecimal) {
         for sub in self.balance_update_handlers.lock().await.iter() {
-            sub.balance_updated(ticker, new_balance, trade_fee).await
+            sub.balance_updated(coin, new_balance).await
         }
     }
 }
@@ -1203,12 +1216,8 @@ pub async fn check_balance_update_loop(ctx: MmArc, ticker: String) {
                     Err(_) => continue,
                 };
                 if Some(&balance) != current_balance.as_ref() {
-                    let trade_fee = match coin.get_trade_fee().compat().await {
-                        Ok(f) => f,
-                        Err(_) => continue,
-                    };
                     let coins_ctx = unwrap!(CoinsContext::from_ctx(&ctx));
-                    coins_ctx.balance_updated(&ticker, &balance, &trade_fee).await;
+                    coins_ctx.balance_updated(&coin, &balance).await;
                     current_balance = Some(balance);
                 }
             },

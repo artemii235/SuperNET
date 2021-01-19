@@ -1,17 +1,18 @@
 #![cfg_attr(not(feature = "native"), allow(dead_code))]
 
-use super::{ban_pubkey, broadcast_my_swap_status, dex_fee_amount, get_locked_amount, get_locked_amount_by_other_swaps,
-            my_swap_file_path, my_swaps_dir, AtomicSwap, LockedAmount, MySwapInfo, RecoveredSwap, RecoveredSwapAction,
-            SavedSwap, SwapConfirmationsSettings, SwapError, SwapsContext, TransactionIdentifier,
-            WAIT_CONFIRM_INTERVAL};
+use super::{ban_pubkey, broadcast_my_swap_status, check_coin_balance_for_swap, dex_fee_amount, get_locked_amount,
+            my_swap_file_path, my_swaps_dir, AtomicSwap, CoinTradeInfo, LockedAmount, LockedAmountError, MySwapInfo,
+            RecoveredSwap, RecoveredSwapAction, SavedSwap, SwapConfirmationsSettings, SwapError, SwapsContext,
+            TransactionIdentifier, WAIT_CONFIRM_INTERVAL};
 use crate::mm2::lp_network::subscribe_to_topic;
 use crate::mm2::lp_swap::{broadcast_swap_message_every, dex_fee_rate, recv_swap_msg, swap_topic, NegotiationDataMsg,
                           SwapMsg};
+use async_trait::async_trait;
 use atomic::Atomic;
 use bigdecimal::BigDecimal;
-use coins::{lp_coinfindᵃ, FoundSwapTxSpend, MmCoinEnum, TradeFee};
+use coins::{lp_coinfindᵃ, FoundSwapTxSpend, MmCoinEnum, TradeFee, TradePreimageError, TradePreimageValue};
 use common::{bits256, executor::Timer, file_lock::FileLock, mm_ctx::MmArc, mm_number::MmNumber, now_ms, slurp, write,
-             MM_VERSION};
+             Traceable, MM_VERSION};
 use futures::{compat::Future01CompatExt, select, FutureExt};
 use futures01::Future;
 use http::Response;
@@ -381,6 +382,9 @@ pub struct TakerSwapMut {
     taker_payment_refund: Option<TransactionIdentifier>,
     secret_hash: H160Json,
     secret: H256Json,
+    maker_coin_trade_fee: Option<TradeFee>,
+    taker_coin_trade_fee: Option<TradeFee>,
+    fee_to_send_taker_fee: Option<TradeFee>,
 }
 
 pub struct TakerSwap {
@@ -602,6 +606,9 @@ impl TakerSwap {
                 taker_payment_refund: None,
                 secret_hash: H160Json::default(),
                 secret: H256Json::default(),
+                maker_coin_trade_fee: None,
+                taker_coin_trade_fee: None,
+                fee_to_send_taker_fee: None,
             }),
         }
     }
@@ -1282,42 +1289,96 @@ impl TakerSwap {
             },
         }
     }
+
+    async fn get_maker_coin_trade_fee(&self) -> Result<TradeFee, TradePreimageError> {
+        if let Some(ref fee) = self.r().maker_coin_trade_fee {
+            return Ok(fee.clone());
+        }
+
+        let fee = self
+            .maker_coin
+            .get_receiver_trade_fee()
+            .compat()
+            .await
+            .trace(source!())?;
+        self.w().maker_coin_trade_fee = Some(fee.clone());
+        Ok(fee)
+    }
+
+    async fn get_taker_coin_trade_fee(&self) -> Result<TradeFee, TradePreimageError> {
+        if let Some(ref fee) = self.r().taker_coin_trade_fee {
+            return Ok(fee.clone());
+        }
+
+        let preimage_value = TradePreimageValue::Exact(self.taker_amount.to_decimal());
+        let fee = self
+            .taker_coin
+            .get_sender_trade_fee(preimage_value)
+            .compat()
+            .await
+            .trace(source!())?;
+        self.w().taker_coin_trade_fee = Some(fee.clone());
+        Ok(fee)
+    }
+
+    async fn get_fee_to_send_taker_fee(&self, dex_fee: BigDecimal) -> Result<TradeFee, TradePreimageError> {
+        if let Some(ref fee) = self.r().fee_to_send_taker_fee {
+            return Ok(fee.clone());
+        }
+
+        let fee = self
+            .taker_coin
+            .get_fee_to_send_taker_fee(dex_fee)
+            .compat()
+            .await
+            .trace(source!())?;
+        self.w().fee_to_send_taker_fee = Some(fee.clone());
+        Ok(fee)
+    }
 }
 
+#[async_trait]
 impl AtomicSwap for TakerSwap {
-    fn locked_amount(&self, trade_fee: &TradeFee) -> LockedAmount {
-        // if taker payment is not sent yet the taker fee amount must be virtually locked
-        let dex_fee_amount = match self.r().taker_fee {
-            Some(_) => 0.into(),
-            None => {
-                let amount = dex_fee_amount(
-                    self.maker_coin.ticker(),
-                    self.taker_coin.ticker(),
-                    &self.taker_amount.clone(),
-                );
-                if self.taker_coin.ticker() == trade_fee.coin {
-                    &amount + &trade_fee.amount
-                } else {
-                    amount
-                }
-            },
-        };
-        let amount = match self.r().taker_payment {
-            Some(_) => 0.into(),
-            None => {
-                let amount = &dex_fee_amount + &self.taker_amount;
-                if self.taker_coin.ticker() == trade_fee.coin {
-                    &amount + &trade_fee.amount
-                } else {
-                    amount
-                }
-            },
-        };
+    async fn locked_amount(&self) -> Result<Vec<LockedAmount>, LockedAmountError> {
+        let mut result = Vec::new();
 
-        LockedAmount {
-            coin: self.taker_coin.ticker().to_string(),
-            amount,
+        // if taker fee is not sent yet it must be virtually locked
+        if self.r().taker_fee.is_none() {
+            let taker_fee_amount = dex_fee_amount(
+                self.maker_coin.ticker(),
+                self.taker_coin.ticker(),
+                &self.taker_amount.clone(),
+            );
+            let trade_fee = self
+                .get_fee_to_send_taker_fee(taker_fee_amount.to_decimal())
+                .await
+                .trace(source!())?;
+            result.push(LockedAmount {
+                coin: self.taker_coin.ticker().to_owned(),
+                amount: taker_fee_amount,
+                trade_fee,
+            });
         }
+
+        // if taker payment is not sent yet it must be virtually locked
+        if self.r().taker_payment.is_none() {
+            result.push(LockedAmount {
+                coin: self.taker_coin.ticker().to_owned(),
+                amount: self.taker_amount.clone(),
+                trade_fee: self.get_taker_coin_trade_fee().await.trace(source!())?,
+            });
+        }
+
+        // if maker payment is not spent yet the `MakerPaymentSpend` tx fee must be virtually locked
+        if self.r().maker_payment_spend.is_none() {
+            result.push(LockedAmount {
+                coin: self.maker_coin.ticker().to_owned(),
+                amount: 0.into(),
+                trade_fee: self.get_maker_coin_trade_fee().await.trace(source!())?,
+            });
+        }
+
+        Ok(result)
     }
 
     fn uuid(&self) -> &Uuid { &self.uuid }
@@ -1334,45 +1395,14 @@ pub async fn check_balance_for_taker_swap(
     volume: MmNumber,
     swap_uuid: Option<&Uuid>,
 ) -> Result<(), String> {
-    let miner_fee = try_s!(my_coin.get_trade_fee().compat().await);
-    log!("check_balance_for_taker_swap miner fee "[miner_fee.amount.to_fraction()]);
-    let locked = match swap_uuid {
-        Some(u) => get_locked_amount_by_other_swaps(ctx, u, my_coin.ticker(), &miner_fee),
-        None => get_locked_amount(&ctx, my_coin.ticker(), &miner_fee),
-    };
-    log!("check_balance_for_taker_swap locked "[locked.to_fraction()]);
-    let my_balance = try_s!(my_coin.my_balance().compat().await).into();
-    log!("check_balance_for_taker_swap balance "(my_balance));
-    let dex_fee = dex_fee_amount(my_coin.ticker(), other_coin.ticker(), &volume);
-    log!("check_balance_for_taker_swap dex_fee "[dex_fee.to_fraction()]);
-    let total_miner_fee = &MmNumber::from(2) * &(miner_fee.amount.clone());
-    let total = if my_coin.ticker() == miner_fee.coin {
-        &volume + &dex_fee + total_miner_fee
-    } else {
-        let base_coin_balance: MmNumber = try_s!(my_coin.base_coin_balance().compat().await).into();
-        if total_miner_fee > base_coin_balance {
-            return ERR!(
-                "Base coin {} balance {} is not sufficient to pay total miner fees {}",
-                miner_fee.coin,
-                base_coin_balance,
-                total_miner_fee
-            );
-        }
-        &volume + &dex_fee
-    };
-    let available = &my_balance - &locked;
-    if total <= available {
-        Ok(())
-    } else {
-        ERR!(
-            "The total required {} amount {} is larger than available {:.8}, balance: {}, locked by swaps: {:.8}",
-            my_coin.ticker(),
-            total,
-            available,
-            my_balance,
-            locked
-        )
-    }
+    let dex_fee = Some(dex_fee_amount(my_coin.ticker(), other_coin.ticker(), &volume));
+
+    common::log::debug!("Check my_coin '{}' balance for TakerSwap", my_coin.ticker());
+    try_s!(check_coin_balance_for_swap(ctx, my_coin, CoinTradeInfo::MyCoin { volume }, swap_uuid, dex_fee).await);
+
+    common::log::debug!("Check other_coin '{}' balance for TakerSwap", other_coin.ticker());
+    try_s!(check_coin_balance_for_swap(ctx, other_coin, CoinTradeInfo::OtherCoin, swap_uuid, None).await);
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -1381,6 +1411,28 @@ struct MaxTakerVolRequest {
     trade_with: Option<String>,
 }
 
+/// If we want to calculate the maximum taker volume, we should solve the following equation:
+/// `max_vol = balance - locked_amount - trade_fee(max_vol) - fee_to_send_taker_fee(dex_fee(max_vol)) - dex_fee(max_vol)`
+///
+/// 1) If the `trade_fee` and `fee_to_send_taker_fee` should be paid in base coin, the equation can be simplified:
+/// `max_vol = balance - locked_amount - dex_fee(max_vol)`,
+/// where we can calculate the exact `max_vol` since the function inverse to `dex_fee(x)` can be obtained.
+///
+/// 2) Otherwise we cannot express the `max_vol` from the equation above, but we can find smallest of the largest `max_vol`.
+/// It means if we find the largest `trade_fee` and `fee_to_send_taker_fee` values and pass them into the equation, we will get:
+/// `min_max_vol = balance - locked_amount - max_trade_fee - max_fee_to_send_taker_fee - dex_fee(max_vol)`
+/// and then `min_max_vol` can be calculated as in the first case.
+///
+/// Please note the following condition is satisfied for any `x` and `y`:
+/// `if x < y then trade_fee(x) <= trade_fee(y) and fee_to_send_taker_fee(x) <= fee_to_send_taker_fee(y) and dex_fee(x) <= dex_fee(y)`
+/// Let `real_max_vol` is a real desired volume.
+/// Performing the following steps one by one, we will get an approximate maximum volume:
+/// - `max_possible = balance - locked_amount` is a largest possible max volume. Hint, we've replaced unknown subtracted `trade_fee`, `fee_to_send_taker_fee`, `dex_fee` variables with zeros.
+/// - `max_trade_fee = trade_fee(max_possible)` is a largest possible `trade_fee` value.
+/// - `max_possible_2 = balance - locked_amount - max_trade_fee` is more accurate max volume than `max_possible`. Please note `real_max_vol <= max_possible_2 <= max_possible`.
+/// - `max_dex_fee = dex_fee(max_possible_2)` is an intermediate value that will be passed into the `fee_to_send_taker_fee`.
+/// - `max_fee_to_send_taker_fee = fee_to_send_taker_fee(max_dex_fee)`
+/// After that `min_max_vol = balance - locked_amount - max_trade_fee - max_fee_to_send_taker_fee - dex_fee(max_vol)` can be solved as in the first case.
 pub async fn max_taker_vol(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
     let req: MaxTakerVolRequest = try_s!(json::from_value(req));
     let coin = match lp_coinfindᵃ(&ctx, &req.coin).await {
@@ -1388,26 +1440,73 @@ pub async fn max_taker_vol(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, S
         Ok(None) => return ERR!("No such coin: {}", req.coin),
         Err(err) => return ERR!("!lp_coinfind({}): {}", req.coin, err),
     };
-    let balance = try_s!(coin.my_balance().compat().await);
-    let fee_info = try_s!(coin.get_trade_fee().compat().await);
-    let locked = get_locked_amount(&ctx, coin.ticker(), &fee_info);
-    let mut available_vol = MmNumber::from(balance) - locked;
-    if fee_info.coin == coin.ticker() {
-        available_vol = available_vol - fee_info.amount * 2.into();
-    }
-    let dex_fee_rate = dex_fee_rate(coin.ticker(), req.trade_with.as_ref().unwrap_or(&req.coin));
-    let fee_threshold = MmNumber::from("0.0001");
-    let threshold_coef = &(&MmNumber::from(1) + &dex_fee_rate) / &dex_fee_rate;
-    if available_vol > &fee_threshold * &threshold_coef {
-        available_vol = available_vol / (MmNumber::from(1) + dex_fee_rate);
+    let base = coin.ticker();
+    let rel = req.trade_with.as_ref().unwrap_or(&req.coin);
+    let balance = MmNumber::from(try_s!(coin.my_balance().compat().await));
+    let locked = try_s!(get_locked_amount(&ctx, base).await);
+
+    let max_possible = &balance - &locked;
+    // TODO replace Exact with UpperBound
+    let max_trade_fee = try_s!(
+        coin.get_sender_trade_fee(TradePreimageValue::Exact(max_possible.to_decimal()))
+            .compat()
+            .await
+    );
+
+    let result = if base == max_trade_fee.coin {
+        // second case
+        let max_possible_2 = &max_possible - &max_trade_fee.amount;
+        let max_dex_fee = dex_fee_amount(base, rel, &max_possible_2);
+        let max_fee_to_send_taker_fee = try_s!(coin.get_fee_to_send_taker_fee(max_dex_fee.to_decimal()).compat().await);
+        let min_max_possible = &max_possible_2 - &max_fee_to_send_taker_fee.amount;
+
+        common::log::debug!(
+            "max_taker_vol case 2: min_max_possible {:?}, balance {:?}, locked {:?}, max_trade_fee {:?}, max_dex_fee {:?}, max_fee_to_send_taker_fee {:?}",
+            min_max_possible.to_fraction(),
+            balance.to_fraction(),
+            locked.to_fraction(),
+            max_trade_fee.amount.to_fraction(),
+            max_dex_fee.to_fraction(),
+            max_fee_to_send_taker_fee.amount.to_fraction()
+        );
+        max_taker_vol_from_available(min_max_possible, base, rel)
     } else {
-        available_vol = available_vol - fee_threshold;
-    }
+        // first case
+        common::log::debug!(
+            "max_taker_vol case 1: balance {:?}, locked {:?}, ",
+            balance.to_fraction(),
+            locked.to_fraction()
+        );
+        max_taker_vol_from_available(max_possible, base, rel)
+    };
+
+    let max_vol = result.map_err(|e| {
+        ERRL!(
+            "Insufficient funds to trade. Please note funds could be locked by other swaps. Error: {}",
+            e
+        )
+    })?;
 
     let res = try_s!(json::to_vec(&json!({
-        "result": available_vol.to_fraction()
+        "result": max_vol.to_fraction()
     })));
     Ok(try_s!(Response::builder().body(res)))
+}
+
+pub fn max_taker_vol_from_available(available: MmNumber, base: &str, rel: &str) -> Result<MmNumber, String> {
+    let dex_fee_rate = dex_fee_rate(base, rel);
+    let fee_threshold = MmNumber::from("0.0001");
+    let threshold_coef = &(&MmNumber::from(1) + &dex_fee_rate) / &dex_fee_rate;
+    let max_vol = if available > &fee_threshold * &threshold_coef {
+        available / (MmNumber::from(1) + dex_fee_rate)
+    } else {
+        available - fee_threshold
+    };
+
+    if max_vol <= MmNumber::from(0) {
+        return ERR!("Max taker volume {} cannot be zero or negative", max_vol);
+    }
+    Ok(max_vol)
 }
 
 #[cfg(test)]
@@ -1733,5 +1832,69 @@ mod taker_swap_tests {
         // MM2 did not attempt to send the payment in this case so swap is not recoverable.
         let swap: TakerSavedSwap = json::from_str(r#"{"error_events":["StartFailed","NegotiateFailed","TakerFeeSendFailed","MakerPaymentValidateFailed","MakerPaymentWaitConfirmFailed","TakerPaymentTransactionFailed","TakerPaymentWaitConfirmFailed","TakerPaymentDataSendFailed","TakerPaymentWaitForSpendFailed","MakerPaymentSpendFailed","TakerPaymentWaitRefundStarted","TakerPaymentRefunded","TakerPaymentRefundFailed"],"events":[{"event":{"data":{"lock_duration":7800,"maker":"1bb83b58ec130e28e0a6d5d2acf2eb01b0d3f1670e021d47d31db8a858219da8","maker_amount":"0.12596566232185483","maker_coin":"KMD","maker_coin_start_block":1458035,"maker_payment_confirmations":1,"maker_payment_wait":1564053079,"my_persistent_pub":"0326846707a52a233cfc49a61ef51b1698bbe6aa78fa8b8d411c02743c09688f0a","started_at":1564050479,"taker_amount":"50.000000000000001504212457800000","taker_coin":"DOGE","taker_coin_start_block":2823448,"taker_payment_confirmations":1,"taker_payment_lock":1564058279,"uuid":"41383f43-46a5-478c-9386-3b2cce0aca20"},"type":"Started"},"timestamp":1564050480269},{"event":{"data":{"maker_payment_locktime":1564066080,"maker_pubkey":"031bb83b58ec130e28e0a6d5d2acf2eb01b0d3f1670e021d47d31db8a858219da8","secret_hash":"3669eb83a007a3c507448d79f45a9f06ec2f36a8"},"type":"Negotiated"},"timestamp":1564050540991},{"event":{"data":{"tx_hash":"bdde828b492d6d1cc25cd2322fd592dafd722fcc7d8b0fedce4d3bb4a1a8c8ff","tx_hex":"0100000002c7efa995c8b7be0a8b6c2d526c6c444c1634d65584e9ee89904e9d8675eac88c010000006a473044022051f34d5e3b7d0b9098d5e35333f3550f9cb9e57df83d5e4635b7a8d2986d6d5602200288c98da05de6950e01229a637110a1800ba643e75cfec59d4eb1021ad9b40801210326846707a52a233cfc49a61ef51b1698bbe6aa78fa8b8d411c02743c09688f0affffffffae6c233989efa7c7d2aa6534adc96078917ff395b7f09f734a147b2f44ade164000000006a4730440220393a784c2da74d0e2a28ec4f7df6c8f9d8b2af6ae6957f1e68346d744223a8fd02201b7a96954ac06815a43a6c7668d829ae9cbb5de76fa77189ddfd9e3038df662c01210326846707a52a233cfc49a61ef51b1698bbe6aa78fa8b8d411c02743c09688f0affffffff02115f5800000000001976a914ca1e04745e8ca0c60d8c5881531d51bec470743f88ac41a84641020000001976a914444f0e1099709ba4d742454a7d98a5c9c162ceab88ac6d84395d"},"type":"TakerFeeSent"},"timestamp":1564050545296},{"event":{"data":{"tx_hash":"0a0f11fa82802c2c30862c50ab2162185dae8de7f7235f32c506f814c142b382","tx_hex":"0400008085202f8902ace337db2dd4c56b0697f58fb8cfb6bd1cd6f469d925fc0376d1dcfb7581bf82000000006b483045022100d1f95be235c5c8880f5d703ace287e2768548792c58c5dbd27f5578881b30ea70220030596106e21c7e0057ee0dab283f9a1fe273f15208cba80870c447bd559ef0d0121031bb83b58ec130e28e0a6d5d2acf2eb01b0d3f1670e021d47d31db8a858219da8ffffffff9f339752567c404427fd77f2b35cecdb4c21489edc64e25e729fdb281785e423000000006a47304402203179e95877dbc107123a417f1e648e3ff13d384890f1e4a67b6dd5087235152e0220102a8ab799fadb26b5d89ceb9c7bc721a7e0c2a0d0d7e46bbe0cf3d130010d430121031bb83b58ec130e28e0a6d5d2acf2eb01b0d3f1670e021d47d31db8a858219da8ffffffff025635c0000000000017a91480a95d366d65e34a465ab17b0c9eb1d5a33bae08876cbfce05000000001976a914c3f710deb7320b0efa6edb14e3ebeeb9155fa90d88ac8d7c395d000000000000000000000000000000"},"type":"MakerPaymentReceived"},"timestamp":1564050588176},{"event":{"type":"MakerPaymentWaitConfirmStarted"},"timestamp":1564050588178},{"event":{"data":{"error":"error"},"type":"MakerPaymentWaitConfirmFailed"},"timestamp":1564051092897},{"event":{"type":"Finished"},"timestamp":1564051092900}],"success_events":["Started","Negotiated","TakerFeeSent","MakerPaymentReceived","MakerPaymentWaitConfirmStarted","MakerPaymentValidatedAndConfirmed","TakerPaymentSent","TakerPaymentSpent","MakerPaymentSpent","Finished"],"uuid":"41383f43-46a5-478c-9386-3b2cce0aca20"}"#).unwrap();
         assert!(!swap.is_recoverable());
+    }
+
+    #[test]
+    fn test_max_taker_vol_from_available() {
+        let dex_fee_threshold = MmNumber::from("0.0001");
+
+        // For these `availables` the dex_fee must be greater than threshold
+        let source = vec![
+            ("0.0779", false),
+            ("0.1", false),
+            ("0.135", false),
+            ("12.000001", false),
+            ("999999999999999999999999999999999999999999999999999999", false),
+            ("0.0778000000000000000000000000000000000000000000000002", false),
+            ("0.0779", false),
+            ("0.0778000000000000000000000000000000000000000000000001", false),
+            ("0.0863333333333333333333333333333333333333333333333334", true),
+            ("0.0863333333333333333333333333333333333333333333333333", true),
+        ];
+        for (available, is_kmd) in source {
+            let available = MmNumber::from(available);
+            // no matter base or rel is KMD
+            let base = if is_kmd { "RICK" } else { "MORTY" };
+            let max_taker_vol = max_taker_vol_from_available(available.clone(), "RICK", "MORTY")
+                .expect("!max_taker_vol_from_available");
+            let dex_fee = dex_fee_amount(base, "MORTY", &max_taker_vol);
+            assert!(dex_fee_threshold < dex_fee);
+            assert_eq!(max_taker_vol + dex_fee, available);
+        }
+
+        // for these `availables` the dex_fee must be the same as `threshold`
+        let source = vec![
+            ("0.0863333333333333333333333333333333333333333333333332", true),
+            ("0.0863333333333333333333333333333333333333333333333331", true),
+            ("0.0777999999999999999999999999999999999999999999999999", false),
+            ("0.0777", false),
+            ("0.00011", false),
+            ("0.0001000000000000000000000000000000000000000000000001", false),
+        ];
+        for (available, is_kmd) in source {
+            let available = MmNumber::from(available);
+            // no matter base or rel is KMD
+            let base = if is_kmd { "KMD" } else { "RICK" };
+            let max_taker_vol =
+                max_taker_vol_from_available(available.clone(), base, "MORTY").expect("!max_taker_vol_from_available");
+            let dex_fee = dex_fee_amount(base, "MORTY", &max_taker_vol);
+            log!("available "[available.to_decimal()]" max_taker_vol "[max_taker_vol.to_decimal()]", dex_fee "[dex_fee.to_decimal()]);
+            assert_eq!(dex_fee_threshold, dex_fee);
+            assert_eq!(max_taker_vol + dex_fee, available);
+        }
+
+        // these `availables` must be the cause of an error
+        let availables = vec![
+            "0.0001",
+            "0.0000999999999999999999999999999999999999999999999999",
+            "0.0000000000000000000000000000000000000000000000000001",
+            "0",
+            "-2",
+        ];
+        for available in availables {
+            let available = MmNumber::from(available);
+            max_taker_vol_from_available(available.clone(), "KMD", "MORTY")
+                .expect_err("!max_taker_vol_from_available success but should be error");
+        }
     }
 }

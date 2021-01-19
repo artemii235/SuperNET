@@ -1159,6 +1159,32 @@ macro_rules! try_map {
     };
 }
 
+#[macro_export]
+macro_rules! source {
+    () => {
+        $crate::TraceSource::new(gstuff::filename(file!()), line!())
+    };
+}
+
+pub struct TraceSource {
+    filename: &'static str,
+    line: u32,
+}
+
+impl TraceSource {
+    pub fn new(filename: &'static str, line: u32) -> TraceSource { TraceSource { filename, line } }
+
+    pub fn with_msg(&self, msg: &str) -> String { format!("{}:{}] {}", self.filename, self.line, msg) }
+}
+
+pub trait Traceable {
+    fn trace(self, source: TraceSource) -> Self;
+}
+
+impl<T, E: Traceable> Traceable for Result<T, E> {
+    fn trace(self, source: TraceSource) -> Self { self.map_err(|e| e.trace(source)) }
+}
+
 /// Executes a GET request, returning the response status, headers and body.
 pub async fn slurp_url(url: &str) -> SlurpRes {
     wio::slurp_req(try_s!(Request::builder().uri(url).body(Vec::new()))).await
