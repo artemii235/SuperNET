@@ -1419,10 +1419,10 @@ pub async fn check_balance_for_maker_swap(
     volume: MmNumber,
     swap_uuid: Option<&Uuid>,
 ) -> Result<(), String> {
-    common::log::debug!("Check my_coin '{}' balance for MakerSwap", my_coin.ticker());
+    common::log::info!("Check my_coin '{}' balance for MakerSwap", my_coin.ticker());
     try_s!(check_coin_balance_for_swap(ctx, my_coin, CoinTradeInfo::MyCoin { volume }, swap_uuid, None).await);
 
-    common::log::debug!("Check other_coin '{}' balance for MakerSwap", other_coin.ticker());
+    common::log::info!("Check other_coin '{}' balance for MakerSwap", other_coin.ticker());
     try_s!(check_coin_balance_for_swap(ctx, other_coin, CoinTradeInfo::OtherCoin, swap_uuid, None).await);
     Ok(())
 }

@@ -1425,10 +1425,10 @@ pub async fn check_balance_for_taker_swap(
 ) -> Result<(), String> {
     let dex_fee = Some(dex_fee_amount(my_coin.ticker(), other_coin.ticker(), &volume));
 
-    common::log::debug!("Check my_coin '{}' balance for TakerSwap", my_coin.ticker());
+    common::log::info!("Check my_coin '{}' balance for TakerSwap", my_coin.ticker());
     try_s!(check_coin_balance_for_swap(ctx, my_coin, CoinTradeInfo::MyCoin { volume }, swap_uuid, dex_fee).await);
 
-    common::log::debug!("Check other_coin '{}' balance for TakerSwap", other_coin.ticker());
+    common::log::info!("Check other_coin '{}' balance for TakerSwap", other_coin.ticker());
     try_s!(check_coin_balance_for_swap(ctx, other_coin, CoinTradeInfo::OtherCoin, swap_uuid, None).await);
     Ok(())
 }

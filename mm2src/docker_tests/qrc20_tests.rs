@@ -1018,6 +1018,125 @@ fn test_wait_for_tx_spend() {
 }
 
 #[test]
+fn test_check_balance_on_order_post_base_coin_locked() {
+    let bob_priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
+    let alice_priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
+    let timeout = (now_ms() / 1000) + 80; // timeout if test takes more than 80 seconds to run
+
+    // fill the Bob address by 0.05 Qtum
+    let (_ctx, coin) = qrc20_coin_from_privkey("QICK", &bob_priv_key);
+    let my_address = coin.my_address().expect("!my_address");
+    fill_address(&coin, &my_address, 0.05.into(), timeout);
+    // fill the Bob address by 10 MYCOIN
+    let (_ctx, coin) = utxo_coin_from_privkey("MYCOIN", &bob_priv_key);
+    let my_address = coin.my_address().expect("!my_address");
+    fill_address(&coin, &my_address, 10.into(), timeout);
+
+    // fill the Alice address by 10 Qtum and 10 QICK
+    let (_ctx, coin) = qrc20_coin_from_privkey("QICK", &alice_priv_key);
+    let my_address = coin.my_address().expect("!my_address");
+    fill_address(&coin, &my_address, 10.into(), timeout);
+    fill_qrc20_address(&coin, 10.into(), timeout);
+    // fill the Alice address by 10 MYCOIN
+    let (_ctx, coin) = utxo_coin_from_privkey("MYCOIN", &alice_priv_key);
+    let my_address = coin.my_address().expect("!my_address");
+    fill_address(&coin, &my_address, 10.into(), timeout);
+
+    let confpath = unsafe { QTUM_CONF_PATH.as_ref().expect("Qtum config is not set yet") };
+    let qick_contract_address = format!("{:#02x}", unsafe { QICK_TOKEN_ADDRESS.expect("!QICK_TOKEN_ADDRESS") });
+    let coins = json!([
+        {"coin":"MYCOIN","asset":"MYCOIN","required_confirmations":0,"txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
+        {"coin":"QICK","required_confirmations":1,"pubtype": 120,"p2shtype": 50,"wiftype": 128,"segwit": true,"mm2": 1,"mature_confirmations": 500,"confpath": confpath,"network":"regtest",
+         "protocol":{"type":"QRC20","protocol_data":{"platform":"QTUM","contract_address":qick_contract_address}}},
+    ]);
+
+    let mut mm_bob = unwrap!(MarketMakerIt::start(
+        json! ({
+            "gui": "nogui",
+            "netid": 9998,
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| unwrap! (s.parse::<i64>())),
+            "passphrase": format!("0x{}", hex::encode(bob_priv_key)),
+            "coins": coins,
+            "i_am_seed": true,
+            "rpc_password": "pass",
+        }),
+        "pass".into(),
+        None,
+    ));
+    let (_dump_log, _dump_dashboard) = mm_dump(&mm_bob.log_path);
+    log!({"Log path: {}", mm_bob.log_path.display()});
+    unwrap!(block_on(
+        mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
+    ));
+    block_on(enable_native(&mm_bob, "MYCOIN", vec![]));
+    block_on(enable_qrc20_native(&mm_bob, "QICK"));
+
+    // start alice
+    let mut mm_alice = unwrap!(MarketMakerIt::start(
+        json! ({
+            "gui": "nogui",
+            "netid": 9998,
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| unwrap! (s.parse::<i64>())),
+            "passphrase": format!("0x{}", hex::encode(alice_priv_key)),
+            "coins": coins,
+            "seednodes": [fomat!((mm_bob.ip))],
+            "rpc_password": "pass",
+        }),
+        "pass".into(),
+        None,
+    ));
+    let (_dump_log, _dump_dashboard) = mm_dump(&mm_alice.log_path);
+    log!({"Log path: {}", mm_alice.log_path.display()});
+    unwrap!(block_on(
+        mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
+    ));
+    block_on(enable_native(&mm_alice, "MYCOIN", vec![]));
+    block_on(enable_qrc20_native(&mm_alice, "QICK"));
+
+    let rc = unwrap!(block_on(mm_alice.rpc(json! ({
+        "userpass": mm_alice.userpass,
+        "method": "setprice",
+        "base": "QICK",
+        "rel": "MYCOIN",
+        "price": 1,
+        "volume": 1,
+    }))));
+    assert!(rc.0.is_success(), "!sell: {}", rc.1);
+
+    log!("Give Bob 2 seconds to import Alice order");
+    thread::sleep(Duration::from_secs(2));
+
+    // Buy QICK and thus lock ~ 0.05 Qtum
+    let rc = unwrap!(block_on(mm_bob.rpc(json! ({
+        "userpass": mm_alice.userpass,
+        "method": "buy",
+        "base": "QICK",
+        "rel": "MYCOIN",
+        "price": 1,
+        "volume": 1,
+    }))));
+    assert!(rc.0.is_success(), "!buy: {}", rc.1);
+
+    log!("Give swaps some time to start");
+    thread::sleep(Duration::from_secs(4));
+
+    // QRC20 balance is sufficient, but most of the balance is locked
+    let rc = unwrap!(block_on(mm_bob.rpc(json! ({
+        "userpass": mm_bob.userpass,
+        "method": "sell",
+        "base": "MYCOIN",
+        "rel": "QICK",
+        "price": 1,
+        "volume": 1,
+    }))));
+    assert!(!rc.0.is_success(), "!sell success but should be error: {}", rc.1);
+}
+
+#[test]
 fn test_trade_qrc20() { trade_base_rel(("QICK", "QORTY")); }
 
 #[test]

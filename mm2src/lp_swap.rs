@@ -547,7 +547,8 @@ pub async fn check_coin_balance_for_swap(
     } else {
         let base_coin_ticker = trade_fee.coin.as_str();
         let trade_fee_fraction = trade_fee.amount.to_fraction();
-        common::log::debug!(
+        // TODO consider to use debug! instead
+        common::log::info!(
             "Check if the base coin '{}' has sufficient balance to pay the trade fee {:?}",
             base_coin_ticker,
             trade_fee_fraction
@@ -561,8 +562,9 @@ pub async fn check_coin_balance_for_swap(
         };
         let available = &base_coin_balance - &base_coin_locked;
 
-        common::log::debug!(
-            "balance {:?}, locked {:?}",
+        common::log::info!(
+            "{} balance {:?}, locked {:?}",
+            base_coin_ticker,
             base_coin_balance.to_fraction(),
             base_coin_locked.to_fraction()
         );
@@ -581,8 +583,9 @@ pub async fn check_coin_balance_for_swap(
     };
 
     let dex_fee_fraction = dex_fee.clone().unwrap_or_default().to_fraction();
-    common::log::debug!(
-        "balance {:?}, locked {:?}, volume {:?}, fee {:?}, dex_fee {:?}",
+    common::log::info!(
+        "{} balance {:?}, locked {:?}, volume {:?}, fee {:?}, dex_fee {:?}",
+        ticker,
         balance.to_fraction(),
         locked.to_fraction(),
         volume.to_fraction(),
