@@ -58,8 +58,25 @@ pub fn init_and_migrate_db(ctx: &MmArc, conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-fn insert_my_swap_sql(swap: SavedSwap) -> Option<(&'static str, Vec<String>)> {
-    let sql = "INSERT INTO my_swaps VALUES (NULL, ?1, ?2, ?3, ?4)";
+static INSERT_MY_SWAP: &str = "INSERT INTO my_swaps VALUES (NULL, ?1, ?2, ?3, ?4)";
+
+pub fn insert_new_started_swap(
+    ctx: &MmArc,
+    my_coin: &str,
+    other_coin: &str,
+    uuid: &str,
+    started_at: &str,
+) -> Result<()> {
+    debug!("Inserting new swap {} to the SQLite database", uuid);
+    let conn = ctx
+        .sqlite_connection
+        .as_option()
+        .expect("SQLite connection is not initialized");
+    let params = [my_coin, other_coin, uuid, started_at];
+    conn.execute(INSERT_MY_SWAP, &params).map(|_| ())
+}
+
+fn insert_saved_swap_sql(swap: SavedSwap) -> Option<(&'static str, Vec<String>)> {
     let swap_info = match swap.get_my_info() {
         Some(s) => s,
         // get_my_info returning None means that swap did not even start - so we can keep it away from indexing.
@@ -71,7 +88,7 @@ fn insert_my_swap_sql(swap: SavedSwap) -> Option<(&'static str, Vec<String>)> {
         swap.uuid().to_string(),
         swap_info.started_at.to_string(),
     ];
-    Some((sql, params))
+    Some((INSERT_MY_SWAP, params))
 }
 
 fn migration_1(ctx: &MmArc) -> Vec<(&'static str, Vec<String>)> {
@@ -81,7 +98,7 @@ fn migration_1(ctx: &MmArc) -> Vec<(&'static str, Vec<String>)> {
         let content = slurp(&file);
         match json::from_slice::<SavedSwap>(&content) {
             Ok(swap) => {
-                if let Some(sql_with_params) = insert_my_swap_sql(swap) {
+                if let Some(sql_with_params) = insert_saved_swap_sql(swap) {
                     result.push(sql_with_params);
                 }
             },
