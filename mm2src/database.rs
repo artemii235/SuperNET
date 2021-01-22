@@ -1,5 +1,6 @@
 /// The module responsible for working with SQLite database
 use crate::mm2::lp_swap::{my_swaps_dir, MyRecentSwapsReq, SavedSwap};
+use common::rusqlite::ToSql;
 use common::{log::{debug, error, info},
              mm_ctx::MmArc,
              read_dir,
@@ -7,6 +8,7 @@ use common::{log::{debug, error, info},
 use gstuff::slurp;
 use serde_json::{self as json};
 use sql_builder::SqlBuilder;
+use std::convert::TryInto;
 use uuid::Uuid;
 
 static MY_SWAPS_TABLE: &str = "my_swaps";
@@ -14,7 +16,7 @@ static INSERT_MY_SWAP: &str = "INSERT INTO my_swaps VALUES (NULL, ?1, ?2, ?3, ?4
 static SELECT_MIGRATION: &str = "SELECT * FROM migration ORDER BY current_migration DESC LIMIT 1;";
 
 fn get_current_migration(conn: &Connection) -> Result<i64> {
-    conn.query_row(SELECT_MIGRATION, NO_PARAMS, |row| Ok(row.get(0)?))
+    conn.query_row(SELECT_MIGRATION, NO_PARAMS, |row| row.get(0))
 }
 
 pub fn init_and_migrate_db(ctx: &MmArc, conn: &Connection) -> Result<()> {
@@ -154,45 +156,77 @@ impl From<uuid::parser::ParseError> for SelectRecentSwapsUuidsErr {
     fn from(err: uuid::parser::ParseError) -> Self { SelectRecentSwapsUuidsErr::Parse(err) }
 }
 
-// returns the selected uuids + total count of found rows
+#[derive(Debug, Default)]
+pub struct RecentSwapsSelectResult {
+    /// UUIDs of swaps matching the query
+    uuids: Vec<Uuid>,
+    /// Total count of swaps matching the query
+    total_count: usize,
+    /// The number of skipped UUIDs
+    skipped: usize,
+}
+
 pub fn select_uuids_for_recent_swaps_req(
     conn: &Connection,
     req: &MyRecentSwapsReq,
-) -> Result<(Vec<Uuid>, usize), SelectRecentSwapsUuidsErr> {
+) -> Result<RecentSwapsSelectResult, SelectRecentSwapsUuidsErr> {
     let mut query_builder = SqlBuilder::select_from(MY_SWAPS_TABLE);
     let mut params = vec![];
-    query_builder.field("uuid");
     if let Some(my_coin) = &req.my_coin {
-        query_builder.and_where("my_coin = ?");
-        params.push(my_coin.clone());
+        query_builder.and_where("my_coin = :my_coin");
+        params.push((":my_coin", my_coin.clone()));
     }
 
     if let Some(other_coin) = &req.other_coin {
-        query_builder.and_where("other_coin = ?");
-        params.push(other_coin.clone());
+        query_builder.and_where("other_coin = :other_coin");
+        params.push((":other_coin", other_coin.clone()));
     }
 
     if let Some(from_timestamp) = &req.from_timestamp {
-        query_builder.and_where("started_at >= ?");
-        params.push(from_timestamp.to_string());
+        query_builder.and_where("started_at >= :from_timestamp");
+        params.push((":from_timestamp", from_timestamp.to_string()));
     }
 
     if let Some(to_timestamp) = &req.to_timestamp {
-        query_builder.and_where("started_at < ?");
-        params.push(to_timestamp.to_string());
+        query_builder.and_where("started_at < :to_timestamp");
+        params.push((":to_timestamp", to_timestamp.to_string()));
     }
 
-    query_builder.limit(req.limit);
+    let mut count_builder = query_builder.clone();
+    count_builder.count("id");
 
-    let sql = query_builder.sql().expect("SQL query builder should never fail here");
-    debug!("Trying to execute SQL {} with params {:?}", sql, params);
-    let mut stmt = conn.prepare(&sql)?;
+    let count_query = count_builder.sql().expect("SQL query builder should never fail here");
+    debug!("Trying to execute SQL query {} with params {:?}", count_query, params);
+
+    let params_as_trait: Vec<_> = params.iter().map(|(key, value)| (*key, value as &dyn ToSql)).collect();
+    let total_count: isize = conn.query_row_named(&count_query, params_as_trait.as_slice(), |row| row.get(0))?;
+    let total_count = total_count.try_into().expect("COUNT should always be >= 0");
+    if total_count == 0 {
+        return Ok(RecentSwapsSelectResult::default());
+    }
+
+    query_builder.field("uuid");
+    query_builder.field("ROW_NUMBER() OVER (ORDER BY started_at DESC) AS NoId");
+    query_builder.order_desc("started_at");
+    query_builder.limit(req.limit);
+    let skipped = match req.page_number {
+        Some(page) => (page.get() - 1) * req.limit,
+        None => 0,
+    };
+    query_builder.offset(skipped);
+
+    let uuids_query = query_builder.sql().expect("SQL query builder should never fail here");
+    debug!("Trying to execute SQL query {} with params {:?}", uuids_query, params);
+    let mut stmt = conn.prepare(&uuids_query)?;
     let uuids = stmt
-        .query_map(params, |row| row.get(0))?
+        .query_map_named(params_as_trait.as_slice(), |row| row.get(0))?
         .collect::<Result<Vec<String>>>()?;
     let uuids: Result<Vec<_>, _> = uuids.into_iter().map(|uuid| uuid.parse()).collect();
     let uuids = uuids?;
-    let len = uuids.len();
 
-    Ok((uuids, len))
+    Ok(RecentSwapsSelectResult {
+        uuids,
+        total_count,
+        skipped,
+    })
 }

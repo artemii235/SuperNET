@@ -4,6 +4,7 @@ curl --url "http://127.0.0.1:7783" --data '
 {
   "userpass":"'$userpass'",
   "method":"my_recent_swaps",
-  "my_coin":"MORTY"
+  "my_coin":"RICK",
+  "limit":2
 }
 '
