@@ -47,6 +47,7 @@ jobs:
           BOB_USERPASS: $(${{ parameters.bob_userpass }})
           ALICE_PASSPHRASE: $(${{ parameters.alice_passphrase }})
           ALICE_USERPASS: $(${{ parameters.alice_userpass }})
+          RUST_LOG: debug
       - bash: |
           cargo +nightly clippy --features native -- -D warnings
         displayName: 'Check Clippy warnings'

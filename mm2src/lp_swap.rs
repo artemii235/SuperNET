@@ -56,7 +56,7 @@
 //
 #![cfg_attr(not(feature = "native"), allow(dead_code))]
 
-use crate::mm2::lp_network::broadcast_p2p_msg;
+use crate::mm2::{database::select_uuids_for_recent_swaps_req, lp_network::broadcast_p2p_msg};
 use async_std::sync as async_std_sync;
 use bigdecimal::BigDecimal;
 use coins::{lp_coinfind, TradeFee, TransactionEnum};
@@ -826,17 +826,24 @@ pub fn save_stats_swap_status(ctx: &MmArc, data: Json) {
 fn ten() -> usize { 10 }
 
 #[derive(Debug, Deserialize)]
-struct MyRecentSwapsReq {
+pub struct MyRecentSwapsReq {
     #[serde(default = "ten")]
-    limit: usize,
-    from_uuid: Option<Uuid>,
-    page_number: Option<NonZeroUsize>,
+    pub limit: usize,
+    pub from_uuid: Option<Uuid>,
+    pub page_number: Option<NonZeroUsize>,
+    pub my_coin: Option<String>,
+    pub other_coin: Option<String>,
+    pub from_timestamp: Option<u64>,
+    pub to_timestamp: Option<u64>,
 }
 
 /// Returns the data of recent swaps of `my` node. Returns no more than `limit` records (default: 10).
 /// Skips the first `skip` records (default: 0).
 pub fn my_recent_swaps(ctx: MmArc, req: Json) -> HyRes {
     let req: MyRecentSwapsReq = try_h!(json::from_value(req));
+    let uuids = try_h!(select_uuids_for_recent_swaps_req(ctx.sqlite_connection(), &req));
+    common::log::debug!("Got uuids {:?}", uuids);
+
     let mut entries: Vec<(u64, PathBuf)> = try_h!(read_dir(&my_swaps_dir(&ctx)));
     // sort by m_time in descending order
     entries.sort_by(|(a, _), (b, _)| b.cmp(&a));

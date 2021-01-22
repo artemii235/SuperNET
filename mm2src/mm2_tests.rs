@@ -853,18 +853,29 @@ async fn trade_base_rel_electrum(pairs: Vec<(&'static str, &'static str)>) {
 
     for (base, rel) in pairs.iter() {
         // ensure the swaps are started
-        unwrap!(
-            mm_alice
-                .wait_for_log(5., |log| log
-                    .contains(&format!("Entering the taker_swap_loop {}/{}", base, rel)))
-                .await
-        );
-        unwrap!(
-            mm_bob
-                .wait_for_log(5., |log| log
-                    .contains(&format!("Entering the maker_swap_loop {}/{}", base, rel)))
-                .await
-        );
+        let expected_log = format!("Entering the taker_swap_loop {}/{}", base, rel);
+        mm_alice
+            .wait_for_log(5., |log| log.contains(&expected_log))
+            .await
+            .unwrap();
+        let expected_log = format!("Entering the maker_swap_loop {}/{}", base, rel);
+        mm_bob
+            .wait_for_log(5., |log| log.contains(&expected_log))
+            .await
+            .unwrap()
+    }
+
+    for uuid in uuids.iter() {
+        // ensure the swaps are indexed to the SQLite database
+        let expected_log = format!("Inserting new swap {} to the SQLite database", uuid);
+        mm_alice
+            .wait_for_log(5., |log| log.contains(&expected_log))
+            .await
+            .unwrap();
+        mm_bob
+            .wait_for_log(5., |log| log.contains(&expected_log))
+            .await
+            .unwrap()
     }
 
     for uuid in uuids.iter() {

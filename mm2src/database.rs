@@ -1,18 +1,20 @@
 /// The module responsible for working with SQLite database
-use crate::mm2::lp_swap::{my_swaps_dir, SavedSwap};
+use crate::mm2::lp_swap::{my_swaps_dir, MyRecentSwapsReq, SavedSwap};
 use common::{log::{debug, error, info},
              mm_ctx::MmArc,
              read_dir,
-             rusqlite::{Connection, Result, NO_PARAMS}};
+             rusqlite::{Connection, Error, Result, NO_PARAMS}};
 use gstuff::slurp;
 use serde_json::{self as json};
+use sql_builder::SqlBuilder;
+use uuid::Uuid;
+
+static MY_SWAPS_TABLE: &str = "my_swaps";
+static INSERT_MY_SWAP: &str = "INSERT INTO my_swaps VALUES (NULL, ?1, ?2, ?3, ?4)";
+static SELECT_MIGRATION: &str = "SELECT * FROM migration ORDER BY current_migration DESC LIMIT 1;";
 
 fn get_current_migration(conn: &Connection) -> Result<i64> {
-    conn.query_row(
-        "SELECT * FROM migration ORDER BY current_migration DESC LIMIT 1;",
-        NO_PARAMS,
-        |row| Ok(row.get(0)?),
-    )
+    conn.query_row(SELECT_MIGRATION, NO_PARAMS, |row| Ok(row.get(0)?))
 }
 
 pub fn init_and_migrate_db(ctx: &MmArc, conn: &Connection) -> Result<()> {
@@ -57,8 +59,6 @@ pub fn init_and_migrate_db(ctx: &MmArc, conn: &Connection) -> Result<()> {
     info!("SQLite database initialization is successful");
     Ok(())
 }
-
-static INSERT_MY_SWAP: &str = "INSERT INTO my_swaps VALUES (NULL, ?1, ?2, ?3, ?4)";
 
 pub fn insert_new_started_swap(
     ctx: &MmArc,
@@ -134,4 +134,65 @@ pub fn migrate_sqlite_database(ctx: &MmArc, conn: &Connection, mut current_migra
     transaction.commit()?;
     info!("migrate_sqlite_database complete, migrated to {}", current_migration);
     Ok(())
+}
+
+#[derive(Debug)]
+pub enum SelectRecentSwapsUuidsErr {
+    Sql(Error),
+    Parse(uuid::parser::ParseError),
+}
+
+impl std::fmt::Display for SelectRecentSwapsUuidsErr {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result { write!(f, "{:?}", self) }
+}
+
+impl From<Error> for SelectRecentSwapsUuidsErr {
+    fn from(err: Error) -> Self { SelectRecentSwapsUuidsErr::Sql(err) }
+}
+
+impl From<uuid::parser::ParseError> for SelectRecentSwapsUuidsErr {
+    fn from(err: uuid::parser::ParseError) -> Self { SelectRecentSwapsUuidsErr::Parse(err) }
+}
+
+// returns the selected uuids + total count of found rows
+pub fn select_uuids_for_recent_swaps_req(
+    conn: &Connection,
+    req: &MyRecentSwapsReq,
+) -> Result<(Vec<Uuid>, usize), SelectRecentSwapsUuidsErr> {
+    let mut query_builder = SqlBuilder::select_from(MY_SWAPS_TABLE);
+    let mut params = vec![];
+    query_builder.field("uuid");
+    if let Some(my_coin) = &req.my_coin {
+        query_builder.and_where("my_coin = ?");
+        params.push(my_coin.clone());
+    }
+
+    if let Some(other_coin) = &req.other_coin {
+        query_builder.and_where("other_coin = ?");
+        params.push(other_coin.clone());
+    }
+
+    if let Some(from_timestamp) = &req.from_timestamp {
+        query_builder.and_where("started_at >= ?");
+        params.push(from_timestamp.to_string());
+    }
+
+    if let Some(to_timestamp) = &req.to_timestamp {
+        query_builder.and_where("started_at < ?");
+        params.push(to_timestamp.to_string());
+    }
+
+    query_builder.limit(req.limit);
+
+    let sql = query_builder.sql().expect("SQL query builder should never fail here");
+    debug!("Trying to execute SQL {} with params {:?}", sql, params);
+    let mut stmt = conn.prepare(&sql)?;
+    let uuids = stmt
+        .query_map(params, |row| row.get(0))?
+        .collect::<Result<Vec<String>>>()?;
+    let uuids: Result<Vec<_>, _> = uuids.into_iter().map(|uuid| uuid.parse()).collect();
+    let uuids = uuids?;
+    let len = uuids.len();
+
+    Ok((uuids, len))
 }
