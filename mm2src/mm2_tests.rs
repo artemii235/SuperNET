@@ -23,7 +23,6 @@ use std::collections::HashMap;
 use std::convert::identity;
 use std::env::{self, var};
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 use std::thread;
 use std::time::Duration;
 use uuid::Uuid;
@@ -4758,99 +4757,6 @@ fn test_trade_fee_returns_numbers_in_various_formats() {
     let _amount_dec: BigDecimal = json::from_value(trade_fee_json["result"]["amount"].clone()).unwrap();
     let _amount_rat: BigRational = json::from_value(trade_fee_json["result"]["amount_rat"].clone()).unwrap();
     let _amount_fraction: Fraction = json::from_value(trade_fee_json["result"]["amount_fraction"].clone()).unwrap();
-}
-
-#[test]
-fn test_trade_preimage_utxos() {
-    let coins = json!([
-        {"coin":"RICK","asset":"RICK","txversion":4,"overwintered":1,"txfee":0,"protocol":{"type":"UTXO"}},
-        {"coin":"MORTY","asset":"MORTY","txversion":4,"overwintered":1,"txfee":0,"protocol":{"type":"UTXO"}},
-    ]);
-
-    // start bob and immediately place the order
-    let mut mm_bob = unwrap!(MarketMakerIt::start(
-        json! ({
-            "gui": "nogui",
-            "netid": 9998,
-            "dht": "on",  // Enable DHT without delay.
-            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
-            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
-            "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| unwrap! (s.parse::<i64>())),
-            "passphrase": "bob passphrase",
-            "coins": coins,
-            "i_am_seed": true,
-            "rpc_password": "pass",
-        }),
-        "pass".into(),
-        match var("LOCAL_THREAD_MM") {
-            Ok(ref e) if e == "bob" => Some(local_start()),
-            _ => None,
-        }
-    ));
-    let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
-    log!({"Bob log path: {}", mm_bob.log_path.display()});
-    unwrap!(block_on(
-        mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
-    ));
-    log!((block_on(enable_electrum(&mm_bob, "RICK", vec!["electrum1.cipig.net:10017"]))));
-    block_on(enable_electrum(&mm_bob, "MORTY", vec!["electrum1.cipig.net:10018"]));
-
-    let rc = unwrap!(block_on(mm_bob.rpc(json! ({
-        "userpass": mm_bob.userpass,
-        "method": "trade_preimage",
-        "sender_coin": "RICK",
-        "receiver_coin": "MORTY",
-        "max": true,
-    }))));
-    assert!(rc.0.is_success(), "!get_trade_fee: {}", rc.1);
-    let trade_fee_json: Json = json::from_str(&rc.1).unwrap();
-    log!((trade_fee_json));
-    let max_sender_fee: BigDecimal =
-        json::from_value(trade_fee_json["result"]["sender_fee"]["amount"].clone()).unwrap();
-    let receiver_fee: BigDecimal =
-        json::from_value(trade_fee_json["result"]["receiver_fee"]["amount"].clone()).unwrap();
-    assert_ne!(max_sender_fee, 0.into());
-    assert_eq!(receiver_fee, 0.into());
-
-    let my_balance = unwrap!(block_on(mm_bob.rpc(json! ({
-        "userpass": mm_bob.userpass,
-        "method": "my_balance",
-        "coin": "RICK",
-    }))));
-    assert_eq!(
-        my_balance.0,
-        StatusCode::OK,
-        "RPC «my_balance» failed with status «{}»",
-        my_balance.0
-    );
-    let json: Json = unwrap!(json::from_str(&my_balance.1));
-    let my_balance = json["balance"].as_str().expect("!balance.as_str()");
-    let my_balance = BigDecimal::from_str(my_balance).expect("!BigDecimal::from_str()");
-    let max_sender_value = my_balance - max_sender_fee.clone();
-
-    let rc = unwrap!(block_on(mm_bob.rpc(json! ({
-        "userpass": mm_bob.userpass,
-        "method": "trade_preimage",
-        "sender_coin": "RICK",
-        "receiver_coin": "MORTY",
-        "value": max_sender_value,
-    }))));
-    assert!(rc.0.is_success(), "!get_trade_fee: {}", rc.1);
-    let trade_fee_json: Json = json::from_str(&rc.1).unwrap();
-    log!((trade_fee_json));
-    let actual: BigDecimal = json::from_value(trade_fee_json["result"]["sender_fee"]["amount"].clone()).unwrap();
-    assert_eq!(actual, max_sender_fee);
-
-    // try with the max_sender_fee + 1
-    let rc = unwrap!(block_on(mm_bob.rpc(json! ({
-        "userpass": mm_bob.userpass,
-        "method": "trade_preimage",
-        "sender_coin": "RICK",
-        "receiver_coin": "MORTY",
-        "value": max_sender_value + BigDecimal::from_str("0.00000001").unwrap(),
-    }))));
-    assert!(rc.0.is_server_error(), "MORTY withdraw: {}", rc.1);
-    assert!(rc.1.contains("Not sufficient balance"));
 }
 
 #[test]

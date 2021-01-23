@@ -157,8 +157,9 @@ impl UtxoCommonOps for QtumCoin {
         fee_policy: FeePolicy,
         fee: Option<ActualTxFee>,
         gas_fee: Option<u64>,
+        force_change_output: bool,
     ) -> Result<(TransactionInputSigner, AdditionalTxData), GenerateTransactionError> {
-        utxo_common::generate_transaction(self, utxos, outputs, fee_policy, fee, gas_fee).await
+        utxo_common::generate_transaction(self, utxos, outputs, fee_policy, fee, gas_fee, force_change_output).await
     }
 
     async fn calc_interest_if_required(

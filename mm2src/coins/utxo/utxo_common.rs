@@ -264,6 +264,8 @@ where
 /// Note `gas_fee` should be enough to execute all of the contract calls within UTXO outputs.
 /// QRC20 specific: `gas_fee` should be calculated by: gas_limit * gas_price * (count of contract calls),
 /// or should be sum of gas fee of all contract calls.
+///
+/// Please note `force_change_output` may cause an error if the change is less than dust.
 pub async fn generate_transaction<T>(
     coin: &T,
     utxos: Vec<UnspentInfo>,
@@ -271,6 +273,7 @@ pub async fn generate_transaction<T>(
     fee_policy: FeePolicy,
     fee: Option<ActualTxFee>,
     gas_fee: Option<u64>,
+    force_change_output: bool,
 ) -> Result<(TransactionInputSigner, AdditionalTxData), GenerateTransactionError>
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps,
@@ -381,8 +384,9 @@ where
             FeePolicy::SendExact => {
                 let mut outputs_plus_fee = sum_outputs_value + tx_fee;
                 if sum_inputs >= outputs_plus_fee {
-                    if sum_inputs - outputs_plus_fee > dust {
-                        // there will be change output if sum_inputs - outputs_plus_fee > dust
+                    let change = sum_inputs - outputs_plus_fee;
+                    if force_change_output || change > dust {
+                        // there will be change output
                         if let ActualTxFee::Dynamic(ref f) = coin_tx_fee {
                             tx_fee += (f * P2PKH_OUTPUT_LEN) / KILO_BYTE;
                             outputs_plus_fee += (f * P2PKH_OUTPUT_LEN) / KILO_BYTE;
@@ -402,7 +406,8 @@ where
             },
             FeePolicy::DeductFromOutput(_) => {
                 if sum_inputs >= sum_outputs_value {
-                    if sum_inputs - sum_outputs_value > dust {
+                    let change = sum_inputs - sum_outputs_value;
+                    if force_change_output || change > dust {
                         if let ActualTxFee::Dynamic(ref f) = coin_tx_fee {
                             tx_fee += (f * P2PKH_OUTPUT_LEN) / KILO_BYTE;
                         }
@@ -444,8 +449,8 @@ where
         }
     );
 
-    let change = sum_inputs - sum_outputs_value;
-    if change >= dust {
+    let mut change = sum_inputs - sum_outputs_value;
+    if force_change_output || change > dust {
         tx.outputs.push({
             TransactionOutput {
                 value: change,
@@ -453,14 +458,14 @@ where
             }
         });
         received_by_me += change;
-    } else {
-        tx_fee += change;
+        change = 0;
     }
 
     let data = AdditionalTxData {
         fee_amount: tx_fee,
         received_by_me,
         spent_by_me: sum_inputs,
+        change,
     };
 
     Ok(try_other!(
@@ -1246,8 +1251,9 @@ where
         None => None,
     };
     let gas_fee = None;
+    let force_change_output = false;
     let (unsigned, data) = try_s!(
-        coin.generate_transaction(unspents, outputs, fee_policy, fee, gas_fee)
+        coin.generate_transaction(unspents, outputs, fee_policy, fee, gas_fee, force_change_output)
             .await
     );
     let prev_script = Builder::build_p2pkh(&coin.as_ref().my_address.hash);
@@ -1258,8 +1264,9 @@ where
         coin.as_ref().signature_version,
         coin.as_ref().fork_id
     ));
+    let fee_amount = data.fee_amount + data.change;
     let fee_details = UtxoFeeDetails {
-        amount: big_decimal_from_sat(data.fee_amount as i64, coin.as_ref().decimals),
+        amount: big_decimal_from_sat(fee_amount as i64, coin.as_ref().decimals),
     };
     let my_address = try_s!(coin.my_address());
     let to_address = try_s!(coin.display_address(&to));
@@ -1746,12 +1753,8 @@ where
         };
 
         let (amount, fee_policy) = match value {
-            TradePreimageValue::Max => {
-                let balance = try_map!(coin.my_balance().compat().await, TradePreimageError::Other);
-                (balance, FeePolicy::DeductFromOutput(0))
-            },
-            TradePreimageValue::Exact(amount) if !amount.is_zero() => (amount, FeePolicy::SendExact),
-            TradePreimageValue::Exact(_) => return Err(TradePreimageError::Other(ERRL!("Value cannot be zero"))),
+            TradePreimageValue::UpperBound(upper_bound) => (upper_bound, FeePolicy::DeductFromOutput(0)),
+            TradePreimageValue::Exact(amount) => (amount, FeePolicy::SendExact),
         };
 
         // pass the dummy params
@@ -1767,7 +1770,21 @@ where
             coin.list_unspent_ordered(&coin.as_ref().my_address).await,
             TradePreimageError::Other
         );
-        let (_tx, data) = generate_transaction(&coin, unspents, outputs, fee_policy, Some(actual_tx_fee), None).await?;
+
+        // force the `generate_transaction` to insert a `change` output into the transaction
+        // to ensure the obtained miner_fee is a max possible
+        let force_change_output = true;
+        let (_tx, data) = generate_transaction(
+            &coin,
+            unspents,
+            outputs,
+            fee_policy,
+            Some(actual_tx_fee),
+            None,
+            force_change_output,
+        )
+        .await?;
+        // do not include the [`AdditionalTxData::change`]
         let fee_amount = big_decimal_from_sat(data.fee_amount as i64, decimals);
         Ok(TradeFee {
             coin: coin.as_ref().ticker.clone(),
@@ -1826,6 +1843,9 @@ where
             script_pubkey: Builder::build_p2pkh(&AddressHash::default()).to_bytes(),
         };
 
+        // force the `generate_transaction` to insert a `change` output into the transaction
+        // to ensure the obtained miner_fee is a max possible
+        let force_change_output = true;
         let (_tx, data) = generate_transaction(
             &coin,
             unspents,
@@ -1833,8 +1853,10 @@ where
             FeePolicy::SendExact,
             Some(actual_tx_fee),
             None,
+            force_change_output,
         )
         .await?;
+        // do not include the [`AdditionalTxData::change`]
         let fee_amount = big_decimal_from_sat(data.fee_amount as i64, decimals);
         Ok(TradeFee {
             coin: coin.ticker().to_owned(),

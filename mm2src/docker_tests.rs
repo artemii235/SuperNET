@@ -63,7 +63,6 @@ mod docker_tests {
     #[rustfmt::skip]
     mod qrc20_tests;
 
-    use crate::mm2::lp_swap::{dex_fee_amount, max_taker_vol_from_available};
     use bigdecimal::BigDecimal;
     use bitcrypto::ChecksumType;
     use chain::OutPoint;
@@ -308,7 +307,7 @@ mod docker_tests {
     fn generate_coin_with_random_privkey(ticker: &str, balance: BigDecimal) -> (MmArc, UtxoStandardCoin, [u8; 32]) {
         let priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
         let (ctx, coin) = utxo_coin_from_privkey(ticker, &priv_key);
-        let timeout = (now_ms() / 1000) + 120; // timeout if test takes more than 120 seconds to run
+        let timeout = 30; // timeout if test takes more than 120 seconds to run
         let my_address = coin.my_address().expect("!my_address");
         fill_address(&coin, &my_address, balance, timeout);
         (ctx, coin, priv_key)
@@ -335,6 +334,7 @@ mod docker_tests {
         // is called concurrently (insufficient funds) and it also may return other errors
         // if previous transaction is not confirmed yet
         let _lock = unwrap!(COINS_LOCK.lock());
+        let timeout = now_ms() / 1000 + timeout;
 
         if let UtxoRpcClientEnum::Native(client) = &coin.as_ref().rpc_client {
             unwrap!(client.import_address(address, address, false).wait());
@@ -492,7 +492,7 @@ mod docker_tests {
 
     #[test]
     fn test_one_hundred_maker_payments_in_a_row_native() {
-        let timeout = (now_ms() / 1000) + 120; // timeout if test takes more than 120 seconds to run
+        let timeout = 30; // timeout if test takes more than 30 seconds to run
         let (_ctx, coin, _) = generate_coin_with_random_privkey("MYCOIN", 1000.into());
         fill_address(&coin, &coin.my_address().unwrap(), 2.into(), timeout);
         let secret = [0; 32];
@@ -1479,117 +1479,6 @@ mod docker_tests {
         unwrap!(block_on(mm_alice.stop()));
     }
 
-    /// Test if the `max_taker_vol` RPC call returns an expected volume.
-    /// The expected volume is calculated according to the instructions described in the comments to the [`lp_swap::taker_swap::max_taker_vol`] function.
-    #[test]
-    fn test_max_taker_vol_dynamic_trade_fee() {
-        let (_ctx, coin, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN1", 2.into());
-        fill_address(&coin, &coin.my_address().unwrap(), 0.0002.into(), now_ms() / 1000 + 60);
-        fill_address(&coin, &coin.my_address().unwrap(), 0.002.into(), now_ms() / 1000 + 60);
-        fill_address(&coin, &coin.my_address().unwrap(), 0.02.into(), now_ms() / 1000 + 60);
-        fill_address(&coin, &coin.my_address().unwrap(), 0.2.into(), now_ms() / 1000 + 60);
-
-        let coins = json! ([
-            {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"},"tx_fee":0},
-            {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"},"tx_fee":0},
-        ]);
-        let mut mm_alice = unwrap!(MarketMakerIt::start(
-            json! ({
-                "gui": "nogui",
-                "netid": 9000,
-                "dht": "on",  // Enable DHT without delay.
-                "passphrase": format!("0x{}", hex::encode(alice_priv_key)),
-                "coins": coins,
-                "rpc_password": "pass",
-                "i_am_see": true,
-            }),
-            "pass".to_string(),
-            None,
-        ));
-        let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
-        unwrap!(block_on(
-            mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
-        ));
-
-        log!([block_on(enable_native(&mm_alice, "MYCOIN1", vec![]))]);
-        log!([block_on(enable_native(&mm_alice, "MYCOIN", vec![]))]);
-
-        // - `max_possible = balance - locked_amount`, where `balance` = 2.2222, `locked_amount` = 0
-        let max_possible = BigDecimal::from(2.2222);
-
-        // - `max_trade_fee = trade_fee(2.2222)`
-        let rc = unwrap!(block_on(mm_alice.rpc(json!({
-            "userpass": mm_alice.userpass,
-            "method": "trade_preimage",
-            "sender_coin": "MYCOIN1",
-            "receiver_coin": "MYCOIN",
-            "value": max_possible,
-        }))));
-        assert!(rc.0.is_success(), "!trade_preimage: {}", rc.1);
-        let json: Json = json::from_str(&rc.1).unwrap();
-        let max_trade_fee: BigDecimal = json::from_value(json["result"]["sender_fee"]["amount"].clone()).unwrap();
-
-        // - `max_possible_2 = balance - locked_amount - max_trade_fee`, `where balance - locked_amount = 2.2222`
-        let max_possible_2 = BigDecimal::from(2.2222) - max_trade_fee.clone();
-        // - `max_dex_fee = dex_fee(max_possible_2)`
-        let max_dex_fee = dex_fee_amount("MYCOIN1", "MYCOIN", &MmNumber::from(max_possible_2));
-
-        // - `max_fee_to_send_taker_fee = fee_to_send_taker_fee(max_dex_fee)`
-        // `taker_fee` is sent using general withdraw, and the fee get be obtained from withdraw result
-        let rc = unwrap!(block_on(mm_alice.rpc(json!({
-            "userpass": mm_alice.userpass,
-            "method": "withdraw",
-            "coin": "MYCOIN1",
-            "to": "R9imXLs1hEcU9KbFDQq2hJEEJ1P5UoekaF",
-            "amount": max_dex_fee.to_decimal(),
-        }))));
-        assert!(rc.0.is_success(), "!withdraw: {}", rc.1);
-        let json: Json = json::from_str(&rc.1).unwrap();
-        let max_fee_to_send_taker_fee: BigDecimal = json::from_value(json["fee_details"]["amount"].clone()).unwrap();
-
-        // and then calculate `min_max_val = balance - locked_amount - max_trade_fee - max_fee_to_send_taker_fee - dex_fee(max_val)` using `max_taker_vol_from_available()`
-        // where `available = balance - locked_amount - max_trade_fee - max_fee_to_send_taker_fee`
-        let available = BigDecimal::from(2.2222) - max_trade_fee - max_fee_to_send_taker_fee;
-        let expected_max_taker_vol = max_taker_vol_from_available(MmNumber::from(available), "MYCOIN1", "MYCOIN")
-            .expect("max_taker_vol_from_available");
-
-        let rc = unwrap!(block_on(mm_alice.rpc(json! ({
-            "userpass": mm_alice.userpass,
-            "method": "max_taker_vol",
-            "coin": "MYCOIN1",
-        }))));
-        assert!(rc.0.is_success(), "!max_taker_vol: {}", rc.1);
-        let json: Json = json::from_str(&rc.1).unwrap();
-        assert_eq!(
-            json["result"],
-            json::to_value(expected_max_taker_vol.to_fraction()).unwrap()
-        );
-
-        // try pass volume greater than max_taker_vol
-        let volume = &expected_max_taker_vol + &MmNumber::from((1, 100000000));
-        let rc = unwrap!(block_on(mm_alice.rpc(json! ({
-            "userpass": mm_alice.userpass,
-            "method": "sell",
-            "base": "MYCOIN1",
-            "rel": "MYCOIN",
-            "price": 1,
-            "volume": volume.to_fraction(),
-        }))));
-        assert!(!rc.0.is_success(), "sell success, but should fail: {}", rc.1);
-
-        let rc = unwrap!(block_on(mm_alice.rpc(json! ({
-            "userpass": mm_alice.userpass,
-            "method": "sell",
-            "base": "MYCOIN1",
-            "rel": "MYCOIN",
-            "price": 1,
-            "volume": expected_max_taker_vol.to_fraction(),
-        }))));
-        assert!(rc.0.is_success(), "!sell: {}", rc.1);
-
-        unwrap!(block_on(mm_alice.stop()));
-    }
-
     // https://github.com/KomodoPlatform/atomicDEX-API/issues/733
     #[test]
     fn test_get_max_taker_vol_dex_fee_threshold() {
@@ -2145,7 +2034,7 @@ mod docker_tests {
     fn test_maker_and_taker_order_created_with_same_priv_should_not_match() {
         let (_ctx, coin, priv_key) = generate_coin_with_random_privkey("MYCOIN", 1000.into());
         let (_ctx, coin1, _) = generate_coin_with_random_privkey("MYCOIN1", 1000.into());
-        fill_address(&coin1, &coin.my_address().unwrap(), 1000.into(), now_ms() / 1000 + 60);
+        fill_address(&coin1, &coin.my_address().unwrap(), 1000.into(), 30);
         let coins = json! ([
             {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
             {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
@@ -2344,7 +2233,7 @@ mod docker_tests {
 
     #[test]
     fn test_utxo_merge() {
-        let timeout = (now_ms() / 1000) + 120; // timeout if test takes more than 120 seconds to run
+        let timeout = 30; // timeout if test takes more than 30 seconds to run
         let (_ctx, coin, privkey) = generate_coin_with_random_privkey("MYCOIN", 1000.into());
         // fill several times to have more UTXOs on address
         fill_address(&coin, &coin.my_address().unwrap(), 2.into(), timeout);
@@ -2407,7 +2296,7 @@ mod docker_tests {
 
     #[test]
     fn test_utxo_merge_max_merge_at_once() {
-        let timeout = (now_ms() / 1000) + 120; // timeout if test takes more than 120 seconds to run
+        let timeout = 30; // timeout if test takes more than 30 seconds to run
         let (_ctx, coin, privkey) = generate_coin_with_random_privkey("MYCOIN", 1000.into());
         // fill several times to have more UTXOs on address
         fill_address(&coin, &coin.my_address().unwrap(), 2.into(), timeout);

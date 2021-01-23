@@ -1,10 +1,12 @@
 use super::*;
+use crate::mm2::lp_swap::{dex_fee_amount, max_taker_vol_from_available};
 use bigdecimal::BigDecimal;
 use coins::qrc20::rpc_clients::for_tests::Qrc20NativeWalletOps;
 use coins::qrc20::{qrc20_coin_from_conf_and_request, Qrc20Coin};
 use coins::utxo::qtum::QtumBasedCoin;
 use coins::utxo::qtum::{qtum_coin_from_conf_and_request, QtumCoin};
 use coins::utxo::sat_from_big_decimal;
+use coins::utxo::utxo_common::big_decimal_from_sat;
 use coins::{MarketCoinOps, MmCoin, TransactionEnum};
 use common::for_tests::{check_my_swap_status, check_recent_swaps, check_stats_swap_status, MAKER_ERROR_EVENTS,
                         MAKER_SUCCESS_EVENTS, TAKER_ERROR_EVENTS, TAKER_SUCCESS_EVENTS};
@@ -12,6 +14,7 @@ use common::mm_ctx::MmArc;
 use common::temp_dir;
 use ethereum_types::H160;
 use http::StatusCode;
+use rand4::Rng;
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -80,13 +83,14 @@ impl QtumDockerOps {
     }
 }
 
-pub fn qtum_docker_node<'a>(docker: &'a Cli, port: u16) -> UtxoDockerNode<'a> {
+pub fn qtum_docker_node(docker: &Cli, port: u16) -> UtxoDockerNode {
     let args = vec!["-p".into(), format!("127.0.0.1:{}:{}", port, port).into()];
     let image = GenericImage::new(QTUM_REGTEST_DOCKER_IMAGE)
         .with_args(args)
         .with_env_var("CLIENTS", "2")
         .with_env_var("COIN_RPC_PORT", port.to_string())
         .with_env_var("ADDRESS_LABEL", QTUM_ADDRESS_LABEL)
+        .with_env_var("FILL_MEMPOOL", "true")
         .with_wait_for(WaitFor::message_on_stdout("config is ready"));
     let container = docker.run(image);
 
@@ -143,7 +147,7 @@ fn qrc20_coin_from_privkey(ticker: &str, priv_key: &[u8]) -> (MmArc, Qrc20Coin) 
         "decimals": 8,
         "required_confirmations":0,
         "pubtype":120,
-        "p2shtype":50,
+        "p2shtype":110,
         "wiftype":128,
         "segwit":true,
         "mm2":1,
@@ -178,10 +182,43 @@ fn generate_qrc20_coin_with_random_privkey(
     let priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
     let (ctx, coin) = qrc20_coin_from_privkey(ticker, &priv_key);
 
-    let timeout = (now_ms() / 1000) + 120; // timeout if test takes more than 40 seconds to run
+    let timeout = 30; // timeout if test takes more than 30 seconds to run
     let my_address = coin.my_address().expect("!my_address");
     fill_address(&coin, &my_address, qtum_balance, timeout);
     fill_qrc20_address(&coin, qrc20_balance, timeout);
+    (ctx, coin, priv_key)
+}
+
+fn generate_qtum_coin_with_random_privkey(
+    ticker: &str,
+    balance: BigDecimal,
+    txfee: Option<u64>,
+) -> (MmArc, QtumCoin, [u8; 32]) {
+    let confpath = unsafe { QTUM_CONF_PATH.as_ref().expect("Qtum config is not set yet") };
+    let conf = json!({
+        "coin":ticker,
+        "decimals":8,
+        "required_confirmations":0,
+        "pubtype":120,
+        "p2shtype": 110,
+        "wiftype":128,
+        "segwit":true,
+        "txfee": txfee,
+        "mm2":1,
+        "mature_confirmations":500,
+        "network":"regtest",
+        "confpath": confpath,
+    });
+    let req = json!({"method": "enable"});
+    let priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
+    let ctx = MmCtxBuilder::new().into_mm_arc();
+    let coin = unwrap!(block_on(qtum_coin_from_conf_and_request(
+        &ctx, "QTUM", &conf, &req, &priv_key
+    )));
+
+    let timeout = 30; // timeout if test takes more than 30 seconds to run
+    let my_address = coin.my_address().expect("!my_address");
+    fill_address(&coin, &my_address, balance, timeout);
     (ctx, coin, priv_key)
 }
 
@@ -211,6 +248,7 @@ fn fill_qrc20_address(coin: &Qrc20Coin, amount: BigDecimal, timeout: u64) {
     // is called concurrently (insufficient funds) and it also may return other errors
     // if previous transaction is not confirmed yet
     let _lock = unwrap!(COINS_LOCK.lock());
+    let timeout = now_ms() / 1000 + timeout;
     let client = match coin.as_ref().rpc_client {
         UtxoRpcClientEnum::Native(ref client) => client,
         UtxoRpcClientEnum::Electrum(_) => panic!("Expected NativeClient"),
@@ -258,6 +296,45 @@ pub async fn enable_qrc20_native(mm: &MarketMakerIt, coin: &str) -> Json {
     unwrap!(json::from_str(&native.1))
 }
 
+/// Wait for the `estimatesmartfee` returns no errors.
+fn wait_for_estimate_smart_fee(timeout: u64) -> Result<(), String> {
+    enum EstimateSmartFeeState {
+        Idle,
+        Ok,
+        NotAvailable,
+    }
+    lazy_static! {
+        static ref LOCK: Mutex<EstimateSmartFeeState> = Mutex::new(EstimateSmartFeeState::Idle);
+    }
+
+    let state = &mut *unwrap!(LOCK.lock());
+    match state {
+        EstimateSmartFeeState::Ok => return Ok(()),
+        EstimateSmartFeeState::NotAvailable => return ERR!("estimatesmartfee not available"),
+        EstimateSmartFeeState::Idle => log!("Start wait_for_estimate_smart_fee"),
+    }
+
+    let priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
+    let (_ctx, coin) = qrc20_coin_from_privkey("QICK", &priv_key);
+    let timeout = now_ms() / 1000 + timeout;
+    let client = match coin.as_ref().rpc_client {
+        UtxoRpcClientEnum::Native(ref client) => client,
+        UtxoRpcClientEnum::Electrum(_) => panic!("Expected NativeClient"),
+    };
+    while now_ms() / 1000 < timeout {
+        if let Ok(res) = client.estimate_smart_fee(&None).wait() {
+            if res.errors.is_empty() {
+                *state = EstimateSmartFeeState::Ok;
+                return Ok(());
+            }
+        }
+        thread::sleep(Duration::from_secs(1));
+    }
+
+    *state = EstimateSmartFeeState::NotAvailable;
+    ERR!("Waited too long for estimate_smart_fee to work")
+}
+
 fn qrc20_coin_conf_item(ticker: &str) -> Json {
     let contract_address = unsafe {
         match ticker {
@@ -277,7 +354,7 @@ fn qrc20_coin_conf_item(ticker: &str) -> Json {
         "coin":ticker,
         "required_confirmations":1,
         "pubtype":120,
-        "p2shtype":50,
+        "p2shtype":110,
         "wiftype":128,
         "segwit":true,
         "mature_confirmations":500,
@@ -290,7 +367,7 @@ fn trade_base_rel((base, rel): (&str, &str)) {
     /// Generate a wallet with the random private key and fill the wallet with Qtum (required by gas_fee) and specified in `ticker` coin.
     fn generate_and_fill_priv_key(ticker: &str) -> [u8; 32] {
         let priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
-        let timeout = (now_ms() / 1000) + 80; // timeout if test takes more than 40 seconds to run
+        let timeout = 30; // timeout if test takes more than 30 seconds to run
 
         match ticker {
             "QICK" | "QORTY" => {
@@ -1021,7 +1098,7 @@ fn test_wait_for_tx_spend() {
 fn test_check_balance_on_order_post_base_coin_locked() {
     let bob_priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
     let alice_priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
-    let timeout = (now_ms() / 1000) + 80; // timeout if test takes more than 80 seconds to run
+    let timeout = 30; // timeout if test takes more than 80 seconds to run
 
     // fill the Bob address by 0.05 Qtum
     let (_ctx, coin) = qrc20_coin_from_privkey("QICK", &bob_priv_key);
@@ -1134,6 +1211,166 @@ fn test_check_balance_on_order_post_base_coin_locked() {
         "volume": 1,
     }))));
     assert!(!rc.0.is_success(), "!sell success but should be error: {}", rc.1);
+}
+
+/// Test if the `max_taker_vol` RPC call returns an expected volume, and we can send `TakerFee` and `TakerPayment` with the corresponding volume.
+/// The expected volume is calculated according to the instructions described in the comments to the [`lp_swap::taker_swap::max_taker_vol`] function.
+#[test]
+fn test_max_taker_vol_dynamic_trade_fee() {
+    wait_for_estimate_smart_fee(30).expect("!wait_for_estimate_smart_fee");
+    // generate QTUM coin with the dynamic fee and fill the wallet by 2 Qtums
+    let (_ctx, coin, priv_key) = generate_qtum_coin_with_random_privkey("QTUM", 2.into(), Some(0));
+    let my_address = coin.my_address().expect("!my_address");
+    let mut rng = rand4::thread_rng();
+    let mut qtum_balance = BigDecimal::from(2);
+    let mut qtum_balance_steps = "2".to_owned();
+    for _ in 0..4 {
+        let amount = rng.gen_range(100000, 10000000);
+        let amount = big_decimal_from_sat(amount, 8);
+        qtum_balance_steps = format!("{} + {}", qtum_balance_steps, amount);
+        qtum_balance = &qtum_balance + &amount;
+        fill_address(&coin, &my_address, amount, 30);
+    }
+    log!("QTUM balance "(qtum_balance)" = "(qtum_balance_steps));
+    // fill MYCOIN
+    let (_ctx, mycoin) = utxo_coin_from_privkey("MYCOIN", &priv_key);
+    let my_address = mycoin.my_address().expect("my_address");
+    fill_address(&mycoin, &my_address, 10.into(), 30);
+
+    let confpath = unsafe { QTUM_CONF_PATH.as_ref().expect("Qtum config is not set yet") };
+    let coins = json! ([
+        {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
+        {"coin":"QTUM","decimals":8,"pubtype":120,"p2shtype":110,"wiftype":128,"segwit":true,
+         "txfee":0,"mm2":1,"mature_confirmations":500,"network":"regtest","confpath":confpath,"protocol":{"type":"UTXO"}},
+    ]);
+    let mut mm = unwrap!(MarketMakerIt::start(
+        json! ({
+            "gui": "nogui",
+            "netid": 9000,
+            "dht": "on",  // Enable DHT without delay.
+            "passphrase": format!("0x{}", hex::encode(priv_key)),
+            "coins": coins,
+            "rpc_password": "pass",
+            "i_am_see": true,
+        }),
+        "pass".to_string(),
+        None,
+    ));
+    let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm.log_path);
+    unwrap!(block_on(
+        mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
+    ));
+
+    log!([block_on(enable_native(&mm, "MYCOIN", vec![]))]);
+    log!([block_on(enable_native(&mm, "QTUM", vec![]))]);
+
+    // - `max_possible = balance - locked_amount`, where `locked_amount = 0`
+    // - `max_trade_fee = trade_fee(balance)`
+    // Please note if we pass the exact value, the `get_sender_trade_fee` will fail with 'Not sufficient balance: Couldn't collect enough value from utxos'.
+    // So we should deduct trade fee from the output. It is possible if `max` field is set to the true.
+    let rc = unwrap!(block_on(mm.rpc(json!({
+        "userpass": mm.userpass,
+        "method": "trade_preimage",
+        "sender_coin": "QTUM",
+        "receiver_coin": "MYCOIN",
+        "max": true,
+    }))));
+
+    assert!(rc.0.is_success(), "!trade_preimage: {}", rc.1);
+    let json: Json = json::from_str(&rc.1).unwrap();
+    let max_trade_fee: BigDecimal = json::from_value(json["result"]["sender_fee"]["amount"].clone()).unwrap();
+    common::log::debug!("max_trade_fee: {}", max_trade_fee);
+
+    // - `max_possible_2 = balance - locked_amount - max_trade_fee`, where `locked_amount = 0`
+    let max_possible_2 = &qtum_balance - &max_trade_fee;
+    // - `max_dex_fee = dex_fee(max_possible_2)`
+    let max_dex_fee = dex_fee_amount("QTUM", "MYCOIN", &MmNumber::from(max_possible_2));
+    common::log::debug!("max_dex_fee: {:?}", max_dex_fee.to_fraction());
+
+    // - `max_fee_to_send_taker_fee = fee_to_send_taker_fee(max_dex_fee)`
+    // `taker_fee` is sent using general withdraw, and the fee get be obtained from withdraw result
+    let rc = unwrap!(block_on(mm.rpc(json!({
+        "userpass": mm.userpass,
+        "method": "withdraw",
+        "coin": "QTUM",
+        "to": "qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG",
+        "amount": max_dex_fee.to_decimal(),
+    }))));
+    assert!(rc.0.is_success(), "!withdraw: {}", rc.1);
+    let json: Json = json::from_str(&rc.1).unwrap();
+    let max_fee_to_send_taker_fee: BigDecimal = json::from_value(json["fee_details"]["amount"].clone()).unwrap();
+    common::log::debug!("max_fee_to_send_taker_fee: {}", max_fee_to_send_taker_fee);
+
+    // and then calculate `min_max_val = balance - locked_amount - max_trade_fee - max_fee_to_send_taker_fee - dex_fee(max_val)` using `max_taker_vol_from_available()`
+    // where `available = balance - locked_amount - max_trade_fee - max_fee_to_send_taker_fee`
+    let available = &qtum_balance - &max_trade_fee - &max_fee_to_send_taker_fee;
+    common::log::debug!("total_available: {}", available);
+    let expected_max_taker_vol = max_taker_vol_from_available(MmNumber::from(available), "QTUM", "MYCOIN")
+        .expect("max_taker_vol_from_available");
+    let real_dex_fee = dex_fee_amount("QTUM", "MYCOIN", &expected_max_taker_vol);
+    common::log::debug!("real_max_dex_fee: {:?}", real_dex_fee.to_fraction());
+
+    // check if the actual max_taker_vol equals to the expected
+    let rc = unwrap!(block_on(mm.rpc(json! ({
+        "userpass": mm.userpass,
+        "method": "max_taker_vol",
+        "coin": "QTUM",
+    }))));
+    assert!(rc.0.is_success(), "!max_taker_vol: {}", rc.1);
+    let json: Json = json::from_str(&rc.1).unwrap();
+    assert_eq!(
+        json["result"],
+        json::to_value(expected_max_taker_vol.to_fraction()).unwrap()
+    );
+
+    // try pass volume greater than max_taker_vol
+    let volume = &expected_max_taker_vol + &MmNumber::from((1, 100000000));
+    let rc = unwrap!(block_on(mm.rpc(json! ({
+        "userpass": mm.userpass,
+        "method": "sell",
+        "base": "QTUM",
+        "rel": "MYCOIN",
+        "price": 1,
+        "volume": volume.to_fraction(),
+    }))));
+    assert!(!rc.0.is_success(), "sell success, but should fail: {}", rc.1);
+
+    let rc = unwrap!(block_on(mm.rpc(json! ({
+        "userpass": mm.userpass,
+        "method": "sell",
+        "base": "QTUM",
+        "rel": "MYCOIN",
+        "price": 1,
+        "volume": expected_max_taker_vol.to_fraction(),
+    }))));
+    assert!(rc.0.is_success(), "!sell: {}", rc.1);
+
+    unwrap!(block_on(mm.stop()));
+
+    let other_pub =
+        hex::decode("03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc06").expect("!hex::decode");
+    let timelock = (now_ms() / 1000) as u32 - 200;
+    let secret_hash = &[0; 20];
+
+    let dex_fee_amount = dex_fee_amount("QTUM", "MYCOIN", &expected_max_taker_vol);
+    let _taker_fee_tx = coin
+        .send_taker_fee(&other_pub, dex_fee_amount.to_decimal())
+        .wait()
+        .expect("!send_taker_fee");
+
+    let _taker_payment_tx = coin
+        .send_taker_payment(
+            timelock,
+            &other_pub,
+            secret_hash,
+            expected_max_taker_vol.to_decimal(),
+            &None,
+        )
+        .wait()
+        .expect("!send_taker_payment");
+
+    let my_balance = coin.my_balance().wait().expect("!my_balance");
+    assert_eq!(my_balance, 0.into());
 }
 
 #[test]

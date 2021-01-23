@@ -127,6 +127,7 @@ pub struct AdditionalTxData {
     pub received_by_me: u64,
     pub spent_by_me: u64,
     pub fee_amount: u64,
+    pub change: u64,
 }
 
 /// The fee set from coins config
@@ -403,6 +404,8 @@ pub trait UtxoCommonOps {
     /// Consider sorting before calling this function
     /// Sends the change (inputs amount - outputs amount) to "my_address"
     /// Also returns additional transaction data
+    ///
+    /// Please note `force_change_output` may cause an error if the change is less than dust.
     async fn generate_transaction(
         &self,
         utxos: Vec<UnspentInfo>,
@@ -410,6 +413,7 @@ pub trait UtxoCommonOps {
         fee_policy: FeePolicy,
         fee: Option<ActualTxFee>,
         gas_fee: Option<u64>,
+        force_change_output: bool,
     ) -> Result<(TransactionInputSigner, AdditionalTxData), GenerateTransactionError>;
 
     /// Calculates interest if the coin is KMD
@@ -1486,8 +1490,9 @@ async fn generate_and_send_tx<T>(
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps,
 {
+    let force_change_output = false;
     let (unsigned, _) = try_s!(
-        coin.generate_transaction(unspents, outputs, fee_policy, None, None)
+        coin.generate_transaction(unspents, outputs, fee_policy, None, None, force_change_output)
             .await
     );
 

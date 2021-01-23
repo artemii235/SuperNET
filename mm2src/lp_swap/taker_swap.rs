@@ -1474,9 +1474,8 @@ pub async fn max_taker_vol(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, S
     let locked = try_s!(get_locked_amount(&ctx, base).await);
 
     let max_possible = &balance - &locked;
-    // TODO replace Exact with UpperBound
     let max_trade_fee = try_s!(
-        coin.get_sender_trade_fee(TradePreimageValue::Exact(max_possible.to_decimal()))
+        coin.get_sender_trade_fee(TradePreimageValue::UpperBound(max_possible.to_decimal()))
             .compat()
             .await
     );

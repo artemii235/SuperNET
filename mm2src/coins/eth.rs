@@ -2428,11 +2428,8 @@ impl MmCoin for EthCoin {
                 },
                 EthCoinType::Erc20(_) => {
                     let value = match value {
-                        TradePreimageValue::Exact(value) => {
+                        TradePreimageValue::Exact(value) | TradePreimageValue::UpperBound(value) => {
                             try_map!(wei_from_big_decimal(&value, coin.decimals), TradePreimageError::Other)
-                        },
-                        TradePreimageValue::Max => {
-                            try_map!(coin.my_balance().compat().await, TradePreimageError::Other)
                         },
                     };
                     let allowed = try_map!(

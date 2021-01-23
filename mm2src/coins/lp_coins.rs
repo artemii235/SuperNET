@@ -415,8 +415,7 @@ pub struct TradeFee {
 #[derive(Debug)]
 pub enum TradePreimageValue {
     Exact(BigDecimal),
-    /// TODO add the UpperBound(BigDecimal)
-    Max,
+    UpperBound(BigDecimal),
 }
 
 #[derive(Debug)]
@@ -1092,7 +1091,8 @@ pub async fn trade_preimage(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, 
     };
 
     let value = if req.max {
-        TradePreimageValue::Max
+        let balance = try_s!(sender_coin.my_balance().compat().await);
+        TradePreimageValue::UpperBound(balance)
     } else {
         TradePreimageValue::Exact(req.value)
     };

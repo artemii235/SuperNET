@@ -761,7 +761,7 @@ fn get_sender_trade_preimage() {
     };
 
     let actual = coin
-        .get_sender_trade_fee(TradePreimageValue::Max)
+        .get_sender_trade_fee(TradePreimageValue::UpperBound(150.into()))
         .wait()
         .expect("!get_sender_trade_fee");
     assert_eq!(actual, expected_fee);
@@ -776,10 +776,6 @@ fn get_sender_trade_preimage() {
 
 #[test]
 fn get_erc20_sender_trade_preimage() {
-    static mut MY_BALANCE: u64 = 0;
-    EthCoin::my_balance
-        .mock_safe(|_| MockResult::Return(Box::new(futures01::future::ok(unsafe { MY_BALANCE.into() }))));
-
     static mut ALLOWANCE: u64 = 0;
     EthCoin::allowance
         .mock_safe(|_, _| MockResult::Return(Box::new(futures01::future::ok(unsafe { ALLOWANCE.into() }))));
@@ -800,25 +796,24 @@ fn get_erc20_sender_trade_preimage() {
     );
 
     // value is allowed
-    unsafe { MY_BALANCE = 1000 };
     unsafe { ALLOWANCE = 1000 };
+    let value = u256_to_big_decimal(1000.into(), 18).expect("u256_to_big_decimal");
     let actual = coin
-        .get_sender_trade_fee(TradePreimageValue::Max)
+        .get_sender_trade_fee(TradePreimageValue::UpperBound(value))
         .wait()
         .expect("!get_sender_trade_fee");
     assert_eq!(actual, expected_trade_fee(300_000));
 
     // value is greater than allowance
-    unsafe { MY_BALANCE = 1000 };
     unsafe { ALLOWANCE = 999 };
+    let value = u256_to_big_decimal(1000.into(), 18).expect("u256_to_big_decimal");
     let actual = coin
-        .get_sender_trade_fee(TradePreimageValue::Max)
+        .get_sender_trade_fee(TradePreimageValue::UpperBound(value))
         .wait()
         .expect("!get_sender_trade_fee");
     assert_eq!(actual, expected_trade_fee(450_000));
 
     // value is allowed
-    unsafe { MY_BALANCE = 2000 };
     unsafe { ALLOWANCE = 1000 };
     let value = u256_to_big_decimal(999.into(), 18).expect("u256_to_big_decimal");
     let actual = coin
@@ -828,7 +823,6 @@ fn get_erc20_sender_trade_preimage() {
     assert_eq!(actual, expected_trade_fee(300_000));
 
     // value is greater than allowance
-    unsafe { MY_BALANCE = 2000 };
     unsafe { ALLOWANCE = 1000 };
     let value = u256_to_big_decimal(1500.into(), 18).expect("u256_to_big_decimal");
     let actual = coin

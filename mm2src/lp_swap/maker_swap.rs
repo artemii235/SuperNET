@@ -1437,8 +1437,7 @@ pub async fn calc_max_maker_vol(ctx: &MmArc, coin: &MmCoinEnum, balance: &BigDec
 
     let mut vol = MmNumber::from(balance.clone()) - locked;
 
-    // TODO replace Exact with UpperBound
-    let preimage_value = TradePreimageValue::Exact(vol.to_decimal());
+    let preimage_value = TradePreimageValue::UpperBound(vol.to_decimal());
     let trade_fee = match coin.get_sender_trade_fee(preimage_value).compat().await {
         Ok(f) => f,
         Err(TradePreimageError::NotSufficientBalance(_)) => return Ok(0.into()),
