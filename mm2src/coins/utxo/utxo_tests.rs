@@ -2125,10 +2125,3 @@ fn test_get_sender_trade_fee_dynamic_tx_fee() {
         .expect("!get_sender_trade_fee");
     assert_eq!(fee1, fee3);
 }
-
-#[test]
-fn print_tx() {
-    let tx: UtxoTx = "010000000193f88580200a37962de3e2b28b3f5af5d7c86c84b6957425e05ef6ae51747930000000006b483045022100ea4563b2be9c5fb7d13d7604b3d270a3489a1245cd9926071677402a69193d3a0220796c2e680f44dab9eb49f46d6eadc9d60677a9d0cad9fcf6b2f3ae82def16997012102d5c08a56ecc86a8ad85fba830f2f920754d3cae3eba8132dc3308c68d486cbb6ffffffff02fb060400000000001976a914ca1e04745e8ca0c60d8c5881531d51bec470743f88ac2a350000000000001976a9148391a4a70d17595b0c14e293a4d7c41d0acf772188ac5f6c0a60".into();
-    log!("inputs: "[tx.inputs]);
-    log!("outputs: "[tx.outputs]);
-}

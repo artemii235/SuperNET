@@ -60,7 +60,7 @@ use crate::mm2::lp_network::broadcast_p2p_msg;
 use async_std::sync as async_std_sync;
 use async_trait::async_trait;
 use bigdecimal::BigDecimal;
-use coins::{lp_coinfind, MmCoinEnum, TradeFee, TradePreimageError, TradePreimageValue, TransactionEnum};
+use coins::{lp_coinfind, lp_coinfindᵃ, MmCoinEnum, TradeFee, TradePreimageError, TradePreimageValue, TransactionEnum};
 use common::{bits256, block_on, calc_total_pages,
              executor::{spawn, Timer},
              mm_ctx::{from_ctx, MmArc},
@@ -966,6 +966,70 @@ pub fn stats_swap_status(ctx: MmArc, req: Json) -> HyRes {
         })
         .to_string(),
     )
+}
+
+#[derive(Deserialize)]
+struct TradePreimageRequest {
+    base: String,
+    rel: String,
+    swap_type: TradePreimageSwapType,
+    #[serde(default)]
+    value: BigDecimal,
+    #[serde(default)]
+    max: bool,
+}
+
+#[derive(Deserialize)]
+enum TradePreimageSwapType {
+    #[serde(rename = "maker_swap")]
+    MakerSwap,
+    #[serde(rename = "taker_swap")]
+    TakerSwap,
+}
+
+pub async fn trade_preimage(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
+    let req: TradePreimageRequest = try_s!(json::from_value(req));
+    let (sender, receiver) = match req.swap_type {
+        TradePreimageSwapType::MakerSwap => (req.base, req.rel),
+        TradePreimageSwapType::TakerSwap => (req.rel, req.base),
+    };
+    let sender_coin = match lp_coinfindᵃ(&ctx, &sender).await {
+        Ok(Some(t)) => t,
+        Ok(None) => return ERR!("No such coin: {}", sender),
+        Err(err) => return ERR!("!lp_coinfind({}): {}", sender, err),
+    };
+    let receiver_coin = match lp_coinfindᵃ(&ctx, &receiver).await {
+        Ok(Some(t)) => t,
+        Ok(None) => return ERR!("No such coin: {}", receiver),
+        Err(err) => return ERR!("!lp_coinfind({}): {}", receiver, err),
+    };
+
+    let value = if req.max {
+        let balance = try_s!(sender_coin.my_balance().compat().await);
+        TradePreimageValue::UpperBound(balance)
+    } else {
+        TradePreimageValue::Exact(req.value)
+    };
+
+    let sender_fee = try_s!(sender_coin.get_sender_trade_fee(value).compat().await);
+    let receiver_fee = try_s!(receiver_coin.get_receiver_trade_fee().compat().await);
+    let res = try_s!(json::to_vec(&json!({
+        "result": {
+            "base_coin_fee": {
+                "coin": sender_fee.coin,
+                "amount": sender_fee.amount.to_decimal(),
+                "amount_fraction": sender_fee.amount.to_fraction(),
+                "amount_rat": sender_fee.amount.to_ratio(),
+            },
+            "rel_coin_fee": {
+                "coin": receiver_fee.coin,
+                "amount": receiver_fee.amount.to_decimal(),
+                "amount_fraction": receiver_fee.amount.to_fraction(),
+                "amount_rat": receiver_fee.amount.to_ratio(),
+            }
+        }
+    })));
+    Ok(try_s!(Response::builder().body(res)))
 }
 
 #[derive(Debug, Deserialize, Serialize)]

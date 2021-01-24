@@ -983,7 +983,7 @@ pub trait UtxoCoinBuilder {
         json::from_value(self.conf()["estimate_fee_mode"].clone()).unwrap_or(None)
     }
 
-    fn dust_amount(&self) -> u64 { UTXO_DUST_AMOUNT }
+    fn dust_amount(&self) -> u64 { json::from_value(self.conf()["dust"].clone()).unwrap_or(UTXO_DUST_AMOUNT) }
 
     fn network(&self) -> Result<BlockchainNetwork, String> {
         let conf = self.conf();

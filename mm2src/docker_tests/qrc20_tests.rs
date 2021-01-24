@@ -154,6 +154,7 @@ fn qrc20_coin_from_privkey(ticker: &str, priv_key: &[u8]) -> (MmArc, Qrc20Coin) 
         "mature_confirmations":500,
         "network":"regtest",
         "confpath": confpath,
+        "dust": 72800,
     });
     let req = json!({
         "method": "enable",
@@ -208,6 +209,7 @@ fn generate_qtum_coin_with_random_privkey(
         "mature_confirmations":500,
         "network":"regtest",
         "confpath": confpath,
+        "dust": 72800,
     });
     let req = json!({"method": "enable"});
     let priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
@@ -1271,14 +1273,15 @@ fn test_max_taker_vol_dynamic_trade_fee() {
     let rc = unwrap!(block_on(mm.rpc(json!({
         "userpass": mm.userpass,
         "method": "trade_preimage",
-        "sender_coin": "QTUM",
-        "receiver_coin": "MYCOIN",
+        "base": "QTUM",
+        "rel": "MYCOIN",
+        "swap_type": "maker_swap",
         "max": true,
     }))));
 
     assert!(rc.0.is_success(), "!trade_preimage: {}", rc.1);
     let json: Json = json::from_str(&rc.1).unwrap();
-    let max_trade_fee: BigDecimal = json::from_value(json["result"]["sender_fee"]["amount"].clone()).unwrap();
+    let max_trade_fee: BigDecimal = json::from_value(json["result"]["base_coin_fee"]["amount"].clone()).unwrap();
     common::log::debug!("max_trade_fee: {}", max_trade_fee);
 
     // - `max_possible_2 = balance - locked_amount - max_trade_fee`, where `locked_amount = 0`

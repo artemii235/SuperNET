@@ -454,7 +454,6 @@ pub trait MmCoin: SwapOps + MarketCoinOps + fmt::Debug + Send + Sync + 'static {
 
     fn is_asset_chain(&self) -> bool;
 
-    /// TODO remove this
     fn can_i_spend_other_payment(&self) -> Box<dyn Future<Item = (), Error = String> + Send>;
 
     /// The coin can be initialized, but it cannot participate in the swaps.
@@ -1065,57 +1064,6 @@ pub fn my_tx_history(ctx: MmArc, req: Json) -> HyRes {
             .to_string(),
         )
     }))
-}
-
-#[derive(Deserialize)]
-struct TradePreimageRequest {
-    sender_coin: String,
-    receiver_coin: String,
-    #[serde(default)]
-    value: BigDecimal,
-    #[serde(default)]
-    max: bool,
-}
-
-pub async fn trade_preimage(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
-    let req: TradePreimageRequest = try_s!(json::from_value(req));
-    let sender_coin = match lp_coinfindᵃ(&ctx, &req.sender_coin).await {
-        Ok(Some(t)) => t,
-        Ok(None) => return ERR!("No such coin: {}", req.sender_coin),
-        Err(err) => return ERR!("!lp_coinfind({}): {}", req.sender_coin, err),
-    };
-    let receiver_coin = match lp_coinfindᵃ(&ctx, &req.receiver_coin).await {
-        Ok(Some(t)) => t,
-        Ok(None) => return ERR!("No such coin: {}", req.receiver_coin),
-        Err(err) => return ERR!("!lp_coinfind({}): {}", req.receiver_coin, err),
-    };
-
-    let value = if req.max {
-        let balance = try_s!(sender_coin.my_balance().compat().await);
-        TradePreimageValue::UpperBound(balance)
-    } else {
-        TradePreimageValue::Exact(req.value)
-    };
-
-    let sender_fee = try_s!(sender_coin.get_sender_trade_fee(value).compat().await);
-    let receiver_fee = try_s!(receiver_coin.get_receiver_trade_fee().compat().await);
-    let res = try_s!(json::to_vec(&json!({
-        "result": {
-            "sender_fee": {
-                "coin": sender_fee.coin,
-                "amount": sender_fee.amount.to_decimal(),
-                "amount_fraction": sender_fee.amount.to_fraction(),
-                "amount_rat": sender_fee.amount.to_ratio(),
-            },
-            "receiver_fee": {
-                "coin": receiver_fee.coin,
-                "amount": receiver_fee.amount.to_decimal(),
-                "amount_fraction": receiver_fee.amount.to_fraction(),
-                "amount_rat": receiver_fee.amount.to_ratio(),
-            }
-        }
-    })));
-    Ok(try_s!(Response::builder().body(res)))
 }
 
 /// Note this function is deprecated.
