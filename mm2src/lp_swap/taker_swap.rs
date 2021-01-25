@@ -1,10 +1,10 @@
 #![cfg_attr(not(feature = "native"), allow(dead_code))]
 
-use super::{ban_pubkey, broadcast_my_swap_status, broadcast_swap_message_every, check_coin_balance_for_swap,
-            dex_fee_amount, dex_fee_rate, get_locked_amount, my_swap_file_path, my_swaps_dir, recv_swap_msg,
-            swap_topic, AtomicSwap, CoinTradeInfo, LockedAmount, MySwapInfo, NegotiationDataMsg, RecoveredSwap,
-            RecoveredSwapAction, SavedSwap, SavedTradeFee, SwapConfirmationsSettings, SwapError, SwapMsg,
-            SwapsContext, TransactionIdentifier, WAIT_CONFIRM_INTERVAL};
+use super::{ban_pubkey, broadcast_my_swap_status, broadcast_swap_message_every, check_my_coin_balance_for_swap,
+            check_other_coin_balance_for_swap, dex_fee_amount, dex_fee_rate, get_locked_amount, my_swap_file_path,
+            my_swaps_dir, recv_swap_msg, swap_topic, AtomicSwap, LockedAmount, MySwapInfo, NegotiationDataMsg,
+            RecoveredSwap, RecoveredSwapAction, SavedSwap, SavedTradeFee, SwapConfirmationsSettings, SwapError,
+            SwapMsg, SwapsContext, TakerFeeAdditionalInfo, TransactionIdentifier, WAIT_CONFIRM_INTERVAL};
 use crate::mm2::lp_network::subscribe_to_topic;
 use atomic::Atomic;
 use bigdecimal::BigDecimal;
@@ -619,12 +619,34 @@ impl TakerSwap {
     }
 
     async fn start(&self) -> Result<(Option<TakerSwapCommand>, Vec<TakerSwapEvent>), String> {
+        let dex_fee = dex_fee_amount(
+            &self.r().data.maker_coin,
+            &self.r().data.taker_coin,
+            &self.taker_amount.clone(),
+        );
+        let fee_to_send_dex_fee = try_s!(
+            self.taker_coin
+                .get_fee_to_send_taker_fee(dex_fee.to_decimal())
+                .compat()
+                .await
+        );
+        let preimage_value = TradePreimageValue::Exact(self.taker_amount.to_decimal());
+        let taker_payment_trade_fee = try_s!(self.taker_coin.get_sender_trade_fee(preimage_value).compat().await);
+        let maker_payment_spend_trade_fee = try_s!(self.maker_coin.get_receiver_trade_fee().compat().await);
+
+        let params = TakerSwapPreparedParams {
+            dex_fee: dex_fee.clone(),
+            fee_to_send_dex_fee: fee_to_send_dex_fee.clone(),
+            taker_payment_trade_fee: taker_payment_trade_fee.clone(),
+            maker_payment_spend_trade_fee: maker_payment_spend_trade_fee.clone(),
+        };
         let check_balance_f = check_balance_for_taker_swap(
             &self.ctx,
             &self.taker_coin,
             &self.maker_coin,
             self.taker_amount.clone(),
             Some(&self.uuid),
+            Some(params),
         );
         if let Err(e) = check_balance_f.await {
             return Ok((Some(TakerSwapCommand::Finish), vec![TakerSwapEvent::StartFailed(
@@ -658,26 +680,6 @@ impl TakerSwap {
             },
         };
 
-        // TODO pass these trade_fee into check_balance_for_taker_swap
-        let fee_amount = dex_fee_amount(
-            &self.r().data.maker_coin,
-            &self.r().data.taker_coin,
-            &self.taker_amount.clone(),
-        );
-        let fee_to_send_taker_fee = try_s!(
-            self.taker_coin
-                .get_fee_to_send_taker_fee(fee_amount.to_decimal())
-                .compat()
-                .await
-        );
-        let taker_payment_trade_fee = try_s!(
-            self.taker_coin
-                .get_sender_trade_fee(TradePreimageValue::Exact(self.taker_amount.to_decimal()))
-                .compat()
-                .await
-        );
-        let maker_payment_spend_trade_fee = try_s!(self.maker_coin.get_receiver_trade_fee().compat().await);
-
         let maker_coin_swap_contract_address = self.maker_coin.swap_contract_address();
         let taker_coin_swap_contract_address = self.taker_coin.swap_contract_address();
 
@@ -699,7 +701,7 @@ impl TakerSwap {
             maker_payment_wait: started_at + (self.payment_locktime * 2) / 5,
             maker_coin_start_block,
             taker_coin_start_block,
-            fee_to_send_taker_fee: Some(SavedTradeFee::from(fee_to_send_taker_fee)),
+            fee_to_send_taker_fee: Some(SavedTradeFee::from(fee_to_send_dex_fee)),
             taker_payment_trade_fee: Some(SavedTradeFee::from(taker_payment_trade_fee)),
             maker_payment_spend_trade_fee: Some(SavedTradeFee::from(maker_payment_spend_trade_fee)),
             maker_coin_swap_contract_address,
@@ -1393,20 +1395,55 @@ impl AtomicSwap for TakerSwap {
     fn taker_coin(&self) -> &str { self.taker_coin.ticker() }
 }
 
+pub struct TakerSwapPreparedParams {
+    dex_fee: MmNumber,
+    fee_to_send_dex_fee: TradeFee,
+    taker_payment_trade_fee: TradeFee,
+    maker_payment_spend_trade_fee: TradeFee,
+}
+
 pub async fn check_balance_for_taker_swap(
     ctx: &MmArc,
     my_coin: &MmCoinEnum,
     other_coin: &MmCoinEnum,
     volume: MmNumber,
     swap_uuid: Option<&Uuid>,
+    prepared_params: Option<TakerSwapPreparedParams>,
 ) -> Result<(), String> {
-    let dex_fee = Some(dex_fee_amount(my_coin.ticker(), other_coin.ticker(), &volume));
+    let params = match prepared_params {
+        Some(params) => params,
+        None => {
+            let dex_fee = dex_fee_amount(my_coin.ticker(), other_coin.ticker(), &volume);
+            let fee_to_send_dex_fee = try_s!(my_coin.get_fee_to_send_taker_fee(dex_fee.to_decimal()).compat().await);
+            let preimage_value = TradePreimageValue::Exact(volume.to_decimal());
+            let taker_payment_trade_fee = try_s!(my_coin.get_sender_trade_fee(preimage_value).compat().await);
+            let maker_payment_spend_trade_fee = try_s!(other_coin.get_receiver_trade_fee().compat().await);
+            TakerSwapPreparedParams {
+                dex_fee,
+                fee_to_send_dex_fee,
+                taker_payment_trade_fee,
+                maker_payment_spend_trade_fee,
+            }
+        },
+    };
 
-    common::log::info!("Check my_coin '{}' balance for TakerSwap", my_coin.ticker());
-    try_s!(check_coin_balance_for_swap(ctx, my_coin, CoinTradeInfo::MyCoin { volume }, swap_uuid, dex_fee).await);
+    let taker_fee = TakerFeeAdditionalInfo {
+        dex_fee: params.dex_fee,
+        fee_to_send_dex_fee: params.fee_to_send_dex_fee,
+    };
 
-    common::log::info!("Check other_coin '{}' balance for TakerSwap", other_coin.ticker());
-    try_s!(check_coin_balance_for_swap(ctx, other_coin, CoinTradeInfo::OtherCoin, swap_uuid, None).await);
+    try_s!(
+        check_my_coin_balance_for_swap(
+            ctx,
+            my_coin,
+            swap_uuid,
+            volume,
+            params.taker_payment_trade_fee,
+            Some(taker_fee)
+        )
+        .await
+    );
+    try_s!(check_other_coin_balance_for_swap(ctx, other_coin, swap_uuid, params.maker_payment_spend_trade_fee).await);
     Ok(())
 }
 

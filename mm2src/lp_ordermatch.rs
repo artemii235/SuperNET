@@ -55,9 +55,9 @@ use uuid::Uuid;
 
 use crate::mm2::{lp_network::{broadcast_p2p_msg, request_any_relay, request_one_peer, subscribe_to_topic, P2PRequest},
                  lp_swap::{calc_max_maker_vol, check_balance_for_maker_swap, check_balance_for_taker_swap,
-                           check_coin_balance_for_swap, is_pubkey_banned, lp_atomic_locktime, run_maker_swap,
-                           run_taker_swap, AtomicLocktimeVersion, CheckBalanceError, CoinTradeInfo, MakerSwap,
-                           RunMakerSwapInput, RunTakerSwapInput, SwapConfirmationsSettings, TakerSwap}};
+                           check_other_coin_balance_for_swap, is_pubkey_banned, lp_atomic_locktime, run_maker_swap,
+                           run_taker_swap, AtomicLocktimeVersion, CheckBalanceError, MakerSwap, RunMakerSwapInput,
+                           RunTakerSwapInput, SwapConfirmationsSettings, TakerSwap}};
 
 #[path = "lp_ordermatch/new_protocol.rs"] mod new_protocol;
 #[path = "lp_ordermatch/order_requests_tracker.rs"]
@@ -2548,7 +2548,7 @@ pub async fn buy(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
         return ERR!("Rel coin is wallet only");
     }
     let my_amount = &input.volume * &input.price;
-    try_s!(check_balance_for_taker_swap(&ctx, &rel_coin, &base_coin, my_amount, None).await);
+    try_s!(check_balance_for_taker_swap(&ctx, &rel_coin, &base_coin, my_amount, None, None).await);
     let res = try_s!(lp_auto_buy(&ctx, &base_coin, &rel_coin, input).await).into_bytes();
     Ok(try_s!(Response::builder().body(res)))
 }
@@ -2568,7 +2568,7 @@ pub async fn sell(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
     if rel_coin.wallet_only() {
         return ERR!("Rel coin is wallet only");
     }
-    try_s!(check_balance_for_taker_swap(&ctx, &base_coin, &rel_coin, input.volume.clone(), None).await);
+    try_s!(check_balance_for_taker_swap(&ctx, &base_coin, &rel_coin, input.volume.clone(), None, None).await);
     let res = try_s!(lp_auto_buy(&ctx, &base_coin, &rel_coin, input).await).into_bytes();
     Ok(try_s!(Response::builder().body(res)))
 }
@@ -2929,7 +2929,8 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
     let volume = if req.max {
         // first check if rel coin balance is sufficient
         common::log::info!("Check other_coin '{}' balance for MakerSwap", rel_coin.ticker());
-        try_s!(check_coin_balance_for_swap(&ctx, &rel_coin, CoinTradeInfo::OtherCoin, None, None).await);
+        let rel_coin_trade_fee = try_s!(rel_coin.get_receiver_trade_fee().compat().await);
+        try_s!(check_other_coin_balance_for_swap(&ctx, &rel_coin, None, rel_coin_trade_fee).await);
         // calculate max maker volume
         // note the `calc_max_maker_vol` returns [`CheckBalanceError::NotSufficientBalance`] error if the balance is not sufficient
         try_s!(calc_max_maker_vol(&ctx, &base_coin, &my_balance).await)
@@ -2937,7 +2938,7 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
         if req.volume <= MmNumber::from(0) {
             return ERR!("Maker volume {} cannot be zero or negative", req.volume);
         }
-        try_s!(check_balance_for_maker_swap(&ctx, &base_coin, &rel_coin, req.volume.clone(), None).await);
+        try_s!(check_balance_for_maker_swap(&ctx, &base_coin, &rel_coin, req.volume.clone(), None, None).await);
         req.volume
     };
 

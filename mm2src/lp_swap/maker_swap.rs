@@ -1,10 +1,10 @@
 #![cfg_attr(not(feature = "native"), allow(dead_code))]
 
 use super::{ban_pubkey, broadcast_my_swap_status, broadcast_swap_message_every, check_base_coin_balance_for_swap,
-            check_coin_balance_for_swap, dex_fee_amount, get_locked_amount, my_swap_file_path, my_swaps_dir,
-            recv_swap_msg, swap_topic, AtomicSwap, CheckBalanceError, CoinTradeInfo, LockedAmount, MySwapInfo,
-            RecoveredSwap, RecoveredSwapAction, SavedSwap, SavedTradeFee, SwapConfirmationsSettings, SwapError,
-            SwapMsg, SwapsContext, TransactionIdentifier, WAIT_CONFIRM_INTERVAL};
+            check_my_coin_balance_for_swap, check_other_coin_balance_for_swap, dex_fee_amount, get_locked_amount,
+            my_swap_file_path, my_swaps_dir, recv_swap_msg, swap_topic, AtomicSwap, CheckBalanceError, LockedAmount,
+            MySwapInfo, RecoveredSwap, RecoveredSwapAction, SavedSwap, SavedTradeFee, SwapConfirmationsSettings,
+            SwapError, SwapMsg, SwapsContext, TransactionIdentifier, WAIT_CONFIRM_INTERVAL};
 
 use crate::mm2::{lp_network::subscribe_to_topic, lp_swap::NegotiationDataMsg};
 use atomic::Atomic;
@@ -257,12 +257,21 @@ impl MakerSwap {
     }
 
     async fn start(&self) -> Result<(Option<MakerSwapCommand>, Vec<MakerSwapEvent>), String> {
+        let preimage_value = TradePreimageValue::Exact(self.maker_amount.clone());
+        let maker_payment_trade_fee = try_s!(self.maker_coin.get_sender_trade_fee(preimage_value).compat().await);
+        let taker_payment_spend_trade_fee = try_s!(self.taker_coin.get_receiver_trade_fee().compat().await);
+
+        let params = MakerSwapPreparedParams {
+            maker_payment_trade_fee: maker_payment_trade_fee.clone(),
+            taker_payment_spend_trade_fee: taker_payment_spend_trade_fee.clone(),
+        };
         match check_balance_for_maker_swap(
             &self.ctx,
             &self.maker_coin,
             &self.taker_coin,
             self.maker_amount.clone().into(),
             Some(&self.uuid),
+            Some(params),
         )
         .await
         {
@@ -308,11 +317,6 @@ impl MakerSwap {
                 )]))
             },
         };
-
-        // TODO pass this trade_fee into check_balance_for_maker_swap
-        let preimage_value = TradePreimageValue::Exact(self.maker_amount.clone());
-        let maker_payment_trade_fee = try_s!(self.maker_coin.get_sender_trade_fee(preimage_value).compat().await);
-        let taker_payment_spend_trade_fee = try_s!(self.taker_coin.get_receiver_trade_fee().compat().await);
 
         let maker_coin_swap_contract_address = self.maker_coin.swap_contract_address();
         let taker_coin_swap_contract_address = self.taker_coin.swap_contract_address();
@@ -1391,18 +1395,34 @@ pub async fn run_maker_swap(swap: RunMakerSwapInput, ctx: MmArc) {
     };
 }
 
+pub struct MakerSwapPreparedParams {
+    maker_payment_trade_fee: TradeFee,
+    taker_payment_spend_trade_fee: TradeFee,
+}
+
 pub async fn check_balance_for_maker_swap(
     ctx: &MmArc,
     my_coin: &MmCoinEnum,
     other_coin: &MmCoinEnum,
     volume: MmNumber,
     swap_uuid: Option<&Uuid>,
+    prepared_params: Option<MakerSwapPreparedParams>,
 ) -> Result<(), String> {
-    common::log::info!("Check my_coin '{}' balance for MakerSwap", my_coin.ticker());
-    try_s!(check_coin_balance_for_swap(ctx, my_coin, CoinTradeInfo::MyCoin { volume }, swap_uuid, None).await);
+    let (maker_payment_trade_fee, taker_payment_spend_trade_fee) = match prepared_params {
+        Some(MakerSwapPreparedParams {
+            maker_payment_trade_fee,
+            taker_payment_spend_trade_fee,
+        }) => (maker_payment_trade_fee, taker_payment_spend_trade_fee),
+        None => {
+            let preimage_value = TradePreimageValue::Exact(volume.to_decimal());
+            let maker_payment_trade_fee = try_s!(my_coin.get_sender_trade_fee(preimage_value).compat().await);
+            let taker_payment_spend_trade_fee = try_s!(other_coin.get_receiver_trade_fee().compat().await);
+            (maker_payment_trade_fee, taker_payment_spend_trade_fee)
+        },
+    };
 
-    common::log::info!("Check other_coin '{}' balance for MakerSwap", other_coin.ticker());
-    try_s!(check_coin_balance_for_swap(ctx, other_coin, CoinTradeInfo::OtherCoin, swap_uuid, None).await);
+    try_s!(check_my_coin_balance_for_swap(ctx, my_coin, swap_uuid, volume, maker_payment_trade_fee, None).await);
+    try_s!(check_other_coin_balance_for_swap(ctx, other_coin, swap_uuid, taker_payment_spend_trade_fee).await);
     Ok(())
 }
 
