@@ -54,7 +54,7 @@ use std::sync::Arc;
 use trie_db::NodeCodec as NodeCodecT;
 use uuid::Uuid;
 
-use crate::mm2::{database::insert_new_started_swap,
+use crate::mm2::{database::my_swaps::insert_new_swap,
                  lp_network::{broadcast_p2p_msg, request_any_relay, request_one_peer, subscribe_to_topic, P2PRequest},
                  lp_swap::{calc_max_maker_vol, check_balance_for_maker_swap, check_balance_for_taker_swap,
                            is_pubkey_banned, lp_atomic_locktime, run_maker_swap, run_taker_swap,
@@ -2095,7 +2095,7 @@ fn lp_connect_start_bob(ctx: MmArc, maker_match: MakerMatch, maker_order: MakerO
         );
 
         let now = now_ms() / 1000;
-        if let Err(e) = insert_new_started_swap(
+        if let Err(e) = insert_new_swap(
             &ctx,
             maker_coin.ticker(),
             taker_coin.ticker(),
@@ -2181,7 +2181,7 @@ fn lp_connected_alice(ctx: MmArc, taker_request: TakerRequest, taker_match: Take
             uuid
         );
         let now = now_ms() / 1000;
-        if let Err(e) = insert_new_started_swap(
+        if let Err(e) = insert_new_swap(
             &ctx,
             taker_coin.ticker(),
             maker_coin.ticker(),
