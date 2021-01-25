@@ -1354,12 +1354,7 @@ impl AtomicSwap for TakerSwap {
             self.taker_coin.ticker(),
             &self.taker_amount.clone(),
         );
-        let trade_fee = self
-            .r()
-            .data
-            .fee_to_send_taker_fee
-            .clone()
-            .map(|fee| TradeFee::from(fee));
+        let trade_fee = self.r().data.fee_to_send_taker_fee.clone().map(TradeFee::from);
         if self.r().taker_fee.is_none() {
             result.push(LockedAmount {
                 coin: self.taker_coin.ticker().to_owned(),
@@ -1370,12 +1365,7 @@ impl AtomicSwap for TakerSwap {
 
         // if taker payment is not sent yet it must be virtually locked
         if self.r().taker_payment.is_none() {
-            let trade_fee = self
-                .r()
-                .data
-                .taker_payment_trade_fee
-                .clone()
-                .map(|fee| TradeFee::from(fee));
+            let trade_fee = self.r().data.taker_payment_trade_fee.clone().map(TradeFee::from);
             result.push(LockedAmount {
                 coin: self.taker_coin.ticker().to_owned(),
                 amount: self.taker_amount.clone(),
@@ -1385,12 +1375,7 @@ impl AtomicSwap for TakerSwap {
 
         // if maker payment is not spent yet the `MakerPaymentSpend` tx fee must be virtually locked
         if self.r().maker_payment_spend.is_none() {
-            let trade_fee = self
-                .r()
-                .data
-                .maker_payment_spend_trade_fee
-                .clone()
-                .map(|fee| TradeFee::from(fee));
+            let trade_fee = self.r().data.maker_payment_spend_trade_fee.clone().map(TradeFee::from);
             result.push(LockedAmount {
                 coin: self.maker_coin.ticker().to_owned(),
                 amount: 0.into(),

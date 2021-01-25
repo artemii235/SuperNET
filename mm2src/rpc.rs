@@ -39,7 +39,7 @@ use crate::mm2::lp_ordermatch::{buy, cancel_all_orders, cancel_order, my_orders,
                                 set_price};
 use crate::mm2::lp_swap::{active_swaps_rpc, coins_needed_for_kick_start, import_swaps, list_banned_pubkeys,
                           max_taker_vol, my_recent_swaps, my_swap_status, recover_funds_of_swap, stats_swap_status,
-                          unban_pubkeys, trade_preimage};
+                          trade_preimage, unban_pubkeys};
 
 #[path = "rpc/lp_commands.rs"] pub mod lp_commands;
 use self::lp_commands::*;

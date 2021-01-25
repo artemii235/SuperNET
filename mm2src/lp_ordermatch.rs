@@ -55,9 +55,9 @@ use uuid::Uuid;
 
 use crate::mm2::{lp_network::{broadcast_p2p_msg, request_any_relay, request_one_peer, subscribe_to_topic, P2PRequest},
                  lp_swap::{calc_max_maker_vol, check_balance_for_maker_swap, check_balance_for_taker_swap,
-                           is_pubkey_banned, lp_atomic_locktime, run_maker_swap, run_taker_swap,
-                           AtomicLocktimeVersion, MakerSwap, RunMakerSwapInput, RunTakerSwapInput,
-                           SwapConfirmationsSettings, TakerSwap}};
+                           check_coin_balance_for_swap, is_pubkey_banned, lp_atomic_locktime, run_maker_swap,
+                           run_taker_swap, AtomicLocktimeVersion, CheckBalanceError, CoinTradeInfo, MakerSwap,
+                           RunMakerSwapInput, RunTakerSwapInput, SwapConfirmationsSettings, TakerSwap}};
 
 #[path = "lp_ordermatch/new_protocol.rs"] mod new_protocol;
 #[path = "lp_ordermatch/order_requests_tracker.rs"]
@@ -753,6 +753,7 @@ impl BalanceTradeFeeUpdatedHandler for BalanceUpdateOrdermatchHandler {
     async fn balance_updated(&self, coin: &MmCoinEnum, new_balance: &BigDecimal) {
         let new_volume = match calc_max_maker_vol(&self.ctx, coin, new_balance).await {
             Ok(v) => v,
+            Err(CheckBalanceError::NotSufficientBalance(_)) => MmNumber::from(0),
             Err(e) => {
                 log::warn!("Couldn't handle the 'balance_updated' event: {}", e);
                 return;
@@ -2926,12 +2927,19 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
 
     let my_balance = try_s!(base_coin.my_balance().compat().await);
     let volume = if req.max {
+        // first check if rel coin balance is sufficient
+        common::log::info!("Check other_coin '{}' balance for MakerSwap", rel_coin.ticker());
+        try_s!(check_coin_balance_for_swap(&ctx, &rel_coin, CoinTradeInfo::OtherCoin, None, None).await);
+        // calculate max maker volume
+        // note the `calc_max_maker_vol` returns [`CheckBalanceError::NotSufficientBalance`] error if the balance is not sufficient
         try_s!(calc_max_maker_vol(&ctx, &base_coin, &my_balance).await)
     } else {
+        if req.volume <= MmNumber::from(0) {
+            return ERR!("Maker volume {} cannot be zero or negative", req.volume);
+        }
+        try_s!(check_balance_for_maker_swap(&ctx, &base_coin, &rel_coin, req.volume.clone(), None).await);
         req.volume
     };
-    // TODO add the volume checking
-    try_s!(check_balance_for_maker_swap(&ctx, &base_coin, &rel_coin, volume.clone(), None).await);
 
     let conf_settings = OrderConfirmationsSettings {
         base_confs: req.base_confs.unwrap_or_else(|| base_coin.required_confirmations()),

@@ -1,17 +1,18 @@
 #![cfg_attr(not(feature = "native"), allow(dead_code))]
 
-use super::{ban_pubkey, broadcast_my_swap_status, broadcast_swap_message_every, check_coin_balance_for_swap,
-            dex_fee_amount, get_locked_amount, my_swap_file_path, my_swaps_dir, recv_swap_msg, swap_topic, AtomicSwap,
-            CoinTradeInfo, LockedAmount, MySwapInfo, RecoveredSwap, RecoveredSwapAction, SavedSwap, SavedTradeFee,
-            SwapConfirmationsSettings, SwapError, SwapMsg, SwapsContext, TransactionIdentifier, WAIT_CONFIRM_INTERVAL};
+use super::{ban_pubkey, broadcast_my_swap_status, broadcast_swap_message_every, check_base_coin_balance_for_swap,
+            check_coin_balance_for_swap, dex_fee_amount, get_locked_amount, my_swap_file_path, my_swaps_dir,
+            recv_swap_msg, swap_topic, AtomicSwap, CheckBalanceError, CoinTradeInfo, LockedAmount, MySwapInfo,
+            RecoveredSwap, RecoveredSwapAction, SavedSwap, SavedTradeFee, SwapConfirmationsSettings, SwapError,
+            SwapMsg, SwapsContext, TransactionIdentifier, WAIT_CONFIRM_INTERVAL};
 
 use crate::mm2::{lp_network::subscribe_to_topic, lp_swap::NegotiationDataMsg};
 use atomic::Atomic;
 use bigdecimal::BigDecimal;
 use bitcrypto::dhash160;
-use coins::{FoundSwapTxSpend, MmCoinEnum, TradeFee, TradePreimageError, TradePreimageValue, TransactionEnum};
+use coins::{FoundSwapTxSpend, MmCoinEnum, TradeFee, TradePreimageValue, TransactionEnum};
 use common::{bits256, executor::Timer, file_lock::FileLock, mm_ctx::MmArc, mm_number::MmNumber, now_ms, slurp, write,
-             MM_VERSION};
+             Traceable, MM_VERSION};
 use futures::{compat::Future01CompatExt, select, FutureExt};
 use futures01::Future;
 use parking_lot::Mutex as PaMutex;
@@ -1002,12 +1003,7 @@ impl AtomicSwap for MakerSwap {
 
         // if maker payment is not sent yet it must be virtually locked
         if self.r().maker_payment.is_none() {
-            let trade_fee = self
-                .r()
-                .data
-                .maker_payment_trade_fee
-                .clone()
-                .map(|fee| TradeFee::from(fee));
+            let trade_fee = self.r().data.maker_payment_trade_fee.clone().map(TradeFee::from);
             result.push(LockedAmount {
                 coin: self.maker_coin.ticker().to_owned(),
                 amount: self.maker_amount.clone().into(),
@@ -1017,12 +1013,7 @@ impl AtomicSwap for MakerSwap {
 
         // if taker payment is not spent yet the `TakerPaymentSpend` tx fee must be virtually locked
         if self.r().taker_payment_spend.is_none() {
-            let trade_fee = self
-                .r()
-                .data
-                .taker_payment_spend_trade_fee
-                .clone()
-                .map(|fee| TradeFee::from(fee));
+            let trade_fee = self.r().data.taker_payment_spend_trade_fee.clone().map(TradeFee::from);
             result.push(LockedAmount {
                 coin: self.taker_coin.ticker().to_owned(),
                 amount: 0.into(),
@@ -1415,20 +1406,40 @@ pub async fn check_balance_for_maker_swap(
     Ok(())
 }
 
-pub async fn calc_max_maker_vol(ctx: &MmArc, coin: &MmCoinEnum, balance: &BigDecimal) -> Result<MmNumber, String> {
+/// Calculate max Maker volume.
+/// Returns [`CheckBalanceError::NotSufficientBalance`] if the balance is not sufficient.
+/// Note the function checks base coin balance if the trade fee should be paid in base coin.
+pub async fn calc_max_maker_vol(
+    ctx: &MmArc,
+    coin: &MmCoinEnum,
+    balance: &BigDecimal,
+) -> Result<MmNumber, CheckBalanceError> {
     let ticker = coin.ticker();
     let locked = get_locked_amount(ctx, ticker);
-    let mut vol = MmNumber::from(balance.clone()) - locked;
+    let mut vol = &MmNumber::from(balance.clone()) - &locked;
 
     let preimage_value = TradePreimageValue::UpperBound(vol.to_decimal());
-    let trade_fee = match coin.get_sender_trade_fee(preimage_value).compat().await {
-        Ok(f) => f,
-        Err(TradePreimageError::NotSufficientBalance(_)) => return Ok(0.into()),
-        Err(e) => return ERR!("{}", e),
-    };
+    let trade_fee = coin
+        .get_sender_trade_fee(preimage_value)
+        .compat()
+        .await
+        .trace(source!())?;
 
     if trade_fee.coin == ticker {
         vol = vol - trade_fee.amount;
+    } else {
+        let base_coin_balance = try_map!(coin.base_coin_balance().compat().await, CheckBalanceError::Other);
+        check_base_coin_balance_for_swap(ctx, &MmNumber::from(base_coin_balance), trade_fee, None)
+            .await
+            .trace(source!())?;
+    }
+    if vol <= MmNumber::from(0) {
+        let err = ERRL!(
+            "Not enough funds for swap: balance: {}, locked by swaps: {:.8}",
+            balance,
+            locked
+        );
+        return Err(CheckBalanceError::NotSufficientBalance(err));
     }
     Ok(vol)
 }

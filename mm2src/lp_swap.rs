@@ -456,6 +456,38 @@ pub enum CoinTradeInfo {
     OtherCoin,
 }
 
+pub enum CheckBalanceError {
+    NotSufficientBalance(String),
+    Other(String),
+}
+
+impl fmt::Display for CheckBalanceError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CheckBalanceError::NotSufficientBalance(e) => write!(f, "Not sufficient balance: {}", e),
+            CheckBalanceError::Other(e) => write!(f, "{}", e),
+        }
+    }
+}
+
+impl Traceable for CheckBalanceError {
+    fn trace(self, source: TraceSource) -> Self {
+        match self {
+            CheckBalanceError::NotSufficientBalance(e) => CheckBalanceError::NotSufficientBalance(source.with_msg(&e)),
+            CheckBalanceError::Other(e) => CheckBalanceError::Other(source.with_msg(&e)),
+        }
+    }
+}
+
+impl From<TradePreimageError> for CheckBalanceError {
+    fn from(orig: TradePreimageError) -> Self {
+        match orig {
+            TradePreimageError::NotSufficientBalance(e) => CheckBalanceError::NotSufficientBalance(e),
+            TradePreimageError::Other(e) => CheckBalanceError::Other(e),
+        }
+    }
+}
+
 /// Check the coin balance before the swap has started.
 ///
 /// `swap_uuid` is used if our swap is running already and we should except this swap locked amount from the following calculations.
@@ -465,8 +497,8 @@ pub async fn check_coin_balance_for_swap(
     coin_info: CoinTradeInfo,
     swap_uuid: Option<&Uuid>,
     dex_fee: Option<MmNumber>,
-) -> Result<(), String> {
-    let balance = MmNumber::from(try_s!(coin.my_balance().compat().await));
+) -> Result<(), CheckBalanceError> {
+    let balance = MmNumber::from(try_map!(coin.my_balance().compat().await, CheckBalanceError::Other));
     let ticker = coin.ticker();
 
     let locked = match swap_uuid {
@@ -477,25 +509,34 @@ pub async fn check_coin_balance_for_swap(
     let (volume, mut trade_fee) = match coin_info {
         CoinTradeInfo::MyCoin { volume } => {
             let preimage_value = TradePreimageValue::Exact(volume.to_decimal());
-            let trade_fee = try_s!(coin.get_sender_trade_fee(preimage_value).compat().await);
+            let trade_fee = coin
+                .get_sender_trade_fee(preimage_value)
+                .compat()
+                .await
+                .trace(source!())?;
             (volume, trade_fee)
         },
         CoinTradeInfo::OtherCoin => {
             let volume = MmNumber::from(0);
-            let trade_fee = try_s!(coin.get_receiver_trade_fee().compat().await);
+            let trade_fee = coin.get_receiver_trade_fee().compat().await.trace(source!())?;
             (volume, trade_fee)
         },
     };
 
     // increase trade_fee.amount if the dex_fee is some
     if let Some(ref dex_fee) = dex_fee {
-        let fee_to_send_dex_fee = try_s!(coin.get_fee_to_send_taker_fee(dex_fee.to_decimal()).compat().await);
+        let fee_to_send_dex_fee = coin
+            .get_fee_to_send_taker_fee(dex_fee.to_decimal())
+            .compat()
+            .await
+            .trace(source!())?;
         if fee_to_send_dex_fee.coin != trade_fee.coin {
-            return ERR!(
+            let err = ERRL!(
                 "Internal error: trade_fee {:?} and fee_to_send_dex_fee {:?} coins are expected to be the same",
                 trade_fee.coin,
                 fee_to_send_dex_fee.coin
             );
+            return Err(CheckBalanceError::Other(err));
         }
         trade_fee.amount = trade_fee.amount + fee_to_send_dex_fee.amount;
     }
@@ -503,40 +544,13 @@ pub async fn check_coin_balance_for_swap(
     let total_trade_fee = if ticker == trade_fee.coin {
         trade_fee.amount
     } else {
-        let base_coin_ticker = trade_fee.coin.as_str();
-        let trade_fee_fraction = trade_fee.amount.to_fraction();
-        // TODO consider to use debug! instead
-        common::log::info!(
-            "Check if the base coin '{}' has sufficient balance to pay the trade fee {:?}",
-            base_coin_ticker,
-            trade_fee_fraction
-        );
-
-        let base_coin_balance = MmNumber::from(try_s!(coin.base_coin_balance().compat().await));
-        let required = trade_fee.amount;
-        let base_coin_locked = match swap_uuid {
-            Some(uuid) => get_locked_amount_by_other_swaps(ctx, uuid, base_coin_ticker),
-            None => get_locked_amount(ctx, base_coin_ticker),
-        };
-        let available = &base_coin_balance - &base_coin_locked;
-
-        common::log::info!(
-            "{} balance {:?}, locked {:?}",
-            base_coin_ticker,
-            base_coin_balance.to_fraction(),
-            base_coin_locked.to_fraction()
-        );
-        if available < required {
-            return ERR!(
-                "The total base coin '{}' required amount {} is larger than available {:.8}, balance: {}, locked by swaps: {:.8}",
-                base_coin_ticker,
-                required,
-                available,
-                base_coin_balance,
-                base_coin_locked
-            );
-        }
-
+        let base_coin_balance = MmNumber::from(try_map!(
+            coin.base_coin_balance().compat().await,
+            CheckBalanceError::Other
+        ));
+        check_base_coin_balance_for_swap(ctx, &base_coin_balance, trade_fee, swap_uuid)
+            .await
+            .trace(source!())?;
         MmNumber::from(0)
     };
 
@@ -558,7 +572,7 @@ pub async fn check_coin_balance_for_swap(
     let available = &balance - &locked;
 
     if available < required {
-        return ERR!(
+        let err = ERRL!(
             "The total required {} amount {} is larger than available {:.8}, balance: {}, locked by swaps: {:.8}",
             ticker,
             required,
@@ -566,8 +580,50 @@ pub async fn check_coin_balance_for_swap(
             balance,
             locked
         );
+        return Err(CheckBalanceError::NotSufficientBalance(err));
     }
 
+    Ok(())
+}
+
+pub async fn check_base_coin_balance_for_swap(
+    ctx: &MmArc,
+    balance: &MmNumber,
+    trade_fee: TradeFee,
+    swap_uuid: Option<&Uuid>,
+) -> Result<(), CheckBalanceError> {
+    let ticker = trade_fee.coin.as_str();
+    let trade_fee_fraction = trade_fee.amount.to_fraction();
+    common::log::info!(
+        "Check if the base coin '{}' has sufficient balance to pay the trade fee {:?}",
+        ticker,
+        trade_fee_fraction
+    );
+
+    let required = trade_fee.amount;
+    let locked = match swap_uuid {
+        Some(uuid) => get_locked_amount_by_other_swaps(ctx, uuid, ticker),
+        None => get_locked_amount(ctx, ticker),
+    };
+    let available = balance - &locked;
+
+    common::log::info!(
+        "{} balance {:?}, locked {:?}",
+        ticker,
+        balance.to_fraction(),
+        locked.to_fraction()
+    );
+    if available < required {
+        let err =  ERRL!(
+            "The total base coin '{}' required amount {} is larger than available {:.8}, balance: {}, locked by swaps: {:.8}",
+            ticker,
+            required,
+            available,
+            balance,
+            locked
+        );
+        return Err(CheckBalanceError::NotSufficientBalance(err));
+    }
     Ok(())
 }
 
