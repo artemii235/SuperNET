@@ -58,7 +58,6 @@
 
 use crate::mm2::lp_network::broadcast_p2p_msg;
 use async_std::sync as async_std_sync;
-use async_trait::async_trait;
 use bigdecimal::BigDecimal;
 use coins::{lp_coinfind, lp_coinfindᵃ, MmCoinEnum, TradeFee, TradePreimageError, TradePreimageValue, TransactionEnum};
 use common::{bits256, block_on, calc_total_pages,
@@ -301,45 +300,11 @@ pub struct RecoveredSwap {
 pub struct LockedAmount {
     coin: String,
     amount: MmNumber,
-    trade_fee: TradeFee,
+    trade_fee: Option<TradeFee>,
 }
 
-#[derive(Debug, Eq, PartialEq)]
-pub enum LockedAmountError {
-    NotSufficientBalance(String),
-    Other(String),
-}
-
-impl fmt::Display for LockedAmountError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            LockedAmountError::NotSufficientBalance(e) => write!(f, "Not sufficient balance: {}", e),
-            LockedAmountError::Other(e) => write!(f, "{}", e),
-        }
-    }
-}
-
-impl From<TradePreimageError> for LockedAmountError {
-    fn from(err: TradePreimageError) -> Self {
-        match err {
-            TradePreimageError::NotSufficientBalance(e) => LockedAmountError::NotSufficientBalance(e),
-            TradePreimageError::Other(e) => LockedAmountError::Other(e),
-        }
-    }
-}
-
-impl Traceable for LockedAmountError {
-    fn trace(self, source: TraceSource) -> Self {
-        match self {
-            LockedAmountError::NotSufficientBalance(e) => LockedAmountError::NotSufficientBalance(source.with_msg(&e)),
-            LockedAmountError::Other(e) => LockedAmountError::Other(source.with_msg(&e)),
-        }
-    }
-}
-
-#[async_trait]
 pub trait AtomicSwap: Send + Sync {
-    async fn locked_amount(&self) -> Result<Vec<LockedAmount>, LockedAmountError>;
+    fn locked_amount(&self) -> Vec<LockedAmount>;
 
     fn uuid(&self) -> &Uuid;
 
@@ -430,26 +395,26 @@ pub fn is_pubkey_banned(ctx: &MmArc, pubkey: &H256Json) -> bool {
 }
 
 /// Get total amount of selected coin locked by all currently ongoing swaps
-pub async fn get_locked_amount(ctx: &MmArc, coin: &str) -> Result<MmNumber, LockedAmountError> {
+pub fn get_locked_amount(ctx: &MmArc, coin: &str) -> MmNumber {
     let swap_ctx = unwrap!(SwapsContext::from_ctx(&ctx));
-    let swaps: Vec<_> = {
-        let swaps_lock = unwrap!(swap_ctx.running_swaps.lock());
-        swaps_lock.iter().filter_map(|swap| swap.upgrade()).collect()
-    };
+    let swap_lock = unwrap!(swap_ctx.running_swaps.lock());
 
-    let mut total_amount = MmNumber::from(0);
-    for swap in swaps.into_iter() {
-        let locked_amounts = swap.locked_amount().await.trace(source!())?;
-        for locked in locked_amounts {
+    swap_lock
+        .iter()
+        .filter_map(|swap| swap.upgrade())
+        .map(|swap| swap.locked_amount())
+        .flatten()
+        .fold(MmNumber::from(0), |mut total_amount, locked| {
             if locked.coin == coin {
                 total_amount = total_amount + locked.amount;
             }
-            if locked.trade_fee.coin == coin {
-                total_amount = total_amount + locked.trade_fee.amount;
+            if let Some(trade_fee) = locked.trade_fee {
+                if trade_fee.coin == coin {
+                    total_amount = total_amount + trade_fee.amount;
+                }
             }
-        }
-    }
-    Ok(total_amount)
+            total_amount
+        })
 }
 
 /// Get number of currently running swaps
@@ -463,34 +428,27 @@ pub fn running_swaps_num(ctx: &MmArc) -> u64 {
 }
 
 /// Get total amount of selected coin locked by all currently ongoing swaps except the one with selected uuid
-async fn get_locked_amount_by_other_swaps(
-    ctx: &MmArc,
-    except_uuid: &Uuid,
-    coin: &str,
-) -> Result<MmNumber, LockedAmountError> {
+fn get_locked_amount_by_other_swaps(ctx: &MmArc, except_uuid: &Uuid, coin: &str) -> MmNumber {
     let swap_ctx = unwrap!(SwapsContext::from_ctx(&ctx));
-    let swaps: Vec<_> = {
-        let swaps_lock = unwrap!(swap_ctx.running_swaps.lock());
-        swaps_lock
-            .iter()
-            .filter_map(|swap| swap.upgrade())
-            .filter(|swap| swap.uuid() != except_uuid)
-            .collect()
-    };
+    let swap_lock = unwrap!(swap_ctx.running_swaps.lock());
 
-    let mut total_amount = MmNumber::from(0);
-    for swap in swaps.into_iter() {
-        let locked_amounts = swap.locked_amount().await.trace(source!())?;
-        for locked in locked_amounts {
+    swap_lock
+        .iter()
+        .filter_map(|swap| swap.upgrade())
+        .filter(|swap| swap.uuid() != except_uuid)
+        .map(|swap| swap.locked_amount())
+        .flatten()
+        .fold(MmNumber::from(0), |mut total_amount, locked| {
             if locked.coin == coin {
                 total_amount = total_amount + locked.amount;
             }
-            if locked.trade_fee.coin == coin {
-                total_amount = total_amount + locked.trade_fee.amount;
+            if let Some(trade_fee) = locked.trade_fee {
+                if trade_fee.coin == coin {
+                    total_amount = total_amount + trade_fee.amount;
+                }
             }
-        }
-    }
-    Ok(total_amount)
+            total_amount
+        })
 }
 
 pub enum CoinTradeInfo {
@@ -512,8 +470,8 @@ pub async fn check_coin_balance_for_swap(
     let ticker = coin.ticker();
 
     let locked = match swap_uuid {
-        Some(u) => try_s!(get_locked_amount_by_other_swaps(ctx, u, ticker).await),
-        None => try_s!(get_locked_amount(ctx, ticker).await),
+        Some(u) => get_locked_amount_by_other_swaps(ctx, u, ticker),
+        None => get_locked_amount(ctx, ticker),
     };
 
     let (volume, mut trade_fee) = match coin_info {
@@ -557,8 +515,8 @@ pub async fn check_coin_balance_for_swap(
         let base_coin_balance = MmNumber::from(try_s!(coin.base_coin_balance().compat().await));
         let required = trade_fee.amount;
         let base_coin_locked = match swap_uuid {
-            Some(uuid) => try_s!(get_locked_amount_by_other_swaps(ctx, uuid, base_coin_ticker).await),
-            None => try_s!(get_locked_amount(ctx, base_coin_ticker).await),
+            Some(uuid) => get_locked_amount_by_other_swaps(ctx, uuid, base_coin_ticker),
+            None => get_locked_amount(ctx, base_coin_ticker),
         };
         let available = &base_coin_balance - &base_coin_locked;
 
@@ -871,6 +829,30 @@ impl SavedSwap {
         let content = try_s!(json::to_vec(self));
         try_s!(std::fs::write(path, &content));
         Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+pub struct SavedTradeFee {
+    coin: String,
+    amount: BigDecimal,
+}
+
+impl From<SavedTradeFee> for TradeFee {
+    fn from(orig: SavedTradeFee) -> Self {
+        TradeFee {
+            coin: orig.coin,
+            amount: orig.amount.into(),
+        }
+    }
+}
+
+impl From<TradeFee> for SavedTradeFee {
+    fn from(orig: TradeFee) -> Self {
+        SavedTradeFee {
+            coin: orig.coin,
+            amount: orig.amount.to_decimal(),
+        }
     }
 }
 

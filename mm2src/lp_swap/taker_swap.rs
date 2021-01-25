@@ -2,16 +2,15 @@
 
 use super::{ban_pubkey, broadcast_my_swap_status, broadcast_swap_message_every, check_coin_balance_for_swap,
             dex_fee_amount, dex_fee_rate, get_locked_amount, my_swap_file_path, my_swaps_dir, recv_swap_msg,
-            swap_topic, AtomicSwap, CoinTradeInfo, LockedAmount, LockedAmountError, MySwapInfo, NegotiationDataMsg,
-            RecoveredSwap, RecoveredSwapAction, SavedSwap, SwapConfirmationsSettings, SwapError, SwapMsg,
+            swap_topic, AtomicSwap, CoinTradeInfo, LockedAmount, MySwapInfo, NegotiationDataMsg, RecoveredSwap,
+            RecoveredSwapAction, SavedSwap, SavedTradeFee, SwapConfirmationsSettings, SwapError, SwapMsg,
             SwapsContext, TransactionIdentifier, WAIT_CONFIRM_INTERVAL};
 use crate::mm2::lp_network::subscribe_to_topic;
-use async_trait::async_trait;
 use atomic::Atomic;
 use bigdecimal::BigDecimal;
-use coins::{lp_coinfindᵃ, FoundSwapTxSpend, MmCoinEnum, TradeFee, TradePreimageError, TradePreimageValue};
+use coins::{lp_coinfindᵃ, FoundSwapTxSpend, MmCoinEnum, TradeFee, TradePreimageValue};
 use common::{bits256, executor::Timer, file_lock::FileLock, mm_ctx::MmArc, mm_number::MmNumber, now_ms, slurp, write,
-             Traceable, MM_VERSION};
+             MM_VERSION};
 use futures::{compat::Future01CompatExt, select, FutureExt};
 use futures01::Future;
 use http::Response;
@@ -368,6 +367,15 @@ pub struct TakerSwapData {
     maker_payment_wait: u64,
     maker_coin_start_block: u64,
     taker_coin_start_block: u64,
+    /// A transaction fee that should be paid to send a `TakerFee`.
+    /// Note this value is used to calculate locked amount only.
+    fee_to_send_taker_fee: Option<SavedTradeFee>,
+    /// A `TakerPayment` transaction fee.
+    /// Note this value is used to calculate locked amount only.
+    taker_payment_trade_fee: Option<SavedTradeFee>,
+    /// A transaction fee that should be paid to spend a `MakerPayment`.
+    /// Note this value is used to calculate locked amount only.
+    maker_payment_spend_trade_fee: Option<SavedTradeFee>,
     #[serde(skip_serializing_if = "Option::is_none")]
     maker_coin_swap_contract_address: Option<BytesJson>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -385,9 +393,6 @@ pub struct TakerSwapMut {
     taker_payment_refund: Option<TransactionIdentifier>,
     secret_hash: H160Json,
     secret: H256Json,
-    maker_coin_trade_fee: Option<TradeFee>,
-    taker_coin_trade_fee: Option<TradeFee>,
-    fee_to_send_taker_fee: Option<TradeFee>,
 }
 
 pub struct TakerSwap {
@@ -609,9 +614,6 @@ impl TakerSwap {
                 taker_payment_refund: None,
                 secret_hash: H160Json::default(),
                 secret: H256Json::default(),
-                maker_coin_trade_fee: None,
-                taker_coin_trade_fee: None,
-                fee_to_send_taker_fee: None,
             }),
         }
     }
@@ -656,6 +658,26 @@ impl TakerSwap {
             },
         };
 
+        // TODO pass these trade_fee into check_balance_for_taker_swap
+        let fee_amount = dex_fee_amount(
+            &self.r().data.maker_coin,
+            &self.r().data.taker_coin,
+            &self.taker_amount.clone(),
+        );
+        let fee_to_send_taker_fee = try_s!(
+            self.taker_coin
+                .get_fee_to_send_taker_fee(fee_amount.to_decimal())
+                .compat()
+                .await
+        );
+        let taker_payment_trade_fee = try_s!(
+            self.taker_coin
+                .get_sender_trade_fee(TradePreimageValue::Exact(self.taker_amount.to_decimal()))
+                .compat()
+                .await
+        );
+        let maker_payment_spend_trade_fee = try_s!(self.maker_coin.get_receiver_trade_fee().compat().await);
+
         let maker_coin_swap_contract_address = self.maker_coin.swap_contract_address();
         let taker_coin_swap_contract_address = self.taker_coin.swap_contract_address();
 
@@ -677,6 +699,9 @@ impl TakerSwap {
             maker_payment_wait: started_at + (self.payment_locktime * 2) / 5,
             maker_coin_start_block,
             taker_coin_start_block,
+            fee_to_send_taker_fee: Some(SavedTradeFee::from(fee_to_send_taker_fee)),
+            taker_payment_trade_fee: Some(SavedTradeFee::from(taker_payment_trade_fee)),
+            maker_payment_spend_trade_fee: Some(SavedTradeFee::from(maker_payment_spend_trade_fee)),
             maker_coin_swap_contract_address,
             taker_coin_swap_contract_address,
         };
@@ -1317,70 +1342,25 @@ impl TakerSwap {
             },
         }
     }
-
-    async fn get_maker_coin_trade_fee(&self) -> Result<TradeFee, TradePreimageError> {
-        if let Some(ref fee) = self.r().maker_coin_trade_fee {
-            return Ok(fee.clone());
-        }
-
-        let fee = self
-            .maker_coin
-            .get_receiver_trade_fee()
-            .compat()
-            .await
-            .trace(source!())?;
-        self.w().maker_coin_trade_fee = Some(fee.clone());
-        Ok(fee)
-    }
-
-    async fn get_taker_coin_trade_fee(&self) -> Result<TradeFee, TradePreimageError> {
-        if let Some(ref fee) = self.r().taker_coin_trade_fee {
-            return Ok(fee.clone());
-        }
-
-        let preimage_value = TradePreimageValue::Exact(self.taker_amount.to_decimal());
-        let fee = self
-            .taker_coin
-            .get_sender_trade_fee(preimage_value)
-            .compat()
-            .await
-            .trace(source!())?;
-        self.w().taker_coin_trade_fee = Some(fee.clone());
-        Ok(fee)
-    }
-
-    async fn get_fee_to_send_taker_fee(&self, dex_fee: BigDecimal) -> Result<TradeFee, TradePreimageError> {
-        if let Some(ref fee) = self.r().fee_to_send_taker_fee {
-            return Ok(fee.clone());
-        }
-
-        let fee = self
-            .taker_coin
-            .get_fee_to_send_taker_fee(dex_fee)
-            .compat()
-            .await
-            .trace(source!())?;
-        self.w().fee_to_send_taker_fee = Some(fee.clone());
-        Ok(fee)
-    }
 }
 
-#[async_trait]
 impl AtomicSwap for TakerSwap {
-    async fn locked_amount(&self) -> Result<Vec<LockedAmount>, LockedAmountError> {
+    fn locked_amount(&self) -> Vec<LockedAmount> {
         let mut result = Vec::new();
 
         // if taker fee is not sent yet it must be virtually locked
+        let taker_fee_amount = dex_fee_amount(
+            self.maker_coin.ticker(),
+            self.taker_coin.ticker(),
+            &self.taker_amount.clone(),
+        );
+        let trade_fee = self
+            .r()
+            .data
+            .fee_to_send_taker_fee
+            .clone()
+            .map(|fee| TradeFee::from(fee));
         if self.r().taker_fee.is_none() {
-            let taker_fee_amount = dex_fee_amount(
-                self.maker_coin.ticker(),
-                self.taker_coin.ticker(),
-                &self.taker_amount.clone(),
-            );
-            let trade_fee = self
-                .get_fee_to_send_taker_fee(taker_fee_amount.to_decimal())
-                .await
-                .trace(source!())?;
             result.push(LockedAmount {
                 coin: self.taker_coin.ticker().to_owned(),
                 amount: taker_fee_amount,
@@ -1390,23 +1370,35 @@ impl AtomicSwap for TakerSwap {
 
         // if taker payment is not sent yet it must be virtually locked
         if self.r().taker_payment.is_none() {
+            let trade_fee = self
+                .r()
+                .data
+                .taker_payment_trade_fee
+                .clone()
+                .map(|fee| TradeFee::from(fee));
             result.push(LockedAmount {
                 coin: self.taker_coin.ticker().to_owned(),
                 amount: self.taker_amount.clone(),
-                trade_fee: self.get_taker_coin_trade_fee().await.trace(source!())?,
+                trade_fee,
             });
         }
 
         // if maker payment is not spent yet the `MakerPaymentSpend` tx fee must be virtually locked
         if self.r().maker_payment_spend.is_none() {
+            let trade_fee = self
+                .r()
+                .data
+                .maker_payment_spend_trade_fee
+                .clone()
+                .map(|fee| TradeFee::from(fee));
             result.push(LockedAmount {
                 coin: self.maker_coin.ticker().to_owned(),
                 amount: 0.into(),
-                trade_fee: self.get_maker_coin_trade_fee().await.trace(source!())?,
+                trade_fee,
             });
         }
 
-        Ok(result)
+        result
     }
 
     fn uuid(&self) -> &Uuid { &self.uuid }
@@ -1471,7 +1463,7 @@ pub async fn max_taker_vol(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, S
     let base = coin.ticker();
     let rel = req.trade_with.as_ref().unwrap_or(&req.coin);
     let balance = MmNumber::from(try_s!(coin.my_balance().compat().await));
-    let locked = try_s!(get_locked_amount(&ctx, base).await);
+    let locked = get_locked_amount(&ctx, base);
 
     let max_possible = &balance - &locked;
     let max_trade_fee = try_s!(
