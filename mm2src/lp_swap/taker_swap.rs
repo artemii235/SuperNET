@@ -2,15 +2,17 @@
 
 use super::{ban_pubkey, broadcast_my_swap_status, broadcast_swap_message_every, check_my_coin_balance_for_swap,
             check_other_coin_balance_for_swap, dex_fee_amount, dex_fee_rate, get_locked_amount, my_swap_file_path,
-            my_swaps_dir, recv_swap_msg, swap_topic, AtomicSwap, LockedAmount, MySwapInfo, NegotiationDataMsg,
-            RecoveredSwap, RecoveredSwapAction, SavedSwap, SavedTradeFee, SwapConfirmationsSettings, SwapError,
-            SwapMsg, SwapsContext, TakerFeeAdditionalInfo, TransactionIdentifier, WAIT_CONFIRM_INTERVAL};
+            my_swaps_dir, recv_swap_msg, swap_topic, AtomicSwap, CheckBalanceError, LockedAmount, MySwapInfo,
+            NegotiationDataMsg, RecoveredSwap, RecoveredSwapAction, SavedSwap, SavedTradeFee,
+            SwapConfirmationsSettings, SwapError, SwapMsg, SwapsContext, TakerFeeAdditionalInfo, TradeFeeResponse,
+            TradePreimageMethod, TradePreimageRequest, TradePreimageResponse, TransactionIdentifier,
+            WAIT_CONFIRM_INTERVAL};
 use crate::mm2::lp_network::subscribe_to_topic;
 use atomic::Atomic;
 use bigdecimal::BigDecimal;
 use coins::{lp_coinfindᵃ, FoundSwapTxSpend, MmCoinEnum, TradeFee, TradePreimageValue};
 use common::{bits256, executor::Timer, file_lock::FileLock, mm_ctx::MmArc, mm_number::MmNumber, now_ms, slurp, write,
-             MM_VERSION};
+             Traceable, MM_VERSION};
 use futures::{compat::Future01CompatExt, select, FutureExt};
 use futures01::Future;
 use http::Response;
@@ -1447,10 +1449,78 @@ pub async fn check_balance_for_taker_swap(
     Ok(())
 }
 
+pub async fn taker_swap_trade_preimage(
+    ctx: &MmArc,
+    req: TradePreimageRequest,
+) -> Result<TradePreimageResponse, String> {
+    let (my_coin_ticker, other_coin_ticker) = match req.swap_method {
+        TradePreimageMethod::SetPrice => return ERR!("Internal error: expected 'sell' or 'buy' method"),
+        TradePreimageMethod::Sell => (req.base, req.rel),
+        TradePreimageMethod::Buy => (req.rel, req.base),
+    };
+    let my_coin = match lp_coinfindᵃ(&ctx, &my_coin_ticker).await {
+        Ok(Some(t)) => t,
+        Ok(None) => return ERR!("No such coin: {}", my_coin_ticker),
+        Err(err) => return ERR!("!lp_coinfind({}): {}", my_coin_ticker, err),
+    };
+    let other_coin = match lp_coinfindᵃ(&ctx, &other_coin_ticker).await {
+        Ok(Some(t)) => t,
+        Ok(None) => return ERR!("No such coin: {}", other_coin_ticker),
+        Err(err) => return ERR!("!lp_coinfind({}): {}", other_coin_ticker, err),
+    };
+
+    let volume = if req.max {
+        try_s!(calc_max_taker_vol(&ctx, &my_coin, &other_coin_ticker).await)
+    } else {
+        MmNumber::from(req.volume)
+    };
+
+    let dex_amount = dex_fee_amount(&my_coin_ticker, &other_coin_ticker, &volume);
+    let fee_to_send_dex_fee = try_s!(
+        my_coin
+            .get_fee_to_send_taker_fee(dex_amount.to_decimal())
+            .compat()
+            .await
+    );
+
+    let preimage_value = TradePreimageValue::Exact(volume.to_decimal());
+    let my_coin_trade_fee = try_s!(my_coin.get_sender_trade_fee(preimage_value).compat().await);
+    let other_coin_trade_fee = try_s!(other_coin.get_receiver_trade_fee().compat().await);
+
+    let (base_coin_fee, rel_coin_fee) = match req.swap_method {
+        TradePreimageMethod::Sell => (my_coin_trade_fee, other_coin_trade_fee),
+        _ => (other_coin_trade_fee, my_coin_trade_fee),
+    };
+    let volume = if req.max { Some(volume.to_fraction()) } else { None };
+    Ok(TradePreimageResponse {
+        base_coin_fee: TradeFeeResponse::from(base_coin_fee),
+        rel_coin_fee: TradeFeeResponse::from(rel_coin_fee),
+        volume,
+        taker_fee: Some(dex_amount.to_fraction()),
+        fee_to_send_taker_fee: Some(TradeFeeResponse::from(fee_to_send_dex_fee)),
+    })
+}
+
 #[derive(Deserialize)]
 struct MaxTakerVolRequest {
     coin: String,
     trade_with: Option<String>,
+}
+
+pub async fn max_taker_vol(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
+    let req: MaxTakerVolRequest = try_s!(json::from_value(req));
+    let coin = match lp_coinfindᵃ(&ctx, &req.coin).await {
+        Ok(Some(t)) => t,
+        Ok(None) => return ERR!("No such coin: {}", req.coin),
+        Err(err) => return ERR!("!lp_coinfind({}): {}", req.coin, err),
+    };
+    let other_coin = req.trade_with.as_ref().unwrap_or(&req.coin);
+    let max_vol = try_s!(calc_max_taker_vol(&ctx, &coin, other_coin).await);
+
+    let res = try_s!(json::to_vec(&json!({
+        "result": max_vol.to_fraction()
+    })));
+    Ok(try_s!(Response::builder().body(res)))
 }
 
 /// If we want to calculate the maximum taker volume, we should solve the following equation:
@@ -1475,30 +1545,32 @@ struct MaxTakerVolRequest {
 /// - `max_dex_fee = dex_fee(max_possible_2)` is an intermediate value that will be passed into the `fee_to_send_taker_fee`.
 /// - `max_fee_to_send_taker_fee = fee_to_send_taker_fee(max_dex_fee)`
 /// After that `min_max_vol = balance - locked_amount - max_trade_fee - max_fee_to_send_taker_fee - dex_fee(max_vol)` can be solved as in the first case.
-pub async fn max_taker_vol(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
-    let req: MaxTakerVolRequest = try_s!(json::from_value(req));
-    let coin = match lp_coinfindᵃ(&ctx, &req.coin).await {
-        Ok(Some(t)) => t,
-        Ok(None) => return ERR!("No such coin: {}", req.coin),
-        Err(err) => return ERR!("!lp_coinfind({}): {}", req.coin, err),
-    };
-    let base = coin.ticker();
-    let rel = req.trade_with.as_ref().unwrap_or(&req.coin);
-    let balance = MmNumber::from(try_s!(coin.my_balance().compat().await));
-    let locked = get_locked_amount(&ctx, base);
+pub async fn calc_max_taker_vol(
+    ctx: &MmArc,
+    coin: &MmCoinEnum,
+    other_coin: &str,
+) -> Result<MmNumber, CheckBalanceError> {
+    let my_coin = coin.ticker();
+    let balance = MmNumber::from(try_map!(coin.my_balance().compat().await, CheckBalanceError::Other));
+    let locked = get_locked_amount(ctx, my_coin);
 
     let max_possible = &balance - &locked;
-    let max_trade_fee = try_s!(
-        coin.get_sender_trade_fee(TradePreimageValue::UpperBound(max_possible.to_decimal()))
-            .compat()
-            .await
-    );
+    let preimage_value = TradePreimageValue::UpperBound(max_possible.to_decimal());
+    let max_trade_fee = coin
+        .get_sender_trade_fee(preimage_value)
+        .compat()
+        .await
+        .trace(source!())?;
 
-    let result = if base == max_trade_fee.coin {
+    let max_vol = if my_coin == max_trade_fee.coin {
         // second case
         let max_possible_2 = &max_possible - &max_trade_fee.amount;
-        let max_dex_fee = dex_fee_amount(base, rel, &max_possible_2);
-        let max_fee_to_send_taker_fee = try_s!(coin.get_fee_to_send_taker_fee(max_dex_fee.to_decimal()).compat().await);
+        let max_dex_fee = dex_fee_amount(my_coin, other_coin, &max_possible_2);
+        let max_fee_to_send_taker_fee = coin
+            .get_fee_to_send_taker_fee(max_dex_fee.to_decimal())
+            .compat()
+            .await
+            .trace(source!())?;
         let min_max_possible = &max_possible_2 - &max_fee_to_send_taker_fee.amount;
 
         common::log::debug!(
@@ -1510,7 +1582,7 @@ pub async fn max_taker_vol(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, S
             max_dex_fee.to_fraction(),
             max_fee_to_send_taker_fee.amount.to_fraction()
         );
-        max_taker_vol_from_available(min_max_possible, base, rel)
+        max_taker_vol_from_available(min_max_possible, my_coin, other_coin).trace(source!())?
     } else {
         // first case
         common::log::debug!(
@@ -1518,23 +1590,12 @@ pub async fn max_taker_vol(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, S
             balance.to_fraction(),
             locked.to_fraction()
         );
-        max_taker_vol_from_available(max_possible, base, rel)
+        max_taker_vol_from_available(max_possible, my_coin, other_coin).trace(source!())?
     };
-
-    let max_vol = result.map_err(|e| {
-        ERRL!(
-            "Insufficient funds to trade. Please note funds could be locked by other swaps. Error: {}",
-            e
-        )
-    })?;
-
-    let res = try_s!(json::to_vec(&json!({
-        "result": max_vol.to_fraction()
-    })));
-    Ok(try_s!(Response::builder().body(res)))
+    Ok(max_vol)
 }
 
-pub fn max_taker_vol_from_available(available: MmNumber, base: &str, rel: &str) -> Result<MmNumber, String> {
+pub fn max_taker_vol_from_available(available: MmNumber, base: &str, rel: &str) -> Result<MmNumber, CheckBalanceError> {
     let dex_fee_rate = dex_fee_rate(base, rel);
     let fee_threshold = MmNumber::from("0.0001");
     let threshold_coef = &(&MmNumber::from(1) + &dex_fee_rate) / &dex_fee_rate;
@@ -1545,7 +1606,8 @@ pub fn max_taker_vol_from_available(available: MmNumber, base: &str, rel: &str) 
     };
 
     if max_vol <= MmNumber::from(0) {
-        return ERR!("Max taker volume {} cannot be zero or negative", max_vol);
+        let err = ERRL!("Max taker volume {} cannot be zero or negative", max_vol);
+        return Err(CheckBalanceError::NotSufficientBalance(err));
     }
     Ok(max_vol)
 }

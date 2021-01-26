@@ -1424,6 +1424,140 @@ mod docker_tests {
     }
 
     #[test]
+    fn test_trade_preimage() {
+        let priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
+        let (_ctx, mycoin) = utxo_coin_from_privkey("MYCOIN", &priv_key);
+        let my_address = mycoin.my_address().expect("!my_address");
+        fill_address(&mycoin, &my_address, 10.into(), 30);
+        let (_ctx, mycoin1) = utxo_coin_from_privkey("MYCOIN1", &priv_key);
+        let my_address = mycoin1.my_address().expect("!my_address");
+        fill_address(&mycoin1, &my_address, 20.into(), 30);
+
+        let coins = json!([
+            {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
+            {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":2000,"protocol":{"type":"UTXO"}},
+        ]);
+        let mut mm = unwrap!(MarketMakerIt::start(
+            json! ({
+                "gui": "nogui",
+                "netid": 9000,
+                "dht": "on",  // Enable DHT without delay.
+                "passphrase": format!("0x{}", hex::encode(priv_key)),
+                "coins": coins,
+                "rpc_password": "pass",
+                "i_am_see": true,
+            }),
+            "pass".to_string(),
+            None,
+        ));
+        let (_dump_log, _dump_dashboard) = mm_dump(&mm.log_path);
+        unwrap!(block_on(
+            mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
+        ));
+
+        log!([block_on(enable_native(&mm, "MYCOIN1", vec![]))]);
+        log!([block_on(enable_native(&mm, "MYCOIN", vec![]))]);
+
+        let rc = unwrap!(block_on(mm.rpc(json!({
+            "userpass": mm.userpass,
+            "method": "trade_preimage",
+            "base": "MYCOIN",
+            "rel": "MYCOIN1",
+            "swap_method": "setprice",
+            "max": true,
+        }))));
+        assert!(rc.0.is_success(), "!trade_preimage: {}", rc.1);
+        let json: Json = json::from_str(&rc.1).unwrap();
+        assert_eq!(json["result"]["base_coin_fee"]["amount"], Json::from("0.00001"));
+        assert_eq!(json["result"]["rel_coin_fee"]["amount"], Json::from("0"));
+        assert_eq!(json["result"]["fee_to_send_taker_fee"], Json::Null);
+        let max_vol = &json["result"]["volume"];
+        // 10 - 0.00001
+        assert_eq!(max_vol["numer"], Json::from("999999"));
+        assert_eq!(max_vol["denom"], Json::from("100000"));
+
+        let rc = unwrap!(block_on(mm.rpc(json!({
+            "userpass": mm.userpass,
+            "method": "trade_preimage",
+            "base": "MYCOIN1",
+            "rel": "MYCOIN",
+            "swap_method": "setprice",
+            "max": true,
+        }))));
+        assert!(rc.0.is_success(), "!trade_preimage: {}", rc.1);
+        let json: Json = json::from_str(&rc.1).unwrap();
+        assert_eq!(json["result"]["base_coin_fee"]["amount"], Json::from("0.00002"));
+        let max_vol = &json["result"]["volume"];
+        // 20 - 0.00002
+        log!((max_vol));
+        assert_eq!(max_vol["numer"], Json::from("999999"));
+        assert_eq!(max_vol["denom"], Json::from("50000"));
+
+        let rc = unwrap!(block_on(mm.rpc(json!({
+            "userpass": mm.userpass,
+            "method": "trade_preimage",
+            "base": "MYCOIN1",
+            "rel": "MYCOIN",
+            "swap_method": "setprice",
+            "volume": "19.99998",
+        }))));
+        assert!(rc.0.is_success(), "!trade_preimage: {}", rc.1);
+        let json: Json = json::from_str(&rc.1).unwrap();
+        assert_eq!(json["result"]["volume"], Json::Null);
+        assert_eq!(json["result"]["base_coin_fee"]["amount"], Json::from("0.00002"));
+
+        let rc = unwrap!(block_on(mm.rpc(json!({
+            "userpass": mm.userpass,
+            "method": "max_taker_vol",
+            "coin": "MYCOIN",
+        }))));
+        assert!(rc.0.is_success(), "!max_taker_vol: {}", rc.1);
+        let json: Json = json::from_str(&rc.1).unwrap();
+        let mycoin_max_vol = &json["result"];
+
+        let rc = unwrap!(block_on(mm.rpc(json!({
+            "userpass": mm.userpass,
+            "method": "max_taker_vol",
+            "coin": "MYCOIN1",
+        }))));
+        assert!(rc.0.is_success(), "!max_taker_vol: {}", rc.1);
+        let json: Json = json::from_str(&rc.1).unwrap();
+        let mycoin1_max_vol = &json["result"];
+
+        let rc = unwrap!(block_on(mm.rpc(json!({
+            "userpass": mm.userpass,
+            "method": "trade_preimage",
+            "base": "MYCOIN",
+            "rel": "MYCOIN1",
+            "swap_method": "sell",
+            "max": true,
+        }))));
+        assert!(rc.0.is_success(), "!trade_preimage: {}", rc.1);
+        let json: Json = json::from_str(&rc.1).unwrap();
+        assert_eq!(json["result"]["fee_to_send_taker_fee"]["amount"], Json::from("0.00001"));
+        assert_eq!(json["result"]["base_coin_fee"]["amount"], Json::from("0.00001"));
+        assert_eq!(json["result"]["rel_coin_fee"]["amount"], Json::from("0"));
+        let max_vol = &json["result"]["volume"];
+        assert_eq!(max_vol, mycoin_max_vol);
+
+        let rc = unwrap!(block_on(mm.rpc(json!({
+            "userpass": mm.userpass,
+            "method": "trade_preimage",
+            "base": "MYCOIN",
+            "rel": "MYCOIN1",
+            "swap_method": "buy",
+            "max": true,
+        }))));
+        assert!(rc.0.is_success(), "!trade_preimage: {}", rc.1);
+        let json: Json = json::from_str(&rc.1).unwrap();
+        assert_eq!(json["result"]["fee_to_send_taker_fee"]["amount"], Json::from("0.00002"));
+        assert_eq!(json["result"]["base_coin_fee"]["amount"], Json::from("0"));
+        assert_eq!(json["result"]["rel_coin_fee"]["amount"], Json::from("0.00002"));
+        let max_vol = &json["result"]["volume"];
+        assert_eq!(max_vol, mycoin1_max_vol);
+    }
+
+    #[test]
     fn test_get_max_taker_vol() {
         let (_ctx, _, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN1", 1.into());
         let coins = json! ([

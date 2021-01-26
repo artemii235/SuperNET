@@ -7,7 +7,7 @@ use coins::utxo::qtum::QtumBasedCoin;
 use coins::utxo::qtum::{qtum_coin_from_conf_and_request, QtumCoin};
 use coins::utxo::sat_from_big_decimal;
 use coins::utxo::utxo_common::big_decimal_from_sat;
-use coins::{MarketCoinOps, MmCoin, TransactionEnum};
+use coins::{MarketCoinOps, MmCoin, TradePreimageValue, TransactionEnum};
 use common::for_tests::{check_my_swap_status, check_recent_swaps, check_stats_swap_status, MAKER_ERROR_EVENTS,
                         MAKER_SUCCESS_EVENTS, TAKER_ERROR_EVENTS, TAKER_SUCCESS_EVENTS};
 use common::mm_ctx::MmArc;
@@ -1269,19 +1269,12 @@ fn test_max_taker_vol_dynamic_trade_fee() {
     // - `max_possible = balance - locked_amount`, where `locked_amount = 0`
     // - `max_trade_fee = trade_fee(balance)`
     // Please note if we pass the exact value, the `get_sender_trade_fee` will fail with 'Not sufficient balance: Couldn't collect enough value from utxos'.
-    // So we should deduct trade fee from the output. It is possible if `max` field is set to the true.
-    let rc = unwrap!(block_on(mm.rpc(json!({
-        "userpass": mm.userpass,
-        "method": "trade_preimage",
-        "base": "QTUM",
-        "rel": "MYCOIN",
-        "swap_type": "maker_swap",
-        "max": true,
-    }))));
-
-    assert!(rc.0.is_success(), "!trade_preimage: {}", rc.1);
-    let json: Json = json::from_str(&rc.1).unwrap();
-    let max_trade_fee: BigDecimal = json::from_value(json["result"]["base_coin_fee"]["amount"].clone()).unwrap();
+    // So we should deduct trade fee from the output.
+    let max_trade_fee = coin
+        .get_sender_trade_fee(TradePreimageValue::UpperBound(qtum_balance.clone()))
+        .wait()
+        .expect("!get_sender_trade_fee");
+    let max_trade_fee = max_trade_fee.amount.to_decimal();
     common::log::debug!("max_trade_fee: {}", max_trade_fee);
 
     // - `max_possible_2 = balance - locked_amount - max_trade_fee`, where `locked_amount = 0`

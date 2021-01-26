@@ -2125,3 +2125,35 @@ fn test_get_sender_trade_fee_dynamic_tx_fee() {
         .expect("!get_sender_trade_fee");
     assert_eq!(fee1, fee3);
 }
+
+// #[test]
+// fn print_tx() {
+//     let mut clients = vec![
+//         (0, "BCH", electrum_client_for_test(&["electrum1.cipig.net:10055"])),
+//         (0, "BTC", electrum_client_for_test(&["electrum1.cipig.net:10000"])),
+//         (0, "DOGE", electrum_client_for_test(&["electrum1.cipig.net:10060"])),
+//         (0, "LTC", electrum_client_for_test(&["electrum1.cipig.net:10063"])),
+//         (0, "QTUM", electrum_client_for_test(&["electrum1.cipig.net:10050"])),
+//     ];
+//
+//     loop {
+//         for (prev, coin, client) in clients.iter_mut() {
+//             if let Ok(fee) = client.estimate_fee_sat(8, &EstimateFeeMethod::Standard, &None).wait() {
+//                 if fee != *prev {
+//                     if let Ok(block) = client.get_block_count().wait() {
+//                         let dif = (fee as i64) - (*prev as i64);
+//                         let percent = if *prev == 0 {
+//                             0f32
+//                         } else {
+//                             (100 * fee) as f32 / (*prev as f32)
+//                         };
+//                         let percent = 100f32 - percent;
+//                         *prev = fee;
+//                         println!("{}:{} => {}, dif={}, percent={}", coin, block, fee, dif, percent);
+//                     }
+//                 }
+//             }
+//         }
+//         std::thread::sleep(Duration::from_secs(2));
+//     }
+// }

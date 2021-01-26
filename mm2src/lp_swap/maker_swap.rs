@@ -4,13 +4,14 @@ use super::{ban_pubkey, broadcast_my_swap_status, broadcast_swap_message_every, 
             check_my_coin_balance_for_swap, check_other_coin_balance_for_swap, dex_fee_amount, get_locked_amount,
             my_swap_file_path, my_swaps_dir, recv_swap_msg, swap_topic, AtomicSwap, CheckBalanceError, LockedAmount,
             MySwapInfo, RecoveredSwap, RecoveredSwapAction, SavedSwap, SavedTradeFee, SwapConfirmationsSettings,
-            SwapError, SwapMsg, SwapsContext, TransactionIdentifier, WAIT_CONFIRM_INTERVAL};
+            SwapError, SwapMsg, SwapsContext, TradeFeeResponse, TradePreimageRequest, TradePreimageResponse,
+            TransactionIdentifier, WAIT_CONFIRM_INTERVAL};
 
 use crate::mm2::{lp_network::subscribe_to_topic, lp_swap::NegotiationDataMsg};
 use atomic::Atomic;
 use bigdecimal::BigDecimal;
 use bitcrypto::dhash160;
-use coins::{FoundSwapTxSpend, MmCoinEnum, TradeFee, TradePreimageValue, TransactionEnum};
+use coins::{lp_coinfindᵃ, FoundSwapTxSpend, MmCoinEnum, TradeFee, TradePreimageValue, TransactionEnum};
 use common::{bits256, executor::Timer, file_lock::FileLock, mm_ctx::MmArc, mm_number::MmNumber, now_ms, slurp, write,
              Traceable, MM_VERSION};
 use futures::{compat::Future01CompatExt, select, FutureExt};
@@ -1424,6 +1425,42 @@ pub async fn check_balance_for_maker_swap(
     try_s!(check_my_coin_balance_for_swap(ctx, my_coin, swap_uuid, volume, maker_payment_trade_fee, None).await);
     try_s!(check_other_coin_balance_for_swap(ctx, other_coin, swap_uuid, taker_payment_spend_trade_fee).await);
     Ok(())
+}
+
+pub async fn maker_swap_trade_preimage(
+    ctx: &MmArc,
+    req: TradePreimageRequest,
+) -> Result<TradePreimageResponse, String> {
+    let base_coin = match lp_coinfindᵃ(&ctx, &req.base).await {
+        Ok(Some(t)) => t,
+        Ok(None) => return ERR!("No such coin: {}", req.base),
+        Err(err) => return ERR!("!lp_coinfind({}): {}", req.base, err),
+    };
+    let rel_coin = match lp_coinfindᵃ(&ctx, &req.rel).await {
+        Ok(Some(t)) => t,
+        Ok(None) => return ERR!("No such coin: {}", req.rel),
+        Err(err) => return ERR!("!lp_coinfind({}): {}", req.rel, err),
+    };
+
+    let volume = if req.max {
+        let balance = try_s!(base_coin.my_balance().compat().await);
+        try_s!(calc_max_maker_vol(&ctx, &base_coin, &balance).await)
+    } else {
+        MmNumber::from(req.volume)
+    };
+
+    let preimage_value = TradePreimageValue::Exact(volume.to_decimal());
+    let base_coin_fee = try_s!(base_coin.get_sender_trade_fee(preimage_value).compat().await);
+    let rel_coin_fee = try_s!(rel_coin.get_receiver_trade_fee().compat().await);
+
+    let volume = if req.max { Some(volume.to_fraction()) } else { None };
+    Ok(TradePreimageResponse {
+        base_coin_fee: TradeFeeResponse::from(base_coin_fee),
+        rel_coin_fee: TradeFeeResponse::from(rel_coin_fee),
+        volume,
+        taker_fee: None,
+        fee_to_send_taker_fee: None,
+    })
 }
 
 /// Calculate max Maker volume.

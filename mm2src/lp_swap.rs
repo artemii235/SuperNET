@@ -59,16 +59,17 @@
 use crate::mm2::lp_network::broadcast_p2p_msg;
 use async_std::sync as async_std_sync;
 use bigdecimal::BigDecimal;
-use coins::{lp_coinfind, lp_coinfindᵃ, MmCoinEnum, TradeFee, TradePreimageError, TradePreimageValue, TransactionEnum};
+use coins::{lp_coinfind, MmCoinEnum, TradeFee, TradePreimageError, TransactionEnum};
 use common::{bits256, block_on, calc_total_pages,
              executor::{spawn, Timer},
              mm_ctx::{from_ctx, MmArc},
-             mm_number::MmNumber,
+             mm_number::{Fraction, MmNumber},
              now_ms, read_dir, rpc_response, slurp, write, HyRes, TraceSource, Traceable};
 use futures::compat::Future01CompatExt;
 use futures::future::{abortable, AbortHandle, TryFutureExt};
 use http::Response;
 use mm2_libp2p::{decode_signed, encode_and_sign, pub_sub_topic, TopicPrefix};
+use num_rational::BigRational;
 use primitives::hash::{H160, H256, H264};
 use rpc::v1::types::{Bytes as BytesJson, H256 as H256Json};
 use serde_json::{self as json, Value as Json};
@@ -262,11 +263,11 @@ macro_rules! recv {
 
 #[path = "lp_swap/taker_swap.rs"] mod taker_swap;
 
-pub use maker_swap::{calc_max_maker_vol, check_balance_for_maker_swap, run_maker_swap, MakerSwap, RunMakerSwapInput};
+pub use maker_swap::{calc_max_maker_vol, check_balance_for_maker_swap, maker_swap_trade_preimage, run_maker_swap,
+                     MakerSwap, RunMakerSwapInput};
 use maker_swap::{stats_maker_swap_file_path, MakerSavedSwap, MakerSwapEvent};
-use num_rational::BigRational;
-pub use taker_swap::{check_balance_for_taker_swap, max_taker_vol, max_taker_vol_from_available, run_taker_swap,
-                     RunTakerSwapInput, TakerSwap};
+pub use taker_swap::{calc_max_taker_vol, check_balance_for_taker_swap, max_taker_vol, max_taker_vol_from_available,
+                     run_taker_swap, taker_swap_trade_preimage, RunTakerSwapInput, TakerSwap};
 use taker_swap::{stats_taker_swap_file_path, TakerSavedSwap, TakerSwapEvent};
 
 /// Includes the grace time we add to the "normal" timeouts
@@ -451,6 +452,7 @@ fn get_locked_amount_by_other_swaps(ctx: &MmArc, except_uuid: &Uuid, coin: &str)
         })
 }
 
+#[derive(Debug)]
 pub enum CheckBalanceError {
     NotSufficientBalance(String),
     Other(String),
@@ -1039,66 +1041,63 @@ pub fn stats_swap_status(ctx: MmArc, req: Json) -> HyRes {
 }
 
 #[derive(Deserialize)]
-struct TradePreimageRequest {
+pub struct TradePreimageRequest {
     base: String,
     rel: String,
-    swap_type: TradePreimageSwapType,
+    swap_method: TradePreimageMethod,
     #[serde(default)]
-    value: BigDecimal,
+    volume: BigDecimal,
     #[serde(default)]
     max: bool,
 }
 
 #[derive(Deserialize)]
-enum TradePreimageSwapType {
-    #[serde(rename = "maker_swap")]
-    MakerSwap,
-    #[serde(rename = "taker_swap")]
-    TakerSwap,
+#[serde(rename_all = "lowercase")]
+pub enum TradePreimageMethod {
+    SetPrice,
+    Buy,
+    Sell,
+}
+
+#[derive(Serialize)]
+pub struct TradePreimageResponse {
+    base_coin_fee: TradeFeeResponse,
+    rel_coin_fee: TradeFeeResponse,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    volume: Option<Fraction>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    taker_fee: Option<Fraction>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fee_to_send_taker_fee: Option<TradeFeeResponse>,
+}
+
+#[derive(Serialize)]
+pub struct TradeFeeResponse {
+    coin: String,
+    amount: BigDecimal,
+    amount_fraction: Fraction,
+    amount_rat: BigRational,
+}
+
+impl From<TradeFee> for TradeFeeResponse {
+    fn from(orig: TradeFee) -> Self {
+        TradeFeeResponse {
+            coin: orig.coin,
+            amount: orig.amount.to_decimal(),
+            amount_fraction: orig.amount.to_fraction(),
+            amount_rat: orig.amount.to_ratio(),
+        }
+    }
 }
 
 pub async fn trade_preimage(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
     let req: TradePreimageRequest = try_s!(json::from_value(req));
-    let (sender, receiver) = match req.swap_type {
-        TradePreimageSwapType::MakerSwap => (req.base, req.rel),
-        TradePreimageSwapType::TakerSwap => (req.rel, req.base),
+    let result = match req.swap_method {
+        TradePreimageMethod::SetPrice => try_s!(maker_swap_trade_preimage(&ctx, req).await),
+        TradePreimageMethod::Buy | TradePreimageMethod::Sell => try_s!(taker_swap_trade_preimage(&ctx, req).await),
     };
-    let sender_coin = match lp_coinfindᵃ(&ctx, &sender).await {
-        Ok(Some(t)) => t,
-        Ok(None) => return ERR!("No such coin: {}", sender),
-        Err(err) => return ERR!("!lp_coinfind({}): {}", sender, err),
-    };
-    let receiver_coin = match lp_coinfindᵃ(&ctx, &receiver).await {
-        Ok(Some(t)) => t,
-        Ok(None) => return ERR!("No such coin: {}", receiver),
-        Err(err) => return ERR!("!lp_coinfind({}): {}", receiver, err),
-    };
-
-    let value = if req.max {
-        let balance = try_s!(sender_coin.my_balance().compat().await);
-        TradePreimageValue::UpperBound(balance)
-    } else {
-        TradePreimageValue::Exact(req.value)
-    };
-
-    let sender_fee = try_s!(sender_coin.get_sender_trade_fee(value).compat().await);
-    let receiver_fee = try_s!(receiver_coin.get_receiver_trade_fee().compat().await);
-    let res = try_s!(json::to_vec(&json!({
-        "result": {
-            "base_coin_fee": {
-                "coin": sender_fee.coin,
-                "amount": sender_fee.amount.to_decimal(),
-                "amount_fraction": sender_fee.amount.to_fraction(),
-                "amount_rat": sender_fee.amount.to_ratio(),
-            },
-            "rel_coin_fee": {
-                "coin": receiver_fee.coin,
-                "amount": receiver_fee.amount.to_decimal(),
-                "amount_fraction": receiver_fee.amount.to_fraction(),
-                "amount_rat": receiver_fee.amount.to_ratio(),
-            }
-        }
-    })));
+    let res = json!({ "result": result });
+    let res = try_s!(json::to_vec(&res));
     Ok(try_s!(Response::builder().body(res)))
 }
 
