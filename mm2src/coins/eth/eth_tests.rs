@@ -1,5 +1,4 @@
 use super::*;
-use bigdecimal::Zero;
 use common::block_on;
 use common::for_tests::wait_for_log;
 use common::mm_ctx::{MmArc, MmCtxBuilder};
@@ -734,28 +733,32 @@ mod wasm_bindgen_tests {
 fn test_add_ten_pct_one_gwei() {
     let num = wei_from_big_decimal(&"0.1".parse().unwrap(), 9).unwrap();
     let expected = wei_from_big_decimal(&"1.1".parse().unwrap(), 9).unwrap();
-    let actual = add_ten_pct_one_gwei(num);
+    let actual = increase_by_percent_one_gwei(num, GAS_PRICE_PERCENT);
     assert_eq!(expected, actual);
 
     let num = wei_from_big_decimal(&"9.9".parse().unwrap(), 9).unwrap();
     let expected = wei_from_big_decimal(&"10.9".parse().unwrap(), 9).unwrap();
-    let actual = add_ten_pct_one_gwei(num);
+    let actual = increase_by_percent_one_gwei(num, GAS_PRICE_PERCENT);
     assert_eq!(expected, actual);
 
     let num = wei_from_big_decimal(&"30.1".parse().unwrap(), 9).unwrap();
     let expected = wei_from_big_decimal(&"33.11".parse().unwrap(), 9).unwrap();
-    let actual = add_ten_pct_one_gwei(num);
+    let actual = increase_by_percent_one_gwei(num, GAS_PRICE_PERCENT);
     assert_eq!(expected, actual);
 }
 
 #[test]
 fn get_sender_trade_preimage() {
-    EthCoinImpl::get_gas_price.mock_safe(|_| MockResult::Return(Box::new(futures01::future::ok(40.into()))));
+    const GAS_PRICE: u64 = 50000000000;
+    // `GAS_PRICE` increased by 5%
+    const TRADE_PREIMAGE_GAS_PRICE: u64 = 52500000000;
+    EthCoinImpl::get_gas_price.mock_safe(|_| MockResult::Return(Box::new(futures01::future::ok(GAS_PRICE.into()))));
 
     let (_ctx, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://dummy.dummy".into()]);
 
     // trade fee for the ETH coin is `2 * 150_000 * 40` always
-    let amount = u256_to_big_decimal((2 * 150_000 * 40).into(), 18).expect("!u256_to_big_decimal");
+    let amount =
+        u256_to_big_decimal((2 * 150_000 * TRADE_PREIMAGE_GAS_PRICE).into(), 18).expect("!u256_to_big_decimal");
     let expected_fee = TradeFee {
         coin: "ETH".to_owned(),
         amount: amount.into(),
@@ -778,13 +781,17 @@ fn get_sender_trade_preimage() {
 #[test]
 fn get_erc20_sender_trade_preimage() {
     static mut ALLOWANCE: u64 = 0;
+    const GAS_PRICE: u64 = 50000000000;
+    // `GAS_PRICE` increased by 5%
+    const TRADE_PREIMAGE_GAS_PRICE: u64 = 52500000000;
     EthCoin::allowance
         .mock_safe(|_, _| MockResult::Return(Box::new(futures01::future::ok(unsafe { ALLOWANCE.into() }))));
 
-    EthCoinImpl::get_gas_price.mock_safe(|_| MockResult::Return(Box::new(futures01::future::ok(40.into()))));
+    EthCoinImpl::get_gas_price.mock_safe(|_| MockResult::Return(Box::new(futures01::future::ok(GAS_PRICE.into()))));
 
     fn expected_trade_fee(gas_limit: u64) -> TradeFee {
-        let amount = u256_to_big_decimal((gas_limit * 40).into(), 18).expect("!u256_to_big_decimal");
+        let amount =
+            u256_to_big_decimal((gas_limit * TRADE_PREIMAGE_GAS_PRICE).into(), 18).expect("!u256_to_big_decimal");
         TradeFee {
             coin: "ETH".to_owned(),
             amount: amount.into(),
@@ -803,6 +810,7 @@ fn get_erc20_sender_trade_preimage() {
         .get_sender_trade_fee(TradePreimageValue::UpperBound(value))
         .wait()
         .expect("!get_sender_trade_fee");
+    log!([actual.amount.to_decimal()]);
     assert_eq!(actual, expected_trade_fee(300_000));
 
     // value is greater than allowance
@@ -835,10 +843,14 @@ fn get_erc20_sender_trade_preimage() {
 
 #[test]
 fn get_receiver_trade_preimage() {
-    EthCoinImpl::get_gas_price.mock_safe(|_| MockResult::Return(Box::new(futures01::future::ok(40.into()))));
+    const GAS_PRICE: u64 = 50000000000;
+    // `GAS_PRICE` increased by 5%
+    const TRADE_PREIMAGE_GAS_PRICE: u64 = 52500000000;
+
+    EthCoinImpl::get_gas_price.mock_safe(|_| MockResult::Return(Box::new(futures01::future::ok(GAS_PRICE.into()))));
 
     let (_ctx, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://dummy.dummy".into()]);
-    let amount = u256_to_big_decimal((150_000 * 40).into(), 18).expect("!u256_to_big_decimal");
+    let amount = u256_to_big_decimal((150_000 * TRADE_PREIMAGE_GAS_PRICE).into(), 18).expect("!u256_to_big_decimal");
     let expected_fee = TradeFee {
         coin: "ETH".to_owned(),
         amount: amount.into(),
@@ -851,10 +863,13 @@ fn get_receiver_trade_preimage() {
 #[test]
 fn test_get_fee_to_send_taker_fee() {
     const DEX_FEE_AMOUNT: u64 = 100_000;
+    const GAS_PRICE: u64 = 50000000000;
+    // `GAS_PRICE` increased by 5%
+    const TRADE_PREIMAGE_GAS_PRICE: u64 = 52500000000;
 
-    EthCoinImpl::get_gas_price.mock_safe(|_| MockResult::Return(Box::new(futures01::future::ok(40.into()))));
+    EthCoinImpl::get_gas_price.mock_safe(|_| MockResult::Return(Box::new(futures01::future::ok(GAS_PRICE.into()))));
     EthCoinImpl::estimate_gas.mock_safe(|_, _, _| MockResult::Return(Box::new(futures01::future::ok(100_000.into()))));
-    let amount = u256_to_big_decimal((100_000 * 40).into(), 18).expect("!u256_to_big_decimal");
+    let amount = u256_to_big_decimal((100_000 * TRADE_PREIMAGE_GAS_PRICE).into(), 18).expect("!u256_to_big_decimal");
     let expected_fee = TradeFee {
         coin: "ETH".to_owned(),
         amount: amount.into(),

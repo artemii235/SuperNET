@@ -79,6 +79,10 @@ pub const PAYMENT_STATE_UNINITIALIZED: u8 = 0;
 pub const PAYMENT_STATE_SENT: u8 = 1;
 const _PAYMENT_STATE_SPENT: u8 = 2;
 const _PAYMENT_STATE_REFUNDED: u8 = 3;
+const GAS_PRICE_PERCENT: u64 = 10;
+/// `get_sender_trade_fee` and `get_receiver_trade_fee` should take into account that gas price may increase during the swap.
+/// So we should increase the gas price by 5%.
+const TRADE_PREIMAGE_GAS_PRICE_PERCENT: u64 = 5;
 
 lazy_static! {
     pub static ref SWAP_CONTRACT: Contract = unwrap!(Contract::load(SWAP_CONTRACT_ABI.as_bytes()));
@@ -268,7 +272,9 @@ impl EthCoinImpl {
     /// Get gas price
     fn get_gas_price(&self) -> Box<dyn Future<Item = U256, Error = String> + Send> {
         let fut = if let Some(url) = &self.gas_station_url {
-            Either01::A(GasStationData::get_gas_price(&url).map(add_ten_pct_one_gwei))
+            Either01::A(
+                GasStationData::get_gas_price(&url).map(|price| increase_by_percent_one_gwei(price, GAS_PRICE_PERCENT)),
+            )
         } else {
             Either01::B(self.web3.eth().gas_price().map_err(|e| ERRL!("{}", e)))
         };
@@ -2421,6 +2427,7 @@ impl MmCoin for EthCoin {
         let coin = self.clone();
         let fut = async move {
             let gas_price = try_map!(coin.get_gas_price().compat().await, TradePreimageError::Other);
+            let gas_price = increase_by_percent_one_gwei(gas_price, TRADE_PREIMAGE_GAS_PRICE_PERCENT);
             let gas_limit = match coin.coin_type {
                 EthCoinType::Eth => {
                     // this gas_limit includes gas for `ethPayment` and `senderRefund` contract calls
@@ -2460,6 +2467,7 @@ impl MmCoin for EthCoin {
         let coin = self.clone();
         let fut = async move {
             let gas_price = try_map!(coin.get_gas_price().compat().await, TradePreimageError::Other);
+            let gas_price = increase_by_percent_one_gwei(gas_price, TRADE_PREIMAGE_GAS_PRICE_PERCENT);
             let total_fee = gas_price * U256::from(150_000);
             let amount = try_map!(u256_to_big_decimal(total_fee, 18), TradePreimageError::Other);
             Ok(TradeFee {
@@ -2498,6 +2506,7 @@ impl MmCoin for EthCoin {
             };
 
             let gas_price = try_map!(coin.get_gas_price().compat().await, TradePreimageError::Other);
+            let gas_price = increase_by_percent_one_gwei(gas_price, TRADE_PREIMAGE_GAS_PRICE_PERCENT);
             let estimate_gas_req = CallRequest {
                 value: Some(eth_value),
                 data: Some(data.clone().into()),
@@ -2914,12 +2923,12 @@ fn get_addr_nonce(addr: Address, web3s: Vec<Web3Instance>) -> Box<dyn Future<Ite
     Box::new(Box::pin(fut).compat())
 }
 
-fn add_ten_pct_one_gwei(num: U256) -> U256 {
+fn increase_by_percent_one_gwei(num: U256, percent: u64) -> U256 {
     let one_gwei = U256::from(10u64.pow(9));
-    let ten_pct = (num / U256::from(100)) * U256::from(10);
-    if ten_pct < one_gwei {
+    let percent = (num / U256::from(100)) * U256::from(percent);
+    if percent < one_gwei {
         num + one_gwei
     } else {
-        num + ten_pct
+        num + percent
     }
 }

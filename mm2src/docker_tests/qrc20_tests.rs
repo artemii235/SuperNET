@@ -1285,16 +1285,11 @@ fn test_max_taker_vol_dynamic_trade_fee() {
 
     // - `max_fee_to_send_taker_fee = fee_to_send_taker_fee(max_dex_fee)`
     // `taker_fee` is sent using general withdraw, and the fee get be obtained from withdraw result
-    let rc = unwrap!(block_on(mm.rpc(json!({
-        "userpass": mm.userpass,
-        "method": "withdraw",
-        "coin": "QTUM",
-        "to": "qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG",
-        "amount": max_dex_fee.to_decimal(),
-    }))));
-    assert!(rc.0.is_success(), "!withdraw: {}", rc.1);
-    let json: Json = json::from_str(&rc.1).unwrap();
-    let max_fee_to_send_taker_fee: BigDecimal = json::from_value(json["fee_details"]["amount"].clone()).unwrap();
+    let max_fee_to_send_taker_fee = coin
+        .get_fee_to_send_taker_fee(max_dex_fee.to_decimal())
+        .wait()
+        .expect("!get_fee_to_send_taker_fee");
+    let max_fee_to_send_taker_fee = max_fee_to_send_taker_fee.amount.to_decimal();
     common::log::debug!("max_fee_to_send_taker_fee: {}", max_fee_to_send_taker_fee);
 
     // and then calculate `min_max_val = balance - locked_amount - max_trade_fee - max_fee_to_send_taker_fee - dex_fee(max_val)` using `max_taker_vol_from_available()`

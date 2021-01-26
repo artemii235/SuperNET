@@ -50,6 +50,9 @@ lazy_static! {
 }
 
 pub const HISTORY_TOO_LARGE_ERR_CODE: i64 = -1;
+/// `get_sender_trade_fee` and `get_receiver_trade_fee` should take into account that dynamic fee may increase during the swap.
+/// So we should increase the dynamic fee by 1%.
+const TRADE_PREIMAGE_DYNAMIC_FEE_PERCENT: f64 = 1.;
 
 pub struct UtxoArcBuilder<'a> {
     ctx: &'a MmArc,
@@ -1749,7 +1752,10 @@ where
                 });
             },
             // if it's dynamic fee, we should generate a swap transaction to get an actual trade fee
-            fee => fee,
+            ActualTxFee::Dynamic(fee) => {
+                // take into account that the dynamic tx fee may increase during the swap
+                ActualTxFee::Dynamic(increase_by_percent(fee, TRADE_PREIMAGE_DYNAMIC_FEE_PERCENT))
+            },
         };
 
         let (amount, fee_policy) = match value {
@@ -1826,7 +1832,10 @@ where
                 });
             },
             // if it's dynamic fee, we should generate a swap transaction to get an actual trade fee
-            fee => fee,
+            ActualTxFee::Dynamic(fee) => {
+                // take into account that the dynamic tx fee may increase during the swap
+                ActualTxFee::Dynamic(increase_by_percent(fee, TRADE_PREIMAGE_DYNAMIC_FEE_PERCENT))
+            },
         };
 
         let (unspents, _recently_sent_txs) = try_map!(
@@ -2407,4 +2416,21 @@ where
             }
         }
     }
+}
+
+fn increase_by_percent(num: u64, percent: f64) -> u64 {
+    let percent = num as f64 / 100. * percent;
+    num + percent as u64
+}
+
+#[test]
+fn test_increase_by_percent() {
+    assert_eq!(increase_by_percent(4300, 1.), 4343);
+    assert_eq!(increase_by_percent(30, 6.9), 32);
+    assert_eq!(increase_by_percent(30, 6.), 31);
+    assert_eq!(increase_by_percent(10, 6.), 10);
+    assert_eq!(increase_by_percent(1000, 0.1), 1001);
+    assert_eq!(increase_by_percent(0, 20.), 0);
+    assert_eq!(increase_by_percent(20, 0.), 20);
+    assert_eq!(increase_by_percent(23, 100.), 46);
 }
