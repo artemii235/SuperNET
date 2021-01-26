@@ -902,27 +902,3 @@ fn test_get_fee_to_send_taker_fee_insufficient_balance() {
         e => panic!("Unexpected error: {}", e),
     }
 }
-
-#[test]
-fn print_tx() {
-    let (_ctx, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://eth1.cipig.net:8555".to_owned()]);
-    let mut prev = BigDecimal::from(0);
-    loop {
-        if let Ok(fee) = coin.get_gas_price().wait() {
-            let fee = u256_to_big_decimal(fee, 8).expect("!u256_to_big_decimal");
-            if fee != prev {
-                if let Ok(block) = coin.current_block().wait() {
-                    let dif = &fee - &prev;
-                    let percent = if prev.is_zero() {
-                        BigDecimal::from(0)
-                    } else {
-                        &(&BigDecimal::from(100) * &fee) / &prev
-                    };
-                    prev = fee.clone();
-                    println!("ETH:{} => {}, dif={}, percent={}", block, fee, dif, percent);
-                }
-            }
-        }
-        std::thread::sleep(Duration::from_secs(2));
-    }
-}
