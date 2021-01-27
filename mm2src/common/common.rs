@@ -1143,7 +1143,7 @@ macro_rules! try_h {
     };
 }
 
-/// Maps an error by applying an `map_f` expression to an error within `exp` and return the result on a failure.
+/// Maps an error by applying a `map_f` expression to an error within `exp` and return the result on a failure.
 ///
 /// Unlike `$exp.map_err($map_f)` this macro applies `ERRL` to an error before the `map_f` is called.
 #[macro_export]

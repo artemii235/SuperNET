@@ -2927,12 +2927,11 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
 
     let my_balance = try_s!(base_coin.my_balance().compat().await);
     let volume = if req.max {
-        // first check if rel coin balance is sufficient
-        common::log::info!("Check other_coin '{}' balance for MakerSwap", rel_coin.ticker());
+        // first check if `rel_coin` balance is sufficient
         let rel_coin_trade_fee = try_s!(rel_coin.get_receiver_trade_fee().compat().await);
         try_s!(check_other_coin_balance_for_swap(&ctx, &rel_coin, None, rel_coin_trade_fee).await);
         // calculate max maker volume
-        // note the `calc_max_maker_vol` returns [`CheckBalanceError::NotSufficientBalance`] error if the balance is not sufficient
+        // note the `calc_max_maker_vol` returns [`CheckBalanceError::NotSufficientBalance`] error if the balance of `base_coin` is not sufficient
         try_s!(calc_max_maker_vol(&ctx, &base_coin, &my_balance).await)
     } else {
         if req.volume <= MmNumber::from(0) {

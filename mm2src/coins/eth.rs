@@ -2544,7 +2544,7 @@ impl MmCoin for EthCoin {
                     let err = ERRL!("The balance seems to be insufficient: {:?}", e);
                     return Err(TradePreimageError::NotSufficientBalance(err));
                 },
-                Err(e) => return Err(TradePreimageError::NotSufficientBalance(ERRL!("{}", e))),
+                Err(e) => return Err(TradePreimageError::Other(ERRL!("{}", e))),
             };
 
             let total_fee = gas_limit * gas_price;

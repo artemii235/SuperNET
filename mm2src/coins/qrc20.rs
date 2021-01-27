@@ -182,7 +182,8 @@ macro_rules! stringify_gen_tx_error {
                 $selff.platform,
                 GenerateTransactionError::EmptyUtxoSet
             ),
-            GenerateTransactionError::NotSufficientBalance { description } => {
+            GenerateTransactionError::NotSufficientBalance { description }
+            | GenerateTransactionError::DeductFeeFromOutputFailed { description } => {
                 ERRL!("Not enough {} to Pay Fee: {}", $selff.platform, description)
             },
             e => ERRL!("{}", e),
