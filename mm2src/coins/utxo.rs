@@ -69,8 +69,8 @@ pub use chain::Transaction as UtxoTx;
 use self::rpc_clients::{ElectrumClient, ElectrumClientImpl, EstimateFeeMethod, EstimateFeeMode, NativeClient,
                         UnspentInfo, UtxoRpcClientEnum};
 use super::{CoinTransportMetrics, CoinsContext, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin,
-            RpcClientType, RpcTransportEventHandler, RpcTransportEventHandlerShared, TradeFee, TradePreimageError,
-            Transaction, TransactionDetails, TransactionEnum, TransactionFut, WithdrawFee, WithdrawRequest};
+            RpcClientType, RpcTransportEventHandler, RpcTransportEventHandlerShared, TradeFee, Transaction,
+            TransactionDetails, TransactionEnum, TransactionFut, WithdrawFee, WithdrawRequest};
 use crate::utxo::rpc_clients::{ElectrumRpcRequest, NativeClientImpl};
 
 #[cfg(test)] pub mod utxo_tests;
@@ -533,21 +533,6 @@ impl std::fmt::Display for GenerateTransactionError {
                 write!(f, "Not sufficient balance: {}", description)
             },
             GenerateTransactionError::Other(e) => write!(f, "{}", e),
-        }
-    }
-}
-
-impl From<GenerateTransactionError> for TradePreimageError {
-    fn from(e: GenerateTransactionError) -> Self {
-        match e {
-            GenerateTransactionError::EmptyUtxoSet => {
-                TradePreimageError::NotSufficientBalance(GenerateTransactionError::EmptyUtxoSet.to_string())
-            },
-            GenerateTransactionError::NotSufficientBalance { description }
-            | GenerateTransactionError::DeductFeeFromOutputFailed { description } => {
-                TradePreimageError::NotSufficientBalance(description)
-            },
-            e => TradePreimageError::Other(e.to_string()),
         }
     }
 }

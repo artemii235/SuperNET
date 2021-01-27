@@ -73,7 +73,7 @@ use self::eth::{eth_coin_from_conf_and_request, EthCoin, EthTxFeeDetails, Signed
 pub mod utxo;
 use self::utxo::qtum::{self, qtum_coin_from_conf_and_request, QtumCoin};
 use self::utxo::utxo_standard::{utxo_standard_coin_from_conf_and_request, UtxoStandardCoin};
-use self::utxo::{UtxoFeeDetails, UtxoTx};
+use self::utxo::{GenerateTransactionError, UtxoFeeDetails, UtxoTx};
 pub mod qrc20;
 use qrc20::{qrc20_coin_from_conf_and_request, Qrc20Coin, Qrc20FeeDetails};
 #[doc(hidden)]
@@ -444,6 +444,21 @@ impl Traceable for TradePreimageError {
     }
 }
 
+impl From<GenerateTransactionError> for TradePreimageError {
+    fn from(e: GenerateTransactionError) -> Self {
+        match e {
+            GenerateTransactionError::EmptyUtxoSet => {
+                TradePreimageError::NotSufficientBalance(GenerateTransactionError::EmptyUtxoSet.to_string())
+            },
+            GenerateTransactionError::NotSufficientBalance { description }
+            | GenerateTransactionError::DeductFeeFromOutputFailed { description } => {
+                TradePreimageError::NotSufficientBalance(description)
+            },
+            e => TradePreimageError::Other(e.to_string()),
+        }
+    }
+}
+
 /// NB: Implementations are expected to follow the pImpl idiom, providing cheap reference-counted cloning and garbage collection.
 pub trait MmCoin: SwapOps + MarketCoinOps + fmt::Debug + Send + Sync + 'static {
     // `MmCoin` is an extension fulcrum for something that doesn't fit the `MarketCoinOps`. Practical examples:
@@ -520,7 +535,6 @@ pub trait MmCoin: SwapOps + MarketCoinOps + fmt::Debug + Send + Sync + 'static {
     fn history_sync_status(&self) -> HistorySyncState;
 
     /// Get fee to be paid per 1 swap transaction
-    /// Note this function is deprecated.
     fn get_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = String> + Send>;
 
     /// Get fee to be paid by sender per whole swap using the sending value and check if the wallet has sufficient balance to pay the fee.
@@ -1066,7 +1080,6 @@ pub fn my_tx_history(ctx: MmArc, req: Json) -> HyRes {
     }))
 }
 
-/// Note this function is deprecated.
 pub async fn get_trade_fee(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
     let ticker = try_s!(req["coin"].as_str().ok_or("No 'coin' field")).to_owned();
     let coin = match lp_coinfindᵃ(&ctx, &ticker).await {

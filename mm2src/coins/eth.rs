@@ -2368,8 +2368,23 @@ impl MmCoin for EthCoin {
     fn is_asset_chain(&self) -> bool { false }
 
     fn can_i_spend_other_payment(&self) -> Box<dyn Future<Item = (), Error = String> + Send> {
-        // [`EthCoin::get_receiver_trade_fee`] returns an error if the Eth balance is insufficient
-        Box::new(self.get_receiver_trade_fee().map(|_| ()).map_err(|e| ERRL!("{}", e)))
+        let selfi = self.clone();
+        let fut = selfi
+            .get_receiver_trade_fee()
+            .map(|fee| fee.amount.to_decimal())
+            .map_err(|e| ERRL!("{}", e))
+            .and_then(move |fee| selfi.base_coin_balance().map(|balance| (balance, fee)))
+            .and_then(move |(balance, fee)| {
+                if balance < fee {
+                    return ERR!(
+                        "Base coin balance {} is too low to cover gas fee, required {}",
+                        balance,
+                        fee
+                    );
+                }
+                Ok(())
+            });
+        Box::new(fut)
     }
 
     fn wallet_only(&self) -> bool { false }

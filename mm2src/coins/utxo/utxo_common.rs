@@ -52,7 +52,7 @@ lazy_static! {
 pub const HISTORY_TOO_LARGE_ERR_CODE: i64 = -1;
 /// `get_sender_trade_fee` and `get_receiver_trade_fee` should take into account that dynamic fee may increase during the swap.
 /// So we should increase the dynamic fee by 1%.
-const TRADE_PREIMAGE_DYNAMIC_FEE_PERCENT: f64 = 1.;
+pub const TRADE_PREIMAGE_DYNAMIC_FEE_PERCENT: f64 = 1.;
 
 pub struct UtxoArcBuilder<'a> {
     ctx: &'a MmArc,
@@ -2373,6 +2373,11 @@ where
     Ok((unspents, recently_spent))
 }
 
+pub fn increase_by_percent(num: u64, percent: f64) -> u64 {
+    let percent = num as f64 / 100. * percent;
+    num + percent as u64
+}
+
 async fn merge_utxo_loop<T>(weak: UtxoWeak, merge_at: usize, check_every: f64, max_merge_at_once: usize)
 where
     T: From<UtxoArc> + AsRef<UtxoCoinFields> + UtxoCommonOps,
@@ -2416,11 +2421,6 @@ where
             }
         }
     }
-}
-
-fn increase_by_percent(num: u64, percent: f64) -> u64 {
-    let percent = num as f64 / 100. * percent;
-    num + percent as u64
 }
 
 #[test]

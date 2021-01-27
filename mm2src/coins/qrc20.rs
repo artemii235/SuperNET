@@ -14,11 +14,11 @@ use async_trait::async_trait;
 use bigdecimal::BigDecimal;
 use bitcrypto::{dhash160, sha256};
 use chain::TransactionOutput;
-use common::block_on;
 use common::executor::Timer;
 use common::jsonrpc_client::{JsonRpcClient, JsonRpcError, JsonRpcRequest, RpcRes};
 use common::log::{error, warn};
 use common::mm_ctx::MmArc;
+use common::{block_on, Traceable};
 use ethabi::{Function, Token};
 use ethereum_types::{H160, U256};
 use futures::compat::Future01CompatExt;
@@ -329,8 +329,9 @@ impl Qrc20Coin {
         let _utxo_lock = UTXO_LOCK.lock().await;
 
         let force_change_output = false;
+        let tx_fee = None;
         let GenerateQrc20TxResult { signed, .. } = self
-            .generate_qrc20_transaction(outputs, force_change_output)
+            .generate_qrc20_transaction(outputs, force_change_output, tx_fee)
             .await
             .map_err(|e| stringify_gen_tx_error!(self, e))?;
         let _tx = try_s!(self.utxo.rpc_client.send_transaction(&signed).compat().await);
@@ -343,14 +344,13 @@ impl Qrc20Coin {
         &self,
         outputs: Vec<ContractCallOutput>,
         force_change_output: bool,
+        tx_fee: Option<ActualTxFee>,
     ) -> Result<GenerateQrc20TxResult, GenerateTransactionError> {
         let unspents = try_map!(
             self.ordered_mature_unspents(&self.utxo.my_address).compat().await,
             GenerateTransactionError::Other
         );
 
-        // None seems that the generate_transaction() should request estimated fee for Kbyte
-        let actual_tx_fee = None;
         let gas_fee = outputs
             .iter()
             .fold(0, |gas_fee, output| gas_fee + output.gas_limit * output.gas_price);
@@ -362,7 +362,7 @@ impl Qrc20Coin {
                 unspents,
                 outputs,
                 fee_policy,
-                actual_tx_fee,
+                tx_fee,
                 Some(gas_fee),
                 force_change_output,
             )
@@ -410,6 +410,40 @@ impl Qrc20Coin {
             gas_limit,
             gas_price,
         })
+    }
+
+    async fn preimage_trade_fee_required_to_send_outputs(
+        &self,
+        outputs: Vec<ContractCallOutput>,
+    ) -> Result<BigDecimal, TradePreimageError> {
+        let decimals = self.as_ref().decimals;
+        match try_map!(self.get_tx_fee().await, TradePreimageError::Other) {
+            ActualTxFee::Fixed(fixed_fee) => {
+                let tx_fee = big_decimal_from_sat(fixed_fee as i64, decimals);
+                let total_fee = outputs.iter().fold(BigDecimal::from(0), |total_fee, output| {
+                    let output_fee = output.gas_limit * output.gas_price;
+                    total_fee + big_decimal_from_sat(output_fee as i64, decimals)
+                });
+                Ok(total_fee + tx_fee)
+            },
+            ActualTxFee::Dynamic(dynamic_fee) => {
+                let tx_fee = ActualTxFee::Dynamic(utxo_common::increase_by_percent(
+                    dynamic_fee,
+                    utxo_common::TRADE_PREIMAGE_DYNAMIC_FEE_PERCENT,
+                ));
+
+                // we should generate a swap transaction to get an actual trade fee
+                // force the `generate_qrc20_transaction` to insert a `change` output into the transaction
+                // to ensure the obtained miner_fee is a max possible
+                let force_change_output = true;
+                // do not include the [`GenerateQrc20TxResult::change`]
+                let GenerateQrc20TxResult { miner_fee, gas_fee, .. } = self
+                    .generate_qrc20_transaction(outputs, force_change_output, Some(tx_fee))
+                    .await?;
+                let total_fee = big_decimal_from_sat((gas_fee + miner_fee) as i64, self.decimals());
+                Ok(total_fee)
+            },
+        }
     }
 }
 
@@ -874,8 +908,23 @@ impl MmCoin for Qrc20Coin {
     fn is_asset_chain(&self) -> bool { utxo_common::is_asset_chain(&self.utxo) }
 
     fn can_i_spend_other_payment(&self) -> Box<dyn Future<Item = (), Error = String> + Send> {
-        // [`Qrc20Coin::get_receiver_trade_fee`] returns an error if the Qtum balance is insufficient
-        Box::new(self.get_receiver_trade_fee().map(|_| ()).map_err(|e| ERRL!("{}", e)))
+        let selfi = self.clone();
+        let fut = selfi
+            .get_receiver_trade_fee()
+            .map(|fee| fee.amount.to_decimal())
+            .map_err(|e| ERRL!("{}", e))
+            .and_then(move |fee| selfi.base_coin_balance().map(|balance| (balance, fee)))
+            .and_then(|(balance, fee)| {
+                if balance < fee {
+                    return ERR!(
+                        "Base coin balance {} is too low to cover gas fee, required {}",
+                        balance,
+                        fee
+                    );
+                }
+                Ok(())
+            });
+        Box::new(fut)
     }
 
     fn wallet_only(&self) -> bool { false }
@@ -947,14 +996,10 @@ impl MmCoin for Qrc20Coin {
                         .await,
                     TradePreimageError::Other
                 );
-                // force the `generate_qrc20_transaction` to insert a `change` output into the transaction
-                // to ensure the obtained miner_fee is a max possible
-                let force_change_output = true;
-                // do not include the [`AdditionalTxData::change`]
-                let GenerateQrc20TxResult { miner_fee, gas_fee, .. } = selfi
-                    .generate_qrc20_transaction(erc20_payment_outputs, force_change_output)
-                    .await?;
-                big_decimal_from_sat((gas_fee + miner_fee) as i64, decimals)
+                selfi
+                    .preimage_trade_fee_required_to_send_outputs(erc20_payment_outputs)
+                    .await
+                    .trace(source!())?
             };
 
             let sender_refund_fee = {
@@ -968,14 +1013,10 @@ impl MmCoin for Qrc20Coin {
                     ),
                     TradePreimageError::Other
                 );
-                // force the `generate_qrc20_transaction` to insert a `change` output into the transaction
-                // to ensure the obtained miner_fee is a max possible
-                let force_change_output = true;
-                // do not include the [`AdditionalTxData::change`]
-                let GenerateQrc20TxResult { miner_fee, gas_fee, .. } = selfi
-                    .generate_qrc20_transaction(vec![sender_refund_output], force_change_output)
-                    .await?;
-                big_decimal_from_sat((gas_fee + miner_fee) as i64, decimals)
+                selfi
+                    .preimage_trade_fee_required_to_send_outputs(vec![sender_refund_output])
+                    .await
+                    .trace(source!())?
             };
 
             let total_fee = erc20_payment_fee + sender_refund_fee;
@@ -989,7 +1030,6 @@ impl MmCoin for Qrc20Coin {
 
     fn get_receiver_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
         let selfi = self.clone();
-        let decimals = self.utxo.decimals;
         let fut = async move {
             // pass the dummy params
             let timelock = (now_ms() / 1000) as u32;
@@ -1004,14 +1044,7 @@ impl MmCoin for Qrc20Coin {
                 TradePreimageError::Other
             );
 
-            // force the `generate_qrc20_transaction` to insert a `change` output into the transaction
-            // to ensure the obtained miner_fee is a max possible
-            let force_change_output = true;
-            // do not include the [`AdditionalTxData::change`]
-            let GenerateQrc20TxResult { miner_fee, gas_fee, .. } = selfi
-                .generate_qrc20_transaction(vec![output], force_change_output)
-                .await?;
-            let total_fee = big_decimal_from_sat((gas_fee + miner_fee) as i64, decimals);
+            let total_fee = selfi.preimage_trade_fee_required_to_send_outputs(vec![output]).await?;
             Ok(TradeFee {
                 coin: selfi.platform.clone(),
                 amount: total_fee.into(),
@@ -1038,14 +1071,10 @@ impl MmCoin for Qrc20Coin {
                 TradePreimageError::Other
             );
 
-            // force the `generate_qrc20_transaction` to insert a `change` output into the transaction
-            // to ensure the obtained miner_fee is a max possible
-            let force_change_output = true;
-            // do not include the [`AdditionalTxData::change`]
-            let GenerateQrc20TxResult { miner_fee, gas_fee, .. } = selfi
-                .generate_qrc20_transaction(vec![transfer_output], force_change_output)
-                .await?;
-            let total_fee = big_decimal_from_sat((gas_fee + miner_fee) as i64, selfi.utxo.decimals);
+            let total_fee = selfi
+                .preimage_trade_fee_required_to_send_outputs(vec![transfer_output])
+                .await
+                .trace(source!())?;
             Ok(TradeFee {
                 coin: selfi.platform.clone(),
                 amount: total_fee.into(),
@@ -1151,13 +1180,14 @@ async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> Result<Transac
     let outputs = vec![transfer_output];
 
     let force_change_output = false;
+    let tx_fee = None;
     let GenerateQrc20TxResult {
         signed,
         miner_fee,
         change,
         gas_fee,
     } = coin
-        .generate_qrc20_transaction(outputs, force_change_output)
+        .generate_qrc20_transaction(outputs, force_change_output, tx_fee)
         .await
         .map_err(|e| stringify_gen_tx_error!(coin, e))?;
 
