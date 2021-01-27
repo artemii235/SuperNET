@@ -9,7 +9,7 @@ use common::{log::{debug, error, info},
 
 use my_swaps::fill_my_swaps_from_json_statements;
 
-static SELECT_MIGRATION: &str = "SELECT * FROM migration ORDER BY current_migration DESC LIMIT 1;";
+const SELECT_MIGRATION: &str = "SELECT * FROM migration ORDER BY current_migration DESC LIMIT 1;";
 
 fn get_current_migration(conn: &Connection) -> SqlResult<i64> {
     conn.query_row(SELECT_MIGRATION, NO_PARAMS, |row| row.get(0))
@@ -43,8 +43,8 @@ pub fn init_and_migrate_db(ctx: &MmArc, conn: &Connection) -> SqlResult<()> {
 
     let init_batch = concat!(
         "BEGIN;
-        CREATE TABLE IF NOT EXISTS migration (current_migration INTEGER PRIMARY KEY);
-        INSERT INTO migration VALUES (NULL);",
+        CREATE TABLE IF NOT EXISTS migration (current_migration INTEGER NOT_NULL UNIQUE);
+        INSERT INTO migration (current_migration) VALUES (1);",
         CREATE_MY_SWAPS_TABLE!(),
         "COMMIT;"
     );
@@ -71,8 +71,10 @@ pub fn migrate_sqlite_database(ctx: &MmArc, conn: &Connection, mut current_migra
             debug!("Executing SQL statement {:?} with params {:?}", statement, params);
             transaction.execute(&statement, params)?;
         }
-        transaction.execute("INSERT INTO migration VALUES (NULL);", NO_PARAMS)?;
         current_migration += 1;
+        transaction.execute("INSERT INTO migration (current_migration) VALUES (?1);", &[
+            current_migration,
+        ])?;
     }
     transaction.commit()?;
     info!("migrate_sqlite_database complete, migrated to {}", current_migration);

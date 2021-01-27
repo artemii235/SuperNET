@@ -10,7 +10,7 @@ use sql_builder::SqlBuilder;
 use std::convert::TryInto;
 use uuid::Uuid;
 
-static MY_SWAPS_TABLE: &str = "my_swaps";
+const MY_SWAPS_TABLE: &str = "my_swaps";
 
 // Using a macro because static variable can't be passed to concat!
 // https://stackoverflow.com/a/39024422
@@ -18,7 +18,7 @@ static MY_SWAPS_TABLE: &str = "my_swaps";
 macro_rules! CREATE_MY_SWAPS_TABLE {
     () => {
         "CREATE TABLE IF NOT EXISTS my_swaps (
-            id INTEGER PRIMARY KEY,
+            id INTEGER NOT NULL PRIMARY KEY,
             my_coin VARCHAR(255) NOT NULL,
             other_coin VARCHAR(255) NOT NULL,
             uuid VARCHAR(255) NOT NULL UNIQUE,
@@ -26,7 +26,7 @@ macro_rules! CREATE_MY_SWAPS_TABLE {
         );"
     };
 }
-static INSERT_MY_SWAP: &str = "INSERT INTO my_swaps VALUES (NULL, ?1, ?2, ?3, ?4)";
+const INSERT_MY_SWAP: &str = "INSERT INTO my_swaps (my_coin, other_coin, uuid, started_at) VALUES (?1, ?2, ?3, ?4)";
 
 pub fn insert_new_swap(ctx: &MmArc, my_coin: &str, other_coin: &str, uuid: &str, started_at: &str) -> SqlResult<()> {
     debug!("Inserting new swap {} to the SQLite database", uuid);
