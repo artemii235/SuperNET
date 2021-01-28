@@ -806,6 +806,14 @@ pub fn my_recent_swaps(ctx: MmArc, req: Json) -> HyRes {
         })
         .collect();
 
+    let page_number = match req.page_number {
+        Some(number) => Json::from(number.get()),
+        None => match req.from_uuid {
+            Some(_) => Json::Null,
+            None => Json::from(1),
+        },
+    };
+
     rpc_response(
         200,
         json!({
@@ -815,7 +823,7 @@ pub fn my_recent_swaps(ctx: MmArc, req: Json) -> HyRes {
                 "skipped": db_result.skipped,
                 "limit": req.limit,
                 "total": db_result.total_count,
-                "page_number": req.page_number,
+                "page_number": page_number,
                 "total_pages": calc_total_pages(db_result.total_count, req.limit),
                 "found_records": db_result.uuids.len(),
             },
