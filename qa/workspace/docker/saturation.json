@@ -1,0 +1,18 @@
+{
+  "taker": {
+    "seed": "UttKRkG5i3uZRh62Ha2rVKeYkAxLf4QAgE3CmruhPiXA68bvpPVy",
+    "ntype": 0,
+    "defhost": "mm_b"
+  },
+  "maker": {
+    "seed": "Utovd1JeRZ8jKGRQgUyxrFvGKEck9danoTqZRHfB7MBXpTUqB6vr",
+    "ntype": 0,
+    "defhost": "mm_a"
+  },
+  "seednode": {
+    "seed": "Uuw5XXdTCjice4S6buknpcjJ6KQJQTw4ZHCrbeUkJXx8ESSGhfBa",
+    "ntype": 1,
+    "defhost": "mm_seed"
+  },
+  "seednodes": ["172.23.0.18"]
+}

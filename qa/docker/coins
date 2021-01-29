@@ -1,0 +1,28 @@
+[
+  {
+    "coin": "BSG",
+    "name": "blacksagecoin",
+    "fname": "BlackSage",
+    "rpcport": 8465,
+    "pubtype": 60,
+    "p2shtype": 85,
+    "wiftype": 188,
+    "txversion": 4,
+    "overwintered": 1,
+    "txfee": 1000,
+    "mm2": 1
+  },
+  {
+    "coin": "WSG",
+    "name": "whitesagecoin",
+    "fname": "WhiteSage",
+    "rpcport": 11511,
+    "pubtype": 60,
+    "p2shtype": 85,
+    "wiftype": 188,
+    "txversion": 4,
+    "overwintered": 1,
+    "txfee": 1000,
+    "mm2": 1
+  }
+]

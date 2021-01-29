@@ -1,0 +1,7 @@
+setuptools
+wheel
+pycurl
+ujson
+certifi
+pytest
+slick-bitcoinrpc
