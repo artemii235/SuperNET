@@ -1446,7 +1446,7 @@ pub async fn maker_swap_trade_preimage(
         let balance = try_s!(base_coin.my_balance().compat().await);
         try_s!(calc_max_maker_vol(&ctx, &base_coin, &balance).await)
     } else {
-        MmNumber::from(req.volume)
+        req.volume
     };
 
     let preimage_value = TradePreimageValue::Exact(volume.to_decimal());

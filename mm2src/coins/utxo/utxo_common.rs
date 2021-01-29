@@ -281,25 +281,12 @@ pub async fn generate_transaction<T>(
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps,
 {
-    // TODO replace try_other! with try_map!
-    macro_rules! try_other {
-        ($exp: expr) => {
-            match $exp {
-                Ok(x) => x,
-                Err(e) => {
-                    let err = format!("{}", e);
-                    return Err(GenerateTransactionError::Other(err));
-                },
-            }
-        };
-    }
-
     let dust: u64 = coin.as_ref().dust_amount;
     let lock_time = (now_ms() / 1000) as u32;
     let change_script_pubkey = Builder::build_p2pkh(&coin.as_ref().my_address.hash).to_bytes();
     let coin_tx_fee = match fee {
         Some(f) => f,
-        None => try_other!(coin.get_tx_fee().await),
+        None => try_map!(coin.get_tx_fee().await, GenerateTransactionError::Other),
     };
     true_or!(!utxos.is_empty(), GenerateTransactionError::EmptyUtxoSet);
     true_or!(!outputs.is_empty(), GenerateTransactionError::EmptyOutputs);
@@ -358,8 +345,15 @@ where
     let mut sum_inputs = 0;
     let mut tx_fee = 0;
     let min_relay_fee = if coin.as_ref().force_min_relay_fee {
-        let fee_dec = try_other!(coin.as_ref().rpc_client.get_relay_fee().compat().await);
-        Some(try_other!(sat_from_big_decimal(&fee_dec, coin.as_ref().decimals)))
+        let fee_dec = try_map!(
+            coin.as_ref().rpc_client.get_relay_fee().compat().await,
+            GenerateTransactionError::Other
+        );
+        let min_relay_fee = try_map!(
+            sat_from_big_decimal(&fee_dec, coin.as_ref().decimals),
+            GenerateTransactionError::Other
+        );
+        Some(min_relay_fee)
     } else {
         None
     };
@@ -471,8 +465,9 @@ where
         change,
     };
 
-    Ok(try_other!(
-        coin.calc_interest_if_required(tx, data, change_script_pubkey).await
+    Ok(try_map!(
+        coin.calc_interest_if_required(tx, data, change_script_pubkey).await,
+        GenerateTransactionError::Other
     ))
 }
 

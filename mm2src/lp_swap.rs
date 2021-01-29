@@ -1046,7 +1046,7 @@ pub struct TradePreimageRequest {
     rel: String,
     swap_method: TradePreimageMethod,
     #[serde(default)]
-    volume: BigDecimal,
+    volume: MmNumber,
     #[serde(default)]
     max: bool,
 }

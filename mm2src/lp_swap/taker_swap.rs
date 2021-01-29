@@ -1472,7 +1472,7 @@ pub async fn taker_swap_trade_preimage(
     let volume = if req.max {
         try_s!(calc_max_taker_vol(&ctx, &my_coin, &other_coin_ticker).await)
     } else {
-        MmNumber::from(req.volume)
+        req.volume
     };
 
     let dex_amount = dex_fee_amount(&my_coin_ticker, &other_coin_ticker, &volume);

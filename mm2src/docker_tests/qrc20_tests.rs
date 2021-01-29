@@ -1215,30 +1215,14 @@ fn test_check_balance_on_order_post_base_coin_locked() {
     assert!(!rc.0.is_success(), "!sell success but should be error: {}", rc.1);
 }
 
-/// Test if the `max_taker_vol` RPC call returns an expected volume, and we can send `TakerFee` and `TakerPayment` with the corresponding volume.
-/// The expected volume is calculated according to the instructions described in the comments to the [`lp_swap::taker_swap::max_taker_vol`] function.
-#[test]
-fn test_max_taker_vol_dynamic_trade_fee() {
-    wait_for_estimate_smart_fee(30).expect("!wait_for_estimate_smart_fee");
-    // generate QTUM coin with the dynamic fee and fill the wallet by 2 Qtums
-    let (_ctx, coin, priv_key) = generate_qtum_coin_with_random_privkey("QTUM", 2.into(), Some(0));
-    let my_address = coin.my_address().expect("!my_address");
-    let mut rng = rand4::thread_rng();
-    let mut qtum_balance = BigDecimal::from(2);
-    let mut qtum_balance_steps = "2".to_owned();
-    for _ in 0..4 {
-        let amount = rng.gen_range(100000, 10000000);
-        let amount = big_decimal_from_sat(amount, 8);
-        qtum_balance_steps = format!("{} + {}", qtum_balance_steps, amount);
-        qtum_balance = &qtum_balance + &amount;
-        fill_address(&coin, &my_address, amount, 30);
-    }
-    log!("QTUM balance "(qtum_balance)" = "(qtum_balance_steps));
-    // fill MYCOIN
-    let (_ctx, mycoin) = utxo_coin_from_privkey("MYCOIN", &priv_key);
-    let my_address = mycoin.my_address().expect("my_address");
-    fill_address(&mycoin, &my_address, 10.into(), 30);
-
+/// Test the following statements:
+/// * `max_taker_vol` returns an expected volume. This expected volume is calculated according to the instructions described in the comments to the [`lp_swap::taker_swap::max_taker_vol`] function;
+/// * If we issue a `sell` request it never fails;
+/// * Our balance is sufficient to send `TakerFee` and `TakerPayment` with the expected volume;
+/// * Zero left on QTUM balance.
+///
+/// Please note this function should be called before the Qtum balance is filled.
+fn test_get_max_taker_vol_and_trade_with_dynamic_trade_fee(coin: QtumCoin, priv_key: &[u8]) {
     let confpath = unsafe { QTUM_CONF_PATH.as_ref().expect("Qtum config is not set yet") };
     let coins = json! ([
         {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
@@ -1265,6 +1249,8 @@ fn test_max_taker_vol_dynamic_trade_fee() {
 
     log!([block_on(enable_native(&mm, "MYCOIN", vec![]))]);
     log!([block_on(enable_native(&mm, "QTUM", vec![]))]);
+
+    let qtum_balance = coin.my_balance().wait().expect("!my_balance");
 
     // - `max_possible = balance - locked_amount`, where `locked_amount = 0`
     // - `max_trade_fee = trade_fee(balance)`
@@ -1362,6 +1348,51 @@ fn test_max_taker_vol_dynamic_trade_fee() {
 
     let my_balance = coin.my_balance().wait().expect("!my_balance");
     assert_eq!(my_balance, 0.into());
+}
+
+/// Generate the Qtum coin with a random balance and start the `test_get_max_taker_vol_and_trade_with_dynamic_trade_fee` test.
+#[test]
+fn test_max_taker_vol_dynamic_trade_fee() {
+    wait_for_estimate_smart_fee(30).expect("!wait_for_estimate_smart_fee");
+    // generate QTUM coin with the dynamic fee and fill the wallet by 2 Qtums
+    let (_ctx, coin, priv_key) = generate_qtum_coin_with_random_privkey("QTUM", 2.into(), Some(0));
+    let my_address = coin.my_address().expect("!my_address");
+    let mut rng = rand4::thread_rng();
+    let mut qtum_balance = BigDecimal::from(2);
+    let mut qtum_balance_steps = "2".to_owned();
+    for _ in 0..4 {
+        let amount = rng.gen_range(100000, 10000000);
+        let amount = big_decimal_from_sat(amount, 8);
+        qtum_balance_steps = format!("{} + {}", qtum_balance_steps, amount);
+        qtum_balance = &qtum_balance + &amount;
+        fill_address(&coin, &my_address, amount, 30);
+    }
+    log!("QTUM balance "(qtum_balance)" = "(qtum_balance_steps));
+
+    test_get_max_taker_vol_and_trade_with_dynamic_trade_fee(coin, &priv_key);
+}
+
+/// This is a special of a set of Qtum inputs where the `max_taker_payment` returns a volume such that
+/// if the volume is passed into the `sell` request, the request will fail with `Not sufficient balance`.
+/// This may be due to the `get_sender_trade_fee(balance)` called from `max_taker_payment` doesn't include a change output,
+/// but the `get_sender_trade_fee(max_volume)` called from `sell` includes a change output.
+/// To sum up, `get_sender_trade_fee(balance) < get_sender_trade_fee(max_volume)`, where `balance > max_volume`.
+/// This test checks if the fee returned from `get_sender_trade_fee` should include a change output anyway.
+#[test]
+fn test_trade_preimage_fee_includes_change_output_anyway() {
+    wait_for_estimate_smart_fee(30).expect("!wait_for_estimate_smart_fee");
+    // generate QTUM coin with the dynamic fee and fill the wallet by 2 Qtums
+    let (_ctx, coin, priv_key) = generate_qtum_coin_with_random_privkey("QTUM", 2.into(), Some(0));
+    let my_address = coin.my_address().expect("!my_address");
+    let mut qtum_balance = BigDecimal::from_str("2.2839365").expect("!BigDecimal::from_str");
+    let amounts = vec!["0.09968324", "0.06979112", "0.09229586", "0.02216628"];
+    for amount in amounts {
+        let amount = BigDecimal::from_str(amount).expect("!BigDecimal::from_str");
+        qtum_balance = &qtum_balance + &amount;
+        fill_address(&coin, &my_address, amount, 30);
+    }
+
+    test_get_max_taker_vol_and_trade_with_dynamic_trade_fee(coin, &priv_key);
 }
 
 #[test]
