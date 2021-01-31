@@ -1374,10 +1374,10 @@ fn test_max_taker_vol_dynamic_trade_fee() {
 
 /// This is a special of a set of Qtum inputs where the `max_taker_payment` returns a volume such that
 /// if the volume is passed into the `sell` request, the request will fail with `Not sufficient balance`.
-/// This may be due to the `get_sender_trade_fee(balance)` called from `max_taker_payment` doesn't include a change output,
-/// but the `get_sender_trade_fee(max_volume)` called from `sell` includes a change output.
+/// This may be due to the `get_sender_trade_fee(balance)` called from `max_taker_payment` doesn't include the change output,
+/// but the `get_sender_trade_fee(max_volume)` called from `sell` includes the change output.
 /// To sum up, `get_sender_trade_fee(balance) < get_sender_trade_fee(max_volume)`, where `balance > max_volume`.
-/// This test checks if the fee returned from `get_sender_trade_fee` should include a change output anyway.
+/// This test checks if the fee returned from `get_sender_trade_fee` should include the change output anyway.
 #[test]
 fn test_trade_preimage_fee_includes_change_output_anyway() {
     wait_for_estimate_smart_fee(30).expect("!wait_for_estimate_smart_fee");

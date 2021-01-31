@@ -69,9 +69,8 @@ impl UtxoCommonOps for UtxoStandardCoin {
         fee_policy: FeePolicy,
         fee: Option<ActualTxFee>,
         gas_fee: Option<u64>,
-        force_change_output: bool,
     ) -> Result<(TransactionInputSigner, AdditionalTxData), GenerateTransactionError> {
-        utxo_common::generate_transaction(self, utxos, outputs, fee_policy, fee, gas_fee, force_change_output).await
+        utxo_common::generate_transaction(self, utxos, outputs, fee_policy, fee, gas_fee).await
     }
 
     async fn calc_interest_if_required(
@@ -130,6 +129,15 @@ impl UtxoCommonOps for UtxoStandardCoin {
         address: &Address,
     ) -> Result<(Vec<UnspentInfo>, AsyncMutexGuard<'a, RecentlySpentOutPoints>), String> {
         utxo_common::list_unspent_ordered(self, address).await
+    }
+
+    async fn preimage_trade_fee_required_to_send_outputs(
+        &self,
+        outputs: Vec<TransactionOutput>,
+        fee_policy: FeePolicy,
+        gas_fee: Option<u64>,
+    ) -> Result<BigDecimal, TradePreimageError> {
+        utxo_common::preimage_trade_fee_required_to_send_outputs(self, outputs, fee_policy, gas_fee).await
     }
 }
 

@@ -144,7 +144,7 @@ fn test_generate_transaction() {
         value: 999,
     }];
 
-    let generated = block_on(coin.generate_transaction(unspents, outputs, FeePolicy::SendExact, None, None, false));
+    let generated = block_on(coin.generate_transaction(unspents, outputs, FeePolicy::SendExact, None, None));
     // must not allow to use output with value < dust
     unwrap_err!(generated);
 
@@ -159,14 +159,12 @@ fn test_generate_transaction() {
         value: 98001,
     }];
 
-    let force_change_output = false;
     let generated = unwrap!(block_on(coin.generate_transaction(
         unspents.clone(),
         outputs.clone(),
         FeePolicy::SendExact,
         None,
         None,
-        force_change_output,
     )));
     // the change that is less than dust must be included to miner fee
     // so no extra outputs should appear in generated transaction
@@ -175,24 +173,6 @@ fn test_generate_transaction() {
     assert_eq!(generated.1.fee_amount, 1000);
     assert_eq!(generated.1.change, 999);
     assert_eq!(generated.1.received_by_me, 0);
-    assert_eq!(generated.1.spent_by_me, 100000);
-
-    let force_change_output = true;
-    let generated = unwrap!(block_on(coin.generate_transaction(
-        unspents,
-        outputs,
-        FeePolicy::SendExact,
-        None,
-        None,
-        force_change_output,
-    )));
-    // the change that is less than dust could be included to miner fee
-    // but the force_change_output is true
-    assert_eq!(generated.0.outputs.len(), 2);
-
-    assert_eq!(generated.1.fee_amount, 1000);
-    assert_eq!(generated.1.change, 0);
-    assert_eq!(generated.1.received_by_me, 999);
     assert_eq!(generated.1.spent_by_me, 100000);
 
     let unspents = vec![UnspentInfo {
@@ -213,7 +193,6 @@ fn test_generate_transaction() {
         FeePolicy::DeductFromOutput(0),
         None,
         None,
-        false,
     )));
     assert_eq!(generated.0.outputs.len(), 1);
 
@@ -241,7 +220,6 @@ fn test_generate_transaction() {
         FeePolicy::SendExact,
         None,
         None,
-        false,
     )));
 }
 
@@ -948,7 +926,6 @@ fn test_generate_transaction_relay_fee_is_used_when_dynamic_fee_is_lower() {
         FeePolicy::SendExact,
         Some(ActualTxFee::Dynamic(100)),
         None,
-        false,
     );
     let generated = unwrap!(block_on(fut));
     assert_eq!(generated.0.outputs.len(), 1);
@@ -995,7 +972,6 @@ fn test_generate_tx_fee_is_correct_when_dynamic_fee_is_larger_than_relay() {
         FeePolicy::SendExact,
         Some(ActualTxFee::Dynamic(1000)),
         None,
-        false,
     );
     let generated = unwrap!(block_on(fut));
     assert_eq!(generated.0.outputs.len(), 2);

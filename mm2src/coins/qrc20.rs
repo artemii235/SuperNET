@@ -329,10 +329,8 @@ impl Qrc20Coin {
         // Move over all QRC20 tokens should share the same cache with each other and base QTUM coin
         let _utxo_lock = UTXO_LOCK.lock().await;
 
-        let force_change_output = false;
-        let tx_fee = None;
         let GenerateQrc20TxResult { signed, .. } = self
-            .generate_qrc20_transaction(outputs, force_change_output, tx_fee)
+            .generate_qrc20_transaction(outputs)
             .await
             .map_err(|e| stringify_gen_tx_error!(self, e))?;
         let _tx = try_s!(self.utxo.rpc_client.send_transaction(&signed).compat().await);
@@ -343,30 +341,24 @@ impl Qrc20Coin {
     /// Note: lock the UTXO_LOCK mutex before this function will be called.
     async fn generate_qrc20_transaction(
         &self,
-        outputs: Vec<ContractCallOutput>,
-        force_change_output: bool,
-        tx_fee: Option<ActualTxFee>,
+        contract_outputs: Vec<ContractCallOutput>,
     ) -> Result<GenerateQrc20TxResult, GenerateTransactionError> {
         let unspents = try_map!(
             self.ordered_mature_unspents(&self.utxo.my_address).compat().await,
             GenerateTransactionError::Other
         );
 
-        let gas_fee = outputs
-            .iter()
-            .fold(0, |gas_fee, output| gas_fee + output.gas_limit * output.gas_price);
+        let mut gas_fee = 0;
+        let mut outputs = Vec::with_capacity(contract_outputs.len());
+        for output in contract_outputs {
+            gas_fee += output.gas_limit * output.gas_price;
+            outputs.push(TransactionOutput::from(output));
+        }
         let fee_policy = FeePolicy::SendExact;
+        let tx_fee = None;
 
-        let outputs = outputs.into_iter().map(|output| output.into()).collect();
         let (unsigned, data) = self
-            .generate_transaction(
-                unspents,
-                outputs,
-                fee_policy,
-                tx_fee,
-                Some(gas_fee),
-                force_change_output,
-            )
+            .generate_transaction(unspents, outputs, fee_policy, tx_fee, Some(gas_fee))
             .await?;
         let prev_script = ScriptBuilder::build_p2pkh(&self.utxo.my_address.hash);
         let signed = try_map!(
@@ -415,36 +407,22 @@ impl Qrc20Coin {
 
     async fn preimage_trade_fee_required_to_send_outputs(
         &self,
-        outputs: Vec<ContractCallOutput>,
+        contract_outputs: Vec<ContractCallOutput>,
     ) -> Result<BigDecimal, TradePreimageError> {
         let decimals = self.as_ref().decimals;
-        match try_map!(self.get_tx_fee().await, TradePreimageError::Other) {
-            ActualTxFee::Fixed(fixed_fee) => {
-                let tx_fee = big_decimal_from_sat(fixed_fee as i64, decimals);
-                let total_fee = outputs.iter().fold(BigDecimal::from(0), |total_fee, output| {
-                    let output_fee = output.gas_limit * output.gas_price;
-                    total_fee + big_decimal_from_sat(output_fee as i64, decimals)
-                });
-                Ok(total_fee + tx_fee)
-            },
-            ActualTxFee::Dynamic(dynamic_fee) => {
-                let tx_fee = ActualTxFee::Dynamic(utxo_common::increase_by_percent(
-                    dynamic_fee,
-                    utxo_common::TRADE_PREIMAGE_DYNAMIC_FEE_PERCENT,
-                ));
-
-                // we should generate a swap transaction to get an actual trade fee
-                // force the `generate_qrc20_transaction` to insert a `change` output into the transaction
-                // to ensure the obtained miner_fee is a max possible
-                let force_change_output = true;
-                // do not include the [`GenerateQrc20TxResult::change`]
-                let GenerateQrc20TxResult { miner_fee, gas_fee, .. } = self
-                    .generate_qrc20_transaction(outputs, force_change_output, Some(tx_fee))
-                    .await?;
-                let total_fee = big_decimal_from_sat((gas_fee + miner_fee) as i64, self.decimals());
-                Ok(total_fee)
-            },
+        let mut gas_fee = 0;
+        let mut outputs = Vec::with_capacity(contract_outputs.len());
+        for output in contract_outputs {
+            gas_fee += output.gas_limit * output.gas_price;
+            outputs.push(TransactionOutput::from(output));
         }
+        let fee_policy = FeePolicy::SendExact;
+        let miner_fee =
+            UtxoCommonOps::preimage_trade_fee_required_to_send_outputs(self, outputs, fee_policy, Some(gas_fee))
+                .await
+                .trace(source!())?;
+        let gas_fee = big_decimal_from_sat(gas_fee as i64, decimals);
+        Ok(miner_fee + gas_fee)
     }
 }
 
@@ -484,9 +462,8 @@ impl UtxoCommonOps for Qrc20Coin {
         fee_policy: FeePolicy,
         fee: Option<ActualTxFee>,
         gas_fee: Option<u64>,
-        force_change_output: bool,
     ) -> Result<(TransactionInputSigner, AdditionalTxData), GenerateTransactionError> {
-        utxo_common::generate_transaction(self, utxos, outputs, fee_policy, fee, gas_fee, force_change_output).await
+        utxo_common::generate_transaction(self, utxos, outputs, fee_policy, fee, gas_fee).await
     }
 
     async fn calc_interest_if_required(
@@ -545,6 +522,15 @@ impl UtxoCommonOps for Qrc20Coin {
         address: &Address,
     ) -> Result<(Vec<UnspentInfo>, AsyncMutexGuard<'a, RecentlySpentOutPoints>), String> {
         utxo_common::list_unspent_ordered(self, address).await
+    }
+
+    async fn preimage_trade_fee_required_to_send_outputs(
+        &self,
+        outputs: Vec<TransactionOutput>,
+        fee_policy: FeePolicy,
+        gas_fee: Option<u64>,
+    ) -> Result<BigDecimal, TradePreimageError> {
+        utxo_common::preimage_trade_fee_required_to_send_outputs(self, outputs, fee_policy, gas_fee).await
     }
 }
 
@@ -1180,15 +1166,13 @@ async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> Result<Transac
     ));
     let outputs = vec![transfer_output];
 
-    let force_change_output = false;
-    let tx_fee = None;
     let GenerateQrc20TxResult {
         signed,
         miner_fee,
         change,
         gas_fee,
     } = coin
-        .generate_qrc20_transaction(outputs, force_change_output, tx_fee)
+        .generate_qrc20_transaction(outputs)
         .await
         .map_err(|e| stringify_gen_tx_error!(coin, e))?;
 

@@ -69,8 +69,8 @@ pub use chain::Transaction as UtxoTx;
 use self::rpc_clients::{ElectrumClient, ElectrumClientImpl, EstimateFeeMethod, EstimateFeeMode, NativeClient,
                         UnspentInfo, UtxoRpcClientEnum};
 use super::{CoinTransportMetrics, CoinsContext, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin,
-            RpcClientType, RpcTransportEventHandler, RpcTransportEventHandlerShared, TradeFee, Transaction,
-            TransactionDetails, TransactionEnum, TransactionFut, WithdrawFee, WithdrawRequest};
+            RpcClientType, RpcTransportEventHandler, RpcTransportEventHandlerShared, TradeFee, TradePreimageError,
+            Transaction, TransactionDetails, TransactionEnum, TransactionFut, WithdrawFee, WithdrawRequest};
 use crate::utxo::rpc_clients::{ElectrumRpcRequest, NativeClientImpl};
 
 #[cfg(test)] pub mod utxo_tests;
@@ -404,8 +404,6 @@ pub trait UtxoCommonOps {
     /// Consider sorting before calling this function
     /// Sends the change (inputs amount - outputs amount) to "my_address"
     /// Also returns additional transaction data
-    ///
-    /// Please note `force_change_output` may cause an error if the change is less than dust.
     async fn generate_transaction(
         &self,
         utxos: Vec<UnspentInfo>,
@@ -413,7 +411,6 @@ pub trait UtxoCommonOps {
         fee_policy: FeePolicy,
         fee: Option<ActualTxFee>,
         gas_fee: Option<u64>,
-        force_change_output: bool,
     ) -> Result<(TransactionInputSigner, AdditionalTxData), GenerateTransactionError>;
 
     /// Calculates interest if the coin is KMD
@@ -456,6 +453,13 @@ pub trait UtxoCommonOps {
         &self,
         address: &Address,
     ) -> Result<(Vec<UnspentInfo>, AsyncMutexGuard<'_, RecentlySpentOutPoints>), String>;
+
+    async fn preimage_trade_fee_required_to_send_outputs(
+        &self,
+        outputs: Vec<TransactionOutput>,
+        fee_policy: FeePolicy,
+        gas_fee: Option<u64>,
+    ) -> Result<BigDecimal, TradePreimageError>;
 }
 
 #[async_trait]
@@ -1475,9 +1479,8 @@ async fn generate_and_send_tx<T>(
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps,
 {
-    let force_change_output = false;
     let (unsigned, _) = try_s!(
-        coin.generate_transaction(unspents, outputs, fee_policy, None, None, force_change_output)
+        coin.generate_transaction(unspents, outputs, fee_policy, None, None)
             .await
     );
 

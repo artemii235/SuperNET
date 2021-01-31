@@ -32,7 +32,7 @@ pub use chain::Transaction as UtxoTx;
 use self::rpc_clients::{electrum_script_hash, UnspentInfo, UtxoRpcClientEnum};
 use crate::utxo::rpc_clients::UtxoRpcClientOps;
 use crate::{TradePreimageError, TradePreimageValue, ValidateAddressResult};
-use common::block_on;
+use common::{block_on, Traceable};
 
 macro_rules! true_or {
     ($cond: expr, $etype: expr) => {
@@ -267,8 +267,6 @@ where
 /// Note `gas_fee` should be enough to execute all of the contract calls within UTXO outputs.
 /// QRC20 specific: `gas_fee` should be calculated by: gas_limit * gas_price * (count of contract calls),
 /// or should be sum of gas fee of all contract calls.
-///
-/// Please note `force_change_output` may cause an error if the change is less than dust.
 pub async fn generate_transaction<T>(
     coin: &T,
     utxos: Vec<UnspentInfo>,
@@ -276,7 +274,6 @@ pub async fn generate_transaction<T>(
     fee_policy: FeePolicy,
     fee: Option<ActualTxFee>,
     gas_fee: Option<u64>,
-    force_change_output: bool,
 ) -> Result<(TransactionInputSigner, AdditionalTxData), GenerateTransactionError>
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps,
@@ -382,7 +379,7 @@ where
                 let mut outputs_plus_fee = sum_outputs_value + tx_fee;
                 if sum_inputs >= outputs_plus_fee {
                     let change = sum_inputs - outputs_plus_fee;
-                    if force_change_output || change > dust {
+                    if change > dust {
                         // there will be change output
                         if let ActualTxFee::Dynamic(ref f) = coin_tx_fee {
                             tx_fee += (f * P2PKH_OUTPUT_LEN) / KILO_BYTE;
@@ -404,7 +401,7 @@ where
             FeePolicy::DeductFromOutput(_) => {
                 if sum_inputs >= sum_outputs_value {
                     let change = sum_inputs - sum_outputs_value;
-                    if force_change_output || change > dust {
+                    if change > dust {
                         if let ActualTxFee::Dynamic(ref f) = coin_tx_fee {
                             tx_fee += (f * P2PKH_OUTPUT_LEN) / KILO_BYTE;
                         }
@@ -447,7 +444,7 @@ where
     );
 
     let mut change = sum_inputs - sum_outputs_value;
-    if force_change_output || change > dust {
+    if change > dust {
         tx.outputs.push({
             TransactionOutput {
                 value: change,
@@ -1249,9 +1246,8 @@ where
         None => None,
     };
     let gas_fee = None;
-    let force_change_output = false;
     let (unsigned, data) = try_s!(
-        coin.generate_transaction(unspents, outputs, fee_policy, fee, gas_fee, force_change_output)
+        coin.generate_transaction(unspents, outputs, fee_policy, fee, gas_fee)
             .await
     );
     let prev_script = Builder::build_p2pkh(&coin.as_ref().my_address.hash);
@@ -1726,8 +1722,64 @@ where
     Box::new(fut.boxed().compat())
 }
 
-/// Maker should pay fee only for sending Maker Payment.
+/// To ensure the `get_sender_trade_fee(x) <= get_sender_trade_fee(y)` condition is satisfied for any `x < y`,
+/// we should include a `change` output into the result fee. Imagine this case:
+/// Let `sum_inputs = 11000` and `total_tx_fee: { 200, if there is no the change output; 230, if there is the change output }`.
+///
+/// If `value = TradePreimageValue::Exact(10000)`, therefore `sum_outputs = 10000`.
+/// then `change = sum_inputs - sum_outputs - total_tx_fee = 800`, so `change < dust` and `total_tx_fee = 200` (including the change output).
+///
+/// But if `value = TradePreimageValue::Exact(9000)`, therefore `sum_outputs = 9000`. Let `sum_inputs = 11000`, `total_tx_fee = 230`
+/// where `change = sum_inputs - sum_outputs - total_tx_fee = 1770`, so `change > dust` and `total_tx_fee = 230` (including the change output).
+///
+/// To sum up, `get_sender_trade_fee(TradePreimageValue::Exact(9000)) > get_sender_trade_fee(TradePreimageValue::Exact(10000))`.
+/// So we should always return a fee as if a transaction includes the change output.
+pub async fn preimage_trade_fee_required_to_send_outputs<T>(
+    coin: &T,
+    outputs: Vec<TransactionOutput>,
+    fee_policy: FeePolicy,
+    gas_fee: Option<u64>,
+) -> Result<BigDecimal, TradePreimageError>
+where
+    T: AsRef<UtxoCoinFields> + UtxoCommonOps,
+{
+    let decimals = coin.as_ref().decimals;
+    let tx_fee = try_map!(coin.get_tx_fee().await, TradePreimageError::Other);
+    let dynamic_fee = match tx_fee {
+        ActualTxFee::Fixed(fee_amount) => {
+            let amount = big_decimal_from_sat(fee_amount as i64, decimals);
+            return Ok(amount);
+        },
+        // if it's a dynamic fee, we should generate a swap transaction to get an actual trade fee
+        ActualTxFee::Dynamic(fee) => fee,
+    };
+    // take into account that the dynamic tx fee may increase during the swap
+    let dynamic_fee = increase_by_percent(dynamic_fee, TRADE_PREIMAGE_DYNAMIC_FEE_PERCENT);
+
+    let outputs_count = outputs.len();
+    let (unspents, _recently_sent_txs) = try_map!(
+        coin.list_unspent_ordered(&coin.as_ref().my_address).await,
+        TradePreimageError::Other
+    );
+
+    let actual_tx_fee = Some(ActualTxFee::Dynamic(dynamic_fee));
+    let (tx, data) = generate_transaction(coin, unspents, outputs, fee_policy, actual_tx_fee, gas_fee).await?;
+
+    let total_fee = if tx.outputs.len() == outputs_count {
+        // take into account the change output
+        data.fee_amount + (dynamic_fee * P2PKH_OUTPUT_LEN) / KILO_BYTE
+    } else {
+        // the change outputs is included already
+        data.fee_amount
+    };
+
+    Ok(big_decimal_from_sat(total_fee as i64, decimals))
+}
+
+/// Maker or Taker should pay fee only for sending his payment.
 /// Even if refund will be required the fee will be deducted from P2SH input.
+/// Please note the `get_sender_trade_fee` satisfies the following condition:
+/// `get_sender_trade_fee(x) <= get_sender_trade_fee(y)` for any `x < y`.
 pub fn get_sender_trade_fee<T>(
     coin: T,
     value: TradePreimageValue,
@@ -1735,24 +1787,7 @@ pub fn get_sender_trade_fee<T>(
 where
     T: AsRef<UtxoCoinFields> + MarketCoinOps + UtxoCommonOps + Send + Sync + 'static,
 {
-    let decimals = coin.as_ref().decimals;
     let fut = async move {
-        let tx_fee = try_map!(coin.get_tx_fee().await, TradePreimageError::Other);
-        let actual_tx_fee = match tx_fee {
-            ActualTxFee::Fixed(fee_amount) => {
-                let amount = big_decimal_from_sat(fee_amount as i64, decimals);
-                return Ok(TradeFee {
-                    coin: coin.as_ref().ticker.clone(),
-                    amount: amount.into(),
-                });
-            },
-            // if it's dynamic fee, we should generate a swap transaction to get an actual trade fee
-            ActualTxFee::Dynamic(fee) => {
-                // take into account that the dynamic tx fee may increase during the swap
-                ActualTxFee::Dynamic(increase_by_percent(fee, TRADE_PREIMAGE_DYNAMIC_FEE_PERCENT))
-            },
-        };
-
         let (amount, fee_policy) = match value {
             TradePreimageValue::UpperBound(upper_bound) => (upper_bound, FeePolicy::DeductFromOutput(0)),
             TradePreimageValue::Exact(amount) => (amount, FeePolicy::SendExact),
@@ -1766,27 +1801,11 @@ where
             generate_swap_payment_outputs(&coin, time_lock, other_pub, secret_hash, amount),
             TradePreimageError::Other
         );
-
-        let (unspents, _recently_sent_txs) = try_map!(
-            coin.list_unspent_ordered(&coin.as_ref().my_address).await,
-            TradePreimageError::Other
-        );
-
-        // force the `generate_transaction` to insert a `change` output into the transaction
-        // to ensure the obtained miner_fee is a max possible
-        let force_change_output = true;
-        let (_tx, data) = generate_transaction(
-            &coin,
-            unspents,
-            outputs,
-            fee_policy,
-            Some(actual_tx_fee),
-            None,
-            force_change_output,
-        )
-        .await?;
-        // do not include the [`AdditionalTxData::change`]
-        let fee_amount = big_decimal_from_sat(data.fee_amount as i64, decimals);
+        let gas_fee = None;
+        let fee_amount = coin
+            .preimage_trade_fee_required_to_send_outputs(outputs, fee_policy, gas_fee)
+            .await
+            .trace(source!())?;
         Ok(TradeFee {
             coin: coin.as_ref().ticker.clone(),
             amount: fee_amount.into(),
@@ -1815,53 +1834,16 @@ pub fn get_fee_to_send_taker_fee<T>(
 where
     T: AsRef<UtxoCoinFields> + MarketCoinOps + UtxoCommonOps + Send + Sync + 'static,
 {
-    let decimals = coin.as_ref().decimals;
     let fut = async move {
-        let tx_fee = try_map!(coin.get_tx_fee().await, TradePreimageError::Other);
-        let actual_tx_fee = match tx_fee {
-            ActualTxFee::Fixed(fee_amount) => {
-                let amount = big_decimal_from_sat(fee_amount as i64, decimals);
-                return Ok(TradeFee {
-                    coin: coin.ticker().to_owned(),
-                    amount: amount.into(),
-                });
-            },
-            // if it's dynamic fee, we should generate a swap transaction to get an actual trade fee
-            ActualTxFee::Dynamic(fee) => {
-                // take into account that the dynamic tx fee may increase during the swap
-                ActualTxFee::Dynamic(increase_by_percent(fee, TRADE_PREIMAGE_DYNAMIC_FEE_PERCENT))
-            },
-        };
-
-        let (unspents, _recently_sent_txs) = try_map!(
-            coin.list_unspent_ordered(&coin.as_ref().my_address).await,
-            TradePreimageError::Other
-        );
-
-        let value = try_map!(
-            sat_from_big_decimal(&dex_fee_amount, decimals),
-            TradePreimageError::Other
-        );
         let output = TransactionOutput {
             value,
             script_pubkey: Builder::build_p2pkh(&AddressHash::default()).to_bytes(),
         };
-
-        // force the `generate_transaction` to insert a `change` output into the transaction
-        // to ensure the obtained miner_fee is a max possible
-        let force_change_output = true;
-        let (_tx, data) = generate_transaction(
-            &coin,
-            unspents,
-            vec![output],
-            FeePolicy::SendExact,
-            Some(actual_tx_fee),
-            None,
-            force_change_output,
-        )
-        .await?;
-        // do not include the [`AdditionalTxData::change`]
-        let fee_amount = big_decimal_from_sat(data.fee_amount as i64, decimals);
+        let gas_fee = None;
+        let fee_amount = coin
+            .preimage_trade_fee_required_to_send_outputs(vec![output], FeePolicy::SendExact, gas_fee)
+            .await
+            .trace(source!())?;
         Ok(TradeFee {
             coin: coin.ticker().to_owned(),
             amount: fee_amount.into(),
