@@ -105,6 +105,7 @@ fn utxo_coin_fields_for_test(rpc_client: UtxoRpcClientEnum, force_seed: Option<&
         mature_confirmations: MATURE_CONFIRMATIONS_DEFAULT,
         tx_cache_directory: None,
         recently_spent_outpoints: AsyncMutex::new(RecentlySpentOutPoints::new(my_script_pubkey)),
+        estimate_fee_blocks: 1,
     }
 }
 
