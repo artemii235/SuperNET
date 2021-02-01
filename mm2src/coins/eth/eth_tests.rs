@@ -893,12 +893,8 @@ fn test_get_fee_to_send_taker_fee_insufficient_balance() {
     );
     let dex_fee_amount = u256_to_big_decimal(DEX_FEE_AMOUNT.into(), 18).expect("!u256_to_big_decimal");
 
-    let err = coin
-        .get_fee_to_send_taker_fee(dex_fee_amount.clone())
-        .wait()
-        .expect_err("Expected TradePreimageError::NotSufficientBalance");
-    match err {
-        TradePreimageError::NotSufficientBalance(e) => assert!(e.contains("The balance seems to be insufficient")),
-        e => panic!("Unexpected error: {}", e),
-    }
+    assert!(
+        coin.get_fee_to_send_taker_fee(dex_fee_amount.clone()).wait().is_err(),
+        "Expected TradePreimageError::NotSufficientBalance"
+    );
 }

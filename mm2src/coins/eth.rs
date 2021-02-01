@@ -2499,8 +2499,6 @@ impl MmCoin for EthCoin {
         &self,
         dex_fee_amount: BigDecimal,
     ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
-        const EXCEPTION_ERROR_CODE: i64 = -32016;
-
         let coin = self.clone();
         let fut = async move {
             let dex_fee_amount = try_map!(
@@ -2536,19 +2534,10 @@ impl MmCoin for EthCoin {
                 gas_price: Some(gas_price),
             };
 
-            let gas_limit = match coin
-                .estimate_gas(estimate_gas_req, None)
-                .compat()
-                .map_err(|e| e.0) // get a kind of the error
-                .await
-            {
-                Ok(l) => l,
-                Err(web3::ErrorKind::Rpc(e)) if e.code.code() == EXCEPTION_ERROR_CODE => {
-                    let err = ERRL!("The balance seems to be insufficient: {:?}", e);
-                    return Err(TradePreimageError::NotSufficientBalance(err));
-                },
-                Err(e) => return Err(TradePreimageError::Other(ERRL!("{}", e))),
-            };
+            let gas_limit = try_map!(
+                coin.estimate_gas(estimate_gas_req, None).compat().await,
+                TradePreimageError::Other
+            );
 
             let total_fee = gas_limit * gas_price;
             let amount = try_map!(u256_to_big_decimal(total_fee, 18), TradePreimageError::Other);
