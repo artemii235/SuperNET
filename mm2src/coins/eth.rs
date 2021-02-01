@@ -2507,7 +2507,11 @@ impl MmCoin for EthCoin {
             );
 
             // pass the dummy params
-            let to_addr = Address::random();
+            let fee_addr_pub_key = unwrap!(hex::decode(
+                "03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc06"
+            ));
+            let to_addr = addr_from_raw_pubkey(&fee_addr_pub_key)
+                .expect("addr_from_raw_pubkey should never fail with the const fee_addr_pub_key");
             let (eth_value, data, call_addr) = match coin.coin_type {
                 EthCoinType::Eth => (dex_fee_amount, Vec::new(), to_addr),
                 EthCoinType::Erc20(token_addr) => {

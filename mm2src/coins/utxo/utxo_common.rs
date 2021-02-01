@@ -443,8 +443,8 @@ where
         }
     );
 
-    let mut change = sum_inputs - sum_outputs_value;
-    if change > dust {
+    let change = sum_inputs - sum_outputs_value;
+    let unused_change = if change > dust {
         tx.outputs.push({
             TransactionOutput {
                 value: change,
@@ -452,14 +452,18 @@ where
             }
         });
         received_by_me += change;
-        change = 0;
-    }
+        None
+    } else if change > 0 {
+        Some(change)
+    } else {
+        None
+    };
 
     let data = AdditionalTxData {
         fee_amount: tx_fee,
         received_by_me,
         spent_by_me: sum_inputs,
-        change,
+        unused_change,
     };
 
     Ok(try_map!(
@@ -1258,7 +1262,7 @@ where
         coin.as_ref().signature_version,
         coin.as_ref().fork_id
     ));
-    let fee_amount = data.fee_amount + data.change;
+    let fee_amount = data.fee_amount + data.unused_change.unwrap_or_default();
     let fee_details = UtxoFeeDetails {
         amount: big_decimal_from_sat(fee_amount as i64, coin.as_ref().decimals),
     };
@@ -1834,7 +1838,12 @@ pub fn get_fee_to_send_taker_fee<T>(
 where
     T: AsRef<UtxoCoinFields> + MarketCoinOps + UtxoCommonOps + Send + Sync + 'static,
 {
+    let decimals = coin.as_ref().decimals;
     let fut = async move {
+        let value = try_map!(
+            sat_from_big_decimal(&dex_fee_amount, decimals),
+            TradePreimageError::Other
+        );
         let output = TransactionOutput {
             value,
             script_pubkey: Builder::build_p2pkh(&AddressHash::default()).to_bytes(),

@@ -309,7 +309,6 @@ impl MutContractCallType {
 struct GenerateQrc20TxResult {
     signed: UtxoTx,
     miner_fee: u64,
-    change: u64,
     gas_fee: u64,
 }
 
@@ -371,10 +370,10 @@ impl Qrc20Coin {
             ),
             GenerateTransactionError::Other
         );
+        let miner_fee = data.fee_amount + data.unused_change.unwrap_or_default();
         Ok(GenerateQrc20TxResult {
             signed,
-            miner_fee: data.fee_amount,
-            change: data.change,
+            miner_fee,
             gas_fee,
         })
     }
@@ -1169,7 +1168,6 @@ async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> Result<Transac
     let GenerateQrc20TxResult {
         signed,
         miner_fee,
-        change,
         gas_fee,
     } = coin
         .generate_qrc20_transaction(outputs)
@@ -1184,11 +1182,10 @@ async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> Result<Transac
     let my_balance_change = &received_by_me - &qrc20_amount;
     let my_address = try_s!(coin.my_address());
     let to_address = try_s!(coin.display_address(&to_addr));
-    let total_miner_fee = miner_fee + change;
     let fee_details = Qrc20FeeDetails {
         // QRC20 fees are paid in base platform currency (in particular Qtum)
         coin: coin.platform.clone(),
-        miner_fee: utxo_common::big_decimal_from_sat(total_miner_fee as i64, coin.utxo.decimals),
+        miner_fee: utxo_common::big_decimal_from_sat(miner_fee as i64, coin.utxo.decimals),
         gas_limit,
         gas_price,
         total_gas_fee: utxo_common::big_decimal_from_sat(gas_fee as i64, coin.utxo.decimals),
