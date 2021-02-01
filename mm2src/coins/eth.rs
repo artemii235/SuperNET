@@ -84,6 +84,8 @@ const GAS_PRICE_PERCENT: u64 = 10;
 /// So we should increase the gas price by 5%.
 const TRADE_PREIMAGE_GAS_PRICE_PERCENT: u64 = 5;
 
+const APPROVE_GAS_LIMIT: u64 = 50_000;
+
 lazy_static! {
     pub static ref SWAP_CONTRACT: Contract = unwrap!(Contract::load(SWAP_CONTRACT_ABI.as_bytes()));
     pub static ref ERC20_CONTRACT: Contract = unwrap!(Contract::load(ERC20_ABI.as_bytes()));
@@ -1454,7 +1456,7 @@ impl EthCoin {
                 let function = try_fus!(ERC20_CONTRACT.function("approve"));
                 let data = try_fus!(function.encode_input(&[Token::Address(spender), Token::Uint(amount),]));
 
-                self.sign_and_send_transaction(0.into(), Action::Call(token_addr), data, U256::from(150_000))
+                self.sign_and_send_transaction(0.into(), Action::Call(token_addr), data, U256::from(APPROVE_GAS_LIMIT))
             },
         }
     }
@@ -2460,7 +2462,7 @@ impl MmCoin for EthCoin {
                     );
                     if allowed < value {
                         // this gas_limit includes gas for `approve`, `erc20Payment` and `senderRefund` contract calls
-                        U256::from(450_000)
+                        U256::from(300_000 + APPROVE_GAS_LIMIT)
                     } else {
                         // this gas_limit includes gas for `erc20Payment` and `senderRefund` contract calls
                         U256::from(300_000)

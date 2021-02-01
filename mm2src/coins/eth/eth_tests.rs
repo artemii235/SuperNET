@@ -781,9 +781,9 @@ fn get_sender_trade_preimage() {
 #[test]
 fn get_erc20_sender_trade_preimage() {
     static mut ALLOWANCE: u64 = 0;
-    const GAS_PRICE: u64 = 50000000000;
+    const GAS_PRICE: u64 = 50_000_000_000;
     // `GAS_PRICE` increased by 5%
-    const TRADE_PREIMAGE_GAS_PRICE: u64 = 52500000000;
+    const TRADE_PREIMAGE_GAS_PRICE: u64 = 52_500_000_000;
     EthCoin::allowance
         .mock_safe(|_, _| MockResult::Return(Box::new(futures01::future::ok(unsafe { ALLOWANCE.into() }))));
 
@@ -820,7 +820,7 @@ fn get_erc20_sender_trade_preimage() {
         .get_sender_trade_fee(TradePreimageValue::UpperBound(value))
         .wait()
         .expect("!get_sender_trade_fee");
-    assert_eq!(actual, expected_trade_fee(450_000));
+    assert_eq!(actual, expected_trade_fee(350_000));
 
     // value is allowed
     unsafe { ALLOWANCE = 1000 };
@@ -838,7 +838,7 @@ fn get_erc20_sender_trade_preimage() {
         .get_sender_trade_fee(TradePreimageValue::Exact(value))
         .wait()
         .expect("!get_sender_trade_fee");
-    assert_eq!(actual, expected_trade_fee(450_000));
+    assert_eq!(actual, expected_trade_fee(350_000));
 }
 
 #[test]
