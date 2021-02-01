@@ -144,7 +144,7 @@ pub async fn get_tx_fee(coin: &UtxoCoinFields) -> Result<ActualTxFee, JsonRpcErr
         TxFee::Dynamic(method) => {
             let fee = coin
                 .rpc_client
-                .estimate_fee_sat(coin.decimals, method, &coin.estimate_fee_mode)
+                .estimate_fee_sat(coin.decimals, method, &coin.estimate_fee_mode, coin.estimate_fee_blocks)
                 .compat()
                 .await?;
             Ok(ActualTxFee::Dynamic(fee))
