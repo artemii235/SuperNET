@@ -12,7 +12,7 @@ use common::for_tests::{check_my_swap_status, check_recent_swaps, check_stats_sw
                         MAKER_SUCCESS_EVENTS, TAKER_ERROR_EVENTS, TAKER_SUCCESS_EVENTS};
 use common::log::debug;
 use common::mm_ctx::MmArc;
-use common::temp_dir;
+use common::{temp_dir, DEX_FEE_ADDR_RAW_PUBKEY};
 use ethereum_types::H160;
 use http::StatusCode;
 use rand4::Rng;
@@ -1325,21 +1325,19 @@ fn test_get_max_taker_vol_and_trade_with_dynamic_trade_fee(coin: QtumCoin, priv_
 
     unwrap!(block_on(mm.stop()));
 
-    let other_pub =
-        hex::decode("03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc06").expect("!hex::decode");
     let timelock = (now_ms() / 1000) as u32 - 200;
     let secret_hash = &[0; 20];
 
     let dex_fee_amount = dex_fee_amount("QTUM", "MYCOIN", &expected_max_taker_vol);
     let _taker_fee_tx = coin
-        .send_taker_fee(&other_pub, dex_fee_amount.to_decimal())
+        .send_taker_fee(&DEX_FEE_ADDR_RAW_PUBKEY, dex_fee_amount.to_decimal())
         .wait()
         .expect("!send_taker_fee");
 
     let _taker_payment_tx = coin
         .send_taker_payment(
             timelock,
-            &other_pub,
+            &DEX_FEE_ADDR_RAW_PUBKEY,
             secret_hash,
             expected_max_taker_vol.to_decimal(),
             &None,

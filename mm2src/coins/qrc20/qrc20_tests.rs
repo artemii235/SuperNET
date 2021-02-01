@@ -3,6 +3,7 @@ use crate::TxFeeDetails;
 use bigdecimal::Zero;
 use chain::OutPoint;
 use common::mm_ctx::MmCtxBuilder;
+use common::DEX_FEE_ADDR_RAW_PUBKEY;
 use itertools::Itertools;
 use mocktopus::mocking::{MockResult, Mockable};
 
@@ -282,16 +283,15 @@ fn test_send_taker_fee() {
     ];
     let (_ctx, coin) = qrc20_coin_for_test(&priv_key);
 
-    let fee_addr_pub_key = hex::decode("03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc06").unwrap();
     let amount = BigDecimal::from_str("0.01").unwrap();
-    let tx = unwrap!(coin.send_taker_fee(&fee_addr_pub_key, amount.clone()).wait());
+    let tx = unwrap!(coin.send_taker_fee(&DEX_FEE_ADDR_RAW_PUBKEY, amount.clone()).wait());
     let tx_hash: H256Json = match tx {
         TransactionEnum::UtxoTx(ref tx) => tx.hash().reversed().into(),
         _ => panic!("Expected UtxoTx"),
     };
     log!("Fee tx "[tx_hash]);
 
-    let result = coin.validate_fee(&tx, &fee_addr_pub_key, &amount).wait();
+    let result = coin.validate_fee(&tx, &DEX_FEE_ADDR_RAW_PUBKEY, &amount).wait();
     assert_eq!(result, Ok(()));
 }
 
@@ -307,10 +307,9 @@ fn test_validate_fee() {
     // QRC20 transfer tx "f97d3a43dbea0993f1b7a6a299377d4ee164c84935a1eb7d835f70c9429e6a1d"
     let tx = TransactionEnum::UtxoTx("010000000160fd74b5714172f285db2b36f0b391cd6883e7291441631c8b18f165b0a4635d020000006a47304402205d409e141111adbc4f185ae856997730de935ac30a0d2b1ccb5a6c4903db8171022024fc59bbcfdbba283556d7eeee4832167301dc8e8ad9739b7865f67b9676b226012103693bff1b39e8b5a306810023c29b95397eb395530b106b1820ea235fd81d9ce9ffffffff020000000000000000625403a08601012844a9059cbb000000000000000000000000ca1e04745e8ca0c60d8c5881531d51bec470743f00000000000000000000000000000000000000000000000000000000000f424014d362e096e873eb7907e205fadc6175c6fec7bc44c200ada205000000001976a9149e032d4b0090a11dc40fe6c47601499a35d55fbb88acfe967d5f".into());
 
-    let fee_addr = hex::decode("03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc06").unwrap();
     let amount = BigDecimal::from_str("0.01").unwrap();
 
-    let result = coin.validate_fee(&tx, &fee_addr, &amount).wait();
+    let result = coin.validate_fee(&tx, &DEX_FEE_ADDR_RAW_PUBKEY, &amount).wait();
     assert_eq!(result, Ok(()));
 
     let fee_addr_dif = hex::decode("03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc05").unwrap();
@@ -324,7 +323,7 @@ fn test_validate_fee() {
 
     let amount_dif = BigDecimal::from_str("0.02").unwrap();
     let err = coin
-        .validate_fee(&tx, &fee_addr, &amount_dif)
+        .validate_fee(&tx, &DEX_FEE_ADDR_RAW_PUBKEY, &amount_dif)
         .wait()
         .err()
         .expect("Expected an error");
@@ -334,7 +333,7 @@ fn test_validate_fee() {
     // QTUM tx "8a51f0ffd45f34974de50f07c5bf2f0949da4e88433f8f75191953a442cf9310"
     let tx = TransactionEnum::UtxoTx("020000000113640281c9332caeddd02a8dd0d784809e1ad87bda3c972d89d5ae41f5494b85010000006a47304402207c5c904a93310b8672f4ecdbab356b65dd869a426e92f1064a567be7ccfc61ff02203e4173b9467127f7de4682513a21efb5980e66dbed4da91dff46534b8e77c7ef012102baefe72b3591de2070c0da3853226b00f082d72daa417688b61cb18c1d543d1afeffffff020001b2c4000000001976a9149e032d4b0090a11dc40fe6c47601499a35d55fbb88acbc4dd20c2f0000001976a9144208fa7be80dcf972f767194ad365950495064a488ac76e70800".into());
     let err = coin
-        .validate_fee(&tx, &fee_addr, &amount)
+        .validate_fee(&tx, &DEX_FEE_ADDR_RAW_PUBKEY, &amount)
         .wait()
         .err()
         .expect("Expected an error");

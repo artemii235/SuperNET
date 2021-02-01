@@ -13,7 +13,7 @@ use bigdecimal::BigDecimal;
 use bitcrypto::dhash160;
 use coins::{lp_coinfindᵃ, FoundSwapTxSpend, MmCoinEnum, TradeFee, TradePreimageValue, TransactionEnum};
 use common::{bits256, executor::Timer, file_lock::FileLock, mm_ctx::MmArc, mm_number::MmNumber, now_ms, slurp, write,
-             Traceable, MM_VERSION};
+             Traceable, DEX_FEE_ADDR_RAW_PUBKEY, MM_VERSION};
 use futures::{compat::Future01CompatExt, select, FutureExt};
 use futures01::Future;
 use parking_lot::Mutex as PaMutex;
@@ -444,9 +444,6 @@ impl MakerSwap {
         let hash = taker_fee.tx_hash();
         log!({ "Taker fee tx {:02x}", hash });
 
-        let fee_addr_pub_key = unwrap!(hex::decode(
-            "03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc06"
-        ));
         let fee_amount = dex_fee_amount(
             &self.r().data.maker_coin,
             &self.r().data.taker_coin,
@@ -457,7 +454,7 @@ impl MakerSwap {
         loop {
             match self
                 .taker_coin
-                .validate_fee(&taker_fee, &fee_addr_pub_key, &fee_amount.clone().into())
+                .validate_fee(&taker_fee, &DEX_FEE_ADDR_RAW_PUBKEY, &fee_amount.clone().into())
                 .compat()
                 .await
             {

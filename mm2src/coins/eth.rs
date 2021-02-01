@@ -23,7 +23,7 @@ use bitcrypto::sha256;
 use common::custom_futures::TimedAsyncMutex;
 use common::executor::Timer;
 use common::mm_ctx::{MmArc, MmWeak};
-use common::{block_on, now_ms, slurp_url, small_rng};
+use common::{block_on, now_ms, slurp_url, small_rng, DEX_FEE_ADDR_RAW_PUBKEY};
 use ethabi::{Contract, Token};
 use ethcore_transaction::{Action, Transaction as UnSignedEthTx, UnverifiedTransaction};
 use ethereum_types::{Address, H160, U256};
@@ -2509,11 +2509,8 @@ impl MmCoin for EthCoin {
             );
 
             // pass the dummy params
-            let fee_addr_pub_key = unwrap!(hex::decode(
-                "03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc06"
-            ));
-            let to_addr = addr_from_raw_pubkey(&fee_addr_pub_key)
-                .expect("addr_from_raw_pubkey should never fail with the const fee_addr_pub_key");
+            let to_addr = addr_from_raw_pubkey(&DEX_FEE_ADDR_RAW_PUBKEY)
+                .expect("addr_from_raw_pubkey should never fail with DEX_FEE_ADDR_RAW_PUBKEY");
             let (eth_value, data, call_addr) = match coin.coin_type {
                 EthCoinType::Eth => (dex_fee_amount, Vec::new(), to_addr),
                 EthCoinType::Erc20(token_addr) => {

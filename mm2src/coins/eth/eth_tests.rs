@@ -198,9 +198,7 @@ fn send_and_refund_erc20_payment() {
     let payment = coin
         .send_maker_payment(
             (now_ms() / 1000) as u32 - 200,
-            &unwrap!(hex::decode(
-                "03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc06"
-            )),
+            &DEX_FEE_ADDR_RAW_PUBKEY,
             &[1; 20],
             "0.001".parse().unwrap(),
             &coin.swap_contract_address(),
@@ -216,9 +214,7 @@ fn send_and_refund_erc20_payment() {
         .send_maker_refunds_payment(
             &payment.tx_hex(),
             (now_ms() / 1000) as u32 - 200,
-            &unwrap!(hex::decode(
-                "03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc06"
-            )),
+            &DEX_FEE_ADDR_RAW_PUBKEY,
             &[1; 20],
             &coin.swap_contract_address(),
         )
@@ -260,9 +256,7 @@ fn send_and_refund_eth_payment() {
     let payment = coin
         .send_maker_payment(
             (now_ms() / 1000) as u32 - 200,
-            &unwrap!(hex::decode(
-                "03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc06"
-            )),
+            &DEX_FEE_ADDR_RAW_PUBKEY,
             &[1; 20],
             "0.001".parse().unwrap(),
             &coin.swap_contract_address(),
@@ -278,9 +272,7 @@ fn send_and_refund_eth_payment() {
         .send_maker_refunds_payment(
             &payment.tx_hex(),
             (now_ms() / 1000) as u32 - 200,
-            &unwrap!(hex::decode(
-                "03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc06"
-            )),
+            &DEX_FEE_ADDR_RAW_PUBKEY,
             &[1; 20],
             &coin.swap_contract_address(),
         )
@@ -673,14 +665,7 @@ mod wasm_bindgen_tests {
                 required_confirmations: 1.into(),
             }));
             let tx = coin
-                .send_maker_payment(
-                    1000,
-                    &unwrap!(hex::decode(
-                        "03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc06"
-                    )),
-                    &[1; 20],
-                    "0.001".parse().unwrap(),
-                )
+                .send_maker_payment(1000, &DEX_FEE_ADDR_RAW_PUBKEY, &[1; 20], "0.001".parse().unwrap())
                 .compat()
                 .await;
             console::log_1(&format!("{:?}", tx).into());

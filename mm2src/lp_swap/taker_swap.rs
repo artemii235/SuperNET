@@ -15,7 +15,7 @@ use common::executor::Timer;
 use common::log::debug;
 use common::mm_ctx::MmArc;
 use common::mm_number::MmNumber;
-use common::{bits256, file_lock::FileLock, now_ms, slurp, write, Traceable, MM_VERSION};
+use common::{bits256, file_lock::FileLock, now_ms, slurp, write, Traceable, DEX_FEE_ADDR_RAW_PUBKEY, MM_VERSION};
 use futures::{compat::Future01CompatExt, select, FutureExt};
 use futures01::Future;
 use http::Response;
@@ -805,9 +805,6 @@ impl TakerSwap {
             ]));
         }
 
-        let fee_addr_pub_key = unwrap!(hex::decode(
-            "03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc06"
-        ));
         let fee_amount = dex_fee_amount(
             &self.r().data.maker_coin,
             &self.r().data.taker_coin,
@@ -815,7 +812,7 @@ impl TakerSwap {
         );
         let fee_tx = self
             .taker_coin
-            .send_taker_fee(&fee_addr_pub_key, fee_amount.into())
+            .send_taker_fee(&DEX_FEE_ADDR_RAW_PUBKEY, fee_amount.into())
             .compat()
             .await;
         let transaction = match fee_tx {
