@@ -10,6 +10,7 @@ use coins::utxo::utxo_common::big_decimal_from_sat;
 use coins::{MarketCoinOps, MmCoin, TradePreimageValue, TransactionEnum};
 use common::for_tests::{check_my_swap_status, check_recent_swaps, check_stats_swap_status, MAKER_ERROR_EVENTS,
                         MAKER_SUCCESS_EVENTS, TAKER_ERROR_EVENTS, TAKER_SUCCESS_EVENTS};
+use common::log::debug;
 use common::mm_ctx::MmArc;
 use common::temp_dir;
 use ethereum_types::H160;
@@ -1261,13 +1262,13 @@ fn test_get_max_taker_vol_and_trade_with_dynamic_trade_fee(coin: QtumCoin, priv_
         .wait()
         .expect("!get_sender_trade_fee");
     let max_trade_fee = max_trade_fee.amount.to_decimal();
-    common::log::debug!("max_trade_fee: {}", max_trade_fee);
+    debug!("max_trade_fee: {}", max_trade_fee);
 
     // - `max_possible_2 = balance - locked_amount - max_trade_fee`, where `locked_amount = 0`
     let max_possible_2 = &qtum_balance - &max_trade_fee;
     // - `max_dex_fee = dex_fee(max_possible_2)`
     let max_dex_fee = dex_fee_amount("QTUM", "MYCOIN", &MmNumber::from(max_possible_2));
-    common::log::debug!("max_dex_fee: {:?}", max_dex_fee.to_fraction());
+    debug!("max_dex_fee: {:?}", max_dex_fee.to_fraction());
 
     // - `max_fee_to_send_taker_fee = fee_to_send_taker_fee(max_dex_fee)`
     // `taker_fee` is sent using general withdraw, and the fee get be obtained from withdraw result
@@ -1276,16 +1277,16 @@ fn test_get_max_taker_vol_and_trade_with_dynamic_trade_fee(coin: QtumCoin, priv_
         .wait()
         .expect("!get_fee_to_send_taker_fee");
     let max_fee_to_send_taker_fee = max_fee_to_send_taker_fee.amount.to_decimal();
-    common::log::debug!("max_fee_to_send_taker_fee: {}", max_fee_to_send_taker_fee);
+    debug!("max_fee_to_send_taker_fee: {}", max_fee_to_send_taker_fee);
 
     // and then calculate `min_max_val = balance - locked_amount - max_trade_fee - max_fee_to_send_taker_fee - dex_fee(max_val)` using `max_taker_vol_from_available()`
     // where `available = balance - locked_amount - max_trade_fee - max_fee_to_send_taker_fee`
     let available = &qtum_balance - &max_trade_fee - &max_fee_to_send_taker_fee;
-    common::log::debug!("total_available: {}", available);
+    debug!("total_available: {}", available);
     let expected_max_taker_vol = max_taker_vol_from_available(MmNumber::from(available), "QTUM", "MYCOIN")
         .expect("max_taker_vol_from_available");
     let real_dex_fee = dex_fee_amount("QTUM", "MYCOIN", &expected_max_taker_vol);
-    common::log::debug!("real_max_dex_fee: {:?}", real_dex_fee.to_fraction());
+    debug!("real_max_dex_fee: {:?}", real_dex_fee.to_fraction());
 
     // check if the actual max_taker_vol equals to the expected
     let rc = unwrap!(block_on(mm.rpc(json! ({

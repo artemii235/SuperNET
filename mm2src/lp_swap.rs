@@ -56,12 +56,14 @@
 //
 #![cfg_attr(not(feature = "native"), allow(dead_code))]
 
-use crate::mm2::lp_network::broadcast_p2p_msg;
+use crate::mm2::{database::my_swaps::{insert_new_swap, select_uuids_by_my_swaps_filter},
+                 lp_network::broadcast_p2p_msg};
 use async_std::sync as async_std_sync;
 use bigdecimal::BigDecimal;
 use coins::{lp_coinfind, MmCoinEnum, TradeFee, TradePreimageError, TransactionEnum};
 use common::{bits256, block_on, calc_total_pages,
              executor::{spawn, Timer},
+             log::{error, info},
              mm_ctx::{from_ctx, MmArc},
              mm_number::{Fraction, MmNumber},
              now_ms, read_dir, rpc_response, slurp, write, HyRes, TraceSource, Traceable};
@@ -179,22 +181,6 @@ pub fn process_msg(ctx: MmArc, topic: &str, msg: &[u8]) {
 
 pub fn swap_topic(uuid: &Uuid) -> String { pub_sub_topic(SWAP_PREFIX, &uuid.to_string()) }
 
-/*
-// NB: Using a macro instead of a function in order to preserve the line numbers in the log.
-macro_rules! send {
-    ($ctx: expr, $subj: expr, $topic: expr, $payload: expr) => {{
-        // Checksum here helps us visually verify the logistics between the Maker and Taker logs.
-        // let crc = crc32::checksum_ieee (&$payload);
-        // log!("Sending '" ($subj) "' (" ($payload.len()) " bytes, crc " (crc) ")");
-        let msg = SwapMsg {
-            subject: $subj,
-            data: $payload,
-        };
-        $ctx.broadcast_p2p_msg($topic, serialize(&msg).take());
-    }};
-}
-*/
-
 async fn recv_swap_msg<T>(
     ctx: MmArc,
     mut getter: impl FnMut(&mut SwapMsgStore) -> Option<T>,
@@ -219,45 +205,6 @@ async fn recv_swap_msg<T>(
         }
     }
 }
-
-/*
-// NB: `$validator` is where we should put the decryption and verification in,
-// in order for the bogus DHT input to disrupt communication less.
-macro_rules! recv_ {
-    ($swap: expr, $subj: expr, $timeout_sec: expr, $ec: expr, $validator: expr) => {{
-        let recv_subject = $subj$swap.uuid;
-        let recv_f = peers::recv ($swap.ctx.clone(), recv_subjectᵇ, fallback, $validator);
-
-        let started = now_float();
-        let timeout = (BASIC_COMM_TIMEOUT + $timeout_sec) as f64;
-        let timeoutᶠ = Timer::till (started + timeout);
-        (async move {
-            let r = match futures::future::select (Box::pin (recv_f), timeoutᶠ) .await {
-                Either::Left ((r, _)) => r,
-                Either::Right (_) => return ERR! ("timeout ({:.1} > {:.1})", now_float() - started, timeout)
-            };
-            if let Ok (ref payload) = r {
-                // Checksum here helps us visually verify the logistics between the Maker and Taker logs.
-                let crc = crc32::checksum_ieee (&payload);
-                log! ("Received '" (recv_subject) "' (" (payload.len()) " bytes, crc " (crc) ")");
-            }
-            r
-        }).await
-    }}
-}
-
-macro_rules! recv {
-    ($selff: ident, $subj: expr, $timeout_sec: expr, $ec: expr, $validator: expr) => {
-        recv_!($selff, $subj, $timeout_sec, $ec, $validator)
-    };
-    // Use this form if there's a sending future to terminate upon receiving the answer.
-    ($selff: ident, $sending_f: ident, $subj: expr, $timeout_sec: expr, $ec: expr, $validator: expr) => {{
-        let payload = recv_!($selff, $subj, $timeout_sec, $ec, $validator);
-        drop($sending_f);
-        payload
-    }};
-}
-*/
 
 #[path = "lp_swap/maker_swap.rs"] mod maker_swap;
 
@@ -492,7 +439,7 @@ pub async fn check_other_coin_balance_for_swap(
     trade_fee: TradeFee,
 ) -> Result<(), CheckBalanceError> {
     let ticker = coin.ticker();
-    common::log::info!("Check other_coin '{}' balance for swap", ticker);
+    info!("Check other_coin '{}' balance for swap", ticker);
     let balance = MmNumber::from(try_map!(coin.my_balance().compat().await, CheckBalanceError::Other));
 
     let locked = match swap_uuid {
@@ -503,7 +450,7 @@ pub async fn check_other_coin_balance_for_swap(
     if ticker == trade_fee.coin {
         let available = &balance - &locked;
         let required = trade_fee.amount;
-        common::log::info!(
+        info!(
             "{} balance {:?}, locked {:?}, required {:?}",
             ticker,
             balance.to_fraction(),
@@ -551,7 +498,7 @@ pub async fn check_my_coin_balance_for_swap(
     taker_fee: Option<TakerFeeAdditionalInfo>,
 ) -> Result<(), CheckBalanceError> {
     let ticker = coin.ticker();
-    common::log::info!("Check my_coin '{}' balance for swap", ticker);
+    info!("Check my_coin '{}' balance for swap", ticker);
     let balance = MmNumber::from(try_map!(coin.my_balance().compat().await, CheckBalanceError::Other));
 
     let locked = match swap_uuid {
@@ -592,7 +539,7 @@ pub async fn check_my_coin_balance_for_swap(
         MmNumber::from(0)
     };
 
-    common::log::info!(
+    info!(
         "{} balance {:?}, locked {:?}, volume {:?}, fee {:?}, dex_fee {:?}",
         ticker,
         balance.to_fraction(),
@@ -628,10 +575,9 @@ pub async fn check_base_coin_balance_for_swap(
 ) -> Result<(), CheckBalanceError> {
     let ticker = trade_fee.coin.as_str();
     let trade_fee_fraction = trade_fee.amount.to_fraction();
-    common::log::info!(
+    info!(
         "Check if the base coin '{}' has sufficient balance to pay the trade fee {:?}",
-        ticker,
-        trade_fee_fraction
+        ticker, trade_fee_fraction
     );
 
     let required = trade_fee.amount;
@@ -641,7 +587,7 @@ pub async fn check_base_coin_balance_for_swap(
     };
     let available = balance - &locked;
 
-    common::log::info!(
+    info!(
         "{} balance {:?}, locked {:?}",
         ticker,
         balance.to_fraction(),
@@ -805,7 +751,7 @@ pub struct TransactionIdentifier {
     tx_hash: BytesJson,
 }
 
-fn my_swaps_dir(ctx: &MmArc) -> PathBuf { ctx.dbdir().join("SWAPS").join("MY") }
+pub fn my_swaps_dir(ctx: &MmArc) -> PathBuf { ctx.dbdir().join("SWAPS").join("MY") }
 
 pub fn my_swap_file_path(ctx: &MmArc, uuid: &Uuid) -> PathBuf { my_swaps_dir(ctx).join(format!("{}.json", uuid)) }
 
@@ -826,7 +772,7 @@ fn save_stats_swap(ctx: &MmArc, swap: &SavedSwap) -> Result<(), String> {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
-enum SavedSwap {
+pub enum SavedSwap {
     Maker(MakerSavedSwap),
     Taker(TakerSavedSwap),
 }
@@ -835,11 +781,11 @@ enum SavedSwap {
 /// They won't have to parse the events themselves handling possible errors, index out of bounds etc.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MySwapInfo {
-    my_coin: String,
-    other_coin: String,
+    pub my_coin: String,
+    pub other_coin: String,
     my_amount: BigDecimal,
     other_amount: BigDecimal,
-    started_at: u64,
+    pub started_at: u64,
 }
 
 impl SavedSwap {
@@ -850,7 +796,7 @@ impl SavedSwap {
         }
     }
 
-    fn uuid(&self) -> &Uuid {
+    pub fn uuid(&self) -> &Uuid {
         match self {
             SavedSwap::Maker(swap) => &swap.uuid,
             SavedSwap::Taker(swap) => &swap.uuid,
@@ -871,7 +817,7 @@ impl SavedSwap {
         }
     }
 
-    fn get_my_info(&self) -> Option<MySwapInfo> {
+    pub fn get_my_info(&self) -> Option<MySwapInfo> {
         match self {
             SavedSwap::Maker(swap) => swap.get_my_info(),
             SavedSwap::Taker(swap) => swap.get_my_info(),
@@ -1133,53 +1079,79 @@ pub fn save_stats_swap_status(ctx: &MmArc, data: Json) {
     unwrap!(save_stats_swap(ctx, &swap));
 }
 
-fn ten() -> usize { 10 }
+const fn ten() -> usize { 10 }
+
+fn one() -> NonZeroUsize { NonZeroUsize::new(1).unwrap() }
 
 #[derive(Debug, Deserialize)]
-struct MyRecentSwapsReq {
-    #[serde(default = "ten")]
-    limit: usize,
-    from_uuid: Option<Uuid>,
-    page_number: Option<NonZeroUsize>,
+pub struct MySwapsFilter {
+    pub my_coin: Option<String>,
+    pub other_coin: Option<String>,
+    pub from_timestamp: Option<u64>,
+    pub to_timestamp: Option<u64>,
 }
 
-/// Returns the data of recent swaps of `my` node. Returns no more than `limit` records (default: 10).
-/// Skips the first `skip` records (default: 0).
+/// Returns *all* uuids of swaps, which match the selected filter.
+pub fn all_swaps_uuids_by_filter(ctx: MmArc, req: Json) -> HyRes {
+    let filter: MySwapsFilter = try_h!(json::from_value(req));
+    let db_result = try_h!(select_uuids_by_my_swaps_filter(ctx.sqlite_connection(), &filter, None));
+
+    rpc_response(
+        200,
+        json!({
+            "result": {
+                "uuids": db_result.uuids,
+                "my_coin": filter.my_coin,
+                "other_coin": filter.other_coin,
+                "from_timestamp": filter.from_timestamp,
+                "to_timestamp": filter.to_timestamp,
+                "found_records": db_result.uuids.len(),
+            },
+        })
+        .to_string(),
+    )
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PagingOptions {
+    #[serde(default = "ten")]
+    pub limit: usize,
+    #[serde(default = "one")]
+    pub page_number: NonZeroUsize,
+    pub from_uuid: Option<Uuid>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MyRecentSwapsReq {
+    #[serde(flatten)]
+    paging_options: PagingOptions,
+    #[serde(flatten)]
+    filter: MySwapsFilter,
+}
+
+/// Returns the data of recent swaps of `my` node.
 pub fn my_recent_swaps(ctx: MmArc, req: Json) -> HyRes {
     let req: MyRecentSwapsReq = try_h!(json::from_value(req));
-    let mut entries: Vec<(u64, PathBuf)> = try_h!(read_dir(&my_swaps_dir(&ctx)));
-    // sort by m_time in descending order
-    entries.sort_by(|(a, _), (b, _)| b.cmp(&a));
+    let db_result = try_h!(select_uuids_by_my_swaps_filter(
+        ctx.sqlite_connection(),
+        &req.filter,
+        Some(&req.paging_options),
+    ));
 
-    let skip = match &req.from_uuid {
-        Some(uuid) => {
-            let swap_path = my_swap_file_path(&ctx, uuid);
-            try_h!(entries
-                .iter()
-                .position(|(_, path)| *path == swap_path)
-                .ok_or(format!("from_uuid {} swap is not found", uuid)))
-                + 1
-        },
-        None => match req.page_number {
-            Some(page_n) => (page_n.get() - 1) * req.limit,
-            None => 0,
-        },
-    };
-
-    // iterate over file entries trying to parse the file contents and add to result vector
-    let swaps: Vec<Json> = entries
+    // iterate over uuids trying to parse the corresponding files content and add to result vector
+    let swaps: Vec<Json> = db_result
+        .uuids
         .iter()
-        .skip(skip)
-        .take(req.limit)
-        .map(
-            |(_, path)| match json::from_slice::<SavedSwap>(&unwrap!(slurp(&path))) {
+        .map(|uuid| {
+            let path = my_swap_file_path(&ctx, uuid);
+            match json::from_slice::<SavedSwap>(&unwrap!(slurp(&path))) {
                 Ok(swap) => unwrap!(json::to_value(MySwapStatusResponse::from(&swap))),
                 Err(e) => {
                     log!("Error " (e) " parsing JSON from " (path.display()));
                     Json::Null
                 },
-            },
-        )
+            }
+        })
         .collect();
 
     rpc_response(
@@ -1187,12 +1159,13 @@ pub fn my_recent_swaps(ctx: MmArc, req: Json) -> HyRes {
         json!({
             "result": {
                 "swaps": swaps,
-                "from_uuid": req.from_uuid,
-                "skipped": skip,
-                "limit": req.limit,
-                "total": entries.len(),
-                "page_number": req.page_number,
-                "total_pages": calc_total_pages(entries.len(), req.limit),
+                "from_uuid": req.paging_options.from_uuid,
+                "skipped": db_result.skipped,
+                "limit": req.paging_options.limit,
+                "total": db_result.total_count,
+                "page_number": req.paging_options.page_number,
+                "total_pages": calc_total_pages(db_result.total_count, req.paging_options.limit),
+                "found_records": db_result.uuids.len(),
             },
         })
         .to_string(),
@@ -1323,7 +1296,20 @@ pub async fn import_swaps(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, St
     let mut skipped = HashMap::new();
     for swap in swaps {
         match swap.save_to_db(&ctx) {
-            Ok(_) => imported.push(swap.uuid().to_owned()),
+            Ok(_) => {
+                if let Some(info) = swap.get_my_info() {
+                    if let Err(e) = insert_new_swap(
+                        &ctx,
+                        &info.my_coin,
+                        &info.other_coin,
+                        &swap.uuid().to_string(),
+                        &info.started_at.to_string(),
+                    ) {
+                        error!("Error {} on new swap insertion", e);
+                    }
+                }
+                imported.push(swap.uuid().to_owned());
+            },
             Err(e) => {
                 skipped.insert(swap.uuid().to_owned(), e);
             },
@@ -1406,7 +1392,7 @@ pub async fn active_swaps_rpc(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>
             let content = match slurp(&path) {
                 Ok(c) => c,
                 Err(e) => {
-                    common::log::error!("Error {} on slurp({})", e, path.display());
+                    error!("Error {} on slurp({})", e, path.display());
                     continue;
                 },
             };
@@ -1416,7 +1402,7 @@ pub async fn active_swaps_rpc(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>
             let status: SavedSwap = match json::from_slice(&content) {
                 Ok(s) => s,
                 Err(e) => {
-                    common::log::error!("Error {} on deserializing the content {:?}", e, content);
+                    error!("Error {} on deserializing the content {:?}", e, content);
                     continue;
                 },
             };

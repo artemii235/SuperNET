@@ -11,8 +11,11 @@ use crate::mm2::lp_network::subscribe_to_topic;
 use atomic::Atomic;
 use bigdecimal::BigDecimal;
 use coins::{lp_coinfindᵃ, FoundSwapTxSpend, MmCoinEnum, TradeFee, TradePreimageValue};
-use common::{bits256, executor::Timer, file_lock::FileLock, mm_ctx::MmArc, mm_number::MmNumber, now_ms, slurp, write,
-             Traceable, MM_VERSION};
+use common::executor::Timer;
+use common::log::debug;
+use common::mm_ctx::MmArc;
+use common::mm_number::MmNumber;
+use common::{bits256, file_lock::FileLock, now_ms, slurp, write, Traceable, MM_VERSION};
 use futures::{compat::Future01CompatExt, select, FutureExt};
 use futures01::Future;
 use http::Response;
@@ -1573,7 +1576,7 @@ pub async fn calc_max_taker_vol(
             .trace(source!())?;
         let min_max_possible = &max_possible_2 - &max_fee_to_send_taker_fee.amount;
 
-        common::log::debug!(
+        debug!(
             "max_taker_vol case 2: min_max_possible {:?}, balance {:?}, locked {:?}, max_trade_fee {:?}, max_dex_fee {:?}, max_fee_to_send_taker_fee {:?}",
             min_max_possible.to_fraction(),
             balance.to_fraction(),
@@ -1585,7 +1588,7 @@ pub async fn calc_max_taker_vol(
         max_taker_vol_from_available(min_max_possible, my_coin, other_coin).trace(source!())?
     } else {
         // first case
-        common::log::debug!(
+        debug!(
             "max_taker_vol case 1: balance {:?}, locked {:?}, ",
             balance.to_fraction(),
             locked.to_fraction()

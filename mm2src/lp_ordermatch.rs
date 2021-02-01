@@ -26,6 +26,7 @@ use blake2::VarBlake2b;
 use coins::utxo::{compressed_pub_key_from_priv_raw, ChecksumType};
 use coins::{lp_coinfindᵃ, BalanceTradeFeeUpdatedHandler, MmCoinEnum};
 use common::executor::{spawn, Timer};
+use common::log::error;
 use common::mm_ctx::{from_ctx, MmArc, MmWeak};
 use common::mm_number::{Fraction, MmNumber};
 use common::{bits256, json_dir_entries, log, new_uuid, now_ms, remove_file, write};
@@ -53,7 +54,8 @@ use std::sync::Arc;
 use trie_db::NodeCodec as NodeCodecT;
 use uuid::Uuid;
 
-use crate::mm2::{lp_network::{broadcast_p2p_msg, request_any_relay, request_one_peer, subscribe_to_topic, P2PRequest},
+use crate::mm2::{database::my_swaps::insert_new_swap,
+                 lp_network::{broadcast_p2p_msg, request_any_relay, request_one_peer, subscribe_to_topic, P2PRequest},
                  lp_swap::{calc_max_maker_vol, check_balance_for_maker_swap, check_balance_for_taker_swap,
                            check_other_coin_balance_for_swap, is_pubkey_banned, lp_atomic_locktime, run_maker_swap,
                            run_taker_swap, AtomicLocktimeVersion, CheckBalanceError, MakerSwap, RunMakerSwapInput,
@@ -2098,6 +2100,17 @@ fn lp_connect_start_bob(ctx: MmArc, maker_match: MakerMatch, maker_order: MakerO
             taker_coin.ticker(),
             uuid
         );
+
+        let now = now_ms() / 1000;
+        if let Err(e) = insert_new_swap(
+            &ctx,
+            maker_coin.ticker(),
+            taker_coin.ticker(),
+            &uuid.to_string(),
+            &now.to_string(),
+        ) {
+            error!("Error {} on new swap insertion", e);
+        }
         let maker_swap = MakerSwap::new(
             ctx.clone(),
             alice,
@@ -2174,6 +2187,16 @@ fn lp_connected_alice(ctx: MmArc, taker_request: TakerRequest, taker_match: Take
             taker_coin.ticker(),
             uuid
         );
+        let now = now_ms() / 1000;
+        if let Err(e) = insert_new_swap(
+            &ctx,
+            taker_coin.ticker(),
+            maker_coin.ticker(),
+            &uuid.to_string(),
+            &now.to_string(),
+        ) {
+            error!("Error {} on new swap insertion", e);
+        }
         let taker_swap = TakerSwap::new(
             ctx.clone(),
             maker,

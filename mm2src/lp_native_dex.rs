@@ -36,6 +36,7 @@ use crate::common::executor::{spawn, spawn_boxed, Timer};
 use crate::common::mm_ctx::{MmArc, MmCtx};
 use crate::common::privkey::key_pair_from_seed;
 use crate::common::{slurp_url, MM_DATETIME, MM_VERSION};
+use crate::mm2::database::init_and_migrate_db;
 use crate::mm2::lp_network::{p2p_event_process_loop, P2PContext};
 use crate::mm2::lp_ordermatch::{broadcast_maker_orders_keep_alive_loop, lp_ordermatch_loop, orders_kick_start,
                                 BalanceUpdateOrdermatchHandler};
@@ -236,8 +237,7 @@ fn migration_1(_ctx: &MmArc) -> Result<(), String> { Ok(()) }
 /// AG: If possible, I think we should avoid calling this function on a working MM, using it for initialization only,
 ///     in order to avoid the possibility of invalid state.
 /// AP: Totally agree, moreover maybe we even `must` deny calling this on a working MM as it's being refactored
-#[allow(unused_unsafe)]
-pub unsafe fn lp_passphrase_init(ctx: &MmArc) -> Result<(), String> {
+pub fn lp_passphrase_init(ctx: &MmArc) -> Result<(), String> {
     let passphrase = ctx.conf["passphrase"].as_str();
     let passphrase = match passphrase {
         None | Some("") => return ERR!("jeezy says we cant use the nullstring as passphrase and I agree"),
@@ -328,9 +328,11 @@ fn seed_to_ipv4_string(seed: &str) -> Option<String> {
 /// * `ctx_cb` - callback used to share the `MmCtx` ID with the call site.
 pub async fn lp_init(mypubport: u16, ctx: MmArc) -> Result<(), String> {
     log! ({"lp_init] version: {} DT {}", MM_VERSION, MM_DATETIME});
-    unsafe { try_s!(lp_passphrase_init(&ctx)) }
+    try_s!(lp_passphrase_init(&ctx));
 
     try_s!(fix_directories(&ctx));
+    try_s!(ctx.init_sqlite_connection());
+    try_s!(init_and_migrate_db(&ctx, ctx.sqlite_connection()));
     #[cfg(feature = "native")]
     {
         try_s!(migrate_db(&ctx));
@@ -450,8 +452,6 @@ pub async fn lp_init(mypubport: u16, ctx: MmArc) -> Result<(), String> {
         }
     };
 
-    #[cfg(not(feature = "native"))]
-    try_s!(ctx.send_to_helpers().await);
     const NETID_7777_SEEDNODES: &[&str] = &["seed1.kmd.io:0", "seed2.kmd.io:0", "seed3.kmd.io:0"];
     let seednodes: Option<Vec<String>> = try_s!(json::from_value(ctx.conf["seednodes"].clone()));
     let seednodes = match seednodes {
