@@ -1,6 +1,6 @@
 use super::{HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeFee, TransactionDetails, TransactionEnum,
             TransactionFut};
-use crate::{FoundSwapTxSpend, ValidateAddressResult, WithdrawRequest};
+use crate::{FoundSwapTxSpend, TradePreimageError, TradePreimageValue, ValidateAddressResult, WithdrawRequest};
 use bigdecimal::BigDecimal;
 use common::mm_ctx::MmArc;
 use futures01::Future;
@@ -224,6 +224,24 @@ impl MmCoin for TestCoin {
 
     /// Get fee to be paid per 1 swap transaction
     fn get_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = String> + Send> { unimplemented!() }
+
+    fn get_sender_trade_fee(
+        &self,
+        value: TradePreimageValue,
+    ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
+        unimplemented!()
+    }
+
+    fn get_receiver_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
+        unimplemented!()
+    }
+
+    fn get_fee_to_send_taker_fee(
+        &self,
+        dex_fee_amount: BigDecimal,
+    ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
+        unimplemented!()
+    }
 
     fn required_confirmations(&self) -> u64 { 1 }
 

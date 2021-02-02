@@ -39,7 +39,7 @@ use crate::mm2::lp_ordermatch::{buy, cancel_all_orders, cancel_order, my_orders,
                                 set_price};
 use crate::mm2::lp_swap::{active_swaps_rpc, all_swaps_uuids_by_filter, coins_needed_for_kick_start, import_swaps,
                           list_banned_pubkeys, max_taker_vol, my_recent_swaps, my_swap_status, recover_funds_of_swap,
-                          stats_swap_status, unban_pubkeys};
+                          stats_swap_status, trade_preimage, unban_pubkeys};
 
 #[path = "rpc/lp_commands.rs"] pub mod lp_commands;
 use self::lp_commands::*;
@@ -181,6 +181,7 @@ pub fn dispatcher(req: Json, ctx: MmArc) -> DispatcherRes {
         "setprice" => hyres(set_price(ctx, req)),
         "stats_swap_status" => stats_swap_status(ctx, req),
         "stop" => stop(ctx),
+        "trade_preimage" => hyres(trade_preimage(ctx, req)),
         "unban_pubkeys" => hyres(unban_pubkeys(ctx, req)),
         "validateaddress" => hyres(validate_address(ctx, req)),
         "version" => version(),

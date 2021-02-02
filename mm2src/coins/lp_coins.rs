@@ -37,7 +37,7 @@ use common::executor::{spawn, Timer};
 use common::mm_ctx::{from_ctx, MmArc};
 use common::mm_metrics::MetricsWeak;
 use common::mm_number::MmNumber;
-use common::{block_on, calc_total_pages, rpc_err_response, rpc_response, HyRes};
+use common::{block_on, calc_total_pages, rpc_err_response, rpc_response, HyRes, TraceSource, Traceable};
 use futures::compat::Future01CompatExt;
 use futures::lock::Mutex as AsyncMutex;
 use futures01::Future;
@@ -73,7 +73,7 @@ use self::eth::{eth_coin_from_conf_and_request, EthCoin, EthTxFeeDetails, Signed
 pub mod utxo;
 use self::utxo::qtum::{self, qtum_coin_from_conf_and_request, QtumCoin};
 use self::utxo::utxo_standard::{utxo_standard_coin_from_conf_and_request, UtxoStandardCoin};
-use self::utxo::{UtxoFeeDetails, UtxoTx};
+use self::utxo::{GenerateTransactionError, UtxoFeeDetails, UtxoTx};
 pub mod qrc20;
 use qrc20::{qrc20_coin_from_conf_and_request, Qrc20Coin, Qrc20FeeDetails};
 #[doc(hidden)]
@@ -406,10 +406,57 @@ pub enum TradeInfo {
     Taker(BigDecimal),
 }
 
-#[derive(Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct TradeFee {
     pub coin: String,
     pub amount: MmNumber,
+}
+
+#[derive(Debug)]
+pub enum TradePreimageValue {
+    Exact(BigDecimal),
+    UpperBound(BigDecimal),
+}
+
+#[derive(Debug)]
+pub enum TradePreimageError {
+    NotSufficientBalance(String),
+    Other(String),
+}
+
+impl fmt::Display for TradePreimageError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TradePreimageError::NotSufficientBalance(e) => write!(f, "Not sufficient balance: {}", e),
+            TradePreimageError::Other(e) => write!(f, "{}", e),
+        }
+    }
+}
+
+impl Traceable for TradePreimageError {
+    fn trace(self, source: TraceSource) -> Self {
+        match self {
+            TradePreimageError::NotSufficientBalance(e) => {
+                TradePreimageError::NotSufficientBalance(source.with_msg(&e))
+            },
+            TradePreimageError::Other(e) => TradePreimageError::Other(source.with_msg(&e)),
+        }
+    }
+}
+
+impl From<GenerateTransactionError> for TradePreimageError {
+    fn from(e: GenerateTransactionError) -> Self {
+        match e {
+            GenerateTransactionError::EmptyUtxoSet => {
+                TradePreimageError::NotSufficientBalance(GenerateTransactionError::EmptyUtxoSet.to_string())
+            },
+            GenerateTransactionError::NotSufficientBalance { description }
+            | GenerateTransactionError::DeductFeeFromOutputFailed { description } => {
+                TradePreimageError::NotSufficientBalance(description)
+            },
+            e => TradePreimageError::Other(e.to_string()),
+        }
+    }
 }
 
 /// NB: Implementations are expected to follow the pImpl idiom, providing cheap reference-counted cloning and garbage collection.
@@ -490,6 +537,21 @@ pub trait MmCoin: SwapOps + MarketCoinOps + fmt::Debug + Send + Sync + 'static {
     /// Get fee to be paid per 1 swap transaction
     fn get_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = String> + Send>;
 
+    /// Get fee to be paid by sender per whole swap using the sending value and check if the wallet has sufficient balance to pay the fee.
+    fn get_sender_trade_fee(
+        &self,
+        value: TradePreimageValue,
+    ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send>;
+
+    /// Get fee to be paid by receiver per whole swap and check if the wallet has sufficient balance to pay the fee.
+    fn get_receiver_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send>;
+
+    /// Get transaction fee the Taker has to pay to send a `TakerFee` transaction and check if the wallet has sufficient balance to pay the fee.
+    fn get_fee_to_send_taker_fee(
+        &self,
+        dex_fee_amount: BigDecimal,
+    ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send>;
+
     /// required transaction confirmations number to ensure double-spend safety
     fn required_confirmations(&self) -> u64;
 
@@ -554,7 +616,7 @@ impl Deref for MmCoinEnum {
 
 #[async_trait]
 pub trait BalanceTradeFeeUpdatedHandler {
-    async fn balance_updated(&self, ticker: &str, new_balance: &BigDecimal, trade_fee: &TradeFee);
+    async fn balance_updated(&self, coin: &MmCoinEnum, new_balance: &BigDecimal);
 }
 
 struct CoinsContext {
@@ -702,9 +764,9 @@ impl RpcTransportEventHandler for CoinTransportMetrics {
 
 #[async_trait]
 impl BalanceTradeFeeUpdatedHandler for CoinsContext {
-    async fn balance_updated(&self, ticker: &str, new_balance: &BigDecimal, trade_fee: &TradeFee) {
+    async fn balance_updated(&self, coin: &MmCoinEnum, new_balance: &BigDecimal) {
         for sub in self.balance_update_handlers.lock().await.iter() {
-            sub.balance_updated(ticker, new_balance, trade_fee).await
+            sub.balance_updated(coin, new_balance).await
         }
     }
 }
@@ -1144,12 +1206,8 @@ pub async fn check_balance_update_loop(ctx: MmArc, ticker: String) {
                     Err(_) => continue,
                 };
                 if Some(&balance) != current_balance.as_ref() {
-                    let trade_fee = match coin.get_trade_fee().compat().await {
-                        Ok(f) => f,
-                        Err(_) => continue,
-                    };
                     let coins_ctx = unwrap!(CoinsContext::from_ctx(&ctx));
-                    coins_ctx.balance_updated(&ticker, &balance, &trade_fee).await;
+                    coins_ctx.balance_updated(&coin, &balance).await;
                     current_balance = Some(balance);
                 }
             },

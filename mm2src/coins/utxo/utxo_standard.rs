@@ -1,5 +1,5 @@
 use super::*;
-use crate::{SwapOps, ValidateAddressResult};
+use crate::{SwapOps, TradePreimageError, TradePreimageValue, ValidateAddressResult};
 use common::mm_metrics::MetricsArc;
 use futures::{FutureExt, TryFutureExt};
 
@@ -129,6 +129,15 @@ impl UtxoCommonOps for UtxoStandardCoin {
         address: &Address,
     ) -> Result<(Vec<UnspentInfo>, AsyncMutexGuard<'a, RecentlySpentOutPoints>), String> {
         utxo_common::list_unspent_ordered(self, address).await
+    }
+
+    async fn preimage_trade_fee_required_to_send_outputs(
+        &self,
+        outputs: Vec<TransactionOutput>,
+        fee_policy: FeePolicy,
+        gas_fee: Option<u64>,
+    ) -> Result<BigDecimal, TradePreimageError> {
+        utxo_common::preimage_trade_fee_required_to_send_outputs(self, outputs, fee_policy, gas_fee).await
     }
 }
 
@@ -388,6 +397,24 @@ impl MmCoin for UtxoStandardCoin {
 
     fn get_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = String> + Send> {
         utxo_common::get_trade_fee(self.clone())
+    }
+
+    fn get_sender_trade_fee(
+        &self,
+        value: TradePreimageValue,
+    ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
+        utxo_common::get_sender_trade_fee(self.clone(), value)
+    }
+
+    fn get_receiver_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
+        utxo_common::get_receiver_trade_fee(&self)
+    }
+
+    fn get_fee_to_send_taker_fee(
+        &self,
+        dex_fee_amount: BigDecimal,
+    ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
+        utxo_common::get_fee_to_send_taker_fee(self.clone(), dex_fee_amount)
     }
 
     fn required_confirmations(&self) -> u64 { utxo_common::required_confirmations(&self.utxo_arc) }

@@ -24,7 +24,7 @@ use bigdecimal::BigDecimal;
 use blake2::digest::{Update, VariableOutput};
 use blake2::VarBlake2b;
 use coins::utxo::{compressed_pub_key_from_priv_raw, ChecksumType};
-use coins::{lp_coinfindᵃ, BalanceTradeFeeUpdatedHandler, MmCoinEnum, TradeFee};
+use coins::{lp_coinfindᵃ, BalanceTradeFeeUpdatedHandler, MmCoinEnum};
 use common::executor::{spawn, Timer};
 use common::log::error;
 use common::mm_ctx::{from_ctx, MmArc, MmWeak};
@@ -57,9 +57,9 @@ use uuid::Uuid;
 use crate::mm2::{database::my_swaps::insert_new_swap,
                  lp_network::{broadcast_p2p_msg, request_any_relay, request_one_peer, subscribe_to_topic, P2PRequest},
                  lp_swap::{calc_max_maker_vol, check_balance_for_maker_swap, check_balance_for_taker_swap,
-                           is_pubkey_banned, lp_atomic_locktime, run_maker_swap, run_taker_swap,
-                           AtomicLocktimeVersion, MakerSwap, RunMakerSwapInput, RunTakerSwapInput,
-                           SwapConfirmationsSettings, TakerSwap}};
+                           check_other_coin_balance_for_swap, is_pubkey_banned, lp_atomic_locktime, run_maker_swap,
+                           run_taker_swap, AtomicLocktimeVersion, CheckBalanceError, MakerSwap, RunMakerSwapInput,
+                           RunTakerSwapInput, SwapConfirmationsSettings, TakerSwap}};
 
 #[path = "lp_ordermatch/new_protocol.rs"] mod new_protocol;
 #[path = "lp_ordermatch/order_requests_tracker.rs"]
@@ -752,14 +752,21 @@ impl BalanceUpdateOrdermatchHandler {
 
 #[async_trait]
 impl BalanceTradeFeeUpdatedHandler for BalanceUpdateOrdermatchHandler {
-    async fn balance_updated(&self, ticker: &str, new_balance: &BigDecimal, trade_fee: &TradeFee) {
-        let new_volume = calc_max_maker_vol(&self.ctx, &new_balance, trade_fee, ticker);
+    async fn balance_updated(&self, coin: &MmCoinEnum, new_balance: &BigDecimal) {
+        let new_volume = match calc_max_maker_vol(&self.ctx, coin, new_balance).await {
+            Ok(v) => v,
+            Err(CheckBalanceError::NotSufficientBalance(_)) => MmNumber::from(0),
+            Err(e) => {
+                log::warn!("Couldn't handle the 'balance_updated' event: {}", e);
+                return;
+            },
+        };
         let ordermatch_ctx = unwrap!(OrdermatchContext::from_ctx(&self.ctx));
         let mut maker_orders = ordermatch_ctx.my_maker_orders.lock().await;
         *maker_orders = maker_orders
             .drain()
             .filter_map(|(uuid, order)| {
-                if order.base == *ticker {
+                if order.base == coin.ticker() {
                     if new_volume < order.min_base_vol {
                         let ctx = self.ctx.clone();
                         delete_my_maker_order(&ctx, &order);
@@ -2564,8 +2571,7 @@ pub async fn buy(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
         return ERR!("Rel coin is wallet only");
     }
     let my_amount = &input.volume * &input.price;
-    try_s!(check_balance_for_taker_swap(&ctx, &rel_coin, &base_coin, my_amount, None).await);
-    try_s!(base_coin.can_i_spend_other_payment().compat().await);
+    try_s!(check_balance_for_taker_swap(&ctx, &rel_coin, &base_coin, my_amount, None, None).await);
     let res = try_s!(lp_auto_buy(&ctx, &base_coin, &rel_coin, input).await).into_bytes();
     Ok(try_s!(Response::builder().body(res)))
 }
@@ -2585,8 +2591,7 @@ pub async fn sell(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
     if rel_coin.wallet_only() {
         return ERR!("Rel coin is wallet only");
     }
-    try_s!(check_balance_for_taker_swap(&ctx, &base_coin, &rel_coin, input.volume.clone(), None).await);
-    try_s!(rel_coin.can_i_spend_other_payment().compat().await);
+    try_s!(check_balance_for_taker_swap(&ctx, &base_coin, &rel_coin, input.volume.clone(), None, None).await);
     let res = try_s!(lp_auto_buy(&ctx, &base_coin, &rel_coin, input).await).into_bytes();
     Ok(try_s!(Response::builder().body(res)))
 }
@@ -2945,15 +2950,19 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
 
     let my_balance = try_s!(base_coin.my_balance().compat().await);
     let volume = if req.max {
-        // use entire balance deducting the locked amount and trade fee if it's paid with base coin,
-        // skipping "check_balance_for_maker_swap"
-        let trade_fee = try_s!(base_coin.get_trade_fee().compat().await);
-        calc_max_maker_vol(&ctx, &my_balance, &trade_fee, base_coin.ticker())
+        // first check if `rel_coin` balance is sufficient
+        let rel_coin_trade_fee = try_s!(rel_coin.get_receiver_trade_fee().compat().await);
+        try_s!(check_other_coin_balance_for_swap(&ctx, &rel_coin, None, rel_coin_trade_fee).await);
+        // calculate max maker volume
+        // note the `calc_max_maker_vol` returns [`CheckBalanceError::NotSufficientBalance`] error if the balance of `base_coin` is not sufficient
+        try_s!(calc_max_maker_vol(&ctx, &base_coin, &my_balance).await)
     } else {
-        try_s!(check_balance_for_maker_swap(&ctx, &base_coin, req.volume.clone(), None).await);
-        req.volume.clone()
+        if req.volume <= MmNumber::from(0) {
+            return ERR!("Maker volume {} cannot be zero or negative", req.volume);
+        }
+        try_s!(check_balance_for_maker_swap(&ctx, &base_coin, &rel_coin, req.volume.clone(), None, None).await);
+        req.volume
     };
-    try_s!(rel_coin.can_i_spend_other_payment().compat().await);
 
     let conf_settings = OrderConfirmationsSettings {
         base_confs: req.base_confs.unwrap_or_else(|| base_coin.required_confirmations()),

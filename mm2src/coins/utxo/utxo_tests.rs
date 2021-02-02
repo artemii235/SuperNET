@@ -2,7 +2,7 @@ use super::rpc_clients::{ElectrumProtocol, ListSinceBlockRes, NetworkInfo};
 use super::*;
 use crate::utxo::rpc_clients::{GetAddressInfoRes, UtxoRpcClientOps, ValidateAddressRes};
 use crate::utxo::utxo_standard::{utxo_standard_coin_from_conf_and_request, UtxoStandardCoin};
-use crate::{SwapOps, WithdrawFee};
+use crate::{SwapOps, TradePreimageValue, WithdrawFee};
 use bigdecimal::BigDecimal;
 use chain::OutPoint;
 use common::mm_ctx::MmCtxBuilder;
@@ -161,17 +161,18 @@ fn test_generate_transaction() {
     }];
 
     let generated = unwrap!(block_on(coin.generate_transaction(
-        unspents,
-        outputs,
+        unspents.clone(),
+        outputs.clone(),
         FeePolicy::SendExact,
         None,
-        None
+        None,
     )));
     // the change that is less than dust must be included to miner fee
     // so no extra outputs should appear in generated transaction
     assert_eq!(generated.0.outputs.len(), 1);
 
-    assert_eq!(generated.1.fee_amount, 1999);
+    assert_eq!(generated.1.fee_amount, 1000);
+    assert_eq!(generated.1.unused_change, Some(999));
     assert_eq!(generated.1.received_by_me, 0);
     assert_eq!(generated.1.spent_by_me, 100000);
 
@@ -192,11 +193,12 @@ fn test_generate_transaction() {
         outputs,
         FeePolicy::DeductFromOutput(0),
         None,
-        None
+        None,
     )));
     assert_eq!(generated.0.outputs.len(), 1);
 
     assert_eq!(generated.1.fee_amount, 1000);
+    assert_eq!(generated.1.unused_change, None);
     assert_eq!(generated.1.received_by_me, 99000);
     assert_eq!(generated.1.spent_by_me, 100000);
     assert_eq!(generated.0.outputs[0].value, 99000);
@@ -218,7 +220,7 @@ fn test_generate_transaction() {
         outputs,
         FeePolicy::SendExact,
         None,
-        None
+        None,
     )));
 }
 
@@ -931,6 +933,7 @@ fn test_generate_transaction_relay_fee_is_used_when_dynamic_fee_is_lower() {
 
     // generated transaction fee must be equal to relay fee if calculated dynamic fee is lower than relay
     assert_eq!(generated.1.fee_amount, 100000000);
+    assert_eq!(generated.1.unused_change, None);
     assert_eq!(generated.1.received_by_me, 0);
     assert_eq!(generated.1.spent_by_me, 1000000000);
     assert!(unsafe { GET_RELAY_FEE_CALLED });
@@ -977,6 +980,7 @@ fn test_generate_tx_fee_is_correct_when_dynamic_fee_is_larger_than_relay() {
 
     // resulting signed transaction size would be 3032 bytes so fee is 3032 sat
     assert_eq!(generated.1.fee_amount, 3032);
+    assert_eq!(generated.1.unused_change, None);
     assert_eq!(generated.1.received_by_me, 999996968);
     assert_eq!(generated.1.spent_by_me, 20000000000);
     assert!(unsafe { GET_RELAY_FEE_CALLED });
@@ -2062,4 +2066,39 @@ fn test_qtum_is_unspent_mature() {
     tx.vout.remove(0);
     // output is not coinbase
     assert!(coin.is_qtum_unspent_mature(&tx));
+}
+
+#[test]
+fn test_get_sender_trade_fee_dynamic_tx_fee() {
+    let rpc_client = electrum_client_for_test(&["95.217.83.126:10001"]);
+    let mut coin_fields = utxo_coin_fields_for_test(
+        UtxoRpcClientEnum::Electrum(rpc_client),
+        Some("bob passphrase max taker vol with dynamic trade fee"),
+    );
+    coin_fields.tx_fee = TxFee::Dynamic(EstimateFeeMethod::Standard);
+    let coin = utxo_coin_from_fields(coin_fields);
+    let my_balance = coin.my_balance().wait().expect("!my_balance");
+    let expected_balance = BigDecimal::from_str("2.22222").expect("!BigDecimal::from_str");
+    assert_eq!(my_balance, expected_balance);
+
+    let fee1 = coin
+        .get_sender_trade_fee(TradePreimageValue::UpperBound(my_balance.clone()))
+        .wait()
+        .expect("!get_sender_trade_fee");
+
+    let value_without_fee = &my_balance - &fee1.amount.to_decimal();
+    log!("value_without_fee "(value_without_fee));
+    let fee2 = coin
+        .get_sender_trade_fee(TradePreimageValue::Exact(value_without_fee))
+        .wait()
+        .expect("!get_sender_trade_fee");
+    assert_eq!(fee1, fee2);
+
+    // `2.21934443` value was obtained as a result of executing the `max_taker_vol` RPC call for this wallet
+    let max_taker_vol = BigDecimal::from_str("2.21934443").expect("!BigDecimal::from_str");
+    let fee3 = coin
+        .get_sender_trade_fee(TradePreimageValue::Exact(max_taker_vol))
+        .wait()
+        .expect("!get_sender_trade_fee");
+    assert_eq!(fee1, fee3);
 }

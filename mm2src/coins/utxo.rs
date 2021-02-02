@@ -69,8 +69,8 @@ pub use chain::Transaction as UtxoTx;
 use self::rpc_clients::{ElectrumClient, ElectrumClientImpl, EstimateFeeMethod, EstimateFeeMode, NativeClient,
                         UnspentInfo, UtxoRpcClientEnum};
 use super::{CoinTransportMetrics, CoinsContext, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin,
-            RpcClientType, RpcTransportEventHandler, RpcTransportEventHandlerShared, TradeFee, Transaction,
-            TransactionDetails, TransactionEnum, TransactionFut, WithdrawFee, WithdrawRequest};
+            RpcClientType, RpcTransportEventHandler, RpcTransportEventHandlerShared, TradeFee, TradePreimageError,
+            Transaction, TransactionDetails, TransactionEnum, TransactionFut, WithdrawFee, WithdrawRequest};
 use crate::utxo::rpc_clients::{ElectrumRpcRequest, NativeClientImpl};
 
 #[cfg(test)] pub mod utxo_tests;
@@ -127,6 +127,7 @@ pub struct AdditionalTxData {
     pub received_by_me: u64,
     pub spent_by_me: u64,
     pub fee_amount: u64,
+    pub unused_change: Option<u64>,
 }
 
 /// The fee set from coins config
@@ -454,6 +455,13 @@ pub trait UtxoCommonOps {
         &self,
         address: &Address,
     ) -> Result<(Vec<UnspentInfo>, AsyncMutexGuard<'_, RecentlySpentOutPoints>), String>;
+
+    async fn preimage_trade_fee_required_to_send_outputs(
+        &self,
+        outputs: Vec<TransactionOutput>,
+        fee_policy: FeePolicy,
+        gas_fee: Option<u64>,
+    ) -> Result<BigDecimal, TradePreimageError>;
 }
 
 #[async_trait]
@@ -968,9 +976,9 @@ pub trait UtxoCoinBuilder {
         json::from_value(self.conf()["estimate_fee_mode"].clone()).unwrap_or(None)
     }
 
-    fn estimate_fee_blocks(&self) -> u32 { json::from_value(self.conf()["estimate_fee_blocks"].clone()).unwrap_or(1) }
+    fn dust_amount(&self) -> u64 { json::from_value(self.conf()["dust"].clone()).unwrap_or(UTXO_DUST_AMOUNT) }
 
-    fn dust_amount(&self) -> u64 { UTXO_DUST_AMOUNT }
+    fn estimate_fee_blocks(&self) -> u32 { json::from_value(self.conf()["estimate_fee_blocks"].clone()).unwrap_or(1) }
 
     fn network(&self) -> Result<BlockchainNetwork, String> {
         let conf = self.conf();
