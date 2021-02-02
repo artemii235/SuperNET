@@ -325,7 +325,7 @@ fn wait_for_estimate_smart_fee(timeout: u64) -> Result<(), String> {
         UtxoRpcClientEnum::Electrum(_) => panic!("Expected NativeClient"),
     };
     while now_ms() / 1000 < timeout {
-        if let Ok(res) = client.estimate_smart_fee(&None).wait() {
+        if let Ok(res) = client.estimate_smart_fee(&None, 1).wait() {
             if res.errors.is_empty() {
                 *state = EstimateSmartFeeState::Ok;
                 return Ok(());
