@@ -35,7 +35,7 @@ jobs:
           mkdir upload
           echo 2.1.$(Build.BuildId)_$(Build.SourceBranchName)_$(COMMIT_HASH)_$(Agent.OS)_Release > MM_VERSION
           cat MM_VERSION
-          cargo build --features native --release
+          cargo build --features native --release --bin mm2
         displayName: 'Build MM2 Release'
       # Explicit --test-threads=16 makes testing process slightly faster on agents that have <16 CPU cores.
       - bash: |

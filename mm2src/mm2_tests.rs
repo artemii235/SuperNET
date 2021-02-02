@@ -791,13 +791,12 @@ async fn trade_base_rel_electrum(pairs: Vec<(&'static str, &'static str)>) {
         log! ({"Alice log path: {}", mm_alice.log_path.display()})
     }
 
-    // Wait for keypair initialization, `lp_passphrase_init`.
-    unwrap!(mm_bob.wait_for_log(11., |l| l.contains("version: ")).await);
-    unwrap!(mm_alice.wait_for_log(11., |l| l.contains("version: ")).await);
-
     // wait until both nodes RPC API is active
     wait_log_re!(mm_bob, 22., ">>>>>>>>> DEX stats ");
     wait_log_re!(mm_alice, 22., ">>>>>>>>> DEX stats ");
+
+    // wait until bob starts listening on the p2p port
+    wait_log_re!(mm_bob, 22., "Listening on");
 
     // Enable coins on Bob side. Print the replies in case we need the address.
     let rc = enable_coins_eth_electrum(&mm_bob, vec!["http://195.201.0.6:8565"]).await;
