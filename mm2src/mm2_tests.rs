@@ -828,12 +828,25 @@ async fn trade_base_rel_electrum(pairs: Vec<(&'static str, &'static str)>) {
         assert!(rc.0.is_success(), "!setprice: {}", rc.1);
     }
 
-    // Allow the order to be converted to maker after not being matched in 30 seconds.
-    // log! ("Waiting 32 seconds…");
-    // Timer::sleep (32.) .await;
-
     for (base, rel) in pairs.iter() {
-        log!("Issue alice " (base) "/" (rel) " buy request");
+        common::log::info!(
+            "Trigger alice subscription to {}/{} orderbook topic first and sleep for 1 second",
+            base,
+            rel
+        );
+        let rc = unwrap!(
+            mm_alice
+                .rpc(json! ({
+                    "userpass": mm_alice.userpass,
+                    "method": "orderbook",
+                    "base": base,
+                    "rel": rel,
+                }))
+                .await
+        );
+        assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
+        Timer::sleep(1.).await;
+        common::log::info!("Issue alice {}/{} buy request", base, rel);
         let rc = unwrap!(
             mm_alice
                 .rpc(json! ({
