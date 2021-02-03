@@ -25,12 +25,10 @@ use std::path::PathBuf;
 use std::sync::{atomic::Ordering, Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use uuid::Uuid;
 
+pub fn stats_maker_swap_dir(ctx: &MmArc) -> PathBuf { ctx.dbdir().join("SWAPS").join("STATS").join("MAKER") }
+
 pub fn stats_maker_swap_file_path(ctx: &MmArc, uuid: &Uuid) -> PathBuf {
-    ctx.dbdir()
-        .join("SWAPS")
-        .join("STATS")
-        .join("MAKER")
-        .join(format!("{}.json", uuid))
+    stats_maker_swap_dir(ctx).join(format!("{}.json", uuid))
 }
 
 fn save_my_maker_swap_event(ctx: &MmArc, swap: &MakerSwap, event: MakerSavedEvent) -> Result<(), String> {
@@ -1191,6 +1189,26 @@ impl MakerSavedSwap {
                 _ => ERR!("First swap event must be Started"),
             },
             None => ERR!("Can't get maker coin, events are empty"),
+        }
+    }
+
+    pub fn maker_amount(&self) -> Result<BigDecimal, String> {
+        match self.events.first() {
+            Some(event) => match &event.event {
+                MakerSwapEvent::Started(data) => Ok(data.maker_amount.clone()),
+                _ => ERR!("First swap event must be Started"),
+            },
+            None => ERR!("Can't get maker amount, events are empty"),
+        }
+    }
+
+    pub fn taker_amount(&self) -> Result<BigDecimal, String> {
+        match self.events.first() {
+            Some(event) => match &event.event {
+                MakerSwapEvent::Started(data) => Ok(data.taker_amount.clone()),
+                _ => ERR!("First swap event must be Started"),
+            },
+            None => ERR!("Can't get taker amount, events are empty"),
         }
     }
 

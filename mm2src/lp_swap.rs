@@ -85,6 +85,17 @@ use std::time::Duration;
 use std::{fmt, thread};
 use uuid::Uuid;
 
+#[path = "lp_swap/maker_swap.rs"] mod maker_swap;
+
+#[path = "lp_swap/taker_swap.rs"] mod taker_swap;
+
+pub use maker_swap::{calc_max_maker_vol, check_balance_for_maker_swap, maker_swap_trade_preimage, run_maker_swap,
+                     stats_maker_swap_dir, MakerSwap, RunMakerSwapInput};
+use maker_swap::{stats_maker_swap_file_path, MakerSavedSwap, MakerSwapEvent};
+pub use taker_swap::{calc_max_taker_vol, check_balance_for_taker_swap, max_taker_vol, max_taker_vol_from_available,
+                     run_taker_swap, stats_taker_swap_dir, taker_swap_trade_preimage, RunTakerSwapInput, TakerSwap};
+use taker_swap::{stats_taker_swap_file_path, TakerSavedSwap, TakerSwapEvent};
+
 pub const SWAP_PREFIX: TopicPrefix = "swap";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -205,17 +216,6 @@ async fn recv_swap_msg<T>(
         }
     }
 }
-
-#[path = "lp_swap/maker_swap.rs"] mod maker_swap;
-
-#[path = "lp_swap/taker_swap.rs"] mod taker_swap;
-
-pub use maker_swap::{calc_max_maker_vol, check_balance_for_maker_swap, maker_swap_trade_preimage, run_maker_swap,
-                     MakerSwap, RunMakerSwapInput};
-use maker_swap::{stats_maker_swap_file_path, MakerSavedSwap, MakerSwapEvent};
-pub use taker_swap::{calc_max_taker_vol, check_balance_for_taker_swap, max_taker_vol, max_taker_vol_from_available,
-                     run_taker_swap, taker_swap_trade_preimage, RunTakerSwapInput, TakerSwap};
-use taker_swap::{stats_taker_swap_file_path, TakerSavedSwap, TakerSwapEvent};
 
 /// Includes the grace time we add to the "normal" timeouts
 /// in order to give different and/or heavy communication channels a chance.
@@ -803,14 +803,14 @@ impl SavedSwap {
         }
     }
 
-    fn maker_coin_ticker(&self) -> Result<String, String> {
+    pub fn maker_coin_ticker(&self) -> Result<String, String> {
         match self {
             SavedSwap::Maker(swap) => swap.maker_coin(),
             SavedSwap::Taker(swap) => swap.maker_coin(),
         }
     }
 
-    fn taker_coin_ticker(&self) -> Result<String, String> {
+    pub fn taker_coin_ticker(&self) -> Result<String, String> {
         match self {
             SavedSwap::Maker(swap) => swap.taker_coin(),
             SavedSwap::Taker(swap) => swap.taker_coin(),

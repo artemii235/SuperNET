@@ -27,12 +27,10 @@ use std::path::PathBuf;
 use std::sync::{atomic::Ordering, Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use uuid::Uuid;
 
+pub fn stats_taker_swap_dir(ctx: &MmArc) -> PathBuf { ctx.dbdir().join("SWAPS").join("STATS").join("TAKER") }
+
 pub fn stats_taker_swap_file_path(ctx: &MmArc, uuid: &Uuid) -> PathBuf {
-    ctx.dbdir()
-        .join("SWAPS")
-        .join("STATS")
-        .join("TAKER")
-        .join(format!("{}.json", uuid))
+    stats_taker_swap_dir(ctx).join(format!("{}.json", uuid))
 }
 
 fn save_my_taker_swap_event(ctx: &MmArc, swap: &TakerSwap, event: TakerSavedEvent) -> Result<(), String> {
