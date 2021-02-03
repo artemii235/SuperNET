@@ -1010,9 +1010,11 @@ pub struct TradePreimageResponse {
     base_coin_fee: TradeFeeResponse,
     rel_coin_fee: TradeFeeResponse,
     #[serde(skip_serializing_if = "Option::is_none")]
-    volume: Option<Fraction>,
+    #[serde(flatten)]
+    volume: Option<DetailedVolume>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    taker_fee: Option<Fraction>,
+    #[serde(flatten)]
+    taker_fee: Option<DetailedTakerFee>,
     #[serde(skip_serializing_if = "Option::is_none")]
     fee_to_send_taker_fee: Option<TradeFeeResponse>,
 }
@@ -1020,21 +1022,22 @@ pub struct TradePreimageResponse {
 #[derive(Serialize)]
 pub struct TradeFeeResponse {
     coin: String,
-    amount: BigDecimal,
-    amount_fraction: Fraction,
-    amount_rat: BigRational,
+    #[serde(flatten)]
+    amount: DetailedAmount,
 }
 
 impl From<TradeFee> for TradeFeeResponse {
     fn from(orig: TradeFee) -> Self {
         TradeFeeResponse {
             coin: orig.coin,
-            amount: orig.amount.to_decimal(),
-            amount_fraction: orig.amount.to_fraction(),
-            amount_rat: orig.amount.to_ratio(),
+            amount: DetailedAmount::from(orig.amount),
         }
     }
 }
+
+construct_detailed!(DetailedAmount, amount);
+construct_detailed!(DetailedVolume, volume);
+construct_detailed!(DetailedTakerFee, taker_fee);
 
 pub async fn trade_preimage(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
     let req: TradePreimageRequest = try_s!(json::from_value(req));

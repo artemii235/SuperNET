@@ -63,6 +63,7 @@ mod docker_tests {
     #[rustfmt::skip]
     mod qrc20_tests;
 
+    use crate::mm2::lp_swap::dex_fee_amount;
     use bigdecimal::BigDecimal;
     use bitcrypto::ChecksumType;
     use chain::OutPoint;
@@ -1467,14 +1468,27 @@ mod docker_tests {
             "max": true,
         }))));
         assert!(rc.0.is_success(), "!trade_preimage: {}", rc.1);
-        let json: Json = json::from_str(&rc.1).unwrap();
-        assert_eq!(json["result"]["base_coin_fee"]["amount"], Json::from("0.00001"));
-        assert_eq!(json["result"]["rel_coin_fee"]["amount"], Json::from("0"));
-        assert_eq!(json["result"]["fee_to_send_taker_fee"], Json::Null);
-        let max_vol = &json["result"]["volume"];
-        // 10 - 0.00001
-        assert_eq!(max_vol["numer"], Json::from("999999"));
-        assert_eq!(max_vol["denom"], Json::from("100000"));
+        let actual: Json = json::from_str(&rc.1).unwrap();
+        let expected = json!({
+            "result": {
+                "base_coin_fee": {
+                    "coin": "MYCOIN",
+                    "amount": "0.00001",
+                    "amount_fraction": { "numer": "1", "denom": "100000" },
+                    "amount_rat": [[1,[1]],[1,[100000]]]
+                },
+                "rel_coin_fee": {
+                    "coin": "MYCOIN1",
+                    "amount": "0",
+                    "amount_fraction": { "numer": "0", "denom": "1" },
+                    "amount_rat": [[0,[]],[1,[1]]]
+                },
+                "volume": "9.99999",
+                "volume_fraction": { "numer": "999999", "denom": "100000" },
+                "volume_rat": [[1,[999999]],[1,[100000]]]
+            }
+        });
+        assert_eq!(actual, expected);
 
         let rc = unwrap!(block_on(mm.rpc(json!({
             "userpass": mm.userpass,
@@ -1485,13 +1499,27 @@ mod docker_tests {
             "max": true,
         }))));
         assert!(rc.0.is_success(), "!trade_preimage: {}", rc.1);
-        let json: Json = json::from_str(&rc.1).unwrap();
-        assert_eq!(json["result"]["base_coin_fee"]["amount"], Json::from("0.00002"));
-        let max_vol = &json["result"]["volume"];
-        // 20 - 0.00002
-        log!((max_vol));
-        assert_eq!(max_vol["numer"], Json::from("999999"));
-        assert_eq!(max_vol["denom"], Json::from("50000"));
+        let actual: Json = json::from_str(&rc.1).unwrap();
+        let expected = json!({
+            "result": {
+                "base_coin_fee": {
+                    "coin": "MYCOIN1",
+                    "amount": "0.00002",
+                    "amount_fraction": { "numer": "1", "denom": "50000" },
+                    "amount_rat": [[1,[1]],[1,[50000]]]
+                },
+                "rel_coin_fee": {
+                    "coin": "MYCOIN",
+                    "amount": "0",
+                    "amount_fraction": { "numer": "0", "denom": "1" },
+                    "amount_rat": [[0,[]],[1,[1]]]
+                },
+                "volume": "19.99998",
+                "volume_fraction": { "numer": "999999", "denom": "50000" },
+                "volume_rat": [[1,[999999]],[1,[50000]]]
+            }
+        });
+        assert_eq!(actual, expected);
 
         let rc = unwrap!(block_on(mm.rpc(json!({
             "userpass": mm.userpass,
@@ -1502,9 +1530,24 @@ mod docker_tests {
             "volume": "19.99998",
         }))));
         assert!(rc.0.is_success(), "!trade_preimage: {}", rc.1);
-        let json: Json = json::from_str(&rc.1).unwrap();
-        assert_eq!(json["result"]["volume"], Json::Null);
-        assert_eq!(json["result"]["base_coin_fee"]["amount"], Json::from("0.00002"));
+        let actual: Json = json::from_str(&rc.1).unwrap();
+        let expected = json!({
+            "result": {
+                "base_coin_fee": {
+                    "coin": "MYCOIN1",
+                    "amount": "0.00002",
+                    "amount_fraction": { "numer": "1", "denom": "50000" },
+                    "amount_rat": [[1,[1]],[1,[50000]]]
+                },
+                "rel_coin_fee": {
+                    "coin": "MYCOIN",
+                    "amount": "0",
+                    "amount_fraction": { "numer": "0", "denom": "1" },
+                    "amount_rat": [[0,[]],[1,[1]]]
+                },
+            }
+        });
+        assert_eq!(actual, expected);
 
         let rc = unwrap!(block_on(mm.rpc(json!({
             "userpass": mm.userpass,
@@ -1513,7 +1556,9 @@ mod docker_tests {
         }))));
         assert!(rc.0.is_success(), "!max_taker_vol: {}", rc.1);
         let json: Json = json::from_str(&rc.1).unwrap();
-        let mycoin_max_vol = &json["result"];
+        let mycoin_max_vol: MmNumber =
+            json::from_value(json["result"].clone()).expect("Expected a number in fraction representation");
+        let mycoin_taker_fee = dex_fee_amount("MYCOIN", "MYCOIN1", &mycoin_max_vol);
 
         let rc = unwrap!(block_on(mm.rpc(json!({
             "userpass": mm.userpass,
@@ -1522,7 +1567,9 @@ mod docker_tests {
         }))));
         assert!(rc.0.is_success(), "!max_taker_vol: {}", rc.1);
         let json: Json = json::from_str(&rc.1).unwrap();
-        let mycoin1_max_vol = &json["result"];
+        let mycoin1_max_vol: MmNumber =
+            json::from_value(json["result"].clone()).expect("Expected a number in fraction representation");
+        let mycoin1_taker_fee = dex_fee_amount("MYCOIN", "MYCOIN1", &mycoin1_max_vol);
 
         let rc = unwrap!(block_on(mm.rpc(json!({
             "userpass": mm.userpass,
@@ -1533,12 +1580,36 @@ mod docker_tests {
             "max": true,
         }))));
         assert!(rc.0.is_success(), "!trade_preimage: {}", rc.1);
-        let json: Json = json::from_str(&rc.1).unwrap();
-        assert_eq!(json["result"]["fee_to_send_taker_fee"]["amount"], Json::from("0.00001"));
-        assert_eq!(json["result"]["base_coin_fee"]["amount"], Json::from("0.00001"));
-        assert_eq!(json["result"]["rel_coin_fee"]["amount"], Json::from("0"));
-        let max_vol = &json["result"]["volume"];
-        assert_eq!(max_vol, mycoin_max_vol);
+        let actual: Json = json::from_str(&rc.1).unwrap();
+        let expected = json!({
+            "result": {
+                "base_coin_fee": {
+                    "coin": "MYCOIN",
+                    "amount": "0.00001",
+                    "amount_fraction": { "numer": "1", "denom": "100000" },
+                    "amount_rat": [[1,[1]],[1,[100000]]]
+                },
+                "rel_coin_fee": {
+                    "coin": "MYCOIN1",
+                    "amount": "0",
+                    "amount_fraction": { "numer": "0", "denom": "1" },
+                    "amount_rat": [[0,[]],[1,[1]]]
+                },
+                "volume": mycoin_max_vol.to_decimal(),
+                "volume_fraction": mycoin_max_vol.to_fraction(),
+                "volume_rat": mycoin_max_vol.to_ratio(),
+                "taker_fee": mycoin_taker_fee.to_decimal(),
+                "taker_fee_fraction": mycoin_taker_fee.to_fraction(),
+                "taker_fee_rat": mycoin_taker_fee.to_ratio(),
+                "fee_to_send_taker_fee": {
+                    "coin": "MYCOIN",
+                    "amount": "0.00001",
+                    "amount_fraction": { "numer": "1", "denom": "100000" },
+                    "amount_rat": [[1,[1]],[1,[100000]]]
+                }
+            }
+        });
+        assert_eq!(actual, expected);
 
         let rc = unwrap!(block_on(mm.rpc(json!({
             "userpass": mm.userpass,
@@ -1549,12 +1620,36 @@ mod docker_tests {
             "max": true,
         }))));
         assert!(rc.0.is_success(), "!trade_preimage: {}", rc.1);
-        let json: Json = json::from_str(&rc.1).unwrap();
-        assert_eq!(json["result"]["fee_to_send_taker_fee"]["amount"], Json::from("0.00002"));
-        assert_eq!(json["result"]["base_coin_fee"]["amount"], Json::from("0"));
-        assert_eq!(json["result"]["rel_coin_fee"]["amount"], Json::from("0.00002"));
-        let max_vol = &json["result"]["volume"];
-        assert_eq!(max_vol, mycoin1_max_vol);
+        let actual: Json = json::from_str(&rc.1).unwrap();
+        let expected = json!({
+            "result": {
+                "base_coin_fee": {
+                    "coin": "MYCOIN",
+                    "amount": "0",
+                    "amount_fraction": { "numer": "0", "denom": "1" },
+                    "amount_rat": [[0,[]],[1,[1]]]
+                },
+                "rel_coin_fee": {
+                    "coin": "MYCOIN1",
+                    "amount": "0.00002",
+                    "amount_fraction": { "numer": "1", "denom": "50000" },
+                    "amount_rat": [[1,[1]],[1,[50000]]]
+                },
+                "volume": mycoin1_max_vol.to_decimal(),
+                "volume_fraction": mycoin1_max_vol.to_fraction(),
+                "volume_rat": mycoin1_max_vol.to_ratio(),
+                "taker_fee": mycoin1_taker_fee.to_decimal(),
+                "taker_fee_fraction": mycoin1_taker_fee.to_fraction(),
+                "taker_fee_rat": mycoin1_taker_fee.to_ratio(),
+                "fee_to_send_taker_fee": {
+                    "coin": "MYCOIN1",
+                    "amount": "0.00002",
+                    "amount_fraction": { "numer": "1", "denom": "50000" },
+                    "amount_rat": [[1,[1]],[1,[50000]]]
+                }
+            }
+        });
+        assert_eq!(actual, expected);
     }
 
     #[test]

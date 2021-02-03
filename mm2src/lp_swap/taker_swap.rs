@@ -2,10 +2,10 @@
 
 use super::{ban_pubkey, broadcast_my_swap_status, broadcast_swap_message_every, check_my_coin_balance_for_swap,
             check_other_coin_balance_for_swap, dex_fee_amount, dex_fee_rate, get_locked_amount, my_swap_file_path,
-            my_swaps_dir, recv_swap_msg, swap_topic, AtomicSwap, CheckBalanceError, LockedAmount, MySwapInfo,
-            NegotiationDataMsg, RecoveredSwap, RecoveredSwapAction, SavedSwap, SavedTradeFee,
-            SwapConfirmationsSettings, SwapError, SwapMsg, SwapsContext, TakerFeeAdditionalInfo, TradeFeeResponse,
-            TradePreimageMethod, TradePreimageRequest, TradePreimageResponse, TransactionIdentifier,
+            my_swaps_dir, recv_swap_msg, swap_topic, AtomicSwap, CheckBalanceError, DetailedVolume, DetailedTakerFee,
+            LockedAmount, MySwapInfo, NegotiationDataMsg, RecoveredSwap, RecoveredSwapAction, SavedSwap,
+            SavedTradeFee, SwapConfirmationsSettings, SwapError, SwapMsg, SwapsContext, TakerFeeAdditionalInfo,
+            TradeFeeResponse, TradePreimageMethod, TradePreimageRequest, TradePreimageResponse, TransactionIdentifier,
             WAIT_CONFIRM_INTERVAL};
 use crate::mm2::lp_network::subscribe_to_topic;
 use atomic::Atomic;
@@ -1491,12 +1491,16 @@ pub async fn taker_swap_trade_preimage(
         TradePreimageMethod::Sell => (my_coin_trade_fee, other_coin_trade_fee),
         _ => (other_coin_trade_fee, my_coin_trade_fee),
     };
-    let volume = if req.max { Some(volume.to_fraction()) } else { None };
+    let volume = if req.max {
+        Some(DetailedVolume::from(volume))
+    } else {
+        None
+    };
     Ok(TradePreimageResponse {
         base_coin_fee: TradeFeeResponse::from(base_coin_fee),
         rel_coin_fee: TradeFeeResponse::from(rel_coin_fee),
         volume,
-        taker_fee: Some(dex_amount.to_fraction()),
+        taker_fee: Some(DetailedTakerFee::from(dex_amount)),
         fee_to_send_taker_fee: Some(TradeFeeResponse::from(fee_to_send_dex_fee)),
     })
 }
