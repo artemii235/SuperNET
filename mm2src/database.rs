@@ -10,6 +10,7 @@ use common::{log::{debug, error, info},
              rusqlite::{Connection, Result as SqlResult, NO_PARAMS}};
 
 use my_swaps::fill_my_swaps_from_json_statements;
+use stats_swaps::create_and_fill_stats_swaps_from_json_statements;
 
 const SELECT_MIGRATION: &str = "SELECT * FROM migration ORDER BY current_migration DESC LIMIT 1;";
 
@@ -58,7 +59,9 @@ pub fn init_and_migrate_db(ctx: &MmArc, conn: &Connection) -> SqlResult<()> {
 
 fn migration_1(ctx: &MmArc) -> Vec<(&'static str, Vec<String>)> { fill_my_swaps_from_json_statements(ctx) }
 
-fn migration_2(ctx: &MmArc) -> Vec<(&'static str, Vec<String>)> { fill_stats_swaps_from_json_statements(ctx) }
+fn migration_2(ctx: &MmArc) -> Vec<(&'static str, Vec<String>)> {
+    create_and_fill_stats_swaps_from_json_statements(ctx)
+}
 
 fn statements_for_migration(ctx: &MmArc, current_migration: i64) -> Option<Vec<(&'static str, Vec<String>)>> {
     match current_migration {

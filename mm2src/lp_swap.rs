@@ -56,7 +56,8 @@
 //
 #![cfg_attr(not(feature = "native"), allow(dead_code))]
 
-use crate::mm2::{database::my_swaps::{insert_new_swap, select_uuids_by_my_swaps_filter},
+use crate::mm2::{database::{my_swaps::{insert_new_swap, select_uuids_by_my_swaps_filter},
+                            stats_swaps::add_swap_to_index},
                  lp_network::broadcast_p2p_msg};
 use async_std::sync as async_std_sync;
 use bigdecimal::BigDecimal;
@@ -90,11 +91,12 @@ use uuid::Uuid;
 #[path = "lp_swap/taker_swap.rs"] mod taker_swap;
 
 pub use maker_swap::{calc_max_maker_vol, check_balance_for_maker_swap, maker_swap_trade_preimage, run_maker_swap,
-                     stats_maker_swap_dir, MakerSwap, RunMakerSwapInput};
-use maker_swap::{stats_maker_swap_file_path, MakerSavedSwap, MakerSwapEvent};
+                     stats_maker_swap_dir, MakerSavedSwap, MakerSwap, RunMakerSwapInput};
+use maker_swap::{stats_maker_swap_file_path, MakerSwapEvent};
 pub use taker_swap::{calc_max_taker_vol, check_balance_for_taker_swap, max_taker_vol, max_taker_vol_from_available,
-                     run_taker_swap, stats_taker_swap_dir, taker_swap_trade_preimage, RunTakerSwapInput, TakerSwap};
-use taker_swap::{stats_taker_swap_file_path, TakerSavedSwap, TakerSwapEvent};
+                     run_taker_swap, stats_taker_swap_dir, taker_swap_trade_preimage, RunTakerSwapInput,
+                     TakerSavedSwap, TakerSwap};
+use taker_swap::{stats_taker_swap_file_path, TakerSwapEvent};
 
 pub const SWAP_PREFIX: TopicPrefix = "swap";
 
@@ -767,6 +769,7 @@ fn save_stats_swap(ctx: &MmArc, swap: &SavedSwap) -> Result<(), String> {
         ),
     };
     try_s!(write(&path, &content));
+    add_swap_to_index(ctx.sqlite_connection(), swap);
     Ok(())
 }
 
@@ -1070,13 +1073,6 @@ fn broadcast_my_swap_status(uuid: &Uuid, ctx: &MmArc) -> Result<(), String> {
     let msg = json::to_vec(&status).expect("Swap status ser should never fail");
     broadcast_p2p_msg(ctx, vec![swap_topic(uuid)], msg);
     Ok(())
-}
-
-/// Saves the swap status notification received from P2P network to local DB.
-#[allow(dead_code)]
-pub fn save_stats_swap_status(ctx: &MmArc, data: Json) {
-    let swap: SavedSwap = unwrap!(json::from_value(data));
-    unwrap!(save_stats_swap(ctx, &swap));
 }
 
 const fn ten() -> usize { 10 }

@@ -96,15 +96,15 @@ pub struct TakerNegotiationData {
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
 pub struct MakerSwapData {
-    taker_coin: String,
-    maker_coin: String,
+    pub taker_coin: String,
+    pub maker_coin: String,
     taker: H256Json,
     secret: H256Json,
     secret_hash: Option<H160Json>,
     my_persistent_pub: H264Json,
     lock_duration: u64,
-    maker_amount: BigDecimal,
-    taker_amount: BigDecimal,
+    pub maker_amount: BigDecimal,
+    pub taker_amount: BigDecimal,
     maker_payment_confirmations: u64,
     maker_payment_requires_nota: Option<bool>,
     taker_payment_confirmations: u64,
@@ -112,7 +112,7 @@ pub struct MakerSwapData {
     maker_payment_lock: u64,
     /// Allows to recognize one SWAP from the other in the logs. #274.
     uuid: Uuid,
-    started_at: u64,
+    pub started_at: u64,
     maker_coin_start_block: u64,
     taker_coin_start_block: u64,
     /// A `MakerPayment` transaction fee.
@@ -1117,6 +1117,21 @@ impl MakerSwapEvent {
             | MakerSwapEvent::TakerFeeValidateFailed(_)
             | MakerSwapEvent::TakerPaymentValidateFailed(_))
     }
+
+    fn is_error(&self) -> bool {
+        !matches!(self, MakerSwapEvent::Started(_)
+            | MakerSwapEvent::Negotiated(_)
+            | MakerSwapEvent::TakerFeeValidated(_)
+            | MakerSwapEvent::MakerPaymentSent(_)
+            | MakerSwapEvent::TakerPaymentReceived(_)
+            | MakerSwapEvent::TakerPaymentWaitConfirmStarted
+            | MakerSwapEvent::TakerPaymentValidatedAndConfirmed
+            | MakerSwapEvent::TakerPaymentSpent(_)
+            | MakerSwapEvent::TakerPaymentSpendConfirmStarted
+            | MakerSwapEvent::TakerPaymentSpendConfirmed
+            | MakerSwapEvent::Finished
+        )
+    }
 }
 
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
@@ -1192,26 +1207,6 @@ impl MakerSavedSwap {
         }
     }
 
-    pub fn maker_amount(&self) -> Result<BigDecimal, String> {
-        match self.events.first() {
-            Some(event) => match &event.event {
-                MakerSwapEvent::Started(data) => Ok(data.maker_amount.clone()),
-                _ => ERR!("First swap event must be Started"),
-            },
-            None => ERR!("Can't get maker amount, events are empty"),
-        }
-    }
-
-    pub fn taker_amount(&self) -> Result<BigDecimal, String> {
-        match self.events.first() {
-            Some(event) => match &event.event {
-                MakerSwapEvent::Started(data) => Ok(data.taker_amount.clone()),
-                _ => ERR!("First swap event must be Started"),
-            },
-            None => ERR!("Can't get taker amount, events are empty"),
-        }
-    }
-
     pub fn is_finished(&self) -> bool {
         match self.events.last() {
             Some(event) => event.event == MakerSwapEvent::Finished,
@@ -1260,6 +1255,40 @@ impl MakerSavedSwap {
             }
         }
         true
+    }
+
+    pub fn swap_data(&self) -> Result<&MakerSwapData, String> {
+        match self.events.first() {
+            Some(event) => match &event.event {
+                MakerSwapEvent::Started(data) => Ok(data),
+                _ => ERR!("First swap event must be Started"),
+            },
+            None => ERR!("Can't get swap_data, events are empty"),
+        }
+    }
+
+    pub fn finished_at(&self) -> Result<u64, String> {
+        match self.events.last() {
+            Some(event) => match &event.event {
+                MakerSwapEvent::Finished => Ok(event.timestamp / 1000),
+                _ => ERR!("Last swap event must be Finished"),
+            },
+            None => ERR!("Can't get finished_at, events are empty"),
+        }
+    }
+
+    pub fn is_success(&self) -> Result<bool, String> {
+        if !self.is_finished() {
+            return ERR!("Can not determine is_success state for not finished swap");
+        }
+
+        for event in self.events.iter() {
+            if event.event.is_error() {
+                return Ok(false);
+            }
+        }
+
+        Ok(true)
     }
 }
 

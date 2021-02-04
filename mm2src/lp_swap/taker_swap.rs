@@ -204,6 +204,40 @@ impl TakerSavedSwap {
         }
         true
     }
+
+    pub fn swap_data(&self) -> Result<&TakerSwapData, String> {
+        match self.events.first() {
+            Some(event) => match &event.event {
+                TakerSwapEvent::Started(data) => Ok(data),
+                _ => ERR!("First swap event must be Started"),
+            },
+            None => ERR!("Can't get swap_data, events are empty"),
+        }
+    }
+
+    pub fn finished_at(&self) -> Result<u64, String> {
+        match self.events.last() {
+            Some(event) => match &event.event {
+                TakerSwapEvent::Finished => Ok(event.timestamp / 1000),
+                _ => ERR!("Last swap event must be Finished"),
+            },
+            None => ERR!("Can't get finished_at, events are empty"),
+        }
+    }
+
+    pub fn is_success(&self) -> Result<bool, String> {
+        if !self.is_finished() {
+            return ERR!("Can not determine is_success state for not finished swap");
+        }
+
+        for event in self.events.iter() {
+            if event.event.is_error() {
+                return Ok(false);
+            }
+        }
+
+        Ok(true)
+    }
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -352,13 +386,13 @@ pub async fn run_taker_swap(swap: RunTakerSwapInput, ctx: MmArc) {
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct TakerSwapData {
-    taker_coin: String,
-    maker_coin: String,
+    pub taker_coin: String,
+    pub maker_coin: String,
     maker: H256Json,
     my_persistent_pub: H264Json,
     lock_duration: u64,
-    maker_amount: BigDecimal,
-    taker_amount: BigDecimal,
+    pub maker_amount: BigDecimal,
+    pub taker_amount: BigDecimal,
     maker_payment_confirmations: u64,
     maker_payment_requires_nota: Option<bool>,
     taker_payment_confirmations: u64,
@@ -366,7 +400,7 @@ pub struct TakerSwapData {
     taker_payment_lock: u64,
     /// Allows to recognize one SWAP from the other in the logs. #274.
     uuid: Uuid,
-    started_at: u64,
+    pub started_at: u64,
     maker_payment_wait: u64,
     maker_coin_start_block: u64,
     taker_coin_start_block: u64,
@@ -498,6 +532,19 @@ impl TakerSwapEvent {
             TakerSwapEvent::NegotiateFailed(_)
             | TakerSwapEvent::MakerPaymentValidateFailed(_)
             | TakerSwapEvent::TakerPaymentWaitForSpendFailed(_))
+    }
+
+    fn is_error(&self) -> bool {
+        !matches!(self, TakerSwapEvent::Started(_)
+        | TakerSwapEvent::Negotiated(_)
+        | TakerSwapEvent::TakerFeeSent(_)
+        | TakerSwapEvent::MakerPaymentReceived(_)
+        | TakerSwapEvent::MakerPaymentWaitConfirmStarted
+        | TakerSwapEvent::MakerPaymentValidatedAndConfirmed
+        | TakerSwapEvent::TakerPaymentSent(_)
+        | TakerSwapEvent::TakerPaymentSpent(_)
+        | TakerSwapEvent::MakerPaymentSpent(_)
+        | TakerSwapEvent::Finished)
     }
 }
 
