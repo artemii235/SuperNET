@@ -257,8 +257,22 @@ impl MakerSwap {
 
     async fn start(&self) -> Result<(Option<MakerSwapCommand>, Vec<MakerSwapEvent>), String> {
         let preimage_value = TradePreimageValue::Exact(self.maker_amount.clone());
-        let maker_payment_trade_fee = try_s!(self.maker_coin.get_sender_trade_fee(preimage_value).compat().await);
-        let taker_payment_spend_trade_fee = try_s!(self.taker_coin.get_receiver_trade_fee().compat().await);
+        let maker_payment_trade_fee = match self.maker_coin.get_sender_trade_fee(preimage_value).compat().await {
+            Ok(fee) => fee,
+            Err(e) => {
+                return Ok((Some(MakerSwapCommand::Finish), vec![MakerSwapEvent::StartFailed(
+                    ERRL!("!maker_coin.get_sender_trade_fee {}", e).into(),
+                )]))
+            },
+        };
+        let taker_payment_spend_trade_fee = match self.taker_coin.get_receiver_trade_fee().compat().await {
+            Ok(fee) => fee,
+            Err(e) => {
+                return Ok((Some(MakerSwapCommand::Finish), vec![MakerSwapEvent::StartFailed(
+                    ERRL!("!taker_coin.get_receiver_trade_fee {}", e).into(),
+                )]))
+            },
+        };
 
         let params = MakerSwapPreparedParams {
             maker_payment_trade_fee: maker_payment_trade_fee.clone(),

@@ -677,15 +677,33 @@ impl TakerSwap {
             &self.r().data.taker_coin,
             &self.taker_amount.clone(),
         );
-        let fee_to_send_dex_fee = try_s!(
-            self.taker_coin
-                .get_fee_to_send_taker_fee(dex_fee.to_decimal())
-                .compat()
-                .await
-        );
+        let fee_to_send_dex_fee_fut = self.taker_coin.get_fee_to_send_taker_fee(dex_fee.to_decimal()).compat();
+        let fee_to_send_dex_fee = match fee_to_send_dex_fee_fut.await {
+            Ok(fee) => fee,
+            Err(e) => {
+                return Ok((Some(TakerSwapCommand::Finish), vec![TakerSwapEvent::StartFailed(
+                    ERRL!("!taker_coin.get_fee_to_send_taker_fee {}", e).into(),
+                )]))
+            },
+        };
         let preimage_value = TradePreimageValue::Exact(self.taker_amount.to_decimal());
-        let taker_payment_trade_fee = try_s!(self.taker_coin.get_sender_trade_fee(preimage_value).compat().await);
-        let maker_payment_spend_trade_fee = try_s!(self.maker_coin.get_receiver_trade_fee().compat().await);
+        let taker_payment_trade_fee = match self.taker_coin.get_sender_trade_fee(preimage_value).compat().await {
+            Ok(fee) => fee,
+            Err(e) => {
+                return Ok((Some(TakerSwapCommand::Finish), vec![TakerSwapEvent::StartFailed(
+                    ERRL!("!taker_coin.get_sender_trade_fee {}", e).into(),
+                )]))
+            },
+        };
+
+        let maker_payment_spend_trade_fee = match self.maker_coin.get_receiver_trade_fee().compat().await {
+            Ok(fee) => fee,
+            Err(e) => {
+                return Ok((Some(TakerSwapCommand::Finish), vec![TakerSwapEvent::StartFailed(
+                    ERRL!("!maker_coin.get_receiver_trade_fee {}", e).into(),
+                )]))
+            },
+        };
 
         let params = TakerSwapPreparedParams {
             dex_fee: dex_fee.clone(),
