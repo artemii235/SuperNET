@@ -1118,8 +1118,8 @@ impl MakerSwapEvent {
             | MakerSwapEvent::TakerPaymentValidateFailed(_))
     }
 
-    fn is_error(&self) -> bool {
-        !matches!(self, MakerSwapEvent::Started(_)
+    fn is_success(&self) -> bool {
+        matches!(self, MakerSwapEvent::Started(_)
             | MakerSwapEvent::Negotiated(_)
             | MakerSwapEvent::TakerFeeValidated(_)
             | MakerSwapEvent::MakerPaymentSent(_)
@@ -1132,6 +1132,8 @@ impl MakerSwapEvent {
             | MakerSwapEvent::Finished
         )
     }
+
+    fn is_error(&self) -> bool { !self.is_success() }
 }
 
 #[derive(Debug, Deserialize, PartialEq, Serialize)]

@@ -534,18 +534,21 @@ impl TakerSwapEvent {
             | TakerSwapEvent::TakerPaymentWaitForSpendFailed(_))
     }
 
-    fn is_error(&self) -> bool {
-        !matches!(self, TakerSwapEvent::Started(_)
-        | TakerSwapEvent::Negotiated(_)
-        | TakerSwapEvent::TakerFeeSent(_)
-        | TakerSwapEvent::MakerPaymentReceived(_)
-        | TakerSwapEvent::MakerPaymentWaitConfirmStarted
-        | TakerSwapEvent::MakerPaymentValidatedAndConfirmed
-        | TakerSwapEvent::TakerPaymentSent(_)
-        | TakerSwapEvent::TakerPaymentSpent(_)
-        | TakerSwapEvent::MakerPaymentSpent(_)
-        | TakerSwapEvent::Finished)
+    fn is_success(&self) -> bool {
+        matches!(self, TakerSwapEvent::Started(_)
+            | TakerSwapEvent::Negotiated(_)
+            | TakerSwapEvent::TakerFeeSent(_)
+            | TakerSwapEvent::MakerPaymentReceived(_)
+            | TakerSwapEvent::MakerPaymentWaitConfirmStarted
+            | TakerSwapEvent::MakerPaymentValidatedAndConfirmed
+            | TakerSwapEvent::TakerPaymentSent(_)
+            | TakerSwapEvent::TakerPaymentSpent(_)
+            | TakerSwapEvent::MakerPaymentSpent(_)
+            | TakerSwapEvent::Finished
+        )
     }
+
+    fn is_error(&self) -> bool { !self.is_success() }
 }
 
 #[derive(Debug)]
