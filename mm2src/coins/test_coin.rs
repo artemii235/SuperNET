@@ -1,6 +1,7 @@
 use super::{HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeFee, TransactionDetails, TransactionEnum,
             TransactionFut};
-use crate::{FoundSwapTxSpend, TradePreimageError, TradePreimageValue, ValidateAddressResult, WithdrawRequest};
+use crate::{FeeApproxStage, FoundSwapTxSpend, TradePreimageError, TradePreimageValue, ValidateAddressResult,
+            WithdrawRequest};
 use bigdecimal::BigDecimal;
 use common::mm_ctx::MmArc;
 use futures01::Future;
@@ -204,8 +205,6 @@ impl SwapOps for TestCoin {
 impl MmCoin for TestCoin {
     fn is_asset_chain(&self) -> bool { unimplemented!() }
 
-    fn can_i_spend_other_payment(&self) -> Box<dyn Future<Item = (), Error = String> + Send> { unimplemented!() }
-
     fn wallet_only(&self) -> bool { unimplemented!() }
 
     fn withdraw(&self, req: WithdrawRequest) -> Box<dyn Future<Item = TransactionDetails, Error = String> + Send> {
@@ -228,17 +227,22 @@ impl MmCoin for TestCoin {
     fn get_sender_trade_fee(
         &self,
         value: TradePreimageValue,
+        stage: FeeApproxStage,
     ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
         unimplemented!()
     }
 
-    fn get_receiver_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
+    fn get_receiver_trade_fee(
+        &self,
+        stage: FeeApproxStage,
+    ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
         unimplemented!()
     }
 
     fn get_fee_to_send_taker_fee(
         &self,
         dex_fee_amount: BigDecimal,
+        stage: FeeApproxStage,
     ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
         unimplemented!()
     }

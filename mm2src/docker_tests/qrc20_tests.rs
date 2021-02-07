@@ -7,7 +7,7 @@ use coins::utxo::qtum::QtumBasedCoin;
 use coins::utxo::qtum::{qtum_coin_from_conf_and_request, QtumCoin};
 use coins::utxo::sat_from_big_decimal;
 use coins::utxo::utxo_common::big_decimal_from_sat;
-use coins::{MarketCoinOps, MmCoin, TradePreimageValue, TransactionEnum};
+use coins::{FeeApproxStage, MarketCoinOps, MmCoin, TradePreimageValue, TransactionEnum};
 use common::for_tests::{check_my_swap_status, check_recent_swaps, check_stats_swap_status, MAKER_ERROR_EVENTS,
                         MAKER_SUCCESS_EVENTS, TAKER_ERROR_EVENTS, TAKER_SUCCESS_EVENTS};
 use common::log::debug;
@@ -206,6 +206,7 @@ fn generate_qtum_coin_with_random_privkey(
         "wiftype":128,
         "segwit":true,
         "txfee": txfee,
+        "txfee_volatility_percent":0.1,
         "mm2":1,
         "mature_confirmations":500,
         "network":"regtest",
@@ -1227,8 +1228,8 @@ fn test_get_max_taker_vol_and_trade_with_dynamic_trade_fee(coin: QtumCoin, priv_
     let confpath = unsafe { QTUM_CONF_PATH.as_ref().expect("Qtum config is not set yet") };
     let coins = json! ([
         {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
-        {"coin":"QTUM","decimals":8,"pubtype":120,"p2shtype":110,"wiftype":128,"segwit":true,
-         "txfee":0,"mm2":1,"mature_confirmations":500,"network":"regtest","confpath":confpath,"protocol":{"type":"UTXO"}},
+        {"coin":"QTUM","decimals":8,"pubtype":120,"p2shtype":110,"wiftype":128,"segwit":true,"txfee":0,"txfee_volatility_percent":0.1,
+        "mm2":1,"mature_confirmations":500,"network":"regtest","confpath":confpath,"protocol":{"type":"UTXO"}},
     ]);
     let mut mm = unwrap!(MarketMakerIt::start(
         json! ({
@@ -1258,7 +1259,10 @@ fn test_get_max_taker_vol_and_trade_with_dynamic_trade_fee(coin: QtumCoin, priv_
     // Please note if we pass the exact value, the `get_sender_trade_fee` will fail with 'Not sufficient balance: Couldn't collect enough value from utxos'.
     // So we should deduct trade fee from the output.
     let max_trade_fee = coin
-        .get_sender_trade_fee(TradePreimageValue::UpperBound(qtum_balance.clone()))
+        .get_sender_trade_fee(
+            TradePreimageValue::UpperBound(qtum_balance.clone()),
+            FeeApproxStage::TradePreimage,
+        )
         .wait()
         .expect("!get_sender_trade_fee");
     let max_trade_fee = max_trade_fee.amount.to_decimal();
@@ -1273,7 +1277,7 @@ fn test_get_max_taker_vol_and_trade_with_dynamic_trade_fee(coin: QtumCoin, priv_
     // - `max_fee_to_send_taker_fee = fee_to_send_taker_fee(max_dex_fee)`
     // `taker_fee` is sent using general withdraw, and the fee get be obtained from withdraw result
     let max_fee_to_send_taker_fee = coin
-        .get_fee_to_send_taker_fee(max_dex_fee.to_decimal())
+        .get_fee_to_send_taker_fee(max_dex_fee.to_decimal(), FeeApproxStage::TradePreimage)
         .wait()
         .expect("!get_fee_to_send_taker_fee");
     let max_fee_to_send_taker_fee = max_fee_to_send_taker_fee.amount.to_decimal();
@@ -1300,18 +1304,6 @@ fn test_get_max_taker_vol_and_trade_with_dynamic_trade_fee(coin: QtumCoin, priv_
         json["result"],
         json::to_value(expected_max_taker_vol.to_fraction()).unwrap()
     );
-
-    // try pass volume greater than max_taker_vol
-    let volume = &expected_max_taker_vol + &MmNumber::from((1, 100000000));
-    let rc = unwrap!(block_on(mm.rpc(json! ({
-        "userpass": mm.userpass,
-        "method": "sell",
-        "base": "QTUM",
-        "rel": "MYCOIN",
-        "price": 1,
-        "volume": volume.to_fraction(),
-    }))));
-    assert!(!rc.0.is_success(), "sell success, but should fail: {}", rc.1);
 
     let rc = unwrap!(block_on(mm.rpc(json! ({
         "userpass": mm.userpass,

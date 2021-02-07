@@ -68,9 +68,10 @@ pub use chain::Transaction as UtxoTx;
 
 use self::rpc_clients::{ElectrumClient, ElectrumClientImpl, EstimateFeeMethod, EstimateFeeMode, NativeClient,
                         UnspentInfo, UtxoRpcClientEnum};
-use super::{CoinTransportMetrics, CoinsContext, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin,
-            RpcClientType, RpcTransportEventHandler, RpcTransportEventHandlerShared, TradeFee, TradePreimageError,
-            Transaction, TransactionDetails, TransactionEnum, TransactionFut, WithdrawFee, WithdrawRequest};
+use super::{CoinTransportMetrics, CoinsContext, FeeApproxStage, FoundSwapTxSpend, HistorySyncState, MarketCoinOps,
+            MmCoin, RpcClientType, RpcTransportEventHandler, RpcTransportEventHandlerShared, TradeFee,
+            TradePreimageError, Transaction, TransactionDetails, TransactionEnum, TransactionFut, WithdrawFee,
+            WithdrawRequest};
 use crate::utxo::rpc_clients::{ElectrumRpcRequest, NativeClientImpl};
 
 #[cfg(test)] pub mod utxo_tests;
@@ -88,6 +89,7 @@ const UTXO_DUST_AMOUNT: u64 = 1000;
 /// # Safety
 /// 11 > 0
 const KMD_MTP_BLOCK_COUNT: NonZeroU64 = unsafe { NonZeroU64::new_unchecked(11u64) };
+const DEFAULT_DYNAMIC_FEE_VOLATILITY_PERCENT: f64 = 0.5;
 
 #[cfg(windows)]
 #[cfg(feature = "native")]
@@ -341,6 +343,8 @@ pub struct UtxoCoinFields {
     /// https://komodoplatform.atlassian.net/wiki/spaces/KPSD/pages/71729160/What+is+a+Parallel+Chain+Asset+Chain
     pub asset_chain: bool,
     pub tx_fee: TxFee,
+    /// Dynamic transaction fee volatility in percent. The value is used to predict a possible increase in dynamic fee.
+    pub tx_fee_volatility_percent: f64,
     /// Transaction version group id for Zcash transactions since Overwinter: https://github.com/zcash/zips/blob/master/zip-0202.rst
     pub version_group_id: u32,
     /// Consensus branch id for Zcash transactions since Overwinter: https://github.com/zcash/zcash/blob/master/src/consensus/upgrades.cpp#L11
@@ -461,7 +465,12 @@ pub trait UtxoCommonOps {
         outputs: Vec<TransactionOutput>,
         fee_policy: FeePolicy,
         gas_fee: Option<u64>,
+        stage: &FeeApproxStage,
     ) -> Result<BigDecimal, TradePreimageError>;
+
+    /// Increase the given `dynamic_fee` according to the fee approximation `stage`.
+    /// The method is used to predict a possible increase in dynamic fee.
+    fn increase_dynamic_fee_by_stage(&self, dynamic_fee: u64, stage: &FeeApproxStage) -> u64;
 }
 
 #[async_trait]
@@ -758,6 +767,7 @@ pub trait UtxoCoinBuilder {
         let tx_version = self.tx_version();
         let overwintered = self.overwintered();
         let tx_fee = try_s!(self.tx_fee(&rpc_client).await);
+        let tx_fee_volatility_percent = self.tx_fee_volatility_percent();
         let version_group_id = try_s!(self.version_group_id(tx_version, overwintered));
         let consensus_branch_id = try_s!(self.consensus_branch_id(tx_version));
         let signature_version = self.signature_version();
@@ -801,6 +811,7 @@ pub trait UtxoCoinBuilder {
             address_format,
             asset_chain,
             tx_fee,
+            tx_fee_volatility_percent,
             version_group_id,
             consensus_branch_id,
             zcash,
@@ -885,6 +896,13 @@ pub trait UtxoCoinBuilder {
             Some(fee) => TxFee::Fixed(fee),
         };
         Ok(tx_fee)
+    }
+
+    fn tx_fee_volatility_percent(&self) -> f64 {
+        match self.conf()["txfee_volatility_percent"].as_f64() {
+            Some(volatility) => volatility,
+            None => DEFAULT_DYNAMIC_FEE_VOLATILITY_PERCENT,
+        }
     }
 
     fn version_group_id(&self, tx_version: i32, overwintered: bool) -> Result<u32, String> {

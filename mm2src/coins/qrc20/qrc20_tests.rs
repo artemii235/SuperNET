@@ -94,50 +94,6 @@ fn test_withdraw_impl_fee_details() {
 }
 
 #[test]
-fn test_can_i_spend_other_payment() {
-    ElectrumClient::display_balance.mock_safe(|_, _, decimal| {
-        // one satoshi more than required
-        let balance = big_decimal_from_sat(CONTRACT_CALL_GAS_FEE + EXPECTED_TX_FEE + 1, decimal);
-        MockResult::Return(Box::new(futures01::future::ok(balance)))
-    });
-
-    // qfkXE2cNFEwPFQqvBcqs8m9KrkNa9KV4xi
-    let priv_key = [
-        192, 240, 176, 226, 14, 170, 226, 96, 107, 47, 166, 243, 154, 48, 28, 243, 18, 144, 240, 1, 79, 103, 178, 42,
-        32, 161, 106, 119, 241, 227, 42, 102,
-    ];
-    let (_ctx, coin) = qrc20_coin_for_test(&priv_key);
-    check_tx_fee(&coin, ActualTxFee::Fixed(EXPECTED_TX_FEE as u64));
-
-    let actual = coin.can_i_spend_other_payment().wait();
-    assert_eq!(actual, Ok(()));
-}
-
-#[test]
-fn test_can_i_spend_other_payment_error() {
-    ElectrumClient::display_balance.mock_safe(|_, _, decimal| {
-        // one satoshi less than required
-        let balance = big_decimal_from_sat(CONTRACT_CALL_GAS_FEE + EXPECTED_TX_FEE - 1, decimal);
-        MockResult::Return(Box::new(futures01::future::ok(balance)))
-    });
-
-    // qfkXE2cNFEwPFQqvBcqs8m9KrkNa9KV4xi
-    let priv_key = [
-        192, 240, 176, 226, 14, 170, 226, 96, 107, 47, 166, 243, 154, 48, 28, 243, 18, 144, 240, 1, 79, 103, 178, 42,
-        32, 161, 106, 119, 241, 227, 42, 102,
-    ];
-    let (_ctx, coin) = qrc20_coin_for_test(&priv_key);
-    check_tx_fee(&coin, ActualTxFee::Fixed(EXPECTED_TX_FEE as u64));
-
-    let err = coin
-        .can_i_spend_other_payment()
-        .wait()
-        .expect_err("!can_i_spend_other_payment should be error");
-    log!("error: "(err));
-    assert!(err.contains("Base coin balance 0.04000999 is too low to cover gas fee, required 0.04001"));
-}
-
-#[test]
 fn test_validate_maker_payment() {
     // this priv_key corresponds to "taker_passphrase" passphrase
     let priv_key = [
@@ -643,7 +599,7 @@ fn test_sender_trade_preimage_zero_allowance() {
     let sender_refund_fee = big_decimal_from_sat(CONTRACT_CALL_GAS_FEE + EXPECTED_TX_FEE, coin.utxo.decimals);
 
     let actual = coin
-        .get_sender_trade_fee(TradePreimageValue::Exact(1.into()))
+        .get_sender_trade_fee(TradePreimageValue::Exact(1.into()), FeeApproxStage::WithoutApprox)
         .wait()
         .expect("!get_sender_trade_fee");
     // one `approve` contract call should be included into the expected trade fee
@@ -679,7 +635,7 @@ fn test_sender_trade_preimage_with_allowance() {
     let sender_refund_fee = big_decimal_from_sat(CONTRACT_CALL_GAS_FEE + EXPECTED_TX_FEE, coin.utxo.decimals);
 
     let actual = coin
-        .get_sender_trade_fee(TradePreimageValue::Exact(2.5.into()))
+        .get_sender_trade_fee(TradePreimageValue::Exact(2.5.into()), FeeApproxStage::WithoutApprox)
         .wait()
         .expect("!get_sender_trade_fee");
     // the expected fee should not include any `approve` contract call
@@ -690,7 +646,7 @@ fn test_sender_trade_preimage_with_allowance() {
     assert_eq!(actual, expected);
 
     let actual = coin
-        .get_sender_trade_fee(TradePreimageValue::Exact(3.5.into()))
+        .get_sender_trade_fee(TradePreimageValue::Exact(3.5.into()), FeeApproxStage::WithoutApprox)
         .wait()
         .expect("!get_sender_trade_fee");
     // two `approve` contract calls should be included into the expected trade fee
@@ -714,7 +670,10 @@ fn test_receiver_trade_preimage() {
     // check if the coin's tx fee is expected
     check_tx_fee(&coin, ActualTxFee::Fixed(EXPECTED_TX_FEE as u64));
 
-    let actual = coin.get_receiver_trade_fee().wait().expect("!get_receiver_trade_fee");
+    let actual = coin
+        .get_receiver_trade_fee(FeeApproxStage::WithoutApprox)
+        .wait()
+        .expect("!get_receiver_trade_fee");
     // only one contract call should be included into the expected trade fee
     let expected_receiver_fee = big_decimal_from_sat(CONTRACT_CALL_GAS_FEE + EXPECTED_TX_FEE, coin.utxo.decimals);
     let expected = TradeFee {
@@ -740,7 +699,7 @@ fn test_taker_fee_tx_fee() {
 
     let dex_fee_amount = BigDecimal::from(5);
     let actual = coin
-        .get_fee_to_send_taker_fee(dex_fee_amount)
+        .get_fee_to_send_taker_fee(dex_fee_amount, FeeApproxStage::WithoutApprox)
         .wait()
         .expect("!get_fee_to_send_taker_fee");
     // only one contract call should be included into the expected trade fee

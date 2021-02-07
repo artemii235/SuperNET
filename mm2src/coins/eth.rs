@@ -53,10 +53,10 @@ use web3::types::{Action as TraceAction, BlockId, BlockNumber, Bytes, CallReques
                   TraceFilterBuilder, Transaction as Web3Transaction, TransactionId};
 use web3::{self, Web3};
 
-use super::{CoinProtocol, CoinTransportMetrics, CoinsContext, FoundSwapTxSpend, HistorySyncState, MarketCoinOps,
-            MmCoin, RpcClientType, RpcTransportEventHandler, RpcTransportEventHandlerShared, SwapOps, TradeFee,
-            TradePreimageError, TradePreimageValue, Transaction, TransactionDetails, TransactionEnum, TransactionFut,
-            ValidateAddressResult, WithdrawFee, WithdrawRequest};
+use super::{CoinProtocol, CoinTransportMetrics, CoinsContext, FeeApproxStage, FoundSwapTxSpend, HistorySyncState,
+            MarketCoinOps, MmCoin, RpcClientType, RpcTransportEventHandler, RpcTransportEventHandlerShared, SwapOps,
+            TradeFee, TradePreimageError, TradePreimageValue, Transaction, TransactionDetails, TransactionEnum,
+            TransactionFut, ValidateAddressResult, WithdrawFee, WithdrawRequest};
 
 pub use ethcore_transaction::SignedTransaction as SignedEthTx;
 pub use rlp;
@@ -80,9 +80,18 @@ pub const PAYMENT_STATE_SENT: u8 = 1;
 const _PAYMENT_STATE_SPENT: u8 = 2;
 const _PAYMENT_STATE_REFUNDED: u8 = 3;
 const GAS_PRICE_PERCENT: u64 = 10;
-/// `get_sender_trade_fee` and `get_receiver_trade_fee` should take into account that gas price may increase during the swap.
-/// So we should increase the gas price by 5%.
-const TRADE_PREIMAGE_GAS_PRICE_PERCENT: u64 = 5;
+
+/// Take into account that the dynamic fee may increase by 3% during the swap.
+const GAS_PRICE_APPROXIMATION_PERCENT_ON_START_SWAP: u64 = 3;
+/// Take into account that the dynamic fee may increase at each of the following stages:
+/// - it may increase by 2% until a swap is started;
+/// - it may increase by 3% during the swap.
+const GAS_PRICE_APPROXIMATION_PERCENT_ON_ORDER_ISSUE: u64 = 5;
+/// Take into account that the dynamic fee may increase at each of the following stages:
+/// - it may increase by 2% until an order is issued;
+/// - it may increase by 2% until a swap is started;
+/// - it may increase by 3% during the swap.
+const GAS_PRICE_APPROXIMATION_PERCENT_ON_TRADE_PREIMAGE: u64 = 7;
 
 const APPROVE_GAS_LIMIT: u64 = 50_000;
 
@@ -2369,26 +2378,6 @@ impl EthTxFeeDetails {
 impl MmCoin for EthCoin {
     fn is_asset_chain(&self) -> bool { false }
 
-    fn can_i_spend_other_payment(&self) -> Box<dyn Future<Item = (), Error = String> + Send> {
-        let selfi = self.clone();
-        let fut = selfi
-            .get_receiver_trade_fee()
-            .map(|fee| fee.amount.to_decimal())
-            .map_err(|e| ERRL!("{}", e))
-            .and_then(move |fee| selfi.base_coin_balance().map(|balance| (balance, fee)))
-            .and_then(move |(balance, fee)| {
-                if balance < fee {
-                    return ERR!(
-                        "Base coin balance {} is too low to cover gas fee, required {}",
-                        balance,
-                        fee
-                    );
-                }
-                Ok(())
-            });
-        Box::new(fut)
-    }
-
     fn wallet_only(&self) -> bool { false }
 
     fn withdraw(&self, req: WithdrawRequest) -> Box<dyn Future<Item = TransactionDetails, Error = String> + Send> {
@@ -2440,11 +2429,12 @@ impl MmCoin for EthCoin {
     fn get_sender_trade_fee(
         &self,
         value: TradePreimageValue,
+        stage: FeeApproxStage,
     ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
         let coin = self.clone();
         let fut = async move {
             let gas_price = try_map!(coin.get_gas_price().compat().await, TradePreimageError::Other);
-            let gas_price = increase_by_percent_one_gwei(gas_price, TRADE_PREIMAGE_GAS_PRICE_PERCENT);
+            let gas_price = increase_gas_price_by_stage(gas_price, &stage);
             let gas_limit = match coin.coin_type {
                 EthCoinType::Eth => {
                     // this gas_limit includes gas for `ethPayment` and `senderRefund` contract calls
@@ -2480,11 +2470,14 @@ impl MmCoin for EthCoin {
         Box::new(fut.boxed().compat())
     }
 
-    fn get_receiver_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
+    fn get_receiver_trade_fee(
+        &self,
+        stage: FeeApproxStage,
+    ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
         let coin = self.clone();
         let fut = async move {
             let gas_price = try_map!(coin.get_gas_price().compat().await, TradePreimageError::Other);
-            let gas_price = increase_by_percent_one_gwei(gas_price, TRADE_PREIMAGE_GAS_PRICE_PERCENT);
+            let gas_price = increase_gas_price_by_stage(gas_price, &stage);
             let total_fee = gas_price * U256::from(150_000);
             let amount = try_map!(u256_to_big_decimal(total_fee, 18), TradePreimageError::Other);
             Ok(TradeFee {
@@ -2498,6 +2491,7 @@ impl MmCoin for EthCoin {
     fn get_fee_to_send_taker_fee(
         &self,
         dex_fee_amount: BigDecimal,
+        stage: FeeApproxStage,
     ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
         let coin = self.clone();
         let fut = async move {
@@ -2522,7 +2516,7 @@ impl MmCoin for EthCoin {
             };
 
             let gas_price = try_map!(coin.get_gas_price().compat().await, TradePreimageError::Other);
-            let gas_price = increase_by_percent_one_gwei(gas_price, TRADE_PREIMAGE_GAS_PRICE_PERCENT);
+            let gas_price = increase_gas_price_by_stage(gas_price, &stage);
             let estimate_gas_req = CallRequest {
                 value: Some(eth_value),
                 data: Some(data.clone().into()),
@@ -2939,5 +2933,20 @@ fn increase_by_percent_one_gwei(num: U256, percent: u64) -> U256 {
         num + one_gwei
     } else {
         num + percent
+    }
+}
+
+fn increase_gas_price_by_stage(gas_price: U256, level: &FeeApproxStage) -> U256 {
+    match level {
+        FeeApproxStage::WithoutApprox => gas_price,
+        FeeApproxStage::StartSwap => {
+            increase_by_percent_one_gwei(gas_price, GAS_PRICE_APPROXIMATION_PERCENT_ON_START_SWAP)
+        },
+        FeeApproxStage::OrderIssue => {
+            increase_by_percent_one_gwei(gas_price, GAS_PRICE_APPROXIMATION_PERCENT_ON_ORDER_ISSUE)
+        },
+        FeeApproxStage::TradePreimage => {
+            increase_by_percent_one_gwei(gas_price, GAS_PRICE_APPROXIMATION_PERCENT_ON_TRADE_PREIMAGE)
+        },
     }
 }

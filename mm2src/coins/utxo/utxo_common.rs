@@ -31,7 +31,7 @@ pub use chain::Transaction as UtxoTx;
 
 use self::rpc_clients::{electrum_script_hash, UnspentInfo, UtxoRpcClientEnum};
 use crate::utxo::rpc_clients::UtxoRpcClientOps;
-use crate::{TradePreimageError, TradePreimageValue, ValidateAddressResult};
+use crate::{FeeApproxStage, TradePreimageError, TradePreimageValue, ValidateAddressResult};
 use common::{block_on, Traceable};
 
 macro_rules! true_or {
@@ -50,9 +50,6 @@ lazy_static! {
 }
 
 pub const HISTORY_TOO_LARGE_ERR_CODE: i64 = -1;
-/// `get_sender_trade_fee` and `get_receiver_trade_fee` should take into account that dynamic fee may increase during the swap.
-/// So we should increase the dynamic fee by 1%.
-pub const TRADE_PREIMAGE_DYNAMIC_FEE_PERCENT: f64 = 1.;
 
 pub struct UtxoArcBuilder<'a> {
     ctx: &'a MmArc,
@@ -1186,10 +1183,6 @@ pub fn display_priv_key(coin: &UtxoCoinFields) -> String { format!("{}", coin.ke
 
 pub fn is_asset_chain(coin: &UtxoCoinFields) -> bool { coin.asset_chain }
 
-pub fn can_i_spend_other_payment() -> Box<dyn Future<Item = (), Error = String> + Send> {
-    Box::new(futures01::future::ok(()))
-}
-
 pub async fn withdraw<T>(coin: T, req: WithdrawRequest) -> Result<TransactionDetails, String>
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps + MarketCoinOps,
@@ -1743,6 +1736,7 @@ pub async fn preimage_trade_fee_required_to_send_outputs<T>(
     outputs: Vec<TransactionOutput>,
     fee_policy: FeePolicy,
     gas_fee: Option<u64>,
+    stage: &FeeApproxStage,
 ) -> Result<BigDecimal, TradePreimageError>
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps,
@@ -1757,8 +1751,9 @@ where
         // if it's a dynamic fee, we should generate a swap transaction to get an actual trade fee
         ActualTxFee::Dynamic(fee) => fee,
     };
+
     // take into account that the dynamic tx fee may increase during the swap
-    let dynamic_fee = increase_by_percent(dynamic_fee, TRADE_PREIMAGE_DYNAMIC_FEE_PERCENT);
+    let dynamic_fee = coin.increase_dynamic_fee_by_stage(dynamic_fee, stage);
 
     let outputs_count = outputs.len();
     let (unspents, _recently_sent_txs) = try_map!(
@@ -1787,6 +1782,7 @@ where
 pub fn get_sender_trade_fee<T>(
     coin: T,
     value: TradePreimageValue,
+    stage: FeeApproxStage,
 ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send>
 where
     T: AsRef<UtxoCoinFields> + MarketCoinOps + UtxoCommonOps + Send + Sync + 'static,
@@ -1807,7 +1803,7 @@ where
         );
         let gas_fee = None;
         let fee_amount = coin
-            .preimage_trade_fee_required_to_send_outputs(outputs, fee_policy, gas_fee)
+            .preimage_trade_fee_required_to_send_outputs(outputs, fee_policy, gas_fee, &stage)
             .await
             .trace(source!())?;
         Ok(TradeFee {
@@ -1834,6 +1830,7 @@ where
 pub fn get_fee_to_send_taker_fee<T>(
     coin: T,
     dex_fee_amount: BigDecimal,
+    stage: FeeApproxStage,
 ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send>
 where
     T: AsRef<UtxoCoinFields> + MarketCoinOps + UtxoCommonOps + Send + Sync + 'static,
@@ -1850,7 +1847,7 @@ where
         };
         let gas_fee = None;
         let fee_amount = coin
-            .preimage_trade_fee_required_to_send_outputs(vec![output], FeePolicy::SendExact, gas_fee)
+            .preimage_trade_fee_required_to_send_outputs(vec![output], FeePolicy::SendExact, gas_fee, &stage)
             .await
             .trace(source!())?;
         Ok(TradeFee {
@@ -2359,9 +2356,32 @@ where
     Ok((unspents, recently_spent))
 }
 
-pub fn increase_by_percent(num: u64, percent: f64) -> u64 {
+/// Increase the given `dynamic_fee` according to the fee approximation `stage` using the [`UtxoCoinFields::tx_fee_volatility_percent`].
+pub fn increase_dynamic_fee_by_stage<T>(coin: &T, dynamic_fee: u64, stage: &FeeApproxStage) -> u64
+where
+    T: AsRef<UtxoCoinFields>,
+{
+    let base_percent = coin.as_ref().tx_fee_volatility_percent;
+    let percent = match stage {
+        FeeApproxStage::WithoutApprox => return dynamic_fee,
+        // Take into account that the dynamic fee may increase during the swap by [`UtxoCoinFields::tx_fee_volatility_percent`].
+        FeeApproxStage::StartSwap => base_percent,
+        // Take into account that the dynamic fee may increase at each of the following stages up to [`UtxoCoinFields::tx_fee_volatility_percent`]:
+        // - until a swap is started;
+        // - during the swap.
+        FeeApproxStage::OrderIssue => base_percent * 2.,
+        // Take into account that the dynamic fee may increase at each of the following stages up to [`UtxoCoinFields::tx_fee_volatility_percent`]:
+        // - until an order is issued;
+        // - until a swap is started;
+        // - during the swap.
+        FeeApproxStage::TradePreimage => base_percent * 2.5,
+    };
+    increase_by_percent(dynamic_fee, percent)
+}
+
+fn increase_by_percent(num: u64, percent: f64) -> u64 {
     let percent = num as f64 / 100. * percent;
-    num + percent as u64
+    num + (percent.round() as u64)
 }
 
 async fn merge_utxo_loop<T>(weak: UtxoWeak, merge_at: usize, check_every: f64, max_merge_at_once: usize)
@@ -2413,10 +2433,12 @@ where
 fn test_increase_by_percent() {
     assert_eq!(increase_by_percent(4300, 1.), 4343);
     assert_eq!(increase_by_percent(30, 6.9), 32);
-    assert_eq!(increase_by_percent(30, 6.), 31);
-    assert_eq!(increase_by_percent(10, 6.), 10);
+    assert_eq!(increase_by_percent(30, 6.), 32);
+    assert_eq!(increase_by_percent(10, 6.), 11);
     assert_eq!(increase_by_percent(1000, 0.1), 1001);
     assert_eq!(increase_by_percent(0, 20.), 0);
     assert_eq!(increase_by_percent(20, 0.), 20);
     assert_eq!(increase_by_percent(23, 100.), 46);
+    assert_eq!(increase_by_percent(100, 2.4), 102);
+    assert_eq!(increase_by_percent(100, 2.5), 103);
 }

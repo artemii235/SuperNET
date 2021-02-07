@@ -7,9 +7,9 @@ use crate::utxo::utxo_common::{self, big_decimal_from_sat};
 use crate::utxo::{coin_daemon_data_dir, qtum, sign_tx, ActualTxFee, AdditionalTxData, FeePolicy,
                   GenerateTransactionError, RecentlySpentOutPoints, UtxoAddressFormat, UtxoCoinBuilder,
                   UtxoCoinFields, UtxoCommonOps, UtxoTx, VerboseTransactionFrom, UTXO_LOCK};
-use crate::{FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeFee, TradePreimageError,
-            TradePreimageValue, TransactionDetails, TransactionEnum, TransactionFut, ValidateAddressResult,
-            WithdrawFee, WithdrawRequest};
+use crate::{FeeApproxStage, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeFee,
+            TradePreimageError, TradePreimageValue, TransactionDetails, TransactionEnum, TransactionFut,
+            ValidateAddressResult, WithdrawFee, WithdrawRequest};
 use async_trait::async_trait;
 use bigdecimal::BigDecimal;
 use bitcrypto::{dhash160, sha256};
@@ -407,6 +407,7 @@ impl Qrc20Coin {
     async fn preimage_trade_fee_required_to_send_outputs(
         &self,
         contract_outputs: Vec<ContractCallOutput>,
+        stage: &FeeApproxStage,
     ) -> Result<BigDecimal, TradePreimageError> {
         let decimals = self.as_ref().decimals;
         let mut gas_fee = 0;
@@ -417,7 +418,7 @@ impl Qrc20Coin {
         }
         let fee_policy = FeePolicy::SendExact;
         let miner_fee =
-            UtxoCommonOps::preimage_trade_fee_required_to_send_outputs(self, outputs, fee_policy, Some(gas_fee))
+            UtxoCommonOps::preimage_trade_fee_required_to_send_outputs(self, outputs, fee_policy, Some(gas_fee), stage)
                 .await
                 .trace(source!())?;
         let gas_fee = big_decimal_from_sat(gas_fee as i64, decimals);
@@ -528,8 +529,13 @@ impl UtxoCommonOps for Qrc20Coin {
         outputs: Vec<TransactionOutput>,
         fee_policy: FeePolicy,
         gas_fee: Option<u64>,
+        stage: &FeeApproxStage,
     ) -> Result<BigDecimal, TradePreimageError> {
-        utxo_common::preimage_trade_fee_required_to_send_outputs(self, outputs, fee_policy, gas_fee).await
+        utxo_common::preimage_trade_fee_required_to_send_outputs(self, outputs, fee_policy, gas_fee, stage).await
+    }
+
+    fn increase_dynamic_fee_by_stage(&self, dynamic_fee: u64, stage: &FeeApproxStage) -> u64 {
+        utxo_common::increase_dynamic_fee_by_stage(self, dynamic_fee, stage)
     }
 }
 
@@ -893,26 +899,6 @@ impl MarketCoinOps for Qrc20Coin {
 impl MmCoin for Qrc20Coin {
     fn is_asset_chain(&self) -> bool { utxo_common::is_asset_chain(&self.utxo) }
 
-    fn can_i_spend_other_payment(&self) -> Box<dyn Future<Item = (), Error = String> + Send> {
-        let selfi = self.clone();
-        let fut = selfi
-            .get_receiver_trade_fee()
-            .map(|fee| fee.amount.to_decimal())
-            .map_err(|e| ERRL!("{}", e))
-            .and_then(move |fee| selfi.base_coin_balance().map(|balance| (balance, fee)))
-            .and_then(|(balance, fee)| {
-                if balance < fee {
-                    return ERR!(
-                        "Base coin balance {} is too low to cover gas fee, required {}",
-                        balance,
-                        fee
-                    );
-                }
-                Ok(())
-            });
-        Box::new(fut)
-    }
-
     fn wallet_only(&self) -> bool { false }
 
     fn withdraw(&self, req: WithdrawRequest) -> Box<dyn Future<Item = TransactionDetails, Error = String> + Send> {
@@ -950,6 +936,7 @@ impl MmCoin for Qrc20Coin {
     fn get_sender_trade_fee(
         &self,
         value: TradePreimageValue,
+        stage: FeeApproxStage,
     ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
         let selfi = self.clone();
         let decimals = self.utxo.decimals;
@@ -983,7 +970,7 @@ impl MmCoin for Qrc20Coin {
                     TradePreimageError::Other
                 );
                 selfi
-                    .preimage_trade_fee_required_to_send_outputs(erc20_payment_outputs)
+                    .preimage_trade_fee_required_to_send_outputs(erc20_payment_outputs, &stage)
                     .await
                     .trace(source!())?
             };
@@ -1000,7 +987,7 @@ impl MmCoin for Qrc20Coin {
                     TradePreimageError::Other
                 );
                 selfi
-                    .preimage_trade_fee_required_to_send_outputs(vec![sender_refund_output])
+                    .preimage_trade_fee_required_to_send_outputs(vec![sender_refund_output], &stage)
                     .await
                     .trace(source!())?
             };
@@ -1014,7 +1001,10 @@ impl MmCoin for Qrc20Coin {
         Box::new(fut.boxed().compat())
     }
 
-    fn get_receiver_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
+    fn get_receiver_trade_fee(
+        &self,
+        stage: FeeApproxStage,
+    ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
         let selfi = self.clone();
         let fut = async move {
             // pass the dummy params
@@ -1030,7 +1020,9 @@ impl MmCoin for Qrc20Coin {
                 TradePreimageError::Other
             );
 
-            let total_fee = selfi.preimage_trade_fee_required_to_send_outputs(vec![output]).await?;
+            let total_fee = selfi
+                .preimage_trade_fee_required_to_send_outputs(vec![output], &stage)
+                .await?;
             Ok(TradeFee {
                 coin: selfi.platform.clone(),
                 amount: total_fee.into(),
@@ -1042,6 +1034,7 @@ impl MmCoin for Qrc20Coin {
     fn get_fee_to_send_taker_fee(
         &self,
         dex_fee_amount: BigDecimal,
+        stage: FeeApproxStage,
     ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
         let selfi = self.clone();
         let fut = async move {
@@ -1058,7 +1051,7 @@ impl MmCoin for Qrc20Coin {
             );
 
             let total_fee = selfi
-                .preimage_trade_fee_required_to_send_outputs(vec![transfer_output])
+                .preimage_trade_fee_required_to_send_outputs(vec![transfer_output], &stage)
                 .await
                 .trace(source!())?;
             Ok(TradeFee {

@@ -11,7 +11,7 @@ use crate::mm2::{lp_network::subscribe_to_topic, lp_swap::NegotiationDataMsg};
 use atomic::Atomic;
 use bigdecimal::BigDecimal;
 use bitcrypto::dhash160;
-use coins::{lp_coinfindᵃ, FoundSwapTxSpend, MmCoinEnum, TradeFee, TradePreimageValue, TransactionEnum};
+use coins::{lp_coinfindᵃ, FeeApproxStage, FoundSwapTxSpend, MmCoinEnum, TradeFee, TradePreimageValue, TransactionEnum};
 use common::{bits256, executor::Timer, file_lock::FileLock, mm_ctx::MmArc, mm_number::MmNumber, now_ms, slurp, write,
              Traceable, DEX_FEE_ADDR_RAW_PUBKEY, MM_VERSION};
 use futures::{compat::Future01CompatExt, select, FutureExt};
@@ -259,8 +259,15 @@ impl MakerSwap {
 
     async fn start(&self) -> Result<(Option<MakerSwapCommand>, Vec<MakerSwapEvent>), String> {
         let preimage_value = TradePreimageValue::Exact(self.maker_amount.clone());
-        let maker_payment_trade_fee = try_s!(self.maker_coin.get_sender_trade_fee(preimage_value).compat().await);
-        let taker_payment_spend_trade_fee = try_s!(self.taker_coin.get_receiver_trade_fee().compat().await);
+        let stage = FeeApproxStage::StartSwap;
+        let maker_payment_trade_fee = try_s!(
+            self.maker_coin
+                .get_sender_trade_fee(preimage_value, stage.clone())
+                .compat()
+                .await
+        );
+        let taker_payment_spend_trade_fee =
+            try_s!(self.taker_coin.get_receiver_trade_fee(stage.clone()).compat().await);
 
         let params = MakerSwapPreparedParams {
             maker_payment_trade_fee: maker_payment_trade_fee.clone(),
@@ -273,6 +280,7 @@ impl MakerSwap {
             self.maker_amount.clone().into(),
             Some(&self.uuid),
             Some(params),
+            stage,
         )
         .await
         {
@@ -282,12 +290,6 @@ impl MakerSwap {
                     ERRL!("!check_balance_for_maker_swap {}", e).into(),
                 )]))
             },
-        };
-
-        if let Err(e) = self.taker_coin.can_i_spend_other_payment().compat().await {
-            return Ok((Some(MakerSwapCommand::Finish), vec![MakerSwapEvent::StartFailed(
-                ERRL!("!can_i_spend_other_payment {}", e).into(),
-            )]));
         };
 
         let secret: [u8; 32] = {
@@ -1405,6 +1407,7 @@ pub async fn check_balance_for_maker_swap(
     volume: MmNumber,
     swap_uuid: Option<&Uuid>,
     prepared_params: Option<MakerSwapPreparedParams>,
+    stage: FeeApproxStage,
 ) -> Result<(), String> {
     let (maker_payment_trade_fee, taker_payment_spend_trade_fee) = match prepared_params {
         Some(MakerSwapPreparedParams {
@@ -1413,8 +1416,13 @@ pub async fn check_balance_for_maker_swap(
         }) => (maker_payment_trade_fee, taker_payment_spend_trade_fee),
         None => {
             let preimage_value = TradePreimageValue::Exact(volume.to_decimal());
-            let maker_payment_trade_fee = try_s!(my_coin.get_sender_trade_fee(preimage_value).compat().await);
-            let taker_payment_spend_trade_fee = try_s!(other_coin.get_receiver_trade_fee().compat().await);
+            let maker_payment_trade_fee = try_s!(
+                my_coin
+                    .get_sender_trade_fee(preimage_value, stage.clone())
+                    .compat()
+                    .await
+            );
+            let taker_payment_spend_trade_fee = try_s!(other_coin.get_receiver_trade_fee(stage).compat().await);
             (maker_payment_trade_fee, taker_payment_spend_trade_fee)
         },
     };
@@ -1441,14 +1449,24 @@ pub async fn maker_swap_trade_preimage(
 
     let volume = if req.max {
         let balance = try_s!(base_coin.my_balance().compat().await);
-        try_s!(calc_max_maker_vol(&ctx, &base_coin, &balance).await)
+        try_s!(calc_max_maker_vol(&ctx, &base_coin, &balance, FeeApproxStage::TradePreimage).await)
     } else {
         req.volume
     };
 
     let preimage_value = TradePreimageValue::Exact(volume.to_decimal());
-    let base_coin_fee = try_s!(base_coin.get_sender_trade_fee(preimage_value).compat().await);
-    let rel_coin_fee = try_s!(rel_coin.get_receiver_trade_fee().compat().await);
+    let base_coin_fee = try_s!(
+        base_coin
+            .get_sender_trade_fee(preimage_value, FeeApproxStage::TradePreimage)
+            .compat()
+            .await
+    );
+    let rel_coin_fee = try_s!(
+        rel_coin
+            .get_receiver_trade_fee(FeeApproxStage::TradePreimage)
+            .compat()
+            .await
+    );
 
     let volume = if req.max {
         Some(DetailedVolume::from(volume))
@@ -1471,6 +1489,7 @@ pub async fn calc_max_maker_vol(
     ctx: &MmArc,
     coin: &MmCoinEnum,
     balance: &BigDecimal,
+    stage: FeeApproxStage,
 ) -> Result<MmNumber, CheckBalanceError> {
     let ticker = coin.ticker();
     let locked = get_locked_amount(ctx, ticker);
@@ -1478,7 +1497,7 @@ pub async fn calc_max_maker_vol(
 
     let preimage_value = TradePreimageValue::UpperBound(vol.to_decimal());
     let trade_fee = coin
-        .get_sender_trade_fee(preimage_value)
+        .get_sender_trade_fee(preimage_value, stage)
         .compat()
         .await
         .trace(source!())?;

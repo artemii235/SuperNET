@@ -412,6 +412,19 @@ pub struct TradeFee {
     pub amount: MmNumber,
 }
 
+/// The approximation is needed to cover the dynamic miner fee changing during a swap.
+#[derive(Clone, Debug)]
+pub enum FeeApproxStage {
+    /// Do not increase the trade fee.
+    WithoutApprox,
+    /// Increase the trade fee slightly.
+    StartSwap,
+    /// Increase the trade fee significantly.
+    OrderIssue,
+    /// Increase the trade fee largely.
+    TradePreimage,
+}
+
 #[derive(Debug)]
 pub enum TradePreimageValue {
     Exact(BigDecimal),
@@ -468,8 +481,6 @@ pub trait MmCoin: SwapOps + MarketCoinOps + fmt::Debug + Send + Sync + 'static {
     // status/availability check: https://github.com/artemii235/SuperNET/issues/156#issuecomment-446501816
 
     fn is_asset_chain(&self) -> bool;
-
-    fn can_i_spend_other_payment(&self) -> Box<dyn Future<Item = (), Error = String> + Send>;
 
     /// The coin can be initialized, but it cannot participate in the swaps.
     fn wallet_only(&self) -> bool;
@@ -541,15 +552,20 @@ pub trait MmCoin: SwapOps + MarketCoinOps + fmt::Debug + Send + Sync + 'static {
     fn get_sender_trade_fee(
         &self,
         value: TradePreimageValue,
+        stage: FeeApproxStage,
     ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send>;
 
     /// Get fee to be paid by receiver per whole swap and check if the wallet has sufficient balance to pay the fee.
-    fn get_receiver_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send>;
+    fn get_receiver_trade_fee(
+        &self,
+        stage: FeeApproxStage,
+    ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send>;
 
     /// Get transaction fee the Taker has to pay to send a `TakerFee` transaction and check if the wallet has sufficient balance to pay the fee.
     fn get_fee_to_send_taker_fee(
         &self,
         dex_fee_amount: BigDecimal,
+        stage: FeeApproxStage,
     ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send>;
 
     /// required transaction confirmations number to ensure double-spend safety

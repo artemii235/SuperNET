@@ -224,8 +224,13 @@ impl UtxoCommonOps for QtumCoin {
         outputs: Vec<TransactionOutput>,
         fee_policy: FeePolicy,
         gas_fee: Option<u64>,
+        stage: &FeeApproxStage,
     ) -> Result<BigDecimal, TradePreimageError> {
-        utxo_common::preimage_trade_fee_required_to_send_outputs(self, outputs, fee_policy, gas_fee).await
+        utxo_common::preimage_trade_fee_required_to_send_outputs(self, outputs, fee_policy, gas_fee, stage).await
+    }
+
+    fn increase_dynamic_fee_by_stage(&self, dynamic_fee: u64, stage: &FeeApproxStage) -> u64 {
+        utxo_common::increase_dynamic_fee_by_stage(self, dynamic_fee, stage)
     }
 }
 
@@ -461,10 +466,6 @@ impl MarketCoinOps for QtumCoin {
 impl MmCoin for QtumCoin {
     fn is_asset_chain(&self) -> bool { utxo_common::is_asset_chain(&self.utxo_arc) }
 
-    fn can_i_spend_other_payment(&self) -> Box<dyn Future<Item = (), Error = String> + Send> {
-        utxo_common::can_i_spend_other_payment()
-    }
-
     fn wallet_only(&self) -> bool { false }
 
     fn withdraw(&self, req: WithdrawRequest) -> Box<dyn Future<Item = TransactionDetails, Error = String> + Send> {
@@ -491,19 +492,24 @@ impl MmCoin for QtumCoin {
     fn get_sender_trade_fee(
         &self,
         value: TradePreimageValue,
+        stage: FeeApproxStage,
     ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
-        utxo_common::get_sender_trade_fee(self.clone(), value)
+        utxo_common::get_sender_trade_fee(self.clone(), value, stage)
     }
 
-    fn get_receiver_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
+    fn get_receiver_trade_fee(
+        &self,
+        _stage: FeeApproxStage,
+    ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
         utxo_common::get_receiver_trade_fee(self)
     }
 
     fn get_fee_to_send_taker_fee(
         &self,
         dex_fee_amount: BigDecimal,
+        stage: FeeApproxStage,
     ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
-        utxo_common::get_fee_to_send_taker_fee(self.clone(), dex_fee_amount)
+        utxo_common::get_fee_to_send_taker_fee(self.clone(), dex_fee_amount, stage)
     }
 
     fn required_confirmations(&self) -> u64 { utxo_common::required_confirmations(&self.utxo_arc) }

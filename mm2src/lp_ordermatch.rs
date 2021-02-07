@@ -24,7 +24,7 @@ use bigdecimal::BigDecimal;
 use blake2::digest::{Update, VariableOutput};
 use blake2::VarBlake2b;
 use coins::utxo::{compressed_pub_key_from_priv_raw, ChecksumType};
-use coins::{lp_coinfindᵃ, BalanceTradeFeeUpdatedHandler, MmCoinEnum};
+use coins::{lp_coinfindᵃ, BalanceTradeFeeUpdatedHandler, FeeApproxStage, MmCoinEnum};
 use common::executor::{spawn, Timer};
 use common::log::error;
 use common::mm_ctx::{from_ctx, MmArc, MmWeak};
@@ -753,7 +753,9 @@ impl BalanceUpdateOrdermatchHandler {
 #[async_trait]
 impl BalanceTradeFeeUpdatedHandler for BalanceUpdateOrdermatchHandler {
     async fn balance_updated(&self, coin: &MmCoinEnum, new_balance: &BigDecimal) {
-        let new_volume = match calc_max_maker_vol(&self.ctx, coin, new_balance).await {
+        // Get the max maker available volume to check if the wallet balance are sufficient for the issued maker orders.
+        // Note although the maker orders are issued already, but they are not matched yet, so pass the `OrderIssue` stage.
+        let new_volume = match calc_max_maker_vol(&self.ctx, coin, new_balance, FeeApproxStage::OrderIssue).await {
             Ok(v) => v,
             Err(CheckBalanceError::NotSufficientBalance(_)) => MmNumber::from(0),
             Err(e) => {
@@ -2571,7 +2573,18 @@ pub async fn buy(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
         return ERR!("Rel coin is wallet only");
     }
     let my_amount = &input.volume * &input.price;
-    try_s!(check_balance_for_taker_swap(&ctx, &rel_coin, &base_coin, my_amount, None, None).await);
+    try_s!(
+        check_balance_for_taker_swap(
+            &ctx,
+            &rel_coin,
+            &base_coin,
+            my_amount,
+            None,
+            None,
+            FeeApproxStage::OrderIssue
+        )
+        .await
+    );
     let res = try_s!(lp_auto_buy(&ctx, &base_coin, &rel_coin, input).await).into_bytes();
     Ok(try_s!(Response::builder().body(res)))
 }
@@ -2591,7 +2604,18 @@ pub async fn sell(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
     if rel_coin.wallet_only() {
         return ERR!("Rel coin is wallet only");
     }
-    try_s!(check_balance_for_taker_swap(&ctx, &base_coin, &rel_coin, input.volume.clone(), None, None).await);
+    try_s!(
+        check_balance_for_taker_swap(
+            &ctx,
+            &base_coin,
+            &rel_coin,
+            input.volume.clone(),
+            None,
+            None,
+            FeeApproxStage::OrderIssue
+        )
+        .await
+    );
     let res = try_s!(lp_auto_buy(&ctx, &base_coin, &rel_coin, input).await).into_bytes();
     Ok(try_s!(Response::builder().body(res)))
 }
@@ -2977,16 +3001,32 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
     let my_balance = try_s!(base_coin.my_balance().compat().await);
     let volume = if req.max {
         // first check if `rel_coin` balance is sufficient
-        let rel_coin_trade_fee = try_s!(rel_coin.get_receiver_trade_fee().compat().await);
+        let rel_coin_trade_fee = try_s!(
+            rel_coin
+                .get_receiver_trade_fee(FeeApproxStage::OrderIssue)
+                .compat()
+                .await
+        );
         try_s!(check_other_coin_balance_for_swap(&ctx, &rel_coin, None, rel_coin_trade_fee).await);
         // calculate max maker volume
         // note the `calc_max_maker_vol` returns [`CheckBalanceError::NotSufficientBalance`] error if the balance of `base_coin` is not sufficient
-        try_s!(calc_max_maker_vol(&ctx, &base_coin, &my_balance).await)
+        try_s!(calc_max_maker_vol(&ctx, &base_coin, &my_balance, FeeApproxStage::OrderIssue).await)
     } else {
         if req.volume <= MmNumber::from(0) {
             return ERR!("Maker volume {} cannot be zero or negative", req.volume);
         }
-        try_s!(check_balance_for_maker_swap(&ctx, &base_coin, &rel_coin, req.volume.clone(), None, None).await);
+        try_s!(
+            check_balance_for_maker_swap(
+                &ctx,
+                &base_coin,
+                &rel_coin,
+                req.volume.clone(),
+                None,
+                None,
+                FeeApproxStage::OrderIssue
+            )
+            .await
+        );
         req.volume
     };
 

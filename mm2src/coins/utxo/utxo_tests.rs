@@ -90,6 +90,7 @@ fn utxo_coin_fields_for_test(rpc_client: UtxoRpcClientEnum, force_seed: Option<&
         ticker: TEST_COIN_NAME.into(),
         wif_prefix: 0,
         tx_fee: TxFee::Fixed(1000),
+        tx_fee_volatility_percent: 1.,
         version_group_id: 0x892f2085,
         consensus_branch_id: 0x76b809bb,
         zcash: true,
@@ -2082,14 +2083,20 @@ fn test_get_sender_trade_fee_dynamic_tx_fee() {
     assert_eq!(my_balance, expected_balance);
 
     let fee1 = coin
-        .get_sender_trade_fee(TradePreimageValue::UpperBound(my_balance.clone()))
+        .get_sender_trade_fee(
+            TradePreimageValue::UpperBound(my_balance.clone()),
+            FeeApproxStage::WithoutApprox,
+        )
         .wait()
         .expect("!get_sender_trade_fee");
 
     let value_without_fee = &my_balance - &fee1.amount.to_decimal();
     log!("value_without_fee "(value_without_fee));
     let fee2 = coin
-        .get_sender_trade_fee(TradePreimageValue::Exact(value_without_fee))
+        .get_sender_trade_fee(
+            TradePreimageValue::Exact(value_without_fee),
+            FeeApproxStage::WithoutApprox,
+        )
         .wait()
         .expect("!get_sender_trade_fee");
     assert_eq!(fee1, fee2);
@@ -2097,7 +2104,7 @@ fn test_get_sender_trade_fee_dynamic_tx_fee() {
     // `2.21934443` value was obtained as a result of executing the `max_taker_vol` RPC call for this wallet
     let max_taker_vol = BigDecimal::from_str("2.21934443").expect("!BigDecimal::from_str");
     let fee3 = coin
-        .get_sender_trade_fee(TradePreimageValue::Exact(max_taker_vol))
+        .get_sender_trade_fee(TradePreimageValue::Exact(max_taker_vol), FeeApproxStage::WithoutApprox)
         .wait()
         .expect("!get_sender_trade_fee");
     assert_eq!(fee1, fee3);
