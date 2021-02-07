@@ -90,7 +90,7 @@ fn utxo_coin_fields_for_test(rpc_client: UtxoRpcClientEnum, force_seed: Option<&
         ticker: TEST_COIN_NAME.into(),
         wif_prefix: 0,
         tx_fee: TxFee::Fixed(1000),
-        tx_fee_volatility_percent: 1.,
+        tx_fee_volatility_percent: DEFAULT_DYNAMIC_FEE_VOLATILITY_PERCENT,
         version_group_id: 0x892f2085,
         consensus_branch_id: 0x76b809bb,
         zcash: true,

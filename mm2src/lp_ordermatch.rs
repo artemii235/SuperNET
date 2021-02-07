@@ -753,7 +753,7 @@ impl BalanceUpdateOrdermatchHandler {
 #[async_trait]
 impl BalanceTradeFeeUpdatedHandler for BalanceUpdateOrdermatchHandler {
     async fn balance_updated(&self, coin: &MmCoinEnum, new_balance: &BigDecimal) {
-        // Get the max maker available volume to check if the wallet balance are sufficient for the issued maker orders.
+        // Get the max maker available volume to check if the wallet balances are sufficient for the issued maker orders.
         // Note although the maker orders are issued already, but they are not matched yet, so pass the `OrderIssue` stage.
         let new_volume = match calc_max_maker_vol(&self.ctx, coin, new_balance, FeeApproxStage::OrderIssue).await {
             Ok(v) => v,
