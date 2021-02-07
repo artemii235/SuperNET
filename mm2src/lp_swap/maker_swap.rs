@@ -260,14 +260,24 @@ impl MakerSwap {
     async fn start(&self) -> Result<(Option<MakerSwapCommand>, Vec<MakerSwapEvent>), String> {
         let preimage_value = TradePreimageValue::Exact(self.maker_amount.clone());
         let stage = FeeApproxStage::StartSwap;
-        let maker_payment_trade_fee = try_s!(
-            self.maker_coin
-                .get_sender_trade_fee(preimage_value, stage.clone())
-                .compat()
-                .await
-        );
-        let taker_payment_spend_trade_fee =
-            try_s!(self.taker_coin.get_receiver_trade_fee(stage.clone()).compat().await);
+        let get_sender_trade_fee_fut = self.maker_coin.get_sender_trade_fee(preimage_value, stage.clone());
+        let maker_payment_trade_fee = match get_sender_trade_fee_fut.compat().await {
+            Ok(fee) => fee,
+            Err(e) => {
+                return Ok((Some(MakerSwapCommand::Finish), vec![MakerSwapEvent::StartFailed(
+                    ERRL!("!maker_coin.get_sender_trade_fee {}", e).into(),
+                )]))
+            },
+        };
+        let taker_payment_spend_trade_fee_fut = self.taker_coin.get_receiver_trade_fee(stage.clone());
+        let taker_payment_spend_trade_fee = match taker_payment_spend_trade_fee_fut.compat().await {
+            Ok(fee) => fee,
+            Err(e) => {
+                return Ok((Some(MakerSwapCommand::Finish), vec![MakerSwapEvent::StartFailed(
+                    ERRL!("!taker_coin.get_receiver_trade_fee {}", e).into(),
+                )]))
+            },
+        };
 
         let params = MakerSwapPreparedParams {
             maker_payment_trade_fee: maker_payment_trade_fee.clone(),
