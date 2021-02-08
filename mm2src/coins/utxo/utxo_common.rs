@@ -16,7 +16,7 @@ use keys::bytes::Bytes;
 use keys::{Address, AddressHash, KeyPair, Public, Type};
 use primitives::hash::H512;
 use rpc::v1::types::{Bytes as BytesJson, H256 as H256Json};
-use script::{Builder, Opcode, Script, ScriptAddress, SignatureVersion, TransactionInputSigner,
+use script::{Builder, Opcode, Script, ScriptAddress, SignatureVersion, SignerHashAlgo, TransactionInputSigner,
              UnsignedTransactionInput};
 use serde_json::{self as json};
 use serialization::{deserialize, serialize};
@@ -315,6 +315,11 @@ where
     } else {
         None
     };
+    let hash_algo = if coin.as_ref().ticker == "GRS" {
+        SignerHashAlgo::SHA256
+    } else {
+        SignerHashAlgo::DSHA256
+    };
     let mut tx = TransactionInputSigner {
         inputs: vec![],
         outputs,
@@ -335,6 +340,7 @@ where
         consensus_branch_id: coin.as_ref().consensus_branch_id,
         zcash: coin.as_ref().zcash,
         str_d_zeel,
+        hash_algo,
     };
     let mut sum_inputs = 0;
     let mut tx_fee = 0;
@@ -551,6 +557,11 @@ pub fn p2sh_spending_tx(
         None
     };
     let str_d_zeel = if coin.ticker == "NAV" { Some("".into()) } else { None };
+    let hash_algo = if coin.ticker == "GRS" {
+        SignerHashAlgo::SHA256
+    } else {
+        SignerHashAlgo::DSHA256
+    };
     let unsigned = TransactionInputSigner {
         lock_time,
         version: coin.tx_version,
@@ -574,6 +585,7 @@ pub fn p2sh_spending_tx(
         consensus_branch_id: coin.consensus_branch_id,
         zcash: coin.zcash,
         str_d_zeel,
+        hash_algo,
     };
     let signed_input = try_s!(p2sh_spend(
         &unsigned,
