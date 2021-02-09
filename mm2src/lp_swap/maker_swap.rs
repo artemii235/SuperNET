@@ -1,11 +1,11 @@
 #![cfg_attr(not(feature = "native"), allow(dead_code))]
 
 use super::{ban_pubkey, broadcast_my_swap_status, broadcast_swap_message_every, check_base_coin_balance_for_swap,
-            check_my_coin_balance_for_swap, check_other_coin_balance_for_swap, dex_fee_amount, get_locked_amount,
-            my_swap_file_path, my_swaps_dir, recv_swap_msg, swap_topic, AtomicSwap, CheckBalanceError, DetailedVolume,
-            LockedAmount, MySwapInfo, RecoveredSwap, RecoveredSwapAction, SavedSwap, SavedTradeFee,
-            SwapConfirmationsSettings, SwapError, SwapMsg, SwapsContext, TradeFeeResponse, TradePreimageRequest,
-            TradePreimageResponse, TransactionIdentifier, WAIT_CONFIRM_INTERVAL};
+            check_my_coin_balance_for_swap, check_other_coin_balance_for_swap, dex_fee_amount_from_taker_coin,
+            get_locked_amount, my_swap_file_path, my_swaps_dir, recv_swap_msg, swap_topic, AtomicSwap,
+            CheckBalanceError, DetailedVolume, LockedAmount, MySwapInfo, RecoveredSwap, RecoveredSwapAction,
+            SavedSwap, SavedTradeFee, SwapConfirmationsSettings, SwapError, SwapMsg, SwapsContext, TradeFeeResponse,
+            TradePreimageRequest, TradePreimageResponse, TransactionIdentifier, WAIT_CONFIRM_INTERVAL};
 
 use crate::mm2::{lp_network::subscribe_to_topic, lp_swap::NegotiationDataMsg};
 use atomic::Atomic;
@@ -454,11 +454,8 @@ impl MakerSwap {
         let hash = taker_fee.tx_hash();
         log!({ "Taker fee tx {:02x}", hash });
 
-        let fee_amount = dex_fee_amount(
-            &self.r().data.maker_coin,
-            &self.r().data.taker_coin,
-            &self.taker_amount.clone().into(),
-        );
+        let taker_amount = MmNumber::from(self.taker_amount.clone());
+        let fee_amount = dex_fee_amount_from_taker_coin(&self.taker_coin, &self.r().data.maker_coin, &taker_amount);
 
         let mut attempts = 0;
         loop {
@@ -1569,11 +1566,13 @@ pub async fn calc_max_maker_vol(
             .await
             .trace(source!())?;
     }
-    if vol <= MmNumber::from(0) {
+    let min_tx_amount = MmNumber::from(coin.min_tx_amount());
+    if vol < min_tx_amount {
         let err = ERRL!(
-            "Not enough funds for swap: balance: {}, locked by swaps: {:.8}",
+            "Not enough funds for swap: balance: {}, locked by swaps: {:.8}, required at least {:.8}",
             balance,
-            locked
+            locked,
+            min_tx_amount
         );
         return Err(CheckBalanceError::NotSufficientBalance(err));
     }

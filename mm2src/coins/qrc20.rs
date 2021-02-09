@@ -894,6 +894,8 @@ impl MarketCoinOps for Qrc20Coin {
     }
 
     fn display_priv_key(&self) -> String { utxo_common::display_priv_key(&self.utxo) }
+
+    fn min_tx_amount(&self) -> BigDecimal { BigDecimal::from(0) }
 }
 
 impl MmCoin for Qrc20Coin {

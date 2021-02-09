@@ -271,6 +271,9 @@ pub trait MarketCoinOps {
     fn address_from_pubkey_str(&self, pubkey: &str) -> Result<String, String>;
 
     fn display_priv_key(&self) -> String;
+
+    /// Get the minimum amount to send.
+    fn min_tx_amount(&self) -> BigDecimal;
 }
 
 #[derive(Deserialize)]
@@ -397,13 +400,6 @@ impl TransactionDetails {
         // in case of electrum returned -1 so there could be records with MAX confirmations
         self.timestamp == 0
     }
-}
-
-pub enum TradeInfo {
-    // going to act as maker
-    Maker,
-    // going to act as taker with expected dexfee amount
-    Taker(BigDecimal),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

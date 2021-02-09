@@ -461,6 +461,8 @@ impl MarketCoinOps for QtumCoin {
     }
 
     fn display_priv_key(&self) -> String { utxo_common::display_priv_key(&self.utxo_arc) }
+
+    fn min_tx_amount(&self) -> BigDecimal { utxo_common::min_tx_amount(self.as_ref()) }
 }
 
 impl MmCoin for QtumCoin {

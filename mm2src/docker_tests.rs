@@ -1549,6 +1549,8 @@ mod docker_tests {
         });
         assert_eq!(actual, expected);
 
+        let dex_fee_threshold = MmNumber::from("0.0001");
+
         let rc = unwrap!(block_on(mm.rpc(json!({
             "userpass": mm.userpass,
             "method": "max_taker_vol",
@@ -1558,7 +1560,7 @@ mod docker_tests {
         let json: Json = json::from_str(&rc.1).unwrap();
         let mycoin_max_vol: MmNumber =
             json::from_value(json["result"].clone()).expect("Expected a number in fraction representation");
-        let mycoin_taker_fee = dex_fee_amount("MYCOIN", "MYCOIN1", &mycoin_max_vol);
+        let mycoin_taker_fee = dex_fee_amount("MYCOIN", "MYCOIN1", &mycoin_max_vol, dex_fee_threshold.clone());
 
         let rc = unwrap!(block_on(mm.rpc(json!({
             "userpass": mm.userpass,
@@ -1569,7 +1571,7 @@ mod docker_tests {
         let json: Json = json::from_str(&rc.1).unwrap();
         let mycoin1_max_vol: MmNumber =
             json::from_value(json["result"].clone()).expect("Expected a number in fraction representation");
-        let mycoin1_taker_fee = dex_fee_amount("MYCOIN", "MYCOIN1", &mycoin1_max_vol);
+        let mycoin1_taker_fee = dex_fee_amount("MYCOIN", "MYCOIN1", &mycoin1_max_vol, dex_fee_threshold);
 
         let rc = unwrap!(block_on(mm.rpc(json!({
             "userpass": mm.userpass,
@@ -1761,6 +1763,64 @@ mod docker_tests {
         assert!(rc.0.is_success(), "!sell: {}", rc.1);
 
         unwrap!(block_on(mm_alice.stop()));
+    }
+
+    /// Test if the `max_taker_vol` cannot return a volume less than the coin's dust.
+    /// The minimum required balance for trading can be obtained by solving the equation:
+    /// `volume + taker_fee + trade_fee + fee_to_send_taker_fee = x`.
+    /// Let `dust = 0.000728` like for Qtum, `trade_fee = 0.0001`, `fee_to_send_taker_fee = 0.0001` and `taker_fee` is the `0.000728` threshold,
+    /// therefore to find a minimum required balance, we should pass the `dust` as the `volume` into the equation above:
+    /// `2 * 0.000728 + 0.0002 = x`, so `x = 0.001656`
+    #[test]
+    fn test_get_max_taker_vol_dust_threshold() {
+        // first, try to test with the balance slightly less than required
+        let (_ctx, coin, priv_key) = generate_coin_with_random_privkey("MYCOIN1", "0.001656".parse().unwrap());
+        let coins = json! ([
+            {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":10000,"protocol":{"type":"UTXO"}},
+            {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":10000,"protocol":{"type":"UTXO"},"dust":72800},
+        ]);
+        let mut mm = unwrap!(MarketMakerIt::start(
+            json! ({
+                "gui": "nogui",
+                "netid": 9000,
+                "dht": "on",  // Enable DHT without delay.
+                "passphrase": format!("0x{}", hex::encode(priv_key)),
+                "coins": coins,
+                "rpc_password": "pass",
+                "i_am_see": true,
+            }),
+            "pass".to_string(),
+            None,
+        ));
+        let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm.log_path);
+        unwrap!(block_on(
+            mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
+        ));
+
+        log!([block_on(enable_native(&mm, "MYCOIN1", vec![]))]);
+        log!([block_on(enable_native(&mm, "MYCOIN", vec![]))]);
+
+        let rc = unwrap!(block_on(mm.rpc(json!({
+            "userpass": mm.userpass,
+            "method": "max_taker_vol",
+            "coin": "MYCOIN1",
+        }))));
+        assert!(!rc.0.is_success(), "max_taker_vol success, but should fail: {}", rc.1);
+
+        fill_address(&coin, &coin.my_address().unwrap(), "0.00001".parse().unwrap(), 30);
+
+        let rc = unwrap!(block_on(mm.rpc(json! ({
+            "userpass": mm.userpass,
+            "method": "max_taker_vol",
+            "coin": "MYCOIN1",
+        }))));
+        assert!(rc.0.is_success(), "!max_taker_vol: {}", rc.1);
+        let json: Json = json::from_str(&rc.1).unwrap();
+        // the result of equation x + 0.000728 (dex fee) + 0.0002 (miner fee * 2) = 0.001666
+        assert_eq!(json["result"]["numer"], Json::from("369"));
+        assert_eq!(json["result"]["denom"], Json::from("500000"));
+
+        unwrap!(block_on(mm.stop()));
     }
 
     #[test]

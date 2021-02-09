@@ -1181,6 +1181,10 @@ where
 
 pub fn display_priv_key(coin: &UtxoCoinFields) -> String { format!("{}", coin.key_pair.private()) }
 
+pub fn min_tx_amount(coin: &UtxoCoinFields) -> BigDecimal {
+    big_decimal_from_sat(coin.dust_amount as i64, coin.decimals)
+}
+
 pub fn is_asset_chain(coin: &UtxoCoinFields) -> bool { coin.asset_chain }
 
 pub async fn withdraw<T>(coin: T, req: WithdrawRequest) -> Result<TransactionDetails, String>

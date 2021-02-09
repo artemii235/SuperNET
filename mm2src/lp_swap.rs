@@ -707,6 +707,16 @@ pub fn lp_atomic_locktime(maker_coin: &str, taker_coin: &str, version: AtomicLoc
     }
 }
 
+fn dex_fee_threshold(min_tx_amount: MmNumber) -> MmNumber {
+    // 0.0001
+    let min_fee = MmNumber::from((1, 10000));
+    if min_fee < min_tx_amount {
+        min_tx_amount
+    } else {
+        min_fee
+    }
+}
+
 fn dex_fee_rate(base: &str, rel: &str) -> MmNumber {
     if base == "KMD" || rel == "KMD" {
         // 1/777 - 10%
@@ -716,16 +726,20 @@ fn dex_fee_rate(base: &str, rel: &str) -> MmNumber {
     }
 }
 
-pub fn dex_fee_amount(base: &str, rel: &str, trade_amount: &MmNumber) -> MmNumber {
+pub fn dex_fee_amount(base: &str, rel: &str, trade_amount: &MmNumber, dex_fee_threshold: MmNumber) -> MmNumber {
     let rate = dex_fee_rate(base, rel);
-    // 0.0001
-    let min_fee = BigRational::new(1.into(), 10000.into()).into();
     let fee_amount = trade_amount * &rate;
-    if fee_amount < min_fee {
-        min_fee
+    if fee_amount < dex_fee_threshold {
+        dex_fee_threshold
     } else {
         fee_amount
     }
+}
+
+pub fn dex_fee_amount_from_taker_coin(taker_coin: &MmCoinEnum, maker_coin: &str, trade_amount: &MmNumber) -> MmNumber {
+    let min_tx_amount = MmNumber::from(taker_coin.min_tx_amount());
+    let dex_fee_threshold = dex_fee_threshold(min_tx_amount);
+    dex_fee_amount(taker_coin.ticker(), maker_coin, trade_amount, dex_fee_threshold)
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1423,33 +1437,34 @@ mod lp_swap_tests {
 
     #[test]
     fn test_dex_fee_amount() {
+        let dex_fee_threshold = MmNumber::from("0.0001");
+
         let base = "BTC";
         let rel = "ETH";
         let amount = 1.into();
-        let actual_fee = dex_fee_amount(base, rel, &amount);
+        let actual_fee = dex_fee_amount(base, rel, &amount, dex_fee_threshold.clone());
         let expected_fee = amount / 777u64.into();
         assert_eq!(expected_fee, actual_fee);
 
         let base = "KMD";
         let rel = "ETH";
         let amount = 1.into();
-        let actual_fee = dex_fee_amount(base, rel, &amount);
+        let actual_fee = dex_fee_amount(base, rel, &amount, dex_fee_threshold.clone());
         let expected_fee = amount * (9, 7770).into();
         assert_eq!(expected_fee, actual_fee);
 
         let base = "BTC";
         let rel = "KMD";
         let amount = 1.into();
-        let actual_fee = dex_fee_amount(base, rel, &amount);
+        let actual_fee = dex_fee_amount(base, rel, &amount, dex_fee_threshold.clone());
         let expected_fee = amount * (9, 7770).into();
         assert_eq!(expected_fee, actual_fee);
 
         let base = "BTC";
         let rel = "KMD";
         let amount: MmNumber = unwrap!("0.001".parse::<BigDecimal>()).into();
-        let actual_fee = dex_fee_amount(base, rel, &amount);
-        let expected_fee: MmNumber = unwrap!("0.0001".parse::<BigDecimal>()).into();
-        assert_eq!(expected_fee, actual_fee);
+        let actual_fee = dex_fee_amount(base, rel, &amount, dex_fee_threshold.clone());
+        assert_eq!(dex_fee_threshold, actual_fee);
     }
 
     #[test]

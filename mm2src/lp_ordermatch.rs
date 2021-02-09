@@ -3012,9 +3012,6 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
         // note the `calc_max_maker_vol` returns [`CheckBalanceError::NotSufficientBalance`] error if the balance of `base_coin` is not sufficient
         try_s!(calc_max_maker_vol(&ctx, &base_coin, &my_balance, FeeApproxStage::OrderIssue).await)
     } else {
-        if req.volume <= MmNumber::from(0) {
-            return ERR!("Maker volume {} cannot be zero or negative", req.volume);
-        }
         try_s!(
             check_balance_for_maker_swap(
                 &ctx,
