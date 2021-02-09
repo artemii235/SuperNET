@@ -1661,7 +1661,7 @@ pub async fn calc_max_taker_vol(
             max_dex_fee.to_fraction(),
             max_fee_to_send_taker_fee.amount.to_fraction()
         );
-        max_taker_vol_from_available(min_max_possible, my_coin, other_coin, min_tx_amount).trace(source!())?
+        max_taker_vol_from_available(min_max_possible, my_coin, other_coin, &min_tx_amount).trace(source!())?
     } else {
         // first case
         debug!(
@@ -1669,7 +1669,7 @@ pub async fn calc_max_taker_vol(
             balance.to_fraction(),
             locked.to_fraction()
         );
-        max_taker_vol_from_available(max_possible, my_coin, other_coin, min_tx_amount).trace(source!())?
+        max_taker_vol_from_available(max_possible, my_coin, other_coin, &min_tx_amount).trace(source!())?
     };
     // do not check if `max_vol < min_tx_amount`, because it is checked within `max_taker_vol_from_available` already
     Ok(max_vol)
@@ -1679,7 +1679,7 @@ pub fn max_taker_vol_from_available(
     available: MmNumber,
     base: &str,
     rel: &str,
-    min_tx_amount: MmNumber,
+    min_tx_amount: &MmNumber,
 ) -> Result<MmNumber, CheckBalanceError> {
     let fee_threshold = dex_fee_threshold(min_tx_amount.clone());
     let dex_fee_rate = dex_fee_rate(base, rel);
@@ -1690,7 +1690,7 @@ pub fn max_taker_vol_from_available(
         available - fee_threshold
     };
 
-    if max_vol <= min_tx_amount {
+    if &max_vol <= min_tx_amount {
         let err = ERRL!(
             "Max taker volume {:?} less than minimum transaction amount {:?}",
             max_vol.to_fraction(),
@@ -2128,10 +2128,10 @@ mod taker_swap_tests {
             let available = MmNumber::from(available);
             // no matter base or rel is KMD
             let base = if is_kmd { "RICK" } else { "MORTY" };
-            let max_taker_vol = max_taker_vol_from_available(available.clone(), "RICK", "MORTY", min_tx_amount.clone())
+            let max_taker_vol = max_taker_vol_from_available(available.clone(), "RICK", "MORTY", &min_tx_amount)
                 .expect("!max_taker_vol_from_available");
 
-            let dex_fee = dex_fee_amount(base, "MORTY", &max_taker_vol, dex_fee_threshold.clone());
+            let dex_fee = dex_fee_amount(base, "MORTY", &max_taker_vol, &dex_fee_threshold);
             assert!(dex_fee_threshold < dex_fee);
             assert!(min_tx_amount <= max_taker_vol);
             assert_eq!(max_taker_vol + dex_fee, available);
@@ -2149,9 +2149,9 @@ mod taker_swap_tests {
             let available = MmNumber::from(available);
             // no matter base or rel is KMD
             let base = if is_kmd { "KMD" } else { "RICK" };
-            let max_taker_vol = max_taker_vol_from_available(available.clone(), base, "MORTY", min_tx_amount.clone())
+            let max_taker_vol = max_taker_vol_from_available(available.clone(), base, "MORTY", &min_tx_amount)
                 .expect("!max_taker_vol_from_available");
-            let dex_fee = dex_fee_amount(base, "MORTY", &max_taker_vol, dex_fee_threshold.clone());
+            let dex_fee = dex_fee_amount(base, "MORTY", &max_taker_vol, &dex_fee_threshold);
             log!("available "[available.to_decimal()]" max_taker_vol "[max_taker_vol.to_decimal()]", dex_fee "[dex_fee.to_decimal()]);
             assert_eq!(dex_fee_threshold, dex_fee);
             assert!(min_tx_amount <= max_taker_vol);
@@ -2171,7 +2171,7 @@ mod taker_swap_tests {
         ];
         for available in availables {
             let available = MmNumber::from(available);
-            max_taker_vol_from_available(available.clone(), "KMD", "MORTY", dex_fee_threshold.clone())
+            max_taker_vol_from_available(available.clone(), "KMD", "MORTY", &dex_fee_threshold)
                 .expect_err("!max_taker_vol_from_available success but should be error");
         }
     }

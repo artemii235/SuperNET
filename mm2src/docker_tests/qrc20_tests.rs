@@ -1276,7 +1276,7 @@ fn test_get_max_taker_vol_and_trade_with_dynamic_trade_fee(coin: QtumCoin, priv_
         "QTUM",
         "MYCOIN",
         &MmNumber::from(max_possible_2),
-        qtum_dex_fee_threshold.clone(),
+        &qtum_dex_fee_threshold,
     );
     debug!("max_dex_fee: {:?}", max_dex_fee.to_fraction());
 
@@ -1295,14 +1295,9 @@ fn test_get_max_taker_vol_and_trade_with_dynamic_trade_fee(coin: QtumCoin, priv_
     debug!("total_available: {}", available);
     let min_tx_amount = qtum_dex_fee_threshold.clone();
     let expected_max_taker_vol =
-        max_taker_vol_from_available(MmNumber::from(available), "QTUM", "MYCOIN", min_tx_amount)
+        max_taker_vol_from_available(MmNumber::from(available), "QTUM", "MYCOIN", &min_tx_amount)
             .expect("max_taker_vol_from_available");
-    let real_dex_fee = dex_fee_amount(
-        "QTUM",
-        "MYCOIN",
-        &expected_max_taker_vol,
-        qtum_dex_fee_threshold.clone(),
-    );
+    let real_dex_fee = dex_fee_amount("QTUM", "MYCOIN", &expected_max_taker_vol, &qtum_dex_fee_threshold);
     debug!("real_max_dex_fee: {:?}", real_dex_fee.to_fraction());
 
     // check if the actual max_taker_vol equals to the expected
@@ -1333,7 +1328,7 @@ fn test_get_max_taker_vol_and_trade_with_dynamic_trade_fee(coin: QtumCoin, priv_
     let timelock = (now_ms() / 1000) as u32 - 200;
     let secret_hash = &[0; 20];
 
-    let dex_fee_amount = dex_fee_amount("QTUM", "MYCOIN", &expected_max_taker_vol, qtum_dex_fee_threshold);
+    let dex_fee_amount = dex_fee_amount("QTUM", "MYCOIN", &expected_max_taker_vol, &qtum_dex_fee_threshold);
     let _taker_fee_tx = coin
         .send_taker_fee(&DEX_FEE_ADDR_RAW_PUBKEY, dex_fee_amount.to_decimal())
         .wait()

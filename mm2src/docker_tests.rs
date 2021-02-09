@@ -1560,7 +1560,7 @@ mod docker_tests {
         let json: Json = json::from_str(&rc.1).unwrap();
         let mycoin_max_vol: MmNumber =
             json::from_value(json["result"].clone()).expect("Expected a number in fraction representation");
-        let mycoin_taker_fee = dex_fee_amount("MYCOIN", "MYCOIN1", &mycoin_max_vol, dex_fee_threshold.clone());
+        let mycoin_taker_fee = dex_fee_amount("MYCOIN", "MYCOIN1", &mycoin_max_vol, &dex_fee_threshold);
 
         let rc = unwrap!(block_on(mm.rpc(json!({
             "userpass": mm.userpass,
@@ -1571,7 +1571,7 @@ mod docker_tests {
         let json: Json = json::from_str(&rc.1).unwrap();
         let mycoin1_max_vol: MmNumber =
             json::from_value(json["result"].clone()).expect("Expected a number in fraction representation");
-        let mycoin1_taker_fee = dex_fee_amount("MYCOIN", "MYCOIN1", &mycoin1_max_vol, dex_fee_threshold);
+        let mycoin1_taker_fee = dex_fee_amount("MYCOIN", "MYCOIN1", &mycoin1_max_vol, &dex_fee_threshold);
 
         let rc = unwrap!(block_on(mm.rpc(json!({
             "userpass": mm.userpass,
