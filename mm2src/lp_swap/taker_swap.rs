@@ -10,7 +10,7 @@ use super::{ban_pubkey, broadcast_my_swap_status, broadcast_swap_message_every, 
 use crate::mm2::lp_network::subscribe_to_topic;
 use atomic::Atomic;
 use bigdecimal::BigDecimal;
-use coins::{lp_coinfindᵃ, FeeApproxStage, FoundSwapTxSpend, MmCoinEnum, TradeFee, TradePreimageValue};
+use coins::{lp_coinfind, FeeApproxStage, FoundSwapTxSpend, MmCoinEnum, TradeFee, TradePreimageValue};
 use common::executor::Timer;
 use common::log::debug;
 use common::mm_ctx::MmArc;
@@ -1525,12 +1525,12 @@ pub async fn taker_swap_trade_preimage(
         TradePreimageMethod::Sell => (req.base, req.rel),
         TradePreimageMethod::Buy => (req.rel, req.base),
     };
-    let my_coin = match lp_coinfindᵃ(&ctx, &my_coin_ticker).await {
+    let my_coin = match lp_coinfind(&ctx, &my_coin_ticker).await {
         Ok(Some(t)) => t,
         Ok(None) => return ERR!("No such coin: {}", my_coin_ticker),
         Err(err) => return ERR!("!lp_coinfind({}): {}", my_coin_ticker, err),
     };
-    let other_coin = match lp_coinfindᵃ(&ctx, &other_coin_ticker).await {
+    let other_coin = match lp_coinfind(&ctx, &other_coin_ticker).await {
         Ok(Some(t)) => t,
         Ok(None) => return ERR!("No such coin: {}", other_coin_ticker),
         Err(err) => return ERR!("!lp_coinfind({}): {}", other_coin_ticker, err),
@@ -1586,7 +1586,7 @@ struct MaxTakerVolRequest {
 
 pub async fn max_taker_vol(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
     let req: MaxTakerVolRequest = try_s!(json::from_value(req));
-    let coin = match lp_coinfindᵃ(&ctx, &req.coin).await {
+    let coin = match lp_coinfind(&ctx, &req.coin).await {
         Ok(Some(t)) => t,
         Ok(None) => return ERR!("No such coin: {}", req.coin),
         Err(err) => return ERR!("!lp_coinfind({}): {}", req.coin, err),

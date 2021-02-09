@@ -890,14 +890,7 @@ pub async fn lp_coininit(ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoin
 }
 
 /// NB: Returns only the enabled (aka active) coins.
-pub fn lp_coinfind(ctx: &MmArc, ticker: &str) -> Result<Option<MmCoinEnum>, String> {
-    let cctx = try_s!(CoinsContext::from_ctx(ctx));
-    let coins = block_on(cctx.coins.lock());
-    Ok(coins.get(ticker).cloned())
-}
-
-/// NB: Returns only the enabled (aka active) coins.
-pub async fn lp_coinfindᵃ(ctx: &MmArc, ticker: &str) -> Result<Option<MmCoinEnum>, String> {
+pub async fn lp_coinfind(ctx: &MmArc, ticker: &str) -> Result<Option<MmCoinEnum>, String> {
     let cctx = try_s!(CoinsContext::from_ctx(ctx));
     let coins = cctx.coins.lock().await;
     Ok(coins.get(ticker).cloned())
@@ -913,7 +906,7 @@ struct ConvertAddressReq {
 
 pub async fn convert_address(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
     let req: ConvertAddressReq = try_s!(json::from_value(req));
-    let coin = match lp_coinfindᵃ(&ctx, &req.coin).await {
+    let coin = match lp_coinfind(&ctx, &req.coin).await {
         Ok(Some(t)) => t,
         Ok(None) => return ERR!("No such coin: {}", req.coin),
         Err(err) => return ERR!("!lp_coinfind({}): {}", req.coin, err),
@@ -928,8 +921,7 @@ pub async fn convert_address(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>,
 }
 
 pub async fn kmd_rewards_info(ctx: MmArc) -> Result<Response<Vec<u8>>, String> {
-    let coin = match lp_coinfindᵃ(&ctx, "KMD").await {
-        // Use lp_coinfindᵃ when async.
+    let coin = match lp_coinfind(&ctx, "KMD").await {
         Ok(Some(MmCoinEnum::UtxoCoin(t))) => t,
         Ok(Some(_)) => return ERR!("KMD was expected to be UTXO"),
         Ok(None) => return ERR!("KMD is not activated"),
@@ -958,7 +950,7 @@ pub struct ValidateAddressResult {
 
 pub async fn validate_address(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
     let req: ValidateAddressReq = try_s!(json::from_value(req));
-    let coin = match lp_coinfindᵃ(&ctx, &req.coin).await {
+    let coin = match lp_coinfind(&ctx, &req.coin).await {
         Ok(Some(t)) => t,
         Ok(None) => return ERR!("No such coin: {}", req.coin),
         Err(err) => return ERR!("!lp_coinfind({}): {}", req.coin, err),
@@ -971,7 +963,7 @@ pub async fn validate_address(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>
 
 pub async fn withdraw(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
     let ticker = try_s!(req["coin"].as_str().ok_or("No 'coin' field")).to_owned();
-    let coin = match lp_coinfindᵃ(&ctx, &ticker).await {
+    let coin = match lp_coinfind(&ctx, &ticker).await {
         Ok(Some(t)) => t,
         Ok(None) => return ERR!("No such coin: {}", ticker),
         Err(err) => return ERR!("!lp_coinfind({}): {}", ticker, err),
@@ -984,7 +976,7 @@ pub async fn withdraw(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String
 
 pub async fn send_raw_transaction(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
     let ticker = try_s!(req["coin"].as_str().ok_or("No 'coin' field")).to_owned();
-    let coin = match lp_coinfindᵃ(&ctx, &ticker).await {
+    let coin = match lp_coinfind(&ctx, &ticker).await {
         Ok(Some(t)) => t,
         Ok(None) => return ERR!("No such coin: {}", ticker),
         Err(err) => return ERR!("!lp_coinfind({}): {}", ticker, err),
@@ -1023,8 +1015,8 @@ struct MyTxHistoryRequest {
 /// Transactions are sorted by number of confirmations in ascending order.
 pub fn my_tx_history(ctx: MmArc, req: Json) -> HyRes {
     let request: MyTxHistoryRequest = try_h!(json::from_value(req));
-    let coin = match lp_coinfind(&ctx, &request.coin) {
-        // Should switch to lp_coinfindᵃ when my_tx_history is async.
+    // Should remove `block_on` when my_tx_history is async.
+    let coin = match block_on(lp_coinfind(&ctx, &request.coin)) {
         Ok(Some(t)) => t,
         Ok(None) => return rpc_err_response(500, &fomat!("No such coin: "(request.coin))),
         Err(err) => return rpc_err_response(500, &fomat!("!lp_coinfind(" (request.coin) "): " (err))),
@@ -1094,7 +1086,7 @@ pub fn my_tx_history(ctx: MmArc, req: Json) -> HyRes {
 
 pub async fn get_trade_fee(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
     let ticker = try_s!(req["coin"].as_str().ok_or("No 'coin' field")).to_owned();
-    let coin = match lp_coinfindᵃ(&ctx, &ticker).await {
+    let coin = match lp_coinfind(&ctx, &ticker).await {
         Ok(Some(t)) => t,
         Ok(None) => return ERR!("No such coin: {}", ticker),
         Err(err) => return ERR!("!lp_coinfind({}): {}", ticker, err),
@@ -1152,7 +1144,7 @@ pub struct ConfirmationsReq {
 
 pub async fn set_required_confirmations(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
     let req: ConfirmationsReq = try_s!(json::from_value(req));
-    let coin = match lp_coinfindᵃ(&ctx, &req.coin).await {
+    let coin = match lp_coinfind(&ctx, &req.coin).await {
         Ok(Some(t)) => t,
         Ok(None) => return ERR!("No such coin {}", req.coin),
         Err(err) => return ERR!("!lp_coinfind ({}): {}", req.coin, err),
@@ -1175,7 +1167,7 @@ pub struct RequiresNotaReq {
 
 pub async fn set_requires_notarization(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
     let req: RequiresNotaReq = try_s!(json::from_value(req));
-    let coin = match lp_coinfindᵃ(&ctx, &req.coin).await {
+    let coin = match lp_coinfind(&ctx, &req.coin).await {
         Ok(Some(t)) => t,
         Ok(None) => return ERR!("No such coin {}", req.coin),
         Err(err) => return ERR!("!lp_coinfind ({}): {}", req.coin, err),
@@ -1192,7 +1184,7 @@ pub async fn set_requires_notarization(ctx: MmArc, req: Json) -> Result<Response
 
 pub async fn show_priv_key(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
     let ticker = try_s!(req["coin"].as_str().ok_or("No 'coin' field")).to_owned();
-    let coin = match lp_coinfindᵃ(&ctx, &ticker).await {
+    let coin = match lp_coinfind(&ctx, &ticker).await {
         Ok(Some(t)) => t,
         Ok(None) => return ERR!("No such coin: {}", ticker),
         Err(err) => return ERR!("!lp_coinfind({}): {}", ticker, err),
@@ -1211,7 +1203,7 @@ pub async fn check_balance_update_loop(ctx: MmArc, ticker: String) {
     let mut current_balance = None;
     loop {
         Timer::sleep(10.).await;
-        match lp_coinfindᵃ(&ctx, &ticker).await {
+        match lp_coinfind(&ctx, &ticker).await {
             Ok(Some(coin)) => {
                 let balance = match coin.my_balance().compat().await {
                     Ok(b) => b,
@@ -1287,7 +1279,7 @@ struct ConvertUtxoAddressReq {
 pub async fn convert_utxo_address(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
     let req: ConvertUtxoAddressReq = try_s!(json::from_value(req));
     let mut addr: utxo::Address = try_s!(req.address.parse());
-    let coin = match lp_coinfindᵃ(&ctx, &req.to_coin).await {
+    let coin = match lp_coinfind(&ctx, &req.to_coin).await {
         Ok(Some(c)) => c,
         _ => return ERR!("Coin {} is not activated", req.to_coin),
     };

@@ -190,14 +190,19 @@ pub fn dispatcher(req: Json, ctx: MmArc) -> DispatcherRes {
     })
 }
 
-async fn rpc_serviceʹ(ctx: MmArc, req: Parts, reqᵇ: Body, client: SocketAddr) -> Result<Response<Vec<u8>>, String> {
+async fn process_rpc_request(
+    ctx: MmArc,
+    req: Parts,
+    req_body: Body,
+    client: SocketAddr,
+) -> Result<Response<Vec<u8>>, String> {
     if req.method != Method::POST {
         return ERR!("Only POST requests are supported!");
     }
 
-    let reqᵇ = try_s!(hyper::body::to_bytes(reqᵇ).await);
-    let reqʲ: Json = try_s!(json::from_slice(&reqᵇ));
-    match reqʲ.as_array() {
+    let req_bytes = try_s!(hyper::body::to_bytes(req_body).await);
+    let req_json: Json = try_s!(json::from_slice(&req_bytes));
+    match req_json.as_array() {
         Some(requests) => {
             let mut futures = Vec::with_capacity(requests.len());
             for request in requests {
@@ -220,7 +225,7 @@ async fn rpc_serviceʹ(ctx: MmArc, req: Parts, reqᵇ: Body, client: SocketAddr)
             let res = try_s!(json::to_vec(&responses));
             Ok(try_s!(Response::builder().body(res)))
         },
-        None => process_single_request(ctx, reqʲ, client).await,
+        None => process_single_request(ctx, req_json, client).await,
     }
 }
 
@@ -263,8 +268,8 @@ async fn rpc_service(req: Request<Body>, ctx_h: u32, client: SocketAddr) -> Resp
     };
 
     // Convert the native Hyper stream into a portable stream of `Bytes`.
-    let (req, reqᵇ) = req.into_parts();
-    let (mut parts, body) = match rpc_serviceʹ(ctx, req, reqᵇ, client).await {
+    let (req, req_body) = req.into_parts();
+    let (mut parts, body) = match process_rpc_request(ctx, req, req_body, client).await {
         Ok(r) => r.into_parts(),
         Err(err) => {
             log!("RPC error response: "(err));
@@ -353,10 +358,10 @@ pub fn init_header_slots() {
     fn rpc_service_fn(
         ctx: MmArc,
         req: Parts,
-        reqᵇ: Box<dyn Stream<Item = Bytes, Error = String> + Send>,
+        req_body: Box<dyn Stream<Item = Bytes, Error = String> + Send>,
         client: SocketAddr,
     ) -> Pin<Box<dyn Future03<Output = Result<Response<Vec<u8>>, String>> + Send>> {
-        Box::pin(rpc_serviceʹ(ctx, req, reqᵇ, client))
+        Box::pin(process_rpc_request(ctx, req, req_body, client))
     }
     let _ = RPC_SERVICE.pin(rpc_service_fn);
 }

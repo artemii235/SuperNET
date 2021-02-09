@@ -527,11 +527,9 @@ pub async fn lp_init(mypubport: u16, ctx: MmArc) -> Result<(), String> {
         *(try_s!(ctx.coins_needed_for_kick_start.lock())) = coins_needed_for_kick_start;
     }
 
-    let ctxʹ = ctx.clone();
-    spawn(lp_ordermatch_loop(ctxʹ));
+    spawn(lp_ordermatch_loop(ctx.clone()));
 
-    let ctxʹ = ctx.clone();
-    spawn(broadcast_maker_orders_keep_alive_loop(ctxʹ));
+    spawn(broadcast_maker_orders_keep_alive_loop(ctx.clone()));
 
     #[cfg(not(feature = "native"))]
     {
@@ -543,9 +541,9 @@ pub async fn lp_init(mypubport: u16, ctx: MmArc) -> Result<(), String> {
     let ctx_id = try_s!(ctx.ffi_handle());
 
     spawn_rpc(ctx_id);
-    let ctxʹ = ctx.clone();
+    let ctx_c = ctx.clone();
     spawn(async move {
-        if let Err(err) = ctxʹ.init_metrics() {
+        if let Err(err) = ctx_c.init_metrics() {
             log!("Warning: couldn't initialize metrics system: "(err));
         }
     });

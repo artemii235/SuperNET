@@ -11,7 +11,7 @@ use crate::mm2::{lp_network::subscribe_to_topic, lp_swap::NegotiationDataMsg};
 use atomic::Atomic;
 use bigdecimal::BigDecimal;
 use bitcrypto::dhash160;
-use coins::{lp_coinfindᵃ, FeeApproxStage, FoundSwapTxSpend, MmCoinEnum, TradeFee, TradePreimageValue, TransactionEnum};
+use coins::{lp_coinfind, FeeApproxStage, FoundSwapTxSpend, MmCoinEnum, TradeFee, TradePreimageValue, TransactionEnum};
 use common::{bits256, executor::Timer, file_lock::FileLock, mm_ctx::MmArc, mm_number::MmNumber, now_ms, slurp, write,
              Traceable, DEX_FEE_ADDR_RAW_PUBKEY, MM_VERSION};
 use futures::{compat::Future01CompatExt, select, FutureExt};
@@ -1492,12 +1492,12 @@ pub async fn maker_swap_trade_preimage(
     ctx: &MmArc,
     req: TradePreimageRequest,
 ) -> Result<TradePreimageResponse, String> {
-    let base_coin = match lp_coinfindᵃ(&ctx, &req.base).await {
+    let base_coin = match lp_coinfind(&ctx, &req.base).await {
         Ok(Some(t)) => t,
         Ok(None) => return ERR!("No such coin: {}", req.base),
         Err(err) => return ERR!("!lp_coinfind({}): {}", req.base, err),
     };
-    let rel_coin = match lp_coinfindᵃ(&ctx, &req.rel).await {
+    let rel_coin = match lp_coinfind(&ctx, &req.rel).await {
         Ok(Some(t)) => t,
         Ok(None) => return ERR!("No such coin: {}", req.rel),
         Err(err) => return ERR!("!lp_coinfind({}): {}", req.rel, err),

@@ -145,9 +145,9 @@ fn chdir(dir: &Path) {
         #[cfg(not(windows))]
         {
             use std::ffi::CString;
-            let dirˢ = unwrap!(dir.to_str());
-            let dirᶜ = unwrap!(CString::new(dirˢ));
-            let rc = unsafe { libc::chdir(dirᶜ.as_ptr()) };
+            let dir_s = unwrap!(dir.to_str());
+            let dir_c = unwrap!(CString::new(dir_s));
+            let rc = unsafe { libc::chdir(dir_c.as_ptr()) };
             assert_eq!(rc, 0, "Can not chdir to {:?}", dir);
         }
 
