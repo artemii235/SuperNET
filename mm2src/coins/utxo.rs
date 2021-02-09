@@ -1481,6 +1481,7 @@ pub(crate) fn sign_tx(
         join_split_pubkey: H256::default(),
         zcash: unsigned.zcash,
         str_d_zeel: unsigned.str_d_zeel,
+        tx_hash_algo: unsigned.hash_algo.into(),
     })
 }
 

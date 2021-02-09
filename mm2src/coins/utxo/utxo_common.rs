@@ -614,6 +614,7 @@ pub fn p2sh_spending_tx(
         join_split_pubkey: H256::default(),
         zcash: coin.zcash,
         str_d_zeel: unsigned.str_d_zeel,
+        tx_hash_algo: unsigned.hash_algo.into(),
     })
 }
 
