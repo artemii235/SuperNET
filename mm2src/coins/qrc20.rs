@@ -882,7 +882,7 @@ impl MarketCoinOps for Qrc20Coin {
     }
 
     fn tx_enum_from_bytes(&self, bytes: &[u8]) -> Result<TransactionEnum, String> {
-        utxo_common::tx_enum_from_bytes(bytes)
+        utxo_common::tx_enum_from_bytes(self.as_ref(), bytes)
     }
 
     fn current_block(&self) -> Box<dyn Future<Item = u64, Error = String> + Send> {

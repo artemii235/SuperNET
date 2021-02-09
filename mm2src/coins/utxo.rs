@@ -32,7 +32,7 @@ use async_trait::async_trait;
 use base64::{encode_config as base64_encode, URL_SAFE};
 use bigdecimal::BigDecimal;
 pub use bitcrypto::{dhash160, sha256, ChecksumType};
-use chain::{OutPoint, TransactionInput, TransactionOutput};
+use chain::{OutPoint, TransactionInput, TransactionOutput, TxHashAlgo};
 use common::executor::{spawn, Timer};
 use common::jsonrpc_client::JsonRpcError;
 use common::mm_ctx::MmArc;
@@ -379,6 +379,7 @@ pub struct UtxoCoinFields {
     pub recently_spent_outpoints: AsyncMutex<RecentlySpentOutPoints>,
     /// The number of blocks used for estimate_fee/estimate_smart_fee RPC calls
     pub estimate_fee_blocks: u32,
+    pub tx_hash_algo: TxHashAlgo,
 }
 
 #[cfg_attr(test, mockable)]
@@ -792,6 +793,7 @@ pub trait UtxoCoinBuilder {
         let estimate_fee_blocks = self.estimate_fee_blocks();
 
         let _my_script_pubkey = Builder::build_p2pkh(&my_address.hash).to_bytes();
+        let tx_hash_algo = self.tx_hash_algo();
         let coin = UtxoCoinFields {
             ticker: self.ticker().to_owned(),
             decimals,
@@ -828,6 +830,7 @@ pub trait UtxoCoinBuilder {
             tx_cache_directory,
             recently_spent_outpoints: AsyncMutex::new(RecentlySpentOutPoints::new(my_script_pubkey)),
             estimate_fee_blocks,
+            tx_hash_algo,
         };
         Ok(coin)
     }
@@ -1145,6 +1148,14 @@ pub trait UtxoCoinBuilder {
             Ok(home.join(confpath))
         } else {
             Ok(confpath.into())
+        }
+    }
+
+    fn tx_hash_algo(&self) -> TxHashAlgo {
+        if self.ticker() == "GRS" {
+            TxHashAlgo::SHA256
+        } else {
+            TxHashAlgo::DSHA256
         }
     }
 }

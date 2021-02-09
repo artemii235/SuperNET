@@ -16,7 +16,7 @@ use keys::bytes::Bytes;
 use keys::{Address, AddressHash, KeyPair, Public, Type};
 use primitives::hash::H512;
 use rpc::v1::types::{Bytes as BytesJson, H256 as H256Json};
-use script::{Builder, Opcode, Script, ScriptAddress, SignatureVersion, SignerHashAlgo, TransactionInputSigner,
+use script::{Builder, Opcode, Script, ScriptAddress, SignatureVersion, TransactionInputSigner,
              UnsignedTransactionInput};
 use serde_json::{self as json};
 use serialization::{deserialize, serialize};
@@ -315,11 +315,7 @@ where
     } else {
         None
     };
-    let hash_algo = if coin.as_ref().ticker == "GRS" {
-        SignerHashAlgo::SHA256
-    } else {
-        SignerHashAlgo::DSHA256
-    };
+    let hash_algo = coin.as_ref().tx_hash_algo.into();
     let mut tx = TransactionInputSigner {
         inputs: vec![],
         outputs,
@@ -557,11 +553,7 @@ pub fn p2sh_spending_tx(
         None
     };
     let str_d_zeel = if coin.ticker == "NAV" { Some("".into()) } else { None };
-    let hash_algo = if coin.ticker == "GRS" {
-        SignerHashAlgo::SHA256
-    } else {
-        SignerHashAlgo::DSHA256
-    };
+    let hash_algo = coin.tx_hash_algo.into();
     let unsigned = TransactionInputSigner {
         lock_time,
         version: coin.tx_version,
@@ -716,7 +708,8 @@ pub fn send_maker_spends_taker_payment<T>(
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps + Send + Sync + 'static,
 {
-    let prev_tx: UtxoTx = try_fus!(deserialize(taker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
+    let mut prev_tx: UtxoTx = try_fus!(deserialize(taker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
+    prev_tx.tx_hash_algo = coin.as_ref().tx_hash_algo;
     let script_data = Builder::default()
         .push_data(secret)
         .push_opcode(Opcode::OP_0)
@@ -752,7 +745,8 @@ pub fn send_taker_spends_maker_payment<T>(
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps + Send + Sync + 'static,
 {
-    let prev_tx: UtxoTx = try_fus!(deserialize(maker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
+    let mut prev_tx: UtxoTx = try_fus!(deserialize(maker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
+    prev_tx.tx_hash_algo = coin.as_ref().tx_hash_algo;
     let script_data = Builder::default()
         .push_data(secret)
         .push_opcode(Opcode::OP_0)
@@ -788,7 +782,8 @@ pub fn send_taker_refunds_payment<T>(
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps + Send + Sync + 'static,
 {
-    let prev_tx: UtxoTx = try_fus!(deserialize(taker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
+    let mut prev_tx: UtxoTx = try_fus!(deserialize(taker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
+    prev_tx.tx_hash_algo = coin.as_ref().tx_hash_algo;
     let script_data = Builder::default().push_opcode(Opcode::OP_1).into_script();
     let redeem_script = payment_script(
         time_lock,
@@ -826,7 +821,8 @@ pub fn send_maker_refunds_payment<T>(
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps + Send + Sync + 'static,
 {
-    let prev_tx: UtxoTx = try_fus!(deserialize(maker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
+    let mut prev_tx: UtxoTx = try_fus!(deserialize(maker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
+    prev_tx.tx_hash_algo = coin.as_ref().tx_hash_algo;
     let script_data = Builder::default().push_opcode(Opcode::OP_1).into_script();
     let redeem_script = payment_script(
         time_lock,
@@ -991,7 +987,8 @@ where
                 match history.first() {
                     Some(item) => {
                         let tx_bytes = try_s!(client.get_transaction_bytes(item.tx_hash.clone()).compat().await);
-                        let tx: UtxoTx = try_s!(deserialize(tx_bytes.0.as_slice()).map_err(|e| ERRL!("{:?}", e)));
+                        let mut tx: UtxoTx = try_s!(deserialize(tx_bytes.0.as_slice()).map_err(|e| ERRL!("{:?}", e)));
+                        tx.tx_hash_algo = coin.as_ref().tx_hash_algo;
                         Ok(Some(tx.into()))
                     },
                     None => Ok(None),
@@ -1013,7 +1010,8 @@ where
                 for item in received_by_addr {
                     if item.address == target_addr && !item.txids.is_empty() {
                         let tx_bytes = try_s!(client.get_transaction_bytes(item.txids[0].clone()).compat().await);
-                        let tx: UtxoTx = try_s!(deserialize(tx_bytes.0.as_slice()).map_err(|e| ERRL!("{:?}", e)));
+                        let mut tx: UtxoTx = try_s!(deserialize(tx_bytes.0.as_slice()).map_err(|e| ERRL!("{:?}", e)));
+                        tx.tx_hash_algo = coin.as_ref().tx_hash_algo;
                         return Ok(Some(tx.into()));
                     }
                 }
@@ -1136,19 +1134,25 @@ pub fn wait_for_confirmations(
     wait_until: u64,
     check_every: u64,
 ) -> Box<dyn Future<Item = (), Error = String> + Send> {
-    let tx: UtxoTx = try_fus!(deserialize(tx).map_err(|e| ERRL!("{:?}", e)));
+    let mut tx: UtxoTx = try_fus!(deserialize(tx).map_err(|e| ERRL!("{:?}", e)));
+    tx.tx_hash_algo = coin.tx_hash_algo;
     coin.rpc_client
         .wait_for_confirmations(&tx, confirmations as u32, requires_nota, wait_until, check_every)
 }
 
 pub fn wait_for_tx_spend(coin: &UtxoCoinFields, tx_bytes: &[u8], wait_until: u64, from_block: u64) -> TransactionFut {
-    let tx: UtxoTx = try_fus!(deserialize(tx_bytes).map_err(|e| ERRL!("{:?}", e)));
+    let mut tx: UtxoTx = try_fus!(deserialize(tx_bytes).map_err(|e| ERRL!("{:?}", e)));
+    tx.tx_hash_algo = coin.tx_hash_algo;
     let vout = 0;
     let client = coin.rpc_client.clone();
+    let tx_hash_algo = coin.tx_hash_algo;
     let fut = async move {
         loop {
             match client.find_output_spend(&tx, vout, from_block).compat().await {
-                Ok(Some(tx)) => return Ok(tx.into()),
+                Ok(Some(mut tx)) => {
+                    tx.tx_hash_algo = tx_hash_algo;
+                    return Ok(tx.into());
+                },
                 Ok(None) => (),
                 Err(e) => {
                     log!("Error " (e) " on find_output_spend of tx " [e]);
@@ -1169,8 +1173,9 @@ pub fn wait_for_tx_spend(coin: &UtxoCoinFields, tx_bytes: &[u8], wait_until: u64
     Box::new(fut.boxed().compat())
 }
 
-pub fn tx_enum_from_bytes(bytes: &[u8]) -> Result<TransactionEnum, String> {
-    let transaction: UtxoTx = try_s!(deserialize(bytes).map_err(|err| format!("{:?}", err)));
+pub fn tx_enum_from_bytes(coin: &UtxoCoinFields, bytes: &[u8]) -> Result<TransactionEnum, String> {
+    let mut transaction: UtxoTx = try_s!(deserialize(bytes).map_err(|err| format!("{:?}", err)));
+    transaction.tx_hash_algo = coin.tx_hash_algo;
     Ok(transaction.into())
 }
 
@@ -1622,7 +1627,8 @@ where
 {
     let hash = H256Json::from(hash);
     let verbose_tx = try_s!(coin.as_ref().rpc_client.get_verbose_transaction(hash).compat().await);
-    let tx: UtxoTx = try_s!(deserialize(verbose_tx.hex.as_slice()).map_err(|e| ERRL!("{:?}", e)));
+    let mut tx: UtxoTx = try_s!(deserialize(verbose_tx.hex.as_slice()).map_err(|e| ERRL!("{:?}", e)));
+    tx.tx_hash_algo = coin.as_ref().tx_hash_algo;
     let mut input_transactions: HashMap<&H256, UtxoTx> = HashMap::new();
     let mut input_amount = 0;
     let mut output_amount = 0;
@@ -1646,8 +1652,9 @@ where
                         .compat()
                         .await
                 );
-                let prev_tx: UtxoTx =
+                let mut prev_tx: UtxoTx =
                     try_s!(deserialize(prev.as_slice()).map_err(|e| ERRL!("{:?}, tx: {:?}", e, prev_hash)));
+                prev_tx.tx_hash_algo = coin.as_ref().tx_hash_algo;
                 e.insert(prev_tx)
             },
             Entry::Occupied(e) => e.into_mut(),
@@ -2115,7 +2122,8 @@ fn validate_payment<T>(
 where
     T: AsRef<UtxoCoinFields> + Send + Sync + 'static,
 {
-    let tx: UtxoTx = try_fus!(deserialize(payment_tx).map_err(|e| ERRL!("{:?}", e)));
+    let mut tx: UtxoTx = try_fus!(deserialize(payment_tx).map_err(|e| ERRL!("{:?}", e)));
+    tx.tx_hash_algo = coin.as_ref().tx_hash_algo;
     let amount = try_fus!(sat_from_big_decimal(&amount, coin.as_ref().decimals));
 
     let expected_redeem = payment_script(
@@ -2184,7 +2192,8 @@ async fn search_for_swap_tx_spend(
     tx: &[u8],
     search_from_block: u64,
 ) -> Result<Option<FoundSwapTxSpend>, String> {
-    let tx: UtxoTx = try_s!(deserialize(tx).map_err(|e| ERRL!("{:?}", e)));
+    let mut tx: UtxoTx = try_s!(deserialize(tx).map_err(|e| ERRL!("{:?}", e)));
+    tx.tx_hash_algo = coin.tx_hash_algo;
     let script = payment_script(time_lock, secret_hash, first_pub, second_pub);
     let expected_script_pubkey = Builder::build_p2sh(&dhash160(&script)).to_bytes();
     if tx.outputs[0].script_pubkey != expected_script_pubkey {
@@ -2202,7 +2211,8 @@ async fn search_for_swap_tx_spend(
             .await
     );
     match spend {
-        Some(tx) => {
+        Some(mut tx) => {
+            tx.tx_hash_algo = coin.tx_hash_algo;
             let script: Script = tx.inputs[0].script_sig.clone().into();
             if let Some(Ok(ref i)) = script.iter().nth(2) {
                 if i.opcode == Opcode::OP_0 {

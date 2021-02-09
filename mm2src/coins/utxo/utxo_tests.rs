@@ -107,6 +107,7 @@ fn utxo_coin_fields_for_test(rpc_client: UtxoRpcClientEnum, force_seed: Option<&
         tx_cache_directory: None,
         recently_spent_outpoints: AsyncMutex::new(RecentlySpentOutPoints::new(my_script_pubkey)),
         estimate_fee_blocks: 1,
+        tx_hash_algo: TxHashAlgo::DSHA256,
     }
 }
 
