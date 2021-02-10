@@ -139,12 +139,13 @@ struct UtxoMergeParams {
 }
 
 pub async fn get_tx_fee(coin: &UtxoCoinFields) -> Result<ActualTxFee, JsonRpcError> {
+    let conf = &coin.conf;
     match &coin.tx_fee {
         TxFee::Fixed(fee) => Ok(ActualTxFee::Fixed(*fee)),
         TxFee::Dynamic(method) => {
             let fee = coin
                 .rpc_client
-                .estimate_fee_sat(coin.decimals, method, &coin.estimate_fee_mode, coin.estimate_fee_blocks)
+                .estimate_fee_sat(coin.decimals, method, &conf.estimate_fee_mode, conf.estimate_fee_blocks)
                 .compat()
                 .await?;
             Ok(ActualTxFee::Dynamic(fee))
@@ -163,7 +164,7 @@ where
         // atomic swap payment spend transaction is slightly more than 300 bytes in average as of now
         ActualTxFee::Dynamic(fee_per_kb) => (fee_per_kb * SWAP_TX_SPEND_SIZE) / KILO_BYTE,
     };
-    if coin.as_ref().force_min_relay_fee {
+    if coin.as_ref().conf.force_min_relay_fee {
         let relay_fee = try_s!(coin.as_ref().rpc_client.get_relay_fee().compat().await);
         let relay_fee_sat = try_s!(sat_from_big_decimal(&relay_fee, coin.as_ref().decimals));
         if fee < relay_fee_sat {
@@ -173,20 +174,20 @@ where
     Ok(fee)
 }
 
-pub fn addresses_from_script(coin: &UtxoCoinFields, script: &Script) -> Result<Vec<Address>, String> {
+pub fn addresses_from_script(conf: &UtxoCoinConf, script: &Script) -> Result<Vec<Address>, String> {
     let destinations: Vec<ScriptAddress> = try_s!(script.extract_destinations());
 
     let addresses = destinations
         .into_iter()
         .map(|dst| {
             let (prefix, t_addr_prefix) = match dst.kind {
-                Type::P2PKH => (coin.pub_addr_prefix, coin.pub_t_addr_prefix),
-                Type::P2SH => (coin.p2sh_addr_prefix, coin.p2sh_t_addr_prefix),
+                Type::P2PKH => (conf.pub_addr_prefix, conf.pub_t_addr_prefix),
+                Type::P2SH => (conf.p2sh_addr_prefix, conf.p2sh_t_addr_prefix),
             };
 
             Address {
                 hash: dst.hash,
-                checksum_type: coin.checksum_type,
+                checksum_type: conf.checksum_type,
                 prefix,
                 t_addr_prefix,
             }
@@ -207,33 +208,33 @@ where
     coin.my_balance()
 }
 
-pub fn display_address(coin: &UtxoCoinFields, address: &Address) -> Result<String, String> {
-    match &coin.address_format {
+pub fn display_address(conf: &UtxoCoinConf, address: &Address) -> Result<String, String> {
+    match &conf.address_format {
         UtxoAddressFormat::Standard => Ok(address.to_string()),
         UtxoAddressFormat::CashAddress { network } => address
-            .to_cashaddress(&network, coin.pub_addr_prefix, coin.p2sh_addr_prefix)
+            .to_cashaddress(&network, conf.pub_addr_prefix, conf.p2sh_addr_prefix)
             .and_then(|cashaddress| cashaddress.encode()),
     }
 }
 
-pub fn address_from_str(coin: &UtxoCoinFields, address: &str) -> Result<Address, String> {
-    match &coin.address_format {
+pub fn address_from_str(conf: &UtxoCoinConf, address: &str) -> Result<Address, String> {
+    match &conf.address_format {
         UtxoAddressFormat::Standard => Address::from_str(address)
             .or_else(|e| match Address::from_cashaddress(
                 &address,
-                coin.checksum_type,
-                coin.pub_addr_prefix,
-                coin.p2sh_addr_prefix) {
-                Ok(_) => ERR!("Legacy address format activated for {}, but cashaddress format used instead. Try to call 'convertaddress'", coin.ticker),
+                conf.checksum_type,
+                conf.pub_addr_prefix,
+                conf.p2sh_addr_prefix) {
+                Ok(_) => ERR!("Legacy address format activated for {}, but cashaddress format used instead. Try to call 'convertaddress'", conf.ticker),
                 Err(_) => ERR!("{}", e),
             }),
         UtxoAddressFormat::CashAddress { .. } => Address::from_cashaddress(
             &address,
-            coin.checksum_type,
-            coin.pub_addr_prefix,
-            coin.p2sh_addr_prefix)
+            conf.checksum_type,
+            conf.pub_addr_prefix,
+            conf.p2sh_addr_prefix)
             .or_else(|e| match Address::from_str(&address) {
-                Ok(_) => ERR!("Cashaddress address format activated for {}, but legacy format used instead. Try to call 'convertaddress'", coin.ticker),
+                Ok(_) => ERR!("Cashaddress address format activated for {}, but legacy format used instead. Try to call 'convertaddress'", conf.ticker),
                 Err(_) => ERR!("{}", e),
             })
     }
@@ -242,7 +243,7 @@ pub fn address_from_str(coin: &UtxoCoinFields, address: &str) -> Result<Address,
 pub async fn get_current_mtp(coin: &UtxoCoinFields) -> Result<u32, String> {
     let current_block = try_s!(coin.rpc_client.get_block_count().compat().await);
     coin.rpc_client
-        .get_median_time_past(current_block, coin.mtp_block_count)
+        .get_median_time_past(current_block, coin.conf.mtp_block_count)
         .compat()
         .await
 }
@@ -275,7 +276,7 @@ pub async fn generate_transaction<T>(
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps,
 {
-    let dust: u64 = coin.as_ref().dust_amount;
+    let dust: u64 = coin.as_ref().conf.dust_amount;
     let lock_time = (now_ms() / 1000) as u32;
     let change_script_pubkey = Builder::build_p2pkh(&coin.as_ref().my_address.hash).to_bytes();
     let coin_tx_fee = match fee {
@@ -310,7 +311,7 @@ where
             .ok_or(GenerateTransactionError::TooLargeGasFee)?;
     }
 
-    let str_d_zeel = if coin.as_ref().ticker == "NAV" {
+    let str_d_zeel = if coin.as_ref().conf.ticker == "NAV" {
         Some("".into())
     } else {
         None
@@ -319,26 +320,26 @@ where
         inputs: vec![],
         outputs,
         lock_time,
-        version: coin.as_ref().tx_version,
-        n_time: if coin.as_ref().is_pos {
+        version: coin.as_ref().conf.tx_version,
+        n_time: if coin.as_ref().conf.is_pos {
             Some((now_ms() / 1000) as u32)
         } else {
             None
         },
-        overwintered: coin.as_ref().overwintered,
+        overwintered: coin.as_ref().conf.overwintered,
         expiry_height: 0,
         join_splits: vec![],
         shielded_spends: vec![],
         shielded_outputs: vec![],
         value_balance: 0,
-        version_group_id: coin.as_ref().version_group_id,
-        consensus_branch_id: coin.as_ref().consensus_branch_id,
-        zcash: coin.as_ref().zcash,
+        version_group_id: coin.as_ref().conf.version_group_id,
+        consensus_branch_id: coin.as_ref().conf.consensus_branch_id,
+        zcash: coin.as_ref().conf.zcash,
         str_d_zeel,
     };
     let mut sum_inputs = 0;
     let mut tx_fee = 0;
-    let min_relay_fee = if coin.as_ref().force_min_relay_fee {
+    let min_relay_fee = if coin.as_ref().conf.force_min_relay_fee {
         let fee_dec = try_map!(
             coin.as_ref().rpc_client.get_relay_fee().compat().await,
             GenerateTransactionError::Other
@@ -481,7 +482,7 @@ pub async fn calc_interest_if_required<T>(
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps,
 {
-    if coin.as_ref().ticker != "KMD" {
+    if coin.as_ref().conf.ticker != "KMD" {
         return Ok((unsigned, data));
     }
     unsigned.lock_time = try_s!(coin.get_current_mtp().await);
@@ -540,22 +541,26 @@ pub fn p2sh_spending_tx(
     // release until the median time moves forward.
     // To compensate, subtract one hour (3,600 seconds) from your locktimes to allow those
     // transactions to be included in mempools at approximately the expected time.
-    let lock_time = if coin.ticker == "KMD" {
+    let lock_time = if coin.conf.ticker == "KMD" {
         (now_ms() / 1000) as u32 - 3600 + 2 * 777
     } else {
         (now_ms() / 1000) as u32 - 3600
     };
-    let n_time = if coin.is_pos {
+    let n_time = if coin.conf.is_pos {
         Some((now_ms() / 1000) as u32)
     } else {
         None
     };
-    let str_d_zeel = if coin.ticker == "NAV" { Some("".into()) } else { None };
+    let str_d_zeel = if coin.conf.ticker == "NAV" {
+        Some("".into())
+    } else {
+        None
+    };
     let unsigned = TransactionInputSigner {
         lock_time,
-        version: coin.tx_version,
+        version: coin.conf.tx_version,
         n_time,
-        overwintered: coin.overwintered,
+        overwintered: coin.conf.overwintered,
         inputs: vec![UnsignedTransactionInput {
             sequence,
             previous_output: OutPoint {
@@ -570,9 +575,9 @@ pub fn p2sh_spending_tx(
         shielded_spends: vec![],
         shielded_outputs: vec![],
         value_balance: 0,
-        version_group_id: coin.version_group_id,
-        consensus_branch_id: coin.consensus_branch_id,
-        zcash: coin.zcash,
+        version_group_id: coin.conf.version_group_id,
+        consensus_branch_id: coin.conf.consensus_branch_id,
+        zcash: coin.conf.zcash,
         str_d_zeel,
     };
     let signed_input = try_s!(p2sh_spend(
@@ -581,8 +586,8 @@ pub fn p2sh_spending_tx(
         &coin.key_pair,
         script_data,
         redeem_script.into(),
-        coin.signature_version,
-        coin.fork_id
+        coin.conf.signature_version,
+        coin.conf.fork_id
     ));
     Ok(UtxoTx {
         version: unsigned.version,
@@ -596,11 +601,11 @@ pub fn p2sh_spending_tx(
         shielded_spends: vec![],
         shielded_outputs: vec![],
         value_balance: 0,
-        version_group_id: coin.version_group_id,
+        version_group_id: coin.conf.version_group_id,
         binding_sig: H512::default(),
         join_split_sig: H512::default(),
         join_split_pubkey: H256::default(),
-        zcash: coin.zcash,
+        zcash: coin.conf.zcash,
         str_d_zeel: unsigned.str_d_zeel,
     })
 }
@@ -611,9 +616,9 @@ where
 {
     let address = try_fus!(address_from_raw_pubkey(
         fee_pub_key,
-        coin.as_ref().pub_addr_prefix,
-        coin.as_ref().pub_t_addr_prefix,
-        coin.as_ref().checksum_type
+        coin.as_ref().conf.pub_addr_prefix,
+        coin.as_ref().conf.pub_t_addr_prefix,
+        coin.as_ref().conf.checksum_type
     ));
     let amount = try_fus!(sat_from_big_decimal(&amount, coin.as_ref().decimals));
     let output = TransactionOutput {
@@ -857,9 +862,9 @@ where
     let amount = amount.clone();
     let address = try_fus!(address_from_raw_pubkey(
         fee_addr,
-        coin.as_ref().pub_addr_prefix,
-        coin.as_ref().pub_t_addr_prefix,
-        coin.as_ref().checksum_type
+        coin.as_ref().conf.pub_addr_prefix,
+        coin.as_ref().conf.pub_t_addr_prefix,
+        coin.as_ref().conf.checksum_type
     ));
 
     let fut = async move {
@@ -986,10 +991,10 @@ where
             },
             UtxoRpcClientEnum::Native(client) => {
                 let target_addr = Address {
-                    t_addr_prefix: coin.as_ref().p2sh_t_addr_prefix,
-                    prefix: coin.as_ref().p2sh_addr_prefix,
+                    t_addr_prefix: coin.as_ref().conf.p2sh_t_addr_prefix,
+                    prefix: coin.as_ref().conf.p2sh_addr_prefix,
                     hash,
-                    checksum_type: coin.as_ref().checksum_type,
+                    checksum_type: coin.as_ref().conf.checksum_type,
                 };
                 let target_addr = target_addr.to_string();
                 let is_imported = try_s!(client.is_address_imported(&target_addr).await);
@@ -1172,9 +1177,9 @@ where
     let pubkey_bytes = try_s!(hex::decode(pubkey));
     let addr = try_s!(address_from_raw_pubkey(
         &pubkey_bytes,
-        coin.as_ref().pub_addr_prefix,
-        coin.as_ref().pub_t_addr_prefix,
-        coin.as_ref().checksum_type
+        coin.as_ref().conf.pub_addr_prefix,
+        coin.as_ref().conf.pub_t_addr_prefix,
+        coin.as_ref().conf.checksum_type
     ));
     coin.display_address(&addr)
 }
@@ -1182,10 +1187,10 @@ where
 pub fn display_priv_key(coin: &UtxoCoinFields) -> String { format!("{}", coin.key_pair.private()) }
 
 pub fn min_tx_amount(coin: &UtxoCoinFields) -> BigDecimal {
-    big_decimal_from_sat(coin.dust_amount as i64, coin.decimals)
+    big_decimal_from_sat(coin.conf.dust_amount as i64, coin.decimals)
 }
 
-pub fn is_asset_chain(coin: &UtxoCoinFields) -> bool { coin.asset_chain }
+pub fn is_asset_chain(coin: &UtxoCoinFields) -> bool { coin.conf.asset_chain }
 
 pub async fn withdraw<T>(coin: T, req: WithdrawRequest) -> Result<TransactionDetails, String>
 where
@@ -1193,10 +1198,9 @@ where
 {
     let to = try_s!(coin.address_from_str(&req.to));
 
-    let is_p2pkh = to.prefix == coin.as_ref().pub_addr_prefix && to.t_addr_prefix == coin.as_ref().pub_t_addr_prefix;
-    let is_p2sh = to.prefix == coin.as_ref().p2sh_addr_prefix
-        && to.t_addr_prefix == coin.as_ref().p2sh_t_addr_prefix
-        && coin.as_ref().segwit;
+    let conf = &coin.as_ref().conf;
+    let is_p2pkh = to.prefix == conf.pub_addr_prefix && to.t_addr_prefix == conf.pub_t_addr_prefix;
+    let is_p2sh = to.prefix == conf.p2sh_addr_prefix && to.t_addr_prefix == conf.p2sh_t_addr_prefix && conf.segwit;
 
     let script_pubkey = if is_p2pkh {
         Builder::build_p2pkh(&to.hash)
@@ -1206,11 +1210,11 @@ where
         return ERR!("Address {} has invalid format", to);
     };
 
-    if to.checksum_type != coin.as_ref().checksum_type {
+    if to.checksum_type != coin.as_ref().conf.checksum_type {
         return ERR!(
             "Address {} has invalid checksum type, it must be {:?}",
             to,
-            coin.as_ref().checksum_type
+            coin.as_ref().conf.checksum_type
         );
     }
 
@@ -1256,8 +1260,8 @@ where
         unsigned,
         &coin.as_ref().key_pair,
         prev_script,
-        coin.as_ref().signature_version,
-        coin.as_ref().fork_id
+        coin.as_ref().conf.signature_version,
+        coin.as_ref().conf.fork_id
     ));
     let fee_amount = data.fee_amount + data.unused_change.unwrap_or_default();
     let fee_details = UtxoFeeDetails {
@@ -1279,7 +1283,7 @@ where
         tx_hex: serialize(&signed).into(),
         fee_details: Some(fee_details.into()),
         block_height: 0,
-        coin: coin.as_ref().ticker.clone(),
+        coin: coin.as_ref().conf.ticker.clone(),
         internal_id: vec![].into(),
         timestamp: now_ms() / 1000,
     })
@@ -1293,11 +1297,15 @@ where
 {
     let to_address_format: UtxoAddressFormat =
         json::from_value(to_address_format).map_err(|e| ERRL!("Error on parse UTXO address format {:?}", e))?;
-    let from_address = try_s!(address_from_any_format(&coin.as_ref(), from));
+    let from_address = try_s!(address_from_any_format(&coin.as_ref().conf, from));
     match to_address_format {
         UtxoAddressFormat::Standard => Ok(from_address.to_string()),
         UtxoAddressFormat::CashAddress { network } => Ok(try_s!(from_address
-            .to_cashaddress(&network, coin.as_ref().pub_addr_prefix, coin.as_ref().p2sh_addr_prefix)
+            .to_cashaddress(
+                &network,
+                coin.as_ref().conf.pub_addr_prefix,
+                coin.as_ref().conf.p2sh_addr_prefix
+            )
             .and_then(|cashaddress| cashaddress.encode()))),
     }
 }
@@ -1317,11 +1325,11 @@ where
         },
     };
 
-    let is_p2pkh =
-        address.prefix == coin.as_ref().pub_addr_prefix && address.t_addr_prefix == coin.as_ref().pub_t_addr_prefix;
-    let is_p2sh = address.prefix == coin.as_ref().p2sh_addr_prefix
-        && address.t_addr_prefix == coin.as_ref().p2sh_t_addr_prefix
-        && coin.as_ref().segwit;
+    let is_p2pkh = address.prefix == coin.as_ref().conf.pub_addr_prefix
+        && address.t_addr_prefix == coin.as_ref().conf.pub_t_addr_prefix;
+    let is_p2sh = address.prefix == coin.as_ref().conf.p2sh_addr_prefix
+        && address.t_addr_prefix == coin.as_ref().conf.p2sh_t_addr_prefix
+        && coin.as_ref().conf.segwit;
 
     if is_p2pkh || is_p2sh {
         ValidateAddressResult {
@@ -1356,8 +1364,9 @@ where
         {
             let coins_ctx = unwrap!(CoinsContext::from_ctx(&ctx));
             let coins = block_on(coins_ctx.coins.lock());
-            if !coins.contains_key(&coin.as_ref().ticker) {
-                ctx.log.log("", &[&"tx_history", &coin.as_ref().ticker], "Loop stopped");
+            if !coins.contains_key(&coin.as_ref().conf.ticker) {
+                ctx.log
+                    .log("", &[&"tx_history", &coin.as_ref().conf.ticker], "Loop stopped");
                 break;
             };
         }
@@ -1367,7 +1376,7 @@ where
             Err(err) => {
                 ctx.log.log(
                     "",
-                    &[&"tx_history", &coin.as_ref().ticker],
+                    &[&"tx_history", &coin.as_ref().conf.ticker],
                     &ERRL!("Error {:?} on getting balance", err),
                 );
                 None
@@ -1391,7 +1400,7 @@ where
             RequestTxHistoryResult::Retry { error } => {
                 ctx.log.log(
                     "",
-                    &[&"tx_history", &coin.as_ref().ticker],
+                    &[&"tx_history", &coin.as_ref().conf.ticker],
                     &ERRL!("{}, retrying", error),
                 );
                 thread::sleep(Duration::from_secs(10));
@@ -1400,7 +1409,7 @@ where
             RequestTxHistoryResult::HistoryTooLarge => {
                 ctx.log.log(
                     "",
-                    &[&"tx_history", &coin.as_ref().ticker],
+                    &[&"tx_history", &coin.as_ref().conf.ticker],
                     &ERRL!("Got `history too large`, stopping further attempts to retrieve it"),
                 );
                 *unwrap!(coin.as_ref().history_sync_state.lock()) = HistorySyncState::Error(json!({
@@ -1412,7 +1421,7 @@ where
             RequestTxHistoryResult::UnknownError(e) => {
                 ctx.log.log(
                     "",
-                    &[&"tx_history", &coin.as_ref().ticker],
+                    &[&"tx_history", &coin.as_ref().conf.ticker],
                     &ERRL!("{}, stopping futher attempts to retreive it", e),
                 );
                 break;
@@ -1434,11 +1443,11 @@ where
             let mut updated = false;
             match history_map.entry(txid.clone()) {
                 Entry::Vacant(e) => {
-                    mm_counter!(ctx.metrics, "tx.history.request.count", 1, "coin" => coin.as_ref().ticker.clone(), "method" => "tx_detail_by_hash");
+                    mm_counter!(ctx.metrics, "tx.history.request.count", 1, "coin" => coin.as_ref().conf.ticker.clone(), "method" => "tx_detail_by_hash");
 
                     match block_on(coin.tx_details_by_hash(&txid.0)) {
                         Ok(mut tx_details) => {
-                            mm_counter!(ctx.metrics, "tx.history.response.count", 1, "coin" => coin.as_ref().ticker.clone(), "method" => "tx_detail_by_hash");
+                            mm_counter!(ctx.metrics, "tx.history.response.count", 1, "coin" => coin.as_ref().conf.ticker.clone(), "method" => "tx_detail_by_hash");
 
                             if tx_details.block_height == 0 && height > 0 {
                                 tx_details.block_height = height;
@@ -1454,7 +1463,7 @@ where
                         },
                         Err(e) => ctx.log.log(
                             "",
-                            &[&"tx_history", &coin.as_ref().ticker],
+                            &[&"tx_history", &coin.as_ref().conf.ticker],
                             &ERRL!("Error {:?} on getting the details of {:?}, skipping the tx", e, txid),
                         ),
                     }
@@ -1466,10 +1475,10 @@ where
                         updated = true;
                     }
                     if e.get().should_update_timestamp() {
-                        mm_counter!(ctx.metrics, "tx.history.request.count", 1, "coin" => coin.as_ref().ticker.clone(), "method" => "tx_detail_by_hash");
+                        mm_counter!(ctx.metrics, "tx.history.request.count", 1, "coin" => coin.as_ref().conf.ticker.clone(), "method" => "tx_detail_by_hash");
 
                         if let Ok(tx_details) = block_on(coin.tx_details_by_hash(&txid.0)) {
-                            mm_counter!(ctx.metrics, "tx.history.response.count", 1, "coin" => coin.as_ref().ticker.clone(), "method" => "tx_detail_by_hash");
+                            mm_counter!(ctx.metrics, "tx.history.response.count", 1, "coin" => coin.as_ref().conf.ticker.clone(), "method" => "tx_detail_by_hash");
 
                             e.get_mut().timestamp = tx_details.timestamp;
                             updated = true;
@@ -1497,7 +1506,7 @@ where
         if success_iteration == 0 {
             ctx.log.log(
                 "😅",
-                &[&"tx_history", &("coin", coin.as_ref().ticker.clone().as_str())],
+                &[&"tx_history", &("coin", coin.as_ref().conf.ticker.clone().as_str())],
                 "history has been loaded successfully",
             );
         }
@@ -1525,7 +1534,7 @@ where
             let mut all_transactions = vec![];
             loop {
                 mm_counter!(metrics, "tx.history.request.count", 1,
-                    "coin" => coin.as_ref().ticker.clone(), "client" => "native", "method" => "listtransactions");
+                    "coin" => coin.as_ref().conf.ticker.clone(), "client" => "native", "method" => "listtransactions");
 
                 let transactions = match client.list_transactions(100, from).compat().await {
                     Ok(value) => value,
@@ -1537,7 +1546,7 @@ where
                 };
 
                 mm_counter!(metrics, "tx.history.response.count", 1,
-                    "coin" => coin.as_ref().ticker.clone(), "client" => "native", "method" => "listtransactions");
+                    "coin" => coin.as_ref().conf.ticker.clone(), "client" => "native", "method" => "listtransactions");
 
                 if transactions.is_empty() {
                     break;
@@ -1547,7 +1556,7 @@ where
             }
 
             mm_counter!(metrics, "tx.history.response.total_length", all_transactions.len() as u64,
-                "coin" => coin.as_ref().ticker.clone(), "client" => "native", "method" => "listtransactions");
+                "coin" => coin.as_ref().conf.ticker.clone(), "client" => "native", "method" => "listtransactions");
 
             all_transactions
                 .into_iter()
@@ -1565,7 +1574,7 @@ where
             let script_hash = electrum_script_hash(&script);
 
             mm_counter!(metrics, "tx.history.request.count", 1,
-                "coin" => coin.as_ref().ticker.clone(), "client" => "electrum", "method" => "blockchain.scripthash.get_history");
+                "coin" => coin.as_ref().conf.ticker.clone(), "client" => "electrum", "method" => "blockchain.scripthash.get_history");
 
             let electrum_history = match client.scripthash_get_history(&hex::encode(script_hash)).compat().await {
                 Ok(value) => value,
@@ -1587,10 +1596,10 @@ where
                 },
             };
             mm_counter!(metrics, "tx.history.response.count", 1,
-                "coin" => coin.as_ref().ticker.clone(), "client" => "electrum", "method" => "blockchain.scripthash.get_history");
+                "coin" => coin.as_ref().conf.ticker.clone(), "client" => "electrum", "method" => "blockchain.scripthash.get_history");
 
             mm_counter!(metrics, "tx.history.response.total_length", electrum_history.len() as u64,
-                "coin" => coin.as_ref().ticker.clone(), "client" => "electrum", "method" => "blockchain.scripthash.get_history");
+                "coin" => coin.as_ref().conf.ticker.clone(), "client" => "electrum", "method" => "blockchain.scripthash.get_history");
 
             // electrum returns the most recent transactions in the end but we need to
             // process them first so rev is required
@@ -1693,7 +1702,7 @@ where
         tx_hex: verbose_tx.hex,
         fee_details: Some(UtxoFeeDetails { amount: fee }.into()),
         block_height: verbose_tx.height.unwrap_or(0),
-        coin: coin.as_ref().ticker.clone(),
+        coin: coin.as_ref().conf.ticker.clone(),
         internal_id: tx.hash().reversed().to_vec().into(),
         timestamp: verbose_tx.time.into(),
     })
@@ -1707,7 +1716,7 @@ pub fn get_trade_fee<T>(coin: T) -> Box<dyn Future<Item = TradeFee, Error = Stri
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps + Send + Sync + 'static,
 {
-    let ticker = coin.as_ref().ticker.clone();
+    let ticker = coin.as_ref().conf.ticker.clone();
     let decimals = coin.as_ref().decimals;
     let fut = async move {
         let fee = try_s!(coin.get_tx_fee().await);
@@ -1811,7 +1820,7 @@ where
             .await
             .trace(source!())?;
         Ok(TradeFee {
-            coin: coin.as_ref().ticker.clone(),
+            coin: coin.as_ref().conf.ticker.clone(),
             amount: fee_amount.into(),
         })
     };
@@ -1825,7 +1834,7 @@ where
     T: AsRef<UtxoCoinFields>,
 {
     let trade_fee = TradeFee {
-        coin: coin.as_ref().ticker.clone(),
+        coin: coin.as_ref().conf.ticker.clone(),
         amount: 0.into(),
     };
     Box::new(futures01::future::ok(trade_fee))
@@ -1863,20 +1872,22 @@ where
 }
 
 pub fn required_confirmations(coin: &UtxoCoinFields) -> u64 {
-    coin.required_confirmations.load(AtomicOrderding::Relaxed)
+    coin.conf.required_confirmations.load(AtomicOrderding::Relaxed)
 }
 
 pub fn requires_notarization(coin: &UtxoCoinFields) -> bool {
-    coin.requires_notarization.load(AtomicOrderding::Relaxed)
+    coin.conf.requires_notarization.load(AtomicOrderding::Relaxed)
 }
 
 pub fn set_required_confirmations(coin: &UtxoCoinFields, confirmations: u64) {
-    coin.required_confirmations
+    coin.conf
+        .required_confirmations
         .store(confirmations, AtomicOrderding::Relaxed);
 }
 
 pub fn set_requires_notarization(coin: &UtxoCoinFields, requires_nota: bool) {
-    coin.requires_notarization
+    coin.conf
+        .requires_notarization
         .store(requires_nota, AtomicOrderding::Relaxed);
 }
 
@@ -2075,14 +2086,14 @@ pub fn address_from_raw_pubkey(
 }
 
 /// Try to parse address from either cashaddress or standard UTXO address format.
-fn address_from_any_format(coin: &UtxoCoinFields, from: &str) -> Result<Address, String> {
+fn address_from_any_format(conf: &UtxoCoinConf, from: &str) -> Result<Address, String> {
     let standard_err = match Address::from_str(from) {
         Ok(a) => return Ok(a),
         Err(e) => e,
     };
 
     let cashaddress_err =
-        match Address::from_cashaddress(from, coin.checksum_type, coin.pub_addr_prefix, coin.p2sh_addr_prefix) {
+        match Address::from_cashaddress(from, conf.checksum_type, conf.pub_addr_prefix, conf.p2sh_addr_prefix) {
             Ok(a) => return Ok(a),
             Err(e) => e,
         };
@@ -2255,10 +2266,10 @@ where
     };
 
     let payment_address = Address {
-        checksum_type: coin.as_ref().checksum_type,
+        checksum_type: coin.as_ref().conf.checksum_type,
         hash: redeem_script_hash,
-        prefix: coin.as_ref().p2sh_addr_prefix,
-        t_addr_prefix: coin.as_ref().p2sh_t_addr_prefix,
+        prefix: coin.as_ref().conf.p2sh_addr_prefix,
+        t_addr_prefix: coin.as_ref().conf.p2sh_t_addr_prefix,
     };
     let result = SwapPaymentOutputsResult {
         payment_address,
@@ -2365,7 +2376,7 @@ pub fn increase_dynamic_fee_by_stage<T>(coin: &T, dynamic_fee: u64, stage: &FeeA
 where
     T: AsRef<UtxoCoinFields>,
 {
-    let base_percent = coin.as_ref().tx_fee_volatility_percent;
+    let base_percent = coin.as_ref().conf.tx_fee_volatility_percent;
     let percent = match stage {
         FeeApproxStage::WithoutApprox => return dynamic_fee,
         // Take into account that the dynamic fee may increase during the swap by [`UtxoCoinFields::tx_fee_volatility_percent`].
@@ -2400,7 +2411,7 @@ where
             None => break,
         };
 
-        let ticker = &coin.as_ref().ticker;
+        let ticker = &coin.as_ref().conf.ticker;
         let (unspents, recently_spent) = match coin.list_unspent_ordered(&coin.as_ref().my_address).await {
             Ok((unspents, recently_spent)) => (unspents, recently_spent),
             Err(e) => {
