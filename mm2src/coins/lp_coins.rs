@@ -1302,12 +1302,12 @@ pub async fn convert_utxo_address(ctx: MmArc, req: Json) -> Result<Response<Vec<
     Ok(try_s!(Response::builder().body(response)))
 }
 
-pub fn address_by_coin_conf_and_pubkey_str(conf: Json, pubkey: &str) -> Result<String, String> {
+pub fn address_by_coin_conf_and_pubkey_str(coin: &str, conf: &Json, pubkey: &str) -> Result<String, String> {
     let protocol: CoinProtocol = try_s!(json::from_value(conf["protocol"].clone()));
     match protocol {
-        CoinProtocol::ERC20 { .. } | CoinProtocol::ETH | CoinProtocol::QRC20 { .. } => {
-            eth::addr_from_pubkey_str(pubkey)
+        CoinProtocol::ERC20 { .. } | CoinProtocol::ETH => eth::addr_from_pubkey_str(pubkey),
+        CoinProtocol::UTXO | CoinProtocol::QTUM | CoinProtocol::QRC20 { .. } => {
+            utxo::address_by_conf_and_pubkey_str(coin, conf, pubkey)
         },
-        CoinProtocol::UTXO | CoinProtocol::QTUM => utxo::address_by_conf_and_pubkey_str(conf, pubkey),
     }
 }

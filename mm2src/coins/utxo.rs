@@ -73,6 +73,7 @@ use super::{CoinTransportMetrics, CoinsContext, FeeApproxStage, FoundSwapTxSpend
             TradePreimageError, Transaction, TransactionDetails, TransactionEnum, TransactionFut, WithdrawFee,
             WithdrawRequest};
 use crate::utxo::rpc_clients::{ElectrumRpcRequest, NativeClientImpl};
+use crate::utxo::utxo_common::display_address;
 
 #[cfg(test)] pub mod utxo_tests;
 
@@ -353,8 +354,6 @@ pub struct UtxoCoinConf {
     /// Block count for median time past calculation
     pub mtp_block_count: NonZeroU64,
     pub estimate_fee_mode: Option<EstimateFeeMode>,
-    /// Minimum transaction value at which the value is not less than fee
-    pub dust_amount: u64,
     /// Minimum number of confirmations at which a transaction is considered mature
     pub mature_confirmations: u32,
     /// The number of blocks used for estimate_fee/estimate_smart_fee RPC calls
@@ -372,6 +371,8 @@ pub struct UtxoCoinFields {
     /// Bitcoin Diamond has 7
     pub decimals: u8,
     pub tx_fee: TxFee,
+    /// Minimum transaction value at which the value is not less than fee
+    pub dust_amount: u64,
     /// RPC client
     pub rpc_client: UtxoRpcClientEnum,
     /// ECDSA key pair
@@ -770,7 +771,6 @@ impl<'a> UtxoConfBuilder<'a> {
         let force_min_relay_fee = self.conf["force_min_relay_fee"].as_bool().unwrap_or(false);
         let mtp_block_count = self.mtp_block_count();
         let estimate_fee_mode = self.estimate_fee_mode();
-        let dust_amount = self.dust_amount();
         let estimate_fee_blocks = self.estimate_fee_blocks();
 
         Ok(UtxoCoinConf {
@@ -798,7 +798,6 @@ impl<'a> UtxoConfBuilder<'a> {
             force_min_relay_fee,
             mtp_block_count,
             estimate_fee_mode,
-            dust_amount,
             mature_confirmations,
             estimate_fee_blocks,
         })
@@ -947,8 +946,6 @@ impl<'a> UtxoConfBuilder<'a> {
         json::from_value(self.conf["estimate_fee_mode"].clone()).unwrap_or(None)
     }
 
-    fn dust_amount(&self) -> u64 { json::from_value(self.conf["dust"].clone()).unwrap_or(UTXO_DUST_AMOUNT) }
-
     fn estimate_fee_blocks(&self) -> u32 { json::from_value(self.conf["estimate_fee_blocks"].clone()).unwrap_or(1) }
 }
 
@@ -988,14 +985,16 @@ pub trait UtxoCoinBuilder {
         let rpc_client = try_s!(self.rpc_client().await);
         let tx_fee = try_s!(self.tx_fee(&rpc_client).await);
         let decimals = try_s!(self.decimals(&rpc_client).await);
+        let dust_amount = self.dust_amount();
 
         let initial_history_state = self.initial_history_state();
         let tx_cache_directory = Some(self.ctx().dbdir().join("TX_CACHE"));
 
         let _my_script_pubkey = Builder::build_p2pkh(&my_address.hash).to_bytes();
         let coin = UtxoCoinFields {
-            decimals,
             conf,
+            decimals,
+            dust_amount,
             rpc_client,
             key_pair,
             my_address,
@@ -1006,6 +1005,8 @@ pub trait UtxoCoinBuilder {
         };
         Ok(coin)
     }
+
+    fn dust_amount(&self) -> u64 { json::from_value(self.conf()["dust"].clone()).unwrap_or(UTXO_DUST_AMOUNT) }
 
     fn network(&self) -> Result<BlockchainNetwork, String> {
         let conf = self.conf();
@@ -1627,4 +1628,18 @@ fn script_sig(message: &H256, key_pair: &KeyPair, fork_id: u32) -> Result<Bytes,
     Ok(sig_script)
 }
 
-pub fn address_by_conf_and_pubkey_str(conf: Json, pubkey: &str) -> Result<String, String> { unimplemented!() }
+pub fn address_by_conf_and_pubkey_str(coin: &str, conf: &Json, pubkey: &str) -> Result<String, String> {
+    let null = Json::Null;
+    let conf_builder = UtxoConfBuilder::new(&conf, &null, coin);
+    let utxo_conf = try_s!(conf_builder.build());
+    let pubkey_bytes = try_s!(hex::decode(pubkey));
+    let hash = dhash160(&pubkey_bytes);
+
+    let address = Address {
+        prefix: utxo_conf.pub_addr_prefix,
+        t_addr_prefix: utxo_conf.pub_t_addr_prefix,
+        hash,
+        checksum_type: utxo_conf.checksum_type,
+    };
+    display_address(&utxo_conf, &address)
+}

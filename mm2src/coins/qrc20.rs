@@ -5,8 +5,8 @@ use crate::utxo::qtum::QtumBasedCoin;
 use crate::utxo::rpc_clients::{ElectrumClient, NativeClient, UnspentInfo, UtxoRpcClientEnum, UtxoRpcClientOps};
 use crate::utxo::utxo_common::{self, big_decimal_from_sat};
 use crate::utxo::{coin_daemon_data_dir, qtum, sign_tx, ActualTxFee, AdditionalTxData, FeePolicy,
-                  GenerateTransactionError, RecentlySpentOutPoints, UtxoAddressFormat, UtxoCoinBuilder,
-                  UtxoCoinFields, UtxoCommonOps, UtxoTx, VerboseTransactionFrom, UTXO_LOCK};
+                  GenerateTransactionError, RecentlySpentOutPoints, UtxoCoinBuilder, UtxoCoinFields, UtxoCommonOps,
+                  UtxoTx, VerboseTransactionFrom, UTXO_LOCK};
 use crate::{FeeApproxStage, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeFee,
             TradePreimageError, TradePreimageValue, TransactionDetails, TransactionEnum, TransactionFut,
             ValidateAddressResult, WithdrawFee, WithdrawRequest};
@@ -136,6 +136,8 @@ impl UtxoCoinBuilder for Qrc20CoinBuilder<'_> {
             .await
             .map_err(|e| ERRL!("{}", e))
     }
+
+    fn dust_amount(&self) -> u64 { QRC20_DUST }
 
     #[cfg(feature = "native")]
     fn confpath(&self) -> Result<PathBuf, String> {

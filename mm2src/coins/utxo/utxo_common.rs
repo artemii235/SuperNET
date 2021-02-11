@@ -276,7 +276,7 @@ pub async fn generate_transaction<T>(
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps,
 {
-    let dust: u64 = coin.as_ref().conf.dust_amount;
+    let dust: u64 = coin.as_ref().dust_amount;
     let lock_time = (now_ms() / 1000) as u32;
     let change_script_pubkey = Builder::build_p2pkh(&coin.as_ref().my_address.hash).to_bytes();
     let coin_tx_fee = match fee {
@@ -1187,7 +1187,7 @@ where
 pub fn display_priv_key(coin: &UtxoCoinFields) -> String { format!("{}", coin.key_pair.private()) }
 
 pub fn min_tx_amount(coin: &UtxoCoinFields) -> BigDecimal {
-    big_decimal_from_sat(coin.conf.dust_amount as i64, coin.decimals)
+    big_decimal_from_sat(coin.dust_amount as i64, coin.decimals)
 }
 
 pub fn is_asset_chain(coin: &UtxoCoinFields) -> bool { coin.conf.asset_chain }
