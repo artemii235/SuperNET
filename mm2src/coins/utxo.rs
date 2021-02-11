@@ -388,7 +388,7 @@ pub struct UtxoCoinFields {
     pub recently_spent_outpoints: AsyncMutex<RecentlySpentOutPoints>,
     pub tx_hash_algo: TxHashAlgo,
 }
-3
+
 #[cfg_attr(test, mockable)]
 #[async_trait]
 pub trait UtxoCommonOps {
@@ -990,6 +990,7 @@ pub trait UtxoCoinBuilder {
 
         let initial_history_state = self.initial_history_state();
         let tx_cache_directory = Some(self.ctx().dbdir().join("TX_CACHE"));
+        let tx_hash_algo = self.tx_hash_algo();
 
         let _my_script_pubkey = Builder::build_p2pkh(&my_address.hash).to_bytes();
         let coin = UtxoCoinFields {
@@ -1003,6 +1004,7 @@ pub trait UtxoCoinBuilder {
             tx_cache_directory,
             recently_spent_outpoints: AsyncMutex::new(RecentlySpentOutPoints::new(my_script_pubkey)),
             tx_fee,
+            tx_hash_algo,
         };
         Ok(coin)
     }

@@ -553,7 +553,11 @@ pub fn p2sh_spending_tx(
     } else {
         None
     };
-    let str_d_zeel = if coin.ticker == "NAV" { Some("".into()) } else { None };
+    let str_d_zeel = if coin.conf.ticker == "NAV" {
+        Some("".into())
+    } else {
+        None
+    };
     let hash_algo = coin.tx_hash_algo.into();
     let unsigned = TransactionInputSigner {
         lock_time,
