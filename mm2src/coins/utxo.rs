@@ -32,7 +32,7 @@ use async_trait::async_trait;
 use base64::{encode_config as base64_encode, URL_SAFE};
 use bigdecimal::BigDecimal;
 pub use bitcrypto::{dhash160, sha256, ChecksumType};
-use chain::{OutPoint, TransactionInput, TransactionOutput};
+use chain::{OutPoint, TransactionInput, TransactionOutput, TxHashAlgo};
 use common::executor::{spawn, Timer};
 use common::jsonrpc_client::JsonRpcError;
 use common::mm_ctx::MmArc;
@@ -386,8 +386,9 @@ pub struct UtxoCoinFields {
     /// The daemon needs some time to update the listunspent list for address which makes it return already spent UTXOs
     /// This cache helps to prevent UTXO reuse in such cases
     pub recently_spent_outpoints: AsyncMutex<RecentlySpentOutPoints>,
+    pub tx_hash_algo: TxHashAlgo,
 }
-
+3
 #[cfg_attr(test, mockable)]
 #[async_trait]
 pub trait UtxoCommonOps {
@@ -1176,6 +1177,14 @@ pub trait UtxoCoinBuilder {
             Ok(confpath.into())
         }
     }
+
+    fn tx_hash_algo(&self) -> TxHashAlgo {
+        if self.ticker() == "GRS" {
+            TxHashAlgo::SHA256
+        } else {
+            TxHashAlgo::DSHA256
+        }
+    }
 }
 
 /// Ping the electrum servers every 30 seconds to prevent them from disconnecting us.
@@ -1510,6 +1519,7 @@ pub(crate) fn sign_tx(
         join_split_pubkey: H256::default(),
         zcash: unsigned.zcash,
         str_d_zeel: unsigned.str_d_zeel,
+        tx_hash_algo: unsigned.hash_algo.into(),
     })
 }
 
