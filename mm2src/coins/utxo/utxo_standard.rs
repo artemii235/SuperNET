@@ -1,6 +1,6 @@
 use super::*;
 use crate::{SwapOps, TradePreimageError, TradePreimageValue, ValidateAddressResult};
-use common::mm_metrics::MetricsArc;
+use common::{mm_metrics::MetricsArc, now_ms};
 use futures::{FutureExt, TryFutureExt};
 
 #[derive(Clone, Debug)]
@@ -312,6 +312,16 @@ impl SwapOps for UtxoStandardCoin {
 
     fn extract_secret(&self, secret_hash: &[u8], spend_tx: &[u8]) -> Result<Vec<u8>, String> {
         utxo_common::extract_secret(secret_hash, spend_tx)
+    }
+
+    fn can_refund_htlc(&self, locktime: u64) -> Box<dyn Future<Item = bool, Error = String> + Send + '_> {
+        let now = now_ms() / 1000;
+        let can_refund = now > locktime;
+        Box::new(
+            self.get_current_mtp()
+                .compat()
+                .map(move |mtp| locktime < mtp as u64 && can_refund),
+        )
     }
 }
 

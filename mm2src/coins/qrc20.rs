@@ -812,6 +812,12 @@ impl SwapOps for Qrc20Coin {
     fn extract_secret(&self, secret_hash: &[u8], spend_tx: &[u8]) -> Result<Vec<u8>, String> {
         self.extract_secret_impl(secret_hash, spend_tx)
     }
+
+    fn can_refund_htlc(&self, locktime: u64) -> Box<dyn Future<Item = bool, Error = String> + Send> {
+        let now = now_ms() / 1000;
+        let can_refund = now > locktime;
+        Box::new(futures01::future::ok(can_refund))
+    }
 }
 
 impl MarketCoinOps for Qrc20Coin {

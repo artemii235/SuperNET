@@ -1,6 +1,6 @@
 use super::*;
 use crate::{eth, SwapOps, TradePreimageError, TradePreimageValue, ValidateAddressResult};
-use common::mm_metrics::MetricsArc;
+use common::{mm_metrics::MetricsArc, now_ms};
 use ethereum_types::H160;
 use futures::{FutureExt, TryFutureExt};
 
@@ -400,6 +400,12 @@ impl SwapOps for QtumCoin {
 
     fn extract_secret(&self, secret_hash: &[u8], spend_tx: &[u8]) -> Result<Vec<u8>, String> {
         utxo_common::extract_secret(secret_hash, spend_tx)
+    }
+
+    fn can_refund_htlc(&self, locktime: u64) -> Box<dyn Future<Item = bool, Error = String> + Send> {
+        let now = now_ms() / 1000;
+        let can_refund = now > locktime;
+        Box::new(futures01::future::ok(can_refund))
     }
 }
 

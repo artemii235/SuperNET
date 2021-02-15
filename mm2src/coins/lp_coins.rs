@@ -230,6 +230,11 @@ pub trait SwapOps {
     ) -> Result<Option<FoundSwapTxSpend>, String>;
 
     fn extract_secret(&self, secret_hash: &[u8], spend_tx: &[u8]) -> Result<Vec<u8>, String>;
+
+    /// Whether the refund transaction can be sent now
+    /// For example: there are no additional conditions for ETH, but for some UTXO coins we should wait for
+    /// locktime < MTP
+    fn can_refund_htlc(&self, locktime: u64) -> Box<dyn Future<Item = bool, Error = String> + Send + '_>;
 }
 
 /// Operations that coins have independently from the MarketMaker.

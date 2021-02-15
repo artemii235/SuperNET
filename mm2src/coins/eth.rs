@@ -853,6 +853,12 @@ impl SwapOps for EthCoin {
             ),
         }
     }
+
+    fn can_refund_htlc(&self, locktime: u64) -> Box<dyn Future<Item = bool, Error = String> + Send> {
+        let now = now_ms() / 1000;
+        let can_refund = now > locktime;
+        Box::new(futures01::future::ok(can_refund))
+    }
 }
 
 impl MarketCoinOps for EthCoin {
