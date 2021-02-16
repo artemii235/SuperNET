@@ -11,9 +11,10 @@ use crate::mm2::{lp_network::subscribe_to_topic, lp_swap::NegotiationDataMsg};
 use atomic::Atomic;
 use bigdecimal::BigDecimal;
 use bitcrypto::dhash160;
-use coins::{lp_coinfind, FeeApproxStage, FoundSwapTxSpend, MmCoinEnum, TradeFee, TradePreimageValue, TransactionEnum};
-use common::{bits256, executor::Timer, file_lock::FileLock, mm_ctx::MmArc, mm_number::MmNumber, now_ms, slurp, write,
-             Traceable, DEX_FEE_ADDR_RAW_PUBKEY, MM_VERSION};
+use coins::{lp_coinfind, CanRefundHtlc, FeeApproxStage, FoundSwapTxSpend, MmCoinEnum, TradeFee, TradePreimageValue,
+            TransactionEnum};
+use common::{bits256, executor::Timer, file_lock::FileLock, log::error, mm_ctx::MmArc, mm_number::MmNumber, now_ms,
+             slurp, write, Traceable, DEX_FEE_ADDR_RAW_PUBKEY, MM_VERSION};
 use futures::{compat::Future01CompatExt, select, FutureExt};
 use futures01::Future;
 use parking_lot::Mutex as PaMutex;
@@ -761,10 +762,16 @@ impl MakerSwap {
     }
 
     async fn refund_maker_payment(&self) -> Result<(Option<MakerSwapCommand>, Vec<MakerSwapEvent>), String> {
-        // have to wait for 1 hour more due as some coins have BIP113 activated so these will reject transactions with locktime == present time
-        // https://github.com/bitcoin/bitcoin/blob/master/doc/release-notes/release-notes-0.11.2.md#bip113-mempool-only-locktime-enforcement-using-getmediantimepast
-        while now_ms() / 1000 < self.wait_refund_until() {
-            Timer::sleep(10.).await;
+        let locktime = self.r().data.maker_payment_lock;
+        loop {
+            match self.maker_coin.can_refund_htlc(locktime).compat().await {
+                Ok(CanRefundHtlc::CanRefundNow) => break,
+                Ok(CanRefundHtlc::HaveToWait(to_sleep)) => Timer::sleep(to_sleep as f64).await,
+                Err(e) => {
+                    error!("Error {} on can_refund_htlc, retrying in 30 seconds", e);
+                    Timer::sleep(30.).await;
+                },
+            }
         }
 
         let spend_fut = self.maker_coin.send_maker_refunds_payment(

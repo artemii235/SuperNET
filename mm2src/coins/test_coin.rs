@@ -200,8 +200,6 @@ impl SwapOps for TestCoin {
     }
 
     fn extract_secret(&self, secret_hash: &[u8], spend_tx: &[u8]) -> Result<Vec<u8>, String> { unimplemented!() }
-
-    fn can_refund_htlc(&self, locktime: u64) -> Box<dyn Future<Item = bool, Error = String> + Send> { unimplemented!() }
 }
 
 #[mockable]

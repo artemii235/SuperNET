@@ -1,5 +1,5 @@
 use super::*;
-use crate::{SwapOps, TradePreimageError, TradePreimageValue, ValidateAddressResult};
+use crate::{CanRefundHtlc, SwapOps, TradePreimageError, TradePreimageValue, ValidateAddressResult};
 use common::{mm_metrics::MetricsArc, now_ms};
 use futures::{FutureExt, TryFutureExt};
 
@@ -89,6 +89,7 @@ impl UtxoCommonOps for UtxoStandardCoin {
         outputs: Vec<TransactionOutput>,
         script_data: Script,
         sequence: u32,
+        lock_time: u32,
     ) -> Result<UtxoTx, String> {
         utxo_common::p2sh_spending_tx(
             &self.utxo_arc,
@@ -97,6 +98,7 @@ impl UtxoCommonOps for UtxoStandardCoin {
             outputs,
             script_data,
             sequence,
+            lock_time,
         )
     }
 
@@ -314,14 +316,21 @@ impl SwapOps for UtxoStandardCoin {
         utxo_common::extract_secret(secret_hash, spend_tx)
     }
 
-    fn can_refund_htlc(&self, locktime: u64) -> Box<dyn Future<Item = bool, Error = String> + Send + '_> {
+    fn can_refund_htlc(&self, locktime: u64) -> Box<dyn Future<Item = CanRefundHtlc, Error = String> + Send + '_> {
         let now = now_ms() / 1000;
-        let can_refund = now > locktime;
-        Box::new(
-            self.get_current_mtp()
-                .compat()
-                .map(move |mtp| locktime < mtp as u64 && can_refund),
-        )
+        if now < locktime {
+            let to_wait = locktime - now + 1;
+            return Box::new(futures01::future::ok(CanRefundHtlc::HaveToWait(to_wait)));
+        }
+        Box::new(self.get_current_mtp().compat().map(move |mtp| {
+            let mtp = mtp as u64;
+            if locktime < mtp {
+                CanRefundHtlc::CanRefundNow
+            } else {
+                let to_wait = locktime - mtp + 1;
+                CanRefundHtlc::HaveToWait(to_wait)
+            }
+        }))
     }
 }
 

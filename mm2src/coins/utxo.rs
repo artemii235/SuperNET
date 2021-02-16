@@ -444,6 +444,7 @@ pub trait UtxoCommonOps {
         outputs: Vec<TransactionOutput>,
         script_data: Script,
         sequence: u32,
+        lock_time: u32,
     ) -> Result<UtxoTx, String>;
 
     /// Get transaction outputs available to spend.

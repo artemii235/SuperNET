@@ -10,9 +10,9 @@ use super::{ban_pubkey, broadcast_my_swap_status, broadcast_swap_message_every, 
 use crate::mm2::lp_network::subscribe_to_topic;
 use atomic::Atomic;
 use bigdecimal::BigDecimal;
-use coins::{lp_coinfind, FeeApproxStage, FoundSwapTxSpend, MmCoinEnum, TradeFee, TradePreimageValue};
+use coins::{lp_coinfind, CanRefundHtlc, FeeApproxStage, FoundSwapTxSpend, MmCoinEnum, TradeFee, TradePreimageValue};
 use common::executor::Timer;
-use common::log::{debug, warn};
+use common::log::{debug, error, warn};
 use common::mm_ctx::MmArc;
 use common::mm_number::MmNumber;
 use common::{bits256, file_lock::FileLock, now_ms, slurp, write, Traceable, DEX_FEE_ADDR_RAW_PUBKEY, MM_VERSION};
@@ -1145,14 +1145,18 @@ impl TakerSwap {
     }
 
     async fn refund_taker_payment(&self) -> Result<(Option<TakerSwapCommand>, Vec<TakerSwapEvent>), String> {
+        let locktime = self.r().data.taker_payment_lock;
         loop {
-            // have to wait for 1 hour more because some coins have BIP113 activated so these will reject transactions with locktime == present time
-            // https://github.com/bitcoin/bitcoin/blob/master/doc/release-notes/release-notes-0.11.2.md#bip113-mempool-only-locktime-enforcement-using-getmediantimepast
-            if now_ms() / 1000 > self.wait_refund_until() {
-                break;
+            match self.taker_coin.can_refund_htlc(locktime).compat().await {
+                Ok(CanRefundHtlc::CanRefundNow) => break,
+                Ok(CanRefundHtlc::HaveToWait(to_sleep)) => Timer::sleep(to_sleep as f64).await,
+                Err(e) => {
+                    error!("Error {} on can_refund_htlc, retrying in 30 seconds", e);
+                    Timer::sleep(30.).await;
+                },
             }
-            Timer::sleep(10.).await;
         }
+
         let refund_fut = self.taker_coin.send_taker_refunds_payment(
             &self.r().taker_payment.clone().unwrap().tx_hex.0,
             self.r().data.taker_payment_lock as u32,
