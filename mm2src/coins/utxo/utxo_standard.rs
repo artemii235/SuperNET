@@ -1,6 +1,6 @@
 use super::*;
 use crate::{CanRefundHtlc, SwapOps, TradePreimageError, TradePreimageValue, ValidateAddressResult};
-use common::{mm_metrics::MetricsArc, now_ms};
+use common::mm_metrics::MetricsArc;
 use futures::{FutureExt, TryFutureExt};
 
 #[derive(Clone, Debug)]
@@ -317,20 +317,7 @@ impl SwapOps for UtxoStandardCoin {
     }
 
     fn can_refund_htlc(&self, locktime: u64) -> Box<dyn Future<Item = CanRefundHtlc, Error = String> + Send + '_> {
-        let now = now_ms() / 1000;
-        if now < locktime {
-            let to_wait = locktime - now + 1;
-            return Box::new(futures01::future::ok(CanRefundHtlc::HaveToWait(to_wait)));
-        }
-        Box::new(self.get_current_mtp().compat().map(move |mtp| {
-            let mtp = mtp as u64;
-            if locktime < mtp {
-                CanRefundHtlc::CanRefundNow
-            } else {
-                let to_wait = locktime - mtp + 1;
-                CanRefundHtlc::HaveToWait(to_wait)
-            }
-        }))
+        utxo_common::can_refund_htlc(self, locktime)
     }
 }
 

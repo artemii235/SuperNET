@@ -31,7 +31,7 @@ pub use chain::Transaction as UtxoTx;
 
 use self::rpc_clients::{electrum_script_hash, UnspentInfo, UtxoRpcClientEnum};
 use crate::utxo::rpc_clients::UtxoRpcClientOps;
-use crate::{FeeApproxStage, TradePreimageError, TradePreimageValue, ValidateAddressResult};
+use crate::{CanRefundHtlc, FeeApproxStage, TradePreimageError, TradePreimageValue, ValidateAddressResult};
 use common::{block_on, Traceable};
 
 macro_rules! true_or {
@@ -2469,6 +2469,26 @@ where
             }
         }
     }
+}
+
+pub fn can_refund_htlc<T>(coin: &T, locktime: u64) -> Box<dyn Future<Item = CanRefundHtlc, Error = String> + Send + '_>
+where
+    T: UtxoCommonOps,
+{
+    let now = now_ms() / 1000;
+    if now < locktime {
+        let to_wait = locktime - now + 1;
+        return Box::new(futures01::future::ok(CanRefundHtlc::HaveToWait(to_wait)));
+    }
+    Box::new(coin.get_current_mtp().compat().map(move |mtp| {
+        let mtp = mtp as u64;
+        if locktime < mtp {
+            CanRefundHtlc::CanRefundNow
+        } else {
+            let to_wait = locktime - mtp + 1;
+            CanRefundHtlc::HaveToWait(to_wait)
+        }
+    }))
 }
 
 #[test]
