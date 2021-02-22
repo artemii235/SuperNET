@@ -31,7 +31,7 @@ use http::Uri;
 use http::{Request, StatusCode};
 use keys::Address;
 #[cfg(test)] use mocktopus::macros::*;
-use rpc::v1::types::{Bytes as BytesJson, Transaction as RpcTransaction, VerboseBlockClient, H256 as H256Json};
+use rpc::v1::types::{Bytes as BytesJson, Transaction as RpcTransaction, H256 as H256Json};
 #[cfg(feature = "native")] use rustls::{self};
 use script::Builder;
 use serde_json::{self as json, Value as Json};
@@ -356,6 +356,54 @@ pub enum EstimateFeeMethod {
     SmartFee,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum BlockNonce {
+    String(String),
+    U64(u64),
+}
+
+#[derive(Debug, Deserialize)]
+pub struct VerboseBlock {
+    /// Block hash
+    pub hash: H256Json,
+    /// Number of confirmations. -1 if block is on the side chain
+    pub confirmations: i64,
+    /// Block size
+    pub size: u32,
+    /// Block size, excluding witness data
+    pub strippedsize: Option<u32>,
+    /// Block weight
+    pub weight: Option<u32>,
+    /// Block height
+    pub height: Option<u32>,
+    /// Block version
+    pub version: u32,
+    /// Block version as hex
+    #[serde(rename = "versionHex")]
+    pub version_hex: Option<String>,
+    /// Merkle root of this block
+    pub merkleroot: H256Json,
+    /// Transactions ids
+    pub tx: Vec<H256Json>,
+    /// Block time in seconds since epoch (Jan 1 1970 GMT)
+    pub time: u32,
+    /// Median block time in seconds since epoch (Jan 1 1970 GMT)
+    pub mediantime: Option<u32>,
+    /// Block nonce
+    pub nonce: BlockNonce,
+    /// Block nbits
+    pub bits: String,
+    /// Block difficulty
+    pub difficulty: f64,
+    /// Expected number of hashes required to produce the chain up to this block (in hex)
+    pub chainwork: H256Json,
+    /// Hash of previous block
+    pub previousblockhash: Option<H256Json>,
+    /// Hash of next block
+    pub nextblockhash: Option<H256Json>,
+}
+
 pub type RpcReqSub<T> = async_oneshot::Sender<Result<T, JsonRpcError>>;
 
 /// RPC client for UTXO based coins
@@ -662,7 +710,7 @@ impl NativeClientImpl {
 
     /// https://developer.bitcoin.org/reference/rpc/getblock.html
     /// Always returns verbose block
-    pub fn get_block(&self, hash: H256Json) -> RpcRes<VerboseBlockClient> {
+    pub fn get_block(&self, hash: H256Json) -> RpcRes<VerboseBlock> {
         let verbose = true;
         rpc_func!(self, "getblock", hash, verbose)
     }
