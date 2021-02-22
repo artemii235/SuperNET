@@ -574,7 +574,8 @@ impl UtxoRpcClientOps for NativeClient {
     ) -> Box<dyn Future<Item = u32, Error = String> + Send> {
         let selfi = self.clone();
         let fut = async move {
-            let starting_block_data = try_s!(selfi.get_block(starting_block.to_string()).compat().await);
+            let starting_block_hash = try_s!(selfi.get_block_hash(starting_block).compat().await);
+            let starting_block_data = try_s!(selfi.get_block(starting_block_hash).compat().await);
             if let Some(median) = starting_block_data.mediantime {
                 return Ok(median);
             }
@@ -586,7 +587,8 @@ impl UtxoRpcClientOps for NativeClient {
                 starting_block - count.get() + 1
             };
             for block_n in from..starting_block {
-                let block_data = try_s!(selfi.get_block(block_n.to_string()).compat().await);
+                let block_hash = try_s!(selfi.get_block_hash(block_n).compat().await);
+                let block_data = try_s!(selfi.get_block(block_hash).compat().await);
                 block_timestamps.push(block_data.time);
             }
             // can unwrap because count is non zero
@@ -660,10 +662,13 @@ impl NativeClientImpl {
 
     /// https://developer.bitcoin.org/reference/rpc/getblock.html
     /// Always returns verbose block
-    pub fn get_block(&self, height: String) -> RpcRes<VerboseBlockClient> {
+    pub fn get_block(&self, hash: H256Json) -> RpcRes<VerboseBlockClient> {
         let verbose = true;
-        rpc_func!(self, "getblock", height, verbose)
+        rpc_func!(self, "getblock", hash, verbose)
     }
+
+    /// https://developer.bitcoin.org/reference/rpc/getblockhash.html
+    pub fn get_block_hash(&self, height: u64) -> RpcRes<H256Json> { rpc_func!(self, "getblockhash", height) }
 
     /// https://developer.bitcoin.org/reference/rpc/getblockcount.html
     pub fn get_block_count(&self) -> RpcRes<u64> { rpc_func!(self, "getblockcount") }
@@ -760,11 +765,6 @@ impl NativeClientImpl {
             target_confirmations,
             include_watch_only
         )
-    }
-
-    /// https://developer.bitcoin.org/reference/rpc/getblockhash.html
-    pub fn get_block_hash(&self, block_number: u64) -> RpcRes<H256Json> {
-        rpc_func!(self, "getblockhash", block_number)
     }
 
     /// https://developer.bitcoin.org/reference/rpc/sendtoaddress.html
