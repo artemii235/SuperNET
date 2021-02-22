@@ -1,6 +1,7 @@
 use super::rpc_clients::{ElectrumProtocol, ListSinceBlockRes, NetworkInfo};
 use super::*;
 use crate::utxo::rpc_clients::{GetAddressInfoRes, UtxoRpcClientOps, ValidateAddressRes};
+use crate::utxo::utxo_common::{generate_transaction, UtxoArcBuilder};
 use crate::utxo::utxo_standard::{utxo_standard_coin_from_conf_and_request, UtxoStandardCoin};
 use crate::{SwapOps, TradePreimageValue, WithdrawFee};
 use bigdecimal::BigDecimal;
@@ -2156,4 +2157,87 @@ fn test_validate_fee_min_block() {
         .wait()
         .unwrap_err();
     assert!(validate_err.contains("confirmed before min_block"));
+}
+
+#[test]
+fn test_generate_tx_doge_fee() {
+    // A tx below 1kb is always 1 doge fee yes.
+    // But keep in mind that every output below 1 doge will incur and extra 1 doge dust fee
+    let config = json!({
+        "coin": "DOGE",
+        "name": "dogecoin",
+        "fname": "Dogecoin",
+        "rpcport": 22555,
+        "pubtype": 30,
+        "p2shtype": 22,
+        "wiftype": 158,
+        "txfee": 0,
+        "force_min_relay_fee": true,
+        "dust": 100000000,
+        "mm2": 1,
+        "required_confirmations": 2,
+        "avg_blocktime": 1,
+        "protocol": {
+            "type": "UTXO"
+        }
+    });
+    let request = json!({
+        "method": "electrum",
+        "coin": "DOGE",
+        "servers": [{"url": "electrum1.cipig.net:10060"},{"url": "electrum2.cipig.net:10060"},{"url": "electrum3.cipig.net:10060"}],
+    });
+    let ctx = MmCtxBuilder::default().into_mm_arc();
+    let doge: UtxoStandardCoin = block_on(UtxoArcBuilder::new(&ctx, "DOGE", &config, &request, &[1; 32]).build())
+        .unwrap()
+        .into();
+
+    let unspents = vec![UnspentInfo {
+        outpoint: Default::default(),
+        value: 1000000000000,
+        height: None,
+    }];
+    let outputs = vec![TransactionOutput {
+        value: 100000000,
+        script_pubkey: vec![0; 26].into(),
+    }];
+    let policy = FeePolicy::SendExact;
+    let (_, data) = block_on(generate_transaction(&doge, unspents, outputs, policy, None, None)).unwrap();
+    let expected_fee = 100000000;
+    assert_eq!(expected_fee, data.fee_amount);
+
+    let unspents = vec![UnspentInfo {
+        outpoint: Default::default(),
+        value: 1000000000000,
+        height: None,
+    }];
+    let outputs = vec![
+        TransactionOutput {
+            value: 100000000,
+            script_pubkey: vec![0; 26].into(),
+        }
+        .clone();
+        40
+    ];
+    let policy = FeePolicy::SendExact;
+    let (_, data) = block_on(generate_transaction(&doge, unspents, outputs, policy, None, None)).unwrap();
+    let expected_fee = 200000000;
+    assert_eq!(expected_fee, data.fee_amount);
+
+    let unspents = vec![UnspentInfo {
+        outpoint: Default::default(),
+        value: 1000000000000,
+        height: None,
+    }];
+    let outputs = vec![
+        TransactionOutput {
+            value: 100000000,
+            script_pubkey: vec![0; 26].into(),
+        }
+        .clone();
+        60
+    ];
+    let policy = FeePolicy::SendExact;
+    let (_, data) = block_on(generate_transaction(&doge, unspents, outputs, policy, None, None)).unwrap();
+    let expected_fee = 300000000;
+    assert_eq!(expected_fee, data.fee_amount);
 }
