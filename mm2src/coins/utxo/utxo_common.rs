@@ -1897,7 +1897,7 @@ where
                 // take into account the change output
                 data.fee_amount + (dynamic_fee * P2PKH_OUTPUT_LEN) / KILO_BYTE
             } else {
-                // the change outputs is included already
+                // the change output is included already
                 data.fee_amount
             };
 
@@ -1922,7 +1922,7 @@ where
                     data.fee_amount
                 }
             } else {
-                // the change outputs is included already
+                // the change output is included already
                 data.fee_amount
             };
 
