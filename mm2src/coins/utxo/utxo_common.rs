@@ -151,6 +151,7 @@ pub async fn get_tx_fee(coin: &UtxoCoinFields) -> Result<ActualTxFee, JsonRpcErr
                 .await?;
             Ok(ActualTxFee::Dynamic(fee))
         },
+        TxFee::FixedPerKb(satoshis) => Ok(ActualTxFee::FixedPerKb(*satoshis)),
     }
 }
 
@@ -164,6 +165,8 @@ where
         ActualTxFee::Fixed(fee) => fee,
         // atomic swap payment spend transaction is slightly more than 300 bytes in average as of now
         ActualTxFee::Dynamic(fee_per_kb) => (fee_per_kb * SWAP_TX_SPEND_SIZE) / KILO_BYTE,
+        // return satoshis here as swap spend transaction size is always less than 1 kb
+        ActualTxFee::FixedPerKb(satoshis) => satoshis,
     };
     if coin.as_ref().conf.force_min_relay_fee {
         let relay_fee = try_s!(coin.as_ref().rpc_client.get_relay_fee().compat().await);
@@ -372,6 +375,20 @@ where
                 let additional_len = 2 + MAX_DER_SIGNATURE_LEN + COMPRESSED_PUBKEY_LEN;
                 let tx_size = transaction_bytes.len() + transaction.inputs().len() * additional_len;
                 (f * tx_size as u64) / KILO_BYTE
+            },
+            ActualTxFee::FixedPerKb(f) => {
+                let transaction = UtxoTx::from(tx.clone());
+                let transaction_bytes = serialize(&transaction);
+                // 2 bytes are used to indicate the length of signature and pubkey
+                // total is 107
+                let additional_len = 2 + MAX_DER_SIGNATURE_LEN + COMPRESSED_PUBKEY_LEN;
+                let tx_size_bytes = (transaction_bytes.len() + transaction.inputs().len() * additional_len) as u64;
+                let tx_size_kb = if tx_size_bytes % KILO_BYTE == 0 {
+                    tx_size_bytes / KILO_BYTE
+                } else {
+                    tx_size_bytes / KILO_BYTE + 1
+                };
+                f * tx_size_kb
             },
         };
 
@@ -1823,6 +1840,7 @@ where
         let amount = match fee {
             ActualTxFee::Fixed(f) => f,
             ActualTxFee::Dynamic(f) => f,
+            ActualTxFee::FixedPerKb(f) => f,
         };
         Ok(TradeFee {
             coin: ticker,
@@ -1856,36 +1874,61 @@ where
 {
     let decimals = coin.as_ref().decimals;
     let tx_fee = try_map!(coin.get_tx_fee().await, TradePreimageError::Other);
-    let dynamic_fee = match tx_fee {
+    match tx_fee {
         ActualTxFee::Fixed(fee_amount) => {
             let amount = big_decimal_from_sat(fee_amount as i64, decimals);
             return Ok(amount);
         },
         // if it's a dynamic fee, we should generate a swap transaction to get an actual trade fee
-        ActualTxFee::Dynamic(fee) => fee,
-    };
+        ActualTxFee::Dynamic(fee) => {
+            // take into account that the dynamic tx fee may increase during the swap
+            let dynamic_fee = coin.increase_dynamic_fee_by_stage(fee, stage);
 
-    // take into account that the dynamic tx fee may increase during the swap
-    let dynamic_fee = coin.increase_dynamic_fee_by_stage(dynamic_fee, stage);
+            let outputs_count = outputs.len();
+            let (unspents, _recently_sent_txs) = try_map!(
+                coin.list_unspent_ordered(&coin.as_ref().my_address).await,
+                TradePreimageError::Other
+            );
 
-    let outputs_count = outputs.len();
-    let (unspents, _recently_sent_txs) = try_map!(
-        coin.list_unspent_ordered(&coin.as_ref().my_address).await,
-        TradePreimageError::Other
-    );
+            let actual_tx_fee = Some(ActualTxFee::Dynamic(dynamic_fee));
+            let (tx, data) = generate_transaction(coin, unspents, outputs, fee_policy, actual_tx_fee, gas_fee).await?;
 
-    let actual_tx_fee = Some(ActualTxFee::Dynamic(dynamic_fee));
-    let (tx, data) = generate_transaction(coin, unspents, outputs, fee_policy, actual_tx_fee, gas_fee).await?;
+            let total_fee = if tx.outputs.len() == outputs_count {
+                // take into account the change output
+                data.fee_amount + (dynamic_fee * P2PKH_OUTPUT_LEN) / KILO_BYTE
+            } else {
+                // the change output is included already
+                data.fee_amount
+            };
 
-    let total_fee = if tx.outputs.len() == outputs_count {
-        // take into account the change output
-        data.fee_amount + (dynamic_fee * P2PKH_OUTPUT_LEN) / KILO_BYTE
-    } else {
-        // the change outputs is included already
-        data.fee_amount
-    };
+            Ok(big_decimal_from_sat(total_fee as i64, decimals))
+        },
+        ActualTxFee::FixedPerKb(fee) => {
+            let outputs_count = outputs.len();
+            let (unspents, _recently_sent_txs) = try_map!(
+                coin.list_unspent_ordered(&coin.as_ref().my_address).await,
+                TradePreimageError::Other
+            );
 
-    Ok(big_decimal_from_sat(total_fee as i64, decimals))
+            let (tx, data) = generate_transaction(coin, unspents, outputs, fee_policy, Some(tx_fee), gas_fee).await?;
+
+            let total_fee = if tx.outputs.len() == outputs_count {
+                // take into account the change output if tx_size_kb(tx with change) > tx_size_kb(tx without change)
+                let tx = UtxoTx::from(tx);
+                let tx_bytes = serialize(&tx);
+                if tx_bytes.len() as u64 % KILO_BYTE + P2PKH_OUTPUT_LEN > KILO_BYTE {
+                    data.fee_amount + fee
+                } else {
+                    data.fee_amount
+                }
+            } else {
+                // the change output is included already
+                data.fee_amount
+            };
+
+            Ok(big_decimal_from_sat(total_fee as i64, decimals))
+        },
+    }
 }
 
 /// Maker or Taker should pay fee only for sending his payment.
