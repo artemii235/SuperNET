@@ -4,7 +4,6 @@ use super::lp_main;
 use bigdecimal::BigDecimal;
 #[cfg(not(feature = "native"))] use common::call_back;
 use common::executor::Timer;
-#[cfg(feature = "native")] use common::for_tests::mm_dump;
 use common::for_tests::{check_my_swap_status, check_recent_swaps, check_stats_swap_status, enable_electrum,
                         enable_native, enable_qrc20, find_metrics_in_json, from_env_file, get_passphrase, mm_spat,
                         LocalStart, MarketMakerIt, RaiiDump, MAKER_ERROR_EVENTS, MAKER_SUCCESS_EVENTS,
@@ -186,7 +185,7 @@ fn local_start_impl(folder: PathBuf, log_path: PathBuf, mut conf: Json) {
 
 /// Starts the WASM version of MM.
 #[cfg(not(feature = "native"))]
-fn wasm_start_impl(ctx: MmArc) {
+fn wasm_start_impl(ctx: crate::common::mm_ctx::MmArc) {
     crate::mm2::rpc::init_header_slots();
 
     let netid = ctx.conf["netid"].as_u64().unwrap_or(0) as u16;
@@ -242,7 +241,7 @@ fn alice_can_see_the_active_order_after_connection() {
         "pass".into(),
         local_start!("bob")
     ));
-    let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
+    let (_bob_dump_log, _bob_dump_dashboard) = mm_bob.mm_dump();
     log!({"Bob log path: {}", mm_bob.log_path.display()});
     unwrap!(block_on(
         mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
@@ -292,7 +291,7 @@ fn alice_can_see_the_active_order_after_connection() {
         "pass".into(),
         local_start!("bob")
     ));
-    let (_eve_dump_log, _eve_dump_dashboard) = mm_dump(&mm_eve.log_path);
+    let (_eve_dump_log, _eve_dump_dashboard) = mm_eve.mm_dump();
     log!({ "Eve log path: {}", mm_eve.log_path.display() });
     unwrap!(block_on(
         mm_eve.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
@@ -371,7 +370,7 @@ fn alice_can_see_the_active_order_after_connection() {
         local_start!("alice")
     ));
 
-    let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
+    let (_alice_dump_log, _alice_dump_dashboard) = mm_alice.mm_dump();
     log!({ "Alice log path: {}", mm_alice.log_path.display() });
 
     unwrap!(block_on(
@@ -429,7 +428,7 @@ fn test_my_balance() {
         "pass".into(),
         local_start!("bob")
     ));
-    let (_dump_log, _dump_dashboard) = mm_dump(&mm.log_path);
+    let (_dump_log, _dump_dashboard) = mm.mm_dump();
     log!({"log path: {}", mm.log_path.display()});
     unwrap!(block_on(
         mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
@@ -527,7 +526,7 @@ fn test_check_balance_on_order_post() {
         "pass".into(),
         local_start!("bob")
     ));
-    let (_dump_log, _dump_dashboard) = mm_dump(&mm.log_path);
+    let (_dump_log, _dump_dashboard) = mm.mm_dump();
     log!({"Log path: {}", mm.log_path.display()});
     unwrap!(block_on(
         mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
@@ -616,7 +615,7 @@ fn test_rpc_password_from_json() {
         "password".into(),
         local_start!("bob")
     ));
-    let (_dump_log, _dump_dashboard) = mm_dump(&mm.log_path);
+    let (_dump_log, _dump_dashboard) = mm.mm_dump();
     log!({"Log path: {}", mm.log_path.display()});
     unwrap!(block_on(
         mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
@@ -706,7 +705,7 @@ fn test_rpc_password_from_json_no_userpass() {
         "password".into(),
         local_start!("bob")
     ));
-    let (_dump_log, _dump_dashboard) = mm_dump(&mm.log_path);
+    let (_dump_log, _dump_dashboard) = mm.mm_dump();
     log!({"Log path: {}", mm.log_path.display()});
     unwrap!(block_on(
         mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
@@ -973,8 +972,8 @@ async fn trade_base_rel_electrum(pairs: Vec<(&'static str, &'static str)>) {
     unwrap!(mm_alice.stop().await);
 }
 
-#[cfg(feature = "native")]
 #[test]
+#[cfg(feature = "native")]
 fn trade_test_electrum_and_eth_coins() { block_on(trade_base_rel_electrum(vec![("ETH", "JST")])); }
 
 #[cfg(not(feature = "native"))]
@@ -1060,7 +1059,7 @@ fn test_withdraw_and_send() {
         }
     ));
 
-    let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
+    let (_alice_dump_log, _alice_dump_dashboard) = mm_alice.mm_dump();
     log! ({"Alice log path: {}", mm_alice.log_path.display()});
 
     // wait until RPC API is active
@@ -1229,7 +1228,7 @@ fn test_order_errors_when_base_equal_rel() {
             _ => None,
         }
     ));
-    let (_dump_log, _dump_dashboard) = mm_dump(&mm.log_path);
+    let (_dump_log, _dump_dashboard) = mm.mm_dump();
     log!({"Log path: {}", mm.log_path.display()});
     unwrap!(block_on(
         mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
@@ -1372,7 +1371,7 @@ fn test_multiple_buy_sell_no_delay() {
             _ => None,
         }
     ));
-    let (_dump_log, _dump_dashboard) = mm_dump(&mm.log_path);
+    let (_dump_log, _dump_dashboard) = mm.mm_dump();
     log!({"Log path: {}", mm.log_path.display()});
     unwrap!(block_on(
         mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
@@ -1468,7 +1467,7 @@ fn test_cancel_order() {
             _ => None,
         }
     ));
-    let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
+    let (_bob_dump_log, _bob_dump_dashboard) = mm_bob.mm_dump();
     log!({"Bob log path: {}", mm_bob.log_path.display()});
     unwrap!(block_on(
         mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
@@ -1508,7 +1507,7 @@ fn test_cancel_order() {
         }
     ));
 
-    let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
+    let (_alice_dump_log, _alice_dump_dashboard) = mm_alice.mm_dump();
     log!({"Alice log path: {}", mm_alice.log_path.display()});
 
     unwrap!(block_on(
@@ -1612,7 +1611,7 @@ fn test_cancel_all_orders() {
             _ => None,
         }
     ));
-    let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
+    let (_bob_dump_log, _bob_dump_dashboard) = mm_bob.mm_dump();
     log!({"Bob log path: {}", mm_bob.log_path.display()});
     unwrap!(block_on(
         mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
@@ -1652,7 +1651,7 @@ fn test_cancel_all_orders() {
         }
     ));
 
-    let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
+    let (_alice_dump_log, _alice_dump_dashboard) = mm_alice.mm_dump();
     log!({"Alice log path: {}", mm_alice.log_path.display()});
 
     unwrap!(block_on(
@@ -1760,7 +1759,7 @@ fn test_electrum_enable_conn_errors() {
             _ => None,
         }
     ));
-    let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
+    let (_bob_dump_log, _bob_dump_dashboard) = mm_bob.mm_dump();
     log!({"Bob log path: {}", mm_bob.log_path.display()});
     unwrap!(block_on(
         mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
@@ -1811,7 +1810,7 @@ fn test_order_should_not_be_displayed_when_node_is_down() {
             _ => None,
         }
     ));
-    let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
+    let (_bob_dump_log, _bob_dump_dashboard) = mm_bob.mm_dump();
     log!({"Bob log path: {}", mm_bob.log_path.display()});
     unwrap!(block_on(
         mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
@@ -1851,7 +1850,7 @@ fn test_order_should_not_be_displayed_when_node_is_down() {
         }
     ));
 
-    let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
+    let (_alice_dump_log, _alice_dump_dashboard) = mm_alice.mm_dump();
     log!({"Alice log path: {}", mm_alice.log_path.display()});
 
     unwrap!(block_on(
@@ -1949,7 +1948,7 @@ fn test_own_orders_should_not_be_removed_from_orderbook() {
             _ => None,
         }
     ));
-    let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
+    let (_bob_dump_log, _bob_dump_dashboard) = mm_bob.mm_dump();
     log!({"Bob log path: {}", mm_bob.log_path.display()});
     unwrap!(block_on(
         mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
@@ -2028,7 +2027,7 @@ fn test_all_orders_per_pair_per_node_must_be_displayed_in_orderbook() {
             _ => None,
         }
     ));
-    let (_dump_log, _dump_dashboard) = mm_dump(&mm.log_path);
+    let (_dump_log, _dump_dashboard) = mm.mm_dump();
     log!({"Log path: {}", mm.log_path.display()});
     unwrap!(block_on(
         mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
@@ -2110,7 +2109,7 @@ fn orderbook_should_display_rational_amounts() {
             _ => None,
         }
     ));
-    let (_dump_log, _dump_dashboard) = mm_dump(&mm.log_path);
+    let (_dump_log, _dump_dashboard) = mm.mm_dump();
     log!({"Log path: {}", mm.log_path.display()});
     unwrap!(block_on(
         mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
@@ -2242,7 +2241,7 @@ fn test_show_priv_key() {
         }
     ));
 
-    let (_dump_log, _dump_dashboard) = mm_dump(&mm.log_path);
+    let (_dump_log, _dump_dashboard) = mm.mm_dump();
     log!({"Log path: {}", mm.log_path.display()});
     unwrap!(block_on(
         mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
@@ -2287,7 +2286,7 @@ fn electrum_and_enable_required_confirmations_and_nota() {
         }
     ));
 
-    let (_dump_log, _dump_dashboard) = mm_dump(&mm.log_path);
+    let (_dump_log, _dump_dashboard) = mm.mm_dump();
     log!({"Log path: {}", mm.log_path.display()});
     unwrap!(block_on(
         mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
@@ -2433,7 +2432,7 @@ fn setprice_buy_sell_too_low_volume() {
         }
     ));
 
-    let (_dump_log, _dump_dashboard) = mm_dump(&mm.log_path);
+    let (_dump_log, _dump_dashboard) = mm.mm_dump();
     log!({"Log path: {}", mm.log_path.display()});
     unwrap!(block_on(
         mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
@@ -2480,7 +2479,7 @@ fn setprice_min_volume_should_be_displayed_in_orderbook() {
         }
     ));
 
-    let (_dump_log, _dump_dashboard) = mm_dump(&mm_bob.log_path);
+    let (_dump_log, _dump_dashboard) = mm_bob.mm_dump();
     log!({"Bob log path: {}", mm_bob.log_path.display()});
     unwrap!(block_on(
         mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
@@ -2505,7 +2504,7 @@ fn setprice_min_volume_should_be_displayed_in_orderbook() {
         }
     ));
 
-    let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
+    let (_alice_dump_log, _alice_dump_dashboard) = mm_alice.mm_dump();
     log!({"Alice log path: {}", mm_alice.log_path.display()});
 
     unwrap!(block_on(
@@ -2602,7 +2601,7 @@ fn orderbook_should_work_without_coins_activation() {
         }
     ));
 
-    let (_dump_log, _dump_dashboard) = mm_dump(&mm_bob.log_path);
+    let (_dump_log, _dump_dashboard) = mm_bob.mm_dump();
     log!({"Bob log path: {}", mm_bob.log_path.display()});
     unwrap!(block_on(
         mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
@@ -2627,7 +2626,7 @@ fn orderbook_should_work_without_coins_activation() {
         }
     ));
 
-    let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
+    let (_alice_dump_log, _alice_dump_dashboard) = mm_alice.mm_dump();
     log!({"Alice log path: {}", mm_alice.log_path.display()});
 
     unwrap!(block_on(
@@ -2955,7 +2954,7 @@ fn set_price_with_cancel_previous_should_broadcast_cancelled_message() {
             _ => None,
         }
     ));
-    let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
+    let (_bob_dump_log, _bob_dump_dashboard) = mm_bob.mm_dump();
     log!({"Bob log path: {}", mm_bob.log_path.display()});
     unwrap!(block_on(
         mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
@@ -2994,7 +2993,7 @@ fn set_price_with_cancel_previous_should_broadcast_cancelled_message() {
         }
     ));
 
-    let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
+    let (_alice_dump_log, _alice_dump_dashboard) = mm_alice.mm_dump();
     log!({"Alice log path: {}", mm_alice.log_path.display()});
 
     unwrap!(block_on(
@@ -3058,6 +3057,7 @@ fn set_price_with_cancel_previous_should_broadcast_cancelled_message() {
 }
 
 #[test]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_batch_requests() {
     let coins = json!([
         {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
@@ -3086,7 +3086,7 @@ fn test_batch_requests() {
             _ => None,
         }
     ));
-    let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
+    let (_bob_dump_log, _bob_dump_dashboard) = mm_bob.mm_dump();
     log!({"Bob log path: {}", mm_bob.log_path.display()});
     unwrap!(block_on(
         mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
@@ -3162,7 +3162,7 @@ fn test_metrics_method() {
         "pass".into(),
         local_start!("bob")
     ));
-    let (_dump_log, _dump_dashboard) = mm_dump(&mm.log_path);
+    let (_dump_log, _dump_dashboard) = mm.mm_dump();
     log!({ "log path: {}", mm.log_path.display() });
     unwrap!(block_on(
         mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
@@ -3220,7 +3220,7 @@ fn test_electrum_tx_history() {
         "pass".into(),
         local_start!("bob")
     ));
-    let (_dump_log, _dump_dashboard) = mm_dump(&mm.log_path);
+    let (_dump_log, _dump_dashboard) = mm.mm_dump();
     log!({ "log path: {}", mm.log_path.display() });
     unwrap!(block_on(
         mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
@@ -3276,6 +3276,7 @@ fn test_electrum_tx_history() {
     assert_eq!(get_tx_history_request_count(&mm), 2);
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[allow(dead_code)]
 fn spin_n_nodes(seednodes: &[&str], coins: &Json, n: usize) -> Vec<(MarketMakerIt, RaiiDump, RaiiDump)> {
     let mut mm_nodes = Vec::with_capacity(n);
@@ -3295,7 +3296,7 @@ fn spin_n_nodes(seednodes: &[&str], coins: &Json, n: usize) -> Vec<(MarketMakerI
             local_start!("alice")
         ));
 
-        let (alice_dump_log, alice_dump_dashboard) = mm_dump(&mm.log_path);
+        let (alice_dump_log, alice_dump_dashboard) = mm.mm_dump();
         log!({ "Alice {} log path: {}", i, mm.log_path.display() });
         for seednode in seednodes.iter() {
             unwrap!(block_on(
@@ -3308,6 +3309,7 @@ fn spin_n_nodes(seednodes: &[&str], coins: &Json, n: usize) -> Vec<(MarketMakerI
 }
 
 #[test]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_withdraw_cashaddresses() {
     let coins = json!([
         {"coin":"BCH","pubtype":0,"p2shtype":5,"mm2":1,"protocol":{"type":"UTXO"},
@@ -3328,7 +3330,7 @@ fn test_withdraw_cashaddresses() {
         "pass".into(),
         local_start!("bob")
     ));
-    let (_dump_log, _dump_dashboard) = mm_dump(&mm.log_path);
+    let (_dump_log, _dump_dashboard) = mm.mm_dump();
     log!({ "log path: {}", mm.log_path.display() });
     unwrap!(block_on(
         mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
@@ -3395,6 +3397,7 @@ fn test_withdraw_cashaddresses() {
 }
 
 #[test]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_common_cashaddresses() {
     let coins = json!([
         {"coin":"BCH","pubtype":0,"p2shtype":5,"mm2":1,"protocol":{"type":"UTXO"},
@@ -3415,7 +3418,7 @@ fn test_common_cashaddresses() {
         "pass".into(),
         local_start!("bob")
     ));
-    let (_dump_log, _dump_dashboard) = mm_dump(&mm.log_path);
+    let (_dump_log, _dump_dashboard) = mm.mm_dump();
     log!({ "log path: {}", mm.log_path.display() });
     unwrap!(block_on(
         mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
@@ -3479,6 +3482,7 @@ fn test_common_cashaddresses() {
 }
 
 #[test]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_convert_utxo_address() {
     let coins = json!([
         {"coin":"BCH","pubtype":0,"p2shtype":5,"mm2":1,"protocol":{"type":"UTXO"}},
@@ -3498,7 +3502,7 @@ fn test_convert_utxo_address() {
         "pass".into(),
         local_start!("bob")
     ));
-    let (_dump_log, _dump_dashboard) = mm_dump(&mm.log_path);
+    let (_dump_log, _dump_dashboard) = mm.mm_dump();
     log!({ "log path: {}", mm.log_path.display() });
     unwrap!(block_on(
         mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
@@ -3595,6 +3599,7 @@ fn test_convert_utxo_address() {
 }
 
 #[test]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_convert_eth_address() {
     let coins = json!([
         {"coin":"ETH","name":"ethereum","protocol":{"type":"ETH"}},
@@ -3620,7 +3625,7 @@ fn test_convert_eth_address() {
             _ => None,
         }
     ));
-    let (_dump_log, _dump_dashboard) = mm_dump(&mm.log_path);
+    let (_dump_log, _dump_dashboard) = mm.mm_dump();
     log!({ "log path: {}", mm.log_path.display() });
     unwrap!(block_on(
         mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
@@ -3691,6 +3696,7 @@ fn test_convert_eth_address() {
 }
 
 #[test]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_convert_qrc20_address() {
     let passphrase = "cV463HpebE2djP9ugJry5wZ9st5cc6AbkHXGryZVPXMH1XJK8cVU";
     let coins = json! ([
@@ -3828,6 +3834,7 @@ fn test_convert_qrc20_address() {
 }
 
 #[test]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_validateaddress() {
     let coins = json!([
         {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
@@ -3860,7 +3867,7 @@ fn test_validateaddress() {
             _ => None,
         }
     ));
-    let (_dump_log, _dump_dashboard) = mm_dump(&mm.log_path);
+    let (_dump_log, _dump_dashboard) = mm.mm_dump();
     log!({"Log path: {}", mm.log_path.display()});
     unwrap!(block_on(
         mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
@@ -3984,6 +3991,7 @@ fn test_validateaddress() {
 }
 
 #[test]
+#[cfg(not(target_arch = "wasm32"))]
 fn qrc20_activate_electrum() {
     let passphrase = "cV463HpebE2djP9ugJry5wZ9st5cc6AbkHXGryZVPXMH1XJK8cVU";
     let coins = json! ([
@@ -4027,6 +4035,7 @@ fn qrc20_activate_electrum() {
 }
 
 #[test]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_qrc20_withdraw() {
     // corresponding private key: [3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144, 72, 172, 110, 180, 13, 123, 179, 10, 49]
     let passphrase = "cMhHM3PMpMrChygR4bLF7QsTdenhWpFrrmf2UezBG3eeFsz41rtL";
@@ -4104,6 +4113,7 @@ fn test_qrc20_withdraw() {
 }
 
 #[test]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_qrc20_withdraw_error() {
     let passphrase = "album hollow help heart use bird response large lounge fat elbow coral";
     let coins = json!([
@@ -4127,7 +4137,7 @@ fn test_qrc20_withdraw_error() {
         "password".into(),
         local_start!("bob")
     ));
-    let (_dump_log, _dump_dashboard) = mm_dump(&mm.log_path);
+    let (_dump_log, _dump_dashboard) = mm.mm_dump();
     log!({ "log path: {}", mm.log_path.display() });
     unwrap!(block_on(
         mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
@@ -4235,7 +4245,7 @@ fn test_qrc20_tx_history() {
         "pass".into(),
         local_start!("bob")
     ));
-    let (_dump_log, _dump_dashboard) = mm_dump(&mm.log_path);
+    let (_dump_log, _dump_dashboard) = mm.mm_dump();
     log!({ "log path: {}", mm.log_path.display() });
     unwrap!(block_on(
         mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
@@ -4315,6 +4325,7 @@ fn test_qrc20_tx_history() {
 }
 
 #[test]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_buy_conf_settings() {
     let bob_passphrase = unwrap!(get_passphrase(&".env.client", "BOB_PASSPHRASE"));
 
@@ -4390,6 +4401,7 @@ fn test_buy_conf_settings() {
 }
 
 #[test]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_buy_response_format() {
     let bob_passphrase = unwrap!(get_passphrase(&".env.client", "BOB_PASSPHRASE"));
 
@@ -4445,6 +4457,7 @@ fn test_buy_response_format() {
 }
 
 #[test]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_sell_response_format() {
     let bob_passphrase = unwrap!(get_passphrase(&".env.client", "BOB_PASSPHRASE"));
 
@@ -4500,6 +4513,7 @@ fn test_sell_response_format() {
 }
 
 #[test]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_my_orders_response_format() {
     let bob_passphrase = unwrap!(get_passphrase(&".env.client", "BOB_PASSPHRASE"));
 
@@ -4578,6 +4592,7 @@ fn test_my_orders_response_format() {
 }
 
 #[test]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_my_orders_after_matched() {
     let bob_passphrase = unwrap!(get_passphrase(&".env.seed", "BOB_PASSPHRASE"));
     let alice_passphrase = unwrap!(get_passphrase(&".env.client", "ALICE_PASSPHRASE"));
@@ -4602,7 +4617,7 @@ fn test_my_orders_after_matched() {
         "pass".to_string(),
         None,
     ));
-    let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
+    let (_bob_dump_log, _bob_dump_dashboard) = mm_bob.mm_dump();
     unwrap!(block_on(
         mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
@@ -4620,7 +4635,7 @@ fn test_my_orders_after_matched() {
         "pass".to_string(),
         None,
     ));
-    let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
+    let (_alice_dump_log, _alice_dump_dashboard) = mm_alice.mm_dump();
     unwrap!(block_on(
         mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
@@ -4673,6 +4688,7 @@ fn test_my_orders_after_matched() {
 }
 
 #[test]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_sell_conf_settings() {
     let bob_passphrase = unwrap!(get_passphrase(&".env.client", "BOB_PASSPHRASE"));
 
@@ -4748,6 +4764,7 @@ fn test_sell_conf_settings() {
 }
 
 #[test]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_set_price_conf_settings() {
     let bob_passphrase = unwrap!(get_passphrase(&".env.client", "BOB_PASSPHRASE"));
 
@@ -4822,10 +4839,11 @@ fn test_set_price_conf_settings() {
     assert_eq!(json["result"]["conf_settings"]["rel_nota"], Json::from(false));
 }
 
-#[test]
 // https://github.com/KomodoPlatform/atomicDEX-API/issues/683
 // trade fee should return numbers in all 3 available formats and
 // "amount" must be always in decimal representation for backwards compatibility
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_trade_fee_returns_numbers_in_various_formats() {
     let coins = json!([
         {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
@@ -4854,7 +4872,7 @@ fn test_trade_fee_returns_numbers_in_various_formats() {
             _ => None,
         }
     ));
-    let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
+    let (_bob_dump_log, _bob_dump_dashboard) = mm_bob.mm_dump();
     log!({"Bob log path: {}", mm_bob.log_path.display()});
     unwrap!(block_on(
         mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
@@ -4876,6 +4894,7 @@ fn test_trade_fee_returns_numbers_in_various_formats() {
 }
 
 #[test]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_orderbook_is_mine_orders() {
     let coins = json!([{"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
         {"coin":"MORTY","asset":"MORTY","rpcport":11608,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
@@ -4903,7 +4922,7 @@ fn test_orderbook_is_mine_orders() {
             _ => None,
         }
     ));
-    let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
+    let (_bob_dump_log, _bob_dump_dashboard) = mm_bob.mm_dump();
     log!({"Bob log path: {}", mm_bob.log_path.display()});
     unwrap!(block_on(
         mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
@@ -4941,7 +4960,7 @@ fn test_orderbook_is_mine_orders() {
         }
     ));
 
-    let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
+    let (_alice_dump_log, _alice_dump_dashboard) = mm_alice.mm_dump();
     log!({"Alice log path: {}", mm_alice.log_path.display()});
 
     unwrap!(block_on(
@@ -5065,12 +5084,12 @@ mod wasm_bindgen_tests {
 
     #[wasm_bindgen]
     extern "C" {
-        fn setInterval(closure: &Closure<FnMut()>, millis: u32) -> f64;
+        fn setInterval(closure: &Closure<dyn FnMut()>, millis: u32) -> f64;
         fn cancelInterval(token: f64);
     }
 
     pub struct Interval {
-        closure: Closure<FnMut()>,
+        closure: Closure<dyn FnMut()>,
     }
 
     impl Interval {
@@ -5094,23 +5113,33 @@ mod wasm_bindgen_tests {
 
     #[wasm_bindgen_test]
     async fn test_swap() {
-        use crate::mm2::lp_swap::{run_maker_swap, run_taker_swap, MakerSwap, TakerSwap};
+        use crate::mm2::lp_swap::{run_maker_swap, run_taker_swap, MakerSwap, RunMakerSwapInput, RunTakerSwapInput,
+                                  SwapConfirmationsSettings, TakerSwap, PAYMENT_LOCKTIME};
         use coins::lp_coininit;
         use common::mm_ctx::MmCtxBuilder;
+        use common::new_uuid;
+        use common::now_ms;
         use futures::future::join;
         use futures::{Future, TryFutureExt};
 
+        let conf_settings = SwapConfirmationsSettings {
+            maker_coin_confs: 0,
+            maker_coin_nota: false,
+            taker_coin_confs: 0,
+            taker_coin_nota: false,
+        };
         setInterval(&EXECUTOR_INTERVAL.closure, 200);
+        let uuid = new_uuid();
         let key_pair_taker =
             key_pair_from_seed("spice describe gravity federal blast come thank unfair canal monkey style afraid")
                 .unwrap();
         let key_pair_maker =
             key_pair_from_seed("also shoot benefit prefer juice shell elder veteran woman mimic image kidney").unwrap();
         let conf = json!({
-            "coins":[{
-                {"coin":"ETH","name":"ethereum","protocol":{"type":"ETH"},"rpcport":80,"mm2":1},
-                {"coin":"JST","name":"jst",,"rpcport":80,"mm2":1,"protocol":{"type":"ERC20","protocol_data":{"platform":"ETH","contract_address":"0x2b294F029Fde858b2c62184e8390591755521d8E"}}}
-            }]
+            "coins":[
+               {"coin":"ETH","name":"ethereum","protocol":{"type":"ETH"},"rpcport":80,"mm2":1},
+               {"coin":"JST","name":"jst","rpcport":80,"mm2":1,"protocol":{"type":"ERC20","protocol_data":{"platform":"ETH","contract_address":"0x2b294F029Fde858b2c62184e8390591755521d8E"}}}
+            ]
         });
         let ctx_taker = MmCtxBuilder::new()
             .with_conf(conf.clone())
@@ -5120,6 +5149,8 @@ mod wasm_bindgen_tests {
             .with_conf(conf)
             .with_secp256k1_key_pair(key_pair_maker)
             .into_mm_arc();
+        let taker_persistent_pub = (**ctx_taker.secp256k1_key_pair().public()).into();
+        let maker_persistent_pub = (**ctx_maker.secp256k1_key_pair().public()).into();
 
         let req = json!({
             "urls":["http://195.201.0.6:8565"],
@@ -5132,24 +5163,31 @@ mod wasm_bindgen_tests {
         let taker_swap = TakerSwap::new(
             ctx_taker.clone(),
             [0; 32].into(),
-            eth_taker.clone(),
-            jst_taker.clone(),
             1.into(),
             1.into(),
-            (**ctx_taker.secp256k1_key_pair().public()).into(),
-            "7c9319b2-866d-412f-bb82-a311b675fc52".to_owned(),
+            taker_persistent_pub,
+            uuid,
+            conf_settings.clone(),
+            eth_taker,
+            jst_taker,
+            PAYMENT_LOCKTIME,
         );
 
         let maker_swap = MakerSwap::new(
             ctx_maker.clone(),
             [0; 32].into(),
-            eth_maker.clone(),
-            jst_maker.clone(),
             1.into(),
             1.into(),
-            (**ctx_maker.secp256k1_key_pair().public()).into(),
-            "7c9319b2-866d-412f-bb82-a311b675fc52".to_owned(),
+            maker_persistent_pub,
+            uuid,
+            conf_settings,
+            eth_maker,
+            jst_maker,
+            PAYMENT_LOCKTIME,
         );
-        join(run_taker_swap(taker_swap, None), run_maker_swap(maker_swap, None)).await;
+
+        let taker_swap_fut = run_taker_swap(RunTakerSwapInput::StartNew(taker_swap), ctx_taker);
+        let maker_swap_fut = run_maker_swap(RunMakerSwapInput::StartNew(maker_swap), ctx_maker);
+        join(taker_swap_fut, maker_swap_fut).await;
     }
 }

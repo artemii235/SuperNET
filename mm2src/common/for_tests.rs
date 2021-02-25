@@ -21,7 +21,6 @@ use std::io::Write;
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
-#[cfg(feature = "native")] use std::str::from_utf8;
 use std::sync::Mutex;
 use std::thread::sleep;
 use std::time::Duration;
@@ -29,8 +28,7 @@ use std::time::Duration;
 use crate::executor::Timer;
 #[cfg(not(feature = "native"))] use crate::helperᶜ;
 use crate::log::{dashboard_path, LogState};
-#[cfg(not(feature = "native"))]
-use crate::mm_ctx::{MmArc, MmCtxBuilder};
+use crate::mm_ctx::MmArc;
 use crate::mm_metrics::{MetricType, MetricsJson};
 #[cfg(feature = "native")] use crate::wio::{slurp_req, POOL};
 use crate::{now_float, slurp};
@@ -262,7 +260,7 @@ impl MarketMakerIt {
 
         #[cfg(not(feature = "native"))]
         {
-            let ctx = MmCtxBuilder::new().with_conf(conf).into_mm_arc();
+            let ctx = crate::mm_ctx::MmCtxBuilder::new().with_conf(conf).into_mm_arc();
             let local = try_s!(local.ok_or("!local"));
             local(ctx.clone());
             Ok(MarketMakerIt { ctx, ip, userpass })
@@ -393,28 +391,33 @@ impl MarketMakerIt {
     }
 
     /// Invokes the locally running MM and returns its reply.
+    #[cfg(target_arch = "wasm32")]
     pub async fn rpc(&self, payload: Json) -> Result<(StatusCode, String, HeaderMap), String> {
         let uri = format!("http://{}:7783", self.ip);
         log!("sending rpc request " (unwrap!(json::to_string(&payload))) " to " (uri));
+        let empty_payload: Vec<u8> = Vec::new();
+        let request = try_s!(Request::builder().method("POST").uri(uri).body(empty_payload));
+        let (parts, _) = request.into_parts();
+
+        let rpc_service = try_s!(crate::header::RPC_SERVICE.as_option().ok_or("!RPC_SERVICE"));
+        let client: SocketAddr = try_s!("127.0.0.1:1".parse());
+        let f = rpc_service(self.ctx.clone(), parts, payload, client);
+        let response = try_s!(f.await);
+        let (parts, body) = response.into_parts();
+        Ok((parts.status, try_s!(String::from_utf8(body)), parts.headers))
+    }
+
+    /// Invokes the locally running MM and returns its reply.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn rpc(&self, payload: Json) -> Result<(StatusCode, String, HeaderMap), String> {
+        let uri = format!("http://{}:7783", self.ip);
+        log!("sending rpc request " (unwrap!(json::to_string(&payload))) " to " (uri));
+
         let payload = try_s!(json::to_vec(&payload));
-        #[cfg(not(feature = "native"))]
-        let payload = futures01::stream::once(Ok(Bytes::from(payload)));
         let request = try_s!(Request::builder().method("POST").uri(uri).body(payload));
-        #[cfg(feature = "native")]
-        {
-            let (status, headers, body) = try_s!(slurp_req(request).await);
-            Ok((status, try_s!(from_utf8(&body)).trim().into(), headers))
-        }
-        #[cfg(not(feature = "native"))]
-        {
-            let rpc_service = try_s!(crate::header::RPC_SERVICE.as_option().ok_or("!RPC_SERVICE"));
-            let (parts, body) = request.into_parts();
-            let client: SocketAddr = try_s!("127.0.0.1:1".parse());
-            let f = rpc_service(self.ctx.clone(), parts, Box::new(body), client);
-            let response = try_s!(f.await);
-            let (parts, body) = response.into_parts();
-            Ok((parts.status, try_s!(String::from_utf8(body)), parts.headers))
-        }
+
+        let (status, headers, body) = try_s!(slurp_req(request).await);
+        Ok((status, try_s!(std::str::from_utf8(&body)).trim().into(), headers))
     }
 
     /// Sends the &str payload to the locally running MM and returns it's reply.
@@ -423,7 +426,7 @@ impl MarketMakerIt {
         let uri = format!("http://{}:7783", self.ip);
         let request = try_s!(Request::builder().method("POST").uri(uri).body(payload.into()));
         let (status, headers, body) = try_s!(block_on(slurp_req(request)));
-        Ok((status, try_s!(from_utf8(&body)).trim().into(), headers))
+        Ok((status, try_s!(std::str::from_utf8(&body)).trim().into(), headers))
     }
 
     #[cfg(not(feature = "native"))]
@@ -533,7 +536,7 @@ struct ToWaitForLogRe {
 #[cfg(feature = "native")]
 pub async fn common_wait_for_log_re(req: Bytes) -> Result<Vec<u8>, String> {
     let args: ToWaitForLogRe = try_s!(json::from_slice(&req));
-    let ctx = try_s!(crate::mm_ctx::MmArc::from_ffi_handle(args.ctx));
+    let ctx = try_s!(MmArc::from_ffi_handle(args.ctx));
     let re = try_s!(Regex::new(&args.re_pred));
 
     // Run the blocking `wait_for_log` in the `POOL`.
@@ -547,13 +550,13 @@ pub async fn common_wait_for_log_re(req: Bytes) -> Result<Vec<u8>, String> {
 }
 
 #[cfg(feature = "native")]
-pub async fn wait_for_log_re(ctx: &crate::mm_ctx::MmArc, timeout_sec: f64, re_pred: &str) -> Result<(), String> {
+pub async fn wait_for_log_re(ctx: &MmArc, timeout_sec: f64, re_pred: &str) -> Result<(), String> {
     let re = try_s!(Regex::new(re_pred));
     wait_for_log(&ctx.log, timeout_sec, &|line| re.is_match(line))
 }
 
 #[cfg(not(feature = "native"))]
-pub async fn wait_for_log_re(ctx: &crate::mm_ctx::MmArc, timeout_sec: f64, re_pred: &str) -> Result<(), String> {
+pub async fn wait_for_log_re(ctx: &MmArc, timeout_sec: f64, re_pred: &str) -> Result<(), String> {
     try_s!(
         helperᶜ(
             "common_wait_for_log_re",

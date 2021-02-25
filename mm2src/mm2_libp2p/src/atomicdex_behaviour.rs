@@ -573,6 +573,15 @@ const ALL_NETID_7777_SEEDNODES: &[(&str, &str)] = &[
     ("12D3KooWAd5gPXwX7eDvKWwkr2FZGfoJceKDCA53SHmTFFVkrN7Q", "46.4.87.18"),
 ];
 
+pub enum NodeType {
+    Light,
+    Relay { ip: IpAddr },
+}
+
+impl NodeType {
+    pub fn is_relay(&self) -> bool { matches!(self, NodeType::Relay {..}) }
+}
+
 /// Creates and spawns new AdexBehaviour Swarm returning:
 /// 1. tx to send control commands
 /// 2. rx emitting gossip events to processing side
@@ -580,15 +589,15 @@ const ALL_NETID_7777_SEEDNODES: &[(&str, &str)] = &[
 /// 4. abort handle to stop the P2P processing fut
 #[allow(clippy::too_many_arguments)]
 pub fn start_gossipsub(
-    ip: IpAddr,
     port: u16,
     netid: u16,
     force_key: Option<[u8; 32]>,
     spawn_fn: fn(Box<dyn Future<Output = ()> + Send + Unpin + 'static>) -> (),
     to_dial: Vec<String>,
-    i_am_relay: bool,
+    node_type: NodeType,
     on_poll: impl Fn(&AtomicDexSwarm) + Send + 'static,
 ) -> (Sender<AdexBehaviourCmd>, AdexEventRx, PeerId, AbortHandle) {
+    let i_am_relay = node_type.is_relay();
     let local_key = match force_key {
         Some(mut key) => {
             let secret = identity::ed25519::SecretKey::from_bytes(&mut key).expect("Secret length is 32 bytes");
@@ -693,10 +702,12 @@ pub fn start_gossipsub(
             .build()
     };
     swarm.floodsub.subscribe(FloodsubTopic::new(PEERS_TOPIC.to_owned()));
-    let addr = format!("/ip4/{}/tcp/{}", ip, port);
-    if i_am_relay {
+
+    if let NodeType::Relay { ip } = node_type {
+        let addr = format!("/ip4/{}/tcp/{}", ip, port);
         libp2p::Swarm::listen_on(&mut swarm, addr.parse().unwrap()).unwrap();
     }
+
     for relay in bootstrap.choose_multiple(&mut thread_rng(), mesh_n) {
         match libp2p::Swarm::dial_addr(&mut swarm, relay.clone()) {
             Ok(_) => info!("Dialed {}", relay),

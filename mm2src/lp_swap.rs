@@ -1138,7 +1138,9 @@ pub struct MySwapsFilter {
 
 #[cfg(not(feature = "native"))]
 pub fn all_swaps_uuids_by_filter(_ctx: MmArc, _req: Json) -> HyRes {
-    future::err::<Response<Vec<u8>>, String>(ERRL!("all_swaps_uuids_by_filter is only supported in native mode yet"))
+    Box::new(futures01::future::err::<Response<Vec<u8>>, String>(ERRL!(
+        "'all_swaps_uuids_by_filter' is only supported in native mode yet"
+    )))
 }
 
 /// Returns *all* uuids of swaps, which match the selected filter.
@@ -1184,7 +1186,9 @@ pub struct MyRecentSwapsReq {
 
 #[cfg(not(feature = "native"))]
 pub fn my_recent_swaps(_ctx: MmArc, _req: Json) -> HyRes {
-    future::err::<Response<Vec<u8>>, String>(ERRL!("my_recent_swaps is only supported in native mode yet"))
+    Box::new(futures01::future::err::<Response<Vec<u8>>, String>(ERRL!(
+        "'my_recent_swaps' is only supported in native mode yet"
+    )))
 }
 
 /// Returns the data of recent swaps of `my` node.

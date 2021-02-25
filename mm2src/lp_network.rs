@@ -156,7 +156,6 @@ async fn process_p2p_request(
     Ok(())
 }
 
-#[cfg(feature = "native")]
 pub fn broadcast_p2p_msg(ctx: &MmArc, topics: Vec<String>, msg: Vec<u8>) {
     let ctx = ctx.clone();
     spawn(async move {
@@ -173,7 +172,6 @@ pub fn broadcast_p2p_msg(ctx: &MmArc, topics: Vec<String>, msg: Vec<u8>) {
 /// # Safety
 ///
 /// The function locks the [`MmCtx::p2p_ctx`] mutext.
-#[cfg(feature = "native")]
 pub async fn subscribe_to_topic(ctx: &MmArc, topic: String) {
     let p2p_ctx = P2PContext::fetch_from_mm_arc(ctx);
     let cmd = AdexBehaviourCmd::Subscribe { topic };
@@ -182,7 +180,6 @@ pub async fn subscribe_to_topic(ctx: &MmArc, topic: String) {
     };
 }
 
-#[cfg(feature = "native")]
 pub async fn request_any_relay<T: de::DeserializeOwned>(
     ctx: MmArc,
     req: P2PRequest,
@@ -231,7 +228,6 @@ pub async fn request_relays<T: de::DeserializeOwned>(
     Ok(parse_peers_responses(responses))
 }
 
-#[cfg(feature = "native")]
 pub async fn request_peers<T: de::DeserializeOwned>(
     ctx: MmArc,
     req: P2PRequest,
@@ -251,7 +247,6 @@ pub async fn request_peers<T: de::DeserializeOwned>(
     Ok(parse_peers_responses(responses))
 }
 
-#[cfg(feature = "native")]
 pub async fn request_one_peer<T: de::DeserializeOwned>(
     ctx: MmArc,
     req: P2PRequest,
@@ -292,7 +287,6 @@ fn parse_peers_responses<T: de::DeserializeOwned>(
         .collect()
 }
 
-#[cfg(feature = "native")]
 pub fn propagate_message(ctx: &MmArc, message_id: MessageId, propagation_source: PeerId) {
     let ctx = ctx.clone();
     spawn(async move {

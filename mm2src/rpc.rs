@@ -30,7 +30,7 @@ use futures::future::{join_all, FutureExt, TryFutureExt};
 use http::header::{HeaderValue, ACCESS_CONTROL_ALLOW_ORIGIN};
 use http::request::Parts;
 use http::{Method, Request, Response};
-#[cfg(feature = "native")] use hyper::{self, Server};
+#[cfg(feature = "native")] use hyper::{self, Body, Server};
 use serde_json::{self as json, Value as Json};
 use std::future::Future as Future03;
 use std::net::SocketAddr;
@@ -43,7 +43,6 @@ use crate::mm2::lp_swap::{active_swaps_rpc, all_swaps_uuids_by_filter, coins_nee
 
 #[path = "rpc/lp_commands.rs"] pub mod lp_commands;
 use self::lp_commands::*;
-use hyper::Body;
 
 /// Lists the RPC method not requiring the "userpass" authentication.  
 /// None is also public to skip auth and display proper error in case of method is missing
@@ -193,15 +192,13 @@ pub fn dispatcher(req: Json, ctx: MmArc) -> DispatcherRes {
 async fn process_rpc_request(
     ctx: MmArc,
     req: Parts,
-    req_body: Body,
+    req_json: Json,
     client: SocketAddr,
 ) -> Result<Response<Vec<u8>>, String> {
     if req.method != Method::POST {
         return ERR!("Only POST requests are supported!");
     }
 
-    let req_bytes = try_s!(hyper::body::to_bytes(req_body).await);
-    let req_json: Json = try_s!(json::from_slice(&req_bytes));
     match req_json.as_array() {
         Some(requests) => {
             let mut futures = Vec::with_capacity(requests.len());
@@ -247,14 +244,17 @@ async fn process_single_request(ctx: MmArc, req: Json, client: SocketAddr) -> Re
 
 #[cfg(feature = "native")]
 async fn rpc_service(req: Request<Body>, ctx_h: u32, client: SocketAddr) -> Response<Body> {
+    /// Unwraps a result or propagates its error 500 response with the specified headers (if they are present).
     macro_rules! try_sf {
-        ($value: expr) => {
+        ($value: expr $(, $header_key:expr => $header_val:expr)*) => {
             match $value {
                 Ok(ok) => ok,
                 Err(err) => {
                     log!("RPC error response: "(err));
                     let ebody = err_to_rpc_json_string(&fomat!((err)));
-                    return unwrap!(Response::builder().status(500).body(Body::from(ebody)));
+                    // generate a `Response` with the headers specified in `$header_key` and `$header_val`
+                    let response = Response::builder().status(500) $(.header($header_key, $header_val))* .body(Body::from(ebody)).unwrap();
+                    return response;
                 },
             }
         };
@@ -269,17 +269,11 @@ async fn rpc_service(req: Request<Body>, ctx_h: u32, client: SocketAddr) -> Resp
 
     // Convert the native Hyper stream into a portable stream of `Bytes`.
     let (req, req_body) = req.into_parts();
-    let (mut parts, body) = match process_rpc_request(ctx, req, req_body, client).await {
-        Ok(r) => r.into_parts(),
-        Err(err) => {
-            log!("RPC error response: "(err));
-            let ebody = err_to_rpc_json_string(&err);
-            return unwrap!(Response::builder()
-                .status(500)
-                .header(ACCESS_CONTROL_ALLOW_ORIGIN, rpc_cors)
-                .body(Body::from(ebody)));
-        },
-    };
+    let req_bytes = try_sf!(hyper::body::to_bytes(req_body).await, ACCESS_CONTROL_ALLOW_ORIGIN => rpc_cors);
+    let req_json: Json = try_sf!(json::from_slice(&req_bytes), ACCESS_CONTROL_ALLOW_ORIGIN => rpc_cors);
+
+    let res = try_sf!(process_rpc_request(ctx, req, req_json, client).await, ACCESS_CONTROL_ALLOW_ORIGIN => rpc_cors);
+    let (mut parts, body) = res.into_parts();
     parts.headers.insert(ACCESS_CONTROL_ALLOW_ORIGIN, rpc_cors);
     Response::from_parts(parts, Body::from(body))
 }
@@ -358,7 +352,7 @@ pub fn init_header_slots() {
     fn rpc_service_fn(
         ctx: MmArc,
         req: Parts,
-        req_body: Box<dyn Stream<Item = Bytes, Error = String> + Send>,
+        req_body: Json,
         client: SocketAddr,
     ) -> Pin<Box<dyn Future03<Output = Result<Response<Vec<u8>>, String>> + Send>> {
         Box::pin(process_rpc_request(ctx, req, req_body, client))

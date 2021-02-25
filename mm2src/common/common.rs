@@ -64,7 +64,6 @@ pub mod jsonrpc_client;
 #[macro_use]
 pub mod log;
 #[macro_use]
-#[path = "mm_metrics/lib.rs"]
 pub mod mm_metrics;
 
 pub mod big_int_str;
@@ -72,7 +71,7 @@ pub mod custom_futures;
 pub mod duplex_mutex;
 pub mod file_lock;
 #[cfg(feature = "native")] pub mod for_c;
-pub mod header;
+#[cfg(target_arch = "wasm32")] pub mod header;
 pub mod iguana_utils;
 pub mod mm_ctx;
 pub mod mm_number;

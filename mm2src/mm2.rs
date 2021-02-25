@@ -23,9 +23,8 @@
 #![cfg_attr(not(feature = "native"), allow(unused_imports))]
 
 use common::crash_reports::init_crash_reports;
-use common::log::unified_log::{LevelFilter, UnifiedLoggerBuilder};
 use common::mm_ctx::MmCtxBuilder;
-use common::{block_on, double_panic_crash, safe_slurp, MM_DATETIME, MM_VERSION};
+use common::{block_on, double_panic_crash, MM_DATETIME, MM_VERSION};
 
 use gstuff::slurp;
 
@@ -273,11 +272,17 @@ pub fn run_lp_main(first_arg: Option<&str>, ctx_cb: &dyn Fn(u32)) -> Result<(), 
     Ok(())
 }
 
+#[cfg(target_arch = "wasm32")]
+fn on_update_config(_args: &[OsString]) -> Result<(), String> {
+    ERR!("'update_config' is only supported in native mode")
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn on_update_config(args: &[OsString]) -> Result<(), String> {
     let src_path = args.get(2).ok_or(ERRL!("Expect path to the source coins config."))?;
     let dst_path = args.get(3).ok_or(ERRL!("Expect destination path."))?;
 
-    let config = try_s!(safe_slurp(src_path));
+    let config = try_s!(common::safe_slurp(src_path));
     let mut config: Json = try_s!(json::from_slice(&config));
 
     let result = if config.is_array() {
@@ -301,6 +306,8 @@ fn on_update_config(args: &[OsString]) -> Result<(), String> {
 
 #[cfg(feature = "native")]
 fn init_logger() -> Result<(), String> {
+    use common::log::unified_log::{LevelFilter, UnifiedLoggerBuilder};
+
     UnifiedLoggerBuilder::default()
         .level_filter_from_env_or_default(LevelFilter::Info)
         .console(false)

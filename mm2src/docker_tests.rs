@@ -54,7 +54,31 @@ mod swaps_file_lock_tests;
 #[path = "docker_tests/qrc20_tests.rs"]
 mod qrc20_tests;
 
-#[cfg(all(test, feature = "native"))]
+#[cfg(all(test, target_arch = "wasm32"))]
+mod docker_tests {
+    use test::{test_main, StaticBenchFn, StaticTestFn, TestDescAndFn};
+
+    pub fn docker_tests_runner(tests: &[&TestDescAndFn]) {
+        let owned_tests: Vec<_> = tests
+            .iter()
+            .map(|t| match t.testfn {
+                StaticTestFn(f) => TestDescAndFn {
+                    testfn: StaticTestFn(f),
+                    desc: t.desc.clone(),
+                },
+                StaticBenchFn(f) => TestDescAndFn {
+                    testfn: StaticBenchFn(f),
+                    desc: t.desc.clone(),
+                },
+                _ => panic!("non-static tests passed to lp_coins test runner"),
+            })
+            .collect();
+        let args: Vec<String> = std::env::args().collect();
+        let _exit_code = test_main(&args, owned_tests, None);
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod docker_tests {
     #[rustfmt::skip]
     mod swaps_confs_settings_sync_tests;
