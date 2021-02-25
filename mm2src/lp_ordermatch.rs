@@ -441,7 +441,7 @@ pub async fn process_peer_request(ctx: MmArc, request: OrdermatchRequest) -> Res
             response.map(|res| res.map(|r| encode_message(&r).expect("Serialization failed")))
         },
         OrdermatchRequest::BestOrders { coin, action, volume } => {
-            process_best_orders_request(ctx, coin, action, volume).await
+            process_best_orders_p2p_request(ctx, coin, action, volume).await
         },
     }
 }
@@ -467,10 +467,10 @@ struct GetOrderbookRes {
 
 #[derive(Debug, Deserialize, Serialize)]
 struct BestOrdersRes {
-    orders: HashMap<String, OrderbookItem>,
+    orders: HashMap<String, Vec<OrderbookItem>>,
 }
 
-async fn process_best_orders_request(
+async fn process_best_orders_p2p_request(
     ctx: MmArc,
     coin: String,
     action: BestOrdersAction,
@@ -478,15 +478,16 @@ async fn process_best_orders_request(
 ) -> Result<Option<Vec<u8>>, String> {
     let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).expect("ordermatch_ctx must exist at this point");
     let orderbook = ordermatch_ctx.orderbook.lock().await;
-    let tickers = match orderbook.pairs_existing_for_coin.get(&coin) {
+    let search_pairs_in = match action {
+        BestOrdersAction::Buy => &orderbook.pairs_existing_for_base,
+        BestOrdersAction::Sell => &orderbook.pairs_existing_for_rel,
+    };
+    let tickers = match search_pairs_in.get(&coin) {
         Some(tickers) => tickers,
         None => return Ok(None),
     };
     let mut result = HashMap::new();
-    let pairs: Vec<_> = tickers
-        .into_iter()
-        .map(|ticker| (coin.clone(), ticker.clone()))
-        .collect();
+    let pairs: Vec<_> = tickers.iter().map(|ticker| (coin.clone(), ticker.clone())).collect();
     for pair in pairs.iter() {
         let orders = match orderbook.ordered.get(pair) {
             Some(orders) => orders,
@@ -495,21 +496,28 @@ async fn process_best_orders_request(
                 continue;
             },
         };
-        let first = match orders.first() {
-            Some(f) => f,
-            None => {
-                log::warn!("No first order for pair {:?}", pair);
-                continue;
-            },
-        };
-        let order = match orderbook.order_set.get(&first.uuid) {
-            Some(o) => o,
-            None => {
-                log::warn!("No order with uuid {:?}", first.uuid);
-                continue;
-            },
-        };
-        result.insert(order.rel.clone(), order.clone());
+        let mut best_orders = vec![];
+        let mut collected_volume = BigRational::zero();
+        for ordered in orders {
+            match orderbook.order_set.get(&ordered.uuid) {
+                Some(o) => {
+                    best_orders.push(o.clone());
+                    let coin_volume = match action {
+                        BestOrdersAction::Buy => o.max_volume.clone(),
+                        BestOrdersAction::Sell => &o.max_volume * &o.price,
+                    };
+                    collected_volume += coin_volume;
+                    if collected_volume >= volume {
+                        break;
+                    }
+                },
+                None => {
+                    log::warn!("No order with uuid {:?}", ordered.uuid);
+                    continue;
+                },
+            };
+        }
+        result.insert(pair.1.clone(), best_orders);
     }
     let response = BestOrdersRes { orders: result };
     let encoded = rmp_serde::to_vec(&response).expect("rmp_serde::to_vec should not fail here");
@@ -1861,8 +1869,10 @@ fn collect_orderbook_metrics(ctx: &MmArc, orderbook: &Orderbook) {
 struct Orderbook {
     /// A map from (base, rel).
     ordered: HashMap<(String, String), BTreeSet<OrderedByPriceOrder>>,
-    /// A map from ticker to the set of another tickers to track the existing pairs
-    pairs_existing_for_coin: HashMap<String, HashSet<String>>,
+    /// A map from base ticker to the set of another tickers to track the existing pairs
+    pairs_existing_for_base: HashMap<String, HashSet<String>>,
+    /// A map from rel ticker to the set of another tickers to track the existing pairs
+    pairs_existing_for_rel: HashMap<String, HashSet<String>>,
     /// A map from (base, rel).
     unordered: HashMap<(String, String), HashSet<Uuid>>,
     order_set: HashMap<Uuid, OrderbookItem>,
@@ -1951,12 +1961,12 @@ impl Orderbook {
                 uuid: order.uuid,
             });
 
-        self.pairs_existing_for_coin
+        self.pairs_existing_for_base
             .entry(order.base.clone())
             .or_insert_with(HashSet::new)
             .insert(order.rel.clone());
 
-        self.pairs_existing_for_coin
+        self.pairs_existing_for_rel
             .entry(order.rel.clone())
             .or_insert_with(HashSet::new)
             .insert(order.base.clone());
@@ -3841,7 +3851,7 @@ fn choose_taker_confs_and_notas(
     }
 }
 
-#[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum BestOrdersAction {
     Buy,
@@ -3867,31 +3877,37 @@ pub async fn best_orders(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Str
     let mut response = HashMap::new();
     if let Some((p2p_response, peer_id)) = orders {
         log::debug!("Got best orders {:?} from peer {}", p2p_response, peer_id);
-        for (coin, order) in p2p_response.orders {
-            let price_mm: MmNumber = order.price.clone().into();
-            let max_vol_mm: MmNumber = order.max_volume.clone().into();
-            let min_vol_mm: MmNumber = order.min_volume.clone().into();
-            let entry = OrderbookEntry {
-                coin: coin.clone(),
-                address: "".into(),
-                price: price_mm.to_decimal(),
-                price_rat: price_mm.to_ratio(),
-                price_fraction: price_mm.to_fraction(),
-                max_volume: max_vol_mm.to_decimal(),
-                max_volume_rat: max_vol_mm.to_ratio(),
-                max_volume_fraction: max_vol_mm.to_fraction(),
-                min_volume: min_vol_mm.to_decimal(),
-                min_volume_rat: min_vol_mm.to_ratio(),
-                min_volume_fraction: min_vol_mm.to_fraction(),
-                pubkey: order.pubkey.clone(),
-                age: (now_ms() as i64 / 1000),
-                zcredits: 0,
-                uuid: order.uuid,
-                is_mine: false,
-            };
-            response.insert(coin, entry);
+        for (coin, orders) in p2p_response.orders {
+            for order in orders {
+                let price_mm: MmNumber = match req.action {
+                    BestOrdersAction::Buy => order.price.clone().into(),
+                    BestOrdersAction::Sell => order.price.recip().into(),
+                };
+                let max_vol_mm: MmNumber = order.max_volume.clone().into();
+                let min_vol_mm: MmNumber = order.min_volume.clone().into();
+                let entry = OrderbookEntry {
+                    coin: coin.clone(),
+                    address: "".into(),
+                    price: price_mm.to_decimal(),
+                    price_rat: price_mm.to_ratio(),
+                    price_fraction: price_mm.to_fraction(),
+                    max_volume: max_vol_mm.to_decimal(),
+                    max_volume_rat: max_vol_mm.to_ratio(),
+                    max_volume_fraction: max_vol_mm.to_fraction(),
+                    min_volume: min_vol_mm.to_decimal(),
+                    min_volume_rat: min_vol_mm.to_ratio(),
+                    min_volume_fraction: min_vol_mm.to_fraction(),
+                    pubkey: order.pubkey.clone(),
+                    age: (now_ms() as i64 / 1000),
+                    zcredits: 0,
+                    uuid: order.uuid,
+                    is_mine: false,
+                };
+                response.entry(coin.clone()).or_insert_with(Vec::new).push(entry);
+            }
         }
     }
+
     let res = json!({ "result": response });
     Response::builder()
         .body(json::to_vec(&res).expect("Serialization failed"))

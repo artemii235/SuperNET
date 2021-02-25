@@ -118,19 +118,24 @@ pub struct MakerMatch {
 
 #[derive(Deserialize)]
 pub struct MakerOrderRpcResult {
-    max_base_vol: BigDecimal,
-    max_base_vol_rat: BigRational,
-    min_base_vol: BigDecimal,
-    min_base_vol_rat: BigRational,
-    price: BigDecimal,
-    price_rat: BigRational,
-    created_at: u64,
-    base: String,
-    rel: String,
-    matches: HashMap<Uuid, MakerMatch>,
-    started_swaps: Vec<Uuid>,
-    uuid: Uuid,
-    conf_settings: Option<OrderConfirmationsSettings>,
+    pub max_base_vol: BigDecimal,
+    pub max_base_vol_rat: BigRational,
+    pub min_base_vol: BigDecimal,
+    pub min_base_vol_rat: BigRational,
+    pub price: BigDecimal,
+    pub price_rat: BigRational,
+    pub created_at: u64,
+    pub base: String,
+    pub rel: String,
+    pub matches: HashMap<Uuid, MakerMatch>,
+    pub started_swaps: Vec<Uuid>,
+    pub uuid: Uuid,
+    pub conf_settings: Option<OrderConfirmationsSettings>,
+}
+
+#[derive(Deserialize)]
+pub struct SetPriceResult {
+    pub result: MakerOrderRpcResult,
 }
 
 #[derive(Deserialize)]
@@ -157,26 +162,26 @@ pub struct MyOrdersRpcResult {
 
 #[derive(Deserialize)]
 pub struct OrderbookEntry {
-    coin: String,
-    address: String,
-    price: BigDecimal,
-    price_rat: BigRational,
-    price_fraction: Fraction,
+    pub coin: String,
+    pub address: String,
+    pub price: BigDecimal,
+    pub price_rat: BigRational,
+    pub price_fraction: Fraction,
     #[serde(rename = "maxvolume")]
-    max_volume: BigDecimal,
-    max_volume_rat: BigRational,
-    max_volume_fraction: Fraction,
-    min_volume: BigDecimal,
-    min_volume_rat: BigRational,
-    min_volume_fraction: Fraction,
-    pubkey: String,
-    age: i64,
-    zcredits: u64,
-    uuid: Uuid,
-    is_mine: bool,
+    pub max_volume: BigDecimal,
+    pub max_volume_rat: BigRational,
+    pub max_volume_fraction: Fraction,
+    pub min_volume: BigDecimal,
+    pub min_volume_rat: BigRational,
+    pub min_volume_fraction: Fraction,
+    pub pubkey: String,
+    pub age: i64,
+    pub zcredits: u64,
+    pub uuid: Uuid,
+    pub is_mine: bool,
 }
 
 #[derive(Deserialize)]
 pub struct BestOrdersResponse {
-    pub result: HashMap<String, OrderbookEntry>,
+    pub result: HashMap<String, Vec<OrderbookEntry>>,
 }

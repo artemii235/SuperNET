@@ -5047,14 +5047,16 @@ fn test_orderbook_is_mine_orders() {
 
 #[test]
 fn test_best_orders() {
+    let bob_passphrase = unwrap!(get_passphrase(&".env.seed", "BOB_PASSPHRASE"));
+
     let coins = json!([
         {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
         {"coin":"MORTY","asset":"MORTY","rpcport":11608,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
         {"coin":"ETH","name":"ethereum","protocol":{"type":"ETH"},"rpcport":80},
-        {"coin":"JST","name":"jst","protocol":{"type":"ERC20", "protocol_data":{"platform":"ETH","contract_address":"0xc0eb7AeD740E1796992A08962c15661bDEB58003"}}}
+        {"coin":"JST","name":"jst","protocol":{"type":"ERC20", "protocol_data":{"platform":"ETH","contract_address":"0x2b294F029Fde858b2c62184e8390591755521d8E"}}}
     ]);
 
-    // start bob and immediately place the order
+    // start bob and immediately place the orders
     let mut mm_bob = unwrap!(MarketMakerIt::start(
         json! ({
             "gui": "nogui",
@@ -5062,7 +5064,7 @@ fn test_best_orders() {
             "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
             "rpcip": env::var ("BOB_TRADE_IP") .ok(),
             "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| unwrap! (s.parse::<i64>())),
-            "passphrase": "bob passphrase",
+            "passphrase": bob_passphrase,
             "coins": coins,
             "rpc_password": "pass",
             "i_am_seed": true,
@@ -5073,36 +5075,37 @@ fn test_best_orders() {
     let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
     log!({"Bob log path: {}", mm_bob.log_path.display()});
     unwrap!(block_on(
+        mm_bob.wait_for_log(22., |log| log.contains("INFO Listening on"))
+    ));
+    unwrap!(block_on(
         mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
     // Enable coins on Bob side. Print the replies in case we need the "address".
-    log!({ "enable_coins (bob): {:?}", block_on(enable_coins_eth_electrum(&mm_bob, vec!["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b"])) });
+    log!({ "enable_coins (bob): {:?}", block_on(enable_coins_eth_electrum(&mm_bob, vec!["http://195.201.0.6:8565"])) });
     // issue sell request on Bob side by setting base/rel price
-    log!("Issue bob sell request");
-    let rc = unwrap!(block_on(mm_bob.rpc(json! ({
-        "userpass": mm_bob.userpass,
-        "method": "setprice",
-        "base": "RICK",
-        "rel": "MORTY",
-        "price": 0.9,
-        "volume": "0.9",
-    }))));
-    assert!(rc.0.is_success(), "!setprice: {}", rc.1);
-    // Bob orderbook must show the new order
-    log!("Get RICK/MORTY orderbook on Bob side");
-    let rc = unwrap!(block_on(mm_bob.rpc(json! ({
-        "userpass": mm_bob.userpass,
-        "method": "orderbook",
-        "base": "RICK",
-        "rel": "MORTY",
-    }))));
-    assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
+    log!("Issue bob sell requests");
 
-    let bob_orderbook: Json = unwrap!(json::from_str(&rc.1));
-    log!("Bob orderbook "[bob_orderbook]);
-    let asks = bob_orderbook["asks"].as_array().unwrap();
-    assert!(asks.len() > 0, "Bob RICK/MORTY asks are empty");
-    assert_eq!(Json::from("0.9"), asks[0]["maxvolume"]);
+    let bob_orders = [
+        // (base, rel, price, volume)
+        ("RICK", "MORTY", "0.9", "0.9"),
+        ("RICK", "MORTY", "0.8", "0.9"),
+        ("RICK", "ETH", "0.8", "0.9"),
+        ("MORTY", "RICK", "0.8", "0.9"),
+        ("MORTY", "RICK", "0.9", "0.9"),
+        ("ETH", "RICK", "0.8", "0.9"),
+    ];
+    for (base, rel, price, volume) in bob_orders.iter() {
+        let rc = unwrap!(block_on(mm_bob.rpc(json! ({
+            "userpass": mm_bob.userpass,
+            "method": "setprice",
+            "base": base,
+            "rel": rel,
+            "price": price,
+            "volume": volume,
+            "cancel_previous": false,
+        }))));
+        assert!(rc.0.is_success(), "!setprice: {}", rc.1);
+    }
 
     let mut mm_alice = unwrap!(MarketMakerIt::start(
         json! ({
@@ -5126,17 +5129,57 @@ fn test_best_orders() {
         mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
 
-    log!("Get RICK/MORTY orderbook on Alice side");
     let rc = unwrap!(block_on(mm_alice.rpc(json! ({
         "userpass": mm_alice.userpass,
         "method": "best_orders",
         "coin": "RICK",
         "action": "buy",
-        "volume": 1,
+        "volume": "0.1",
     }))));
     assert!(rc.0.is_success(), "!best_orders: {}", rc.1);
     let response: BestOrdersResponse = json::from_str(&rc.1).unwrap();
-    assert!(response.result.contains_key("MORTY"));
+    let best_morty_orders = response.result.get("MORTY").unwrap();
+    assert_eq!(1, best_morty_orders.len());
+    let expected_price: BigDecimal = "0.8".parse().unwrap();
+    assert_eq!(expected_price, best_morty_orders[0].price);
+
+    let rc = unwrap!(block_on(mm_alice.rpc(json! ({
+        "userpass": mm_alice.userpass,
+        "method": "best_orders",
+        "coin": "RICK",
+        "action": "buy",
+        "volume": "1.7",
+    }))));
+    assert!(rc.0.is_success(), "!best_orders: {}", rc.1);
+    let response: BestOrdersResponse = json::from_str(&rc.1).unwrap();
+    let best_morty_orders = response.result.get("MORTY").unwrap();
+    let expected_price: BigDecimal = "0.8".parse().unwrap();
+    assert_eq!(expected_price, best_morty_orders[0].price);
+    let expected_price: BigDecimal = "0.9".parse().unwrap();
+    assert_eq!(expected_price, best_morty_orders[1].price);
+
+    let expected_price: BigDecimal = "0.8".parse().unwrap();
+    let best_eth_orders = response.result.get("ETH").unwrap();
+    assert_eq!(expected_price, best_eth_orders[0].price);
+
+    let rc = unwrap!(block_on(mm_alice.rpc(json! ({
+        "userpass": mm_alice.userpass,
+        "method": "best_orders",
+        "coin": "RICK",
+        "action": "sell",
+        "volume": "0.1",
+    }))));
+    assert!(rc.0.is_success(), "!best_orders: {}", rc.1);
+    let response: BestOrdersResponse = json::from_str(&rc.1).unwrap();
+
+    let expected_price: BigDecimal = "1.25".parse().unwrap();
+
+    let best_morty_orders = response.result.get("MORTY").unwrap();
+    assert_eq!(expected_price, best_morty_orders[0].price);
+    assert_eq!(1, best_morty_orders.len());
+
+    let best_eth_orders = response.result.get("ETH").unwrap();
+    assert_eq!(expected_price, best_eth_orders[0].price);
 
     unwrap!(block_on(mm_bob.stop()));
     unwrap!(block_on(mm_alice.stop()));
