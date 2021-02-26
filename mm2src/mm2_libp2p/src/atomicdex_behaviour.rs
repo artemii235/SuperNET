@@ -610,7 +610,10 @@ pub fn start_gossipsub(
     info!("Local peer id: {:?}", local_peer_id);
 
     #[cfg(target_arch = "wasm32")]
-    let transport = libp2p::wasm_ext::ExtTransport::new(todo!());
+    let transport = {
+        let websocket = libp2p::wasm_ext::ffi::websocket_transport();
+        libp2p::wasm_ext::ExtTransport::new(websocket)
+    };
 
     #[cfg(not(target_arch = "wasm32"))]
     let transport = {

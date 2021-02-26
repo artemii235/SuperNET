@@ -984,7 +984,7 @@ pub extern "C" fn trade_test_electrum_and_eth_coins(cb_id: i32) {
     common::executor::spawn(async move {
         let pairs = vec![("ETH", "JST")];
         trade_base_rel_electrum(pairs).await;
-        unsafe { call_back(cb_id, null(), 0) }
+        call_back(cb_id, null(), 0)
     })
 }
 
@@ -5094,7 +5094,7 @@ mod wasm_bindgen_tests {
 
     impl Interval {
         fn new() -> Interval {
-            let closure = Closure::new({ common::executor::run });
+            let closure = Closure::new(common::executor::run);
             Interval { closure }
         }
     }

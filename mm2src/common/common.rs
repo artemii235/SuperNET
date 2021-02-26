@@ -1471,14 +1471,12 @@ pub fn var(name: &str) -> Result<String, String> {
         use std::str::from_utf8;
 
         let mut buf: [u8; 4096] = unsafe { zeroed() };
-        let rc = unsafe {
-            host_env(
-                name.as_ptr() as *const c_char,
-                name.len() as i32,
-                buf.as_mut_ptr() as *mut c_char,
-                buf.len() as i32,
-            )
-        };
+        let rc = host_env(
+            name.as_ptr() as *const c_char,
+            name.len() as i32,
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len() as i32,
+        );
         if rc <= 0 {
             return ERR!("No {}", name);
         }
@@ -1509,7 +1507,7 @@ pub fn now_ms() -> u64 {
     extern "C" {
         pub fn date_now() -> f64;
     }
-    unsafe { date_now() as u64 }
+    date_now() as u64
 }
 #[cfg(not(feature = "native"))]
 pub fn now_float() -> f64 {
@@ -1544,14 +1542,12 @@ pub fn slurp(path: &dyn AsRef<Path>) -> Result<Vec<u8>, String> {
 
     let path = try_s!(path.as_ref().to_str().ok_or("slurp: path not unicode"));
     let mut rbuf: [u8; 262144] = unsafe { MaybeUninit::uninit().assume_init() };
-    let rc = unsafe {
-        host_slurp(
-            path.as_ptr() as *const c_char,
-            path.len() as i32,
-            rbuf.as_mut_ptr() as *mut c_char,
-            rbuf.len() as i32,
-        )
-    };
+    let rc = host_slurp(
+        path.as_ptr() as *const c_char,
+        path.len() as i32,
+        rbuf.as_mut_ptr() as *mut c_char,
+        rbuf.len() as i32,
+    );
     if rc < 0 {
         return ERR!("!host_slurp: {}", rc);
     }
@@ -1568,7 +1564,7 @@ pub fn temp_dir() -> PathBuf {
         pub fn temp_dir(rbuf: *mut c_char, rcap: i32) -> i32;
     }
     let mut buf: [u8; 4096] = unsafe { zeroed() };
-    let rc = unsafe { temp_dir(buf.as_mut_ptr() as *mut c_char, buf.len() as i32) };
+    let rc = temp_dir(buf.as_mut_ptr() as *mut c_char, buf.len() as i32);
     if rc <= 0 {
         panic!("!temp_dir")
     }
@@ -1592,7 +1588,7 @@ pub fn remove_file(path: &dyn AsRef<Path>) -> Result<(), String> {
     }
 
     let path = try_s!(path.as_ref().to_str().ok_or("Non-unicode path"));
-    let rc = unsafe { host_rm(path.as_ptr() as *const c_char, path.len() as i32) };
+    let rc = host_rm(path.as_ptr() as *const c_char, path.len() as i32);
     if rc != 0 {
         return ERR!("!host_rm: {}", rc);
     }
@@ -1616,14 +1612,12 @@ pub fn write(path: &dyn AsRef<Path>, contents: &dyn AsRef<[u8]>) -> Result<(), S
 
     let path = try_s!(path.as_ref().to_str().ok_or("Non-unicode path"));
     let content = contents.as_ref();
-    let rc = unsafe {
-        host_write(
-            path.as_ptr() as *const c_char,
-            path.len() as i32,
-            content.as_ptr() as *const c_char,
-            content.len() as i32,
-        )
-    };
+    let rc = host_write(
+        path.as_ptr() as *const c_char,
+        path.len() as i32,
+        content.as_ptr() as *const c_char,
+        content.len() as i32,
+    );
     if rc != 0 {
         return ERR!("!host_write: {}", rc);
     }
@@ -1686,14 +1680,12 @@ pub fn read_dir(dir: &dyn AsRef<Path>) -> Result<Vec<(u64, PathBuf)>, String> {
 
     let path = try_s!(dir.as_ref().to_str().ok_or("read_dir: dir path not unicode"));
     let mut rbuf: [u8; 262144] = unsafe { MaybeUninit::uninit().assume_init() };
-    let rc = unsafe {
-        host_read_dir(
-            path.as_ptr() as *const c_char,
-            path.len() as i32,
-            rbuf.as_mut_ptr() as *mut c_char,
-            rbuf.len() as i32,
-        )
-    };
+    let rc = host_read_dir(
+        path.as_ptr() as *const c_char,
+        path.len() as i32,
+        rbuf.as_mut_ptr() as *mut c_char,
+        rbuf.len() as i32,
+    );
     if rc <= 0 {
         return ERR!("!host_read_dir: {}", rc);
     }
@@ -1884,15 +1876,13 @@ impl fmt::Display for HelperResponse {
 pub async fn helperᶜ(helper: &'static str, args: Vec<u8>) -> Result<Vec<u8>, String> {
     use serde_bencode::de::from_bytes as bdecode;
 
-    let helper_request_id = unsafe {
-        http_helper_if(
-            helper.as_ptr(),
-            helper.len() as i32,
-            args.as_ptr(),
-            args.len() as i32,
-            9999,
-        )
-    };
+    let helper_request_id = http_helper_if(
+        helper.as_ptr(),
+        helper.len() as i32,
+        args.as_ptr(),
+        args.len() as i32,
+        9999,
+    );
 
     struct HelperReply {
         helper: &'static str,
@@ -1902,7 +1892,7 @@ pub async fn helperᶜ(helper: &'static str, args: Vec<u8>) -> Result<Vec<u8>, S
         type Output = Result<Vec<u8>, String>;
         fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll03<Self::Output> {
             let mut buf: [u8; 65535] = unsafe { std::mem::MaybeUninit::uninit().assume_init() };
-            let rlen = unsafe { http_helper_check(self.helper_request_id, buf.as_mut_ptr(), buf.len() as i32) };
+            let rlen = http_helper_check(self.helper_request_id, buf.as_mut_ptr(), buf.len() as i32);
             if rlen < -1 {
                 // Response is larger than capacity.
                 return Poll03::Ready(ERR!("Helper result is too large ({})", rlen));

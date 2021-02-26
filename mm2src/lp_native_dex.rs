@@ -191,7 +191,7 @@ fn fix_directories(ctx: &MmCtx) -> Result<(), String> {
         ($path: expr) => {
             let path = $path;
             let path = try_s!(path.to_str().ok_or("Non-unicode path"));
-            let rc = unsafe { host_ensure_dir_is_writable(path.as_ptr() as *const c_char, path.len() as i32) };
+            let rc = host_ensure_dir_is_writable(path.as_ptr() as *const c_char, path.len() as i32);
             if rc != 0 {
                 return ERR!("Dir '{}' not writeable: {}", path, rc);
             }

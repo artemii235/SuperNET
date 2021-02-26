@@ -17,7 +17,7 @@ extern crate fomat_macros;
 #[cfg(test)]
 #[macro_use]
 extern crate gstuff;
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 #[macro_use]
 extern crate lazy_static;
 #[cfg(test)]

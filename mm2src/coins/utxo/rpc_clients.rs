@@ -1039,7 +1039,7 @@ pub fn spawn_electrum(
     use std::net::{IpAddr, Ipv4Addr};
 
     let args = unwrap!(json::to_vec(req));
-    let rc = unsafe { host_electrum_connect(args.as_ptr() as *const c_char, args.len() as i32) };
+    let rc = host_electrum_connect(args.as_ptr() as *const c_char, args.len() as i32);
     if rc < 0 {
         panic!("!host_electrum_connect: {}", rc)
     }
@@ -1096,7 +1096,7 @@ impl ElectrumConnection {
 
     #[cfg(not(feature = "native"))]
     async fn is_connected(&self) -> bool {
-        let rc = unsafe { host_electrum_is_connected(self.ri) };
+        let rc = host_electrum_is_connected(self.ri);
         if rc < 0 {
             panic!("!host_electrum_is_connected: {}", rc)
         }
@@ -1271,7 +1271,7 @@ async fn electrum_request_multi(
     for connection in client.connections.lock().await.iter() {
         let (tx, rx) = futures::channel::oneshot::channel();
         try_s!(ELECTRUM_REPLIES.lock()).insert((connection.ri, id), tx);
-        let rc = unsafe { host_electrum_request(connection.ri, req.as_ptr() as *const c_char, req.len() as i32) };
+        let rc = host_electrum_request(connection.ri, req.as_ptr() as *const c_char, req.len() as i32);
         if rc != 0 {
             return ERR!("!host_electrum_request: {}", rc);
         }
@@ -1288,7 +1288,7 @@ async fn electrum_request_multi(
         };
 
         let mut buf: [u8; 131072] = unsafe { MaybeUninit::uninit().assume_init() };
-        let rc = unsafe { host_electrum_reply(connection.ri, id, buf.as_mut_ptr() as *mut c_char, buf.len() as i32) };
+        let rc = host_electrum_reply(connection.ri, id, buf.as_mut_ptr() as *mut c_char, buf.len() as i32);
         if rc <= 0 {
             log!("!host_electrum_reply: "(rc));
             continue;
