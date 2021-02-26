@@ -2030,6 +2030,7 @@ pub fn set_requires_notarization(coin: &UtxoCoinFields, requires_nota: bool) {
         .store(requires_nota, AtomicOrderding::Relaxed);
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub async fn ordered_mature_unspents<'a, T>(
     coin: &'a T,
     address: &Address,
