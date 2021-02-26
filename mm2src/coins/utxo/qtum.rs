@@ -1,5 +1,5 @@
 use super::*;
-use crate::{eth, CanRefundHtlc, SwapOps, TradePreimageError, TradePreimageValue, ValidateAddressResult};
+use crate::{eth, CanRefundHtlc, CoinBalance, SwapOps, TradePreimageError, TradePreimageValue, ValidateAddressResult};
 use common::mm_metrics::MetricsArc;
 use ethereum_types::H160;
 use futures::{FutureExt, TryFutureExt};
@@ -18,7 +18,22 @@ pub enum QtumAddressFormat {
     Contract,
 }
 
-pub trait QtumBasedCoin: AsRef<UtxoCoinFields> {
+#[async_trait]
+pub trait QtumBasedCoin: AsRef<UtxoCoinFields> + UtxoCommonOps + MarketCoinOps {
+    async fn qtum_balance(&self) -> Result<CoinBalance, String> {
+        let balance = try_s!(
+            self.as_ref()
+                .rpc_client
+                .display_balance(self.as_ref().my_address.clone(), self.as_ref().decimals)
+                .compat()
+                .await
+        );
+
+        let unspendable = try_s!(utxo_common::my_unspendable_balance(self, &balance).await);
+        let spendable = &balance - &unspendable;
+        Ok(CoinBalance { spendable, unspendable })
+    }
+
     fn convert_to_address(&self, from: &str, to_address_format: Json) -> Result<String, String> {
         let to_address_format: QtumAddressFormat =
             json::from_value(to_address_format).map_err(|e| ERRL!("Error on parse Qtum address format {:?}", e))?;
@@ -423,8 +438,10 @@ impl MarketCoinOps for QtumCoin {
 
     fn my_address(&self) -> Result<String, String> { utxo_common::my_address(self) }
 
-    fn my_balance(&self) -> Box<dyn Future<Item = BigDecimal, Error = String> + Send> {
-        utxo_common::my_balance(&self.utxo_arc)
+    fn my_balance(&self) -> Box<dyn Future<Item = CoinBalance, Error = String> + Send> {
+        let selfi = self.clone();
+        let fut = async move { Ok(try_s!(selfi.qtum_balance().await)) };
+        Box::new(fut.boxed().compat())
     }
 
     fn base_coin_balance(&self) -> Box<dyn Future<Item = BigDecimal, Error = String> + Send> {
@@ -539,10 +556,6 @@ impl MmCoin for QtumCoin {
 
     fn set_requires_notarization(&self, requires_nota: bool) {
         utxo_common::set_requires_notarization(&self.utxo_arc, requires_nota)
-    }
-
-    fn my_unspendable_balance(&self) -> Box<dyn Future<Item = BigDecimal, Error = String> + Send> {
-        Box::new(utxo_common::my_unspendable_balance(self.clone()).boxed().compat())
     }
 
     fn swap_contract_address(&self) -> Option<BytesJson> { utxo_common::swap_contract_address() }

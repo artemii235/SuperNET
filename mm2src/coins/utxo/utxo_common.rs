@@ -5,7 +5,7 @@ use chain::constants::SEQUENCE_FINAL;
 use chain::{OutPoint, TransactionInput, TransactionOutput};
 use common::executor::Timer;
 use common::jsonrpc_client::{JsonRpcError, JsonRpcErrorType};
-use common::log::{error, info};
+use common::log::{error, info, warn};
 use common::mm_ctx::MmArc;
 use common::mm_metrics::MetricsArc;
 use futures::compat::Future01CompatExt;
@@ -32,7 +32,7 @@ pub use chain::Transaction as UtxoTx;
 
 use self::rpc_clients::{electrum_script_hash, UnspentInfo, UtxoRpcClientEnum};
 use crate::utxo::rpc_clients::UtxoRpcClientOps;
-use crate::{CanRefundHtlc, FeeApproxStage, TradePreimageError, TradePreimageValue, ValidateAddressResult};
+use crate::{CanRefundHtlc, CoinBalance, FeeApproxStage, TradePreimageError, TradePreimageValue, ValidateAddressResult};
 use common::{block_on, Traceable};
 
 macro_rules! true_or {
@@ -209,7 +209,7 @@ pub fn base_coin_balance<T>(coin: &T) -> Box<dyn Future<Item = BigDecimal, Error
 where
     T: MarketCoinOps,
 {
-    coin.my_balance()
+    Box::new(coin.my_spendable_balance())
 }
 
 pub fn display_address(conf: &UtxoCoinConf, address: &Address) -> Result<String, String> {
@@ -1210,10 +1210,15 @@ where
     coin.display_address(&coin.as_ref().my_address)
 }
 
-pub fn my_balance(coin: &UtxoCoinFields) -> Box<dyn Future<Item = BigDecimal, Error = String> + Send> {
+pub fn my_balance(coin: &UtxoCoinFields) -> Box<dyn Future<Item = CoinBalance, Error = String> + Send> {
     Box::new(
         coin.rpc_client
             .display_balance(coin.my_address.clone(), coin.decimals)
+            // at the moment standard UTXO coins do not have an unspendable balance
+            .map(|spendable| CoinBalance {
+                spendable,
+                unspendable: BigDecimal::from(0),
+            })
             .map_err(|e| ERRL!("{}", e)),
     )
 }
@@ -1464,7 +1469,7 @@ pub fn process_history_loop<T>(coin: &T, ctx: MmArc)
 where
     T: AsRef<UtxoCoinFields> + UtxoStandardOps + UtxoCommonOps + MmCoin + MarketCoinOps,
 {
-    let mut my_balance: Option<BigDecimal> = None;
+    let mut my_balance: Option<CoinBalance> = None;
     let history = coin.load_history_from_file(&ctx);
     let mut history_map: HashMap<H256Json, TransactionDetails> = history
         .into_iter()
@@ -2176,28 +2181,32 @@ pub async fn cache_transaction_if_possible(_coin: &UtxoCoinFields, _tx: &RpcTran
     Ok(())
 }
 
-pub async fn my_unspendable_balance<T>(coin: T) -> Result<BigDecimal, String>
+pub async fn my_unspendable_balance<T>(coin: &T, total_balance: &BigDecimal) -> Result<BigDecimal, String>
 where
-    T: AsRef<UtxoCoinFields> + UtxoCommonOps + MarketCoinOps,
+    T: AsRef<UtxoCoinFields> + UtxoCommonOps + MarketCoinOps + ?Sized,
 {
     let mut attempts = 0i32;
     loop {
-        let balance = try_s!(coin.my_balance().compat().await);
         let mature_unspents = try_s!(coin.ordered_mature_unspents(&coin.as_ref().my_address).compat().await);
         let spendable_balance = mature_unspents.iter().fold(BigDecimal::zero(), |acc, x| {
             acc + big_decimal_from_sat(x.value as i64, coin.as_ref().decimals)
         });
-        if balance >= spendable_balance {
-            return Ok(balance - spendable_balance);
+        if total_balance >= &spendable_balance {
+            return Ok(total_balance - spendable_balance);
         }
 
         if attempts == 2 {
             return ERR!(
-                "spendable balance {} more than total balance {}",
+                "Spendable balance {} greater than total balance {}",
                 spendable_balance,
-                balance
+                total_balance
             );
         }
+
+        warn!(
+            "Attempt N{}: spendable balance {} greater than total balance {}",
+            attempts, spendable_balance, total_balance
+        );
 
         // the balance could be changed by other instance between my_balance() and ordered_mature_unspents() calls
         // try again

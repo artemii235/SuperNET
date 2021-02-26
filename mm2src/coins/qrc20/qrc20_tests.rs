@@ -717,7 +717,11 @@ fn test_taker_fee_tx_fee() {
     let (_ctx, coin) = qrc20_coin_for_test(&priv_key);
     // check if the coin's tx fee is expected
     check_tx_fee(&coin, ActualTxFee::Fixed(EXPECTED_TX_FEE as u64));
-    assert_eq!(coin.my_balance().wait().expect("!my_balance"), BigDecimal::from(5));
+    let expected_balance = CoinBalance {
+        spendable: BigDecimal::from(5),
+        unspendable: BigDecimal::from(0),
+    };
+    assert_eq!(coin.my_balance().wait().expect("!my_balance"), expected_balance);
 
     let dex_fee_amount = BigDecimal::from(5);
     let actual = coin

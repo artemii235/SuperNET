@@ -7,7 +7,7 @@ use crate::utxo::utxo_common::{self, big_decimal_from_sat, check_all_inputs_sign
 use crate::utxo::{coin_daemon_data_dir, qtum, sign_tx, ActualTxFee, AdditionalTxData, FeePolicy,
                   GenerateTransactionError, RecentlySpentOutPoints, UtxoCoinBuilder, UtxoCoinFields, UtxoCommonOps,
                   UtxoTx, VerboseTransactionFrom, UTXO_LOCK};
-use crate::{FeeApproxStage, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeFee,
+use crate::{CoinBalance, FeeApproxStage, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeFee,
             TradePreimageError, TradePreimageValue, TransactionDetails, TransactionEnum, TransactionFut,
             ValidateAddressResult, WithdrawFee, WithdrawRequest};
 use async_trait::async_trait;
@@ -833,7 +833,7 @@ impl MarketCoinOps for Qrc20Coin {
 
     fn my_address(&self) -> Result<String, String> { utxo_common::my_address(self) }
 
-    fn my_balance(&self) -> Box<dyn Future<Item = BigDecimal, Error = String> + Send> {
+    fn my_balance(&self) -> Box<dyn Future<Item = CoinBalance, Error = String> + Send> {
         let my_address = self.my_addr_as_contract_addr();
         let params = &[Token::Address(my_address)];
         let contract_address = self.contract_address;
@@ -848,13 +848,21 @@ impl MarketCoinOps for Qrc20Coin {
                 Some(Token::Uint(bal)) => u256_to_big_decimal(*bal, decimals),
                 Some(_) => ERR!(r#"Expected Uint as "balanceOf" result but got {:?}"#, tokens),
                 None => ERR!(r#"Expected Uint as "balanceOf" result but got nothing"#),
+            })
+            .map(|spendable| CoinBalance {
+                spendable,
+                unspendable: BigDecimal::from(0),
             });
         Box::new(fut)
     }
 
     fn base_coin_balance(&self) -> Box<dyn Future<Item = BigDecimal, Error = String> + Send> {
-        // use standard UTXO my_balance implementation that returns Qtum balance instead of QRC20
-        utxo_common::my_balance(&self.utxo)
+        let selfi = self.clone();
+        let fut = async move {
+            let CoinBalance { spendable, .. } = try_s!(selfi.qtum_balance().await);
+            Ok(spendable)
+        };
+        Box::new(fut.boxed().compat())
     }
 
     fn send_raw_tx(&self, tx: &str) -> Box<dyn Future<Item = String, Error = String> + Send> {
@@ -1088,11 +1096,6 @@ impl MmCoin for Qrc20Coin {
         utxo_common::set_requires_notarization(&self.utxo, requires_nota)
     }
 
-    fn my_unspendable_balance(&self) -> Box<dyn Future<Item = BigDecimal, Error = String> + Send> {
-        // QRC20 cannot have unspendable balance
-        Box::new(futures01::future::ok(0.into()))
-    }
-
     fn swap_contract_address(&self) -> Option<BytesJson> {
         Some(BytesJson::from(self.swap_contract_address.0.as_ref()))
     }
@@ -1135,7 +1138,7 @@ async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> Result<Transac
 
     let _utxo_lock = UTXO_LOCK.lock().await;
 
-    let qrc20_balance = try_s!(coin.my_balance().compat().await);
+    let qrc20_balance = try_s!(coin.my_spendable_balance().compat().await);
 
     // the qrc20_amount_sat is used only within smart contract calls
     let (qrc20_amount_sat, qrc20_amount) = if req.max {

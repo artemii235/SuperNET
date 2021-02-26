@@ -1,5 +1,5 @@
 use super::*;
-use crate::{CanRefundHtlc, SwapOps, TradePreimageError, TradePreimageValue, ValidateAddressResult};
+use crate::{CanRefundHtlc, CoinBalance, SwapOps, TradePreimageError, TradePreimageValue, ValidateAddressResult};
 use common::mm_metrics::MetricsArc;
 use futures::{FutureExt, TryFutureExt};
 
@@ -335,7 +335,7 @@ impl MarketCoinOps for UtxoStandardCoin {
 
     fn my_address(&self) -> Result<String, String> { utxo_common::my_address(self) }
 
-    fn my_balance(&self) -> Box<dyn Future<Item = BigDecimal, Error = String> + Send> {
+    fn my_balance(&self) -> Box<dyn Future<Item = CoinBalance, Error = String> + Send> {
         utxo_common::my_balance(&self.utxo_arc)
     }
 
@@ -450,10 +450,6 @@ impl MmCoin for UtxoStandardCoin {
 
     fn set_requires_notarization(&self, requires_nota: bool) {
         utxo_common::set_requires_notarization(&self.utxo_arc, requires_nota)
-    }
-
-    fn my_unspendable_balance(&self) -> Box<dyn Future<Item = BigDecimal, Error = String> + Send> {
-        Box::new(utxo_common::my_unspendable_balance(self.clone()).boxed().compat())
     }
 
     fn swap_contract_address(&self) -> Option<BytesJson> { utxo_common::swap_contract_address() }
