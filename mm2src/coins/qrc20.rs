@@ -342,8 +342,8 @@ impl Qrc20Coin {
         &self,
         contract_outputs: Vec<ContractCallOutput>,
     ) -> Result<GenerateQrc20TxResult, GenerateTransactionError> {
-        let unspents = try_map!(
-            self.ordered_mature_unspents(&self.utxo.my_address).compat().await,
+        let (unspents, _) = try_map!(
+            self.ordered_mature_unspents(&self.utxo.my_address).await,
             GenerateTransactionError::Other
         );
 
@@ -426,8 +426,8 @@ impl Qrc20Coin {
     }
 }
 
-#[cfg_attr(test, mockable)]
 #[async_trait]
+#[cfg_attr(test, mockable)]
 impl UtxoCommonOps for Qrc20Coin {
     /// Get only QTUM transaction fee.
     async fn get_tx_fee(&self) -> Result<ActualTxFee, JsonRpcError> { utxo_common::get_tx_fee(&self.utxo).await }
@@ -495,15 +495,11 @@ impl UtxoCommonOps for Qrc20Coin {
         )
     }
 
-    fn ordered_mature_unspents(
-        &self,
-        address: &UtxoAddress,
-    ) -> Box<dyn Future<Item = Vec<UnspentInfo>, Error = String> + Send> {
-        Box::new(
-            utxo_common::ordered_mature_unspents(self.clone(), address.clone())
-                .boxed()
-                .compat(),
-        )
+    async fn ordered_mature_unspents<'a>(
+        &'a self,
+        address: &Address,
+    ) -> Result<(Vec<UnspentInfo>, AsyncMutexGuard<'a, RecentlySpentOutPoints>), String> {
+        utxo_common::ordered_mature_unspents(self, address).await
     }
 
     fn get_verbose_transaction_from_cache_or_rpc(
@@ -523,7 +519,7 @@ impl UtxoCommonOps for Qrc20Coin {
         &'a self,
         address: &Address,
     ) -> Result<(Vec<UnspentInfo>, AsyncMutexGuard<'a, RecentlySpentOutPoints>), String> {
-        utxo_common::list_unspent_ordered(self, address).await
+        utxo_common::ordered_mature_unspents(self, address).await
     }
 
     async fn preimage_trade_fee_required_to_send_outputs(

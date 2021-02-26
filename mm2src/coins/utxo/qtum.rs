@@ -123,8 +123,8 @@ pub async fn qtum_coin_from_conf_and_request(
 
 impl QtumBasedCoin for QtumCoin {}
 
-#[cfg_attr(test, mockable)]
 #[async_trait]
+#[cfg_attr(test, mockable)]
 impl UtxoCommonOps for QtumCoin {
     async fn get_tx_fee(&self) -> Result<ActualTxFee, JsonRpcError> { utxo_common::get_tx_fee(&self.utxo_arc).await }
 
@@ -190,15 +190,11 @@ impl UtxoCommonOps for QtumCoin {
         )
     }
 
-    fn ordered_mature_unspents(
-        &self,
+    async fn ordered_mature_unspents<'a>(
+        &'a self,
         address: &Address,
-    ) -> Box<dyn Future<Item = Vec<UnspentInfo>, Error = String> + Send> {
-        Box::new(
-            utxo_common::ordered_mature_unspents(self.clone(), address.clone())
-                .boxed()
-                .compat(),
-        )
+    ) -> Result<(Vec<UnspentInfo>, AsyncMutexGuard<'a, RecentlySpentOutPoints>), String> {
+        utxo_common::ordered_mature_unspents(self, address).await
     }
 
     fn get_verbose_transaction_from_cache_or_rpc(
@@ -218,7 +214,7 @@ impl UtxoCommonOps for QtumCoin {
         &'a self,
         address: &Address,
     ) -> Result<(Vec<UnspentInfo>, AsyncMutexGuard<'a, RecentlySpentOutPoints>), String> {
-        utxo_common::list_unspent_ordered(self, address).await
+        utxo_common::ordered_mature_unspents(self, address).await
     }
 
     async fn preimage_trade_fee_required_to_send_outputs(
