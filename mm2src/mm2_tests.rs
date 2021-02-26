@@ -5065,6 +5065,7 @@ fn test_orderbook_is_mine_orders() {
 }
 
 #[test]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_sell_min_volume() {
     let bob_passphrase = unwrap!(get_passphrase(&".env.client", "BOB_PASSPHRASE"));
 
@@ -5140,6 +5141,7 @@ fn test_sell_min_volume() {
 }
 
 #[test]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_buy_min_volume() {
     let bob_passphrase = unwrap!(get_passphrase(&".env.client", "BOB_PASSPHRASE"));
 
