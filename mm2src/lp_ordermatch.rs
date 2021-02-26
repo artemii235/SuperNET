@@ -1167,6 +1167,7 @@ struct TakerOrder {
     created_at: u64,
     request: TakerRequest,
     matches: HashMap<Uuid, TakerMatch>,
+    min_volume: MmNumber,
     order_type: OrderType,
 }
 
@@ -1531,7 +1532,7 @@ impl Into<MakerOrder> for TakerOrder {
             TakerAction::Sell => MakerOrder {
                 price: (self.request.get_rel_amount() / self.request.get_base_amount()),
                 max_base_vol: self.request.get_base_amount().clone(),
-                min_base_vol: MIN_TRADING_VOL.into(),
+                min_base_vol: self.min_volume,
                 created_at: now_ms(),
                 base: self.request.base,
                 rel: self.request.rel,
@@ -1541,17 +1542,21 @@ impl Into<MakerOrder> for TakerOrder {
                 conf_settings: self.request.conf_settings,
             },
             // The "buy" taker order is recreated with reversed pair as Maker order is always considered as "sell"
-            TakerAction::Buy => MakerOrder {
-                price: (self.request.get_base_amount() / self.request.get_rel_amount()),
-                max_base_vol: self.request.get_rel_amount().clone(),
-                min_base_vol: MIN_TRADING_VOL.into(),
-                created_at: now_ms(),
-                base: self.request.rel,
-                rel: self.request.base,
-                matches: HashMap::new(),
-                started_swaps: Vec::new(),
-                uuid: self.request.uuid,
-                conf_settings: self.request.conf_settings.map(|s| s.reversed()),
+            TakerAction::Buy => {
+                let price = self.request.get_base_amount() / self.request.get_rel_amount();
+                let min_base_vol = &self.min_volume / &price;
+                MakerOrder {
+                    price,
+                    max_base_vol: self.request.get_rel_amount().clone(),
+                    min_base_vol,
+                    created_at: now_ms(),
+                    base: self.request.rel,
+                    rel: self.request.base,
+                    matches: HashMap::new(),
+                    started_swaps: Vec::new(),
+                    uuid: self.request.uuid,
+                    conf_settings: self.request.conf_settings.map(|s| s.reversed()),
+                }
             },
         }
     }
@@ -2626,6 +2631,8 @@ async fn process_taker_connect(ctx: MmArc, sender_pubkey: H256Json, connect_msg:
     }
 }
 
+fn min_trading_vol() -> MmNumber { MmNumber::from(MIN_TRADING_VOL) }
+
 #[derive(Deserialize, Debug)]
 pub struct AutoBuyInput {
     base: String,
@@ -2649,6 +2656,8 @@ pub struct AutoBuyInput {
     base_nota: Option<bool>,
     rel_confs: Option<u64>,
     rel_nota: Option<bool>,
+    #[serde(default = "min_trading_vol")]
+    min_volume: MmNumber,
 }
 
 pub async fn buy(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
@@ -2753,11 +2762,15 @@ impl<'a> From<&'a TakerRequest> for TakerRequestForRpc<'a> {
     }
 }
 
+construct_detailed!(DetailedMinVolume, min_volume);
+
 #[derive(Serialize)]
 struct LpautobuyResult<'a> {
     #[serde(flatten)]
     request: TakerRequestForRpc<'a>,
     order_type: OrderType,
+    #[serde(flatten)]
+    min_volume: DetailedMinVolume,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -2823,16 +2836,17 @@ pub async fn lp_auto_buy(
     let result = json!({ "result": LpautobuyResult {
         request: (&request).into(),
         order_type: input.order_type,
+        min_volume: input.min_volume.clone().into(),
     } });
     let order = TakerOrder {
         created_at: now_ms(),
         matches: HashMap::new(),
         request,
         order_type: input.order_type,
+        min_volume: input.min_volume,
     };
     save_my_taker_order(ctx, &order);
     my_taker_orders.insert(order.request.uuid, order);
-    drop(my_taker_orders);
     Ok(result.to_string())
 }
 
