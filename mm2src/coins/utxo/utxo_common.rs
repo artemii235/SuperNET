@@ -1341,11 +1341,7 @@ where
     let script_pubkey = script_pubkey.to_bytes();
 
     let _utxo_lock = UTXO_LOCK.lock().await;
-    let unspents = try_s!(coin
-        .ordered_mature_unspents(&coin.as_ref().my_address)
-        .compat()
-        .await
-        .map_err(|e| ERRL!("{}", e)));
+    let (unspents, _) = try_s!(coin.ordered_mature_unspents(&coin.as_ref().my_address).await);
     let (value, fee_policy) = if req.max {
         (
             unspents.iter().fold(0, |sum, unspent| sum + unspent.value),
@@ -2039,7 +2035,11 @@ pub fn set_requires_notarization(coin: &UtxoCoinFields, requires_nota: bool) {
         .store(requires_nota, AtomicOrderding::Relaxed);
 }
 
-pub async fn ordered_mature_unspents<T>(coin: T, address: Address) -> Result<Vec<UnspentInfo>, String>
+#[allow(clippy::needless_lifetimes)]
+pub async fn ordered_mature_unspents<'a, T>(
+    coin: &'a T,
+    address: &Address,
+) -> Result<(Vec<UnspentInfo>, AsyncMutexGuard<'a, RecentlySpentOutPoints>), String>
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps,
 {
@@ -2067,7 +2067,7 @@ where
         Ok(confirmations as u32)
     }
 
-    let (unspents, _) = try_s!(coin.list_unspent_ordered(&address).await);
+    let (unspents, recently_spent) = try_s!(list_unspent_ordered(coin, address).await);
     let block_count = try_s!(coin.as_ref().rpc_client.get_block_count().compat().await);
 
     let mut result = Vec::with_capacity(unspents.len());
@@ -2114,7 +2114,7 @@ where
         }
     }
 
-    Ok(result)
+    Ok((result, recently_spent))
 }
 
 pub fn is_unspent_mature(mature_confirmations: u32, output: &RpcTransaction) -> bool {
@@ -2187,7 +2187,7 @@ where
 {
     let mut attempts = 0i32;
     loop {
-        let mature_unspents = try_s!(coin.ordered_mature_unspents(&coin.as_ref().my_address).compat().await);
+        let (mature_unspents, _) = try_s!(coin.ordered_mature_unspents(&coin.as_ref().my_address).await);
         let spendable_balance = mature_unspents.iter().fold(BigDecimal::zero(), |acc, x| {
             acc + big_decimal_from_sat(x.value as i64, coin.as_ref().decimals)
         });

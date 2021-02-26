@@ -48,7 +48,8 @@ fn check_tx_fee(coin: &Qrc20Coin, expected_tx_fee: ActualTxFee) {
 
 #[test]
 fn test_withdraw_impl_fee_details() {
-    Qrc20Coin::ordered_mature_unspents.mock_safe(|_, _| {
+    Qrc20Coin::ordered_mature_unspents.mock_safe(|coin, _| {
+        let cache = block_on(coin.as_ref().recently_spent_outpoints.lock());
         let unspents = vec![UnspentInfo {
             outpoint: OutPoint {
                 hash: 1.into(),
@@ -57,7 +58,7 @@ fn test_withdraw_impl_fee_details() {
             value: 1000000000,
             height: Default::default(),
         }];
-        MockResult::Return(Box::new(futures01::future::ok(unspents)))
+        MockResult::Return(Box::pin(futures::future::ok((unspents, cache))))
     });
 
     // priv_key of qXxsj5RtciAby9T7m98AgAATL4zTi4UwDG

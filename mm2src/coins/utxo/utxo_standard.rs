@@ -102,15 +102,11 @@ impl UtxoCommonOps for UtxoStandardCoin {
         )
     }
 
-    fn ordered_mature_unspents(
-        &self,
+    async fn ordered_mature_unspents<'a>(
+        &'a self,
         address: &Address,
-    ) -> Box<dyn Future<Item = Vec<UnspentInfo>, Error = String> + Send> {
-        Box::new(
-            utxo_common::ordered_mature_unspents(self.clone(), address.clone())
-                .boxed()
-                .compat(),
-        )
+    ) -> Result<(Vec<UnspentInfo>, AsyncMutexGuard<'a, RecentlySpentOutPoints>), String> {
+        utxo_common::ordered_mature_unspents(self, address).await
     }
 
     fn get_verbose_transaction_from_cache_or_rpc(
