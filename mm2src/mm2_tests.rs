@@ -5064,6 +5064,158 @@ fn test_orderbook_is_mine_orders() {
     );
 }
 
+#[test]
+fn test_sell_min_volume() {
+    let bob_passphrase = unwrap!(get_passphrase(&".env.client", "BOB_PASSPHRASE"));
+
+    let coins = json! ([
+        {"coin":"RICK","asset":"RICK","required_confirmations":0,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
+        {"coin":"MORTY","asset":"MORTY","required_confirmations":0,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
+        {"coin":"ETH","name":"ethereum","protocol":{"type":"ETH"}},
+        {"coin":"JST","name":"jst","protocol":{"type":"ERC20","protocol_data":{"platform":"ETH","contract_address":"0x2b294F029Fde858b2c62184e8390591755521d8E"}}}
+    ]);
+
+    let mut mm_bob = unwrap!(MarketMakerIt::start(
+        json! ({
+            "gui": "nogui",
+            "netid": 8999,
+            "dht": "on",  // Enable DHT without delay.
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| unwrap! (s.parse::<i64>())),
+            "passphrase": bob_passphrase,
+            "coins": coins,
+            "rpc_password": "password",
+            "i_am_seed": true,
+        }),
+        "password".into(),
+        local_start!("bob")
+    ));
+
+    let (_bob_dump_log, _bob_dump_dashboard) = mm_bob.mm_dump();
+    log! ({"Bob log path: {}", mm_bob.log_path.display()});
+    unwrap!(block_on(
+        mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
+    ));
+    log!([block_on(enable_coins_eth_electrum(&mm_bob, vec![
+        "http://195.201.0.6:8565"
+    ]))]);
+
+    let min_volume: BigDecimal = "0.1".parse().unwrap();
+    log!("Issue bob ETH/JST sell request");
+    let rc = unwrap!(block_on(mm_bob.rpc(json! ({
+        "userpass": mm_bob.userpass,
+        "method": "sell",
+        "base": "ETH",
+        "rel": "JST",
+        "price": "1",
+        "volume": "1",
+        "min_volume": min_volume,
+        "order_type": {
+            "type": "GoodTillCancelled"
+        }
+    }))));
+    assert!(rc.0.is_success(), "!sell: {}", rc.1);
+    let rc_json: Json = json::from_str(&rc.1).unwrap();
+    let uuid: Uuid = json::from_value(rc_json["result"]["uuid"].clone()).unwrap();
+    let min_volume_response: BigDecimal = json::from_value(rc_json["result"]["min_volume"].clone()).unwrap();
+    assert_eq!(min_volume, min_volume_response);
+
+    log!("Wait for 40 seconds for Bob order to be converted to maker");
+    thread::sleep(Duration::from_secs(40));
+
+    let rc = unwrap!(block_on(mm_bob.rpc(json! ({
+        "userpass": mm_bob.userpass,
+        "method": "my_orders",
+    }))));
+    assert!(rc.0.is_success(), "!my_orders: {}", rc.1);
+    let my_orders: Json = unwrap!(json::from_str(&rc.1));
+    let my_maker_orders: HashMap<Uuid, Json> = unwrap!(json::from_value(my_orders["result"]["maker_orders"].clone()));
+    let my_taker_orders: HashMap<Uuid, Json> = unwrap!(json::from_value(my_orders["result"]["taker_orders"].clone()));
+    assert_eq!(1, my_maker_orders.len(), "maker_orders must have exactly 1 order");
+    assert!(my_taker_orders.is_empty(), "taker_orders must be empty");
+    let maker_order = my_maker_orders.get(&uuid).unwrap();
+    let min_volume_maker: BigDecimal = json::from_value(maker_order["min_base_vol"].clone()).unwrap();
+    assert_eq!(min_volume, min_volume_maker);
+}
+
+#[test]
+fn test_buy_min_volume() {
+    let bob_passphrase = unwrap!(get_passphrase(&".env.client", "BOB_PASSPHRASE"));
+
+    let coins = json! ([
+        {"coin":"RICK","asset":"RICK","required_confirmations":0,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
+        {"coin":"MORTY","asset":"MORTY","required_confirmations":0,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
+        {"coin":"ETH","name":"ethereum","protocol":{"type":"ETH"}},
+        {"coin":"JST","name":"jst","protocol":{"type":"ERC20","protocol_data":{"platform":"ETH","contract_address":"0x2b294F029Fde858b2c62184e8390591755521d8E"}}}
+    ]);
+
+    let mut mm_bob = unwrap!(MarketMakerIt::start(
+        json! ({
+            "gui": "nogui",
+            "netid": 8999,
+            "dht": "on",  // Enable DHT without delay.
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| unwrap! (s.parse::<i64>())),
+            "passphrase": bob_passphrase,
+            "coins": coins,
+            "rpc_password": "password",
+            "i_am_seed": true,
+        }),
+        "password".into(),
+        local_start!("bob")
+    ));
+
+    let (_bob_dump_log, _bob_dump_dashboard) = mm_bob.mm_dump();
+    log! ({"Bob log path: {}", mm_bob.log_path.display()});
+    unwrap!(block_on(
+        mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
+    ));
+    log!([block_on(enable_coins_eth_electrum(&mm_bob, vec![
+        "http://195.201.0.6:8565"
+    ]))]);
+
+    let min_volume: BigDecimal = "0.1".parse().unwrap();
+    log!("Issue bob ETH/JST sell request");
+    let rc = unwrap!(block_on(mm_bob.rpc(json! ({
+        "userpass": mm_bob.userpass,
+        "method": "buy",
+        "base": "ETH",
+        "rel": "JST",
+        "price": "2",
+        "volume": "1",
+        "min_volume": min_volume,
+        "order_type": {
+            "type": "GoodTillCancelled"
+        }
+    }))));
+    assert!(rc.0.is_success(), "!sell: {}", rc.1);
+    let rc_json: Json = json::from_str(&rc.1).unwrap();
+    let uuid: Uuid = json::from_value(rc_json["result"]["uuid"].clone()).unwrap();
+    let min_volume_response: BigDecimal = json::from_value(rc_json["result"]["min_volume"].clone()).unwrap();
+    assert_eq!(min_volume, min_volume_response);
+
+    log!("Wait for 40 seconds for Bob order to be converted to maker");
+    thread::sleep(Duration::from_secs(40));
+
+    let rc = unwrap!(block_on(mm_bob.rpc(json! ({
+        "userpass": mm_bob.userpass,
+        "method": "my_orders",
+    }))));
+    assert!(rc.0.is_success(), "!my_orders: {}", rc.1);
+    let my_orders: Json = unwrap!(json::from_str(&rc.1));
+    let my_maker_orders: HashMap<Uuid, Json> = unwrap!(json::from_value(my_orders["result"]["maker_orders"].clone()));
+    let my_taker_orders: HashMap<Uuid, Json> = unwrap!(json::from_value(my_orders["result"]["taker_orders"].clone()));
+    assert_eq!(1, my_maker_orders.len(), "maker_orders must have exactly 1 order");
+    assert!(my_taker_orders.is_empty(), "taker_orders must be empty");
+    let maker_order = my_maker_orders.get(&uuid).unwrap();
+
+    let expected_min_volume: BigDecimal = "0.2".parse().unwrap();
+    let min_volume_maker: BigDecimal = json::from_value(maker_order["min_base_vol"].clone()).unwrap();
+    assert_eq!(expected_min_volume, min_volume_maker);
+}
+
 // HOWTO
 // 1. Install Firefox.
 // 2. Install forked version of wasm-bindgen-cli: cargo install wasm-bindgen-cli --git https://github.com/artemii235/wasm-bindgen.git
