@@ -5226,12 +5226,8 @@ fn test_best_orders() {
     ));
     let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
     log!({"Bob log path: {}", mm_bob.log_path.display()});
-    unwrap!(block_on(
-        mm_bob.wait_for_log(22., |log| log.contains("INFO Listening on"))
-    ));
-    unwrap!(block_on(
-        mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
-    ));
+    block_on(mm_bob.wait_for_log(22., |log| log.contains("INFO Listening on"))).unwrap();
+    block_on(mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
     // Enable coins on Bob side. Print the replies in case we need the "address".
     let bob_coins = block_on(enable_coins_eth_electrum(&mm_bob, &["http://195.201.0.6:8565"]));
     log!({ "enable_coins (bob): {:?}", bob_coins });
@@ -5278,9 +5274,11 @@ fn test_best_orders() {
     let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
     log!({ "Alice log path: {}", mm_alice.log_path.display() });
 
-    unwrap!(block_on(
-        mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
-    ));
+    block_on(mm_bob.wait_for_log(22., |log| {
+        log.contains("DEBUG Handling IncludedTorelaysMesh message for peer")
+    }))
+    .unwrap();
+    block_on(mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
     let rc = unwrap!(block_on(mm_alice.rpc(json! ({
         "userpass": mm_alice.userpass,
