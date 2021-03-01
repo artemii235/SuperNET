@@ -19,8 +19,8 @@
 //  Copyright © 2017-2019 SuperNET. All rights reserved.
 //
 
-#![cfg_attr(not(feature = "native"), allow(dead_code))]
-#![cfg_attr(not(feature = "native"), allow(unused_imports))]
+#![cfg_attr(target_arch = "wasm32", allow(dead_code))]
+#![cfg_attr(target_arch = "wasm32", allow(unused_imports))]
 
 use common::crash_reports::init_crash_reports;
 use common::mm_ctx::MmCtxBuilder;
@@ -41,7 +41,7 @@ use std::str;
 use self::lp_native_dex::{lp_init, lp_ports};
 use coins::update_coins_config;
 
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 #[path = "database.rs"]
 pub mod database;
 
@@ -164,7 +164,7 @@ fn help() {
         )
 }
 
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 #[allow(dead_code)] // Not used by mm2_lib.
 pub fn mm2_main() {
     use libc::c_char;
@@ -272,11 +272,6 @@ pub fn run_lp_main(first_arg: Option<&str>, ctx_cb: &dyn Fn(u32)) -> Result<(), 
     Ok(())
 }
 
-#[cfg(target_arch = "wasm32")]
-fn on_update_config(_args: &[OsString]) -> Result<(), String> {
-    ERR!("'update_config' is only supported in native mode")
-}
-
 #[cfg(not(target_arch = "wasm32"))]
 fn on_update_config(args: &[OsString]) -> Result<(), String> {
     let src_path = args.get(2).ok_or(ERRL!("Expect path to the source coins config."))?;
@@ -304,7 +299,7 @@ fn on_update_config(args: &[OsString]) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 fn init_logger() -> Result<(), String> {
     use common::log::unified_log::{LevelFilter, UnifiedLoggerBuilder};
 
@@ -315,5 +310,5 @@ fn init_logger() -> Result<(), String> {
         .try_init()
 }
 
-#[cfg(not(feature = "native"))]
+#[cfg(target_arch = "wasm32")]
 fn init_logger() -> Result<(), String> { Ok(()) }

@@ -139,7 +139,7 @@ impl UtxoCoinBuilder for Qrc20CoinBuilder<'_> {
 
     fn dust_amount(&self) -> u64 { QRC20_DUST }
 
-    #[cfg(feature = "native")]
+    #[cfg(not(target_arch = "wasm32"))]
     fn confpath(&self) -> Result<PathBuf, String> {
         use crate::utxo::coin_daemon_data_dir;
 

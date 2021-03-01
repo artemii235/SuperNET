@@ -27,9 +27,8 @@ use std::thread;
 
 pub use log::{debug, error, info, trace, warn};
 
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 lazy_static! {
-    static ref PRINTF_LOCK: Mutex<()> = Mutex::new(());
     /// If this C callback is present then all the logging output should happen through it
     /// (and leaving stdout untouched).
     /// The *gravity* logging still gets a copy in order for the log-based tests to work.
@@ -48,14 +47,14 @@ struct Gravity {
 
 impl Gravity {
     /// Files a log chunk to be logged from the center of gravity thread.
-    #[cfg(feature = "native")]
+    #[cfg(not(target_arch = "wasm32"))]
     fn chunk2log(&self, chunk: String) {
         self.landing.push(chunk);
         if thread::current().id() == self.target_thread_id {
             self.flush()
         }
     }
-    #[cfg(not(feature = "native"))]
+    #[cfg(target_arch = "wasm32")]
     fn chunk2log(&self, chunk: String) {
         writeln(&chunk);
         self.landing.push(chunk);
@@ -63,7 +62,7 @@ impl Gravity {
 
     /// Prints the collected log chunks.  
     /// `println!` is used for compatibility with unit test stdout capturing.
-    #[cfg(feature = "native")]
+    #[cfg(not(target_arch = "wasm32"))]
     fn flush(&self) {
         let mut tail = unwrap!(self.tail.spinlock(77));
         while let Ok(chunk) = self.landing.pop() {
@@ -77,7 +76,7 @@ impl Gravity {
             tail.push_back(chunk)
         }
     }
-    #[cfg(not(feature = "native"))]
+    #[cfg(target_arch = "wasm32")]
     fn flush(&self) {}
 }
 
@@ -86,7 +85,7 @@ thread_local! {
     static GRAVITY: RefCell<Option<Weak<Gravity>>> = RefCell::new (None)
 }
 
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 #[doc(hidden)]
 pub fn chunk2log(mut chunk: String) {
     let used_log_output = if let Some(log_cb) = *LOG_OUTPUT.lock() {
@@ -123,7 +122,7 @@ pub fn chunk2log(mut chunk: String) {
     writeln(&chunk)
 }
 
-#[cfg(not(feature = "native"))]
+#[cfg(target_arch = "wasm32")]
 #[doc(hidden)]
 pub fn chunk2log(chunk: String) { writeln(&chunk) }
 
@@ -158,7 +157,7 @@ macro_rules! log {
         let mut buf = String::new();
         unwrap! (wite! (&mut buf,
             ($crate::log::short_log_time ($crate::now_ms()))
-            if cfg! (feature = "native") {", "} else {"ʷ "}
+            if cfg! (target_arch = "wasm32") {"ʷ "} else {", "}
             (::gstuff::filename (file!())) ':' (line!()) "] "
             $($args)+)
         );
@@ -787,7 +786,7 @@ impl LogState {
     /// Useful for unit tests, since they can only capture the output made from the initial test thread
     /// (https://github.com/rust-lang/rust/issues/12309,
     ///  https://github.com/rust-lang/rust/issues/50297#issuecomment-388988381).
-    #[cfg(feature = "native")]
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn thread_gravity_on(&self) -> Result<(), String> {
         let mut gravity = try_s!(self.gravity.spinlock(77));
         if let Some(ref gravity) = *gravity {
@@ -805,11 +804,11 @@ impl LogState {
             Ok(())
         }
     }
-    #[cfg(not(feature = "native"))]
+    #[cfg(target_arch = "wasm32")]
     pub fn thread_gravity_on(&self) -> Result<(), String> { Ok(()) }
 
     /// Start intercepting the `log!` invocations happening on the current thread.
-    #[cfg(feature = "native")]
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn register_my_thread(&self) -> Result<(), String> {
         let gravity = try_s!(self.gravity.spinlock(77));
         if let Some(ref gravity) = *gravity {
@@ -822,11 +821,11 @@ impl LogState {
         }
         Ok(())
     }
-    #[cfg(not(feature = "native"))]
+    #[cfg(target_arch = "wasm32")]
     pub fn register_my_thread(&self) -> Result<(), String> { Ok(()) }
 }
 
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 impl Drop for LogState {
     fn drop(&mut self) {
         // Make sure to log the chunks received from the satellite threads.
@@ -856,7 +855,7 @@ impl Drop for LogState {
     }
 }
 
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 pub mod unified_log {
     use super::chunk2log;
     pub use log::LevelFilter;

@@ -17,9 +17,6 @@
 //  marketmaker
 //
 
-#![cfg_attr(not(feature = "native"), allow(dead_code))]
-#![cfg_attr(not(feature = "native"), allow(unused_imports))]
-
 use bigdecimal::BigDecimal;
 use coins::{disable_coin as disable_coin_impl, lp_coinfind, lp_coininit, MmCoinEnum};
 use common::executor::{spawn, Timer};

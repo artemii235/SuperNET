@@ -1,6 +1,6 @@
-#![cfg_attr(not(feature = "native"), allow(unused_imports))]
-#![cfg_attr(not(feature = "native"), allow(unused_macros))]
-#![cfg_attr(not(feature = "native"), allow(dead_code))]
+#![cfg_attr(target_arch = "wasm32", allow(unused_imports))]
+#![cfg_attr(target_arch = "wasm32", allow(unused_macros))]
+#![cfg_attr(target_arch = "wasm32", allow(dead_code))]
 
 use crate::utxo::sat_from_big_decimal;
 use crate::{RpcTransportEventHandler, RpcTransportEventHandlerShared};
@@ -14,7 +14,7 @@ use common::mm_number::MmNumber;
 use common::wio::slurp_req;
 use common::{median, OrdRange, StringError};
 use futures::channel::oneshot as async_oneshot;
-#[cfg(not(feature = "native"))]
+#[cfg(target_arch = "wasm32")]
 use futures::channel::oneshot::Sender as ShotSender;
 use futures::compat::{Future01CompatExt, Stream01CompatExt};
 use futures::future::{select as select_func, Either, FutureExt, TryFutureExt};
@@ -32,7 +32,7 @@ use http::{Request, StatusCode};
 use keys::Address;
 #[cfg(test)] use mocktopus::macros::*;
 use rpc::v1::types::{Bytes as BytesJson, Transaction as RpcTransaction, H256 as H256Json};
-#[cfg(feature = "native")] use rustls::{self};
+#[cfg(not(target_arch = "wasm32"))] use rustls::{self};
 use script::Builder;
 use serde_json::{self as json, Value as Json};
 use serialization::{deserialize, serialize, CompactInteger, Reader};
@@ -43,19 +43,21 @@ use std::io;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::num::NonZeroU64;
 use std::ops::Deref;
-#[cfg(not(feature = "native"))] use std::os::raw::c_char;
+#[cfg(target_arch = "wasm32")] use std::os::raw::c_char;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrdering};
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
-#[cfg(feature = "native")] use tokio::net::TcpStream;
-#[cfg(feature = "native")] use tokio_rustls::webpki::DNSNameRef;
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))] use tokio::net::TcpStream;
+#[cfg(not(target_arch = "wasm32"))]
+use tokio_rustls::webpki::DNSNameRef;
+#[cfg(not(target_arch = "wasm32"))]
 use tokio_rustls::{client::TlsStream, TlsConnector};
-#[cfg(feature = "native")] use webpki_roots::TLS_SERVER_ROOTS;
+#[cfg(not(target_arch = "wasm32"))]
+use webpki_roots::TLS_SERVER_ROOTS;
 
 pub type AddressesByLabelResult = HashMap<String, AddressPurpose>;
 
@@ -67,7 +69,7 @@ pub struct AddressPurpose {
 /// Skips the server certificate verification on TLS connection
 pub struct NoCertificateVerification {}
 
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 impl rustls::ServerCertVerifier for NoCertificateVerification {
     fn verify_server_cert(
         &self,
@@ -990,7 +992,7 @@ fn addr_to_socket_addr(input: &str) -> Result<SocketAddr, String> {
 }
 
 /// Attempts to process the request (parse url, etc), build up the config and create new electrum connection
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 pub fn spawn_electrum(
     req: &ElectrumRpcRequest,
     event_handlers: Vec<RpcTransportEventHandlerShared>,
@@ -1001,13 +1003,13 @@ pub fn spawn_electrum(
             let uri: Uri = try_s!(req.url.parse());
             let host = try_s!(uri.host().ok_or(ERRL!("Couldn't retrieve host from addr {}", req.url)));
 
-            #[cfg(feature = "native")]
+            #[cfg(not(target_arch = "wasm32"))]
             fn check(host: &str) -> Result<(), String> {
                 DNSNameRef::try_from_ascii_str(host)
                     .map(|_| ())
                     .map_err(|e| fomat!([e]))
             }
-            #[cfg(not(feature = "native"))]
+            #[cfg(target_arch = "wasm32")]
             fn check(_host: &str) -> Result<(), String> { Ok(()) }
 
             try_s!(check(host));
@@ -1022,7 +1024,7 @@ pub fn spawn_electrum(
     Ok(electrum_connect(req.url.clone(), config, event_handlers))
 }
 
-#[cfg(not(feature = "native"))]
+#[cfg(target_arch = "wasm32")]
 #[cfg_attr(feature = "w-bindgen", wasm_bindgen(raw_module = "../../../js/defined-in-js.js"))]
 extern "C" {
     fn host_electrum_connect(ptr: *const c_char, len: i32) -> i32;
@@ -1031,7 +1033,7 @@ extern "C" {
     fn host_electrum_reply(ri: i32, id: i32, rbuf: *mut c_char, rcap: i32) -> i32;
 }
 
-#[cfg(not(feature = "native"))]
+#[cfg(target_arch = "wasm32")]
 pub fn spawn_electrum(
     req: &ElectrumRpcRequest,
     _event_handlers: Vec<RpcTransportEventHandlerShared>,
@@ -1091,10 +1093,10 @@ pub struct ElectrumConnection {
 }
 
 impl ElectrumConnection {
-    #[cfg(feature = "native")]
+    #[cfg(not(target_arch = "wasm32"))]
     async fn is_connected(&self) -> bool { self.tx.lock().await.is_some() }
 
-    #[cfg(not(feature = "native"))]
+    #[cfg(target_arch = "wasm32")]
     async fn is_connected(&self) -> bool {
         let rc = host_electrum_is_connected(self.ri);
         if rc < 0 {
@@ -1160,7 +1162,7 @@ pub struct ElectrumClientImpl {
     get_balance_subs: AsyncMutex<Vec<async_oneshot::Sender<Result<ElectrumBalance, JsonRpcError>>>>,
 }
 
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 async fn electrum_request_multi(
     client: ElectrumClient,
     request: JsonRpcRequest,
@@ -1199,7 +1201,7 @@ async fn electrum_request_multi(
     }
 }
 
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 async fn electrum_request_to(
     client: ElectrumClient,
     request: JsonRpcRequest,
@@ -1225,7 +1227,7 @@ async fn electrum_request_to(
     Ok((JsonRpcRemoteAddr(to_addr.to_owned()), response))
 }
 
-#[cfg(not(feature = "native"))]
+#[cfg(target_arch = "wasm32")]
 async fn electrum_request_to(
     _client: ElectrumClient,
     _request: JsonRpcRequest,
@@ -1234,14 +1236,14 @@ async fn electrum_request_to(
     ERR!("Not supported")
 }
 
-#[cfg(not(feature = "native"))]
+#[cfg(target_arch = "wasm32")]
 lazy_static! {
     static ref ELECTRUM_REPLIES: std::sync::Mutex<HashMap<(i32, i32), ShotSender<()>>> =
         std::sync::Mutex::new(HashMap::new());
 }
 
 #[no_mangle]
-#[cfg(not(feature = "native"))]
+#[cfg(target_arch = "wasm32")]
 pub extern "C" fn electrum_replied(ri: i32, id: i32) {
     //log! ("electrum_replied] " [=ri] ", " [=id]);
     let mut electrum_replies = unwrap!(ELECTRUM_REPLIES.lock());
@@ -1252,7 +1254,7 @@ pub extern "C" fn electrum_replied(ri: i32, id: i32) {
 
 /// AG: As of now the pings tend to fail.
 ///     I haven't looked into this because we'll probably use a websocket or Java implementation instead.
-#[cfg(not(feature = "native"))]
+#[cfg(target_arch = "wasm32")]
 async fn electrum_request_multi(
     client: ElectrumClient,
     request: JsonRpcRequest,
@@ -1780,14 +1782,14 @@ macro_rules! try_loop {
 }
 
 /// The enum wrapping possible variants of underlying Streams
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 #[allow(clippy::large_enum_variant)]
 enum ElectrumStream {
     Tcp(TcpStream),
     Tls(TlsStream<TcpStream>),
 }
 
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 impl AsRef<TcpStream> for ElectrumStream {
     fn as_ref(&self) -> &TcpStream {
         match self {
@@ -1797,7 +1799,7 @@ impl AsRef<TcpStream> for ElectrumStream {
     }
 }
 
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 impl AsyncRead for ElectrumStream {
     fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
         match self.get_mut() {
@@ -1807,7 +1809,7 @@ impl AsyncRead for ElectrumStream {
     }
 }
 
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 impl AsyncWrite for ElectrumStream {
     fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
         match self.get_mut() {
@@ -1844,7 +1846,7 @@ async fn electrum_last_chunk_loop(last_chunk: Arc<AtomicU64>) {
     }
 }
 
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 async fn connect_loop(
     config: ElectrumConfig,
     addr: String,
@@ -1956,7 +1958,7 @@ async fn connect_loop(
     }
 }
 
-#[cfg(not(feature = "native"))]
+#[cfg(target_arch = "wasm32")]
 async fn connect_loop(
     _config: ElectrumConfig,
     _addr: SocketAddr,
@@ -1968,7 +1970,7 @@ async fn connect_loop(
 
 /// Builds up the electrum connection, spawns endless loop that attempts to reconnect to the server
 /// in case of connection errors
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 fn electrum_connect(
     addr: String,
     config: ElectrumConfig,
@@ -1999,7 +2001,7 @@ fn electrum_connect(
     }
 }
 
-#[cfg(not(feature = "native"))]
+#[cfg(target_arch = "wasm32")]
 fn electrum_connect(
     _addr: SocketAddr,
     _config: ElectrumConfig,
