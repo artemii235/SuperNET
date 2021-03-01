@@ -185,3 +185,13 @@ pub struct OrderbookEntry {
 pub struct BestOrdersResponse {
     pub result: HashMap<String, Vec<OrderbookEntry>>,
 }
+
+#[derive(Debug, Deserialize)]
+pub struct EnableElectrumResponse {
+    pub coin: String,
+    pub address: String,
+    pub balance: BigDecimal,
+    pub required_confirmations: u64,
+    pub requires_notarization: bool,
+    pub result: String,
+}

@@ -620,8 +620,8 @@ pub fn mm_spat(
 
 /// Asks MM to enable the given currency in electrum mode
 /// fresh list of servers at https://github.com/jl777/coins/blob/master/electrums/.
-pub async fn enable_electrum(mm: &MarketMakerIt, coin: &str, urls: Vec<&str>) -> Json {
-    let servers: Vec<_> = urls.into_iter().map(|url| json!({ "url": url })).collect();
+pub async fn enable_electrum(mm: &MarketMakerIt, coin: &str, tx_history: bool, urls: &[&str]) -> Json {
+    let servers: Vec<_> = urls.iter().map(|url| json!({ "url": url })).collect();
     let electrum = unwrap!(
         mm.rpc(json! ({
             "userpass": mm.userpass,
@@ -629,6 +629,7 @@ pub async fn enable_electrum(mm: &MarketMakerIt, coin: &str, urls: Vec<&str>) ->
             "coin": coin,
             "servers": servers,
             "mm2": 1,
+            "tx_history": tx_history,
         }))
         .await
     );
@@ -700,7 +701,7 @@ pub fn get_passphrase(path: &dyn AsRef<Path>, env: &str) -> Result<String, Strin
 
 /// Asks MM to enable the given currency in native mode.
 /// Returns the RPC reply containing the corresponding wallet address.
-pub async fn enable_native(mm: &MarketMakerIt, coin: &str, urls: Vec<&str>) -> Json {
+pub async fn enable_native(mm: &MarketMakerIt, coin: &str, urls: &[&str]) -> Json {
     let native = unwrap!(
         mm.rpc(json! ({
             "userpass": mm.userpass,

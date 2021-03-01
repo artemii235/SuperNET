@@ -446,7 +446,6 @@ pub async fn process_peer_request(ctx: MmArc, request: OrdermatchRequest) -> Res
     }
 }
 
-#[allow(dead_code)]
 type TrieProof = Vec<Vec<u8>>;
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -467,7 +466,7 @@ struct GetOrderbookRes {
 
 #[derive(Debug, Deserialize, Serialize)]
 struct BestOrdersRes {
-    orders: HashMap<String, Vec<OrderbookItem>>,
+    orders: HashMap<String, Vec<OrderbookItemWithProof>>,
 }
 
 async fn process_best_orders_p2p_request(
@@ -501,7 +500,13 @@ async fn process_best_orders_p2p_request(
         for ordered in orders {
             match orderbook.order_set.get(&ordered.uuid) {
                 Some(o) => {
-                    best_orders.push(o.clone());
+                    match orderbook.orderbook_item_with_proof(o.clone()) {
+                        Ok(order_w_proof) => best_orders.push(order_w_proof),
+                        Err(e) => {
+                            log::error!("Error {:?} on proof generation for order {:?}", e, o);
+                            continue;
+                        },
+                    };
                     let coin_volume = match action {
                         BestOrdersAction::Buy => o.max_volume.clone(),
                         BestOrdersAction::Sell => &o.max_volume * &o.price,
@@ -2113,6 +2118,14 @@ impl Orderbook {
             trie_roots: trie_roots_to_request,
         })
     }
+
+    fn orderbook_item_with_proof(&self, order: OrderbookItem) -> Result<OrderbookItemWithProof, ()> {
+        Ok(OrderbookItemWithProof {
+            order,
+            last_message_payload: vec![],
+            proof: vec![],
+        })
+    }
 }
 
 #[derive(Default)]
@@ -2860,6 +2873,16 @@ struct OrderbookItem {
     min_volume: BigRational,
     uuid: Uuid,
     created_at: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+struct OrderbookItemWithProof {
+    /// Orderbook item
+    order: OrderbookItem,
+    /// Last pubkey message payload that contains most recent pair trie root
+    last_message_payload: Vec<u8>,
+    /// Proof confirming that orderbook item is in the pair trie
+    proof: TrieProof,
 }
 
 /// Concrete implementation of Hasher using Blake2b 64-bit hashes
@@ -3887,21 +3910,35 @@ pub async fn best_orders(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Str
         volume: req.volume.into(),
     };
 
-    let orders = try_s!(request_any_relay::<BestOrdersRes>(ctx.clone(), P2PRequest::Ordermatch(p2p_request)).await);
+    let best_orders_res =
+        try_s!(request_any_relay::<BestOrdersRes>(ctx.clone(), P2PRequest::Ordermatch(p2p_request)).await);
     let mut response = HashMap::new();
-    if let Some((p2p_response, peer_id)) = orders {
+    if let Some((p2p_response, peer_id)) = best_orders_res {
         log::debug!("Got best orders {:?} from peer {}", p2p_response, peer_id);
-        for (coin, orders) in p2p_response.orders {
-            for order in orders {
+        for (coin, orders_w_proofs) in p2p_response.orders {
+            let coin_conf = coin_conf(&ctx, &coin);
+            if coin_conf.is_null() {
+                log::warn!("Coin {} is not found in config", coin);
+                continue;
+            }
+            for order_w_proof in orders_w_proofs {
+                let order = order_w_proof.order;
+                let address = match address_by_coin_conf_and_pubkey_str(&coin, &coin_conf, &order.pubkey) {
+                    Ok(a) => a,
+                    Err(e) => {
+                        log::error!("Error {} getting coin {} address from pubkey {}", e, coin, order.pubkey);
+                        continue;
+                    },
+                };
                 let price_mm: MmNumber = match req.action {
-                    BestOrdersAction::Buy => order.price.clone().into(),
+                    BestOrdersAction::Buy => order.price.into(),
                     BestOrdersAction::Sell => order.price.recip().into(),
                 };
-                let max_vol_mm: MmNumber = order.max_volume.clone().into();
-                let min_vol_mm: MmNumber = order.min_volume.clone().into();
+                let max_vol_mm: MmNumber = order.max_volume.into();
+                let min_vol_mm: MmNumber = order.min_volume.into();
                 let entry = OrderbookEntry {
                     coin: coin.clone(),
-                    address: "".into(),
+                    address,
                     price: price_mm.to_decimal(),
                     price_rat: price_mm.to_ratio(),
                     price_fraction: price_mm.to_fraction(),
@@ -3911,7 +3948,7 @@ pub async fn best_orders(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Str
                     min_volume: min_vol_mm.to_decimal(),
                     min_volume_rat: min_vol_mm.to_ratio(),
                     min_volume_fraction: min_vol_mm.to_fraction(),
-                    pubkey: order.pubkey.clone(),
+                    pubkey: order.pubkey,
                     age: (now_ms() as i64 / 1000),
                     zcredits: 0,
                     uuid: order.uuid,

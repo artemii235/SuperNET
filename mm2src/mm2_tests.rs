@@ -5,10 +5,10 @@ use bigdecimal::BigDecimal;
 #[cfg(not(feature = "native"))] use common::call_back;
 use common::executor::Timer;
 #[cfg(feature = "native")] use common::for_tests::mm_dump;
-use common::for_tests::{check_my_swap_status, check_recent_swaps, check_stats_swap_status, enable_electrum,
-                        enable_native, enable_qrc20, find_metrics_in_json, from_env_file, get_passphrase, mm_spat,
-                        LocalStart, MarketMakerIt, RaiiDump, MAKER_ERROR_EVENTS, MAKER_SUCCESS_EVENTS,
-                        TAKER_ERROR_EVENTS, TAKER_SUCCESS_EVENTS};
+use common::for_tests::{check_my_swap_status, check_recent_swaps, check_stats_swap_status,
+                        enable_electrum as enable_electrum_impl, enable_native as enable_native_impl, enable_qrc20,
+                        find_metrics_in_json, from_env_file, get_passphrase, mm_spat, LocalStart, MarketMakerIt,
+                        RaiiDump, MAKER_ERROR_EVENTS, MAKER_SUCCESS_EVENTS, TAKER_ERROR_EVENTS, TAKER_SUCCESS_EVENTS};
 use common::mm_metrics::{MetricType, MetricsJson};
 use common::mm_number::Fraction;
 use common::privkey::key_pair_from_seed;
@@ -34,11 +34,24 @@ use structs::*;
 // "Tests in your src files should be unit tests, and tests in tests/ should be integration-style tests."
 // - https://doc.rust-lang.org/cargo/guide/tests.html
 
-async fn enable_coins_eth_electrum(mm: &MarketMakerIt, eth_urls: Vec<&str>) -> HashMap<&'static str, Json> {
+async fn enable_electrum(mm: &MarketMakerIt, coin: &str, tx_history: bool, urls: &[&str]) -> EnableElectrumResponse {
+    let value = enable_electrum_impl(mm, coin, tx_history, urls).await;
+    json::from_value(value).unwrap()
+}
+
+async fn enable_native(mm: &MarketMakerIt, coin: &str, urls: &[&str]) -> EnableElectrumResponse {
+    let value = enable_native_impl(mm, coin, urls).await;
+    json::from_value(value).unwrap()
+}
+
+async fn enable_coins_eth_electrum(
+    mm: &MarketMakerIt,
+    eth_urls: &[&str],
+) -> HashMap<&'static str, EnableElectrumResponse> {
     let mut replies = HashMap::new();
     replies.insert(
         "RICK",
-        enable_electrum(mm, "RICK", vec![
+        enable_electrum(mm, "RICK", false, &[
             "electrum1.cipig.net:10017",
             "electrum2.cipig.net:10017",
             "electrum3.cipig.net:10017",
@@ -47,19 +60,21 @@ async fn enable_coins_eth_electrum(mm: &MarketMakerIt, eth_urls: Vec<&str>) -> H
     );
     replies.insert(
         "MORTY",
-        enable_electrum(mm, "MORTY", vec![
+        enable_electrum(mm, "MORTY", false, &[
             "electrum1.cipig.net:10018",
             "electrum2.cipig.net:10018",
             "electrum3.cipig.net:10018",
         ])
         .await,
     );
-    replies.insert("ETH", enable_native(mm, "ETH", eth_urls.clone()).await);
+    replies.insert("ETH", enable_native(mm, "ETH", eth_urls).await);
     replies.insert("JST", enable_native(mm, "JST", eth_urls).await);
     replies
 }
 
-fn addr_from_enable(enable_response: &Json) -> Json { enable_response["address"].clone() }
+fn addr_from_enable<'a>(enable_response: &'a HashMap<&str, EnableElectrumResponse>, coin: &str) -> &'a str {
+    &enable_response.get(coin).unwrap().address
+}
 
 fn rmd160_from_passphrase(passphrase: &str) -> [u8; 20] {
     key_pair_from_seed(passphrase).unwrap().public().address_hash().take()
@@ -248,7 +263,7 @@ fn alice_can_see_the_active_order_after_connection() {
         mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
     // Enable coins on Bob side. Print the replies in case we need the "address".
-    log!({ "enable_coins (bob): {:?}", block_on(enable_coins_eth_electrum(&mm_bob, vec!["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b"])) });
+    log!({ "enable_coins (bob): {:?}", block_on(enable_coins_eth_electrum(&mm_bob, &["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b"])) });
     // issue sell request on Bob side by setting base/rel price
     log!("Issue bob sell request");
     let rc = unwrap!(block_on(mm_bob.rpc(json! ({
@@ -298,7 +313,7 @@ fn alice_can_see_the_active_order_after_connection() {
         mm_eve.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
     // Enable coins on Eve side. Print the replies in case we need the "address".
-    log!({ "enable_coins (eve): {:?}", block_on(enable_coins_eth_electrum(&mm_eve, vec!["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b"])) });
+    log!({ "enable_coins (eve): {:?}", block_on(enable_coins_eth_electrum(&mm_eve, &["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b"])) });
     // issue sell request on Eve side by setting base/rel price
     log!("Issue eve sell request");
     let rc = unwrap!(block_on(mm_eve.rpc(json! ({
@@ -379,7 +394,7 @@ fn alice_can_see_the_active_order_after_connection() {
     ));
 
     // Enable coins on Alice side. Print the replies in case we need the "address".
-    log!({ "enable_coins (alice): {:?}", block_on(enable_coins_eth_electrum(&mm_alice, vec!["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b"])) });
+    log!({ "enable_coins (alice): {:?}", block_on(enable_coins_eth_electrum(&mm_alice, &["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b"])) });
 
     log!("Get RICK/MORTY orderbook on Alice side");
     let rc = unwrap!(block_on(mm_alice.rpc(json! ({
@@ -435,13 +450,12 @@ fn test_my_balance() {
         mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
     // Enable RICK.
-    let json = block_on(enable_electrum(&mm, "RICK", vec![
+    let json = block_on(enable_electrum(&mm, "RICK", false, &[
         "electrum1.cipig.net:10017",
         "electrum2.cipig.net:10017",
         "electrum3.cipig.net:10017",
     ]));
-    let balance_on_enable = unwrap!(json["balance"].as_str());
-    assert_eq!(balance_on_enable, "7.777");
+    assert_eq!(json.balance, "7.777".parse().unwrap());
 
     let my_balance = unwrap!(block_on(mm.rpc(json! ({
         "userpass": mm.userpass,
@@ -535,7 +549,7 @@ fn test_check_balance_on_order_post() {
         mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
     // Enable coins. Print the replies in case we need the "address".
-    log! ({"enable_coins (bob): {:?}", block_on (enable_coins_eth_electrum (&mm, vec!["http://eth1.cipig.net:8555"]))});
+    log! ({"enable_coins (bob): {:?}", block_on (enable_coins_eth_electrum (&mm, &["http://eth1.cipig.net:8555"]))});
     // issue sell request by setting base/rel price
 
     // Expect error as MORTY balance is 0
@@ -802,10 +816,10 @@ async fn trade_base_rel_electrum(pairs: Vec<(&'static str, &'static str)>) {
     wait_log_re!(mm_alice, 22., ">>>>>>>>> DEX stats ");
 
     // Enable coins on Bob side. Print the replies in case we need the address.
-    let rc = enable_coins_eth_electrum(&mm_bob, vec!["http://195.201.0.6:8565"]).await;
+    let rc = enable_coins_eth_electrum(&mm_bob, &["http://195.201.0.6:8565"]).await;
     log! ({"enable_coins (bob): {:?}", rc});
     // Enable coins on Alice side. Print the replies in case we need the address.
-    let rc = enable_coins_eth_electrum(&mm_alice, vec!["http://195.201.0.6:8565"]).await;
+    let rc = enable_coins_eth_electrum(&mm_alice, &["http://195.201.0.6:8565"]).await;
     log! ({"enable_coins (alice): {:?}", rc});
 
     // unwrap! (mm_alice.wait_for_log (999., &|log| log.contains ("set pubkey for ")));
@@ -996,10 +1010,10 @@ fn withdraw_and_send(
     mm: &MarketMakerIt,
     coin: &str,
     to: &str,
-    enable_res: &HashMap<&'static str, Json>,
+    enable_res: &HashMap<&'static str, EnableElectrumResponse>,
     expected_bal_change: &str,
 ) {
-    let addr = addr_from_enable(unwrap!(enable_res.get(coin)));
+    let addr = addr_from_enable(enable_res, coin);
 
     let withdraw = unwrap!(block_on(mm.rpc(json! ({
         "userpass": mm.userpass,
@@ -1013,7 +1027,7 @@ fn withdraw_and_send(
     let withdraw_json: Json = unwrap!(json::from_str(&withdraw.1));
     assert_eq!(Some(&vec![Json::from(to)]), withdraw_json["to"].as_array());
     assert_eq!(Json::from(expected_bal_change), withdraw_json["my_balance_change"]);
-    assert_eq!(Some(&vec![addr]), withdraw_json["from"].as_array());
+    assert_eq!(Some(&vec![Json::from(addr)]), withdraw_json["from"].as_array());
 
     let send = unwrap!(block_on(mm.rpc(json! ({
         "userpass": mm.userpass,
@@ -1071,10 +1085,10 @@ fn test_withdraw_and_send() {
     ));
 
     // Enable coins. Print the replies in case we need the address.
-    let mut enable_res = block_on(enable_coins_eth_electrum(&mm_alice, vec!["http://195.201.0.6:8565"]));
+    let mut enable_res = block_on(enable_coins_eth_electrum(&mm_alice, &["http://195.201.0.6:8565"]));
     enable_res.insert(
         "MORTY_SEGWIT",
-        block_on(enable_electrum(&mm_alice, "MORTY_SEGWIT", vec![
+        block_on(enable_electrum(&mm_alice, "MORTY_SEGWIT", false, &[
             "electrum1.cipig.net:10018",
             "electrum2.cipig.net:10018",
             "electrum3.cipig.net:10018",
@@ -1236,7 +1250,7 @@ fn test_order_errors_when_base_equal_rel() {
     unwrap!(block_on(
         mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
-    block_on(enable_electrum(&mm, "RICK", vec![
+    block_on(enable_electrum(&mm, "RICK", false, &[
         "electrum3.cipig.net:10017",
         "electrum2.cipig.net:10017",
         "electrum1.cipig.net:10017",
@@ -1303,9 +1317,8 @@ fn startup_passphrase(passphrase: &str, expected_address: &str) {
     unwrap!(block_on(
         mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
-    let enable = block_on(enable_electrum(&mm, "KMD", vec!["electrum1.cipig.net:10001"]));
-    let addr = addr_from_enable(&enable);
-    assert_eq!(Json::from(expected_address), addr);
+    let enable = block_on(enable_electrum(&mm, "KMD", false, &["electrum1.cipig.net:10001"]));
+    assert_eq!(expected_address, enable.address);
     unwrap!(block_on(mm.stop()));
 }
 
@@ -1379,9 +1392,7 @@ fn test_multiple_buy_sell_no_delay() {
     unwrap!(block_on(
         mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
-    log!([block_on(enable_coins_eth_electrum(&mm, vec![
-        "http://195.201.0.6:8565"
-    ]))]);
+    log!([block_on(enable_coins_eth_electrum(&mm, &["http://195.201.0.6:8565"]))]);
 
     let rc = unwrap!(block_on(mm.rpc(json! ({
         "userpass": mm.userpass,
@@ -1476,7 +1487,7 @@ fn test_cancel_order() {
         mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
     // Enable coins on Bob side. Print the replies in case we need the "address".
-    log! ({"enable_coins (bob): {:?}", block_on (enable_coins_eth_electrum (&mm_bob, vec!["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b"]))});
+    log! ({"enable_coins (bob): {:?}", block_on (enable_coins_eth_electrum (&mm_bob, &["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b"]))});
 
     log!("Issue sell request on Bob side by setting base/rel price…");
     let rc = unwrap!(block_on(mm_bob.rpc(json! ({
@@ -1518,7 +1529,7 @@ fn test_cancel_order() {
     ));
 
     // Enable coins on Alice side. Print the replies in case we need the "address".
-    log! ({"enable_coins (alice): {:?}", block_on (enable_coins_eth_electrum (&mm_alice, vec!["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b"]))});
+    log! ({"enable_coins (alice): {:?}", block_on (enable_coins_eth_electrum (&mm_alice, &["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b"]))});
 
     log!("Get RICK/MORTY orderbook on Alice side");
     let rc = unwrap!(block_on(mm_alice.rpc(json! ({
@@ -1620,7 +1631,7 @@ fn test_cancel_all_orders() {
         mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
     // Enable coins on Bob side. Print the replies in case we need the "address".
-    log! ({"enable_coins (bob): {:?}", block_on (enable_coins_eth_electrum (&mm_bob, vec!["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b"]))});
+    log! ({"enable_coins (bob): {:?}", block_on (enable_coins_eth_electrum (&mm_bob, &["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b"]))});
 
     log!("Issue sell request on Bob side by setting base/rel price…");
     let rc = unwrap!(block_on(mm_bob.rpc(json! ({
@@ -1662,7 +1673,7 @@ fn test_cancel_all_orders() {
     ));
 
     // Enable coins on Alice side. Print the replies in case we need the "address".
-    log! ({"enable_coins (alice): {:?}", block_on (enable_coins_eth_electrum (&mm_alice, vec!["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b"]))});
+    log! ({"enable_coins (alice): {:?}", block_on (enable_coins_eth_electrum (&mm_alice, &["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b"]))});
 
     log!("Give Alice 15 seconds to import the order…");
     thread::sleep(Duration::from_secs(15));
@@ -1768,7 +1779,7 @@ fn test_electrum_enable_conn_errors() {
         mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
     // Using working servers and few else with random ports to trigger "connection refused"
-    block_on(enable_electrum(&mm_bob, "RICK", vec![
+    block_on(enable_electrum(&mm_bob, "RICK", false, &[
         "electrum3.cipig.net:10017",
         "electrum2.cipig.net:10017",
         "electrum1.cipig.net:10017",
@@ -1776,7 +1787,7 @@ fn test_electrum_enable_conn_errors() {
         "electrum1.cipig.net:60018",
     ]));
     // use random domain name to trigger name is not resolved
-    block_on(enable_electrum(&mm_bob, "MORTY", vec![
+    block_on(enable_electrum(&mm_bob, "MORTY", false, &[
         "electrum3.cipig.net:10018",
         "electrum2.cipig.net:10018",
         "electrum1.cipig.net:10018",
@@ -1820,7 +1831,7 @@ fn test_order_should_not_be_displayed_when_node_is_down() {
     ));
 
     log!(
-        "Bob enable RICK "[block_on(enable_electrum(&mm_bob, "RICK", vec![
+        "Bob enable RICK "[block_on(enable_electrum(&mm_bob, "RICK", false, &[
             "electrum3.cipig.net:10017",
             "electrum2.cipig.net:10017",
             "electrum1.cipig.net:10017",
@@ -1828,7 +1839,7 @@ fn test_order_should_not_be_displayed_when_node_is_down() {
     );
 
     log!(
-        "Bob enable MORTY "[block_on(enable_electrum(&mm_bob, "MORTY", vec![
+        "Bob enable MORTY "[block_on(enable_electrum(&mm_bob, "MORTY", false, &[
             "electrum3.cipig.net:10018",
             "electrum2.cipig.net:10018",
             "electrum1.cipig.net:10018",
@@ -1861,7 +1872,7 @@ fn test_order_should_not_be_displayed_when_node_is_down() {
     ));
 
     log!(
-        "Alice enable RICK "[block_on(enable_electrum(&mm_alice, "RICK", vec![
+        "Alice enable RICK "[block_on(enable_electrum(&mm_alice, "RICK", false, &[
             "electrum3.cipig.net:10017",
             "electrum2.cipig.net:10017",
             "electrum1.cipig.net:10017",
@@ -1869,7 +1880,7 @@ fn test_order_should_not_be_displayed_when_node_is_down() {
     );
 
     log!(
-        "Alice enable MORTY "[block_on(enable_electrum(&mm_alice, "MORTY", vec![
+        "Alice enable MORTY "[block_on(enable_electrum(&mm_alice, "MORTY", false, &[
             "electrum3.cipig.net:10018",
             "electrum2.cipig.net:10018",
             "electrum1.cipig.net:10018",
@@ -1958,7 +1969,7 @@ fn test_own_orders_should_not_be_removed_from_orderbook() {
     ));
 
     log!(
-        "Bob enable RICK "[block_on(enable_electrum(&mm_bob, "RICK", vec![
+        "Bob enable RICK "[block_on(enable_electrum(&mm_bob, "RICK", false, &[
             "electrum3.cipig.net:10017",
             "electrum2.cipig.net:10017",
             "electrum1.cipig.net:10017",
@@ -1966,7 +1977,7 @@ fn test_own_orders_should_not_be_removed_from_orderbook() {
     );
 
     log!(
-        "Bob enable MORTY "[block_on(enable_electrum(&mm_bob, "MORTY", vec![
+        "Bob enable MORTY "[block_on(enable_electrum(&mm_bob, "MORTY", false, &[
             "electrum3.cipig.net:10018",
             "electrum2.cipig.net:10018",
             "electrum1.cipig.net:10018",
@@ -2035,12 +2046,12 @@ fn test_all_orders_per_pair_per_node_must_be_displayed_in_orderbook() {
     unwrap!(block_on(
         mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
-    block_on(enable_electrum(&mm, "RICK", vec![
+    block_on(enable_electrum(&mm, "RICK", false, &[
         "electrum3.cipig.net:10017",
         "electrum2.cipig.net:10017",
         "electrum1.cipig.net:10017",
     ]));
-    block_on(enable_electrum(&mm, "MORTY", vec![
+    block_on(enable_electrum(&mm, "MORTY", false, &[
         "electrum3.cipig.net:10018",
         "electrum2.cipig.net:10018",
         "electrum1.cipig.net:10018",
@@ -2117,12 +2128,12 @@ fn orderbook_should_display_rational_amounts() {
     unwrap!(block_on(
         mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
-    block_on(enable_electrum(&mm, "RICK", vec![
+    block_on(enable_electrum(&mm, "RICK", false, &[
         "electrum3.cipig.net:10017",
         "electrum2.cipig.net:10017",
         "electrum1.cipig.net:10017",
     ]));
-    block_on(enable_electrum(&mm, "MORTY", vec![
+    block_on(enable_electrum(&mm, "MORTY", false, &[
         "electrum3.cipig.net:10018",
         "electrum2.cipig.net:10018",
         "electrum1.cipig.net:10018",
@@ -2249,7 +2260,7 @@ fn test_show_priv_key() {
     unwrap!(block_on(
         mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
-    log! ({"enable_coins: {:?}", block_on (enable_coins_eth_electrum (&mm, vec!["http://195.201.0.6:8565"]))});
+    log! ({"enable_coins: {:?}", block_on (enable_coins_eth_electrum (&mm, &["http://195.201.0.6:8565"]))});
 
     check_priv_key(&mm, "RICK", "UvCjJf4dKSs2vFGVtCnUTAhR5FTZGdg43DDRa9s7s5DV1sSDX14g");
     check_priv_key(
@@ -2444,9 +2455,7 @@ fn setprice_buy_sell_too_low_volume() {
         mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
 
-    log!([block_on(enable_coins_eth_electrum(&mm, vec![
-        "http://195.201.0.6:8565"
-    ]))]);
+    log!([block_on(enable_coins_eth_electrum(&mm, &["http://195.201.0.6:8565"]))]);
 
     check_too_low_volume_order_creation_fails(&mm, "MORTY", "ETH");
     check_too_low_volume_order_creation_fails(&mm, "ETH", "MORTY");
@@ -2517,8 +2526,8 @@ fn setprice_min_volume_should_be_displayed_in_orderbook() {
         mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
 
-    log! ({"enable_coins (bob): {:?}", block_on (enable_coins_eth_electrum (&mm_bob, vec!["http://195.201.0.6:8565"]))});
-    log! ({"enable_coins (alice): {:?}", block_on (enable_coins_eth_electrum (&mm_alice, vec!["http://195.201.0.6:8565"]))});
+    log! ({"enable_coins (bob): {:?}", block_on (enable_coins_eth_electrum (&mm_bob, &["http://195.201.0.6:8565"]))});
+    log! ({"enable_coins (alice): {:?}", block_on (enable_coins_eth_electrum (&mm_alice, &["http://195.201.0.6:8565"]))});
 
     // issue orderbook call on Alice side to trigger subscription to a topic
     unwrap!(block_on(mm_alice.rpc(json! ({
@@ -2639,7 +2648,7 @@ fn orderbook_should_work_without_coins_activation() {
         mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
 
-    log! ({"enable_coins (bob): {:?}", block_on (enable_coins_eth_electrum (&mm_bob, vec!["http://195.201.0.6:8565"]))});
+    log! ({"enable_coins (bob): {:?}", block_on (enable_coins_eth_electrum (&mm_bob, &["http://195.201.0.6:8565"]))});
 
     let rc = unwrap!(block_on(mm_bob.rpc(json! ({
         "userpass": mm_bob.userpass,
@@ -2701,7 +2710,7 @@ fn test_fill_or_kill_taker_order_should_not_transform_to_maker() {
     unwrap!(block_on(
         mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
-    log!([block_on(enable_coins_eth_electrum(&mm_bob, vec![
+    log!([block_on(enable_coins_eth_electrum(&mm_bob, &[
         "http://195.201.0.6:8565"
     ]))]);
 
@@ -2771,7 +2780,7 @@ fn test_gtc_taker_order_should_transform_to_maker() {
     unwrap!(block_on(
         mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
-    log!([block_on(enable_coins_eth_electrum(&mm_bob, vec![
+    log!([block_on(enable_coins_eth_electrum(&mm_bob, &[
         "http://195.201.0.6:8565"
     ]))]);
 
@@ -2847,7 +2856,7 @@ fn test_set_price_must_save_order_to_db() {
     unwrap!(block_on(
         mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
-    log!([block_on(enable_coins_eth_electrum(&mm_bob, vec![
+    log!([block_on(enable_coins_eth_electrum(&mm_bob, &[
         "http://195.201.0.6:8565"
     ]))]);
 
@@ -2905,7 +2914,7 @@ fn test_set_price_response_format() {
     unwrap!(block_on(
         mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
-    log!([block_on(enable_coins_eth_electrum(&mm_bob, vec![
+    log!([block_on(enable_coins_eth_electrum(&mm_bob, &[
         "http://195.201.0.6:8565"
     ]))]);
 
@@ -2966,7 +2975,7 @@ fn set_price_with_cancel_previous_should_broadcast_cancelled_message() {
         mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
     // Enable coins on Bob side. Print the replies in case we need the "address".
-    log! ({"enable_coins (bob): {:?}", block_on (enable_coins_eth_electrum (&mm_bob, vec!["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b"]))});
+    log! ({"enable_coins (bob): {:?}", block_on (enable_coins_eth_electrum (&mm_bob, &["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b"]))});
 
     let set_price_json = json! ({
         "userpass": mm_bob.userpass,
@@ -3007,7 +3016,7 @@ fn set_price_with_cancel_previous_should_broadcast_cancelled_message() {
     ));
 
     // Enable coins on Alice side. Print the replies in case we need the "address".
-    log! ({"enable_coins (alice): {:?}", block_on (enable_coins_eth_electrum (&mm_alice, vec!["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b"]))});
+    log! ({"enable_coins (alice): {:?}", block_on (enable_coins_eth_electrum (&mm_alice, &["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b"]))});
 
     log!("Get RICK/MORTY orderbook on Alice side");
     let rc = unwrap!(block_on(mm_alice.rpc(json! ({
@@ -3173,7 +3182,7 @@ fn test_metrics_method() {
         mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
 
-    let _electrum = block_on(enable_electrum(&mm, "RICK", vec![
+    let _electrum = block_on(enable_electrum(&mm, "RICK", false, &[
         "electrum1.cipig.net:10017",
         "electrum2.cipig.net:10017",
         "electrum3.cipig.net:10017",
@@ -3232,23 +3241,11 @@ fn test_electrum_tx_history() {
     ));
 
     // Enable RICK electrum client with tx_history loop.
-    let electrum = unwrap!(block_on(mm.rpc (json! ({
-        "userpass": mm.userpass,
-        "method": "electrum",
-        "coin": "RICK",
-        "servers": [{"url":"electrum1.cipig.net:10017"},{"url":"electrum2.cipig.net:10017"},{"url":"electrum3.cipig.net:10017"}],
-        "mm2": 1,
-        "tx_history": true
-    }))));
-
-    assert_eq!(
-        electrum.0,
-        StatusCode::OK,
-        "RPC «electrum» failed with {} {}",
-        electrum.0,
-        electrum.1
-    );
-    let electrum: Json = unwrap!(json::from_str(&electrum.1));
+    let electrum = block_on(enable_electrum(&mm, "RICK", true, &[
+        "electrum1.cipig.net:10017",
+        "electrum2.cipig.net:10017",
+        "electrum3.cipig.net:10017",
+    ]));
 
     // Wait till tx_history will not be loaded
     unwrap!(block_on(mm.wait_for_log(500., |log| {
@@ -3263,7 +3260,7 @@ fn test_electrum_tx_history() {
     assert_eq!(get_tx_history_request_count(&mm), 1);
 
     // make a transaction to change balance
-    let mut enable_res: HashMap<&str, Json> = HashMap::new();
+    let mut enable_res = HashMap::new();
     enable_res.insert("RICK", electrum);
     log!("enable_coins: "[enable_res]);
     withdraw_and_send(
@@ -3509,7 +3506,7 @@ fn test_convert_utxo_address() {
         mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
 
-    let _electrum = block_on(enable_electrum(&mm, "BCH", vec![
+    let _electrum = block_on(enable_electrum(&mm, "BCH", false, &[
         "electrum1.cipig.net:10017",
         "electrum2.cipig.net:10017",
         "electrum3.cipig.net:10017",
@@ -3631,7 +3628,7 @@ fn test_convert_eth_address() {
         mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
 
-    block_on(enable_native(&mm, "ETH", vec!["http://195.201.0.6:8565"]));
+    block_on(enable_native(&mm, "ETH", &["http://195.201.0.6:8565"]));
 
     // test single-case to mixed-case
     let rc = unwrap!(block_on(mm.rpc(json! ({
@@ -3870,9 +3867,7 @@ fn test_validateaddress() {
     unwrap!(block_on(
         mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
-    log!([block_on(enable_coins_eth_electrum(&mm, vec![
-        "http://195.201.0.6:8565"
-    ]))]);
+    log!([block_on(enable_coins_eth_electrum(&mm, &["http://195.201.0.6:8565"]))]);
 
     // test valid RICK address
 
@@ -4352,7 +4347,7 @@ fn test_buy_conf_settings() {
     unwrap!(block_on(
         mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
-    log!([block_on(enable_coins_eth_electrum(&mm_bob, vec![
+    log!([block_on(enable_coins_eth_electrum(&mm_bob, &[
         "http://195.201.0.6:8565"
     ]))]);
 
@@ -4427,7 +4422,7 @@ fn test_buy_response_format() {
     unwrap!(block_on(
         mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
-    log!([block_on(enable_coins_eth_electrum(&mm_bob, vec![
+    log!([block_on(enable_coins_eth_electrum(&mm_bob, &[
         "http://195.201.0.6:8565"
     ]))]);
 
@@ -4482,7 +4477,7 @@ fn test_sell_response_format() {
     unwrap!(block_on(
         mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
-    log!([block_on(enable_coins_eth_electrum(&mm_bob, vec![
+    log!([block_on(enable_coins_eth_electrum(&mm_bob, &[
         "http://195.201.0.6:8565"
     ]))]);
 
@@ -4537,7 +4532,7 @@ fn test_my_orders_response_format() {
     unwrap!(block_on(
         mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
-    log!([block_on(enable_coins_eth_electrum(&mm_bob, vec![
+    log!([block_on(enable_coins_eth_electrum(&mm_bob, &[
         "http://195.201.0.6:8565"
     ]))]);
 
@@ -4631,10 +4626,10 @@ fn test_my_orders_after_matched() {
     ));
 
     // Enable coins on Bob side. Print the replies in case we need the address.
-    let rc = block_on(enable_coins_eth_electrum(&mm_bob, vec!["http://195.201.0.6:8565"]));
+    let rc = block_on(enable_coins_eth_electrum(&mm_bob, &["http://195.201.0.6:8565"]));
     log! ({"enable_coins (bob): {:?}", rc});
     // Enable coins on Alice side. Print the replies in case we need the address.
-    let rc = block_on(enable_coins_eth_electrum(&mm_alice, vec!["http://195.201.0.6:8565"]));
+    let rc = block_on(enable_coins_eth_electrum(&mm_alice, &["http://195.201.0.6:8565"]));
     log! ({"enable_coins (alice): {:?}", rc});
 
     let rc = unwrap!(block_on(mm_bob.rpc(json! ({
@@ -4710,7 +4705,7 @@ fn test_sell_conf_settings() {
     unwrap!(block_on(
         mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
-    log!([block_on(enable_coins_eth_electrum(&mm_bob, vec![
+    log!([block_on(enable_coins_eth_electrum(&mm_bob, &[
         "http://195.201.0.6:8565"
     ]))]);
 
@@ -4785,7 +4780,7 @@ fn test_set_price_conf_settings() {
     unwrap!(block_on(
         mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
-    log!([block_on(enable_coins_eth_electrum(&mm_bob, vec![
+    log!([block_on(enable_coins_eth_electrum(&mm_bob, &[
         "http://195.201.0.6:8565"
     ]))]);
 
@@ -4864,7 +4859,7 @@ fn test_trade_fee_returns_numbers_in_various_formats() {
     unwrap!(block_on(
         mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
-    block_on(enable_coins_eth_electrum(&mm_bob, vec![
+    block_on(enable_coins_eth_electrum(&mm_bob, &[
         "https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b",
     ]));
 
@@ -4914,7 +4909,7 @@ fn test_orderbook_is_mine_orders() {
         mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
     // Enable coins on Bob side. Print the replies in case we need the "address".
-    log! ({"enable_coins (bob): {:?}", block_on (enable_coins_eth_electrum (&mm_bob, vec!["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b"]))});
+    log! ({"enable_coins (bob): {:?}", block_on (enable_coins_eth_electrum (&mm_bob, &["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b"]))});
 
     let rc = unwrap!(block_on(mm_bob.rpc(json! ({
         "userpass": mm_bob.userpass,
@@ -4954,7 +4949,7 @@ fn test_orderbook_is_mine_orders() {
     ));
 
     // Enable coins on Alice side. Print the replies in case we need the "address".
-    log! ({"enable_coins (alice): {:?}", block_on (enable_coins_eth_electrum (&mm_alice, vec!["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b"]))});
+    log! ({"enable_coins (alice): {:?}", block_on (enable_coins_eth_electrum (&mm_alice, &["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b"]))});
 
     log!("Give Alice 15 seconds to import the order…");
     thread::sleep(Duration::from_secs(15));
@@ -5083,7 +5078,7 @@ fn test_sell_min_volume() {
     unwrap!(block_on(
         mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
-    log!([block_on(enable_coins_eth_electrum(&mm_bob, vec![
+    log!([block_on(enable_coins_eth_electrum(&mm_bob, &[
         "http://195.201.0.6:8565"
     ]))]);
 
@@ -5158,7 +5153,7 @@ fn test_buy_min_volume() {
     unwrap!(block_on(
         mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
-    log!([block_on(enable_coins_eth_electrum(&mm_bob, vec![
+    log!([block_on(enable_coins_eth_electrum(&mm_bob, &[
         "http://195.201.0.6:8565"
     ]))]);
 
@@ -5238,7 +5233,8 @@ fn test_best_orders() {
         mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
     ));
     // Enable coins on Bob side. Print the replies in case we need the "address".
-    log!({ "enable_coins (bob): {:?}", block_on(enable_coins_eth_electrum(&mm_bob, vec!["http://195.201.0.6:8565"])) });
+    let bob_coins = block_on(enable_coins_eth_electrum(&mm_bob, &["http://195.201.0.6:8565"]));
+    log!({ "enable_coins (bob): {:?}", bob_coins });
     // issue sell request on Bob side by setting base/rel price
     log!("Issue bob sell requests");
 
@@ -5311,9 +5307,13 @@ fn test_best_orders() {
     let response: BestOrdersResponse = json::from_str(&rc.1).unwrap();
     let best_morty_orders = response.result.get("MORTY").unwrap();
     let expected_price: BigDecimal = "0.8".parse().unwrap();
+
+    let bob_morty_addr = addr_from_enable(&bob_coins, "MORTY");
     assert_eq!(expected_price, best_morty_orders[0].price);
+    assert_eq!(bob_morty_addr, best_morty_orders[0].address);
     let expected_price: BigDecimal = "0.9".parse().unwrap();
     assert_eq!(expected_price, best_morty_orders[1].price);
+    assert_eq!(bob_morty_addr, best_morty_orders[1].address);
 
     let expected_price: BigDecimal = "0.8".parse().unwrap();
     let best_eth_orders = response.result.get("ETH").unwrap();
