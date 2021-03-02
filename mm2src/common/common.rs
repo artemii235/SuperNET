@@ -1743,24 +1743,14 @@ pub fn writeln(line: &str) {
 }
 
 #[cfg(target_arch = "wasm32")]
-const fn make_tail() -> [u8; 0x10000] { [0; 0x10000] }
+static mut PROCESS_LOG_TAIL: [u8; 0x10000] = [0; 0x10000];
 
-#[cfg(target_arch = "wasm32")]
-static mut PROCESS_LOG_TAIL: [u8; 0x10000] = make_tail();
 #[cfg(target_arch = "wasm32")]
 static TAIL_CUR: Atomic<usize> = Atomic::new(0);
 
-#[cfg(all(target_arch = "wasm32", not(target_arch = "wasm32")))]
-pub fn writeln(line: &str) {
-    use std::ffi::CString;
-
-    extern "C" {
-        pub fn console_log(ptr: *const c_char, len: i32);
-    }
-    let lineᶜ = unwrap!(CString::new(line));
-    unsafe { console_log(lineᶜ.as_ptr(), line.len() as i32) }
-
-    // Keep a tail of the log in RAM for the integration tests.
+/// Keep a tail of the log in RAM for the integration tests.
+#[cfg(target_arch = "wasm32")]
+pub fn append_log_tail(line: &str) {
     unsafe {
         if line.len() < PROCESS_LOG_TAIL.len() {
             let posⁱ = TAIL_CUR.load(Ordering::Relaxed);
@@ -1782,10 +1772,11 @@ pub fn writeln(line: &str) {
     }
 }
 
-#[cfg(all(target_arch = "wasm32", target_arch = "wasm32"))]
+#[cfg(target_arch = "wasm32")]
 pub fn writeln(line: &str) {
     use web_sys::console;
     console::log_1(&line.into());
+    append_log_tail(line);
 }
 
 /// Set up a panic hook that prints the panic location and the message.  
