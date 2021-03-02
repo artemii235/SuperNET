@@ -83,7 +83,7 @@ impl Transport for Web3Transport {
         (id, request)
     }
 
-    #[cfg(not(feature = "w-bindgen"))]
+    #[cfg(not(target_arch = "wasm32"))]
     fn send(&self, _id: RequestId, request: Call) -> Self::Out {
         Box::new(
             sendʹ(request, self.uris.clone(), self.event_handlers.clone())
@@ -92,7 +92,7 @@ impl Transport for Web3Transport {
         )
     }
 
-    #[cfg(feature = "w-bindgen")]
+    #[cfg(target_arch = "wasm32")]
     fn send(&self, _id: RequestId, request: Call) -> Self::Out {
         use wasm_bindgen::prelude::*;
         use wasm_bindgen::JsCast;

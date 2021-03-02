@@ -603,7 +603,7 @@ fn test_nonce_lock() {
     unwrap!(wait_for_log(&ctx.log, 1.1, &|line| line.contains("get_addr_nonce…")));
 }
 
-#[cfg(feature = "w-bindgen")]
+#[cfg(target_arch = "wasm32")]
 mod wasm_bindgen_tests {
     use super::*;
     use crate::lp_coininit;

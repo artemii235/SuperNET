@@ -181,7 +181,7 @@ fn fix_directories(ctx: &MmCtx) -> Result<(), String> {
 fn fix_directories(ctx: &MmCtx) -> Result<(), String> {
     use std::os::raw::c_char;
 
-    #[cfg_attr(feature = "w-bindgen", wasm_bindgen(raw_module = "../../../js/defined-in-js.js"))]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(raw_module = "../../../js/defined-in-js.js"))]
     extern "C" {
         pub fn host_ensure_dir_is_writable(ptr: *const c_char, len: i32) -> i32;
     }

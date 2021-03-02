@@ -5225,8 +5225,8 @@ fn test_buy_min_volume() {
 // 1. Install Firefox.
 // 2. Install forked version of wasm-bindgen-cli: cargo install wasm-bindgen-cli --git https://github.com/artemii235/wasm-bindgen.git
 // 3. Download Gecko driver for your OS: https://github.com/mozilla/geckodriver/releases
-// 4. Run HEADLESS_TIMEOUT=120 GECKODRIVER=PATH_TO_GECKO_DRIVER_BIN cargo test --target wasm32-unknown-unknown --features w-bindgen
-#[cfg(feature = "w-bindgen")]
+// 4. Run HEADLESS_TIMEOUT=120 GECKODRIVER=PATH_TO_GECKO_DRIVER_BIN cargo test --target wasm32-unknown-unknown
+#[cfg(target_arch = "wasm32")]
 mod wasm_bindgen_tests {
     use super::*;
     use futures01::Future;
