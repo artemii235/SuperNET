@@ -5235,15 +5235,16 @@ fn test_best_orders() {
     log!("Issue bob sell requests");
 
     let bob_orders = [
-        // (base, rel, price, volume)
-        ("RICK", "MORTY", "0.9", "0.9"),
-        ("RICK", "MORTY", "0.8", "0.9"),
-        ("RICK", "ETH", "0.8", "0.9"),
-        ("MORTY", "RICK", "0.8", "0.9"),
-        ("MORTY", "RICK", "0.9", "0.9"),
-        ("ETH", "RICK", "0.8", "0.9"),
+        // (base, rel, price, volume, min_volume)
+        ("RICK", "MORTY", "0.9", "0.9", None),
+        ("RICK", "MORTY", "0.8", "0.9", None),
+        ("RICK", "MORTY", "0.7", "0.9", Some("0.9")),
+        ("RICK", "ETH", "0.8", "0.9", None),
+        ("MORTY", "RICK", "0.8", "0.9", None),
+        ("MORTY", "RICK", "0.9", "0.9", None),
+        ("ETH", "RICK", "0.8", "0.9", None),
     ];
-    for (base, rel, price, volume) in bob_orders.iter() {
+    for (base, rel, price, volume, min_volume) in bob_orders.iter() {
         let rc = unwrap!(block_on(mm_bob.rpc(json! ({
             "userpass": mm_bob.userpass,
             "method": "setprice",
@@ -5251,6 +5252,7 @@ fn test_best_orders() {
             "rel": rel,
             "price": price,
             "volume": volume,
+            "min_volume": min_volume.unwrap_or("0.00777"),
             "cancel_previous": false,
         }))));
         assert!(rc.0.is_success(), "!setprice: {}", rc.1);
@@ -5303,16 +5305,16 @@ fn test_best_orders() {
     }))));
     assert!(rc.0.is_success(), "!best_orders: {}", rc.1);
     let response: BestOrdersResponse = json::from_str(&rc.1).unwrap();
+    // MORTY
     let best_morty_orders = response.result.get("MORTY").unwrap();
-    let expected_price: BigDecimal = "0.8".parse().unwrap();
-
+    let expected_price: BigDecimal = "0.7".parse().unwrap();
     let bob_morty_addr = addr_from_enable(&bob_coins, "MORTY");
     assert_eq!(expected_price, best_morty_orders[0].price);
     assert_eq!(bob_morty_addr, best_morty_orders[0].address);
-    let expected_price: BigDecimal = "0.9".parse().unwrap();
+    let expected_price: BigDecimal = "0.8".parse().unwrap();
     assert_eq!(expected_price, best_morty_orders[1].price);
     assert_eq!(bob_morty_addr, best_morty_orders[1].address);
-
+    // ETH
     let expected_price: BigDecimal = "0.8".parse().unwrap();
     let best_eth_orders = response.result.get("ETH").unwrap();
     assert_eq!(expected_price, best_eth_orders[0].price);

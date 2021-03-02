@@ -20,6 +20,7 @@
 #![cfg_attr(not(feature = "native"), allow(dead_code))]
 
 use async_trait::async_trait;
+use best_orders::BestOrdersAction;
 use bigdecimal::BigDecimal;
 use blake2::digest::{Update, VariableOutput};
 use blake2::VarBlake2b;
@@ -40,6 +41,7 @@ use mm2_libp2p::{decode_signed, encode_and_sign, encode_message, pub_sub_topic, 
 #[cfg(test)] use mocktopus::macros::*;
 use num_rational::BigRational;
 use num_traits::identities::Zero;
+use order_requests_tracker::OrderRequestsTracker;
 use parity_util_mem::malloc_size;
 use rpc::v1::types::H256 as H256Json;
 use serde_json::{self as json, Value as Json};
@@ -61,12 +63,12 @@ use crate::mm2::{database::my_swaps::insert_new_swap,
                            check_other_coin_balance_for_swap, is_pubkey_banned, lp_atomic_locktime, run_maker_swap,
                            run_taker_swap, AtomicLocktimeVersion, CheckBalanceError, MakerSwap, RunMakerSwapInput,
                            RunTakerSwapInput, SwapConfirmationsSettings, TakerSwap}};
+pub use best_orders::best_orders_rpc;
 
+#[path = "lp_ordermatch/best_orders.rs"] mod best_orders;
 #[path = "lp_ordermatch/new_protocol.rs"] mod new_protocol;
 #[path = "lp_ordermatch/order_requests_tracker.rs"]
 mod order_requests_tracker;
-use order_requests_tracker::OrderRequestsTracker;
-
 #[cfg(test)]
 #[cfg(feature = "native")]
 #[path = "ordermatch_tests.rs"]
@@ -441,7 +443,7 @@ pub async fn process_peer_request(ctx: MmArc, request: OrdermatchRequest) -> Res
             response.map(|res| res.map(|r| encode_message(&r).expect("Serialization failed")))
         },
         OrdermatchRequest::BestOrders { coin, action, volume } => {
-            process_best_orders_p2p_request(ctx, coin, action, volume).await
+            best_orders::process_best_orders_p2p_request(ctx, coin, action, volume).await
         },
     }
 }
@@ -462,71 +464,6 @@ struct GetOrderbookPubkeyItem {
 struct GetOrderbookRes {
     /// Asks and bids grouped by pubkey.
     pubkey_orders: HashMap<String, GetOrderbookPubkeyItem>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct BestOrdersRes {
-    orders: HashMap<String, Vec<OrderbookItemWithProof>>,
-}
-
-async fn process_best_orders_p2p_request(
-    ctx: MmArc,
-    coin: String,
-    action: BestOrdersAction,
-    volume: BigRational,
-) -> Result<Option<Vec<u8>>, String> {
-    let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).expect("ordermatch_ctx must exist at this point");
-    let orderbook = ordermatch_ctx.orderbook.lock().await;
-    let search_pairs_in = match action {
-        BestOrdersAction::Buy => &orderbook.pairs_existing_for_base,
-        BestOrdersAction::Sell => &orderbook.pairs_existing_for_rel,
-    };
-    let tickers = match search_pairs_in.get(&coin) {
-        Some(tickers) => tickers,
-        None => return Ok(None),
-    };
-    let mut result = HashMap::new();
-    let pairs: Vec<_> = tickers.iter().map(|ticker| (coin.clone(), ticker.clone())).collect();
-    for pair in pairs.iter() {
-        let orders = match orderbook.ordered.get(pair) {
-            Some(orders) => orders,
-            None => {
-                log::warn!("No orders for pair {:?}", pair);
-                continue;
-            },
-        };
-        let mut best_orders = vec![];
-        let mut collected_volume = BigRational::zero();
-        for ordered in orders {
-            match orderbook.order_set.get(&ordered.uuid) {
-                Some(o) => {
-                    match orderbook.orderbook_item_with_proof(o.clone()) {
-                        Ok(order_w_proof) => best_orders.push(order_w_proof),
-                        Err(e) => {
-                            log::error!("Error {:?} on proof generation for order {:?}", e, o);
-                            continue;
-                        },
-                    };
-                    let coin_volume = match action {
-                        BestOrdersAction::Buy => o.max_volume.clone(),
-                        BestOrdersAction::Sell => &o.max_volume * &o.price,
-                    };
-                    collected_volume += coin_volume;
-                    if collected_volume >= volume {
-                        break;
-                    }
-                },
-                None => {
-                    log::warn!("No order with uuid {:?}", ordered.uuid);
-                    continue;
-                },
-            };
-        }
-        result.insert(pair.1.clone(), best_orders);
-    }
-    let response = BestOrdersRes { orders: result };
-    let encoded = rmp_serde::to_vec(&response).expect("rmp_serde::to_vec should not fail here");
-    Ok(Some(encoded))
 }
 
 async fn process_get_orderbook_request(ctx: MmArc, base: String, rel: String) -> Result<Option<Vec<u8>>, String> {
@@ -3886,81 +3823,4 @@ fn choose_taker_confs_and_notas(
         taker_coin_confs,
         taker_coin_nota,
     }
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum BestOrdersAction {
-    Buy,
-    Sell,
-}
-
-#[derive(Debug, Deserialize)]
-struct BestOrdersRequest {
-    coin: String,
-    action: BestOrdersAction,
-    volume: MmNumber,
-}
-
-pub async fn best_orders(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
-    let req: BestOrdersRequest = try_s!(json::from_value(req));
-    let p2p_request = OrdermatchRequest::BestOrders {
-        coin: req.coin,
-        action: req.action,
-        volume: req.volume.into(),
-    };
-
-    let best_orders_res =
-        try_s!(request_any_relay::<BestOrdersRes>(ctx.clone(), P2PRequest::Ordermatch(p2p_request)).await);
-    let mut response = HashMap::new();
-    if let Some((p2p_response, peer_id)) = best_orders_res {
-        log::debug!("Got best orders {:?} from peer {}", p2p_response, peer_id);
-        for (coin, orders_w_proofs) in p2p_response.orders {
-            let coin_conf = coin_conf(&ctx, &coin);
-            if coin_conf.is_null() {
-                log::warn!("Coin {} is not found in config", coin);
-                continue;
-            }
-            for order_w_proof in orders_w_proofs {
-                let order = order_w_proof.order;
-                let address = match address_by_coin_conf_and_pubkey_str(&coin, &coin_conf, &order.pubkey) {
-                    Ok(a) => a,
-                    Err(e) => {
-                        log::error!("Error {} getting coin {} address from pubkey {}", e, coin, order.pubkey);
-                        continue;
-                    },
-                };
-                let price_mm: MmNumber = match req.action {
-                    BestOrdersAction::Buy => order.price.into(),
-                    BestOrdersAction::Sell => order.price.recip().into(),
-                };
-                let max_vol_mm: MmNumber = order.max_volume.into();
-                let min_vol_mm: MmNumber = order.min_volume.into();
-                let entry = OrderbookEntry {
-                    coin: coin.clone(),
-                    address,
-                    price: price_mm.to_decimal(),
-                    price_rat: price_mm.to_ratio(),
-                    price_fraction: price_mm.to_fraction(),
-                    max_volume: max_vol_mm.to_decimal(),
-                    max_volume_rat: max_vol_mm.to_ratio(),
-                    max_volume_fraction: max_vol_mm.to_fraction(),
-                    min_volume: min_vol_mm.to_decimal(),
-                    min_volume_rat: min_vol_mm.to_ratio(),
-                    min_volume_fraction: min_vol_mm.to_fraction(),
-                    pubkey: order.pubkey,
-                    age: (now_ms() as i64 / 1000),
-                    zcredits: 0,
-                    uuid: order.uuid,
-                    is_mine: false,
-                };
-                response.entry(coin.clone()).or_insert_with(Vec::new).push(entry);
-            }
-        }
-    }
-
-    let res = json!({ "result": response });
-    Response::builder()
-        .body(json::to_vec(&res).expect("Serialization failed"))
-        .map_err(|e| ERRL!("{}", e))
 }
