@@ -209,8 +209,6 @@ pub enum PeerDecodedResponse<T> {
 }
 
 #[allow(dead_code)]
-#[cfg(feature = "native")]
-#[allow(dead_code)]
 pub async fn request_relays<T: de::DeserializeOwned>(
     ctx: MmArc,
     req: P2PRequest,

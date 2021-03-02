@@ -17,7 +17,6 @@
 //  lp_ordermatch.rs
 //  marketmaker
 //
-#![cfg_attr(not(feature = "native"), allow(dead_code))]
 
 use async_trait::async_trait;
 use bigdecimal::BigDecimal;
@@ -67,8 +66,7 @@ use crate::mm2::lp_swap::{calc_max_maker_vol, check_balance_for_maker_swap, chec
 mod order_requests_tracker;
 use order_requests_tracker::OrderRequestsTracker;
 
-#[cfg(test)]
-#[cfg(feature = "native")]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 #[path = "ordermatch_tests.rs"]
 mod ordermatch_tests;
 

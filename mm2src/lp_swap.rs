@@ -54,13 +54,13 @@
 //  lp_swap.rs
 //  marketmaker
 //
-#![cfg_attr(not(feature = "native"), allow(dead_code))]
 
 use crate::mm2::lp_network::broadcast_p2p_msg;
 use async_std::sync as async_std_sync;
 use bigdecimal::BigDecimal;
 use coins::{lp_coinfind, MmCoinEnum, TradeFee, TradePreimageError, TransactionEnum};
-#[cfg(feature = "native")] use common::mm_ctx::SqliteCtx;
+#[cfg(not(target_arch = "wasm32"))]
+use common::mm_ctx::SqliteCtx;
 use common::{bits256, block_on, calc_total_pages,
              executor::{spawn, Timer},
              log::{error, info},
@@ -776,7 +776,7 @@ pub fn my_swaps_dir(ctx: &MmArc) -> PathBuf { ctx.dbdir().join("SWAPS").join("MY
 
 pub fn my_swap_file_path(ctx: &MmArc, uuid: &Uuid) -> PathBuf { my_swaps_dir(ctx).join(format!("{}.json", uuid)) }
 
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 pub fn insert_new_swap_to_db(
     ctx: &MmArc,
     my_coin: &str,
@@ -788,7 +788,7 @@ pub fn insert_new_swap_to_db(
         .map_err(|e| ERRL!("{}", e))
 }
 
-#[cfg(not(feature = "native"))]
+#[cfg(target_arch = "wasm32")]
 pub fn insert_new_swap_to_db(
     _ctx: &MmArc,
     _my_coin: &str,
@@ -799,12 +799,12 @@ pub fn insert_new_swap_to_db(
     Ok(())
 }
 
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 fn add_swap_to_db_index(ctx: &MmArc, swap: &SavedSwap) {
     crate::mm2::database::stats_swaps::add_swap_to_index(&ctx.sqlite_connection(), swap)
 }
 
-#[cfg(not(feature = "native"))]
+#[cfg(target_arch = "wasm32")]
 fn add_swap_to_db_index(_ctx: &MmArc, _swap: &SavedSwap) {}
 
 fn save_stats_swap(ctx: &MmArc, swap: &SavedSwap) -> Result<(), String> {
@@ -1142,7 +1142,7 @@ pub struct MySwapsFilter {
     pub to_timestamp: Option<u64>,
 }
 
-#[cfg(not(feature = "native"))]
+#[cfg(target_arch = "wasm32")]
 pub fn all_swaps_uuids_by_filter(_ctx: MmArc, _req: Json) -> HyRes {
     Box::new(futures01::future::err::<Response<Vec<u8>>, String>(ERRL!(
         "'all_swaps_uuids_by_filter' is only supported in native mode yet"
@@ -1150,7 +1150,7 @@ pub fn all_swaps_uuids_by_filter(_ctx: MmArc, _req: Json) -> HyRes {
 }
 
 /// Returns *all* uuids of swaps, which match the selected filter.
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 pub fn all_swaps_uuids_by_filter(ctx: MmArc, req: Json) -> HyRes {
     use crate::mm2::database::my_swaps::select_uuids_by_my_swaps_filter;
 
@@ -1190,7 +1190,7 @@ pub struct MyRecentSwapsReq {
     filter: MySwapsFilter,
 }
 
-#[cfg(not(feature = "native"))]
+#[cfg(target_arch = "wasm32")]
 pub fn my_recent_swaps(_ctx: MmArc, _req: Json) -> HyRes {
     Box::new(futures01::future::err::<Response<Vec<u8>>, String>(ERRL!(
         "'my_recent_swaps' is only supported in native mode yet"
@@ -1198,7 +1198,7 @@ pub fn my_recent_swaps(_ctx: MmArc, _req: Json) -> HyRes {
 }
 
 /// Returns the data of recent swaps of `my` node.
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 pub fn my_recent_swaps(ctx: MmArc, req: Json) -> HyRes {
     use crate::mm2::database::my_swaps::select_uuids_by_my_swaps_filter;
 

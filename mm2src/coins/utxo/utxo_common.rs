@@ -2122,7 +2122,7 @@ pub fn is_unspent_mature(mature_confirmations: u32, output: &RpcTransaction) -> 
     !output.is_coinbase() || output.confirmations >= mature_confirmations
 }
 
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 pub async fn get_verbose_transaction_from_cache_or_rpc(
     coin: &UtxoCoinFields,
     txid: H256Json,
@@ -2147,7 +2147,7 @@ pub async fn get_verbose_transaction_from_cache_or_rpc(
     Ok(VerboseTransactionFrom::Rpc(tx))
 }
 
-#[cfg(not(feature = "native"))]
+#[cfg(target_arch = "wasm32")]
 pub async fn get_verbose_transaction_from_cache_or_rpc(
     coin: &UtxoCoinFields,
     txid: H256Json,
@@ -2156,7 +2156,7 @@ pub async fn get_verbose_transaction_from_cache_or_rpc(
     Ok(VerboseTransactionFrom::Rpc(tx))
 }
 
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 pub async fn cache_transaction_if_possible(coin: &UtxoCoinFields, tx: &RpcTransaction) -> Result<(), String> {
     let tx_cache_path = match &coin.tx_cache_directory {
         Some(p) => p.clone(),
@@ -2176,7 +2176,7 @@ pub async fn cache_transaction_if_possible(coin: &UtxoCoinFields, tx: &RpcTransa
         .map_err(|e| ERRL!("Error {:?} on caching transaction {:?}", e, tx.txid))
 }
 
-#[cfg(not(feature = "native"))]
+#[cfg(target_arch = "wasm32")]
 pub async fn cache_transaction_if_possible(_coin: &UtxoCoinFields, _tx: &RpcTransaction) -> Result<(), String> {
     Ok(())
 }

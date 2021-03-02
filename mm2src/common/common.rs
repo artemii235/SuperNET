@@ -425,11 +425,13 @@ pub fn stack_trace(
         true
     });
 
-    #[cfg(all(feature = "native", not(windows)))]
+    // not(wasm) and not(windows)
+    #[cfg(not(any(target_arch = "wasm32", windows)))]
     output_pc_mem_addr(output)
 }
 
-#[cfg(all(feature = "native", not(windows)))]
+// not(wasm) and not(windows)
+#[cfg(not(any(target_arch = "wasm32", windows)))]
 fn output_pc_mem_addr(output: &mut dyn FnMut(&str)) {
     TargetSharedLibrary::each(|shlib| {
         let mut trace_buf = trace_buf();
@@ -1748,7 +1750,7 @@ static mut PROCESS_LOG_TAIL: [u8; 0x10000] = make_tail();
 #[cfg(target_arch = "wasm32")]
 static TAIL_CUR: Atomic<usize> = Atomic::new(0);
 
-#[cfg(all(not(feature = "native"), not(feature = "w-bindgen")))]
+#[cfg(all(target_arch = "wasm32", not(feature = "w-bindgen")))]
 pub fn writeln(line: &str) {
     use std::ffi::CString;
 
@@ -1780,7 +1782,7 @@ pub fn writeln(line: &str) {
     }
 }
 
-#[cfg(all(not(feature = "native"), feature = "w-bindgen"))]
+#[cfg(all(target_arch = "wasm32", feature = "w-bindgen"))]
 pub fn writeln(line: &str) {
     use web_sys::console;
     console::log_1(&line.into());

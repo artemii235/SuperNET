@@ -16,21 +16,21 @@
 //
 //  Copyright © 2014-2018 SuperNET. All rights reserved.
 //
-#![cfg_attr(not(feature = "native"), allow(unused_imports))]
-#![cfg_attr(not(feature = "native"), allow(dead_code))]
 
 use coins::{convert_address, convert_utxo_address, get_enabled_coins, get_trade_fee, kmd_rewards_info, my_tx_history,
             send_raw_transaction, set_required_confirmations, set_requires_notarization, show_priv_key,
             validate_address, withdraw};
 use common::mm_ctx::MmArc;
-#[cfg(feature = "native")] use common::wio::{CORE, CPUPOOL};
+#[cfg(not(target_arch = "wasm32"))]
+use common::wio::{CORE, CPUPOOL};
 use common::{err_to_rpc_json_string, err_tp_rpc_json, HyRes};
 use futures::compat::Future01CompatExt;
 use futures::future::{join_all, FutureExt, TryFutureExt};
 use http::header::{HeaderValue, ACCESS_CONTROL_ALLOW_ORIGIN};
 use http::request::Parts;
 use http::{Method, Request, Response};
-#[cfg(feature = "native")] use hyper::{self, Body, Server};
+#[cfg(not(target_arch = "wasm32"))]
+use hyper::{self, Body, Server};
 use serde_json::{self as json, Value as Json};
 use std::future::Future as Future03;
 use std::net::SocketAddr;
@@ -139,11 +139,11 @@ pub fn dispatcher(req: Json, ctx: MmArc) -> DispatcherRes {
         // "fundvalue" => lp_fundvalue (ctx, req, false),
         "help" => help(),
         "import_swaps" => {
-            #[cfg(feature = "native")]
+            #[cfg(not(target_arch = "wasm32"))]
             {
                 Box::new(CPUPOOL.spawn_fn(move || hyres(import_swaps(ctx, req))))
             }
-            #[cfg(not(feature = "native"))]
+            #[cfg(target_arch = "wasm32")]
             {
                 return DispatcherRes::NoMatch(req);
             }
@@ -162,11 +162,11 @@ pub fn dispatcher(req: Json, ctx: MmArc) -> DispatcherRes {
         "orderbook" => hyres(orderbook(ctx, req)),
         "sim_panic" => hyres(sim_panic(req)),
         "recover_funds_of_swap" => {
-            #[cfg(feature = "native")]
+            #[cfg(not(target_arch = "wasm32"))]
             {
                 Box::new(CPUPOOL.spawn_fn(move || hyres(recover_funds_of_swap(ctx, req))))
             }
-            #[cfg(not(feature = "native"))]
+            #[cfg(target_arch = "wasm32")]
             {
                 return DispatcherRes::NoMatch(req);
             }
@@ -242,7 +242,7 @@ async fn process_single_request(ctx: MmArc, req: Json, client: SocketAddr) -> Re
     Ok(res)
 }
 
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 async fn rpc_service(req: Request<Body>, ctx_h: u32, client: SocketAddr) -> Response<Body> {
     /// Unwraps a result or propagates its error 500 response with the specified headers (if they are present).
     macro_rules! try_sf {
@@ -278,7 +278,7 @@ async fn rpc_service(req: Request<Body>, ctx_h: u32, client: SocketAddr) -> Resp
     Response::from_parts(parts, Body::from(body))
 }
 
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 pub extern "C" fn spawn_rpc(ctx_h: u32) {
     use hyper::server::conn::AddrStream;
     use hyper::service::{make_service_fn, service_fn};
@@ -341,10 +341,10 @@ pub extern "C" fn spawn_rpc(ctx_h: u32) {
     });
 }
 
-#[cfg(not(feature = "native"))]
+#[cfg(target_arch = "wasm32")]
 pub extern "C" fn spawn_rpc(_ctx_h: u32) { unimplemented!() }
 
-#[cfg(not(feature = "native"))]
+#[cfg(target_arch = "wasm32")]
 pub fn init_header_slots() {
     use common::header::RPC_SERVICE;
     use std::pin::Pin;

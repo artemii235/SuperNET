@@ -1,8 +1,6 @@
-#![cfg_attr(not(feature = "native"), allow(unused_variables))]
-
 use super::lp_main;
 use bigdecimal::BigDecimal;
-#[cfg(not(feature = "native"))] use common::call_back;
+#[cfg(target_arch = "wasm32")] use common::call_back;
 use common::executor::Timer;
 use common::for_tests::{check_my_swap_status, check_recent_swaps, check_stats_swap_status, enable_electrum,
                         enable_native, enable_qrc20, find_metrics_in_json, from_env_file, get_passphrase, mm_spat,
@@ -14,7 +12,7 @@ use common::privkey::key_pair_from_seed;
 use common::BigInt;
 use common::{block_on, slurp};
 use http::StatusCode;
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 use hyper::header::ACCESS_CONTROL_ALLOW_ORIGIN;
 use num_rational::BigRational;
 use serde_json::{self as json, Value as Json};
@@ -81,7 +79,7 @@ fn test_fundvalue() {portfolio::portfolio_tests::test_fundvalue (local_start())}
 /// Integration test for RPC server.
 /// Check that MM doesn't crash in case of invalid RPC requests
 #[test]
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_rpc() {
     let (_, mut mm, _dump_log, _dump_dashboard) = mm_spat(local_start(), &identity);
     unwrap!(block_on(
@@ -139,7 +137,7 @@ fn test_mm_start() {
 
 #[allow(unused_variables)]
 fn chdir(dir: &Path) {
-    #[cfg(feature = "native")]
+    #[cfg(not(target_arch = "wasm32"))]
     {
         #[cfg(not(windows))]
         {
@@ -165,7 +163,7 @@ fn chdir(dir: &Path) {
 
 /// Typically used when the `LOCAL_THREAD_MM` env is set, helping debug the tested MM.  
 /// NB: Accessing `lp_main` this function have to reside in the mm2 binary crate. We pass a pointer to it to subcrates.
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 fn local_start_impl(folder: PathBuf, log_path: PathBuf, mut conf: Json) {
     unwrap!(thread::Builder::new().name("MM".into()).spawn(move || {
         if conf["log"].is_null() {
@@ -184,7 +182,7 @@ fn local_start_impl(folder: PathBuf, log_path: PathBuf, mut conf: Json) {
 }
 
 /// Starts the WASM version of MM.
-#[cfg(not(feature = "native"))]
+#[cfg(target_arch = "wasm32")]
 fn wasm_start_impl(ctx: crate::common::mm_ctx::MmArc) {
     crate::mm2::rpc::init_header_slots();
 
@@ -195,15 +193,15 @@ fn wasm_start_impl(ctx: crate::common::mm_ctx::MmArc) {
     })
 }
 
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 fn local_start() -> LocalStart { local_start_impl }
 
-#[cfg(not(feature = "native"))]
+#[cfg(target_arch = "wasm32")]
 fn local_start() -> LocalStart { wasm_start_impl }
 
 macro_rules! local_start {
     ($who: expr) => {
-        if cfg!(feature = "native") {
+        if cfg!(not(target_acrh = "wasm32")) {
             match var("LOCAL_THREAD_MM") {
                 Ok(ref e) if e == $who => Some(local_start()),
                 _ => None,
@@ -216,7 +214,7 @@ macro_rules! local_start {
 
 /// https://github.com/artemii235/SuperNET/issues/241
 #[test]
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 fn alice_can_see_the_active_order_after_connection() {
     let coins = json!([
         {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
@@ -408,7 +406,7 @@ fn log_test_status() { common::log::tests::test_status() }
 fn log_test_printed_dashboard() { common::log::tests::test_printed_dashboard() }
 
 #[test]
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_my_balance() {
     let coins = json!([
         {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
@@ -503,7 +501,7 @@ fn check_sell_fails(mm: &MarketMakerIt, base: &str, rel: &str, vol: f64) {
 }
 
 #[test]
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_check_balance_on_order_post() {
     let coins = json!([
         {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
@@ -564,7 +562,7 @@ fn test_check_balance_on_order_post() {
 }
 
 #[test]
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_rpc_password_from_json() {
     let coins = json!([
         {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
@@ -690,7 +688,7 @@ fn test_rpc_password_from_json() {
 }
 
 #[test]
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_rpc_password_from_json_no_userpass() {
     let coins = json!([
         {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"protocol":{"type":"UTXO"}},
@@ -758,7 +756,7 @@ async fn trade_base_rel_electrum(pairs: Vec<(&'static str, &'static str)>) {
     ));
 
     let (_bob_dump_log, _bob_dump_dashboard) = mm_bob.mm_dump();
-    #[cfg(feature = "native")]
+    #[cfg(not(target_arch = "wasm32"))]
     {
         log! ({"Bob log path: {}", mm_bob.log_path.display()})
     }
@@ -791,7 +789,7 @@ async fn trade_base_rel_electrum(pairs: Vec<(&'static str, &'static str)>) {
     ));
 
     let (_alice_dump_log, _alice_dump_dashboard) = mm_alice.mm_dump();
-    #[cfg(feature = "native")]
+    #[cfg(not(target_arch = "wasm32"))]
     {
         log! ({"Alice log path: {}", mm_alice.log_path.display()})
     }
@@ -904,7 +902,7 @@ async fn trade_base_rel_electrum(pairs: Vec<(&'static str, &'static str)>) {
                 .await
         );
 
-        #[cfg(not(feature = "native"))]
+        #[cfg(target_arch = "wasm32")]
         {
             log!("Waiting a few second for the fresh swap status to be saved..");
             Timer::sleep(7.77).await;
@@ -975,10 +973,10 @@ async fn trade_base_rel_electrum(pairs: Vec<(&'static str, &'static str)>) {
 }
 
 #[test]
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 fn trade_test_electrum_and_eth_coins() { block_on(trade_base_rel_electrum(vec![("ETH", "JST")])); }
 
-#[cfg(not(feature = "native"))]
+#[cfg(target_arch = "wasm32")]
 #[no_mangle]
 pub extern "C" fn trade_test_electrum_and_eth_coins(cb_id: i32) {
     use std::ptr::null;
@@ -990,7 +988,7 @@ pub extern "C" fn trade_test_electrum_and_eth_coins(cb_id: i32) {
     })
 }
 
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 fn withdraw_and_send(
     mm: &MarketMakerIt,
     coin: &str,
@@ -1026,7 +1024,7 @@ fn withdraw_and_send(
 }
 
 #[test]
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_withdraw_and_send() {
     let (alice_file_passphrase, _alice_file_userpass) = from_env_file(unwrap!(slurp(&".env.client")));
 
@@ -1146,7 +1144,7 @@ fn test_withdraw_and_send() {
 
 /// Ensure that swap status return the 404 status code if swap is not found
 #[test]
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_swap_status() {
     let coins = json! ([{"coin":"RICK","asset":"RICK"},]);
 
@@ -1206,7 +1204,7 @@ fn test_swap_status() {
 /// Ensure that setprice/buy/sell calls deny base == rel
 /// https://github.com/artemii235/SuperNET/issues/363
 #[test]
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_order_errors_when_base_equal_rel() {
     let coins = json!([
         {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
@@ -1295,7 +1293,7 @@ fn startup_passphrase(passphrase: &str, expected_address: &str) {
         }
     ));
     let (_dump_log, _dump_dashboard) = mm.mm_dump();
-    #[cfg(feature = "native")]
+    #[cfg(not(target_arch = "wasm32"))]
     {
         log!({"Log path: {}", mm.log_path.display()})
     }
@@ -1311,7 +1309,7 @@ fn startup_passphrase(passphrase: &str, expected_address: &str) {
 /// MM2 should detect if passphrase is WIF or 0x-prefixed hex encoded privkey and parse it properly.
 /// https://github.com/artemii235/SuperNET/issues/396
 #[test]
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_startup_passphrase() {
     // seed phrase
     startup_passphrase("bob passphrase", "RRnMcSeKiLrNdbp91qNVQwwXx5azD4S4CD");
@@ -1340,7 +1338,7 @@ fn test_startup_passphrase() {
 /// MM2 should allow to issue several buy/sell calls in a row without delays.
 /// https://github.com/artemii235/SuperNET/issues/245
 #[test]
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_multiple_buy_sell_no_delay() {
     let coins = json!([
         {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
@@ -1439,7 +1437,7 @@ fn test_multiple_buy_sell_no_delay() {
 
 /// https://github.com/artemii235/SuperNET/issues/398
 #[test]
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_cancel_order() {
     let coins = json!([
         {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
@@ -1583,7 +1581,7 @@ fn test_cancel_order() {
 }
 
 #[test]
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_cancel_all_orders() {
     let coins = json!([
         {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
@@ -1735,7 +1733,7 @@ fn test_cancel_all_orders() {
 /// Electrum requests should success if at least 1 server successfully connected,
 /// all others might end up with DNS resolution errors, TCP connection errors, etc.
 #[test]
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_electrum_enable_conn_errors() {
     let coins = json!([
         {"coin":"RICK","asset":"RICK","protocol":{"type":"UTXO"}},
@@ -1785,7 +1783,7 @@ fn test_electrum_enable_conn_errors() {
 }
 
 #[test]
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_order_should_not_be_displayed_when_node_is_down() {
     let coins = json!([
         {"coin":"RICK","asset":"RICK","protocol":{"type":"UTXO"}},
@@ -1923,7 +1921,7 @@ fn test_order_should_not_be_displayed_when_node_is_down() {
 }
 
 #[test]
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_own_orders_should_not_be_removed_from_orderbook() {
     let coins = json!([
         {"coin":"RICK","asset":"RICK","protocol":{"type":"UTXO"}},
@@ -2003,7 +2001,7 @@ fn test_own_orders_should_not_be_removed_from_orderbook() {
 }
 
 #[test]
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 // https://github.com/KomodoPlatform/atomicDEX-API/issues/511
 fn test_all_orders_per_pair_per_node_must_be_displayed_in_orderbook() {
     let coins = json!([
@@ -2086,7 +2084,7 @@ fn test_all_orders_per_pair_per_node_must_be_displayed_in_orderbook() {
 }
 
 #[test]
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 fn orderbook_should_display_rational_amounts() {
     let coins = json!([
         {"coin":"RICK","asset":"RICK","protocol":{"type":"UTXO"}},
@@ -2214,7 +2212,7 @@ fn check_priv_key(mm: &MarketMakerIt, coin: &str, expected_priv_key: &str) {
 }
 
 #[test]
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 // https://github.com/KomodoPlatform/atomicDEX-API/issues/519#issuecomment-589149811
 fn test_show_priv_key() {
     let coins = json! ([
@@ -2259,7 +2257,7 @@ fn test_show_priv_key() {
 }
 
 #[test]
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 // https://github.com/KomodoPlatform/atomicDEX-API/issues/586
 fn test_electrum_and_enable_response() {
     let coins = json! ([
@@ -2406,7 +2404,7 @@ fn check_too_low_volume_order_creation_fails(mm: &MarketMakerIt, base: &str, rel
 }
 
 #[test]
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 // https://github.com/KomodoPlatform/atomicDEX-API/issues/481
 fn setprice_buy_sell_too_low_volume() {
     let bob_passphrase = unwrap!(get_passphrase(&".env.seed", "BOB_PASSPHRASE"));
@@ -2453,7 +2451,7 @@ fn setprice_buy_sell_too_low_volume() {
 }
 
 #[test]
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 // https://github.com/KomodoPlatform/atomicDEX-API/issues/473
 fn setprice_min_volume_should_be_displayed_in_orderbook() {
     let bob_passphrase = unwrap!(get_passphrase(&".env.seed", "BOB_PASSPHRASE"));
@@ -2575,7 +2573,7 @@ fn setprice_min_volume_should_be_displayed_in_orderbook() {
 }
 
 #[test]
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 // https://github.com/KomodoPlatform/atomicDEX-API/issues/670
 fn orderbook_should_work_without_coins_activation() {
     let bob_passphrase = unwrap!(get_passphrase(&".env.seed", "BOB_PASSPHRASE"));
@@ -2667,7 +2665,7 @@ fn orderbook_should_work_without_coins_activation() {
 }
 
 #[test]
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_fill_or_kill_taker_order_should_not_transform_to_maker() {
     let bob_passphrase = unwrap!(get_passphrase(&".env.client", "BOB_PASSPHRASE"));
 
@@ -2737,7 +2735,7 @@ fn test_fill_or_kill_taker_order_should_not_transform_to_maker() {
 }
 
 #[test]
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_gtc_taker_order_should_transform_to_maker() {
     let bob_passphrase = unwrap!(get_passphrase(&".env.client", "BOB_PASSPHRASE"));
 
@@ -2813,7 +2811,7 @@ fn test_gtc_taker_order_should_transform_to_maker() {
 }
 
 #[test]
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_set_price_must_save_order_to_db() {
     let bob_passphrase = unwrap!(get_passphrase(&".env.client", "BOB_PASSPHRASE"));
 
@@ -2871,7 +2869,7 @@ fn test_set_price_must_save_order_to_db() {
 }
 
 #[test]
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_set_price_response_format() {
     let bob_passphrase = unwrap!(get_passphrase(&".env.client", "BOB_PASSPHRASE"));
 
@@ -2929,7 +2927,7 @@ fn test_set_price_response_format() {
 }
 
 #[test]
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 // https://github.com/KomodoPlatform/atomicDEX-API/issues/635
 fn set_price_with_cancel_previous_should_broadcast_cancelled_message() {
     let coins = json!([
@@ -3147,7 +3145,7 @@ fn request_metrics(mm: &MarketMakerIt) -> MetricsJson {
 }
 
 #[test]
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_metrics_method() {
     let coins = json!([
         {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
@@ -3191,7 +3189,7 @@ fn test_metrics_method() {
 
 #[test]
 #[ignore]
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_electrum_tx_history() {
     fn get_tx_history_request_count(mm: &MarketMakerIt) -> u64 {
         let metrics = request_metrics(&mm);
@@ -4227,7 +4225,7 @@ fn test_qrc20_withdraw_error() {
 }
 
 #[test]
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_qrc20_tx_history() {
     let passphrase = "daring blind measure rebuild grab boost fix favorite nurse stereo april rookie";
     let coins = json!([

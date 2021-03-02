@@ -16,9 +16,6 @@
 //  lp_native_dex.rs
 //  marketmaker
 //
-#![cfg_attr(not(feature = "native"), allow(dead_code))]
-#![cfg_attr(not(feature = "native"), allow(unused_imports))]
-#![cfg_attr(not(feature = "native"), allow(unused_variables))]
 
 use coins::register_balance_update_handler;
 use mm2_libp2p::{start_gossipsub, NodeType};
@@ -31,7 +28,7 @@ use std::net::{IpAddr, Ipv4Addr, ToSocketAddrs};
 use std::path::Path;
 use std::str;
 
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 use crate::mm2::database::init_and_migrate_db;
 use crate::mm2::lp_network::{p2p_event_process_loop, P2PContext};
 use crate::mm2::lp_ordermatch::{broadcast_maker_orders_keep_alive_loop, lp_ordermatch_loop, orders_kick_start,
@@ -41,7 +38,8 @@ use crate::mm2::rpc::spawn_rpc;
 use bitcrypto::sha256;
 use common::executor::{spawn, spawn_boxed, Timer};
 use common::log::{error, info, warn};
-#[cfg(feature = "native")] use common::mm_ctx::SqliteCtx;
+#[cfg(not(target_arch = "wasm32"))]
+use common::mm_ctx::SqliteCtx;
 use common::mm_ctx::{MmArc, MmCtx};
 use common::privkey::key_pair_from_seed;
 use common::{slurp_url, MM_DATETIME, MM_VERSION};
@@ -128,7 +126,7 @@ fn ensure_file_is_writable(file_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 fn fix_directories(ctx: &MmCtx) -> Result<(), String> {
     let dbdir = ctx.dbdir();
     try_s!(std::fs::create_dir_all(&dbdir));
@@ -179,7 +177,7 @@ fn fix_directories(ctx: &MmCtx) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(not(feature = "native"))]
+#[cfg(target_arch = "wasm32")]
 fn fix_directories(ctx: &MmCtx) -> Result<(), String> {
     use std::os::raw::c_char;
 
@@ -207,7 +205,7 @@ fn fix_directories(ctx: &MmCtx) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 fn migrate_db(ctx: &MmArc) -> Result<(), String> {
     let migration_num_path = ctx.dbdir().join(".migration");
     let mut current_migration = match std::fs::read(&migration_num_path) {
@@ -231,7 +229,7 @@ fn migrate_db(ctx: &MmArc) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 fn migration_1(_ctx: &MmArc) -> Result<(), String> { Ok(()) }
 
 /// Resets the context (most of which resides currently in `lp::G` but eventually would move into `MmCtx`).
@@ -272,7 +270,7 @@ pub fn lp_passphrase_init(ctx: &MmArc) -> Result<(), String> {
 /// Dropping or using that Sender will stop the HTTP fallback server.
 ///
 /// Also the port of the HTTP fallback server is returned.
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_ip(ctx: &MmArc, ip: IpAddr) -> Result<(), String> {
     let netid = ctx.netid();
 
@@ -331,7 +329,7 @@ pub async fn lp_init(mypubport: u16, ctx: MmArc) -> Result<(), String> {
     try_s!(lp_passphrase_init(&ctx));
 
     try_s!(fix_directories(&ctx));
-    #[cfg(feature = "native")]
+    #[cfg(not(target_arch = "wasm32"))]
     {
         try_s!(ctx.init_sqlite_connection());
         try_s!(init_and_migrate_db(&ctx, &ctx.sqlite_connection()));
@@ -342,12 +340,15 @@ pub async fn lp_init(mypubport: u16, ctx: MmArc) -> Result<(), String> {
     #[cfg(not(target_arch = "wasm32"))]
     try_s!(init_p2p(mypubport, ctx.clone()).await);
 
+    // TODO temporary just to avoid unused_variables
+    let _ = mypubport;
+
     let balance_update_ordermatch_handler = BalanceUpdateOrdermatchHandler::new(ctx.clone());
     register_balance_update_handler(ctx.clone(), Box::new(balance_update_ordermatch_handler)).await;
 
     try_s!(ctx.initialized.pin(true));
 
-    #[cfg(feature = "native")]
+    #[cfg(not(target_arch = "wasm32"))]
     {
         // launch kickstart threads before RPC is available, this will prevent the API user to place
         // an order and start new swap that might get started 2 times because of kick-start
@@ -360,7 +361,7 @@ pub async fn lp_init(mypubport: u16, ctx: MmArc) -> Result<(), String> {
 
     spawn(broadcast_maker_orders_keep_alive_loop(ctx.clone()));
 
-    #[cfg(not(feature = "native"))]
+    #[cfg(target_arch = "wasm32")]
     {
         if 1 == 1 {
             return Ok(());

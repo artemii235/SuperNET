@@ -9,7 +9,6 @@
 
 #![allow(uncommon_codepoints)]
 #![feature(non_ascii_idents)]
-#![cfg_attr(not(feature = "native"), allow(dead_code))]
 
 #[macro_use] extern crate fomat_macros;
 #[macro_use] extern crate unwrap;

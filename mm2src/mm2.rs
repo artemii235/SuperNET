@@ -51,7 +51,7 @@ pub mod database;
 #[path = "lp_swap.rs"] pub mod lp_swap;
 #[path = "rpc.rs"] pub mod rpc;
 
-#[cfg(any(test, not(feature = "native")))]
+#[cfg(any(test, target_arch = "wasm32"))]
 #[path = "mm2_tests.rs"]
 mod mm2_tests;
 

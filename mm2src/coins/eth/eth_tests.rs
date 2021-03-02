@@ -574,7 +574,7 @@ fn test_withdraw_impl_manual_fee() {
 }
 
 #[test]
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_nonce_lock() {
     use common::for_tests::wait_for_log;
     use futures::future::join_all;

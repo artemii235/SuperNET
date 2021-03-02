@@ -3,13 +3,13 @@ use gstuff::Constructible;
 use serde_json::{self as json, Value as Json, Value};
 use std::sync::{Arc, Weak};
 
-#[cfg(feature = "native")] mod native;
-#[cfg(feature = "native")]
+#[cfg(not(target_arch = "wasm32"))] mod native;
+#[cfg(not(target_arch = "wasm32"))]
 pub use native::{prometheus, Clock, Metrics, TrySink};
 
-#[cfg(not(feature = "native"))] mod wasm;
+#[cfg(target_arch = "wasm32")] mod wasm;
 use std::collections::HashMap;
-#[cfg(not(feature = "native"))] pub use wasm::{Clock, Metrics};
+#[cfg(target_arch = "wasm32")] pub use wasm::{Clock, Metrics};
 
 pub trait MetricsOps {
     /// If the instance was not initialized yet, create the `receiver` else return an error.
