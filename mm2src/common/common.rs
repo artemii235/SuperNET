@@ -1446,7 +1446,7 @@ pub fn var(name: &str) -> Result<String, String> {
     /// Obtains the environment variable `name` from the host, copying it into `rbuf`.
     /// Returns the length of the value copied to `rbuf` or -1 if there was an error.
     #[cfg(target_arch = "wasm32")]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(raw_module = "../../../js/defined-in-js.js"))]
+    #[wasm_bindgen(raw_module = "../../../js/defined-in-js.js")]
     extern "C" {
         pub fn host_env(name: *const c_char, nameˡ: i32, rbuf: *mut c_char, rcap: i32) -> i32;
     }
@@ -1497,7 +1497,7 @@ use backtrace::SymbolName;
 
 #[cfg(target_arch = "wasm32")]
 pub fn now_ms() -> u64 {
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(raw_module = "../../../js/defined-in-js.js"))]
+    #[wasm_bindgen(raw_module = "../../../js/defined-in-js.js")]
     extern "C" {
         pub fn date_now() -> f64;
     }
@@ -1529,7 +1529,7 @@ pub fn safe_slurp(path: &dyn AsRef<Path>) -> Result<Vec<u8>, String> {
 pub fn slurp(path: &dyn AsRef<Path>) -> Result<Vec<u8>, String> {
     use std::mem::MaybeUninit;
 
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(raw_module = "../../../js/defined-in-js.js"))]
+    #[wasm_bindgen(raw_module = "../../../js/defined-in-js.js")]
     extern "C" {
         pub fn host_slurp(path_p: *const c_char, path_l: i32, rbuf: *mut c_char, rcap: i32) -> i32;
     }
@@ -1553,7 +1553,7 @@ pub fn temp_dir() -> PathBuf { env::temp_dir() }
 
 #[cfg(target_arch = "wasm32")]
 pub fn temp_dir() -> PathBuf {
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(raw_module = "../../../js/defined-in-js.js"))]
+    #[wasm_bindgen(raw_module = "../../../js/defined-in-js.js")]
     extern "C" {
         pub fn temp_dir(rbuf: *mut c_char, rcap: i32) -> i32;
     }
@@ -1576,7 +1576,7 @@ pub fn remove_file(path: &dyn AsRef<Path>) -> Result<(), String> {
 pub fn remove_file(path: &dyn AsRef<Path>) -> Result<(), String> {
     use std::os::raw::c_char;
 
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(raw_module = "../../../js/defined-in-js.js"))]
+    #[wasm_bindgen(raw_module = "../../../js/defined-in-js.js")]
     extern "C" {
         pub fn host_rm(ptr: *const c_char, len: i32) -> i32;
     }
@@ -1599,7 +1599,7 @@ pub fn write(path: &dyn AsRef<Path>, contents: &dyn AsRef<[u8]>) -> Result<(), S
 pub fn write(path: &dyn AsRef<Path>, contents: &dyn AsRef<[u8]>) -> Result<(), String> {
     use std::os::raw::c_char;
 
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(raw_module = "../../../js/defined-in-js.js"))]
+    #[wasm_bindgen(raw_module = "../../../js/defined-in-js.js")]
     extern "C" {
         pub fn host_write(path_p: *const c_char, path_l: i32, ptr: *const c_char, len: i32) -> i32;
     }
@@ -1667,7 +1667,7 @@ pub fn read_dir(dir: &dyn AsRef<Path>) -> Result<Vec<(u64, PathBuf)>, String> {
 pub fn read_dir(dir: &dyn AsRef<Path>) -> Result<Vec<(u64, PathBuf)>, String> {
     use std::mem::MaybeUninit;
 
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(raw_module = "../../../js/defined-in-js.js"))]
+    #[wasm_bindgen(raw_module = "../../../js/defined-in-js.js")]
     extern "C" {
         pub fn host_read_dir(path_p: *const c_char, path_l: i32, rbuf: *mut c_char, rcap: i32) -> i32;
     }
@@ -1800,14 +1800,14 @@ pub fn small_rng() -> SmallRng { SmallRng::seed_from_u64(now_ms()) }
 /// Ask the WASM host to send HTTP request to the native helpers.
 /// Returns request ID used to wait for the reply.
 #[cfg(target_arch = "wasm32")]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen(raw_module = "../../../js/defined-in-js.js"))]
+#[wasm_bindgen(raw_module = "../../../js/defined-in-js.js")]
 extern "C" {
     fn http_helper_if(helper: *const u8, helper_len: i32, payload: *const u8, payload_len: i32, timeout_ms: i32)
         -> i32;
 }
 
 #[cfg(target_arch = "wasm32")]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen(raw_module = "../../../js/defined-in-js.js"))]
+#[wasm_bindgen(raw_module = "../../../js/defined-in-js.js")]
 extern "C" {
     /// Check with the WASM host to see if the given HTTP request is ready.
     ///
@@ -1946,7 +1946,7 @@ impl<T: Copy> OrdRange<T> {
 
 /// Invokes callback `cb_id` in the WASM host, passing a `(ptr,len)` string to it.
 #[cfg(target_arch = "wasm32")]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen(raw_module = "../../../js/defined-in-js.js"))]
+#[wasm_bindgen(raw_module = "../../../js/defined-in-js.js")]
 extern "C" {
     pub fn call_back(cb_id: i32, ptr: *const c_char, len: i32);
 }

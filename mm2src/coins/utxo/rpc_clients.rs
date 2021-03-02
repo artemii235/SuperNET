@@ -1025,7 +1025,7 @@ pub fn spawn_electrum(
 }
 
 #[cfg(target_arch = "wasm32")]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen(raw_module = "../../../js/defined-in-js.js"))]
+#[wasm_bindgen(raw_module = "../../../js/defined-in-js.js")]
 extern "C" {
     fn host_electrum_connect(ptr: *const c_char, len: i32) -> i32;
     fn host_electrum_is_connected(ri: i32) -> i32;
