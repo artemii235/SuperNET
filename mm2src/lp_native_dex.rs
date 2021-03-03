@@ -438,7 +438,7 @@ async fn detect_myipaddr(ctx: MmArc) -> Result<IpAddr, String> {
         };
 
         // Try to bind on this IP.
-        // If we're not behind a NAT then the bind will likely suceed.
+        // If we're not behind a NAT then the bind will likely succeed.
         // If the bind fails then emit a user-visible warning and fall back to 0.0.0.0.
         match test_ip(&ctx, ip) {
             Ok(_) => {
@@ -535,8 +535,8 @@ async fn init_p2p(mypubport: u16, ctx: MmArc) -> Result<(), String> {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let myipaddr = try_s!(myipaddr(ctx.clone()).await);
-            NodeType::Relay { ip: myipaddr }
+            let ip = try_s!(myipaddr(ctx.clone()).await);
+            NodeType::Relay { ip }
         }
     } else {
         NodeType::Light
