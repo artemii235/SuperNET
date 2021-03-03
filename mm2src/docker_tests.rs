@@ -5,6 +5,7 @@
 #![feature(drain_filter)]
 #![feature(hash_raw_entry)]
 #![feature(non_ascii_idents)]
+#![feature(map_first_last)]
 #![recursion_limit = "512"]
 
 #[cfg(test)] use docker_tests::docker_tests_runner;
@@ -580,8 +581,8 @@ mod docker_tests {
         .unwrap();
         let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
         block_on(mm_bob.wait_for_log(60., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
-        log!([block_on(enable_native(&mm_bob, "MYCOIN", vec![]))]);
-        log!([block_on(enable_native(&mm_bob, "MYCOIN1", vec![]))]);
+        log!([block_on(enable_native(&mm_bob, "MYCOIN", &[]))]);
+        log!([block_on(enable_native(&mm_bob, "MYCOIN1", &[]))]);
         let rc = block_on(mm_bob.rpc(json! ({
             "userpass": mm_bob.userpass,
             "method": "setprice",
@@ -717,10 +718,10 @@ mod docker_tests {
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
         block_on(mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
-        log!([block_on(enable_native(&mm_bob, "MYCOIN", vec![]))]);
-        log!([block_on(enable_native(&mm_bob, "MYCOIN1", vec![]))]);
-        log!([block_on(enable_native(&mm_alice, "MYCOIN", vec![]))]);
-        log!([block_on(enable_native(&mm_alice, "MYCOIN1", vec![]))]);
+        log!([block_on(enable_native(&mm_bob, "MYCOIN", &[]))]);
+        log!([block_on(enable_native(&mm_bob, "MYCOIN1", &[]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN", &[]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN1", &[]))]);
 
         let rc = block_on(mm_bob.rpc(json! ({
             "userpass": mm_bob.userpass,
@@ -855,10 +856,10 @@ mod docker_tests {
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
         block_on(mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
-        log!([block_on(enable_native(&mm_bob, "MYCOIN", vec![]))]);
-        log!([block_on(enable_native(&mm_bob, "MYCOIN1", vec![]))]);
-        log!([block_on(enable_native(&mm_alice, "MYCOIN", vec![]))]);
-        log!([block_on(enable_native(&mm_alice, "MYCOIN1", vec![]))]);
+        log!([block_on(enable_native(&mm_bob, "MYCOIN", &[]))]);
+        log!([block_on(enable_native(&mm_bob, "MYCOIN1", &[]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN", &[]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN1", &[]))]);
 
         let rc = block_on(mm_bob.rpc(json! ({
             "userpass": mm_bob.userpass,
@@ -1007,10 +1008,10 @@ mod docker_tests {
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
         block_on(mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
-        log!([block_on(enable_native(&mm_bob, "MYCOIN", vec![]))]);
-        log!([block_on(enable_native(&mm_bob, "MYCOIN1", vec![]))]);
-        log!([block_on(enable_native(&mm_alice, "MYCOIN", vec![]))]);
-        log!([block_on(enable_native(&mm_alice, "MYCOIN1", vec![]))]);
+        log!([block_on(enable_native(&mm_bob, "MYCOIN", &[]))]);
+        log!([block_on(enable_native(&mm_bob, "MYCOIN1", &[]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN", &[]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN1", &[]))]);
 
         let rc = block_on(mm_bob.rpc(json! ({
             "userpass": mm_bob.userpass,
@@ -1118,10 +1119,10 @@ mod docker_tests {
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
         block_on(mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
-        log!([block_on(enable_native(&mm_bob, "MYCOIN", vec![]))]);
-        log!([block_on(enable_native(&mm_bob, "MYCOIN1", vec![]))]);
-        log!([block_on(enable_native(&mm_alice, "MYCOIN", vec![]))]);
-        log!([block_on(enable_native(&mm_alice, "MYCOIN1", vec![]))]);
+        log!([block_on(enable_native(&mm_bob, "MYCOIN", &[]))]);
+        log!([block_on(enable_native(&mm_bob, "MYCOIN1", &[]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN", &[]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN1", &[]))]);
         let rc = block_on(mm_bob.rpc(json! ({
             "userpass": mm_bob.userpass,
             "method": "setprice",
@@ -1222,10 +1223,10 @@ mod docker_tests {
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
         block_on(mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
-        log!([block_on(enable_native(&mm_bob, "MYCOIN", vec![]))]);
-        log!([block_on(enable_native(&mm_bob, "MYCOIN1", vec![]))]);
-        log!([block_on(enable_native(&mm_alice, "MYCOIN", vec![]))]);
-        log!([block_on(enable_native(&mm_alice, "MYCOIN1", vec![]))]);
+        log!([block_on(enable_native(&mm_bob, "MYCOIN", &[]))]);
+        log!([block_on(enable_native(&mm_bob, "MYCOIN1", &[]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN", &[]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN1", &[]))]);
         let rc = block_on(mm_bob.rpc(json! ({
             "userpass": mm_bob.userpass,
             "method": "setprice",
@@ -1321,10 +1322,10 @@ mod docker_tests {
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
         block_on(mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
-        log!([block_on(enable_native(&mm_bob, "MYCOIN", vec![]))]);
-        log!([block_on(enable_native(&mm_bob, "MYCOIN1", vec![]))]);
-        log!([block_on(enable_native(&mm_alice, "MYCOIN", vec![]))]);
-        log!([block_on(enable_native(&mm_alice, "MYCOIN1", vec![]))]);
+        log!([block_on(enable_native(&mm_bob, "MYCOIN", &[]))]);
+        log!([block_on(enable_native(&mm_bob, "MYCOIN1", &[]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN", &[]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN1", &[]))]);
         let rc = block_on(mm_bob.rpc(json! ({
             "userpass": mm_bob.userpass,
             "method": "setprice",
@@ -1402,8 +1403,8 @@ mod docker_tests {
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
         block_on(mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
-        log!([block_on(enable_native(&mm_alice, "MYCOIN", vec![]))]);
-        log!([block_on(enable_native(&mm_alice, "MYCOIN1", vec![]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN", &[]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN1", &[]))]);
         let rc = block_on(mm_alice.rpc(json! ({
             "userpass": mm_alice.userpass,
             "method": "buy",
@@ -1468,8 +1469,8 @@ mod docker_tests {
         let (_dump_log, _dump_dashboard) = mm_dump(&mm.log_path);
         block_on(mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
-        log!([block_on(enable_native(&mm, "MYCOIN1", vec![]))]);
-        log!([block_on(enable_native(&mm, "MYCOIN", vec![]))]);
+        log!([block_on(enable_native(&mm, "MYCOIN1", &[]))]);
+        log!([block_on(enable_native(&mm, "MYCOIN", &[]))]);
 
         let rc = block_on(mm.rpc(json!({
             "userpass": mm.userpass,
@@ -1697,8 +1698,8 @@ mod docker_tests {
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
         block_on(mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
-        log!([block_on(enable_native(&mm_alice, "MYCOIN1", vec![]))]);
-        log!([block_on(enable_native(&mm_alice, "MYCOIN", vec![]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN1", &[]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN", &[]))]);
         let rc = block_on(mm_alice.rpc(json! ({
             "userpass": mm_alice.userpass,
             "method": "max_taker_vol",
@@ -1755,8 +1756,8 @@ mod docker_tests {
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
         block_on(mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
-        log!([block_on(enable_native(&mm_alice, "MYCOIN1", vec![]))]);
-        log!([block_on(enable_native(&mm_alice, "MYCOIN", vec![]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN1", &[]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN", &[]))]);
         let rc = block_on(mm_alice.rpc(json! ({
             "userpass": mm_alice.userpass,
             "method": "max_taker_vol",
@@ -1817,8 +1818,8 @@ mod docker_tests {
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm.log_path);
         block_on(mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
-        log!([block_on(enable_native(&mm, "MYCOIN1", vec![]))]);
-        log!([block_on(enable_native(&mm, "MYCOIN", vec![]))]);
+        log!([block_on(enable_native(&mm, "MYCOIN1", &[]))]);
+        log!([block_on(enable_native(&mm, "MYCOIN", &[]))]);
 
         let rc = block_on(mm.rpc(json!({
             "userpass": mm.userpass,
@@ -1873,9 +1874,9 @@ mod docker_tests {
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
         block_on(mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
-        log!([block_on(enable_native(&mm_alice, "MYCOIN1", vec![]))]);
-        log!([block_on(enable_native(&mm_alice, "MYCOIN", vec![]))]);
-        log!([block_on(enable_electrum(&mm_alice, "KMD", vec![
+        log!([block_on(enable_native(&mm_alice, "MYCOIN1", &[]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN", &[]))]);
+        log!([block_on(enable_electrum(&mm_alice, "KMD", false, &[
             "electrum1.cipig.net:10001",
             "electrum2.cipig.net:10001",
             "electrum3.cipig.net:10001"
@@ -1934,8 +1935,8 @@ mod docker_tests {
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
         block_on(mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
-        log!([block_on(enable_native(&mm_alice, "MYCOIN", vec![]))]);
-        log!([block_on(enable_native(&mm_alice, "MYCOIN1", vec![]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN", &[]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN1", &[]))]);
         let rc = block_on(mm_alice.rpc(json! ({
             "userpass": mm_alice.userpass,
             "method": "setprice",
@@ -2010,10 +2011,10 @@ mod docker_tests {
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
         block_on(mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
-        log!([block_on(enable_native(&mm_bob, "MYCOIN", vec![]))]);
-        log!([block_on(enable_native(&mm_bob, "MYCOIN1", vec![]))]);
-        log!([block_on(enable_native(&mm_alice, "MYCOIN", vec![]))]);
-        log!([block_on(enable_native(&mm_alice, "MYCOIN1", vec![]))]);
+        log!([block_on(enable_native(&mm_bob, "MYCOIN", &[]))]);
+        log!([block_on(enable_native(&mm_bob, "MYCOIN1", &[]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN", &[]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN1", &[]))]);
         let rc = block_on(mm_bob.rpc(json! ({
             "userpass": mm_bob.userpass,
             "method": "setprice",
@@ -2087,8 +2088,8 @@ mod docker_tests {
         let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
         block_on(mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
-        log!([block_on(enable_native(&mm_bob, "MYCOIN", vec![]))]);
-        log!([block_on(enable_native(&mm_bob, "MYCOIN1", vec![]))]);
+        log!([block_on(enable_native(&mm_bob, "MYCOIN", &[]))]);
+        log!([block_on(enable_native(&mm_bob, "MYCOIN1", &[]))]);
         let rc = block_on(mm_bob.rpc(json! ({
             "userpass": mm_bob.userpass,
             "method": "setprice",
@@ -2108,8 +2109,8 @@ mod docker_tests {
         let mut mm_bob_dup = MarketMakerIt::start(bob_conf, "pass".to_string(), None).unwrap();
         let (_bob_dup_dump_log, _bob_dup_dump_dashboard) = mm_dump(&mm_bob_dup.log_path);
         block_on(mm_bob_dup.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
-        log!([block_on(enable_native(&mm_bob_dup, "MYCOIN", vec![]))]);
-        log!([block_on(enable_native(&mm_bob_dup, "MYCOIN1", vec![]))]);
+        log!([block_on(enable_native(&mm_bob_dup, "MYCOIN", &[]))]);
+        log!([block_on(enable_native(&mm_bob_dup, "MYCOIN1", &[]))]);
 
         thread::sleep(Duration::from_secs(2));
 
@@ -2182,10 +2183,10 @@ mod docker_tests {
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
         block_on(mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
-        log!([block_on(enable_native(&mm_bob, "MYCOIN", vec![]))]);
-        log!([block_on(enable_native(&mm_bob, "MYCOIN1", vec![]))]);
-        log!([block_on(enable_native(&mm_alice, "MYCOIN", vec![]))]);
-        log!([block_on(enable_native(&mm_alice, "MYCOIN1", vec![]))]);
+        log!([block_on(enable_native(&mm_bob, "MYCOIN", &[]))]);
+        log!([block_on(enable_native(&mm_bob, "MYCOIN1", &[]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN", &[]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN1", &[]))]);
 
         let rc = block_on(mm_bob.rpc(json! ({
             "userpass": mm_bob.userpass,
@@ -2206,8 +2207,8 @@ mod docker_tests {
         let mut mm_bob_dup = MarketMakerIt::start(bob_conf, "pass".to_string(), None).unwrap();
         let (_bob_dup_dump_log, _bob_dup_dump_dashboard) = mm_dump(&mm_bob_dup.log_path);
         block_on(mm_bob_dup.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
-        log!([block_on(enable_native(&mm_bob_dup, "MYCOIN", vec![]))]);
-        log!([block_on(enable_native(&mm_bob_dup, "MYCOIN1", vec![]))]);
+        log!([block_on(enable_native(&mm_bob_dup, "MYCOIN", &[]))]);
+        log!([block_on(enable_native(&mm_bob_dup, "MYCOIN1", &[]))]);
 
         log!("Give restarted Bob 2 seconds to kickstart the order");
         thread::sleep(Duration::from_secs(2));
@@ -2288,12 +2289,12 @@ mod docker_tests {
         let (_alice_2_dump_log, _alice_2_dump_dashboard) = mm_dump(&mm_alice_2.log_path);
         block_on(mm_alice_2.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
-        log!([block_on(enable_native(&mm_bob, "MYCOIN", vec![]))]);
-        log!([block_on(enable_native(&mm_bob, "MYCOIN1", vec![]))]);
-        log!([block_on(enable_native(&mm_alice_1, "MYCOIN", vec![]))]);
-        log!([block_on(enable_native(&mm_alice_1, "MYCOIN1", vec![]))]);
-        log!([block_on(enable_native(&mm_alice_2, "MYCOIN", vec![]))]);
-        log!([block_on(enable_native(&mm_alice_2, "MYCOIN1", vec![]))]);
+        log!([block_on(enable_native(&mm_bob, "MYCOIN", &[]))]);
+        log!([block_on(enable_native(&mm_bob, "MYCOIN1", &[]))]);
+        log!([block_on(enable_native(&mm_alice_1, "MYCOIN", &[]))]);
+        log!([block_on(enable_native(&mm_alice_1, "MYCOIN1", &[]))]);
+        log!([block_on(enable_native(&mm_alice_2, "MYCOIN", &[]))]);
+        log!([block_on(enable_native(&mm_alice_2, "MYCOIN1", &[]))]);
 
         let rc = block_on(mm_bob.rpc(json! ({
             "userpass": mm_bob.userpass,
@@ -2382,10 +2383,10 @@ mod docker_tests {
         let (_alice_1_dump_log, _alice_1_dump_dashboard) = mm_dump(&mm_alice.log_path);
         block_on(mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
-        log!([block_on(enable_native(&mm_bob, "MYCOIN", vec![]))]);
-        log!([block_on(enable_native(&mm_bob, "MYCOIN1", vec![]))]);
-        log!([block_on(enable_native(&mm_alice, "MYCOIN", vec![]))]);
-        log!([block_on(enable_native(&mm_alice, "MYCOIN1", vec![]))]);
+        log!([block_on(enable_native(&mm_bob, "MYCOIN", &[]))]);
+        log!([block_on(enable_native(&mm_bob, "MYCOIN1", &[]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN", &[]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN1", &[]))]);
 
         let rc = block_on(mm_bob.rpc(json! ({
             "userpass": mm_bob.userpass,
@@ -2460,10 +2461,10 @@ mod docker_tests {
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
         block_on(mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
-        log!([block_on(enable_native(&mm_bob, "MYCOIN", vec![]))]);
-        log!([block_on(enable_native(&mm_bob, "MYCOIN1", vec![]))]);
-        log!([block_on(enable_native(&mm_alice, "MYCOIN", vec![]))]);
-        log!([block_on(enable_native(&mm_alice, "MYCOIN1", vec![]))]);
+        log!([block_on(enable_native(&mm_bob, "MYCOIN", &[]))]);
+        log!([block_on(enable_native(&mm_bob, "MYCOIN1", &[]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN", &[]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN1", &[]))]);
         let rc = block_on(mm_bob.rpc(json! ({
             "userpass": mm_bob.userpass,
             "method": "sell",

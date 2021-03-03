@@ -56,10 +56,10 @@ fn test_confirmation_settings_sync_correctly_on_buy(
     let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
     block_on(mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
-    log!([block_on(enable_native(&mm_bob, "MYCOIN", vec![]))]);
-    log!([block_on(enable_native(&mm_bob, "MYCOIN1", vec![]))]);
-    log!([block_on(enable_native(&mm_alice, "MYCOIN", vec![]))]);
-    log!([block_on(enable_native(&mm_alice, "MYCOIN1", vec![]))]);
+    log!([block_on(enable_native(&mm_bob, "MYCOIN", &[]))]);
+    log!([block_on(enable_native(&mm_bob, "MYCOIN1", &[]))]);
+    log!([block_on(enable_native(&mm_alice, "MYCOIN", &[]))]);
+    log!([block_on(enable_native(&mm_alice, "MYCOIN1", &[]))]);
     let rc = block_on(mm_bob.rpc(json! ({
         "userpass": mm_bob.userpass,
         "method": "setprice",
@@ -223,10 +223,10 @@ fn test_confirmation_settings_sync_correctly_on_sell(
     let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
     block_on(mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
-    log!([block_on(enable_native(&mm_bob, "MYCOIN", vec![]))]);
-    log!([block_on(enable_native(&mm_bob, "MYCOIN1", vec![]))]);
-    log!([block_on(enable_native(&mm_alice, "MYCOIN", vec![]))]);
-    log!([block_on(enable_native(&mm_alice, "MYCOIN1", vec![]))]);
+    log!([block_on(enable_native(&mm_bob, "MYCOIN", &[]))]);
+    log!([block_on(enable_native(&mm_bob, "MYCOIN1", &[]))]);
+    log!([block_on(enable_native(&mm_alice, "MYCOIN", &[]))]);
+    log!([block_on(enable_native(&mm_alice, "MYCOIN1", &[]))]);
     let rc = block_on(mm_bob.rpc(json! ({
         "userpass": mm_bob.userpass,
         "method": "setprice",

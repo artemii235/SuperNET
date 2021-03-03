@@ -30,20 +30,21 @@ use futures::future::{join_all, FutureExt, TryFutureExt};
 use http::header::{HeaderValue, ACCESS_CONTROL_ALLOW_ORIGIN};
 use http::request::Parts;
 use http::{Method, Request, Response};
+use hyper::Body;
 #[cfg(feature = "native")] use hyper::{self, Server};
 use serde_json::{self as json, Value as Json};
 use std::future::Future as Future03;
 use std::net::SocketAddr;
 
-use crate::mm2::lp_ordermatch::{buy, cancel_all_orders, cancel_order, my_orders, order_status, orderbook, sell,
-                                set_price};
+use crate::mm2::lp_ordermatch::{best_orders_rpc, buy, cancel_all_orders, cancel_order, my_orders, order_status,
+                                orderbook, sell, set_price};
 use crate::mm2::lp_swap::{active_swaps_rpc, all_swaps_uuids_by_filter, coins_needed_for_kick_start, import_swaps,
                           list_banned_pubkeys, max_taker_vol, my_recent_swaps, my_swap_status, recover_funds_of_swap,
                           stats_swap_status, trade_preimage, unban_pubkeys};
 
-#[path = "rpc/lp_commands.rs"] pub mod lp_commands;
 use self::lp_commands::*;
-use hyper::Body;
+
+#[path = "rpc/lp_commands.rs"] pub mod lp_commands;
 
 /// Lists the RPC method not requiring the "userpass" authentication.  
 /// None is also public to skip auth and display proper error in case of method is missing
@@ -120,6 +121,7 @@ pub fn dispatcher(req: Json, ctx: MmArc) -> DispatcherRes {
         // "autoprice" => lp_autoprice (ctx, req),
         "active_swaps" => hyres(active_swaps_rpc(ctx, req)),
         "all_swaps_uuids_by_filter" => all_swaps_uuids_by_filter(ctx, req),
+        "best_orders" => hyres(best_orders_rpc(ctx, req)),
         "buy" => hyres(buy(ctx, req)),
         "cancel_all_orders" => hyres(cancel_all_orders(ctx, req)),
         "cancel_order" => hyres(cancel_order(ctx, req)),

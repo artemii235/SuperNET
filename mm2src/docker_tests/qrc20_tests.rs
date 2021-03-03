@@ -18,6 +18,7 @@ use http::StatusCode;
 use rand4::Rng;
 use std::path::PathBuf;
 use std::str::FromStr;
+use wasm_bindgen::UnwrapThrowExt;
 
 pub const QTUM_REGTEST_DOCKER_IMAGE: &str = "sergeyboyko/qtumregtest";
 
@@ -437,13 +438,13 @@ fn trade_base_rel((base, rel): (&str, &str)) {
 
     log!([block_on(enable_qrc20_native(&mm_bob, "QICK"))]);
     log!([block_on(enable_qrc20_native(&mm_bob, "QORTY"))]);
-    log!([block_on(enable_native(&mm_bob, "MYCOIN", vec![]))]);
-    log!([block_on(enable_native(&mm_bob, "MYCOIN1", vec![]))]);
+    log!([block_on(enable_native(&mm_bob, "MYCOIN", &[]))]);
+    log!([block_on(enable_native(&mm_bob, "MYCOIN1", &[]))]);
 
     log!([block_on(enable_qrc20_native(&mm_alice, "QICK"))]);
     log!([block_on(enable_qrc20_native(&mm_alice, "QORTY"))]);
-    log!([block_on(enable_native(&mm_alice, "MYCOIN", vec![]))]);
-    log!([block_on(enable_native(&mm_alice, "MYCOIN1", vec![]))]);
+    log!([block_on(enable_native(&mm_alice, "MYCOIN", &[]))]);
+    log!([block_on(enable_native(&mm_alice, "MYCOIN1", &[]))]);
     let rc = block_on(mm_bob.rpc(json! ({
         "userpass": mm_bob.userpass,
         "method": "setprice",
@@ -1190,7 +1191,7 @@ fn test_check_balance_on_order_post_base_coin_locked() {
     let (_dump_log, _dump_dashboard) = mm_dump(&mm_bob.log_path);
     log!({"Log path: {}", mm_bob.log_path.display()});
     block_on(mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
-    block_on(enable_native(&mm_bob, "MYCOIN", vec![]));
+    block_on(enable_native(&mm_bob, "MYCOIN", &[]));
     block_on(enable_qrc20_native(&mm_bob, "QICK"));
 
     // start alice
@@ -1213,7 +1214,7 @@ fn test_check_balance_on_order_post_base_coin_locked() {
     let (_dump_log, _dump_dashboard) = mm_dump(&mm_alice.log_path);
     log!({"Log path: {}", mm_alice.log_path.display()});
     block_on(mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
-    block_on(enable_native(&mm_alice, "MYCOIN", vec![]));
+    block_on(enable_native(&mm_alice, "MYCOIN", &[]));
     block_on(enable_qrc20_native(&mm_alice, "QICK"));
 
     let rc = block_on(mm_alice.rpc(json! ({
@@ -1289,8 +1290,8 @@ fn test_get_max_taker_vol_and_trade_with_dynamic_trade_fee(coin: QtumCoin, priv_
     let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm.log_path);
     block_on(mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
-    log!([block_on(enable_native(&mm, "MYCOIN", vec![]))]);
-    log!([block_on(enable_native(&mm, "QTUM", vec![]))]);
+    log!([block_on(enable_native(&mm, "MYCOIN", &[]))]);
+    log!([block_on(enable_native(&mm, "QTUM", &[]))]);
 
     let qtum_balance = coin.my_spendable_balance().wait().expect("!my_balance");
     let qtum_dex_fee_threshold = MmNumber::from("0.000728");

@@ -5,6 +5,7 @@
 #![recursion_limit = "512"]
 #![feature(test)]
 #![feature(hash_raw_entry)]
+#![feature(map_first_last)]
 
 #[macro_use] extern crate common;
 #[macro_use] extern crate fomat_macros;

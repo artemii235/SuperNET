@@ -20,6 +20,7 @@
 #![cfg_attr(not(feature = "native"), allow(dead_code))]
 
 use async_trait::async_trait;
+use best_orders::BestOrdersAction;
 use bigdecimal::BigDecimal;
 use blake2::digest::{Update, VariableOutput};
 use blake2::VarBlake2b;
@@ -40,6 +41,7 @@ use mm2_libp2p::{decode_signed, encode_and_sign, encode_message, pub_sub_topic, 
 #[cfg(test)] use mocktopus::macros::*;
 use num_rational::BigRational;
 use num_traits::identities::Zero;
+use order_requests_tracker::OrderRequestsTracker;
 use parity_util_mem::malloc_size;
 use rpc::v1::types::H256 as H256Json;
 use serde_json::{self as json, Value as Json};
@@ -61,12 +63,12 @@ use crate::mm2::{database::my_swaps::insert_new_swap,
                            check_other_coin_balance_for_swap, is_pubkey_banned, lp_atomic_locktime, run_maker_swap,
                            run_taker_swap, AtomicLocktimeVersion, CheckBalanceError, MakerSwap, RunMakerSwapInput,
                            RunTakerSwapInput, SwapConfirmationsSettings, TakerSwap}};
+pub use best_orders::best_orders_rpc;
 
+#[path = "lp_ordermatch/best_orders.rs"] mod best_orders;
 #[path = "lp_ordermatch/new_protocol.rs"] mod new_protocol;
 #[path = "lp_ordermatch/order_requests_tracker.rs"]
 mod order_requests_tracker;
-use order_requests_tracker::OrderRequestsTracker;
-
 #[cfg(test)]
 #[cfg(feature = "native")]
 #[path = "ordermatch_tests.rs"]
@@ -388,6 +390,11 @@ pub enum OrdermatchRequest {
         /// Request using this condition
         trie_roots: HashMap<AlbOrderedOrderbookPair, H64>,
     },
+    BestOrders {
+        coin: String,
+        action: BestOrdersAction,
+        volume: BigRational,
+    },
 }
 
 #[derive(Debug)]
@@ -435,10 +442,12 @@ pub async fn process_peer_request(ctx: MmArc, request: OrdermatchRequest) -> Res
             let response = process_sync_pubkey_orderbook_state(ctx, pubkey, trie_roots).await;
             response.map(|res| res.map(|r| encode_message(&r).expect("Serialization failed")))
         },
+        OrdermatchRequest::BestOrders { coin, action, volume } => {
+            best_orders::process_best_orders_p2p_request(ctx, coin, action, volume).await
+        },
     }
 }
 
-#[allow(dead_code)]
 type TrieProof = Vec<Vec<u8>>;
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -1807,6 +1816,10 @@ fn collect_orderbook_metrics(ctx: &MmArc, orderbook: &Orderbook) {
 struct Orderbook {
     /// A map from (base, rel).
     ordered: HashMap<(String, String), BTreeSet<OrderedByPriceOrder>>,
+    /// A map from base ticker to the set of another tickers to track the existing pairs
+    pairs_existing_for_base: HashMap<String, HashSet<String>>,
+    /// A map from rel ticker to the set of another tickers to track the existing pairs
+    pairs_existing_for_rel: HashMap<String, HashSet<String>>,
     /// A map from (base, rel).
     unordered: HashMap<(String, String), HashSet<Uuid>>,
     order_set: HashMap<Uuid, OrderbookItem>,
@@ -1894,6 +1907,16 @@ impl Orderbook {
                 price: order.price.clone().into(),
                 uuid: order.uuid,
             });
+
+        self.pairs_existing_for_base
+            .entry(order.base.clone())
+            .or_insert_with(HashSet::new)
+            .insert(order.rel.clone());
+
+        self.pairs_existing_for_rel
+            .entry(order.rel.clone())
+            .or_insert_with(HashSet::new)
+            .insert(order.base.clone());
 
         self.unordered
             .entry(base_rel)
@@ -2030,6 +2053,14 @@ impl Orderbook {
         Some(OrdermatchRequest::SyncPubkeyOrderbookState {
             pubkey: from_pubkey.to_owned(),
             trie_roots: trie_roots_to_request,
+        })
+    }
+
+    fn orderbook_item_with_proof(&self, order: OrderbookItem) -> Result<OrderbookItemWithProof, ()> {
+        Ok(OrderbookItemWithProof {
+            order,
+            last_message_payload: vec![],
+            proof: vec![],
         })
     }
 }
@@ -2779,6 +2810,16 @@ struct OrderbookItem {
     min_volume: BigRational,
     uuid: Uuid,
     created_at: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+struct OrderbookItemWithProof {
+    /// Orderbook item
+    order: OrderbookItem,
+    /// Last pubkey message payload that contains most recent pair trie root
+    last_message_payload: Vec<u8>,
+    /// Proof confirming that orderbook item is in the pair trie
+    proof: TrieProof,
 }
 
 /// Concrete implementation of Hasher using Blake2b 64-bit hashes
