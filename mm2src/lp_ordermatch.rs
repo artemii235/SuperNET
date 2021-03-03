@@ -482,7 +482,7 @@ async fn process_get_orderbook_request(ctx: MmArc, base: String, rel: String) ->
         (total_orders_number, uuids_by_pubkey)
     }
 
-    let ordermatch_ctx = unwrap!(OrdermatchContext::from_ctx(&ctx));
+    let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
     let orderbook = ordermatch_ctx.orderbook.lock().await;
 
     let (total_orders_number, orders) = get_pubkeys_orders(&orderbook, base, rel);
@@ -603,7 +603,7 @@ async fn process_sync_pubkey_orderbook_state(
     pubkey: String,
     trie_roots: HashMap<AlbOrderedOrderbookPair, H64>,
 ) -> Result<Option<SyncPubkeyOrderbookStateRes>, String> {
-    let ordermatch_ctx = unwrap!(OrdermatchContext::from_ctx(&ctx));
+    let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
     let orderbook = ordermatch_ctx.orderbook.lock().await;
     let pubkey_state = match orderbook.pubkeys_state.get(&pubkey) {
         Some(s) => s,
@@ -767,7 +767,7 @@ impl BalanceTradeFeeUpdatedHandler for BalanceUpdateOrdermatchHandler {
                 return;
             },
         };
-        let ordermatch_ctx = unwrap!(OrdermatchContext::from_ctx(&self.ctx));
+        let ordermatch_ctx = OrdermatchContext::from_ctx(&self.ctx).unwrap();
         let mut maker_orders = ordermatch_ctx.my_maker_orders.lock().await;
         *maker_orders = maker_orders
             .drain()
@@ -2093,7 +2093,7 @@ fn lp_connect_start_bob(ctx: MmArc, maker_match: MakerMatch, maker_order: MakerO
         let maker_amount = maker_match.reserved.get_base_amount().to_decimal();
         let taker_amount = maker_match.reserved.get_rel_amount().to_decimal();
         let privkey = &ctx.secp256k1_key_pair().private().secret;
-        let my_persistent_pub = unwrap!(compressed_pub_key_from_priv_raw(&privkey[..], ChecksumType::DSHA256));
+        let my_persistent_pub = compressed_pub_key_from_priv_raw(&privkey[..], ChecksumType::DSHA256).unwrap();
         let uuid = maker_match.request.uuid;
         let my_conf_settings = choose_maker_confs_and_notas(
             maker_order.conf_settings,
@@ -2177,7 +2177,7 @@ fn lp_connected_alice(ctx: MmArc, taker_request: TakerRequest, taker_match: Take
         };
 
         let privkey = &ctx.secp256k1_key_pair().private().secret;
-        let my_persistent_pub = unwrap!(compressed_pub_key_from_priv_raw(&privkey[..], ChecksumType::DSHA256));
+        let my_persistent_pub = compressed_pub_key_from_priv_raw(&privkey[..], ChecksumType::DSHA256).unwrap();
         let maker_amount = taker_match.reserved.get_base_amount().clone();
         let taker_amount = taker_match.reserved.get_rel_amount().clone();
         let uuid = taker_match.reserved.taker_order_uuid;
@@ -2239,7 +2239,7 @@ pub async fn lp_ordermatch_loop(ctx: MmArc) {
         if ctx.is_stopping() {
             break;
         }
-        let ordermatch_ctx = unwrap!(OrdermatchContext::from_ctx(&ctx));
+        let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
         {
             let mut my_taker_orders = ordermatch_ctx.my_taker_orders.lock().await;
             let mut my_maker_orders = ordermatch_ctx.my_maker_orders.lock().await;
@@ -2349,8 +2349,8 @@ pub async fn lp_ordermatch_loop(ctx: MmArc) {
 }
 
 async fn process_maker_reserved(ctx: MmArc, from_pubkey: H256Json, reserved_msg: MakerReserved) {
-    let ordermatch_ctx = unwrap!(OrdermatchContext::from_ctx(&ctx));
-    let our_public_id = unwrap!(ctx.public_id());
+    let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
+    let our_public_id = ctx.public_id().unwrap();
     if our_public_id.bytes == from_pubkey.0 {
         log::warn!("Skip maker reserved from our pubkey");
         return;
@@ -2392,8 +2392,8 @@ async fn process_maker_reserved(ctx: MmArc, from_pubkey: H256Json, reserved_msg:
 }
 
 async fn process_maker_connected(ctx: MmArc, from_pubkey: H256Json, connected: MakerConnected) {
-    let ordermatch_ctx = unwrap!(OrdermatchContext::from_ctx(&ctx));
-    let our_public_id = unwrap!(ctx.public_id());
+    let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
+    let our_public_id = ctx.public_id().unwrap();
     if our_public_id.bytes == from_pubkey.0 {
         log::warn!("Skip maker connected from our pubkey");
         return;
@@ -2427,7 +2427,7 @@ async fn process_maker_connected(ctx: MmArc, from_pubkey: H256Json, connected: M
 }
 
 async fn process_taker_request(ctx: MmArc, from_pubkey: H256Json, taker_request: TakerRequest) {
-    let our_public_id: H256Json = unwrap!(ctx.public_id()).bytes.into();
+    let our_public_id: H256Json = ctx.public_id().unwrap().bytes.into();
     if our_public_id == from_pubkey {
         log::warn!("Skip the request originating from our pubkey");
         return;
@@ -2443,7 +2443,7 @@ async fn process_taker_request(ctx: MmArc, from_pubkey: H256Json, taker_request:
         return;
     }
 
-    let ordermatch_ctx = unwrap!(OrdermatchContext::from_ctx(&ctx));
+    let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
     let mut my_orders = ordermatch_ctx.my_maker_orders.lock().await;
     let filtered = my_orders
         .iter_mut()
@@ -2498,8 +2498,8 @@ async fn process_taker_request(ctx: MmArc, from_pubkey: H256Json, taker_request:
 }
 
 async fn process_taker_connect(ctx: MmArc, sender_pubkey: H256Json, connect_msg: TakerConnect) {
-    let ordermatch_ctx = unwrap!(OrdermatchContext::from_ctx(&ctx));
-    let our_public_id = unwrap!(ctx.public_id());
+    let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
+    let our_public_id = ctx.public_id().unwrap();
     if our_public_id.bytes == sender_pubkey.0 {
         log::warn!("Skip taker connect from our pubkey");
         return;
@@ -3284,14 +3284,14 @@ fn my_taker_order_file_path(ctx: &MmArc, uuid: &Uuid) -> PathBuf {
 
 fn save_my_maker_order(ctx: &MmArc, order: &MakerOrder) {
     let path = my_maker_order_file_path(ctx, &order.uuid);
-    let content = unwrap!(json::to_vec(order));
-    unwrap!(write(&path, &content));
+    let content = json::to_vec(order).unwrap();
+    write(&path, &content).unwrap();
 }
 
 fn save_my_taker_order(ctx: &MmArc, order: &TakerOrder) {
     let path = my_taker_order_file_path(ctx, &order.request.uuid);
-    let content = unwrap!(json::to_vec(order));
-    unwrap!(write(&path, &content));
+    let content = json::to_vec(order).unwrap();
+    write(&path, &content).unwrap();
 }
 
 #[cfg_attr(test, mockable)]

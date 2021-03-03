@@ -254,7 +254,7 @@ async fn rpc_service(req: Request<Body>, ctx_h: u32, client: SocketAddr) -> Resp
                 Err(err) => {
                     log!("RPC error response: "(err));
                     let ebody = err_to_rpc_json_string(&fomat!((err)));
-                    return unwrap!(Response::builder().status(500).body(Body::from(ebody)));
+                    return Response::builder().status(500).body(Body::from(ebody)).unwrap();
                 },
             }
         };
@@ -274,10 +274,11 @@ async fn rpc_service(req: Request<Body>, ctx_h: u32, client: SocketAddr) -> Resp
         Err(err) => {
             log!("RPC error response: "(err));
             let ebody = err_to_rpc_json_string(&err);
-            return unwrap!(Response::builder()
+            return Response::builder()
                 .status(500)
                 .header(ACCESS_CONTROL_ALLOW_ORIGIN, rpc_cors)
-                .body(Body::from(ebody)));
+                .body(Body::from(ebody))
+                .unwrap();
         },
     };
     parts.headers.insert(ACCESS_CONTROL_ALLOW_ORIGIN, rpc_cors);
@@ -296,11 +297,11 @@ pub extern "C" fn spawn_rpc(ctx_h: u32) {
     // then we might want to refactor into starting it ideomatically in order to benefit from a more graceful shutdown,
     // cf. https://github.com/hyperium/hyper/pull/1640.
 
-    let ctx = unwrap!(MmArc::from_ffi_handle(ctx_h), "No context");
+    let ctx = MmArc::from_ffi_handle(ctx_h).expect("No context");
 
-    let rpc_ip_port = unwrap!(ctx.rpc_ip_port());
+    let rpc_ip_port = ctx.rpc_ip_port().unwrap();
     CORE.0.enter(|| {
-        let server = unwrap!(Server::try_bind(&rpc_ip_port), "Can't bind on {}", rpc_ip_port);
+        let server = Server::try_bind(&rpc_ip_port).unwrap_or_else(|_| panic!("Can't bind on {}", rpc_ip_port));
         let make_svc = make_service_fn(move |socket: &AddrStream| {
             let remote_addr = socket.remote_addr();
             async move {
@@ -337,7 +338,7 @@ pub extern "C" fn spawn_rpc(ctx_h: u32) {
             futures::future::ready(())
         });
 
-        let rpc_ip_port = unwrap!(ctx.rpc_ip_port());
+        let rpc_ip_port = ctx.rpc_ip_port().unwrap();
         CORE.0.spawn({
             log!(">>>>>>>>>> DEX stats " (rpc_ip_port.ip())":"(rpc_ip_port.port()) " \
                 DEX stats API enabled at unixtime." (gstuff::now_ms() / 1000) " <<<<<<<<<");
