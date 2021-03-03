@@ -18,7 +18,6 @@ use http::StatusCode;
 use rand4::Rng;
 use std::path::PathBuf;
 use std::str::FromStr;
-use wasm_bindgen::UnwrapThrowExt;
 
 pub const QTUM_REGTEST_DOCKER_IMAGE: &str = "sergeyboyko/qtumregtest";
 
