@@ -28,13 +28,6 @@ const EXPORT_METRICS_INTERVAL: f64 = 5. * 60.;
 
 type StopListenerCallback = Box<dyn FnMut() -> Result<(), String>>;
 
-#[cfg(not(target_arch = "wasm32"))]
-pub trait SqliteCtx {
-    fn init_sqlite_connection(&self) -> Result<(), String>;
-
-    fn sqlite_connection(&self) -> MutexGuard<Connection>;
-}
-
 /// MarketMaker state, shared between the various MarketMaker threads.
 ///
 /// Every MarketMaker has one and only one instance of `MmCtx`.
@@ -230,11 +223,9 @@ impl MmCtx {
     }
 
     pub fn gui(&self) -> Option<&str> { self.conf["gui"].as_str() }
-}
 
-#[cfg(not(target_arch = "wasm32"))]
-impl SqliteCtx for MmCtx {
-    fn init_sqlite_connection(&self) -> Result<(), String> {
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn init_sqlite_connection(&self) -> Result<(), String> {
         let sqlite_file_path = self.dbdir().join("MM2.db");
         log::debug!("Trying to open SQLite database file {}", sqlite_file_path.display());
         let connection = try_s!(Connection::open(sqlite_file_path));
@@ -242,7 +233,8 @@ impl SqliteCtx for MmCtx {
         Ok(())
     }
 
-    fn sqlite_connection(&self) -> MutexGuard<Connection> {
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn sqlite_connection(&self) -> MutexGuard<Connection> {
         self.sqlite_connection
             .or(&|| panic!("sqlite_connection is not initialized"))
             .lock()

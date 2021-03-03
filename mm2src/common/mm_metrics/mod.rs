@@ -1,6 +1,7 @@
 use crate::log::{LogArc, LogWeak, Tag};
 use gstuff::Constructible;
 use serde_json::{self as json, Value as Json, Value};
+use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 
 #[cfg(not(target_arch = "wasm32"))] mod native;
@@ -8,7 +9,6 @@ use std::sync::{Arc, Weak};
 pub use native::{prometheus, Clock, Metrics, TrySink};
 
 #[cfg(target_arch = "wasm32")] mod wasm;
-use std::collections::HashMap;
 #[cfg(target_arch = "wasm32")] pub use wasm::{Clock, Metrics};
 
 pub trait MetricsOps {

@@ -1,7 +1,7 @@
 /// This module contains code to work with my_swaps table in MM2 SQLite DB
 use crate::mm2::lp_swap::{my_swaps_dir, MySwapsFilter, PagingOptions, SavedSwap};
 use common::log::{debug, error};
-use common::mm_ctx::{MmArc, SqliteCtx};
+use common::mm_ctx::MmArc;
 use common::rusqlite::{Connection, Error as SqlError, Result as SqlResult, ToSql};
 use common::{read_dir, slurp};
 use serde_json::{self as json};

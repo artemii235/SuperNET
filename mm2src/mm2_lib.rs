@@ -5,6 +5,7 @@
 #![feature(integer_atomics)]
 #![feature(non_ascii_idents)]
 #![recursion_limit = "512"]
+#![cfg_attr(target_arch = "wasm32", allow(unused_imports))]
 
 #[macro_use] extern crate common;
 #[macro_use] extern crate enum_primitive_derive;
@@ -96,10 +97,10 @@ pub unsafe extern "C" fn mm2_main(conf: *const c_char, log_cb: extern "C" fn(lin
     MainErr::Ok as i8
 }
 
-/// Checks if the MM2 singleton thread is currently running or not.  
-/// 0 .. not running.  
-/// 1 .. running, but no context yet.  
-/// 2 .. context, but no RPC yet.  
+/// Checks if the MM2 singleton thread is currently running or not.
+/// 0 .. not running.
+/// 1 .. running, but no context yet.
+/// 2 .. context, but no RPC yet.
 /// 3 .. RPC is up.
 #[no_mangle]
 pub extern "C" fn mm2_main_status() -> i8 {

@@ -38,8 +38,6 @@ use crate::mm2::rpc::spawn_rpc;
 use bitcrypto::sha256;
 use common::executor::{spawn, spawn_boxed, Timer};
 use common::log::{error, info, warn};
-#[cfg(not(target_arch = "wasm32"))]
-use common::mm_ctx::SqliteCtx;
 use common::mm_ctx::{MmArc, MmCtx};
 use common::privkey::key_pair_from_seed;
 use common::{slurp_url, MM_DATETIME, MM_VERSION};
