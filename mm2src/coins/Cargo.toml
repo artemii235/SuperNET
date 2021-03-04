@@ -51,7 +51,6 @@ serde_json = { version = "1.0", features = ["preserve_order", "raw_value"] }
 serialization = { git = "https://github.com/artemii235/parity-bitcoin.git" }
 sha2 = "0.8"
 sha3 = "0.8"
-unwrap = "1.2"
 # One of web3 dependencies is the old `tokio-uds 0.1.7` which fails cross-compiling to ARM.
 # We don't need the default web3 features at all since we added our own web3 transport using shared HYPER instance.
 web3 = { git = "https://github.com/artemii235/rust-web3", default-features = false }

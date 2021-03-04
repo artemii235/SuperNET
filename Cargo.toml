@@ -109,7 +109,6 @@ term = "=0.5.1"
 
 trie-db = "0.22.1"
 trie-root = "0.16.0"
-unwrap = "1.2"
 uuid = { version = "0.7", features = ["serde", "v4"] }
 wasm-timer = "0.2.4"
 

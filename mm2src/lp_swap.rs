@@ -173,8 +173,8 @@ pub fn process_msg(ctx: MmArc, topic: &str, msg: &[u8]) {
             return;
         },
     };
-    let swap_ctx = unwrap!(SwapsContext::from_ctx(&ctx));
-    let mut msgs = unwrap!(swap_ctx.swap_msgs.lock());
+    let swap_ctx = SwapsContext::from_ctx(&ctx).unwrap();
+    let mut msgs = swap_ctx.swap_msgs.lock().unwrap();
     if let Some(msg_store) = msgs.get_mut(&uuid) {
         if msg_store.accept_only_from.bytes == msg.2.unprefixed() {
             match msg.0 {
@@ -202,8 +202,8 @@ async fn recv_swap_msg<T>(
     let wait_until = started + timeout;
     loop {
         Timer::sleep(1.).await;
-        let swap_ctx = unwrap!(SwapsContext::from_ctx(&ctx));
-        let mut msgs = unwrap!(swap_ctx.swap_msgs.lock());
+        let swap_ctx = SwapsContext::from_ctx(&ctx).unwrap();
+        let mut msgs = swap_ctx.swap_msgs.lock().unwrap();
         if let Some(msg_store) = msgs.get_mut(uuid) {
             if let Some(msg) = getter(msg_store) {
                 return Ok(msg);
@@ -327,8 +327,8 @@ impl SwapsContext {
 }
 
 pub fn ban_pubkey(ctx: &MmArc, pubkey: H256, swap_uuid: &Uuid, event: SwapEvent) {
-    let ctx = unwrap!(SwapsContext::from_ctx(ctx));
-    let mut banned = unwrap!(ctx.banned_pubkeys.lock());
+    let ctx = SwapsContext::from_ctx(ctx).unwrap();
+    let mut banned = ctx.banned_pubkeys.lock().unwrap();
     banned.insert(pubkey.into(), BanReason {
         caused_by_swap: *swap_uuid,
         caused_by_event: event,
@@ -336,15 +336,15 @@ pub fn ban_pubkey(ctx: &MmArc, pubkey: H256, swap_uuid: &Uuid, event: SwapEvent)
 }
 
 pub fn is_pubkey_banned(ctx: &MmArc, pubkey: &H256Json) -> bool {
-    let ctx = unwrap!(SwapsContext::from_ctx(ctx));
-    let banned = unwrap!(ctx.banned_pubkeys.lock());
+    let ctx = SwapsContext::from_ctx(ctx).unwrap();
+    let banned = ctx.banned_pubkeys.lock().unwrap();
     banned.contains_key(pubkey)
 }
 
 /// Get total amount of selected coin locked by all currently ongoing swaps
 pub fn get_locked_amount(ctx: &MmArc, coin: &str) -> MmNumber {
-    let swap_ctx = unwrap!(SwapsContext::from_ctx(&ctx));
-    let swap_lock = unwrap!(swap_ctx.running_swaps.lock());
+    let swap_ctx = SwapsContext::from_ctx(&ctx).unwrap();
+    let swap_lock = swap_ctx.running_swaps.lock().unwrap();
 
     swap_lock
         .iter()
@@ -366,8 +366,8 @@ pub fn get_locked_amount(ctx: &MmArc, coin: &str) -> MmNumber {
 
 /// Get number of currently running swaps
 pub fn running_swaps_num(ctx: &MmArc) -> u64 {
-    let swap_ctx = unwrap!(SwapsContext::from_ctx(&ctx));
-    let swaps = unwrap!(swap_ctx.running_swaps.lock());
+    let swap_ctx = SwapsContext::from_ctx(&ctx).unwrap();
+    let swaps = swap_ctx.running_swaps.lock().unwrap();
     swaps.iter().fold(0, |total, swap| match swap.upgrade() {
         Some(_) => total + 1,
         None => total,
@@ -376,8 +376,8 @@ pub fn running_swaps_num(ctx: &MmArc) -> u64 {
 
 /// Get total amount of selected coin locked by all currently ongoing swaps except the one with selected uuid
 fn get_locked_amount_by_other_swaps(ctx: &MmArc, except_uuid: &Uuid, coin: &str) -> MmNumber {
-    let swap_ctx = unwrap!(SwapsContext::from_ctx(&ctx));
-    let swap_lock = unwrap!(swap_ctx.running_swaps.lock());
+    let swap_ctx = SwapsContext::from_ctx(&ctx).unwrap();
+    let swap_lock = swap_ctx.running_swaps.lock().unwrap();
 
     swap_lock
         .iter()
@@ -1213,8 +1213,8 @@ pub fn my_recent_swaps(ctx: MmArc, req: Json) -> HyRes {
         .iter()
         .map(|uuid| {
             let path = my_swap_file_path(&ctx, uuid);
-            match json::from_slice::<SavedSwap>(&unwrap!(slurp(&path))) {
-                Ok(swap) => unwrap!(json::to_value(MySwapStatusResponse::from(&swap))),
+            match json::from_slice::<SavedSwap>(&slurp(&path).unwrap()) {
+                Ok(swap) => json::to_value(MySwapStatusResponse::from(&swap)).unwrap(),
                 Err(e) => {
                     log!("Error " (e) " parsing JSON from " (path.display()));
                     Json::Null
@@ -1245,7 +1245,8 @@ pub fn my_recent_swaps(ctx: MmArc, req: Json) -> HyRes {
 /// Return the tickers of coins that must be enabled for swaps to continue
 pub fn swap_kick_starts(ctx: MmArc) -> HashSet<String> {
     let mut coins = HashSet::new();
-    let entries: Vec<PathBuf> = unwrap!(read_dir(&my_swaps_dir(&ctx)))
+    let entries: Vec<PathBuf> = read_dir(&my_swaps_dir(&ctx))
+        .unwrap()
         .into_iter()
         .filter_map(|(_lm, path)| {
             if path.extension() == Some(OsStr::new("json")) {
@@ -1257,7 +1258,7 @@ pub fn swap_kick_starts(ctx: MmArc) -> HashSet<String> {
         .collect();
 
     entries.iter().for_each(|path| {
-        if let Ok(swap) = json::from_slice::<SavedSwap>(&unwrap!(slurp(&path))) {
+        if let Ok(swap) = json::from_slice::<SavedSwap>(&slurp(&path).unwrap()) {
             if !swap.is_finished() {
                 log!("Kick starting the swap "(swap.uuid()));
                 let maker_coin_ticker = match swap.maker_coin_ticker() {
@@ -1518,7 +1519,7 @@ mod lp_swap_tests {
 
         let base = "BTC";
         let rel = "KMD";
-        let amount: MmNumber = unwrap!("0.001".parse::<BigDecimal>()).into();
+        let amount: MmNumber = "0.001".parse::<BigDecimal>().unwrap().into();
         let actual_fee = dex_fee_amount(base, rel, &amount, &dex_fee_threshold);
         assert_eq!(dex_fee_threshold, actual_fee);
     }
@@ -1527,7 +1528,7 @@ mod lp_swap_tests {
     fn test_serde_swap_negotiation_data() {
         let data = SwapNegotiationData::default();
         let bytes = serialize(&data);
-        let deserialized = unwrap!(deserialize(bytes.as_slice()));
+        let deserialized = deserialize(bytes.as_slice()).unwrap();
         assert_eq!(data, deserialized);
     }
 

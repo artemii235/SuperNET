@@ -7,9 +7,8 @@ use web_sys::console;
 
 #[wasm_bindgen_test]
 fn pass() {
-    use super::CoinsContext;
     let ctx = MmCtxBuilder::default().into_mm_arc();
-    let _coins_context = unwrap!(CoinsContext::from_ctx(&ctx));
+    let _coins_context = CoinsContext::from_ctx(&ctx).unwrap();
     assert_eq!(1, 1);
 }
 

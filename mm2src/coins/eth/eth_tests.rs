@@ -459,13 +459,12 @@ fn test_search_for_swap_tx_spend_was_spent() {
         243, 128, 2, 235, 208, 193, 192, 74, 208, 242, 26, 221, 83, 54, 74, 160, 111, 29, 92, 8, 75, 61, 97, 103, 199,
         100, 189, 72, 74, 221, 144, 66, 170, 68, 121, 29, 105, 19, 194, 35, 245, 196, 131, 236, 29, 105, 101, 30,
     ];
-    let spend_tx = FoundSwapTxSpend::Spent(unwrap!(signed_eth_tx_from_bytes(&spend_tx)).into());
+    let spend_tx = FoundSwapTxSpend::Spent(signed_eth_tx_from_bytes(&spend_tx).unwrap().into());
 
-    let found_tx = unwrap!(unwrap!(coin.search_for_swap_tx_spend(
-        &payment_tx,
-        swap_contract_address,
-        6051857,
-    )));
+    let found_tx = coin
+        .search_for_swap_tx_spend(&payment_tx, swap_contract_address, 6051857)
+        .unwrap()
+        .unwrap();
     assert_eq!(spend_tx, found_tx);
 }
 
@@ -528,13 +527,12 @@ fn test_search_for_swap_tx_spend_was_refunded() {
         19, 27, 208, 119, 219, 60, 231, 2, 118, 91, 169, 99, 78, 209, 135, 160, 51, 115, 90, 189, 124, 172, 205, 134,
         203, 159, 238, 40, 39, 99, 88, 48, 160, 189, 37, 60, 20, 117, 65, 238, 36, 98, 226, 48, 22, 235, 86, 183,
     ];
-    let refund_tx = FoundSwapTxSpend::Refunded(unwrap!(signed_eth_tx_from_bytes(&refund_tx)).into());
+    let refund_tx = FoundSwapTxSpend::Refunded(signed_eth_tx_from_bytes(&refund_tx).unwrap().into());
 
-    let found_tx = unwrap!(unwrap!(coin.search_for_swap_tx_spend(
-        &payment_tx,
-        swap_contract_address,
-        5886908,
-    )));
+    let found_tx = coin
+        .search_for_swap_tx_spend(&payment_tx, swap_contract_address, 5886908)
+        .unwrap()
+        .unwrap();
     assert_eq!(refund_tx, found_tx);
 }
 
@@ -560,7 +558,7 @@ fn test_withdraw_impl_manual_fee() {
     };
     coin.my_balance().wait().unwrap();
 
-    let tx_details = unwrap!(block_on(withdraw_impl(ctx, coin.clone(), withdraw_req)));
+    let tx_details = block_on(withdraw_impl(ctx, coin.clone(), withdraw_req)).unwrap();
     let expected = Some(
         EthTxFeeDetails {
             coin: "ETH".into(),
@@ -595,12 +593,12 @@ fn test_nonce_lock() {
     }
     let results = block_on(join_all(futures));
     for result in results {
-        unwrap!(result);
+        result.unwrap();
     }
     // Waiting for NONCE_LOCK… might not appear at all if waiting takes less than 0.5 seconds
     // but all transactions are sent successfully still
-    // unwrap!(wait_for_log(&ctx.log, 1.1, &|line| line.contains("Waiting for NONCE_LOCK…")));
-    unwrap!(wait_for_log(&ctx.log, 1.1, &|line| line.contains("get_addr_nonce…")));
+    // wait_for_log(&ctx.log, 1.1, &|line| line.contains("Waiting for NONCE_LOCK…")));
+    wait_for_log(&ctx.log, 1.1, &|line| line.contains("get_addr_nonce…")).unwrap();
 }
 
 #[test]

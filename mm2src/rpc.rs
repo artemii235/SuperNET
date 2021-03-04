@@ -35,14 +35,14 @@ use serde_json::{self as json, Value as Json};
 use std::future::Future as Future03;
 use std::net::SocketAddr;
 
-use crate::mm2::lp_ordermatch::{buy, cancel_all_orders, cancel_order, my_orders, order_status, orderbook, sell,
-                                set_price};
+use crate::mm2::lp_ordermatch::{best_orders_rpc, buy, cancel_all_orders, cancel_order, my_orders, order_status,
+                                orderbook, sell, set_price};
 use crate::mm2::lp_swap::{active_swaps_rpc, all_swaps_uuids_by_filter, coins_needed_for_kick_start, import_swaps,
                           list_banned_pubkeys, max_taker_vol, my_recent_swaps, my_swap_status, recover_funds_of_swap,
                           stats_swap_status, trade_preimage, unban_pubkeys};
 
-#[path = "rpc/lp_commands.rs"] pub mod lp_commands;
 use self::lp_commands::*;
+#[path = "rpc/lp_commands.rs"] pub mod lp_commands;
 
 /// Lists the RPC method not requiring the "userpass" authentication.  
 /// None is also public to skip auth and display proper error in case of method is missing
@@ -119,6 +119,7 @@ pub fn dispatcher(req: Json, ctx: MmArc) -> DispatcherRes {
         // "autoprice" => lp_autoprice (ctx, req),
         "active_swaps" => hyres(active_swaps_rpc(ctx, req)),
         "all_swaps_uuids_by_filter" => all_swaps_uuids_by_filter(ctx, req),
+        "best_orders" => hyres(best_orders_rpc(ctx, req)),
         "buy" => hyres(buy(ctx, req)),
         "cancel_all_orders" => hyres(cancel_all_orders(ctx, req)),
         "cancel_order" => hyres(cancel_order(ctx, req)),
@@ -290,11 +291,11 @@ pub extern "C" fn spawn_rpc(ctx_h: u32) {
     // then we might want to refactor into starting it ideomatically in order to benefit from a more graceful shutdown,
     // cf. https://github.com/hyperium/hyper/pull/1640.
 
-    let ctx = unwrap!(MmArc::from_ffi_handle(ctx_h), "No context");
+    let ctx = MmArc::from_ffi_handle(ctx_h).expect("No context");
 
-    let rpc_ip_port = unwrap!(ctx.rpc_ip_port());
+    let rpc_ip_port = ctx.rpc_ip_port().unwrap();
     CORE.0.enter(|| {
-        let server = unwrap!(Server::try_bind(&rpc_ip_port), "Can't bind on {}", rpc_ip_port);
+        let server = Server::try_bind(&rpc_ip_port).unwrap_or_else(|_| panic!("Can't bind on {}", rpc_ip_port));
         let make_svc = make_service_fn(move |socket: &AddrStream| {
             let remote_addr = socket.remote_addr();
             async move {
@@ -331,7 +332,7 @@ pub extern "C" fn spawn_rpc(ctx_h: u32) {
             futures::future::ready(())
         });
 
-        let rpc_ip_port = unwrap!(ctx.rpc_ip_port());
+        let rpc_ip_port = ctx.rpc_ip_port().unwrap();
         CORE.0.spawn({
             log!(">>>>>>>>>> DEX stats " (rpc_ip_port.ip())":"(rpc_ip_port.port()) " \
                 DEX stats API enabled at unixtime." (gstuff::now_ms() / 1000) " <<<<<<<<<");

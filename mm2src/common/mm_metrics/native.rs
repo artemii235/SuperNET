@@ -601,7 +601,7 @@ mod tests {
         // metrics system is not initialized yet
         assert!(metrics.try_sink().is_none());
 
-        unwrap!(metrics.init());
+        metrics.init().unwrap();
         assert!(metrics.init().is_err());
         assert!(metrics.init_with_dashboard(log_state.weak(), 1.).is_err());
 

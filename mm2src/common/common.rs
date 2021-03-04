@@ -26,7 +26,6 @@
 #[macro_use] extern crate lazy_static;
 #[macro_use] extern crate serde_derive;
 #[macro_use] extern crate serde_json;
-#[macro_use] extern crate unwrap;
 
 /// Fills a C character array with a zero-terminated C string,
 /// returning an error if the string is too large.
@@ -648,7 +647,7 @@ pub mod wio {
     use std::time::Duration;
     use tokio::runtime::Runtime;
 
-    fn start_core_thread() -> MM2Runtime { MM2Runtime(unwrap!(Runtime::new())) }
+    fn start_core_thread() -> MM2Runtime { MM2Runtime(Runtime::new().unwrap()) }
 
     pub struct MM2Runtime(pub Runtime);
 
@@ -660,10 +659,10 @@ pub mod wio {
         /// Deprecated, prefer the futures 0.3 `POOL` instead.
         pub static ref CPUPOOL: CpuPool = CpuPool::new(8);
         /// Shared CPU pool to run intensive/sleeping requests on s separate thread.
-        pub static ref POOL: Mutex<ThreadPool> = Mutex::new (unwrap! (ThreadPool::builder()
-            .pool_size (8)
-            .name_prefix ("POOL")
-            .create(), "!ThreadPool"));
+        pub static ref POOL: Mutex<ThreadPool> = Mutex::new(ThreadPool::builder()
+            .pool_size(8)
+            .name_prefix("POOL")
+            .create().expect("!ThreadPool"));
     }
 
     impl<Fut: std::future::Future<Output = ()> + Send + 'static> hyper::rt::Executor<Fut> for &MM2Runtime {
@@ -759,17 +758,18 @@ pub mod wio {
                         if self.monitor.is_none() {
                             let task = futures01::task::current();
                             let deadline = self.started + self.timeout;
-                            self.monitor = Some(unwrap!(std::thread::Builder::new()
-                                .name("timeout monitor".into())
-                                .spawn(move || {
-                                    loop {
+                            self.monitor = Some(
+                                std::thread::Builder::new()
+                                    .name("timeout monitor".into())
+                                    .spawn(move || loop {
                                         std::thread::sleep(Duration::from_secs(1));
                                         task.notify();
                                         if now_float() > deadline + 2. {
                                             break;
                                         }
-                                    }
-                                })));
+                                    })
+                                    .unwrap(),
+                            );
                         }
                         Ok(Async::NotReady)
                     }
@@ -1030,10 +1030,11 @@ pub mod executor {
         static START: Once = Once::new();
         static SCHEDULE: Constructible<channel::Sender<SheduleChannelItem>> = Constructible::new();
         START.call_once(|| {
-            unwrap!(
-                thread::Builder::new().name("spawn_after".into()).spawn(move || {
+            thread::Builder::new()
+                .name("spawn_after".into())
+                .spawn(move || {
                     let (tx, rx) = channel::bounded(0);
-                    unwrap!(SCHEDULE.pin(tx), "spawn_after] Can't pin the channel");
+                    SCHEDULE.pin(tx).expect("spawn_after] Can't pin the channel");
                     type Task = Pin<Box<dyn Future03<Output = ()> + Send + 'static>>;
                     let mut tasks: BTreeMap<Duration, Vec<Task>> = BTreeMap::new();
                     let mut ready = Vec::with_capacity(4);
@@ -1068,9 +1069,8 @@ pub mod executor {
                             .or_insert_with(Vec::new)
                             .push(f)
                     }
-                }),
-                "Can't spawn a spawn_after thread"
-            );
+                })
+                .expect("Can't spawn a spawn_after thread");
         });
         loop {
             match SCHEDULE.as_option() {
@@ -1079,7 +1079,7 @@ pub mod executor {
                     continue;
                 },
                 Some(tx) => {
-                    unwrap!(tx.send((utc, Box::pin(future))), "Can't reach spawn_after");
+                    tx.send((utc, Box::pin(future))).expect("Can't reach spawn_after");
                     break;
                 },
             }
@@ -1192,7 +1192,7 @@ pub async fn slurp_url(url: &str) -> SlurpRes {
 
 #[test]
 fn test_slurp_req() {
-    let (status, headers, body) = unwrap!(block_on(slurp_url("https://httpbin.org/get")));
+    let (status, headers, body) = block_on(slurp_url("https://httpbin.org/get")).unwrap();
     assert!(status.is_success(), format!("{:?} {:?} {:?}", status, headers, body));
 }
 
@@ -1562,7 +1562,7 @@ pub fn temp_dir() -> PathBuf {
     if rc <= 0 {
         panic!("!temp_dir")
     }
-    let path = unwrap!(std::str::from_utf8(&buf[0..rc as usize]));
+    let path = std::str::from_utf8(&buf[0..rc as usize]).unwrap();
     Path::new(path).into()
 }
 
@@ -1647,7 +1647,7 @@ pub fn read_dir(dir: &dyn AsRef<Path>) -> Result<Vec<(u64, PathBuf)>, String> {
                 },
             };
 
-            let lm = unwrap!(m_time.duration_since(UNIX_EPOCH), "!duration_since").as_millis();
+            let lm = m_time.duration_since(UNIX_EPOCH).expect("!duration_since").as_millis();
             assert!(lm < u64::max_value() as u128);
             let lm = lm as u64;
 
@@ -1835,7 +1835,7 @@ lazy_static! {
 #[no_mangle]
 #[cfg(target_arch = "wasm32")]
 pub extern "C" fn http_ready(helper_request_id: i32) {
-    let mut helper_requests = unwrap!(HELPER_REQUESTS.lock());
+    let mut helper_requests = HELPER_REQUESTS.lock().unwrap();
     if let Some(waker) = helper_requests.remove(&helper_request_id) {
         waker.wake()
     }
@@ -1889,13 +1889,13 @@ pub async fn helperᶜ(helper: &'static str, args: Vec<u8>) -> Result<Vec<u8>, S
             // NB: Need a fresh waker each time `Pending` is returned, to support switching tasks.
             // cf. https://rust-lang.github.io/async-book/02_execution/03_wakeups.html
             let waker = cx.waker().clone();
-            unwrap!(HELPER_REQUESTS.lock()).insert(self.helper_request_id, waker);
+            HELPER_REQUESTS.lock().unwrap().insert(self.helper_request_id, waker);
 
             Poll03::Pending
         }
     }
     impl Drop for HelperReply {
-        fn drop(&mut self) { unwrap!(HELPER_REQUESTS.lock()).remove(&self.helper_request_id); }
+        fn drop(&mut self) { HELPER_REQUESTS.lock().unwrap().remove(&self.helper_request_id); }
     }
     let rv: Vec<u8> = try_s!(
         HelperReply {
@@ -1997,12 +1997,12 @@ pub fn round_to(bd: &BigDecimal, places: u8) -> String {
 
         if pos < dot {
             //println! ("{}, pos < dot, stopping at pos {}", bds, pos);
-            let mut integer: i64 = unwrap!((&bds[0..=pos]).parse());
+            let mut integer: i64 = (&bds[0..=pos]).parse().unwrap();
             if prev_digit > 5 {
                 if bda[0] == b'-' {
-                    integer = unwrap!(integer.checked_sub(1))
+                    integer = integer.checked_sub(1).unwrap()
                 } else {
-                    integer = unwrap!(integer.checked_add(1))
+                    integer = integer.checked_add(1).unwrap()
                 }
             }
             return format!("{}", integer);

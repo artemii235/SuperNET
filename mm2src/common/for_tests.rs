@@ -137,7 +137,7 @@ impl Drop for RaiiDump {
         // `term` bypasses the stdout capturing, we should only use it if the capturing was disabled.
         let nocapture = env::args().any(|a| a == "--nocapture");
 
-        let log = unwrap!(slurp(&self.log_path));
+        let log = slurp(&self.log_path).unwrap();
 
         // Make sure the log is Unicode.
         // We'll get the "io error when listing tests: Custom { kind: InvalidData, error: StringError("text was not valid unicode") }" otherwise.
@@ -262,7 +262,7 @@ impl MarketMakerIt {
                 Some(path) => path.into(),
                 None => {
                     let dir = folder.join("DB");
-                    conf["dbdir"] = unwrap!(dir.to_str()).into();
+                    conf["dbdir"] = dir.to_str().unwrap().into();
                     dir
                 },
             };
@@ -277,7 +277,7 @@ impl MarketMakerIt {
                 Some(path) => path.into(),
                 None => {
                     let path = folder.join("mm2.log");
-                    conf["log"] = unwrap!(path.to_str()).into();
+                    conf["log"] = path.to_str().unwrap().into();
                     path
                 },
             };
@@ -393,7 +393,7 @@ impl MarketMakerIt {
     #[cfg(target_arch = "wasm32")]
     pub async fn rpc(&self, payload: Json) -> Result<(StatusCode, String, HeaderMap), String> {
         let uri = format!("http://{}:7783", self.ip);
-        log!("sending rpc request " (unwrap!(json::to_string(&payload))) " to " (uri));
+        log!("sending rpc request " (json::to_string(&payload).unwrap()) " to " (uri));
         let empty_payload: Vec<u8> = Vec::new();
         let request = try_s!(Request::builder().method("POST").uri(uri).body(empty_payload));
         let (parts, _) = request.into_parts();
@@ -410,7 +410,7 @@ impl MarketMakerIt {
     #[cfg(not(target_arch = "wasm32"))]
     pub async fn rpc(&self, payload: Json) -> Result<(StatusCode, String, HeaderMap), String> {
         let uri = format!("http://{}:7783", self.ip);
-        log!("sending rpc request " (unwrap!(json::to_string(&payload))) " to " (uri));
+        log!("sending rpc request " (json::to_string(&payload).unwrap()) " to " (uri));
 
         let payload = try_s!(json::to_vec(&payload));
         let request = try_s!(Request::builder().method("POST").uri(uri).body(payload));
@@ -480,7 +480,7 @@ impl Drop for MarketMakerIt {
 macro_rules! wait_log_re {
     ($mm_it: expr, $timeout_sec: expr, $re_pred: expr) => {{
         log! ("Waiting for “" ($re_pred) "”…");
-        let re = unwrap! (regex::Regex::new ($re_pred));
+        let re = regex::Regex::new($re_pred).unwrap();
         let rc = $mm_it.wait_for_log ($timeout_sec, |line| re.is_match (line)) .await;
         if let Err (err) = rc {panic! ("{}: {}", $re_pred, err)}
     }};
@@ -578,7 +578,7 @@ pub fn mm_dump(log_path: &Path) -> (RaiiDump, RaiiDump) {
             log_path: log_path.to_path_buf(),
         },
         RaiiDump {
-            log_path: unwrap!(dashboard_path(log_path)),
+            log_path: dashboard_path(log_path).unwrap(),
         },
     )
 }
@@ -590,7 +590,7 @@ pub fn mm_spat(
     conf_mod: &dyn Fn(Json) -> Json,
 ) -> (&'static str, MarketMakerIt, RaiiDump, RaiiDump) {
     let passphrase = "SPATsRps3dhEtXwtnpRCKF";
-    let mm = unwrap!(MarketMakerIt::start(
+    let mm = MarketMakerIt::start(
         conf_mod(json! ({
             "gui": "nogui",
             "passphrase": passphrase,
@@ -606,8 +606,9 @@ pub fn mm_spat(
         match super::var("LOCAL_THREAD_MM") {
             Ok(ref e) if e == "1" => Some(local_start),
             _ => None,
-        }
-    ));
+        },
+    )
+    .unwrap();
     let (dump_log, dump_dashboard) = mm_dump(&mm.log_path);
     (passphrase, mm, dump_log, dump_dashboard)
 }
@@ -622,18 +623,19 @@ pub fn mm_spat(
 
 /// Asks MM to enable the given currency in electrum mode
 /// fresh list of servers at https://github.com/jl777/coins/blob/master/electrums/.
-pub async fn enable_electrum(mm: &MarketMakerIt, coin: &str, urls: Vec<&str>) -> Json {
-    let servers: Vec<_> = urls.into_iter().map(|url| json!({ "url": url })).collect();
-    let electrum = unwrap!(
-        mm.rpc(json! ({
+pub async fn enable_electrum(mm: &MarketMakerIt, coin: &str, tx_history: bool, urls: &[&str]) -> Json {
+    let servers: Vec<_> = urls.iter().map(|url| json!({ "url": url })).collect();
+    let electrum = mm
+        .rpc(json! ({
             "userpass": mm.userpass,
             "method": "electrum",
             "coin": coin,
             "servers": servers,
             "mm2": 1,
+            "tx_history": tx_history,
         }))
         .await
-    );
+        .unwrap();
     assert_eq!(
         electrum.0,
         StatusCode::OK,
@@ -641,13 +643,13 @@ pub async fn enable_electrum(mm: &MarketMakerIt, coin: &str, urls: Vec<&str>) ->
         electrum.0,
         electrum.1
     );
-    unwrap!(json::from_str(&electrum.1))
+    json::from_str(&electrum.1).unwrap()
 }
 
 pub async fn enable_qrc20(mm: &MarketMakerIt, coin: &str, urls: &[&str], swap_contract_address: &str) -> Json {
     let servers: Vec<_> = urls.iter().map(|url| json!({ "url": url })).collect();
-    let electrum = unwrap!(
-        mm.rpc(json! ({
+    let electrum = mm
+        .rpc(json! ({
             "userpass": mm.userpass,
             "method": "electrum",
             "coin": coin,
@@ -656,7 +658,7 @@ pub async fn enable_qrc20(mm: &MarketMakerIt, coin: &str, urls: &[&str], swap_co
             "swap_contract_address": swap_contract_address,
         }))
         .await
-    );
+        .unwrap();
     assert_eq!(
         electrum.0,
         StatusCode::OK,
@@ -664,20 +666,23 @@ pub async fn enable_qrc20(mm: &MarketMakerIt, coin: &str, urls: &[&str], swap_co
         electrum.0,
         electrum.1
     );
-    unwrap!(json::from_str(&electrum.1))
+    json::from_str(&electrum.1).unwrap()
 }
 
 /// Reads passphrase and userpass from .env file
 pub fn from_env_file(env: Vec<u8>) -> (Option<String>, Option<String>) {
     use regex::bytes::Regex;
     let (mut passphrase, mut userpass) = (None, None);
-    for cap in unwrap!(Regex::new(r"(?m)^(PASSPHRASE|USERPASS)=(\w[\w ]+)$")).captures_iter(&env) {
+    for cap in Regex::new(r"(?m)^(PASSPHRASE|USERPASS)=(\w[\w ]+)$")
+        .unwrap()
+        .captures_iter(&env)
+    {
         match cap.get(1) {
             Some(name) if name.as_bytes() == b"PASSPHRASE" => {
-                passphrase = cap.get(2).map(|v| unwrap!(String::from_utf8(v.as_bytes().into())))
+                passphrase = cap.get(2).map(|v| String::from_utf8(v.as_bytes().into()).unwrap())
             },
             Some(name) if name.as_bytes() == b"USERPASS" => {
-                userpass = cap.get(2).map(|v| unwrap!(String::from_utf8(v.as_bytes().into())))
+                userpass = cap.get(2).map(|v| String::from_utf8(v.as_bytes().into()).unwrap())
             },
             _ => (),
         }
@@ -702,9 +707,9 @@ pub fn get_passphrase(path: &dyn AsRef<Path>, env: &str) -> Result<String, Strin
 
 /// Asks MM to enable the given currency in native mode.
 /// Returns the RPC reply containing the corresponding wallet address.
-pub async fn enable_native(mm: &MarketMakerIt, coin: &str, urls: Vec<&str>) -> Json {
-    let native = unwrap!(
-        mm.rpc(json! ({
+pub async fn enable_native(mm: &MarketMakerIt, coin: &str, urls: &[&str]) -> Json {
+    let native = mm
+        .rpc(json! ({
             "userpass": mm.userpass,
             "method": "enable",
             "coin": coin,
@@ -714,9 +719,9 @@ pub async fn enable_native(mm: &MarketMakerIt, coin: &str, urls: Vec<&str>) -> J
             "mm2": 1,
         }))
         .await
-    );
+        .unwrap();
     assert_eq!(native.0, StatusCode::OK, "'enable' failed: {}", native.1);
-    unwrap!(json::from_str(&native.1))
+    json::from_str(&native.1).unwrap()
 }
 
 /// Use a separate (unique) temporary folder for each MM.
@@ -772,8 +777,8 @@ pub async fn check_my_swap_status(
     maker_amount: BigDecimal,
     taker_amount: BigDecimal,
 ) {
-    let response = unwrap!(
-        mm.rpc(json! ({
+    let response = mm
+        .rpc(json! ({
             "userpass": mm.userpass,
             "method": "my_swap_status",
             "params": {
@@ -781,24 +786,20 @@ pub async fn check_my_swap_status(
             }
         }))
         .await
-    );
+        .unwrap();
     assert!(response.0.is_success(), "!status of {}: {}", uuid, response.1);
-    let status_response: Json = unwrap!(json::from_str(&response.1));
-    let success_events: Vec<String> = unwrap!(json::from_value(status_response["result"]["success_events"].clone()));
+    let status_response: Json = json::from_str(&response.1).unwrap();
+    let success_events: Vec<String> = json::from_value(status_response["result"]["success_events"].clone()).unwrap();
     assert_eq!(expected_success_events, success_events.as_slice());
-    let error_events: Vec<String> = unwrap!(json::from_value(status_response["result"]["error_events"].clone()));
+    let error_events: Vec<String> = json::from_value(status_response["result"]["error_events"].clone()).unwrap();
     assert_eq!(expected_error_events, error_events.as_slice());
 
-    let events_array = unwrap!(status_response["result"]["events"].as_array());
-    let actual_maker_amount = unwrap!(json::from_value(
-        events_array[0]["event"]["data"]["maker_amount"].clone()
-    ));
+    let events_array = status_response["result"]["events"].as_array().unwrap();
+    let actual_maker_amount = json::from_value(events_array[0]["event"]["data"]["maker_amount"].clone()).unwrap();
     assert_eq!(maker_amount, actual_maker_amount);
-    let actual_taker_amount = unwrap!(json::from_value(
-        events_array[0]["event"]["data"]["taker_amount"].clone()
-    ));
+    let actual_taker_amount = json::from_value(events_array[0]["event"]["data"]["taker_amount"].clone()).unwrap();
     assert_eq!(taker_amount, actual_taker_amount);
-    let actual_events = events_array.iter().map(|item| unwrap!(item["event"]["type"].as_str()));
+    let actual_events = events_array.iter().map(|item| item["event"]["type"].as_str().unwrap());
     let actual_events: Vec<&str> = actual_events.collect();
     assert_eq!(expected_success_events, actual_events.as_slice());
 }
@@ -809,41 +810,41 @@ pub async fn check_stats_swap_status(
     maker_expected_events: &[&str],
     taker_expected_events: &[&str],
 ) {
-    let response = unwrap!(
-        mm.rpc(json! ({
+    let response = mm
+        .rpc(json! ({
             "method": "stats_swap_status",
             "params": {
                 "uuid": uuid,
             }
         }))
         .await
-    );
+        .unwrap();
     assert!(response.0.is_success(), "!status of {}: {}", uuid, response.1);
-    let status_response: Json = unwrap!(json::from_str(&response.1));
-    let maker_events_array = unwrap!(status_response["result"]["maker"]["events"].as_array());
-    let taker_events_array = unwrap!(status_response["result"]["taker"]["events"].as_array());
+    let status_response: Json = json::from_str(&response.1).unwrap();
+    let maker_events_array = status_response["result"]["maker"]["events"].as_array().unwrap();
+    let taker_events_array = status_response["result"]["taker"]["events"].as_array().unwrap();
     let maker_actual_events = maker_events_array
         .iter()
-        .map(|item| unwrap!(item["event"]["type"].as_str()));
+        .map(|item| item["event"]["type"].as_str().unwrap());
     let maker_actual_events: Vec<&str> = maker_actual_events.collect();
     let taker_actual_events = taker_events_array
         .iter()
-        .map(|item| unwrap!(item["event"]["type"].as_str()));
+        .map(|item| item["event"]["type"].as_str().unwrap());
     let taker_actual_events: Vec<&str> = taker_actual_events.collect();
     assert_eq!(maker_expected_events, maker_actual_events.as_slice());
     assert_eq!(taker_expected_events, taker_actual_events.as_slice());
 }
 
 pub async fn check_recent_swaps(mm: &MarketMakerIt, expected_len: usize) {
-    let response = unwrap!(
-        mm.rpc(json! ({
+    let response = mm
+        .rpc(json! ({
             "method": "my_recent_swaps",
             "userpass": mm.userpass,
         }))
         .await
-    );
+        .unwrap();
     assert!(response.0.is_success(), "!status of my_recent_swaps {}", response.1);
-    let swaps_response: Json = unwrap!(json::from_str(&response.1));
-    let swaps: &Vec<Json> = unwrap!(swaps_response["result"]["swaps"].as_array());
+    let swaps_response: Json = json::from_str(&response.1).unwrap();
+    let swaps: &Vec<Json> = swaps_response["result"]["swaps"].as_array().unwrap();
     assert_eq!(expected_len, swaps.len());
 }
