@@ -334,12 +334,8 @@ pub async fn lp_init(mypubport: u16, ctx: MmArc) -> Result<(), String> {
         try_s!(migrate_db(&ctx));
     }
 
-    // TODO temporary not(wasm32)
-    #[cfg(not(target_arch = "wasm32"))]
+    // #[cfg(not(target_arch = "wasm32"))]
     try_s!(init_p2p(mypubport, ctx.clone()).await);
-
-    // TODO temporary just to avoid unused_variables
-    let _ = mypubport;
 
     let balance_update_ordermatch_handler = BalanceUpdateOrdermatchHandler::new(ctx.clone());
     register_balance_update_handler(ctx.clone(), Box::new(balance_update_ordermatch_handler)).await;
