@@ -36,7 +36,7 @@ use std::future::Future as Future03;
 use std::net::SocketAddr;
 
 use crate::mm2::lp_ordermatch::{best_orders_rpc, buy, cancel_all_orders, cancel_order, my_orders, order_status,
-                                orderbook, sell, set_price};
+                                orderbook, orderbook_depth_rpc, sell, set_price};
 use crate::mm2::lp_swap::{active_swaps_rpc, all_swaps_uuids_by_filter, coins_needed_for_kick_start, import_swaps,
                           list_banned_pubkeys, max_taker_vol, my_recent_swaps, my_swap_status, recover_funds_of_swap,
                           stats_swap_status, trade_preimage, unban_pubkeys};
@@ -109,7 +109,6 @@ fn hyres(handler: impl Future03<Output = Result<Response<Vec<u8>>, String>> + Se
 ///
 /// Returns `None` if the requested "method" wasn't found among the ported RPC methods and has to be handled elsewhere.
 pub fn dispatcher(req: Json, ctx: MmArc) -> DispatcherRes {
-    //log! ("dispatcher] " (json::to_string (&req) .unwrap()));
     let method = match req["method"].clone() {
         Json::String(method) => method,
         _ => return DispatcherRes::NoMatch(req),
@@ -161,6 +160,7 @@ pub fn dispatcher(req: Json, ctx: MmArc) -> DispatcherRes {
         "my_tx_history" => my_tx_history(ctx, req),
         "order_status" => hyres(order_status(ctx, req)),
         "orderbook" => hyres(orderbook(ctx, req)),
+        "orderbook_depth" => hyres(orderbook_depth_rpc(ctx, req)),
         "sim_panic" => hyres(sim_panic(req)),
         "recover_funds_of_swap" => {
             #[cfg(not(target_arch = "wasm32"))]
@@ -172,7 +172,6 @@ pub fn dispatcher(req: Json, ctx: MmArc) -> DispatcherRes {
                 return DispatcherRes::NoMatch(req);
             }
         },
-        // "passphrase" => passphrase (ctx, req),
         "sell" => hyres(sell(ctx, req)),
         "show_priv_key" => hyres(show_priv_key(ctx, req)),
         "send_raw_transaction" => hyres(send_raw_transaction(ctx, req)),

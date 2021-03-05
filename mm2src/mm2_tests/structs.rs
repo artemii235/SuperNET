@@ -186,6 +186,23 @@ pub struct BestOrdersResponse {
     pub result: HashMap<String, Vec<OrderbookEntry>>,
 }
 
+#[derive(Deserialize)]
+pub struct PairDepth {
+    pub asks: usize,
+    pub bids: usize,
+}
+
+#[derive(Deserialize)]
+pub struct PairWithDepth {
+    pub pair: (String, String),
+    pub depth: PairDepth,
+}
+
+#[derive(Deserialize)]
+pub struct OrderbookDepthResponse {
+    pub result: Vec<PairWithDepth>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct EnableElectrumResponse {
     pub coin: String,

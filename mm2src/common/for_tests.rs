@@ -25,6 +25,7 @@ use std::time::Duration;
 
 use crate::executor::Timer;
 #[cfg(target_arch = "wasm32")] use crate::helperᶜ;
+#[cfg(not(target_arch = "wasm32"))] use crate::log::LogLevel;
 use crate::log::{dashboard_path, LogState};
 use crate::mm_ctx::MmArc;
 use crate::mm_metrics::{MetricType, MetricsJson};
@@ -169,7 +170,7 @@ pub type LocalStart = fn(PathBuf, PathBuf, Json);
 #[cfg(target_arch = "wasm32")]
 pub type LocalStart = fn(MmArc);
 
-/// An instance of a MarketMaker process started by and for an integration test.  
+/// An instance of a MarketMaker process started by and for an integration test.
 /// Given that [in CI] the tests are executed before the build, the binary of that process is the tests binary.
 #[cfg(not(target_arch = "wasm32"))]
 pub struct MarketMakerIt {
@@ -847,4 +848,26 @@ pub async fn check_recent_swaps(mm: &MarketMakerIt, expected_len: usize) {
     let swaps_response: Json = json::from_str(&response.1).unwrap();
     let swaps: &Vec<Json> = swaps_response["result"]["swaps"].as_array().unwrap();
     assert_eq!(expected_len, swaps.len());
+}
+
+/// Ensure the `RUST_LOG` environment variable is expected.
+///
+/// # Panic
+///
+/// Panic if the `RUST_LOG` environment variable doesn't equal to the `required_level`.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn require_log_level(expected: &[LogLevel]) {
+    let actual = match LogLevel::from_env() {
+        Some(level) => level,
+        None => panic!(
+            "Expected one of the {:?} log levels. It seems `RUST_LOG` env is not set",
+            expected
+        ),
+    };
+    assert!(
+        expected.contains(&actual),
+        "Expected one of {:?} log levels, found '{:?}'",
+        expected,
+        actual,
+    );
 }

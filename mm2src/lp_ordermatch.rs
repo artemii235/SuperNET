@@ -63,12 +63,13 @@ use crate::mm2::lp_swap::{calc_max_maker_vol, check_balance_for_maker_swap, chec
                           CheckBalanceError, MakerSwap, RunMakerSwapInput, RunTakerSwapInput,
                           SwapConfirmationsSettings, TakerSwap};
 pub use best_orders::best_orders_rpc;
+pub use orderbook_depth::orderbook_depth_rpc;
 
 #[path = "lp_ordermatch/best_orders.rs"] mod best_orders;
 #[path = "lp_ordermatch/new_protocol.rs"] mod new_protocol;
 #[path = "lp_ordermatch/order_requests_tracker.rs"]
 mod order_requests_tracker;
-
+#[path = "lp_ordermatch/orderbook_depth.rs"] mod orderbook_depth;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 #[path = "ordermatch_tests.rs"]
 mod ordermatch_tests;
@@ -382,7 +383,10 @@ pub async fn process_msg(ctx: MmArc, _topics: Vec<String>, from_peer: String, ms
 #[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum OrdermatchRequest {
     /// Get an orderbook for the given pair.
-    GetOrderbook { base: String, rel: String },
+    GetOrderbook {
+        base: String,
+        rel: String,
+    },
     /// Sync specific pubkey orderbook state if our known Patricia trie state doesn't match the latest keep alive message
     SyncPubkeyOrderbookState {
         pubkey: String,
@@ -393,6 +397,9 @@ pub enum OrdermatchRequest {
         coin: String,
         action: BestOrdersAction,
         volume: BigRational,
+    },
+    OrderbookDepth {
+        pairs: Vec<(String, String)>,
     },
 }
 
@@ -443,6 +450,9 @@ pub async fn process_peer_request(ctx: MmArc, request: OrdermatchRequest) -> Res
         },
         OrdermatchRequest::BestOrders { coin, action, volume } => {
             best_orders::process_best_orders_p2p_request(ctx, coin, action, volume).await
+        },
+        OrdermatchRequest::OrderbookDepth { pairs } => {
+            orderbook_depth::process_orderbook_depth_p2p_request(ctx, pairs).await
         },
     }
 }

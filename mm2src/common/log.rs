@@ -856,9 +856,39 @@ impl Drop for LogState {
     }
 }
 
+#[derive(Debug, PartialEq)]
+pub enum LogLevel {
+    /// A level lower than all log levels.
+    Off,
+    /// Corresponds to the `ERROR` log level.
+    Error,
+    /// Corresponds to the `WARN` log level.
+    Warn,
+    /// Corresponds to the `INFO` log level.
+    Info,
+    /// Corresponds to the `DEBUG` log level.
+    Debug,
+    /// Corresponds to the `TRACE` log level.
+    Trace,
+}
+
+impl LogLevel {
+    pub fn from_env() -> Option<LogLevel> {
+        match std::env::var("RUST_LOG").ok()?.to_lowercase().as_str() {
+            "off" => Some(LogLevel::Off),
+            "error" => Some(LogLevel::Error),
+            "warn" => Some(LogLevel::Warn),
+            "info" => Some(LogLevel::Info),
+            "debug" => Some(LogLevel::Debug),
+            "trace" => Some(LogLevel::Trace),
+            _ => None,
+        }
+    }
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 pub mod unified_log {
-    use super::chunk2log;
+    use super::{chunk2log, LogLevel};
     pub use log::LevelFilter;
     use log::Record;
     use log4rs::{append, config,
@@ -866,7 +896,7 @@ pub mod unified_log {
 
     const MM_FORMAT: &str = "{d(%d %H:%M:%S)(utc)}, {f}:{L}] {l} {m}";
     const DEFAULT_FORMAT: &str = "[{d(%Y-%m-%d %H:%M:%S %Z)(utc)} {h({l})} {M}:{f}:{L}] {m}";
-    const DEFAULT_LEVEL_FILTER: LevelFilter = LevelFilter::Info;
+    const DEFAULT_LEVEL_FILTER: LogLevel = LogLevel::Info;
 
     pub struct UnifiedLoggerBuilder {
         console_format: String,
@@ -901,12 +931,12 @@ pub mod unified_log {
             self
         }
 
-        pub fn level_filter(mut self, filter: LevelFilter) -> UnifiedLoggerBuilder {
+        pub fn level_filter(mut self, filter: LogLevel) -> UnifiedLoggerBuilder {
             self.filter = LevelPolicy::Exact(filter);
             self
         }
 
-        pub fn level_filter_from_env_or_default(mut self, default: LevelFilter) -> UnifiedLoggerBuilder {
+        pub fn level_filter_from_env_or_default(mut self, default: LogLevel) -> UnifiedLoggerBuilder {
             self.filter = LevelPolicy::FromEnvOrDefault(default);
             self
         }
@@ -925,7 +955,7 @@ pub mod unified_log {
             let mut appenders = Vec::new();
             let level_filter = match self.filter {
                 LevelPolicy::Exact(l) => l,
-                LevelPolicy::FromEnvOrDefault(default) => Self::get_level_filter_from_env().unwrap_or(default),
+                LevelPolicy::FromEnvOrDefault(default) => LogLevel::from_env().unwrap_or(default),
             };
 
             if self.mm_log {
@@ -944,29 +974,32 @@ pub mod unified_log {
             }
 
             let app_names: Vec<_> = appenders.iter().map(|app| app.name()).collect();
-            let root = config::Root::builder().appenders(app_names).build(level_filter);
+            let root = config::Root::builder()
+                .appenders(app_names)
+                .build(LevelFilter::from(level_filter));
             let config = try_s!(config::Config::builder().appenders(appenders).build(root));
 
             try_s!(log4rs::init_config(config));
             Ok(())
         }
+    }
 
-        fn get_level_filter_from_env() -> Option<LevelFilter> {
-            match std::env::var("RUST_LOG").ok()?.to_lowercase().as_str() {
-                "off" => Some(LevelFilter::Off),
-                "error" => Some(LevelFilter::Error),
-                "warn" => Some(LevelFilter::Warn),
-                "info" => Some(LevelFilter::Info),
-                "debug" => Some(LevelFilter::Debug),
-                "trace" => Some(LevelFilter::Trace),
-                _ => None,
+    impl From<LogLevel> for LevelFilter {
+        fn from(level: LogLevel) -> Self {
+            match level {
+                LogLevel::Off => LevelFilter::Off,
+                LogLevel::Error => LevelFilter::Error,
+                LogLevel::Warn => LevelFilter::Warn,
+                LogLevel::Info => LevelFilter::Info,
+                LogLevel::Debug => LevelFilter::Debug,
+                LogLevel::Trace => LevelFilter::Trace,
             }
         }
     }
 
     enum LevelPolicy {
-        Exact(LevelFilter),
-        FromEnvOrDefault(LevelFilter),
+        Exact(LogLevel),
+        FromEnvOrDefault(LogLevel),
     }
 
     #[derive(Debug)]

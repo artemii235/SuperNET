@@ -301,10 +301,11 @@ fn on_update_config(args: &[OsString]) -> Result<(), String> {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn init_logger() -> Result<(), String> {
-    use common::log::unified_log::{LevelFilter, UnifiedLoggerBuilder};
+    use common::log::unified_log::UnifiedLoggerBuilder;
+    use common::log::LogLevel;
 
     UnifiedLoggerBuilder::default()
-        .level_filter_from_env_or_default(LevelFilter::Info)
+        .level_filter_from_env_or_default(LogLevel::Info)
         .console(false)
         .mm_log(true)
         .try_init()
