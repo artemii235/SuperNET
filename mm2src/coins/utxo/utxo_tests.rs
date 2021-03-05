@@ -2369,3 +2369,17 @@ fn test_generate_tx_doge_fee() {
     let expected_fee = 300000000;
     assert_eq!(expected_fee, data.fee_amount);
 }
+
+#[test]
+fn doge_mtp() {
+    let electrum = electrum_client_for_test(&[
+        "electrum1.cipig.net:10060",
+        "electrum2.cipig.net:10060",
+        "electrum3.cipig.net:10060",
+    ]);
+    let mtp = electrum
+        .get_median_time_past(3631820, NonZeroU64::new(11).unwrap())
+        .wait()
+        .unwrap();
+    assert_eq!(mtp, 1614849084);
+}

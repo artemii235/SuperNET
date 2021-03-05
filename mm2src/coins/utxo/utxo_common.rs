@@ -2606,7 +2606,7 @@ where
     let now = now_ms() / 1000;
     if now < locktime {
         let to_wait = locktime - now + 1;
-        return Box::new(futures01::future::ok(CanRefundHtlc::HaveToWait(to_wait)));
+        return Box::new(futures01::future::ok(CanRefundHtlc::HaveToWait(to_wait.max(3600))));
     }
     Box::new(coin.get_current_mtp().compat().map(move |mtp| {
         let mtp = mtp as u64;
@@ -2614,7 +2614,7 @@ where
             CanRefundHtlc::CanRefundNow
         } else {
             let to_wait = locktime - mtp + 1;
-            CanRefundHtlc::HaveToWait(to_wait)
+            CanRefundHtlc::HaveToWait(to_wait.max(3600))
         }
     }))
 }
