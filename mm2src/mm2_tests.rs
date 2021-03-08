@@ -4493,8 +4493,7 @@ fn test_buy_response_format() {
     })))
     .unwrap();
     assert!(rc.0.is_success(), "!buy: {}", rc.1);
-    let json: Json = json::from_str(&rc.1).unwrap();
-    let _: BuyOrSellRpcResult = json::from_value(json["result"].clone()).unwrap();
+    let _: BuyOrSellRpcResult = json::from_str(&rc.1).unwrap();
 }
 
 #[test]
@@ -4548,8 +4547,7 @@ fn test_sell_response_format() {
     })))
     .unwrap();
     assert!(rc.0.is_success(), "!sell: {}", rc.1);
-    let json: Json = json::from_str(&rc.1).unwrap();
-    let _: BuyOrSellRpcResult = json::from_value(json["result"].clone()).unwrap();
+    let _: BuyOrSellRpcResult = json::from_str(&rc.1).unwrap();
 }
 
 #[test]
@@ -5177,6 +5175,61 @@ fn test_sell_min_volume() {
     let maker_order = my_maker_orders.get(&uuid).unwrap();
     let min_volume_maker: BigDecimal = json::from_value(maker_order["min_base_vol"].clone()).unwrap();
     assert_eq!(min_volume, min_volume_maker);
+}
+
+#[test]
+fn test_sell_min_volume_dust() {
+    let bob_passphrase = get_passphrase(&".env.client", "BOB_PASSPHRASE").unwrap();
+
+    let coins = json! ([
+        {"coin":"RICK","asset":"RICK","dust":100000000,"required_confirmations":0,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
+        {"coin":"MORTY","asset":"MORTY","required_confirmations":0,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
+        {"coin":"ETH","name":"ethereum","protocol":{"type":"ETH"}},
+        {"coin":"JST","name":"jst","protocol":{"type":"ERC20","protocol_data":{"platform":"ETH","contract_address":"0x2b294F029Fde858b2c62184e8390591755521d8E"}}}
+    ]);
+
+    let mut mm_bob = MarketMakerIt::start(
+        json! ({
+            "gui": "nogui",
+            "netid": 8999,
+            "dht": "on",  // Enable DHT without delay.
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| s.parse::<i64>().unwrap()),
+            "passphrase": bob_passphrase,
+            "coins": coins,
+            "rpc_password": "password",
+            "i_am_seed": true,
+        }),
+        "password".into(),
+        local_start!("bob"),
+    )
+    .unwrap();
+
+    let (_bob_dump_log, _bob_dump_dashboard) = mm_bob.mm_dump();
+    log! ({"Bob log path: {}", mm_bob.log_path.display()});
+    block_on(mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
+    log!([block_on(enable_coins_eth_electrum(&mm_bob, &[
+        "http://195.201.0.6:8565"
+    ]))]);
+
+    log!("Issue bob ETH/JST sell request");
+    let rc = block_on(mm_bob.rpc(json! ({
+        "userpass": mm_bob.userpass,
+        "method": "sell",
+        "base": "RICK",
+        "rel": "MORTY",
+        "price": "1",
+        "volume": "1",
+        "order_type": {
+            "type": "FillOrKill"
+        }
+    })))
+    .unwrap();
+    assert!(rc.0.is_success(), "!sell: {}", rc.1);
+    let response: BuyOrSellRpcResult = json::from_str(&rc.1).unwrap();
+    let expected_min = BigDecimal::from(1);
+    assert_eq!(response.result.min_volume, expected_min);
 }
 
 #[test]

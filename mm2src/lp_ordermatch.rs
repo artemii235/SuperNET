@@ -2794,17 +2794,23 @@ pub async fn lp_auto_buy(
         request.clone().into(),
     );
 
+    let min_tx_amount = MmNumber::from(base_coin.min_tx_amount());
+    let min_volume = if input.min_volume < min_tx_amount {
+        min_tx_amount
+    } else {
+        input.min_volume
+    };
     let result = json!({ "result": LpautobuyResult {
         request: (&request).into(),
         order_type: input.order_type,
-        min_volume: input.min_volume.clone().into(),
+        min_volume: min_volume.clone().into(),
     } });
     let order = TakerOrder {
         created_at: now_ms(),
         matches: HashMap::new(),
         request,
         order_type: input.order_type,
-        min_volume: input.min_volume,
+        min_volume,
     };
     save_my_taker_order(ctx, &order);
     my_taker_orders.insert(order.request.uuid, order);
