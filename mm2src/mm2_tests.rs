@@ -5182,7 +5182,7 @@ fn test_sell_min_volume_dust() {
     let bob_passphrase = get_passphrase(&".env.client", "BOB_PASSPHRASE").unwrap();
 
     let coins = json! ([
-        {"coin":"RICK","asset":"RICK","dust":100000000,"required_confirmations":0,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
+        {"coin":"RICK","asset":"RICK","dust":10000000,"required_confirmations":0,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
         {"coin":"MORTY","asset":"MORTY","required_confirmations":0,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
         {"coin":"ETH","name":"ethereum","protocol":{"type":"ETH"}},
         {"coin":"JST","name":"jst","protocol":{"type":"ERC20","protocol_data":{"platform":"ETH","contract_address":"0x2b294F029Fde858b2c62184e8390591755521d8E"}}}
@@ -5284,10 +5284,8 @@ fn test_buy_min_volume() {
     })))
     .unwrap();
     assert!(rc.0.is_success(), "!sell: {}", rc.1);
-    let rc_json: Json = json::from_str(&rc.1).unwrap();
-    let uuid: Uuid = json::from_value(rc_json["result"]["uuid"].clone()).unwrap();
-    let min_volume_response: BigDecimal = json::from_value(rc_json["result"]["min_volume"].clone()).unwrap();
-    assert_eq!(min_volume, min_volume_response);
+    let response: BuyOrSellRpcResult = json::from_str(&rc.1).unwrap();
+    assert_eq!(min_volume, response.result.min_volume);
 
     log!("Wait for 40 seconds for Bob order to be converted to maker");
     thread::sleep(Duration::from_secs(40));
@@ -5303,7 +5301,7 @@ fn test_buy_min_volume() {
     let my_taker_orders: HashMap<Uuid, Json> = json::from_value(my_orders["result"]["taker_orders"].clone()).unwrap();
     assert_eq!(1, my_maker_orders.len(), "maker_orders must have exactly 1 order");
     assert!(my_taker_orders.is_empty(), "taker_orders must be empty");
-    let maker_order = my_maker_orders.get(&uuid).unwrap();
+    let maker_order = my_maker_orders.get(&response.result.uuid).unwrap();
 
     let expected_min_volume: BigDecimal = "0.2".parse().unwrap();
     let min_volume_maker: BigDecimal = json::from_value(maker_order["min_base_vol"].clone()).unwrap();

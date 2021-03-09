@@ -913,35 +913,20 @@ impl TakerRequest {
     fn get_rel_amount(&self) -> &MmNumber { &self.rel_amount }
 }
 
-struct TakerRequestBuilder {
-    base: String,
-    rel: String,
+struct TakerOrderBuilder<'a> {
+    base_coin: &'a MmCoinEnum,
+    rel_coin: &'a MmCoinEnum,
     base_amount: MmNumber,
     rel_amount: MmNumber,
     sender_pubkey: H256Json,
     action: TakerAction,
     match_by: MatchBy,
+    order_type: OrderType,
     conf_settings: Option<OrderConfirmationsSettings>,
+    min_volume: Option<MmNumber>,
 }
 
-impl Default for TakerRequestBuilder {
-    fn default() -> Self {
-        TakerRequestBuilder {
-            base: "".into(),
-            rel: "".into(),
-            base_amount: 0.into(),
-            rel_amount: 0.into(),
-            sender_pubkey: H256Json::default(),
-            action: TakerAction::Buy,
-            match_by: MatchBy::Any,
-            conf_settings: None,
-        }
-    }
-}
-
-enum TakerRequestBuildError {
-    BaseCoinEmpty,
-    RelCoinEmpty,
+enum TakerOrderBuildError {
     BaseEqualRel,
     /// Base amount too low with threshold
     BaseAmountTooLow {
@@ -953,43 +938,57 @@ enum TakerRequestBuildError {
         actual: MmNumber,
         threshold: MmNumber,
     },
+    /// Min volume too low with threshold
+    MinVolumeTooLow {
+        actual: MmNumber,
+        threshold: MmNumber,
+    },
     SenderPubkeyIsZero,
     ConfsSettingsNotSet,
 }
 
-impl fmt::Display for TakerRequestBuildError {
+impl fmt::Display for TakerOrderBuildError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TakerRequestBuildError::BaseCoinEmpty => write!(f, "Base coin can not be empty"),
-            TakerRequestBuildError::RelCoinEmpty => write!(f, "Rel coin can not be empty"),
-            TakerRequestBuildError::BaseEqualRel => write!(f, "Rel coin can not be same as base"),
-            TakerRequestBuildError::BaseAmountTooLow { actual, threshold } => write!(
+            TakerOrderBuildError::BaseEqualRel => write!(f, "Rel coin can not be same as base"),
+            TakerOrderBuildError::BaseAmountTooLow { actual, threshold } => write!(
                 f,
                 "Base amount {} is too low, required: {}",
                 actual.to_decimal(),
                 threshold.to_decimal()
             ),
-            TakerRequestBuildError::RelAmountTooLow { actual, threshold } => write!(
+            TakerOrderBuildError::RelAmountTooLow { actual, threshold } => write!(
                 f,
                 "Rel amount {} is too low, required: {}",
                 actual.to_decimal(),
                 threshold.to_decimal()
             ),
-            TakerRequestBuildError::SenderPubkeyIsZero => write!(f, "Sender pubkey can not be zero"),
-            TakerRequestBuildError::ConfsSettingsNotSet => write!(f, "Confirmation settings must be set"),
+            TakerOrderBuildError::MinVolumeTooLow { actual, threshold } => write!(
+                f,
+                "Min volume {} is too low, required: {}",
+                actual.to_decimal(),
+                threshold.to_decimal()
+            ),
+            TakerOrderBuildError::SenderPubkeyIsZero => write!(f, "Sender pubkey can not be zero"),
+            TakerOrderBuildError::ConfsSettingsNotSet => write!(f, "Confirmation settings must be set"),
         }
     }
 }
 
-impl TakerRequestBuilder {
-    fn with_base_coin(mut self, ticker: String) -> Self {
-        self.base = ticker;
-        self
-    }
-
-    fn with_rel_coin(mut self, ticker: String) -> Self {
-        self.rel = ticker;
-        self
+impl<'a> TakerOrderBuilder<'a> {
+    fn new(base_coin: &'a MmCoinEnum, rel_coin: &'a MmCoinEnum) -> TakerOrderBuilder<'a> {
+        TakerOrderBuilder {
+            base_coin,
+            rel_coin,
+            base_amount: MmNumber::from(0),
+            rel_amount: MmNumber::from(0),
+            sender_pubkey: H256Json::default(),
+            action: TakerAction::Buy,
+            match_by: MatchBy::Any,
+            conf_settings: None,
+            min_volume: None,
+            order_type: OrderType::GoodTillCancelled,
+        }
     }
 
     fn with_base_amount(mut self, vol: MmNumber) -> Self {
@@ -1002,6 +1001,11 @@ impl TakerRequestBuilder {
         self
     }
 
+    fn with_min_volume(mut self, vol: Option<MmNumber>) -> Self {
+        self.min_volume = vol;
+        self
+    }
+
     fn with_action(mut self, action: TakerAction) -> Self {
         self.action = action;
         self
@@ -1009,6 +1013,11 @@ impl TakerRequestBuilder {
 
     fn with_match_by(mut self, match_by: MatchBy) -> Self {
         self.match_by = match_by;
+        self
+    }
+
+    fn with_order_type(mut self, order_type: OrderType) -> Self {
+        self.order_type = order_type;
         self
     }
 
@@ -1023,71 +1032,91 @@ impl TakerRequestBuilder {
     }
 
     /// Validate fields and build
-    fn build(self) -> Result<TakerRequest, TakerRequestBuildError> {
-        let min_vol = MmNumber::from(MIN_TRADING_VOL);
+    fn build(self) -> Result<TakerOrder, TakerOrderBuildError> {
+        let min_vol_threshold = MmNumber::from(MIN_TRADING_VOL);
+        let min_tx_multiplier = MmNumber::from(10);
+        let min_base_amount =
+            (&self.base_coin.min_tx_amount().into() * &min_tx_multiplier).max(min_vol_threshold.clone());
+        let min_rel_amount = (&self.rel_coin.min_tx_amount().into() * &min_tx_multiplier).max(min_vol_threshold);
 
-        if self.base.is_empty() {
-            return Err(TakerRequestBuildError::BaseCoinEmpty);
+        if self.base_coin.ticker() == self.rel_coin.ticker() {
+            return Err(TakerOrderBuildError::BaseEqualRel);
         }
 
-        if self.rel.is_empty() {
-            return Err(TakerRequestBuildError::RelCoinEmpty);
-        }
-
-        if self.base == self.rel {
-            return Err(TakerRequestBuildError::BaseEqualRel);
-        }
-
-        if self.base_amount < min_vol {
-            return Err(TakerRequestBuildError::BaseAmountTooLow {
+        if self.base_amount < min_base_amount {
+            return Err(TakerOrderBuildError::BaseAmountTooLow {
                 actual: self.base_amount,
-                threshold: min_vol,
+                threshold: min_base_amount,
             });
         }
 
-        if self.rel_amount < min_vol {
-            return Err(TakerRequestBuildError::RelAmountTooLow {
+        if self.rel_amount < min_rel_amount {
+            return Err(TakerOrderBuildError::RelAmountTooLow {
                 actual: self.rel_amount,
-                threshold: min_vol,
+                threshold: min_rel_amount,
             });
         }
 
         if self.sender_pubkey == H256Json::default() {
-            return Err(TakerRequestBuildError::SenderPubkeyIsZero);
+            return Err(TakerOrderBuildError::SenderPubkeyIsZero);
         }
 
         if self.conf_settings.is_none() {
-            return Err(TakerRequestBuildError::ConfsSettingsNotSet);
+            return Err(TakerOrderBuildError::ConfsSettingsNotSet);
         }
 
-        Ok(TakerRequest {
-            base: self.base,
-            rel: self.rel,
-            base_amount: self.base_amount,
-            rel_amount: self.rel_amount,
-            action: self.action,
-            uuid: new_uuid(),
-            sender_pubkey: self.sender_pubkey,
-            dest_pub_key: Default::default(),
-            match_by: self.match_by,
-            conf_settings: self.conf_settings,
+        let min_volume = match self.min_volume {
+            Some(min) => min,
+            None => min_base_amount.clone(),
+        };
+
+        if min_volume < min_base_amount {
+            return Err(TakerOrderBuildError::MinVolumeTooLow {
+                actual: min_volume,
+                threshold: min_base_amount,
+            });
+        }
+
+        Ok(TakerOrder {
+            created_at: now_ms() / 1000,
+            request: TakerRequest {
+                base: self.base_coin.ticker().to_owned(),
+                rel: self.rel_coin.ticker().to_owned(),
+                base_amount: self.base_amount,
+                rel_amount: self.rel_amount,
+                action: self.action,
+                uuid: new_uuid(),
+                sender_pubkey: self.sender_pubkey,
+                dest_pub_key: Default::default(),
+                match_by: self.match_by,
+                conf_settings: self.conf_settings,
+            },
+            matches: Default::default(),
+            min_volume,
+            order_type: self.order_type,
         })
     }
 
     #[cfg(test)]
     /// skip validation for tests
-    fn build_unchecked(self) -> TakerRequest {
-        TakerRequest {
-            base: self.base,
-            rel: self.rel,
-            base_amount: self.base_amount,
-            rel_amount: self.rel_amount,
-            action: self.action,
-            uuid: new_uuid(),
-            sender_pubkey: self.sender_pubkey,
-            dest_pub_key: Default::default(),
-            match_by: self.match_by,
-            conf_settings: self.conf_settings,
+    fn build_unchecked(self) -> TakerOrder {
+        TakerOrder {
+            created_at: 0,
+            request: TakerRequest {
+                base: self.base_coin.ticker().to_owned(),
+                rel: self.rel_coin.ticker().to_owned(),
+                base_amount: self.base_amount,
+                rel_amount: self.rel_amount,
+                action: self.action,
+                uuid: new_uuid(),
+                sender_pubkey: self.sender_pubkey,
+                dest_pub_key: Default::default(),
+                match_by: self.match_by,
+                conf_settings: self.conf_settings,
+            },
+            matches: HashMap::new(),
+            min_volume: Default::default(),
+            order_type: Default::default(),
         }
     }
 }
@@ -2592,8 +2621,6 @@ async fn process_taker_connect(ctx: MmArc, sender_pubkey: H256Json, connect_msg:
     }
 }
 
-fn min_trading_vol() -> MmNumber { MmNumber::from(MIN_TRADING_VOL) }
-
 #[derive(Deserialize, Debug)]
 pub struct AutoBuyInput {
     base: String,
@@ -2617,8 +2644,7 @@ pub struct AutoBuyInput {
     base_nota: Option<bool>,
     rel_confs: Option<u64>,
     rel_nota: Option<bool>,
-    #[serde(default = "min_trading_vol")]
-    min_volume: MmNumber,
+    min_volume: Option<MmNumber>,
 }
 
 pub async fn buy(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
@@ -2778,40 +2804,27 @@ pub async fn lp_auto_buy(
         rel_confs: input.rel_confs.unwrap_or_else(|| rel_coin.required_confirmations()),
         rel_nota: input.rel_nota.unwrap_or_else(|| rel_coin.requires_notarization()),
     };
-    let request_builder = TakerRequestBuilder::default()
-        .with_base_coin(input.base.clone())
-        .with_rel_coin(input.rel.clone())
+    let order_builder = TakerOrderBuilder::new(base_coin, rel_coin)
         .with_base_amount(input.volume)
         .with_rel_amount(rel_volume)
         .with_action(action)
         .with_match_by(input.match_by)
+        .with_min_volume(input.min_volume)
+        .with_order_type(input.order_type)
         .with_conf_settings(conf_settings)
         .with_sender_pubkey(H256Json::from(our_public_id.bytes));
-    let request = try_s!(request_builder.build());
+    let order = try_s!(order_builder.build());
     broadcast_ordermatch_message(
         &ctx,
         vec![orderbook_topic_from_base_rel(&input.base, &input.rel)],
-        request.clone().into(),
+        order.request.clone().into(),
     );
 
-    let min_tx_amount = MmNumber::from(base_coin.min_tx_amount());
-    let min_volume = if input.min_volume < min_tx_amount {
-        min_tx_amount
-    } else {
-        input.min_volume
-    };
     let result = json!({ "result": LpautobuyResult {
-        request: (&request).into(),
-        order_type: input.order_type,
-        min_volume: min_volume.clone().into(),
+        request: (&order.request).into(),
+        order_type: order.order_type,
+        min_volume: order.min_volume.clone().into(),
     } });
-    let order = TakerOrder {
-        created_at: now_ms(),
-        matches: HashMap::new(),
-        request,
-        order_type: input.order_type,
-        min_volume,
-    };
     save_my_taker_order(ctx, &order);
     my_taker_orders.insert(order.request.uuid, order);
     Ok(result.to_string())
