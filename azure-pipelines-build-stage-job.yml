@@ -42,7 +42,7 @@ jobs:
         displayName: 'Test MM2 WASM'
         condition: eq( variables['Agent.OS'], 'Linux' )
         env:
-          HEADLESS_TIMEOUT: 120
+          WASM_BINDGEN_TEST_TIMEOUT: 120
           GECKODRIVER: '/home/azureagent/wasm/geckodriver'
       # Explicit --test-threads=16 makes testing process slightly faster on agents that have <16 CPU cores.
       - bash: |
