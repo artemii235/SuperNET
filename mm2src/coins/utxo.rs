@@ -957,7 +957,11 @@ impl<'a> UtxoConfBuilder<'a> {
 
     fn is_pos(&self) -> bool { self.conf["isPoS"].as_u64() == Some(1) }
 
-    fn segwit(&self) -> bool { self.conf["segwit"].as_bool().unwrap_or(false) }
+    fn segwit(&self) -> bool {
+        self.req["full_segwit"]
+            .as_bool()
+            .unwrap_or(self.conf["segwit"].as_bool().unwrap_or(false))
+    }
 
     fn mtp_block_count(&self) -> NonZeroU64 {
         json::from_value(self.conf["mtp_block_count"].clone()).unwrap_or(KMD_MTP_BLOCK_COUNT)

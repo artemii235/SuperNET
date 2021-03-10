@@ -5547,6 +5547,60 @@ fn test_orderbook_depth() {
     block_on(mm_alice.stop()).unwrap();
 }
 
+#[test]
+#[cfg(feature = "native")]
+fn test_segwit_on_enable() {
+    let p2shtype = 3;
+
+    let coins = json!([
+        {"coin":"RICK","asset":"RICK","pubtype":1,"p2shtype":p2shtype,"mm2":1,"rpcport":8923,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
+    ]);
+
+    // start bob and immediately place the orders
+    let mut mm_bob = MarketMakerIt::start(
+        json! ({
+            "gui": "nogui",
+            "netid": 9998,
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| s.parse::<i64>().unwrap()),
+            "passphrase": "bob passphrase",
+            "coins": coins,
+            "rpc_password": "pass",
+            "i_am_seed": true,
+        }),
+        "pass".into(),
+        local_start!("bob"),
+    )
+    .unwrap();
+    let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
+    log!({"Bob log path: {}", mm_bob.log_path.display()});
+    block_on(mm_bob.wait_for_log(22., |log| log.contains("INFO Listening on"))).unwrap();
+    block_on(mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
+
+    let native = block_on(mm_bob.rpc(json! ({
+        "userpass": mm_bob.userpass,
+        "method": "enable",
+        "coin": "RICK",
+        "full_segwit": true,
+        "mm2": 1,   
+    })))
+    .unwrap();
+
+    assert_eq!(native.0, StatusCode::OK, "'enable' failed: {}", native.1);
+    let enable_res = json::from_str(&native.1).unwrap();
+
+    let mut replies = HashMap::new();
+    replies.insert(
+        "RICK",
+        enable_res
+    );
+    let sigwit_addr = addr_from_enable(&replies, "RICK");    
+    block_on(mm_bob.stop()).unwrap();
+    assert!(*&sigwit_addr[0..1].parse::<i32>().unwrap() == p2shtype)
+}
+
+
 // HOWTO
 // 1. Install Firefox.
 // 2. Install forked version of wasm-bindgen-cli: cargo install wasm-bindgen-cli --git https://github.com/artemii235/wasm-bindgen.git
