@@ -5573,7 +5573,7 @@ fn test_orderbook_depth() {
 
 // HOWTO
 // 1. Install Firefox.
-// 2. Install forked version of wasm-bindgen-cli: cargo install wasm-bindgen-cli
+// 2. Install wasm-bindgen-cli: cargo install wasm-bindgen-cli
 // 3. Download Gecko driver for your OS: https://github.com/mozilla/geckodriver/releases
 // 4. Run HEADLESS_TIMEOUT=120 GECKODRIVER=PATH_TO_GECKO_DRIVER_BIN cargo test --target wasm32-unknown-unknown
 #[cfg(target_arch = "wasm32")]

@@ -37,6 +37,13 @@ jobs:
           cat MM_VERSION
           cargo build --release --bin mm2
         displayName: 'Build MM2 Release'
+      - bash: |
+          cargo test --target wasm32-unknown-unknown --release --bin mm2
+        displayName: 'Test MM2 WASM'
+        condition: eq( variables['Agent.OS'], 'Linux' )
+        env:
+          HEADLESS_TIMEOUT: 120
+          GECKODRIVER: '/home/azureagent/wasm/geckodriver'
       # Explicit --test-threads=16 makes testing process slightly faster on agents that have <16 CPU cores.
       - bash: |
           cargo test --all -- --test-threads=16
