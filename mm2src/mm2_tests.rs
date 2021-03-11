@@ -23,6 +23,7 @@ use std::collections::HashMap;
 use std::convert::identity;
 use std::env::{self, var};
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::thread;
 use std::time::Duration;
 use uuid::Uuid;
@@ -291,11 +292,10 @@ fn alice_can_see_the_active_order_after_connection() {
     .unwrap();
     assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
 
-    let bob_orderbook: Json = json::from_str(&rc.1).unwrap();
+    let bob_orderbook: OrderbookResponse = json::from_str(&rc.1).unwrap();
     log!("Bob orderbook "[bob_orderbook]);
-    let asks = bob_orderbook["asks"].as_array().unwrap();
-    assert!(asks.len() > 0, "Bob RICK/MORTY asks are empty");
-    assert_eq!(Json::from("0.9"), asks[0]["maxvolume"]);
+    assert!(bob_orderbook.asks.len() > 0, "Bob RICK/MORTY asks are empty");
+    assert_eq!(BigDecimal::from_str("0.9").unwrap(), bob_orderbook.asks[0].max_volume);
 
     // start eve and immediately place the order
     let mut mm_eve = MarketMakerIt::start(
@@ -354,12 +354,18 @@ fn alice_can_see_the_active_order_after_connection() {
     .unwrap();
     assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
 
-    let eve_orderbook: Json = json::from_str(&rc.1).unwrap();
+    let eve_orderbook: OrderbookResponse = json::from_str(&rc.1).unwrap();
     log!("Eve orderbook "[eve_orderbook]);
-    let asks = eve_orderbook["asks"].as_array().unwrap();
-    let bids = eve_orderbook["bids"].as_array().unwrap();
-    assert_eq!(asks.len(), 2, "Eve RICK/MORTY orderbook must have exactly 2 asks");
-    assert_eq!(bids.len(), 1, "Eve RICK/MORTY orderbook must have exactly 1 bid");
+    assert_eq!(
+        eve_orderbook.asks.len(),
+        2,
+        "Eve RICK/MORTY orderbook must have exactly 2 asks"
+    );
+    assert_eq!(
+        eve_orderbook.bids.len(),
+        1,
+        "Eve RICK/MORTY orderbook must have exactly 1 bid"
+    );
 
     log!("Give Bob 2 seconds to import Eve order");
     thread::sleep(Duration::from_secs(2));
@@ -373,12 +379,18 @@ fn alice_can_see_the_active_order_after_connection() {
     .unwrap();
     assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
 
-    let bob_orderbook: Json = json::from_str(&rc.1).unwrap();
+    let bob_orderbook: OrderbookResponse = json::from_str(&rc.1).unwrap();
     log!("Bob orderbook "[bob_orderbook]);
-    let asks = bob_orderbook["asks"].as_array().unwrap();
-    let bids = bob_orderbook["bids"].as_array().unwrap();
-    assert_eq!(asks.len(), 2, "Bob RICK/MORTY orderbook must have exactly 2 asks");
-    assert_eq!(bids.len(), 1, "Bob RICK/MORTY orderbook must have exactly 1 bid");
+    assert_eq!(
+        bob_orderbook.asks.len(),
+        2,
+        "Bob RICK/MORTY orderbook must have exactly 2 asks"
+    );
+    assert_eq!(
+        bob_orderbook.bids.len(),
+        1,
+        "Bob RICK/MORTY orderbook must have exactly 1 bid"
+    );
 
     let mut mm_alice = MarketMakerIt::start(
         json! ({
@@ -414,12 +426,18 @@ fn alice_can_see_the_active_order_after_connection() {
     .unwrap();
     assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
 
-    let alice_orderbook: Json = json::from_str(&rc.1).unwrap();
+    let alice_orderbook: OrderbookResponse = json::from_str(&rc.1).unwrap();
     log!("Alice orderbook "[alice_orderbook]);
-    let asks = alice_orderbook["asks"].as_array().unwrap();
-    let bids = alice_orderbook["bids"].as_array().unwrap();
-    assert_eq!(asks.len(), 2, "Alice RICK/MORTY orderbook must have exactly 2 asks");
-    assert_eq!(bids.len(), 1, "Alice RICK/MORTY orderbook must have exactly 1 bid");
+    assert_eq!(
+        alice_orderbook.asks.len(),
+        2,
+        "Alice RICK/MORTY orderbook must have exactly 2 asks"
+    );
+    assert_eq!(
+        alice_orderbook.bids.len(),
+        1,
+        "Alice RICK/MORTY orderbook must have exactly 1 bid"
+    );
 
     block_on(mm_bob.stop()).unwrap();
     block_on(mm_alice.stop()).unwrap();
@@ -983,13 +1001,11 @@ async fn trade_base_rel_electrum(pairs: Vec<(&'static str, &'static str)>) {
             .unwrap();
         assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
 
-        let bob_orderbook: Json = json::from_str(&rc.1).unwrap();
+        let bob_orderbook: OrderbookResponse = json::from_str(&rc.1).unwrap();
         log!((base) "/" (rel) " orderbook " [bob_orderbook]);
 
-        let bids = bob_orderbook["bids"].as_array().unwrap();
-        let asks = bob_orderbook["asks"].as_array().unwrap();
-        assert_eq!(0, bids.len(), "{} {} bids must be empty", base, rel);
-        assert_eq!(0, asks.len(), "{} {} asks must be empty", base, rel);
+        assert_eq!(0, bob_orderbook.bids.len(), "{} {} bids must be empty", base, rel);
+        assert_eq!(0, bob_orderbook.asks.len(), "{} {} asks must be empty", base, rel);
     }
     mm_bob.stop().await.unwrap();
     mm_alice.stop().await.unwrap();
@@ -1443,13 +1459,11 @@ fn test_multiple_buy_sell_no_delay() {
     .unwrap();
     assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
 
-    let bob_orderbook: Json = json::from_str(&rc.1).unwrap();
+    let bob_orderbook: OrderbookResponse = json::from_str(&rc.1).unwrap();
     log!("RICK/MORTY orderbook "[bob_orderbook]);
-    let bids = bob_orderbook["bids"].as_array().unwrap();
-    let asks = bob_orderbook["asks"].as_array().unwrap();
-    assert!(bids.len() > 0, "RICK/MORTY bids are empty");
-    assert_eq!(0, asks.len(), "RICK/MORTY asks are not empty");
-    assert_eq!(Json::from("0.1"), bids[0]["maxvolume"]);
+    assert!(bob_orderbook.bids.len() > 0, "RICK/MORTY bids are empty");
+    assert_eq!(0, bob_orderbook.asks.len(), "RICK/MORTY asks are not empty");
+    assert_eq!(BigDecimal::from_str("0.1").unwrap(), bob_orderbook.bids[0].max_volume);
 
     log!("Get RICK/ETH orderbook");
     let rc = block_on(mm.rpc(json! ({
@@ -1461,12 +1475,11 @@ fn test_multiple_buy_sell_no_delay() {
     .unwrap();
     assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
 
-    let bob_orderbook: Json = json::from_str(&rc.1).unwrap();
+    let bob_orderbook: OrderbookResponse = json::from_str(&rc.1).unwrap();
     log!("RICK/ETH orderbook "[bob_orderbook]);
-    let bids = bob_orderbook["bids"].as_array().unwrap();
-    assert!(bids.len() > 0, "RICK/ETH bids are empty");
-    assert_eq!(asks.len(), 0, "RICK/ETH asks are not empty");
-    assert_eq!(Json::from("0.1"), bids[0]["maxvolume"]);
+    assert!(bob_orderbook.bids.len() > 0, "RICK/ETH bids are empty");
+    assert_eq!(bob_orderbook.asks.len(), 0, "RICK/ETH asks are not empty");
+    assert_eq!(BigDecimal::from_str("0.1").unwrap(), bob_orderbook.bids[0].max_volume);
 }
 
 /// https://github.com/artemii235/SuperNET/issues/398
@@ -1560,10 +1573,13 @@ fn test_cancel_order() {
     .unwrap();
     assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
 
-    let alice_orderbook: Json = json::from_str(&rc.1).unwrap();
+    let alice_orderbook: OrderbookResponse = json::from_str(&rc.1).unwrap();
     log!("Alice orderbook "[alice_orderbook]);
-    let asks = alice_orderbook["asks"].as_array().unwrap();
-    assert_eq!(asks.len(), 1, "Alice RICK/MORTY orderbook must have exactly 1 ask");
+    assert_eq!(
+        alice_orderbook.asks.len(),
+        1,
+        "Alice RICK/MORTY orderbook must have exactly 1 ask"
+    );
 
     let cancel_rc = block_on(mm_bob.rpc(json! ({
         "userpass": mm_bob.userpass,
@@ -1595,10 +1611,9 @@ fn test_cancel_order() {
     .unwrap();
     assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
 
-    let bob_orderbook: Json = json::from_str(&rc.1).unwrap();
+    let bob_orderbook: OrderbookResponse = json::from_str(&rc.1).unwrap();
     log!("Bob orderbook "[bob_orderbook]);
-    let asks = bob_orderbook["asks"].as_array().unwrap();
-    assert_eq!(asks.len(), 0, "Bob RICK/MORTY asks are not empty");
+    assert_eq!(bob_orderbook.asks.len(), 0, "Bob RICK/MORTY asks are not empty");
 
     // Alice orderbook must show no orders
     log!("Get RICK/MORTY orderbook on Alice side");
@@ -1611,10 +1626,9 @@ fn test_cancel_order() {
     .unwrap();
     assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
 
-    let alice_orderbook: Json = json::from_str(&rc.1).unwrap();
+    let alice_orderbook: OrderbookResponse = json::from_str(&rc.1).unwrap();
     log!("Alice orderbook "[alice_orderbook]);
-    let asks = alice_orderbook["asks"].as_array().unwrap();
-    assert_eq!(asks.len(), 0, "Alice RICK/MORTY asks are not empty");
+    assert_eq!(alice_orderbook.asks.len(), 0, "Alice RICK/MORTY asks are not empty");
 }
 
 #[test]

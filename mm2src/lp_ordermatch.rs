@@ -2886,6 +2886,74 @@ impl OrderbookItem {
             self.min_volume = new_min_volume.into();
         }
     }
+
+    fn as_rpc_entry_ask(&self, address: String, is_mine: bool) -> RpcOrderbookEntry {
+        let price_mm = MmNumber::from(self.price.clone());
+        let max_vol_mm = MmNumber::from(self.max_volume.clone());
+        let min_vol_mm = MmNumber::from(self.min_volume.clone());
+
+        let base_max_volume = max_vol_mm.clone().into();
+        let base_min_volume = min_vol_mm.clone().into();
+        let rel_max_volume = max_vol_mm.clone().into();
+        let rel_min_volume = min_vol_mm.clone().into();
+
+        RpcOrderbookEntry {
+            coin: self.base.clone(),
+            address,
+            price: price_mm.to_decimal(),
+            price_rat: price_mm.to_ratio(),
+            price_fraction: price_mm.to_fraction(),
+            max_volume: max_vol_mm.to_decimal(),
+            max_volume_rat: max_vol_mm.to_ratio(),
+            max_volume_fraction: max_vol_mm.to_fraction(),
+            min_volume: min_vol_mm.to_decimal(),
+            min_volume_rat: min_vol_mm.to_ratio(),
+            min_volume_fraction: min_vol_mm.to_fraction(),
+            pubkey: self.pubkey.clone(),
+            age: (now_ms() as i64 / 1000),
+            zcredits: 0,
+            uuid: self.uuid,
+            is_mine,
+            base_max_volume,
+            base_min_volume,
+            rel_max_volume,
+            rel_min_volume,
+        }
+    }
+
+    fn as_rpc_entry_bid(&self, address: String, is_mine: bool) -> RpcOrderbookEntry {
+        let price_mm = MmNumber::from(1i32) / self.price.clone().into();
+        let max_vol_mm = MmNumber::from(self.max_volume.clone());
+        let min_vol_mm = MmNumber::from(self.min_volume.clone());
+
+        let base_max_volume = max_vol_mm.clone().into();
+        let base_min_volume = min_vol_mm.clone().into();
+        let rel_max_volume = max_vol_mm.clone().into();
+        let rel_min_volume = min_vol_mm.clone().into();
+
+        RpcOrderbookEntry {
+            coin: self.rel.clone(),
+            address,
+            price: price_mm.to_decimal(),
+            price_rat: price_mm.to_ratio(),
+            price_fraction: price_mm.to_fraction(),
+            max_volume: max_vol_mm.to_decimal(),
+            max_volume_rat: max_vol_mm.to_ratio(),
+            max_volume_fraction: max_vol_mm.to_fraction(),
+            min_volume: min_vol_mm.to_decimal(),
+            min_volume_rat: min_vol_mm.to_ratio(),
+            min_volume_fraction: min_vol_mm.to_fraction(),
+            pubkey: self.pubkey.clone(),
+            age: (now_ms() as i64 / 1000),
+            zcredits: 0,
+            uuid: self.uuid,
+            is_mine,
+            base_max_volume,
+            base_min_volume,
+            rel_max_volume,
+            rel_min_volume,
+        }
+    }
 }
 
 fn get_true() -> bool { true }
@@ -3582,8 +3650,13 @@ async fn subscribe_to_orderbook_topic(
     Ok(())
 }
 
+construct_detailed!(DetailedBaseMaxVolume, base_max_volume);
+construct_detailed!(DetailedBaseMinVolume, base_min_volume);
+construct_detailed!(DetailedRelMaxVolume, rel_max_volume);
+construct_detailed!(DetailedRelMinVolume, rel_min_volume);
+
 #[derive(Debug, Serialize)]
-pub struct OrderbookEntry {
+pub struct RpcOrderbookEntry {
     coin: String,
     address: String,
     price: BigDecimal,
@@ -3601,17 +3674,25 @@ pub struct OrderbookEntry {
     zcredits: u64,
     uuid: Uuid,
     is_mine: bool,
+    #[serde(flatten)]
+    base_max_volume: DetailedBaseMaxVolume,
+    #[serde(flatten)]
+    base_min_volume: DetailedBaseMinVolume,
+    #[serde(flatten)]
+    rel_max_volume: DetailedRelMaxVolume,
+    #[serde(flatten)]
+    rel_min_volume: DetailedRelMinVolume,
 }
 
 #[derive(Debug, Serialize)]
 pub struct OrderbookResponse {
     #[serde(rename = "askdepth")]
     ask_depth: u32,
-    asks: Vec<OrderbookEntry>,
+    asks: Vec<RpcOrderbookEntry>,
     base: String,
     #[serde(rename = "biddepth")]
     bid_depth: u32,
-    bids: Vec<OrderbookEntry>,
+    bids: Vec<RpcOrderbookEntry>,
     netid: u16,
     #[serde(rename = "numasks")]
     num_asks: usize,
@@ -3654,32 +3735,14 @@ pub async fn orderbook(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
                     "Orderbook::unordered contains {:?} uuid that is not in Orderbook::order_set",
                     uuid
                 ))?;
-                let price_mm: MmNumber = ask.price.clone().into();
-                let max_vol_mm: MmNumber = ask.max_volume.clone().into();
-                let min_vol_mm: MmNumber = ask.min_volume.clone().into();
 
-                orderbook_entries.push(OrderbookEntry {
-                    coin: req.base.clone(),
-                    address: try_s!(address_by_coin_conf_and_pubkey_str(
-                        &req.base,
-                        &base_coin_conf,
-                        &ask.pubkey
-                    )),
-                    price: price_mm.to_decimal(),
-                    price_rat: price_mm.to_ratio(),
-                    price_fraction: price_mm.to_fraction(),
-                    max_volume: max_vol_mm.to_decimal(),
-                    max_volume_rat: max_vol_mm.to_ratio(),
-                    max_volume_fraction: max_vol_mm.to_fraction(),
-                    min_volume: min_vol_mm.to_decimal(),
-                    min_volume_rat: min_vol_mm.to_ratio(),
-                    min_volume_fraction: min_vol_mm.to_fraction(),
-                    pubkey: ask.pubkey.clone(),
-                    age: (now_ms() as i64 / 1000),
-                    zcredits: 0,
-                    uuid: *uuid,
-                    is_mine: my_pubsecp == ask.pubkey,
-                })
+                let address = try_s!(address_by_coin_conf_and_pubkey_str(
+                    &req.base,
+                    &base_coin_conf,
+                    &ask.pubkey
+                ));
+                let is_mine = my_pubsecp == ask.pubkey;
+                orderbook_entries.push(ask.as_rpc_entry_ask(address, is_mine));
             }
             orderbook_entries
         },
@@ -3695,33 +3758,13 @@ pub async fn orderbook(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
                     "Orderbook::unordered contains {:?} uuid that is not in Orderbook::order_set",
                     uuid
                 ))?;
-                let price_mm = &MmNumber::from(1i32) / &bid.price.clone().into();
-                let max_vol_mm: MmNumber = bid.max_volume.clone().into();
-                let min_vol_mm: MmNumber = bid.min_volume.clone().into();
-                orderbook_entries.push(OrderbookEntry {
-                    coin: req.rel.clone(),
-                    address: try_s!(address_by_coin_conf_and_pubkey_str(
-                        &req.rel,
-                        &rel_coin_conf,
-                        &bid.pubkey
-                    )),
-                    // NB: 1/x can not be represented as a decimal and introduces a rounding error
-                    // cf. https://github.com/KomodoPlatform/atomicDEX-API/issues/495#issuecomment-516365682
-                    price: price_mm.to_decimal(),
-                    price_rat: price_mm.to_ratio(),
-                    price_fraction: price_mm.to_fraction(),
-                    max_volume: max_vol_mm.to_decimal(),
-                    max_volume_rat: max_vol_mm.to_ratio(),
-                    max_volume_fraction: max_vol_mm.to_fraction(),
-                    min_volume: min_vol_mm.to_decimal(),
-                    min_volume_rat: min_vol_mm.to_ratio(),
-                    min_volume_fraction: min_vol_mm.to_fraction(),
-                    pubkey: bid.pubkey.clone(),
-                    age: (now_ms() as i64 / 1000),
-                    zcredits: 0,
-                    uuid: *uuid,
-                    is_mine: my_pubsecp == bid.pubkey,
-                })
+                let address = try_s!(address_by_coin_conf_and_pubkey_str(
+                    &req.rel,
+                    &rel_coin_conf,
+                    &bid.pubkey
+                ));
+                let is_mine = my_pubsecp == bid.pubkey;
+                orderbook_entries.push(bid.as_rpc_entry_bid(address, is_mine));
             }
             orderbook_entries
         },
