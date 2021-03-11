@@ -922,6 +922,7 @@ struct TakerOrderBuilder<'a> {
     order_type: OrderType,
     conf_settings: Option<OrderConfirmationsSettings>,
     min_volume: Option<MmNumber>,
+    timeout: u64,
 }
 
 enum TakerOrderBuildError {
@@ -986,6 +987,7 @@ impl<'a> TakerOrderBuilder<'a> {
             conf_settings: None,
             min_volume: None,
             order_type: OrderType::GoodTillCancelled,
+            timeout: TAKER_ORDER_TIMEOUT,
         }
     }
 
@@ -1026,6 +1028,11 @@ impl<'a> TakerOrderBuilder<'a> {
 
     fn with_sender_pubkey(mut self, sender_pubkey: H256Json) -> Self {
         self.sender_pubkey = sender_pubkey;
+        self
+    }
+
+    fn with_timeout(mut self, timeout: u64) -> Self {
+        self.timeout = timeout;
         self
     }
 
@@ -1076,7 +1083,7 @@ impl<'a> TakerOrderBuilder<'a> {
         }
 
         Ok(TakerOrder {
-            created_at: now_ms() / 1000,
+            created_at: now_ms(),
             request: TakerRequest {
                 base: self.base_coin.ticker().to_owned(),
                 rel: self.rel_coin.ticker().to_owned(),
@@ -1092,6 +1099,7 @@ impl<'a> TakerOrderBuilder<'a> {
             matches: Default::default(),
             min_volume,
             order_type: self.order_type,
+            timeout: self.timeout,
         })
     }
 
@@ -1099,7 +1107,7 @@ impl<'a> TakerOrderBuilder<'a> {
     /// skip validation for tests
     fn build_unchecked(self) -> TakerOrder {
         TakerOrder {
-            created_at: 0,
+            created_at: now_ms(),
             request: TakerRequest {
                 base: self.base_coin.ticker().to_owned(),
                 rel: self.rel_coin.ticker().to_owned(),
@@ -1115,6 +1123,7 @@ impl<'a> TakerOrderBuilder<'a> {
             matches: HashMap::new(),
             min_volume: Default::default(),
             order_type: Default::default(),
+            timeout: self.timeout,
         }
     }
 }
@@ -1149,6 +1158,7 @@ struct TakerOrder {
     matches: HashMap<Uuid, TakerMatch>,
     min_volume: MmNumber,
     order_type: OrderType,
+    timeout: u64,
 }
 
 /// Result of match_reserved function
@@ -2317,7 +2327,7 @@ pub async fn lp_ordermatch_loop(ctx: MmArc) {
             *my_taker_orders = my_taker_orders
                 .drain()
                 .filter_map(|(uuid, order)| {
-                    if order.created_at + TAKER_ORDER_TIMEOUT * 1000 < now_ms() {
+                    if order.created_at + order.timeout * 1000 < now_ms() {
                         delete_my_taker_order(&ctx, &uuid);
                         if order.matches.is_empty() && order.order_type == OrderType::GoodTillCancelled {
                             let maker_order: MakerOrder = order.into();
@@ -2625,7 +2635,7 @@ pub struct AutoBuyInput {
     rel: String,
     price: MmNumber,
     volume: MmNumber,
-    timeout: Option<u32>,
+    timeout: Option<u64>,
     /// Not used. Deprecated.
     duration: Option<u32>,
     // TODO: remove this field on API refactoring, method should be separated from params
@@ -2802,7 +2812,7 @@ pub async fn lp_auto_buy(
         rel_confs: input.rel_confs.unwrap_or_else(|| rel_coin.required_confirmations()),
         rel_nota: input.rel_nota.unwrap_or_else(|| rel_coin.requires_notarization()),
     };
-    let order_builder = TakerOrderBuilder::new(base_coin, rel_coin)
+    let mut order_builder = TakerOrderBuilder::new(base_coin, rel_coin)
         .with_base_amount(input.volume)
         .with_rel_amount(rel_volume)
         .with_action(action)
@@ -2811,6 +2821,9 @@ pub async fn lp_auto_buy(
         .with_order_type(input.order_type)
         .with_conf_settings(conf_settings)
         .with_sender_pubkey(H256Json::from(our_public_id.bytes));
+    if let Some(timeout) = input.timeout {
+        order_builder = order_builder.with_timeout(timeout);
+    }
     let order = try_s!(order_builder.build());
     broadcast_ordermatch_message(
         &ctx,

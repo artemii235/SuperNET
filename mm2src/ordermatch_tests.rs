@@ -325,6 +325,7 @@ fn test_taker_match_reserved() {
         created_at: now_ms(),
         order_type: OrderType::GoodTillCancelled,
         min_volume: 0.into(),
+        timeout: 30,
     };
 
     let reserved = MakerReserved {
@@ -360,6 +361,7 @@ fn test_taker_match_reserved() {
         created_at: now_ms(),
         order_type: OrderType::GoodTillCancelled,
         min_volume: 0.into(),
+        timeout: 30,
     };
 
     let reserved = MakerReserved {
@@ -395,6 +397,7 @@ fn test_taker_match_reserved() {
         created_at: now_ms(),
         order_type: OrderType::GoodTillCancelled,
         min_volume: 0.into(),
+        timeout: 30,
     };
 
     let reserved = MakerReserved {
@@ -430,6 +433,7 @@ fn test_taker_match_reserved() {
         created_at: now_ms(),
         order_type: OrderType::GoodTillCancelled,
         min_volume: 0.into(),
+        timeout: 30,
     };
 
     let reserved = MakerReserved {
@@ -465,6 +469,7 @@ fn test_taker_match_reserved() {
         created_at: now_ms(),
         order_type: OrderType::GoodTillCancelled,
         min_volume: 0.into(),
+        timeout: 30,
     };
 
     let reserved = MakerReserved {
@@ -500,6 +505,7 @@ fn test_taker_match_reserved() {
         created_at: now_ms(),
         order_type: OrderType::GoodTillCancelled,
         min_volume: 0.into(),
+        timeout: 30,
     };
 
     let reserved = MakerReserved {
@@ -535,6 +541,7 @@ fn test_taker_match_reserved() {
         created_at: now_ms(),
         order_type: OrderType::GoodTillCancelled,
         min_volume: 0.into(),
+        timeout: 30,
     };
 
     let reserved = MakerReserved {
@@ -570,6 +577,7 @@ fn test_taker_match_reserved() {
         created_at: now_ms(),
         order_type: OrderType::GoodTillCancelled,
         min_volume: 0.into(),
+        timeout: 30,
     };
 
     let reserved = MakerReserved {
@@ -605,6 +613,7 @@ fn test_taker_match_reserved() {
         matches: HashMap::new(),
         order_type: OrderType::GoodTillCancelled,
         min_volume: 0.into(),
+        timeout: 30,
     };
 
     let reserved = MakerReserved {
@@ -643,6 +652,7 @@ fn test_taker_order_cancellable() {
         created_at: now_ms(),
         order_type: OrderType::GoodTillCancelled,
         min_volume: 0.into(),
+        timeout: 30,
     };
 
     assert!(order.is_cancellable());
@@ -666,6 +676,7 @@ fn test_taker_order_cancellable() {
         created_at: now_ms(),
         order_type: OrderType::GoodTillCancelled,
         min_volume: 0.into(),
+        timeout: 30,
     };
 
     order.matches.insert(Uuid::new_v4(), TakerMatch {
@@ -755,6 +766,7 @@ fn prepare_for_cancel_by(ctx: &MmArc) -> mpsc::Receiver<AdexBehaviourCmd> {
         },
         order_type: OrderType::GoodTillCancelled,
         min_volume: 0.into(),
+        timeout: 30,
     });
     rx
 }
@@ -843,6 +855,7 @@ fn test_taker_order_match_by() {
         created_at: now_ms(),
         order_type: OrderType::GoodTillCancelled,
         min_volume: 0.into(),
+        timeout: 30,
     };
 
     let reserved = MakerReserved {
