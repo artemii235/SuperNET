@@ -1,5 +1,3 @@
-#![cfg_attr(not(feature = "native"), allow(dead_code))]
-
 use super::{ban_pubkey, broadcast_my_swap_status, broadcast_swap_message_every, check_base_coin_balance_for_swap,
             check_my_coin_balance_for_swap, check_other_coin_balance_for_swap, dex_fee_amount_from_taker_coin,
             get_locked_amount, my_swap_file_path, my_swaps_dir, recv_swap_msg, swap_topic, AtomicSwap,
@@ -160,6 +158,20 @@ impl MakerSwap {
     fn w(&self) -> RwLockWriteGuard<MakerSwapMut> { self.mutable.write().unwrap() }
     fn r(&self) -> RwLockReadGuard<MakerSwapMut> { self.mutable.read().unwrap() }
 
+    #[cfg(target_arch = "wasm32")]
+    fn generate_secret(&self) -> [u8; 32] {
+        // TODO small rng uses now_ms() as seed which is completely insecure to generate the secret
+        // for swap, we must consider refactoring
+        let mut rng = common::small_rng();
+        rng.gen()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn generate_secret(&self) -> [u8; 32] {
+        let mut rng = rand::thread_rng();
+        rng.gen()
+    }
+
     fn wait_refund_until(&self) -> u64 { self.r().data.maker_payment_lock + 3700 }
 
     fn apply_event(&self, event: MakerSwapEvent) -> Result<(), String> {
@@ -301,16 +313,7 @@ impl MakerSwap {
             },
         };
 
-        let secret: [u8; 32] = {
-            #[cfg(feature = "native")]
-            let mut rng = rand::thread_rng();
-            // TODO small rng uses now_ms() as seed which is completely insecure to generate the secret
-            // for swap, we must consider refactoring
-            #[cfg(not(feature = "native"))]
-            let mut rng = common::small_rng();
-
-            rng.gen()
-        };
+        let secret = self.generate_secret();
         let started_at = now_ms() / 1000;
         let maker_coin_start_block = match self.maker_coin.current_block().compat().await {
             Ok(b) => b,

@@ -17,7 +17,6 @@
 //  lp_ordermatch.rs
 //  marketmaker
 //
-#![cfg_attr(not(feature = "native"), allow(dead_code))]
 
 use async_trait::async_trait;
 use best_orders::BestOrdersAction;
@@ -57,12 +56,12 @@ use std::sync::Arc;
 use trie_db::NodeCodec as NodeCodecT;
 use uuid::Uuid;
 
-use crate::mm2::{database::my_swaps::insert_new_swap,
-                 lp_network::{broadcast_p2p_msg, request_any_relay, request_one_peer, subscribe_to_topic, P2PRequest},
-                 lp_swap::{calc_max_maker_vol, check_balance_for_maker_swap, check_balance_for_taker_swap,
-                           check_other_coin_balance_for_swap, is_pubkey_banned, lp_atomic_locktime, run_maker_swap,
-                           run_taker_swap, AtomicLocktimeVersion, CheckBalanceError, MakerSwap, RunMakerSwapInput,
-                           RunTakerSwapInput, SwapConfirmationsSettings, TakerSwap}};
+use crate::mm2::lp_network::{broadcast_p2p_msg, request_any_relay, request_one_peer, subscribe_to_topic, P2PRequest};
+use crate::mm2::lp_swap::{calc_max_maker_vol, check_balance_for_maker_swap, check_balance_for_taker_swap,
+                          check_other_coin_balance_for_swap, insert_new_swap_to_db, is_pubkey_banned,
+                          lp_atomic_locktime, run_maker_swap, run_taker_swap, AtomicLocktimeVersion,
+                          CheckBalanceError, MakerSwap, RunMakerSwapInput, RunTakerSwapInput,
+                          SwapConfirmationsSettings, TakerSwap};
 pub use best_orders::best_orders_rpc;
 pub use orderbook_depth::orderbook_depth_rpc;
 
@@ -71,8 +70,7 @@ pub use orderbook_depth::orderbook_depth_rpc;
 #[path = "lp_ordermatch/order_requests_tracker.rs"]
 mod order_requests_tracker;
 #[path = "lp_ordermatch/orderbook_depth.rs"] mod orderbook_depth;
-#[cfg(test)]
-#[cfg(feature = "native")]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 #[path = "ordermatch_tests.rs"]
 mod ordermatch_tests;
 
@@ -2193,7 +2191,7 @@ fn lp_connect_start_bob(ctx: MmArc, maker_match: MakerMatch, maker_order: MakerO
         );
 
         let now = now_ms() / 1000;
-        if let Err(e) = insert_new_swap(
+        if let Err(e) = insert_new_swap_to_db(
             &ctx,
             maker_coin.ticker(),
             taker_coin.ticker(),
@@ -2279,7 +2277,7 @@ fn lp_connected_alice(ctx: MmArc, taker_request: TakerRequest, taker_match: Take
             uuid
         );
         let now = now_ms() / 1000;
-        if let Err(e) = insert_new_swap(
+        if let Err(e) = insert_new_swap_to_db(
             &ctx,
             taker_coin.ticker(),
             maker_coin.ticker(),
