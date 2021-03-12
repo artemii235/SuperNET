@@ -1496,13 +1496,8 @@ where
 use backtrace::SymbolName;
 
 #[cfg(target_arch = "wasm32")]
-pub fn now_ms() -> u64 {
-    #[wasm_bindgen(raw_module = "../../../js/defined-in-js.js")]
-    extern "C" {
-        pub fn date_now() -> f64;
-    }
-    date_now() as u64
-}
+pub fn now_ms() -> u64 { js_sys::Date::now() as u64 }
+
 #[cfg(target_arch = "wasm32")]
 pub fn now_float() -> f64 {
     use gstuff::duration_to_float;

@@ -2,10 +2,13 @@ use super::lp_main;
 use bigdecimal::BigDecimal;
 #[cfg(target_arch = "wasm32")] use common::call_back;
 use common::executor::Timer;
+#[cfg(not(target_arch = "wasm32"))]
+use common::for_tests::require_log_level;
 use common::for_tests::{check_my_swap_status, check_recent_swaps, check_stats_swap_status,
                         enable_electrum as enable_electrum_impl, enable_native as enable_native_impl, enable_qrc20,
                         find_metrics_in_json, from_env_file, get_passphrase, mm_spat, LocalStart, MarketMakerIt,
                         RaiiDump, MAKER_ERROR_EVENTS, MAKER_SUCCESS_EVENTS, TAKER_ERROR_EVENTS, TAKER_SUCCESS_EVENTS};
+#[cfg(not(target_arch = "wasm32"))] use common::log::LogLevel;
 use common::mm_metrics::{MetricType, MetricsJson};
 use common::mm_number::Fraction;
 use common::privkey::key_pair_from_seed;
@@ -5279,8 +5282,7 @@ fn test_buy_min_volume() {
 #[test]
 #[cfg(not(target_arch = "wasm32"))]
 fn test_best_orders() {
-    use common::log::LogLevel;
-    common::for_tests::require_log_level(&[LogLevel::Debug, LogLevel::Trace]);
+    require_log_level(&[LogLevel::Debug, LogLevel::Trace]);
 
     let bob_passphrase = get_passphrase(&".env.seed", "BOB_PASSPHRASE").unwrap();
 
@@ -5468,6 +5470,8 @@ fn request_and_check_orderbook_depth(mm_alice: &MarketMakerIt) {
 #[test]
 #[cfg(not(target_arch = "wasm32"))]
 fn test_orderbook_depth() {
+    common::for_tests::require_log_level(&[LogLevel::Debug, LogLevel::Trace]);
+
     let bob_passphrase = get_passphrase(&".env.seed", "BOB_PASSPHRASE").unwrap();
 
     let coins = json!([
@@ -5589,35 +5593,6 @@ mod wasm_bindgen_tests {
 
     wasm_bindgen_test_configure!(run_in_browser);
 
-    #[wasm_bindgen]
-    extern "C" {
-        fn setInterval(closure: &Closure<dyn FnMut()>, millis: u32) -> f64;
-        fn cancelInterval(token: f64);
-    }
-
-    pub struct Interval {
-        closure: Closure<dyn FnMut()>,
-    }
-
-    impl Interval {
-        fn new() -> Interval {
-            let closure = Closure::new(common::executor::run);
-            Interval { closure }
-        }
-    }
-
-    unsafe impl Send for Interval {}
-    unsafe impl Sync for Interval {}
-
-    lazy_static! {
-        static ref EXECUTOR_INTERVAL: Interval = Interval::new();
-    }
-
-    #[wasm_bindgen(raw_module = "./js/defined-in-js.js")]
-    extern "C" {
-        fn sleep(ms: u32) -> Promise;
-    }
-
     #[wasm_bindgen_test]
     async fn test_swap() {
         use crate::mm2::lp_swap::{run_maker_swap, run_taker_swap, MakerSwap, RunMakerSwapInput, RunTakerSwapInput,
@@ -5635,7 +5610,6 @@ mod wasm_bindgen_tests {
             taker_coin_confs: 0,
             taker_coin_nota: false,
         };
-        setInterval(&EXECUTOR_INTERVAL.closure, 200);
         let uuid = new_uuid();
         let key_pair_taker =
             key_pair_from_seed("spice describe gravity federal blast come thank unfair canal monkey style afraid")

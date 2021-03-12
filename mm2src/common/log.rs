@@ -872,6 +872,7 @@ pub enum LogLevel {
     Trace,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl LogLevel {
     pub fn from_env() -> Option<LogLevel> {
         match std::env::var("RUST_LOG").ok()?.to_lowercase().as_str() {

@@ -53,8 +53,10 @@ uuid = { version = "0.7", features = ["serde", "v4"] }
 winapi = "0.3"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = "0.3.27"
 serde_bencode = "0.2"
 wasm-bindgen = { version = "0.2.50", features = ["serde-serialize", "nightly"] }
+wasm-bindgen-futures = "0.4.21"
 web-sys = { version = "0.3.4", features = ["console"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
