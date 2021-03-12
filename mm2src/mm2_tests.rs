@@ -5306,7 +5306,7 @@ fn test_setprice_min_volume_dust() {
     assert!(rc.0.is_success(), "!setprice: {}", rc.1);
     let response: SetPriceResult = json::from_str(&rc.1).unwrap();
     let expected_min = BigDecimal::from(1);
-    assert_eq!(response.result.min_base_vol, expected_min);
+    assert_eq!(expected_min, response.result.min_base_vol);
 }
 
 #[test]

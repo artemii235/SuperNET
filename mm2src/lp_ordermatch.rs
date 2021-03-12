@@ -1238,7 +1238,7 @@ pub struct MakerOrder {
 
 struct MakerOrderBuilder<'a> {
     max_base_vol: MmNumber,
-    min_base_vol: MmNumber,
+    min_base_vol: Option<MmNumber>,
     price: MmNumber,
     base_coin: &'a MmCoinEnum,
     rel_coin: &'a MmCoinEnum,
@@ -1319,7 +1319,7 @@ impl<'a> MakerOrderBuilder<'a> {
             base_coin,
             rel_coin,
             max_base_vol: 0.into(),
-            min_base_vol: 0.into(),
+            min_base_vol: None,
             price: 0.into(),
             conf_settings: None,
         }
@@ -1330,7 +1330,7 @@ impl<'a> MakerOrderBuilder<'a> {
         self
     }
 
-    fn with_min_base_vol(mut self, vol: MmNumber) -> Self {
+    fn with_min_base_vol(mut self, vol: Option<MmNumber>) -> Self {
         self.min_base_vol = vol;
         self
     }
@@ -1380,16 +1380,20 @@ impl<'a> MakerOrderBuilder<'a> {
             });
         }
 
-        if self.min_base_vol < min_base_amount {
+        let min_base_vol = match self.min_base_vol {
+            Some(vol) => vol,
+            None => min_base_amount.clone(),
+        };
+        if min_base_vol < min_base_amount {
             return Err(MakerOrderBuildError::MinBaseVolTooLow {
-                actual: self.min_base_vol,
+                actual: min_base_vol,
                 threshold: min_base_amount,
             });
         }
 
-        if self.max_base_vol < self.min_base_vol {
+        if self.max_base_vol < min_base_vol {
             return Err(MakerOrderBuildError::MaxBaseVolBelowMinBaseVol {
-                min: self.min_base_vol,
+                min: min_base_vol,
                 max: self.max_base_vol,
             });
         }
@@ -1403,7 +1407,7 @@ impl<'a> MakerOrderBuilder<'a> {
             rel: self.rel_coin.ticker().to_owned(),
             created_at: now_ms(),
             max_base_vol: self.max_base_vol,
-            min_base_vol: self.min_base_vol,
+            min_base_vol,
             price: self.price,
             matches: HashMap::new(),
             started_swaps: Vec::new(),
@@ -1419,7 +1423,7 @@ impl<'a> MakerOrderBuilder<'a> {
             rel: self.rel_coin.ticker().to_owned(),
             created_at: now_ms(),
             max_base_vol: self.max_base_vol,
-            min_base_vol: self.min_base_vol,
+            min_base_vol: self.min_base_vol.unwrap_or(MIN_TRADING_VOL.into()),
             price: self.price,
             matches: HashMap::new(),
             started_swaps: Vec::new(),
@@ -2950,8 +2954,6 @@ impl OrderbookItem {
 
 fn get_true() -> bool { true }
 
-fn min_volume() -> MmNumber { MmNumber::from(MIN_TRADING_VOL) }
-
 #[derive(Deserialize)]
 struct SetPriceReq {
     base: String,
@@ -2961,8 +2963,7 @@ struct SetPriceReq {
     max: bool,
     #[serde(default)]
     volume: MmNumber,
-    #[serde(default = "min_volume")]
-    min_volume: MmNumber,
+    min_volume: Option<MmNumber>,
     #[serde(default = "get_true")]
     cancel_previous: bool,
     base_confs: Option<u64>,
