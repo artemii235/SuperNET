@@ -5324,16 +5324,17 @@ fn test_buy_min_volume() {
     })))
     .unwrap();
     assert!(rc.0.is_success(), "!my_orders: {}", rc.1);
-    let my_orders: Json = json::from_str(&rc.1).unwrap();
-    let my_maker_orders: HashMap<Uuid, Json> = json::from_value(my_orders["result"]["maker_orders"].clone()).unwrap();
-    let my_taker_orders: HashMap<Uuid, Json> = json::from_value(my_orders["result"]["taker_orders"].clone()).unwrap();
-    assert_eq!(1, my_maker_orders.len(), "maker_orders must have exactly 1 order");
-    assert!(my_taker_orders.is_empty(), "taker_orders must be empty");
-    let maker_order = my_maker_orders.get(&response.result.uuid).unwrap();
+    let my_orders: MyOrdersRpcResult = json::from_str(&rc.1).unwrap();
+    assert_eq!(
+        1,
+        my_orders.maker_orders.len(),
+        "maker_orders must have exactly 1 order"
+    );
+    assert!(my_orders.taker_orders.is_empty(), "taker_orders must be empty");
+    let maker_order = my_orders.maker_orders.get(&response.result.uuid).unwrap();
 
     let expected_min_volume: BigDecimal = "0.2".parse().unwrap();
-    let min_volume_maker: BigDecimal = json::from_value(maker_order["min_base_vol"].clone()).unwrap();
-    assert_eq!(expected_min_volume, min_volume_maker);
+    assert_eq!(expected_min_volume, maker_order);
 }
 
 #[test]
@@ -5734,6 +5735,7 @@ mod wasm_bindgen_tests {
             1.into(),
             taker_persistent_pub,
             uuid,
+            None,
             conf_settings.clone(),
             eth_taker,
             jst_taker,
@@ -5747,6 +5749,7 @@ mod wasm_bindgen_tests {
             1.into(),
             maker_persistent_pub,
             uuid,
+            None,
             conf_settings,
             eth_maker,
             jst_maker,

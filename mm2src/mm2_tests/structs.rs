@@ -164,8 +164,8 @@ pub struct TakerOrderRpcResult {
 
 #[derive(Deserialize)]
 pub struct MyOrdersRpcResult {
-    maker_orders: HashMap<Uuid, MakerOrderRpcResult>,
-    taker_orders: HashMap<Uuid, TakerOrderRpcResult>,
+    pub maker_orders: HashMap<Uuid, MakerOrderRpcResult>,
+    pub taker_orders: HashMap<Uuid, TakerOrderRpcResult>,
 }
 
 #[derive(Debug, Deserialize)]

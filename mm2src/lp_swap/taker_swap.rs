@@ -37,6 +37,7 @@ fn save_my_taker_swap_event(ctx: &MmArc, swap: &TakerSwap, event: TakerSavedEven
     let swap: SavedSwap = if content.is_empty() {
         SavedSwap::Taker(TakerSavedSwap {
             uuid: swap.uuid,
+            my_order_uuid: swap.my_order_uuid,
             maker_amount: Some(swap.maker_amount.to_decimal()),
             maker_coin: Some(swap.maker_coin.ticker().to_owned()),
             taker_amount: Some(swap.taker_amount.to_decimal()),
@@ -127,6 +128,7 @@ impl TakerSavedEvent {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TakerSavedSwap {
     pub uuid: Uuid,
+    my_order_uuid: Option<Uuid>,
     pub events: Vec<TakerSavedEvent>,
     maker_amount: Option<BigDecimal>,
     maker_coin: Option<String>,
@@ -437,6 +439,7 @@ pub struct TakerSwap {
     my_persistent_pub: H264,
     maker: bits256,
     uuid: Uuid,
+    my_order_uuid: Option<Uuid>,
     maker_payment_lock: Atomic<u64>,
     maker_payment_confirmed: Atomic<bool>,
     errors: PaMutex<Vec<SwapError>>,
@@ -632,6 +635,7 @@ impl TakerSwap {
         taker_amount: MmNumber,
         my_persistent_pub: H264,
         uuid: Uuid,
+        my_order_uuid: Option<Uuid>,
         conf_settings: SwapConfirmationsSettings,
         maker_coin: MmCoinEnum,
         taker_coin: MmCoinEnum,
@@ -646,6 +650,7 @@ impl TakerSwap {
             my_persistent_pub,
             maker,
             uuid,
+            my_order_uuid,
             maker_payment_confirmed: Atomic::new(false),
             finished_at: Atomic::new(0),
             maker_payment_lock: Atomic::new(0),
@@ -1241,6 +1246,7 @@ impl TakerSwap {
             data.taker_amount.clone().into(),
             my_persistent_pub,
             saved.uuid,
+            Some(saved.uuid),
             conf_settings,
             maker_coin,
             taker_coin,
