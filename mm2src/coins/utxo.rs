@@ -45,13 +45,13 @@ use futures::lock::{Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard};
 use futures::stream::StreamExt;
 use futures01::Future;
 use keys::bytes::Bytes;
-pub use keys::{Address, KeyPair, Private, Public, Secret};
+pub use keys::{Address, KeyPair, Private, Public, Secret, AddressHash};
 #[cfg(test)] use mocktopus::macros::*;
 use num_traits::ToPrimitive;
 use primitives::hash::{H256, H264, H512};
 use rand::seq::SliceRandom;
 use rpc::v1::types::{Bytes as BytesJson, Transaction as RpcTransaction, H256 as H256Json};
-use script::{Builder, Script, SignatureVersion, TransactionInputSigner};
+use script::{Builder, Script, SignatureVersion, TransactionInputSigner, Opcode};
 use serde_json::{self as json, Value as Json};
 use serialization::serialize;
 use std::collections::{HashMap, HashSet};
@@ -974,6 +974,19 @@ impl<'a> UtxoConfBuilder<'a> {
     fn estimate_fee_blocks(&self) -> u32 { json::from_value(self.conf["estimate_fee_blocks"].clone()).unwrap_or(1) }
 }
 
+pub fn build_redeem_script(keyhash: &[u8]) -> Bytes {
+    let mut redeem_script = Bytes::new_with_len(22);
+    redeem_script[0] = Opcode::OP_0 as u8;
+    redeem_script[1] = Opcode::OP_PUSHBYTES_20 as u8;
+    redeem_script[2..22].clone_from_slice(keyhash);
+    redeem_script
+}
+
+pub fn build_redeem_script_address(keyhash: &[u8]) -> AddressHash {
+    let redeem_script = build_redeem_script(keyhash);
+    dhash160(&redeem_script)
+}
+
 #[async_trait]
 pub trait UtxoCoinBuilder {
     type ResultCoin;
@@ -1000,11 +1013,22 @@ pub trait UtxoCoinBuilder {
             checksum_type: conf.checksum_type,
         };
         let key_pair = try_s!(KeyPair::from_private(private));
-        let my_address = Address {
-            prefix: conf.pub_addr_prefix,
-            t_addr_prefix: conf.pub_t_addr_prefix,
-            hash: key_pair.public().address_hash(),
-            checksum_type: conf.checksum_type,
+        let my_address = if !conf.segwit {
+            Address {
+                prefix: conf.pub_addr_prefix,
+                t_addr_prefix: conf.pub_t_addr_prefix,
+                hash: key_pair.public().address_hash(),
+                checksum_type: conf.checksum_type,
+            }
+        } else {
+            //https://bitcoincore.org/en/segwit_wallet_dev/#creation-of-p2sh-p2wpkh-address
+            let keyhash = key_pair.public().address_hash();
+            Address {
+                prefix: conf.p2sh_addr_prefix,
+                t_addr_prefix: conf.pub_t_addr_prefix,
+                hash: build_redeem_script_address(keyhash.deref()),
+                checksum_type: conf.checksum_type,
+            }
         };
         let my_script_pubkey = Builder::build_p2pkh(&my_address.hash).to_bytes();
         let rpc_client = try_s!(self.rpc_client().await);
