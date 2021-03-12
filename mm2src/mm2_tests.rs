@@ -5334,7 +5334,7 @@ fn test_buy_min_volume() {
     let maker_order = my_orders.maker_orders.get(&response.result.uuid).unwrap();
 
     let expected_min_volume: BigDecimal = "0.2".parse().unwrap();
-    assert_eq!(expected_min_volume, maker_order);
+    assert_eq!(expected_min_volume, maker_order.min_base_vol);
 }
 
 #[test]
