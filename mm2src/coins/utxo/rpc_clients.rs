@@ -1124,42 +1124,19 @@ impl Drop for ElectrumConnection {
 }
 
 #[derive(Debug)]
-pub struct RpcRequestState<T> {
-    is_request_running: Arc<AtomicBool>,
-    response_subs: Vec<oneshot::Sender<Result<T, JsonRpcError>>>,
-}
-
-#[derive(Debug)]
-pub struct RpcRequestWrapper<Key, Response> {
-    inner: HashMap<Key, RpcRequestState<Response>>,
-}
-
-impl<Key, Response> RpcRequestWrapper<Key, Response> {
-    fn new() -> Self { RpcRequestWrapper { inner: HashMap::new() } }
-
-    #[allow(dead_code)]
-    async fn wrap_request(
-        &mut self,
-        _key: Key,
-        _request: impl Future<Item = Response, Error = JsonRpcError>,
-    ) -> Result<Response, JsonRpcError> {
-        unimplemented!()
-    }
-}
-
-#[derive(Debug)]
 pub struct ElectrumClientImpl {
     coin_ticker: String,
     connections: AsyncMutex<Vec<ElectrumConnection>>,
     next_id: AtomicU64,
     event_handlers: Vec<RpcTransportEventHandlerShared>,
     protocol_version: OrdRange<f32>,
-    get_balance_wrapper: RpcRequestWrapper<Address, ElectrumBalance>,
-    list_unspent_wrapper: RpcRequestWrapper<Address, Vec<ElectrumUnspent>>,
+    /*
     list_unspent_in_progress: AtomicBool,
     list_unspent_subs: AsyncMutex<Vec<RpcReqSub<Vec<ElectrumUnspent>>>>,
     get_balance_in_progress: AtomicBool,
     get_balance_subs: AsyncMutex<Vec<async_oneshot::Sender<Result<ElectrumBalance, JsonRpcError>>>>,
+
+     */
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1423,6 +1400,23 @@ impl ElectrumClient {
     /// It can return duplicates sometimes: https://github.com/artemii235/SuperNET/issues/269
     /// We should remove them to build valid transactions
     fn scripthash_list_unspent(&self, hash: &str) -> RpcRes<Vec<ElectrumUnspent>> {
+        Box::new(rpc_func!(self, "blockchain.scripthash.listunspent", hash).and_then(
+            move |unspents: Vec<ElectrumUnspent>| {
+                let mut map: HashMap<(H256Json, u32), bool> = HashMap::new();
+                let unspents = unspents
+                    .into_iter()
+                    .filter(|unspent| match map.entry((unspent.tx_hash.clone(), unspent.tx_pos)) {
+                        Entry::Occupied(_) => false,
+                        Entry::Vacant(e) => {
+                            e.insert(true);
+                            true
+                        },
+                    })
+                    .collect();
+                Ok(unspents)
+            },
+        ))
+        /*
         let arc = self.clone();
         let hash = hash.to_owned();
         if self
@@ -1464,6 +1458,8 @@ impl ElectrumClient {
             };
             Box::new(fut.boxed().compat())
         }
+
+        */
     }
 
     /// https://electrumx.readthedocs.io/en/latest/protocol-methods.html#blockchain-scripthash-get-history
@@ -1473,6 +1469,8 @@ impl ElectrumClient {
 
     /// https://electrumx.readthedocs.io/en/latest/protocol-methods.html#blockchain-scripthash-gethistory
     fn scripthash_get_balance(&self, hash: &str) -> RpcRes<ElectrumBalance> {
+        rpc_func!(self, "blockchain.scripthash.get_balance", hash)
+        /*
         let arc = self.clone();
         let hash = hash.to_owned();
         if self
@@ -1498,6 +1496,8 @@ impl ElectrumClient {
             };
             Box::new(fut.boxed().compat())
         }
+
+         */
     }
 
     /// https://electrumx.readthedocs.io/en/latest/protocol-methods.html#blockchain-headers-subscribe
@@ -1672,12 +1672,13 @@ impl ElectrumClientImpl {
             next_id: 0.into(),
             event_handlers,
             protocol_version,
-            get_balance_wrapper: RpcRequestWrapper::new(),
-            list_unspent_wrapper: RpcRequestWrapper::new(),
+            /*
             list_unspent_in_progress: Default::default(),
             list_unspent_subs: Default::default(),
             get_balance_in_progress: Default::default(),
             get_balance_subs: Default::default(),
+
+             */
         }
     }
 
