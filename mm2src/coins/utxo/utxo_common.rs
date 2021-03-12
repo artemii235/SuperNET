@@ -881,7 +881,7 @@ where
 fn pubkey_from_script_sig(script: &Script) -> Result<H264, String> {
     match script.get_instruction(0) {
         Some(Ok(instruction)) => match instruction.opcode {
-            Opcode::OP_PUSHBYTES_71 | Opcode::OP_PUSHBYTES_72 => match instruction.data {
+            Opcode::OP_PUSHBYTES_70 | Opcode::OP_PUSHBYTES_71 | Opcode::OP_PUSHBYTES_72 => match instruction.data {
                 Some(bytes) => try_s!(Signature::parse_der(&bytes[..bytes.len() - 1])),
                 None => return ERR!("No data at instruction 0 of script {:?}", script),
             },

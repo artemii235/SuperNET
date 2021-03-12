@@ -2245,6 +2245,25 @@ fn test_validate_fee_min_block() {
 }
 
 #[test]
+// https://github.com/KomodoPlatform/atomicDEX-API/issues/857
+fn test_validate_fee_bch_70_bytes_signature() {
+    let rpc_client = electrum_client_for_test(&[
+        "electrum1.cipig.net:10055",
+        "electrum2.cipig.net:10055",
+        "electrum3.cipig.net:10055",
+    ]);
+    let coin = utxo_coin_for_test(UtxoRpcClientEnum::Electrum(rpc_client), None);
+    // https://blockchair.com/bitcoin-cash/transaction/ccee05a6b5bbc6f50d2a65a5a3a04690d3e2d81082ad57d3ab471189f53dd70d
+    let tx_bytes = hex::decode("0100000002cae89775f264e50f14238be86a7184b7f77bfe26f54067b794c546ec5eb9c91a020000006b483045022100d6ed080f722a0637a37552382f462230cc438984bc564bdb4b7094f06cfa38fa022062304a52602df1fbb3bebac4f56e1632ad456f62d9031f4983f07e546c8ec4d8412102ae7dc4ef1b49aadeff79cfad56664105f4d114e1716bc4f930cb27dbd309e521ffffffff11f386a6fe8f0431cb84f549b59be00f05e78f4a8a926c5e023a0d5f9112e8200000000069463043021f17eb93ed20a6f2cd357eabb41a4ec6329000ddc6d5b42ecbe642c5d41b206a022026bc4920c4ce3af751283574baa8e4a3efd4dad0d8fe6ba3ddf5d75628d36fda412102ae7dc4ef1b49aadeff79cfad56664105f4d114e1716bc4f930cb27dbd309e521ffffffff0210270000000000001976a914ca1e04745e8ca0c60d8c5881531d51bec470743f88ac57481c00000000001976a914bac11ce4cd2b1df2769c470d09b54f86df737e3c88ac035b4a60").unwrap();
+    let taker_fee_tx = coin.tx_enum_from_bytes(&tx_bytes).unwrap();
+    let amount: BigDecimal = "0.0001".parse().unwrap();
+    let sender_pub = hex::decode("02ae7dc4ef1b49aadeff79cfad56664105f4d114e1716bc4f930cb27dbd309e521").unwrap();
+    coin.validate_fee(&taker_fee_tx, &sender_pub, &*DEX_FEE_ADDR_RAW_PUBKEY, &amount, 0)
+        .wait()
+        .unwrap();
+}
+
+#[test]
 fn firo_verbose_block_deserialize() {
     let json = json!({
        "hash":"e21ea157b142270ba479a0aeb5571144b2a06f66a693c20675c624a6f211de0a",
