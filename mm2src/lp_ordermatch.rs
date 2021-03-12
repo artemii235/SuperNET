@@ -1236,31 +1236,16 @@ pub struct MakerOrder {
     conf_settings: Option<OrderConfirmationsSettings>,
 }
 
-struct MakerOrderBuilder {
+struct MakerOrderBuilder<'a> {
     max_base_vol: MmNumber,
     min_base_vol: MmNumber,
     price: MmNumber,
-    base: String,
-    rel: String,
+    base_coin: &'a MmCoinEnum,
+    rel_coin: &'a MmCoinEnum,
     conf_settings: Option<OrderConfirmationsSettings>,
 }
 
-impl Default for MakerOrderBuilder {
-    fn default() -> MakerOrderBuilder {
-        MakerOrderBuilder {
-            base: "".into(),
-            rel: "".into(),
-            max_base_vol: 0.into(),
-            min_base_vol: 0.into(),
-            price: 0.into(),
-            conf_settings: None,
-        }
-    }
-}
-
 enum MakerOrderBuildError {
-    BaseCoinEmpty,
-    RelCoinEmpty,
     BaseEqualRel,
     /// Max base vol too low with threshold
     MaxBaseVolTooLow {
@@ -1292,8 +1277,6 @@ enum MakerOrderBuildError {
 impl fmt::Display for MakerOrderBuildError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            MakerOrderBuildError::BaseCoinEmpty => write!(f, "Base coin can not be empty"),
-            MakerOrderBuildError::RelCoinEmpty => write!(f, "Rel coin can not be empty"),
             MakerOrderBuildError::BaseEqualRel => write!(f, "Rel coin can not be same as base"),
             MakerOrderBuildError::MaxBaseVolTooLow { actual, threshold } => write!(
                 f,
@@ -1330,15 +1313,16 @@ impl fmt::Display for MakerOrderBuildError {
     }
 }
 
-impl MakerOrderBuilder {
-    fn with_base_coin(mut self, ticker: String) -> Self {
-        self.base = ticker;
-        self
-    }
-
-    fn with_rel_coin(mut self, ticker: String) -> Self {
-        self.rel = ticker;
-        self
+impl<'a> MakerOrderBuilder<'a> {
+    fn new(base_coin: &'a MmCoinEnum, rel_coin: &'a MmCoinEnum) -> MakerOrderBuilder<'a> {
+        MakerOrderBuilder {
+            base_coin,
+            rel_coin,
+            max_base_vol: 0.into(),
+            min_base_vol: 0.into(),
+            price: 0.into(),
+            conf_settings: None,
+        }
     }
 
     fn with_max_base_vol(mut self, vol: MmNumber) -> Self {
@@ -1364,24 +1348,20 @@ impl MakerOrderBuilder {
     /// Validate fields and build
     fn build(self) -> Result<MakerOrder, MakerOrderBuildError> {
         let min_price = MmNumber::from(BigRational::new(1.into(), 100_000_000.into()));
-        let min_vol = MmNumber::from(MIN_TRADING_VOL);
+        let min_vol_threshold = MmNumber::from(MIN_TRADING_VOL);
+        let min_tx_multiplier = MmNumber::from(10);
+        let min_base_amount =
+            (&self.base_coin.min_tx_amount().into() * &min_tx_multiplier).max(min_vol_threshold.clone());
+        let min_rel_amount = (&self.rel_coin.min_tx_amount().into() * &min_tx_multiplier).max(min_vol_threshold);
 
-        if self.base.is_empty() {
-            return Err(MakerOrderBuildError::BaseCoinEmpty);
-        }
-
-        if self.rel.is_empty() {
-            return Err(MakerOrderBuildError::RelCoinEmpty);
-        }
-
-        if self.base == self.rel {
+        if self.base_coin.ticker() == self.rel_coin.ticker() {
             return Err(MakerOrderBuildError::BaseEqualRel);
         }
 
-        if self.max_base_vol < min_vol {
+        if self.max_base_vol < min_base_amount {
             return Err(MakerOrderBuildError::MaxBaseVolTooLow {
                 actual: self.max_base_vol,
-                threshold: min_vol,
+                threshold: min_base_amount,
             });
         }
 
@@ -1393,17 +1373,17 @@ impl MakerOrderBuilder {
         }
 
         let rel_vol = &self.max_base_vol * &self.price;
-        if rel_vol < min_vol {
+        if rel_vol < min_rel_amount {
             return Err(MakerOrderBuildError::RelVolTooLow {
                 actual: rel_vol,
-                threshold: min_vol,
+                threshold: min_rel_amount,
             });
         }
 
-        if self.min_base_vol < min_vol {
+        if self.min_base_vol < min_base_amount {
             return Err(MakerOrderBuildError::MinBaseVolTooLow {
                 actual: self.min_base_vol,
-                threshold: min_vol,
+                threshold: min_base_amount,
             });
         }
 
@@ -1419,8 +1399,8 @@ impl MakerOrderBuilder {
         }
 
         Ok(MakerOrder {
-            base: self.base,
-            rel: self.rel,
+            base: self.base_coin.ticker().to_owned(),
+            rel: self.rel_coin.ticker().to_owned(),
             created_at: now_ms(),
             max_base_vol: self.max_base_vol,
             min_base_vol: self.min_base_vol,
@@ -1435,8 +1415,8 @@ impl MakerOrderBuilder {
     #[cfg(test)]
     fn build_unchecked(self) -> MakerOrder {
         MakerOrder {
-            base: self.base,
-            rel: self.rel,
+            base: self.base_coin.ticker().to_owned(),
+            rel: self.rel_coin.ticker().to_owned(),
             created_at: now_ms(),
             max_base_vol: self.max_base_vol,
             min_base_vol: self.min_base_vol,
@@ -3211,9 +3191,7 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
         rel_confs: req.rel_confs.unwrap_or_else(|| rel_coin.required_confirmations()),
         rel_nota: req.rel_nota.unwrap_or_else(|| rel_coin.requires_notarization()),
     };
-    let builder = MakerOrderBuilder::default()
-        .with_base_coin(req.base)
-        .with_rel_coin(req.rel)
+    let builder = MakerOrderBuilder::new(&base_coin, &rel_coin)
         .with_max_base_vol(volume)
         .with_min_base_vol(req.min_volume)
         .with_price(req.price)

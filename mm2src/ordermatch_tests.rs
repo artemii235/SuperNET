@@ -200,12 +200,13 @@ fn test_match_maker_order_and_taker_request() {
 // https://github.com/KomodoPlatform/atomicDEX-API/pull/739#discussion_r517275495
 #[test]
 fn maker_order_match_with_request_zero_volumes() {
-    let maker_order = MakerOrderBuilder::default()
+    let coin = MmCoinEnum::Test(TestCoin {});
+
+    let maker_order = MakerOrderBuilder::new(&coin, &coin)
         .with_max_base_vol(1.into())
         .with_price(1.into())
         .build_unchecked();
 
-    let coin = MmCoinEnum::Test(TestCoin {});
     // default taker order has empty coins and zero amounts so it should pass to the price calculation stage (division)
     let taker_order = TakerOrderBuilder::new(&coin, &coin)
         .with_rel_amount(1.into())

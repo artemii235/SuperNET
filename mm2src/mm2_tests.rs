@@ -4647,8 +4647,7 @@ fn test_my_orders_response_format() {
     .unwrap();
     assert!(rc.0.is_success(), "!my_orders: {}", rc.1);
 
-    let json: Json = json::from_str(&rc.1).unwrap();
-    let _: MyOrdersRpcResult = json::from_value(json["result"].clone()).unwrap();
+    let _: MyOrdersRpcResult = json::from_str(&rc.1).unwrap();
 }
 
 #[test]
@@ -4738,8 +4737,7 @@ fn test_my_orders_after_matched() {
     .unwrap();
     assert!(rc.0.is_success(), "!my_orders: {}", rc.1);
 
-    let json: Json = json::from_str(&rc.1).unwrap();
-    let _: MyOrdersRpcResult = json::from_value(json["result"].clone()).unwrap();
+    let _: MyOrdersRpcResult = json::from_str(&rc.1).unwrap();
     block_on(mm_bob.stop()).unwrap();
     block_on(mm_alice.stop()).unwrap();
 }
@@ -5239,7 +5237,7 @@ fn test_sell_min_volume_dust() {
         "http://195.201.0.6:8565"
     ]))]);
 
-    log!("Issue bob ETH/JST sell request");
+    log!("Issue bob RICK/MORTY sell request");
     let rc = block_on(mm_bob.rpc(json! ({
         "userpass": mm_bob.userpass,
         "method": "sell",
@@ -5256,6 +5254,59 @@ fn test_sell_min_volume_dust() {
     let response: BuyOrSellRpcResult = json::from_str(&rc.1).unwrap();
     let expected_min = BigDecimal::from(1);
     assert_eq!(response.result.min_volume, expected_min);
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn test_setprice_min_volume_dust() {
+    let bob_passphrase = get_passphrase(&".env.client", "BOB_PASSPHRASE").unwrap();
+
+    let coins = json! ([
+        {"coin":"RICK","asset":"RICK","dust":10000000,"required_confirmations":0,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
+        {"coin":"MORTY","asset":"MORTY","required_confirmations":0,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
+        {"coin":"ETH","name":"ethereum","protocol":{"type":"ETH"}},
+        {"coin":"JST","name":"jst","protocol":{"type":"ERC20","protocol_data":{"platform":"ETH","contract_address":"0x2b294F029Fde858b2c62184e8390591755521d8E"}}}
+    ]);
+
+    let mut mm_bob = MarketMakerIt::start(
+        json! ({
+            "gui": "nogui",
+            "netid": 8999,
+            "dht": "on",  // Enable DHT without delay.
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| s.parse::<i64>().unwrap()),
+            "passphrase": bob_passphrase,
+            "coins": coins,
+            "rpc_password": "password",
+            "i_am_seed": true,
+        }),
+        "password".into(),
+        local_start!("bob"),
+    )
+    .unwrap();
+
+    let (_bob_dump_log, _bob_dump_dashboard) = mm_bob.mm_dump();
+    log! ({"Bob log path: {}", mm_bob.log_path.display()});
+    block_on(mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
+    log!([block_on(enable_coins_eth_electrum(&mm_bob, &[
+        "http://195.201.0.6:8565"
+    ]))]);
+
+    log!("Issue bob RICK/MORTY sell request");
+    let rc = block_on(mm_bob.rpc(json! ({
+        "userpass": mm_bob.userpass,
+        "method": "setprice",
+        "base": "RICK",
+        "rel": "MORTY",
+        "price": "1",
+        "volume": "1",
+    })))
+    .unwrap();
+    assert!(rc.0.is_success(), "!setprice: {}", rc.1);
+    let response: SetPriceResult = json::from_str(&rc.1).unwrap();
+    let expected_min = BigDecimal::from(1);
+    assert_eq!(response.result.min_base_vol, expected_min);
 }
 
 #[test]
@@ -5327,11 +5378,11 @@ fn test_buy_min_volume() {
     let my_orders: MyOrdersRpcResult = json::from_str(&rc.1).unwrap();
     assert_eq!(
         1,
-        my_orders.maker_orders.len(),
+        my_orders.result.maker_orders.len(),
         "maker_orders must have exactly 1 order"
     );
-    assert!(my_orders.taker_orders.is_empty(), "taker_orders must be empty");
-    let maker_order = my_orders.maker_orders.get(&response.result.uuid).unwrap();
+    assert!(my_orders.result.taker_orders.is_empty(), "taker_orders must be empty");
+    let maker_order = my_orders.result.maker_orders.get(&response.result.uuid).unwrap();
 
     let expected_min_volume: BigDecimal = "0.2".parse().unwrap();
     assert_eq!(expected_min_volume, maker_order.min_base_vol);
