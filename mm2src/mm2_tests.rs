@@ -1793,6 +1793,7 @@ fn test_order_should_not_be_displayed_when_node_is_down() {
             "coins": coins,
             "seednodes": [fomat!((mm_bob.ip))],
             "rpc_password": "pass",
+            "maker_order_timeout": 5,
         }),
         "pass".into(),
         match var("LOCAL_THREAD_MM") {
@@ -1854,7 +1855,7 @@ fn test_order_should_not_be_displayed_when_node_is_down() {
     assert_eq!(asks.len(), 1, "Alice RICK/MORTY orderbook must have exactly 1 ask");
 
     block_on(mm_bob.stop()).unwrap();
-    thread::sleep(Duration::from_secs(95));
+    thread::sleep(Duration::from_secs(6));
 
     let rc = block_on(mm_alice.rpc(json! ({
         "userpass": mm_alice.userpass,
@@ -1894,6 +1895,7 @@ fn test_own_orders_should_not_be_removed_from_orderbook() {
             "coins": coins,
             "i_am_seed": true,
             "rpc_password": "pass",
+            "maker_order_timeout": 5,
         }),
         "pass".into(),
         match var("LOCAL_THREAD_MM") {
@@ -1935,7 +1937,7 @@ fn test_own_orders_should_not_be_removed_from_orderbook() {
     .unwrap();
     assert!(rc.0.is_success(), "!setprice: {}", rc.1);
 
-    thread::sleep(Duration::from_secs(95));
+    thread::sleep(Duration::from_secs(6));
 
     let rc = block_on(mm_bob.rpc(json! ({
         "userpass": mm_bob.userpass,
@@ -2021,7 +2023,7 @@ fn test_all_orders_per_pair_per_node_must_be_displayed_in_orderbook() {
     .unwrap();
     assert!(rc.0.is_success(), "!setprice: {}", rc.1);
 
-    thread::sleep(Duration::from_secs(12));
+    thread::sleep(Duration::from_secs(2));
 
     log!("Get RICK/MORTY orderbook");
     let rc = block_on(mm.rpc(json! ({
@@ -2096,7 +2098,7 @@ fn orderbook_should_display_rational_amounts() {
     .unwrap();
     assert!(rc.0.is_success(), "!setprice: {}", rc.1);
 
-    thread::sleep(Duration::from_secs(12));
+    thread::sleep(Duration::from_secs(1));
     log!("Get RICK/MORTY orderbook");
     let rc = block_on(mm.rpc(json! ({
         "userpass": mm.userpass,
@@ -2146,6 +2148,105 @@ fn orderbook_should_display_rational_amounts() {
 
     assert_eq!(nine, *orderbook.bids[0].max_volume_fraction.numer());
     assert_eq!(ten, *orderbook.bids[0].max_volume_fraction.denom());
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn orderbook_should_display_base_rel_volumes() {
+    let coins = json!([
+        {"coin":"RICK","asset":"RICK","protocol":{"type":"UTXO"}},
+        {"coin":"MORTY","asset":"MORTY","protocol":{"type":"UTXO"}},
+    ]);
+
+    let mut mm = MarketMakerIt::start(
+        json! ({
+            "gui": "nogui",
+            "netid": 9998,
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| s.parse::<i64>().unwrap()),
+            "passphrase": "bob passphrase",
+            "coins": coins,
+            "rpc_password": "pass",
+            "i_am_seed": true,
+        }),
+        "pass".into(),
+        match var("LOCAL_THREAD_MM") {
+            Ok(ref e) if e == "bob" => Some(local_start()),
+            _ => None,
+        },
+    )
+    .unwrap();
+    let (_dump_log, _dump_dashboard) = &mm.mm_dump();
+    log!({"Log path: {}", mm.log_path.display()});
+    block_on(mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
+    block_on(enable_electrum(&mm, "RICK", false, &[
+        "electrum3.cipig.net:10017",
+        "electrum2.cipig.net:10017",
+        "electrum1.cipig.net:10017",
+    ]));
+    block_on(enable_electrum(&mm, "MORTY", false, &[
+        "electrum3.cipig.net:10018",
+        "electrum2.cipig.net:10018",
+        "electrum1.cipig.net:10018",
+    ]));
+
+    let price = BigRational::new(2.into(), 1.into());
+    let volume = BigRational::new(1.into(), 1.into());
+
+    // create order with rational amount and price
+    let rc = block_on(mm.rpc(json! ({
+        "userpass": mm.userpass,
+        "method": "setprice",
+        "base": "RICK",
+        "rel": "MORTY",
+        "price": price,
+        "volume": volume,
+        "cancel_previous": false,
+    })))
+    .unwrap();
+    assert!(rc.0.is_success(), "!setprice: {}", rc.1);
+
+    thread::sleep(Duration::from_secs(1));
+    log!("Get RICK/MORTY orderbook");
+    let rc = block_on(mm.rpc(json! ({
+        "userpass": mm.userpass,
+        "method": "orderbook",
+        "base": "RICK",
+        "rel": "MORTY",
+    })))
+    .unwrap();
+    assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
+
+    let orderbook: OrderbookResponse = json::from_str(&rc.1).unwrap();
+    log!("orderbook "[orderbook]);
+    assert_eq!(orderbook.asks.len(), 1, "RICK/MORTY orderbook must have exactly 1 ask");
+    let min_volume = BigRational::new(777.into(), 100000.into());
+    assert_eq!(volume, orderbook.asks[0].base_max_volume_rat);
+    assert_eq!(min_volume, orderbook.asks[0].base_min_volume_rat);
+
+    assert_eq!(&volume * &price, orderbook.asks[0].rel_max_volume_rat);
+    assert_eq!(&min_volume * &price, orderbook.asks[0].rel_min_volume_rat);
+
+    log!("Get MORTY/RICK orderbook");
+    let rc = block_on(mm.rpc(json! ({
+        "userpass": mm.userpass,
+        "method": "orderbook",
+        "base": "MORTY",
+        "rel": "RICK",
+    })))
+    .unwrap();
+    assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
+
+    let orderbook: OrderbookResponse = json::from_str(&rc.1).unwrap();
+    log!("orderbook "[orderbook]);
+    assert_eq!(orderbook.bids.len(), 1, "MORTY/RICK orderbook must have exactly 1 bid");
+    let min_volume = BigRational::new(777.into(), 100000.into());
+    assert_eq!(volume, orderbook.bids[0].rel_max_volume_rat);
+    assert_eq!(min_volume, orderbook.bids[0].rel_min_volume_rat);
+
+    assert_eq!(&volume * &price, orderbook.bids[0].base_max_volume_rat);
+    assert_eq!(&min_volume * &price, orderbook.bids[0].base_min_volume_rat);
 }
 
 fn check_priv_key(mm: &MarketMakerIt, coin: &str, expected_priv_key: &str) {
@@ -5102,6 +5203,7 @@ fn test_sell_min_volume() {
 }
 
 #[test]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_sell_min_volume_dust() {
     let bob_passphrase = get_passphrase(&".env.client", "BOB_PASSPHRASE").unwrap();
 

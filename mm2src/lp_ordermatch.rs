@@ -80,8 +80,6 @@ const MAKER_ORDER_TIMEOUT: u64 = MIN_ORDER_KEEP_ALIVE_INTERVAL * 3;
 const TAKER_ORDER_TIMEOUT: u64 = 30;
 const ORDER_MATCH_TIMEOUT: u64 = 30;
 const ORDERBOOK_REQUESTING_TIMEOUT: u64 = MIN_ORDER_KEEP_ALIVE_INTERVAL * 2;
-#[allow(dead_code)]
-const INACTIVE_ORDER_TIMEOUT: u64 = 240;
 const MIN_TRADING_VOL: &str = "0.00777";
 const MAX_ORDERS_NUMBER_IN_ORDERBOOK_RESPONSE: usize = 1000;
 
@@ -2314,6 +2312,7 @@ fn lp_connected_alice(ctx: MmArc, taker_request: TakerRequest, taker_match: Take
 
 pub async fn lp_ordermatch_loop(ctx: MmArc) {
     let my_pubsecp = hex::encode(&**ctx.secp256k1_key_pair().public());
+    let maker_order_timeout = ctx.conf["maker_order_timeout"].as_u64().unwrap_or(MAKER_ORDER_TIMEOUT);
     loop {
         if ctx.is_stopping() {
             break;
@@ -2379,7 +2378,7 @@ pub async fn lp_ordermatch_loop(ctx: MmArc) {
             let mut uuids_to_remove = vec![];
             let mut keys_to_remove = vec![];
             orderbook.pubkeys_state.retain(|pubkey, state| {
-                let to_retain = pubkey == &my_pubsecp || state.last_keep_alive + MAKER_ORDER_TIMEOUT > now_ms() / 1000;
+                let to_retain = pubkey == &my_pubsecp || state.last_keep_alive + maker_order_timeout > now_ms() / 1000;
                 if !to_retain {
                     for (uuid, _) in &state.orders_uuids {
                         uuids_to_remove.push(*uuid);
@@ -2905,8 +2904,8 @@ impl OrderbookItem {
 
         let base_max_volume = max_vol_mm.clone().into();
         let base_min_volume = min_vol_mm.clone().into();
-        let rel_max_volume = max_vol_mm.clone().into();
-        let rel_min_volume = min_vol_mm.clone().into();
+        let rel_max_volume = (&max_vol_mm * &price_mm).into();
+        let rel_min_volume = (&min_vol_mm * &price_mm).into();
 
         RpcOrderbookEntry {
             coin: self.base.clone(),
@@ -2937,8 +2936,8 @@ impl OrderbookItem {
         let max_vol_mm = MmNumber::from(self.max_volume.clone());
         let min_vol_mm = MmNumber::from(self.min_volume.clone());
 
-        let base_max_volume = max_vol_mm.clone().into();
-        let base_min_volume = min_vol_mm.clone().into();
+        let base_max_volume = (&max_vol_mm / &price_mm).into();
+        let base_min_volume = (&min_vol_mm / &price_mm).into();
         let rel_max_volume = max_vol_mm.clone().into();
         let rel_min_volume = min_vol_mm.clone().into();
 
