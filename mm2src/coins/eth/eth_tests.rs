@@ -25,6 +25,10 @@ fn eth_coin_for_test(coin_type: EthCoinType, urls: Vec<String>) -> (MmArc, EthCo
     let transport = Web3Transport::new(urls).unwrap();
     let web3 = Web3::new(transport);
     let ctx = MmCtxBuilder::new().into_mm_arc();
+    let ticker = match coin_type {
+        EthCoinType::Eth => "ETH".to_string(),
+        EthCoinType::Erc20(_token_addr) => "JST".to_string(),
+    };
 
     let eth_coin = EthCoin(Arc::new(EthCoinImpl {
         coin_type,
@@ -34,7 +38,7 @@ fn eth_coin_for_test(coin_type: EthCoinType, urls: Vec<String>) -> (MmArc, EthCo
         my_address: key_pair.address(),
         key_pair,
         swap_contract_address: Address::from("0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94"),
-        ticker: "ETH".into(),
+        ticker,
         web3_instances: vec![Web3Instance {
             web3: web3.clone(),
             is_parity: true,
@@ -562,6 +566,41 @@ fn test_withdraw_impl_manual_fee() {
     let expected = Some(
         EthTxFeeDetails {
             coin: "ETH".into(),
+            gas_price: "0.000000001".parse().unwrap(),
+            gas: 150000,
+            total_fee: "0.00015".parse().unwrap(),
+        }
+        .into(),
+    );
+    assert_eq!(expected, tx_details.fee_details);
+}
+
+#[test]
+fn test_withdraw_impl_fee_details() {
+    let (ctx, coin) = eth_coin_for_test(EthCoinType::Erc20(Address::from("0x2b294F029Fde858b2c62184e8390591755521d8E")), vec!["http://dummy.dummy".into()]);
+
+    EthCoin::my_balance.mock_safe(|_| {
+        let balance = wei_from_big_decimal(&1000000000.into(), 18).unwrap();
+        MockResult::Return(Box::new(futures01::future::ok(balance)))
+    });
+    get_addr_nonce.mock_safe(|_, _| MockResult::Return(Box::new(futures01::future::ok(0.into()))));
+
+    let withdraw_req = WithdrawRequest {
+        amount: 1.into(),
+        to: "0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94".to_string(),
+        coin: "JST".to_string(),
+        max: false,
+        fee: Some(WithdrawFee::EthGas {
+            gas: 150000,
+            gas_price: 1.into(),
+        }),
+    };
+    coin.my_balance().wait().unwrap();
+
+    let tx_details = block_on(withdraw_impl(ctx, coin.clone(), withdraw_req)).unwrap();
+    let expected = Some(
+        EthTxFeeDetails {
+            coin: "JST".into(),
             gas_price: "0.000000001".parse().unwrap(),
             gas: 150000,
             total_fee: "0.00015".parse().unwrap(),

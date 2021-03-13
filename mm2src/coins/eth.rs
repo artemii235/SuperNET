@@ -482,7 +482,7 @@ async fn withdraw_impl(ctx: MmArc, coin: EthCoin, req: WithdrawRequest) -> Resul
     } else {
         0.into()
     };
-    let fee_details = try_s!(EthTxFeeDetails::new(gas, gas_price, "ETH"));
+    let fee_details = try_s!(EthTxFeeDetails::new(gas, gas_price, coin.ticker()));
     if coin.coin_type == EthCoinType::Eth {
         spent_by_me += &fee_details.total_fee;
     }
