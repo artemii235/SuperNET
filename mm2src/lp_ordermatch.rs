@@ -2892,19 +2892,18 @@ struct SetPriceReq {
     rel_nota: Option<bool>,
 }
 
-
 #[derive(Deserialize)]
- struct MakerOrderUpdateReq {
-     uuid: Uuid,
-     new_price: MmNumber,
-     new_volume: MmNumber,
-     #[serde(default)]
-     max: bool,
-     base_confs: Option<u64>,
-     base_nota: Option<bool>,
-     rel_confs: Option<u64>,
-     rel_nota: Option<bool>,
- }
+struct MakerOrderUpdateReq {
+    uuid: Uuid,
+    new_price: Option<MmNumber>,
+    new_volume: Option<MmNumber>,
+    #[serde(default)]
+    max: bool,
+    base_confs: Option<u64>,
+    base_nota: Option<bool>,
+    rel_confs: Option<u64>,
+    rel_nota: Option<bool>,
+}
 
 #[derive(Debug, Serialize)]
 pub struct MakerReservedForRpc<'a> {
@@ -3153,9 +3152,9 @@ pub async fn update_maker_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8
     let mut my_orders = ordermatch_ctx.my_maker_orders.lock().await;
 
     //Get the previous order details using uuid
-    let my_previous_order = match my_orders.get(&req.uuid) {
-        Some(O) => O,
-        None => return ERR!("Order with {} uuid is not found",&req.uuid),
+    let my_previous_order = match my_orders.get_mut(&req.uuid) {
+        Some(o) => o,
+        None => return ERR!("Order with {} uuid is not found", &req.uuid),
     };
 
     let base_coin: MmCoinEnum = match try_s!(lp_coinfind(&ctx, &my_previous_order.base).await) {
@@ -3185,23 +3184,22 @@ pub async fn update_maker_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8
                 .await
         );
         try_s!(check_other_coin_balance_for_swap(&ctx, &rel_coin, None, rel_coin_trade_fee).await);
-        try_s!(calc_max_maker_vol(&ctx, &base_coin,&my_balance, FeeApproxStage::OrderIssue).await)
+        try_s!(calc_max_maker_vol(&ctx, &base_coin, &my_balance, FeeApproxStage::OrderIssue).await)
     } else {
         try_s!(
             check_balance_for_maker_swap(
                 &ctx,
                 &base_coin,
                 &rel_coin,
-                req.new_volume.clone(),
+                req.new_volume.clone().unwrap(),
                 None,
                 None,
                 FeeApproxStage::OrderIssue
             )
             .await
         );
-        req.new_volume
+        req.new_volume.unwrap()
     };
-
 
     let conf_settings = OrderConfirmationsSettings {
         base_confs: req.base_confs.unwrap_or_else(|| base_coin.required_confirmations()),
@@ -3211,47 +3209,35 @@ pub async fn update_maker_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8
     };
 
     //create the object MakerOrder with new volume and new price.
-    let mut makerUpdateOrder = MakerOrder {
+    let maker_update_order = MakerOrder {
         base: my_previous_order.base.clone(),
         rel: my_previous_order.rel.clone(),
         created_at: now_ms(),
         max_base_vol: volume,
         min_base_vol: my_previous_order.min_base_vol.clone(),
-        price: req.new_price,
+        price: req.new_price.unwrap(),
         uuid: my_previous_order.uuid,
         conf_settings: Some(conf_settings),
         matches: HashMap::new(),
         started_swaps: Vec::new(),
     };
 
-
-    let request_orderbook = false;
-    try_s!(
-        subscribe_to_orderbook_topic(
-            &ctx,
-            &makerUpdateOrder.base.clone(),
-            &makerUpdateOrder.rel.clone(),
-            request_orderbook
-        )
-        .await
-    );
-    save_my_maker_order(&ctx, &makerUpdateOrder);
-    let updated_msg =
-        new_protocol::MakerOrderUpdated::new(makerUpdateOrder.uuid.clone())
-        .with_new_max_volume(makerUpdateOrder.max_base_vol.to_ratio().clone())
-        .with_new_price(makerUpdateOrder.price.to_ratio().clone());
+    save_my_maker_order(&ctx, &maker_update_order);
+    let updated_msg = new_protocol::MakerOrderUpdated::new(maker_update_order.uuid.clone())
+        .with_new_max_volume(maker_update_order.max_base_vol.to_ratio().clone())
+        .with_new_price(maker_update_order.price.to_ratio().clone());
 
     maker_order_updated_p2p_notify(
         ctx.clone(),
-        &makerUpdateOrder.base.clone(),
-        &makerUpdateOrder.rel.clone(),
+        &maker_update_order.base.clone(),
+        &maker_update_order.rel.clone(),
         updated_msg,
     )
     .await;
 
-    let rpc_result = MakerOrderForRpc::from(&makerUpdateOrder);
+    let rpc_result = MakerOrderForRpc::from(&maker_update_order);
     let res = try_s!(json::to_vec(&json!({ "result": rpc_result })));
-    my_orders.insert(makerUpdateOrder.uuid, makerUpdateOrder);
+    my_orders.insert(maker_update_order.uuid, maker_update_order);
     Ok(try_s!(Response::builder().body(res)))
 }
 /// Result of match_order_and_request function
