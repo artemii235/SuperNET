@@ -57,7 +57,7 @@ use super::{CoinBalance, CoinProtocol, CoinTransportMetrics, CoinsContext, FeeAp
             HistorySyncState, MarketCoinOps, MmCoin, RpcClientType, RpcTransportEventHandler,
             RpcTransportEventHandlerShared, SwapOps, TradeFee, TradePreimageError, TradePreimageValue, Transaction,
             TransactionDetails, TransactionEnum, TransactionFut, ValidateAddressResult, WithdrawFee, WithdrawRequest};
-
+use super::coin_conf;
 pub use ethcore_transaction::SignedTransaction as SignedEthTx;
 pub use rlp;
 
@@ -482,7 +482,13 @@ async fn withdraw_impl(ctx: MmArc, coin: EthCoin, req: WithdrawRequest) -> Resul
     } else {
         0.into()
     };
-    let fee_details = try_s!(EthTxFeeDetails::new(gas, gas_price, coin.ticker()));
+    let coins_en = coin_conf(&ctx, coin.ticker());
+    let protocol_data = &coins_en["protocol"]["protocol_data"];
+    let fee_coin = match protocol_data {
+        Json::Null => coin.ticker(),
+        _ => protocol_data["platform"].as_str().unwrap(),
+    };
+    let fee_details = try_s!(EthTxFeeDetails::new(gas, gas_price, fee_coin));
     if coin.coin_type == EthCoinType::Eth {
         spent_by_me += &fee_details.total_fee;
     }

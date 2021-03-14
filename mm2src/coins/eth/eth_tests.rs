@@ -24,7 +24,14 @@ fn eth_coin_for_test(coin_type: EthCoinType, urls: Vec<String>) -> (MmArc, EthCo
     .unwrap();
     let transport = Web3Transport::new(urls).unwrap();
     let web3 = Web3::new(transport);
-    let ctx = MmCtxBuilder::new().into_mm_arc();
+    let conf = json!({
+        "coins":[
+           {"coin":"ETH","name":"ethereum","protocol":{"type":"ETH"},"rpcport":80,"mm2":1},
+           {"coin":"JST","name":"jst","rpcport":80,"mm2":1,"protocol":{"type":"ERC20","protocol_data":{"platform":"ETH","contract_address":"0x2b294F029Fde858b2c62184e8390591755521d8E"}}}
+        ]
+    });
+    let ctx = MmCtxBuilder::new()
+        .with_conf(conf.clone()).into_mm_arc();
     let ticker = match coin_type {
         EthCoinType::Eth => "ETH".to_string(),
         EthCoinType::Erc20(_token_addr) => "JST".to_string(),
@@ -600,7 +607,7 @@ fn test_withdraw_impl_fee_details() {
     let tx_details = block_on(withdraw_impl(ctx, coin.clone(), withdraw_req)).unwrap();
     let expected = Some(
         EthTxFeeDetails {
-            coin: "JST".into(),
+            coin: "ETH".into(),
             gas_price: "0.000000001".parse().unwrap(),
             gas: 150000,
             total_fee: "0.00015".parse().unwrap(),
