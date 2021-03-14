@@ -20,9 +20,9 @@ test = false
 doctest = false
 bench = false
 
-[[bin]]
-name = "docker_tests"
-path = "mm2src/docker_tests.rs"
+# [[bin]]
+# name = "docker_tests"
+# path = "mm2src/docker_tests.rs"
 
 [lib]
 name = "mm2"
