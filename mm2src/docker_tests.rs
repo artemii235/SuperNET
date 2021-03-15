@@ -169,6 +169,7 @@ mod docker_tests {
     fn remove_docker_containers(name: &str) {
         let stdout = Command::new("docker")
             .arg("ps")
+            .arg("-a")
             .arg("-f")
             .arg(format!("ancestor={}", name))
             .arg("-q")
@@ -2656,4 +2657,49 @@ mod docker_tests {
         // 4 utxos are merged of 5 so the resulting unspents len must be 2
         assert_eq!(unspents.len(), 2);
     }
+
+    #[test]
+    fn test_segwit_on_enable() {
+  
+        let coins = json!([
+            {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
+        ]);
+    
+        // start bob and immediately place the orders
+        let mut mm_bob = MarketMakerIt::start(
+            json! ({
+                "gui": "nogui",
+                "netid": 9000,
+                "dht": "on",  // Enable DHT without delay.
+                "passphrase": "bob passphrase",
+                "coins": coins,
+                "rpc_password": "pass",
+                "i_am_seed": true,
+            }),
+            "pass".into(),
+            None,
+        )
+        .unwrap();
+        let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
+        log!({"Bob log path: {}", mm_bob.log_path.display()});
+        block_on(mm_bob.wait_for_log(22., |log| log.contains("INFO Listening on"))).unwrap();
+        block_on(mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
+    
+        let native = block_on(mm_bob.rpc(json! ({
+            "userpass": mm_bob.userpass,
+            "method": "enable",
+            "coin": "MYCOIN",
+            "full_segwit": true,
+            "mm2": 1,   
+        })))
+        .unwrap();
+    
+        assert!(native.0.is_success(), "'enable' failed: {}", native.1);
+        log!("Enable result "(native.1));
+        let enable_res : Json = json::from_str(&native.1).unwrap();
+        let sigwit_addr = enable_res["address"].as_str().unwrap();    
+        block_on(mm_bob.stop()).unwrap();
+        assert!(sigwit_addr.chars().next().unwrap() == 'b')
+    }
+
 }
