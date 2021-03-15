@@ -1068,10 +1068,7 @@ impl<'a> TakerOrderBuilder<'a> {
             return Err(TakerOrderBuildError::ConfsSettingsNotSet);
         }
 
-        let min_volume = match self.min_volume {
-            Some(min) => min,
-            None => min_base_amount.clone(),
-        };
+        let min_volume = self.min_volume.unwrap_or_else(|| min_base_amount.clone());
 
         if min_volume < min_base_amount {
             return Err(TakerOrderBuildError::MinVolumeTooLow {
@@ -1380,10 +1377,7 @@ impl<'a> MakerOrderBuilder<'a> {
             });
         }
 
-        let min_base_vol = match self.min_base_vol {
-            Some(vol) => vol,
-            None => min_base_amount.clone(),
-        };
+        let min_base_vol = self.min_base_vol.unwrap_or_else(|| min_base_amount.clone());
         if min_base_vol < min_base_amount {
             return Err(MakerOrderBuildError::MinBaseVolTooLow {
                 actual: min_base_vol,
