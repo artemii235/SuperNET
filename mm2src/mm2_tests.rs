@@ -2922,8 +2922,7 @@ fn test_set_price_must_save_order_to_db() {
 #[test]
 #[cfg(feature = "native")]
 fn test_set_price_response_format() {
-    //let bob_passphrase = get_passphrase(&".env.client", "BOB_PASSPHRASE").unwrap();
-    let bob_passphrase = "pink sweet fantasy sock assault then social age joke tennis lawn loop fame organ debris model orange critic boil popular cup exotic lake luggage";
+    let bob_passphrase = get_passphrase(&".env.client", "BOB_PASSPHRASE").unwrap();
 
     let coins = json! ([
         {"coin":"RICK","asset":"RICK","required_confirmations":0,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
@@ -2962,63 +2961,6 @@ fn test_set_price_response_format() {
         "userpass": mm_bob.userpass,
         "method": "setprice",
         "base": "RICK",
-        "rel": "MORTY",
-        "price": 1,
-        "volume": 0.1
-    })))
-    .unwrap();
-    assert!(rc.0.is_success(), "!setprice: {}", rc.1);
-    let rc_json: Json = json::from_str(&rc.1).unwrap();
-    let _: BigDecimal = json::from_value(rc_json["result"]["max_base_vol"].clone()).unwrap();
-    let _: BigDecimal = json::from_value(rc_json["result"]["min_base_vol"].clone()).unwrap();
-    let _: BigDecimal = json::from_value(rc_json["result"]["price"].clone()).unwrap();
-
-    let _: BigRational = json::from_value(rc_json["result"]["max_base_vol_rat"].clone()).unwrap();
-    let _: BigRational = json::from_value(rc_json["result"]["min_base_vol_rat"].clone()).unwrap();
-    let _: BigRational = json::from_value(rc_json["result"]["price_rat"].clone()).unwrap();
-}
-
-#[test]
-#[cfg(feature = "native")]
-fn test_update_maker_order() {
-    let bob_passphrase = "pink sweet fantasy sock assault then social age joke tennis lawn loop fame organ debris model orange critic boil popular cup exotic lake luggage";
-
-    let coins = json! ([
-        {"coin":"RICK","asset":"RICK","required_confirmations":0,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
-        {"coin":"MORTY","asset":"MORTY","required_confirmations":0,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
-
-    ]);
-
-    let mut mm_bob = MarketMakerIt::start(
-        json! ({
-            "gui": "nogui",
-            "netid": 8999,
-            "dht": "on",  // Enable DHT without delay.
-            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
-            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
-            "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| s.parse::<i64>().unwrap()),
-            "passphrase": bob_passphrase,
-            "coins": coins,
-            "rpc_password": "password",
-            "i_am_seed": true,
-        }),
-        "password".into(),
-        local_start!("bob"),
-    )
-    .unwrap();
-
-    let (_bob_dump_log, _bob_dump_dashboard) = mm_bob.mm_dump();
-    log! ({"Bob log path: {}", mm_bob.log_path.display()});
-    block_on(mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
-    log!([block_on(enable_coins_eth_electrum(&mm_bob, &[
-        "http://195.201.0.6:8565"
-    ]))]);
-
-    log!("Issue bob RICK/MORTY sell request");
-    let rc = block_on(mm_bob.rpc(json! ({
-        "userpass": mm_bob.userpass,
-        "method": "setprice",
-        "base": "RICKY",
         "rel": "MORTY",
         "price": 1,
         "volume": 0.1
@@ -3167,6 +3109,103 @@ fn set_price_with_cancel_previous_should_broadcast_cancelled_message() {
     log!("Alice orderbook "[alice_orderbook]);
     let asks = alice_orderbook["asks"].as_array().unwrap();
     assert_eq!(asks.len(), 1, "Alice RICK/MORTY orderbook must have exactly 1 ask");
+}
+
+#[test]
+#[cfg(feature = "native")]
+fn test_update_maker_order() {
+    let bob_passphrase = get_passphrase(&".env.client", "BOB_PASSPHRASE").unwrap();
+    let coins = json! ([
+        {"coin":"RICK","asset":"RICK","required_confirmations":0,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
+        {"coin":"MORTY","asset":"MORTY","required_confirmations":0,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
+        {"coin":"ETH","name":"ethereum","protocol":{"type":"ETH"}},
+        {"coin":"JST","name":"jst","protocol":{"type":"ERC20","protocol_data":{"platform":"ETH","contract_address":"0x2b294F029Fde858b2c62184e8390591755521d8E"}}}
+    ]);
+
+    let mut mm_bob = MarketMakerIt::start(
+        json! ({
+            "gui": "nogui",
+            "netid": 8999,
+            "dht": "on",  // Enable DHT without delay.
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| s.parse::<i64>().unwrap()),
+            "passphrase": bob_passphrase,
+            "coins": coins,
+            "rpc_password": "password",
+            "i_am_seed": true,
+        }),
+        "password".into(),
+        local_start!("bob"),
+    )
+    .unwrap();
+
+    let (_bob_dump_log, _bob_dump_dashboard) = mm_bob.mm_dump();
+    log! ({"Bob log path: {}", mm_bob.log_path.display()});
+    block_on(mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
+    log!([block_on(enable_coins_eth_electrum(&mm_bob, &[
+        "http://195.201.0.6:8565"
+    ]))]);
+
+    log!("Issue bob RICK/MORTY sell request");
+    let rc = block_on(mm_bob.rpc(json! ({
+        "userpass": mm_bob.userpass,
+        "method": "setprice",
+        "base": "RICK",
+        "rel": "MORTY",
+        "price": 1,
+        "volume": 0.1
+    })))
+    .unwrap();
+    assert!(rc.0.is_success(), "!setprice: {}", rc.1);
+    let rc_json: Json = json::from_str(&rc.1).unwrap();
+    let order_uuid: Uuid = json::from_value(rc_json["result"]["uuid"].clone()).unwrap();
+    print!("the value in {} uuid", order_uuid);
+
+    log!("update maker order bob RICK/MORTY update request");
+    let rc1 = block_on(mm_bob.rpc(json! ({
+        "userpass": mm_bob.userpass,
+        "method": "update_maker_order",
+        "uuid": order_uuid,
+        "new_price": 2,
+        "new_volume": 0.1,
+        "max":false,
+    })))
+    .unwrap();
+    assert!(rc1.0.is_success(), "!update_maker_order: {}", rc1.1);
+    let rc_json: Json = json::from_str(&rc1.1).unwrap();
+
+    log!("new price provide is less then minimum value bob RICK/MORTY update request");
+    let rc2 = block_on(mm_bob.rpc(json! ({
+        "userpass": mm_bob.userpass,
+        "method": "update_maker_order",
+        "uuid": order_uuid,
+        "new_price": 0,
+        "new_volume": 0.1,
+        "max":false,
+    })))
+    .unwrap();
+    assert!(
+        rc2.0.is_server_error(),
+        "new price cannot be less than minimum value failed with status: {}",
+        rc2.1
+    );
+
+    log!("new volume provide is less then minimum value bob RICK/MORTY update request");
+    let rc3 = block_on(mm_bob.rpc(json! ({
+        "userpass": mm_bob.userpass,
+        "method": "update_maker_order",
+        "uuid": order_uuid,
+        "new_price": 1,
+        "new_volume":0,
+        "max":false,
+    })))
+    .unwrap();
+    assert!(
+        rc3.0.is_server_error(),
+        "volume cannot be less than minimum value failed with status: {}",
+        rc3.1
+    );
 }
 
 #[test]

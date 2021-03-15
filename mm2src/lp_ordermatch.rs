@@ -3147,6 +3147,8 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
 //update makerorder will update the previously created order with new volume and new price.
 pub async fn update_maker_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
     let req: MakerOrderUpdateReq = try_s!(json::from_value(req));
+    let min_price = MmNumber::from(BigRational::new(1.into(), 100_000_000.into()));
+    let min_vol = MmNumber::from(MIN_TRADING_VOL);
 
     let ordermatch_ctx = try_s!(OrdermatchContext::from_ctx(&ctx));
     let mut my_orders = ordermatch_ctx.my_maker_orders.lock().await;
@@ -3173,6 +3175,50 @@ pub async fn update_maker_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8
         return ERR!("Rel coin is wallet only");
     }
 
+    //Validate new price
+    let new_price = match req.new_price {
+        Some(price) if (price > min_price) => price,
+        Some(price) if (price < min_price) => return ERR!("price {} which cannot be less then minimum price ", price),
+        _ => my_previous_order.price.clone(),
+    };
+
+    //Validate Volume
+    let new_volume = match req.new_volume {
+        Some(vol) if (vol > min_vol) => vol,
+        Some(vol) if (vol < min_vol) => {
+            return ERR!("maximum volume {} which cannot be less then minimum volume ", vol)
+        },
+        _ => my_previous_order.max_base_vol.clone(),
+    };
+
+    //OrderConfirmationsSettings validate with new value
+    let base_confs = match req.base_confs {
+        Some(base_conf_value) if base_conf_value != base_coin.required_confirmations() => base_conf_value,
+        _ => base_coin.required_confirmations(),
+    };
+
+    let base_nota = match req.base_nota {
+        Some(base_nota_value) if base_nota_value != base_coin.requires_notarization() => base_nota_value,
+        _ => base_coin.requires_notarization(),
+    };
+
+    let rel_confs = match req.rel_confs {
+        Some(rel_conf_value) if rel_conf_value != rel_coin.required_confirmations() => rel_conf_value,
+        _ => rel_coin.required_confirmations(),
+    };
+
+    let rel_nota = match req.rel_nota {
+        Some(rel_nota_value) if rel_nota_value != rel_coin.requires_notarization() => rel_nota_value,
+        _ => rel_coin.requires_notarization(),
+    };
+
+    let conf_settings = OrderConfirmationsSettings {
+        base_confs,
+        base_nota,
+        rel_confs,
+        rel_nota,
+    };
+
     // get the balance details of base-coin.
     let my_balance = try_s!(base_coin.my_spendable_balance().compat().await);
 
@@ -3191,21 +3237,14 @@ pub async fn update_maker_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8
                 &ctx,
                 &base_coin,
                 &rel_coin,
-                req.new_volume.clone().unwrap(),
+                new_volume.clone(),
                 None,
                 None,
                 FeeApproxStage::OrderIssue
             )
             .await
         );
-        req.new_volume.unwrap()
-    };
-
-    let conf_settings = OrderConfirmationsSettings {
-        base_confs: req.base_confs.unwrap_or_else(|| base_coin.required_confirmations()),
-        base_nota: req.base_nota.unwrap_or_else(|| base_coin.requires_notarization()),
-        rel_confs: req.rel_confs.unwrap_or_else(|| rel_coin.required_confirmations()),
-        rel_nota: req.rel_nota.unwrap_or_else(|| rel_coin.requires_notarization()),
+        new_volume
     };
 
     //create the object MakerOrder with new volume and new price.
@@ -3215,7 +3254,7 @@ pub async fn update_maker_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8
         created_at: now_ms(),
         max_base_vol: volume,
         min_base_vol: my_previous_order.min_base_vol.clone(),
-        price: req.new_price.unwrap(),
+        price: new_price,
         uuid: my_previous_order.uuid,
         conf_settings: Some(conf_settings),
         matches: HashMap::new(),
