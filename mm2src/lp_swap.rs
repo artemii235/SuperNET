@@ -88,11 +88,11 @@ use uuid::Uuid;
 #[path = "lp_swap/taker_swap.rs"] mod taker_swap;
 
 pub use maker_swap::{calc_max_maker_vol, check_balance_for_maker_swap, maker_swap_trade_preimage, run_maker_swap,
-                     stats_maker_swap_dir, MakerSavedSwap, MakerSwap, RunMakerSwapInput};
+                     stats_maker_swap_dir, MakerSavedSwap, MakerSwap, MakerTradePreimage, RunMakerSwapInput};
 use maker_swap::{stats_maker_swap_file_path, MakerSwapEvent};
 pub use taker_swap::{calc_max_taker_vol, check_balance_for_taker_swap, max_taker_vol, max_taker_vol_from_available,
                      run_taker_swap, stats_taker_swap_dir, taker_swap_trade_preimage, RunTakerSwapInput,
-                     TakerSavedSwap, TakerSwap};
+                     TakerSavedSwap, TakerSwap, TakerTradePreimage};
 use taker_swap::{stats_taker_swap_file_path, TakerSwapEvent};
 
 pub const SWAP_PREFIX: TopicPrefix = "swap";
@@ -1041,11 +1041,20 @@ pub fn stats_swap_status(ctx: MmArc, req: Json) -> HyRes {
 
 #[derive(Deserialize)]
 pub struct TradePreimageRequest {
+    /// The base currency of the request.
     base: String,
+    /// The rel currency of the request.
     rel: String,
+    /// The name of the method whose preimage is requested.
     swap_method: TradePreimageMethod,
+    /// The price in `rel` the user is willing to receive per one unit of the `base` coin.
+    #[serde(default)]
+    price: MmNumber,
+    /// The amount the user is willing to trade.
+    /// Ignored if `max = true`.
     #[serde(default)]
     volume: MmNumber,
+    /// Whether to return the maximum available volume for setprice method
     #[serde(default)]
     max: bool,
 }
@@ -1059,20 +1068,104 @@ pub enum TradePreimageMethod {
 }
 
 #[derive(Serialize)]
-pub struct TradePreimageResponse {
-    base_coin_fee: TradeFeeResponse,
-    rel_coin_fee: TradeFeeResponse,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(flatten)]
-    volume: Option<DetailedVolume>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(flatten)]
-    taker_fee: Option<DetailedTakerFee>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    fee_to_send_taker_fee: Option<TradeFeeResponse>,
+#[serde(untagged)]
+#[allow(clippy::large_enum_variant)]
+pub enum TradePreimageResponse {
+    MakerPreimage {
+        base_coin_fee: TradeFeeResponse,
+        rel_coin_fee: TradeFeeResponse,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(flatten)]
+        volume: Option<DetailedVolume>,
+        total_fees: Vec<TradeFeeResponse>,
+    },
+    TakerPreimage {
+        base_coin_fee: TradeFeeResponse,
+        rel_coin_fee: TradeFeeResponse,
+        taker_fee: TradeFeeResponse,
+        fee_to_send_taker_fee: TradeFeeResponse,
+        total_fees: Vec<TradeFeeResponse>,
+    },
 }
 
-#[derive(Serialize)]
+impl From<MakerTradePreimage> for TradePreimageResponse {
+    fn from(maker: MakerTradePreimage) -> Self {
+        let mut total_fees = HashMap::new();
+
+        TradePreimageResponse::accumulate_total_fees(&mut total_fees, maker.base_coin_fee.clone());
+        let base_coin_fee = TradeFeeResponse::from(maker.base_coin_fee);
+
+        TradePreimageResponse::accumulate_total_fees(&mut total_fees, maker.rel_coin_fee.clone());
+        let rel_coin_fee = TradeFeeResponse::from(maker.rel_coin_fee);
+
+        let total_fees = total_fees
+            .into_iter()
+            .filter_map(TradePreimageResponse::filter_zero_fees)
+            .collect();
+        let volume = maker.volume.map(DetailedVolume::from);
+        TradePreimageResponse::MakerPreimage {
+            base_coin_fee,
+            rel_coin_fee,
+            volume,
+            total_fees,
+        }
+    }
+}
+
+impl From<TakerTradePreimage> for TradePreimageResponse {
+    fn from(taker: TakerTradePreimage) -> Self {
+        let mut total_fees = HashMap::new();
+
+        TradePreimageResponse::accumulate_total_fees(&mut total_fees, taker.base_coin_fee.clone());
+        let base_coin_fee = TradeFeeResponse::from(taker.base_coin_fee);
+
+        TradePreimageResponse::accumulate_total_fees(&mut total_fees, taker.rel_coin_fee.clone());
+        let rel_coin_fee = TradeFeeResponse::from(taker.rel_coin_fee);
+
+        TradePreimageResponse::accumulate_total_fees(&mut total_fees, taker.taker_fee.clone());
+        let taker_fee = TradeFeeResponse::from(taker.taker_fee);
+
+        TradePreimageResponse::accumulate_total_fees(&mut total_fees, taker.fee_to_send_taker_fee.clone());
+        let fee_to_send_taker_fee = TradeFeeResponse::from(taker.fee_to_send_taker_fee);
+
+        let total_fees = total_fees
+            .into_iter()
+            .filter_map(TradePreimageResponse::filter_zero_fees)
+            .collect();
+        TradePreimageResponse::TakerPreimage {
+            base_coin_fee,
+            rel_coin_fee,
+            taker_fee,
+            fee_to_send_taker_fee,
+            total_fees,
+        }
+    }
+}
+
+impl TradePreimageResponse {
+    fn accumulate_total_fees(total_fees: &mut HashMap<String, TradeFee>, fee: TradeFee) {
+        use std::collections::hash_map::Entry;
+        match total_fees.entry(fee.coin.clone()) {
+            Entry::Occupied(mut entry) => {
+                let total_fee = entry.get_mut();
+                total_fee.amount = &total_fee.amount + &fee.amount;
+            },
+            Entry::Vacant(entry) => {
+                entry.insert(fee);
+            },
+        }
+    }
+
+    fn filter_zero_fees((_coin, fee): (String, TradeFee)) -> Option<TradeFeeResponse> {
+        if fee.amount.is_zero() {
+            None
+        } else {
+            Some(TradeFeeResponse::from(fee))
+        }
+    }
+}
+
+#[derive(Clone, Serialize)]
 pub struct TradeFeeResponse {
     coin: String,
     #[serde(flatten)]
@@ -1090,13 +1183,14 @@ impl From<TradeFee> for TradeFeeResponse {
 
 construct_detailed!(DetailedAmount, amount);
 construct_detailed!(DetailedVolume, volume);
-construct_detailed!(DetailedTakerFee, taker_fee);
 
 pub async fn trade_preimage(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
     let req: TradePreimageRequest = try_s!(json::from_value(req));
-    let result = match req.swap_method {
-        TradePreimageMethod::SetPrice => try_s!(maker_swap_trade_preimage(&ctx, req).await),
-        TradePreimageMethod::Buy | TradePreimageMethod::Sell => try_s!(taker_swap_trade_preimage(&ctx, req).await),
+    let result: TradePreimageResponse = match req.swap_method {
+        TradePreimageMethod::SetPrice => try_s!(maker_swap_trade_preimage(&ctx, req).await).into(),
+        TradePreimageMethod::Buy | TradePreimageMethod::Sell => {
+            try_s!(taker_swap_trade_preimage(&ctx, req).await).into()
+        },
     };
     let res = json!({ "result": result });
     let res = try_s!(json::to_vec(&res));
