@@ -1124,12 +1124,28 @@ impl Drop for ElectrumConnection {
 }
 
 #[derive(Debug)]
+struct ConcurrentRequestState<T> {
+    is_running: bool,
+    subscribers: Vec<RpcReqSub<T>>,
+}
+
+impl<T> ConcurrentRequestState<T> {
+    fn new() -> Self {
+        ConcurrentRequestState {
+            is_running: false,
+            subscribers: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct ElectrumClientImpl {
     coin_ticker: String,
     connections: AsyncMutex<Vec<ElectrumConnection>>,
     next_id: AtomicU64,
     event_handlers: Vec<RpcTransportEventHandlerShared>,
     protocol_version: OrdRange<f32>,
+    get_balance_state: AsyncMutex<ConcurrentRequestState<ElectrumBalance>>,
     /*
     list_unspent_in_progress: AtomicBool,
     list_unspent_subs: AsyncMutex<Vec<RpcReqSub<Vec<ElectrumUnspent>>>>,
@@ -1145,17 +1161,24 @@ async fn electrum_request_multi(
     request: JsonRpcRequest,
 ) -> Result<(JsonRpcRemoteAddr, JsonRpcResponse), String> {
     let mut futures = vec![];
-    for connection in client.connections.lock().await.iter() {
+    let connections = client.connections.lock().await;
+    for connection in connections.iter() {
         let connection_addr = connection.addr.clone();
         match &*connection.tx.lock().await {
             Some(tx) => {
-                let fut = electrum_request(request.clone(), tx.clone(), connection.responses.clone())
-                    .map(|response| (JsonRpcRemoteAddr(connection_addr), response));
+                let fut = electrum_request(
+                    request.clone(),
+                    tx.clone(),
+                    connection.responses.clone(),
+                    ELECTRUM_TIMEOUT / connections.len() as u64,
+                )
+                .map(|response| (JsonRpcRemoteAddr(connection_addr), response));
                 futures.push(fut)
             },
             None => (),
         }
     }
+    drop(connections);
     if futures.is_empty() {
         return ERR!("All electrums are currently disconnected");
     }
@@ -1200,7 +1223,11 @@ async fn electrum_request_to(
         (tx, responses)
     };
 
-    let response = try_s!(electrum_request(request.clone(), tx, responses).compat().await);
+    let response = try_s!(
+        electrum_request(request.clone(), tx, responses, ELECTRUM_TIMEOUT)
+            .compat()
+            .await
+    );
     Ok((JsonRpcRemoteAddr(to_addr.to_owned()), response))
 }
 
@@ -1469,35 +1496,29 @@ impl ElectrumClient {
 
     /// https://electrumx.readthedocs.io/en/latest/protocol-methods.html#blockchain-scripthash-gethistory
     fn scripthash_get_balance(&self, hash: &str) -> RpcRes<ElectrumBalance> {
-        rpc_func!(self, "blockchain.scripthash.get_balance", hash)
-        /*
         let arc = self.clone();
         let hash = hash.to_owned();
-        if self
-            .get_balance_in_progress
-            .compare_and_swap(false, true, AtomicOrdering::Relaxed)
-        {
-            let fut = async move {
+        let fut = async move {
+            let mut state = arc.get_balance_state.lock().await;
+            if state.is_running {
                 let (tx, rx) = async_oneshot::channel();
-                arc.get_balance_subs.lock().await.push(tx);
+                state.subscribers.push(tx);
+                drop(state);
                 rx.await.unwrap()
-            };
-            Box::new(fut.boxed().compat())
-        } else {
-            let fut = async move {
+            } else {
+                drop(state);
                 let balance_res = rpc_func!(arc, "blockchain.scripthash.get_balance", hash).compat().await;
-                for sub in arc.get_balance_subs.lock().await.drain(..) {
+                let mut state = arc.get_balance_state.lock().await;
+                for sub in state.subscribers.drain(..) {
                     if sub.send(balance_res.clone()).is_err() {
                         log!("list_unspent_sub is dropped");
                     }
                 }
-                arc.get_balance_in_progress.store(false, AtomicOrdering::Relaxed);
+                state.is_running = false;
                 balance_res
-            };
-            Box::new(fut.boxed().compat())
-        }
-
-         */
+            }
+        };
+        Box::new(fut.boxed().compat())
     }
 
     /// https://electrumx.readthedocs.io/en/latest/protocol-methods.html#blockchain-headers-subscribe
@@ -1679,6 +1700,7 @@ impl ElectrumClientImpl {
             get_balance_subs: Default::default(),
 
              */
+            get_balance_state: AsyncMutex::new(ConcurrentRequestState::new()),
         }
     }
 
@@ -2017,6 +2039,7 @@ fn electrum_request(
     request: JsonRpcRequest,
     tx: mpsc::Sender<Vec<u8>>,
     responses: Arc<AsyncMutex<HashMap<String, async_oneshot::Sender<JsonRpcResponse>>>>,
+    timeout: u64,
 ) -> Box<dyn Future<Item = JsonRpcResponse, Error = String> + Send + 'static> {
     let send_fut = async move {
         let mut json = try_s!(json::to_string(&request));
@@ -2034,7 +2057,7 @@ fn electrum_request(
         .boxed()
         .compat()
         .map_err(StringError)
-        .timeout(Duration::from_secs(ELECTRUM_TIMEOUT));
+        .timeout(Duration::from_secs(timeout));
 
     Box::new(send_fut.map_err(|e| ERRL!("{}", e.0)))
 }
