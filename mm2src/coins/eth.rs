@@ -2549,11 +2549,13 @@ impl MmCoin for EthCoin {
 
             // Please note if the wallet's balance is insufficient to withdraw, then `estimate_gas` may fail with the `Exception` error.
             // Ideally we should determine the case when we have the insufficient balance and return `TradePreimageError::NotSufficientBalance` error.
-            let gas_limit = try_map!(
+            let gas_limit: U256 = 100000.into();
+            /*
+                try_map!(
                 coin.estimate_gas(estimate_gas_req, None).compat().await,
                 TradePreimageError::Other
             );
-
+            */
             let total_fee = gas_limit * gas_price;
             let amount = try_map!(u256_to_big_decimal(total_fee, 18), TradePreimageError::Other);
             Ok(TradeFee {
