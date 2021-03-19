@@ -2496,12 +2496,13 @@ mod docker_tests {
             "rel": "MYCOIN1",
             "price": 1,
             "volume": 1,
+            "timeout": 2,
         })))
         .unwrap();
         assert!(rc.0.is_success(), "!sell: {}", rc.1);
 
-        log!("Give Bob 35 seconds to convert order to maker");
-        thread::sleep(Duration::from_secs(35));
+        log!("Give Bob 4 seconds to convert order to maker");
+        thread::sleep(Duration::from_secs(4));
 
         let rc = block_on(mm_alice.rpc(json! ({
             "userpass": mm_alice.userpass,

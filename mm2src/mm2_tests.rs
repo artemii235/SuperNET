@@ -23,6 +23,7 @@ use std::collections::HashMap;
 use std::convert::identity;
 use std::env::{self, var};
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::thread;
 use std::time::Duration;
 use uuid::Uuid;
@@ -291,11 +292,10 @@ fn alice_can_see_the_active_order_after_connection() {
     .unwrap();
     assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
 
-    let bob_orderbook: Json = json::from_str(&rc.1).unwrap();
+    let bob_orderbook: OrderbookResponse = json::from_str(&rc.1).unwrap();
     log!("Bob orderbook "[bob_orderbook]);
-    let asks = bob_orderbook["asks"].as_array().unwrap();
-    assert!(asks.len() > 0, "Bob RICK/MORTY asks are empty");
-    assert_eq!(Json::from("0.9"), asks[0]["maxvolume"]);
+    assert!(bob_orderbook.asks.len() > 0, "Bob RICK/MORTY asks are empty");
+    assert_eq!(BigDecimal::from_str("0.9").unwrap(), bob_orderbook.asks[0].max_volume);
 
     // start eve and immediately place the order
     let mut mm_eve = MarketMakerIt::start(
@@ -354,12 +354,18 @@ fn alice_can_see_the_active_order_after_connection() {
     .unwrap();
     assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
 
-    let eve_orderbook: Json = json::from_str(&rc.1).unwrap();
+    let eve_orderbook: OrderbookResponse = json::from_str(&rc.1).unwrap();
     log!("Eve orderbook "[eve_orderbook]);
-    let asks = eve_orderbook["asks"].as_array().unwrap();
-    let bids = eve_orderbook["bids"].as_array().unwrap();
-    assert_eq!(asks.len(), 2, "Eve RICK/MORTY orderbook must have exactly 2 asks");
-    assert_eq!(bids.len(), 1, "Eve RICK/MORTY orderbook must have exactly 1 bid");
+    assert_eq!(
+        eve_orderbook.asks.len(),
+        2,
+        "Eve RICK/MORTY orderbook must have exactly 2 asks"
+    );
+    assert_eq!(
+        eve_orderbook.bids.len(),
+        1,
+        "Eve RICK/MORTY orderbook must have exactly 1 bid"
+    );
 
     log!("Give Bob 2 seconds to import Eve order");
     thread::sleep(Duration::from_secs(2));
@@ -373,12 +379,18 @@ fn alice_can_see_the_active_order_after_connection() {
     .unwrap();
     assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
 
-    let bob_orderbook: Json = json::from_str(&rc.1).unwrap();
+    let bob_orderbook: OrderbookResponse = json::from_str(&rc.1).unwrap();
     log!("Bob orderbook "[bob_orderbook]);
-    let asks = bob_orderbook["asks"].as_array().unwrap();
-    let bids = bob_orderbook["bids"].as_array().unwrap();
-    assert_eq!(asks.len(), 2, "Bob RICK/MORTY orderbook must have exactly 2 asks");
-    assert_eq!(bids.len(), 1, "Bob RICK/MORTY orderbook must have exactly 1 bid");
+    assert_eq!(
+        bob_orderbook.asks.len(),
+        2,
+        "Bob RICK/MORTY orderbook must have exactly 2 asks"
+    );
+    assert_eq!(
+        bob_orderbook.bids.len(),
+        1,
+        "Bob RICK/MORTY orderbook must have exactly 1 bid"
+    );
 
     let mut mm_alice = MarketMakerIt::start(
         json! ({
@@ -414,12 +426,18 @@ fn alice_can_see_the_active_order_after_connection() {
     .unwrap();
     assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
 
-    let alice_orderbook: Json = json::from_str(&rc.1).unwrap();
+    let alice_orderbook: OrderbookResponse = json::from_str(&rc.1).unwrap();
     log!("Alice orderbook "[alice_orderbook]);
-    let asks = alice_orderbook["asks"].as_array().unwrap();
-    let bids = alice_orderbook["bids"].as_array().unwrap();
-    assert_eq!(asks.len(), 2, "Alice RICK/MORTY orderbook must have exactly 2 asks");
-    assert_eq!(bids.len(), 1, "Alice RICK/MORTY orderbook must have exactly 1 bid");
+    assert_eq!(
+        alice_orderbook.asks.len(),
+        2,
+        "Alice RICK/MORTY orderbook must have exactly 2 asks"
+    );
+    assert_eq!(
+        alice_orderbook.bids.len(),
+        1,
+        "Alice RICK/MORTY orderbook must have exactly 1 bid"
+    );
 
     block_on(mm_bob.stop()).unwrap();
     block_on(mm_alice.stop()).unwrap();
@@ -983,13 +1001,11 @@ async fn trade_base_rel_electrum(pairs: Vec<(&'static str, &'static str)>) {
             .unwrap();
         assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
 
-        let bob_orderbook: Json = json::from_str(&rc.1).unwrap();
+        let bob_orderbook: OrderbookResponse = json::from_str(&rc.1).unwrap();
         log!((base) "/" (rel) " orderbook " [bob_orderbook]);
 
-        let bids = bob_orderbook["bids"].as_array().unwrap();
-        let asks = bob_orderbook["asks"].as_array().unwrap();
-        assert_eq!(0, bids.len(), "{} {} bids must be empty", base, rel);
-        assert_eq!(0, asks.len(), "{} {} asks must be empty", base, rel);
+        assert_eq!(0, bob_orderbook.bids.len(), "{} {} bids must be empty", base, rel);
+        assert_eq!(0, bob_orderbook.asks.len(), "{} {} asks must be empty", base, rel);
     }
     mm_bob.stop().await.unwrap();
     mm_alice.stop().await.unwrap();
@@ -1368,107 +1384,6 @@ fn test_startup_passphrase() {
     assert!(key_pair_from_seed("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141").is_err());
 }
 
-/// MM2 should allow to issue several buy/sell calls in a row without delays.
-/// https://github.com/artemii235/SuperNET/issues/245
-#[test]
-#[cfg(not(target_arch = "wasm32"))]
-fn test_multiple_buy_sell_no_delay() {
-    let coins = json!([
-        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
-        {"coin":"MORTY","asset":"MORTY","rpcport":11608,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
-        {"coin":"ETH","name":"ethereum","protocol":{"type":"ETH"}},
-        {"coin":"JST","name":"jst","protocol":{"type":"ERC20","protocol_data":{"platform":"ETH","contract_address":"0x2b294F029Fde858b2c62184e8390591755521d8E"}}}
-    ]);
-
-    let (bob_file_passphrase, _bob_file_userpass) = from_env_file(slurp(&".env.seed").unwrap());
-    let bob_passphrase = var("BOB_PASSPHRASE")
-        .ok()
-        .or(bob_file_passphrase)
-        .expect("No BOB_PASSPHRASE or .env.seed/PASSPHRASE");
-
-    let mut mm = MarketMakerIt::start(
-        json! ({
-            "gui": "nogui",
-            "netid": 9998,
-            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
-            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
-            "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| s.parse::<i64>().unwrap()),
-            "passphrase": bob_passphrase,
-            "coins": coins,
-            "rpc_password": "pass",
-            "i_am_seed": true,
-        }),
-        "pass".into(),
-        match var("LOCAL_THREAD_MM") {
-            Ok(ref e) if e == "bob" => Some(local_start()),
-            _ => None,
-        },
-    )
-    .unwrap();
-    let (_dump_log, _dump_dashboard) = mm.mm_dump();
-    log!({"Log path: {}", mm.log_path.display()});
-    block_on(mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
-    log!([block_on(enable_coins_eth_electrum(&mm, &["http://195.201.0.6:8565"]))]);
-
-    let rc = block_on(mm.rpc(json! ({
-        "userpass": mm.userpass,
-        "method": "buy",
-        "base": "RICK",
-        "rel": "MORTY",
-        "price": 1,
-        "volume": 0.1,
-    })))
-    .unwrap();
-    assert!(rc.0.is_success(), "buy should have succeed, but got {:?}", rc);
-
-    let rc = block_on(mm.rpc(json! ({
-        "userpass": mm.userpass,
-        "method": "buy",
-        "base": "RICK",
-        "rel": "ETH",
-        "price": 1,
-        "volume": 0.1,
-    })))
-    .unwrap();
-    assert!(rc.0.is_success(), "buy should have succeed, but got {:?}", rc);
-    thread::sleep(Duration::from_secs(40));
-
-    log!("Get RICK/MORTY orderbook");
-    let rc = block_on(mm.rpc(json! ({
-        "userpass": mm.userpass,
-        "method": "orderbook",
-        "base": "RICK",
-        "rel": "MORTY",
-    })))
-    .unwrap();
-    assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
-
-    let bob_orderbook: Json = json::from_str(&rc.1).unwrap();
-    log!("RICK/MORTY orderbook "[bob_orderbook]);
-    let bids = bob_orderbook["bids"].as_array().unwrap();
-    let asks = bob_orderbook["asks"].as_array().unwrap();
-    assert!(bids.len() > 0, "RICK/MORTY bids are empty");
-    assert_eq!(0, asks.len(), "RICK/MORTY asks are not empty");
-    assert_eq!(Json::from("0.1"), bids[0]["maxvolume"]);
-
-    log!("Get RICK/ETH orderbook");
-    let rc = block_on(mm.rpc(json! ({
-        "userpass": mm.userpass,
-        "method": "orderbook",
-        "base": "RICK",
-        "rel": "ETH",
-    })))
-    .unwrap();
-    assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
-
-    let bob_orderbook: Json = json::from_str(&rc.1).unwrap();
-    log!("RICK/ETH orderbook "[bob_orderbook]);
-    let bids = bob_orderbook["bids"].as_array().unwrap();
-    assert!(bids.len() > 0, "RICK/ETH bids are empty");
-    assert_eq!(asks.len(), 0, "RICK/ETH asks are not empty");
-    assert_eq!(Json::from("0.1"), bids[0]["maxvolume"]);
-}
-
 /// https://github.com/artemii235/SuperNET/issues/398
 #[test]
 #[cfg(not(target_arch = "wasm32"))]
@@ -1560,10 +1475,13 @@ fn test_cancel_order() {
     .unwrap();
     assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
 
-    let alice_orderbook: Json = json::from_str(&rc.1).unwrap();
+    let alice_orderbook: OrderbookResponse = json::from_str(&rc.1).unwrap();
     log!("Alice orderbook "[alice_orderbook]);
-    let asks = alice_orderbook["asks"].as_array().unwrap();
-    assert_eq!(asks.len(), 1, "Alice RICK/MORTY orderbook must have exactly 1 ask");
+    assert_eq!(
+        alice_orderbook.asks.len(),
+        1,
+        "Alice RICK/MORTY orderbook must have exactly 1 ask"
+    );
 
     let cancel_rc = block_on(mm_bob.rpc(json! ({
         "userpass": mm_bob.userpass,
@@ -1595,10 +1513,9 @@ fn test_cancel_order() {
     .unwrap();
     assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
 
-    let bob_orderbook: Json = json::from_str(&rc.1).unwrap();
+    let bob_orderbook: OrderbookResponse = json::from_str(&rc.1).unwrap();
     log!("Bob orderbook "[bob_orderbook]);
-    let asks = bob_orderbook["asks"].as_array().unwrap();
-    assert_eq!(asks.len(), 0, "Bob RICK/MORTY asks are not empty");
+    assert_eq!(bob_orderbook.asks.len(), 0, "Bob RICK/MORTY asks are not empty");
 
     // Alice orderbook must show no orders
     log!("Get RICK/MORTY orderbook on Alice side");
@@ -1611,10 +1528,9 @@ fn test_cancel_order() {
     .unwrap();
     assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
 
-    let alice_orderbook: Json = json::from_str(&rc.1).unwrap();
+    let alice_orderbook: OrderbookResponse = json::from_str(&rc.1).unwrap();
     log!("Alice orderbook "[alice_orderbook]);
-    let asks = alice_orderbook["asks"].as_array().unwrap();
-    assert_eq!(asks.len(), 0, "Alice RICK/MORTY asks are not empty");
+    assert_eq!(alice_orderbook.asks.len(), 0, "Alice RICK/MORTY asks are not empty");
 }
 
 #[test]
@@ -1697,8 +1613,8 @@ fn test_cancel_all_orders() {
     // Enable coins on Alice side. Print the replies in case we need the "address".
     log! ({"enable_coins (alice): {:?}", block_on (enable_coins_eth_electrum (&mm_alice, &["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b"]))});
 
-    log!("Give Alice 15 seconds to import the order…");
-    thread::sleep(Duration::from_secs(15));
+    log!("Give Alice 3 seconds to import the order…");
+    thread::sleep(Duration::from_secs(3));
 
     log!("Get RICK/MORTY orderbook on Alice side");
     let rc = block_on(mm_alice.rpc(json! ({
@@ -1880,6 +1796,7 @@ fn test_order_should_not_be_displayed_when_node_is_down() {
             "coins": coins,
             "seednodes": [fomat!((mm_bob.ip))],
             "rpc_password": "pass",
+            "maker_order_timeout": 5,
         }),
         "pass".into(),
         match var("LOCAL_THREAD_MM") {
@@ -1941,7 +1858,7 @@ fn test_order_should_not_be_displayed_when_node_is_down() {
     assert_eq!(asks.len(), 1, "Alice RICK/MORTY orderbook must have exactly 1 ask");
 
     block_on(mm_bob.stop()).unwrap();
-    thread::sleep(Duration::from_secs(95));
+    thread::sleep(Duration::from_secs(6));
 
     let rc = block_on(mm_alice.rpc(json! ({
         "userpass": mm_alice.userpass,
@@ -1981,6 +1898,7 @@ fn test_own_orders_should_not_be_removed_from_orderbook() {
             "coins": coins,
             "i_am_seed": true,
             "rpc_password": "pass",
+            "maker_order_timeout": 5,
         }),
         "pass".into(),
         match var("LOCAL_THREAD_MM") {
@@ -2022,7 +1940,7 @@ fn test_own_orders_should_not_be_removed_from_orderbook() {
     .unwrap();
     assert!(rc.0.is_success(), "!setprice: {}", rc.1);
 
-    thread::sleep(Duration::from_secs(95));
+    thread::sleep(Duration::from_secs(6));
 
     let rc = block_on(mm_bob.rpc(json! ({
         "userpass": mm_bob.userpass,
@@ -2108,7 +2026,7 @@ fn test_all_orders_per_pair_per_node_must_be_displayed_in_orderbook() {
     .unwrap();
     assert!(rc.0.is_success(), "!setprice: {}", rc.1);
 
-    thread::sleep(Duration::from_secs(12));
+    thread::sleep(Duration::from_secs(2));
 
     log!("Get RICK/MORTY orderbook");
     let rc = block_on(mm.rpc(json! ({
@@ -2183,7 +2101,7 @@ fn orderbook_should_display_rational_amounts() {
     .unwrap();
     assert!(rc.0.is_success(), "!setprice: {}", rc.1);
 
-    thread::sleep(Duration::from_secs(12));
+    thread::sleep(Duration::from_secs(1));
     log!("Get RICK/MORTY orderbook");
     let rc = block_on(mm.rpc(json! ({
         "userpass": mm.userpass,
@@ -2194,25 +2112,20 @@ fn orderbook_should_display_rational_amounts() {
     .unwrap();
     assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
 
-    let orderbook: Json = json::from_str(&rc.1).unwrap();
+    let orderbook: OrderbookResponse = json::from_str(&rc.1).unwrap();
     log!("orderbook "[orderbook]);
-    let asks = orderbook["asks"].as_array().unwrap();
-    assert_eq!(asks.len(), 1, "RICK/MORTY orderbook must have exactly 1 ask");
-    let price_in_orderbook: BigRational = json::from_value(asks[0]["price_rat"].clone()).unwrap();
-    let volume_in_orderbook: BigRational = json::from_value(asks[0]["max_volume_rat"].clone()).unwrap();
-    assert_eq!(price, price_in_orderbook);
-    assert_eq!(volume, volume_in_orderbook);
+    assert_eq!(orderbook.asks.len(), 1, "RICK/MORTY orderbook must have exactly 1 ask");
+    assert_eq!(price, orderbook.asks[0].price_rat);
+    assert_eq!(volume, orderbook.asks[0].max_volume_rat);
 
     let nine = BigInt::from(9);
     let ten = BigInt::from(10);
     // should also display fraction
-    let price_in_orderbook: Fraction = json::from_value(asks[0]["price_fraction"].clone()).unwrap();
-    let volume_in_orderbook: Fraction = json::from_value(asks[0]["max_volume_fraction"].clone()).unwrap();
-    assert_eq!(nine, *price_in_orderbook.numer());
-    assert_eq!(ten, *price_in_orderbook.denom());
+    assert_eq!(nine, *orderbook.asks[0].price_fraction.numer());
+    assert_eq!(ten, *orderbook.asks[0].price_fraction.denom());
 
-    assert_eq!(nine, *volume_in_orderbook.numer());
-    assert_eq!(ten, *volume_in_orderbook.denom());
+    assert_eq!(nine, *orderbook.asks[0].max_volume_fraction.numer());
+    assert_eq!(ten, *orderbook.asks[0].max_volume_fraction.denom());
 
     log!("Get MORTY/RICK orderbook");
     let rc = block_on(mm.rpc(json! ({
@@ -2224,25 +2137,119 @@ fn orderbook_should_display_rational_amounts() {
     .unwrap();
     assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
 
-    let orderbook: Json = json::from_str(&rc.1).unwrap();
+    let orderbook: OrderbookResponse = json::from_str(&rc.1).unwrap();
     log!("orderbook "[orderbook]);
-    let bids = orderbook["bids"].as_array().unwrap();
-    assert_eq!(bids.len(), 1, "MORTY/RICK orderbook must have exactly 1 bid");
-    let price_in_orderbook: BigRational = json::from_value(bids[0]["price_rat"].clone()).unwrap();
-    let volume_in_orderbook: BigRational = json::from_value(bids[0]["max_volume_rat"].clone()).unwrap();
+    assert_eq!(orderbook.bids.len(), 1, "MORTY/RICK orderbook must have exactly 1 bid");
 
     let price = BigRational::new(10.into(), 9.into());
-    assert_eq!(price, price_in_orderbook);
-    assert_eq!(volume, volume_in_orderbook);
+    assert_eq!(price, orderbook.bids[0].price_rat);
+    assert_eq!(volume, orderbook.bids[0].max_volume_rat);
 
     // should also display fraction
-    let price_in_orderbook: Fraction = json::from_value(bids[0]["price_fraction"].clone()).unwrap();
-    let volume_in_orderbook: Fraction = json::from_value(bids[0]["max_volume_fraction"].clone()).unwrap();
-    assert_eq!(ten, *price_in_orderbook.numer());
-    assert_eq!(nine, *price_in_orderbook.denom());
+    assert_eq!(ten, *orderbook.bids[0].price_fraction.numer());
+    assert_eq!(nine, *orderbook.bids[0].price_fraction.denom());
 
-    assert_eq!(nine, *volume_in_orderbook.numer());
-    assert_eq!(ten, *volume_in_orderbook.denom());
+    assert_eq!(nine, *orderbook.bids[0].max_volume_fraction.numer());
+    assert_eq!(ten, *orderbook.bids[0].max_volume_fraction.denom());
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn orderbook_should_display_base_rel_volumes() {
+    let coins = json!([
+        {"coin":"RICK","asset":"RICK","protocol":{"type":"UTXO"}},
+        {"coin":"MORTY","asset":"MORTY","protocol":{"type":"UTXO"}},
+    ]);
+
+    let mut mm = MarketMakerIt::start(
+        json! ({
+            "gui": "nogui",
+            "netid": 9998,
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| s.parse::<i64>().unwrap()),
+            "passphrase": "bob passphrase",
+            "coins": coins,
+            "rpc_password": "pass",
+            "i_am_seed": true,
+        }),
+        "pass".into(),
+        match var("LOCAL_THREAD_MM") {
+            Ok(ref e) if e == "bob" => Some(local_start()),
+            _ => None,
+        },
+    )
+    .unwrap();
+    let (_dump_log, _dump_dashboard) = &mm.mm_dump();
+    log!({"Log path: {}", mm.log_path.display()});
+    block_on(mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
+    block_on(enable_electrum(&mm, "RICK", false, &[
+        "electrum3.cipig.net:10017",
+        "electrum2.cipig.net:10017",
+        "electrum1.cipig.net:10017",
+    ]));
+    block_on(enable_electrum(&mm, "MORTY", false, &[
+        "electrum3.cipig.net:10018",
+        "electrum2.cipig.net:10018",
+        "electrum1.cipig.net:10018",
+    ]));
+
+    let price = BigRational::new(2.into(), 1.into());
+    let volume = BigRational::new(1.into(), 1.into());
+
+    // create order with rational amount and price
+    let rc = block_on(mm.rpc(json! ({
+        "userpass": mm.userpass,
+        "method": "setprice",
+        "base": "RICK",
+        "rel": "MORTY",
+        "price": price,
+        "volume": volume,
+        "cancel_previous": false,
+    })))
+    .unwrap();
+    assert!(rc.0.is_success(), "!setprice: {}", rc.1);
+
+    thread::sleep(Duration::from_secs(1));
+    log!("Get RICK/MORTY orderbook");
+    let rc = block_on(mm.rpc(json! ({
+        "userpass": mm.userpass,
+        "method": "orderbook",
+        "base": "RICK",
+        "rel": "MORTY",
+    })))
+    .unwrap();
+    assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
+
+    let orderbook: OrderbookResponse = json::from_str(&rc.1).unwrap();
+    log!("orderbook "[orderbook]);
+    assert_eq!(orderbook.asks.len(), 1, "RICK/MORTY orderbook must have exactly 1 ask");
+    let min_volume = BigRational::new(777.into(), 100000.into());
+    assert_eq!(volume, orderbook.asks[0].base_max_volume_rat);
+    assert_eq!(min_volume, orderbook.asks[0].base_min_volume_rat);
+
+    assert_eq!(&volume * &price, orderbook.asks[0].rel_max_volume_rat);
+    assert_eq!(&min_volume * &price, orderbook.asks[0].rel_min_volume_rat);
+
+    log!("Get MORTY/RICK orderbook");
+    let rc = block_on(mm.rpc(json! ({
+        "userpass": mm.userpass,
+        "method": "orderbook",
+        "base": "MORTY",
+        "rel": "RICK",
+    })))
+    .unwrap();
+    assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
+
+    let orderbook: OrderbookResponse = json::from_str(&rc.1).unwrap();
+    log!("orderbook "[orderbook]);
+    assert_eq!(orderbook.bids.len(), 1, "MORTY/RICK orderbook must have exactly 1 bid");
+    let min_volume = BigRational::new(777.into(), 100000.into());
+    assert_eq!(volume, orderbook.bids[0].rel_max_volume_rat);
+    assert_eq!(min_volume, orderbook.bids[0].rel_min_volume_rat);
+
+    assert_eq!(&volume * &price, orderbook.bids[0].base_max_volume_rat);
+    assert_eq!(&min_volume * &price, orderbook.bids[0].base_min_volume_rat);
 }
 
 fn check_priv_key(mm: &MarketMakerIt, coin: &str, expected_priv_key: &str) {
@@ -2760,7 +2767,8 @@ fn test_fill_or_kill_taker_order_should_not_transform_to_maker() {
         "volume": 0.1,
         "order_type": {
             "type": "FillOrKill"
-        }
+        },
+        "timeout": 2,
     })))
     .unwrap();
     assert!(rc.0.is_success(), "!sell: {}", rc.1);
@@ -2768,8 +2776,8 @@ fn test_fill_or_kill_taker_order_should_not_transform_to_maker() {
     let order_type = sell_json["result"]["order_type"]["type"].as_str();
     assert_eq!(order_type, Some("FillOrKill"));
 
-    log!("Wait for 40 seconds for Bob order to be cancelled");
-    thread::sleep(Duration::from_secs(40));
+    log!("Wait for 4 seconds for Bob order to be cancelled");
+    thread::sleep(Duration::from_secs(4));
 
     let rc = block_on(mm_bob.rpc(json! ({
         "userpass": mm_bob.userpass,
@@ -2831,15 +2839,16 @@ fn test_gtc_taker_order_should_transform_to_maker() {
         "volume": 0.1,
         "order_type": {
             "type": "GoodTillCancelled"
-        }
+        },
+        "timeout": 2,
     })))
     .unwrap();
     assert!(rc.0.is_success(), "!setprice: {}", rc.1);
     let rc_json: Json = json::from_str(&rc.1).unwrap();
     let uuid: Uuid = json::from_value(rc_json["result"]["uuid"].clone()).unwrap();
 
-    log!("Wait for 40 seconds for Bob order to be converted to maker");
-    thread::sleep(Duration::from_secs(40));
+    log!("Wait for 4 seconds for Bob order to be converted to maker");
+    thread::sleep(Duration::from_secs(4));
 
     let rc = block_on(mm_bob.rpc(json! ({
         "userpass": mm_bob.userpass,
@@ -3074,7 +3083,7 @@ fn set_price_with_cancel_previous_should_broadcast_cancelled_message() {
     let rc = block_on(mm_bob.rpc(set_price_json.clone())).unwrap();
     assert!(rc.0.is_success(), "!setprice: {}", rc.1);
 
-    let pause = 11;
+    let pause = 2;
     log!("Waiting (" (pause) " seconds) for Bob to broadcast messages…");
     thread::sleep(Duration::from_secs(pause));
 
@@ -4506,8 +4515,7 @@ fn test_buy_response_format() {
     })))
     .unwrap();
     assert!(rc.0.is_success(), "!buy: {}", rc.1);
-    let json: Json = json::from_str(&rc.1).unwrap();
-    let _: BuyOrSellRpcResult = json::from_value(json["result"].clone()).unwrap();
+    let _: BuyOrSellRpcResult = json::from_str(&rc.1).unwrap();
 }
 
 #[test]
@@ -4562,8 +4570,7 @@ fn test_sell_response_format() {
     })))
     .unwrap();
     assert!(rc.0.is_success(), "!sell: {}", rc.1);
-    let json: Json = json::from_str(&rc.1).unwrap();
-    let _: BuyOrSellRpcResult = json::from_value(json["result"].clone()).unwrap();
+    let _: BuyOrSellRpcResult = json::from_str(&rc.1).unwrap();
 }
 
 #[test]
@@ -4643,8 +4650,7 @@ fn test_my_orders_response_format() {
     .unwrap();
     assert!(rc.0.is_success(), "!my_orders: {}", rc.1);
 
-    let json: Json = json::from_str(&rc.1).unwrap();
-    let _: MyOrdersRpcResult = json::from_value(json["result"].clone()).unwrap();
+    let _: MyOrdersRpcResult = json::from_str(&rc.1).unwrap();
 }
 
 #[test]
@@ -4734,8 +4740,7 @@ fn test_my_orders_after_matched() {
     .unwrap();
     assert!(rc.0.is_success(), "!my_orders: {}", rc.1);
 
-    let json: Json = json::from_str(&rc.1).unwrap();
-    let _: MyOrdersRpcResult = json::from_value(json["result"].clone()).unwrap();
+    let _: MyOrdersRpcResult = json::from_str(&rc.1).unwrap();
     block_on(mm_bob.stop()).unwrap();
     block_on(mm_alice.stop()).unwrap();
 }
@@ -5024,9 +5029,6 @@ fn test_orderbook_is_mine_orders() {
     // Enable coins on Alice side. Print the replies in case we need the "address".
     log! ({"enable_coins (alice): {:?}", block_on (enable_coins_eth_electrum (&mm_alice, &["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b"]))});
 
-    log!("Give Alice 15 seconds to import the order…");
-    thread::sleep(Duration::from_secs(15));
-
     // Bob orderbook must show 1 mine order
     log!("Get RICK/MORTY orderbook on Bob side");
     let rc = block_on(mm_bob.rpc(json! ({
@@ -5075,8 +5077,8 @@ fn test_orderbook_is_mine_orders() {
     .unwrap();
     assert!(rc.0.is_success(), "!buy: {}", rc.1);
 
-    log!("Give Bob 15 seconds to import the order…");
-    thread::sleep(Duration::from_secs(15));
+    log!("Give Bob 2 seconds to import the order…");
+    thread::sleep(Duration::from_secs(2));
 
     // Bob orderbook must show 1 mine and 1 non-mine orders.
     // Request orderbook with reverse base and rel coins to check bids instead of asks
@@ -5172,7 +5174,8 @@ fn test_sell_min_volume() {
         "min_volume": min_volume,
         "order_type": {
             "type": "GoodTillCancelled"
-        }
+        },
+        "timeout": 2,
     })))
     .unwrap();
     assert!(rc.0.is_success(), "!sell: {}", rc.1);
@@ -5181,8 +5184,8 @@ fn test_sell_min_volume() {
     let min_volume_response: BigDecimal = json::from_value(rc_json["result"]["min_volume"].clone()).unwrap();
     assert_eq!(min_volume, min_volume_response);
 
-    log!("Wait for 40 seconds for Bob order to be converted to maker");
-    thread::sleep(Duration::from_secs(40));
+    log!("Wait for 4 seconds for Bob order to be converted to maker");
+    thread::sleep(Duration::from_secs(4));
 
     let rc = block_on(mm_bob.rpc(json! ({
         "userpass": mm_bob.userpass,
@@ -5198,6 +5201,115 @@ fn test_sell_min_volume() {
     let maker_order = my_maker_orders.get(&uuid).unwrap();
     let min_volume_maker: BigDecimal = json::from_value(maker_order["min_base_vol"].clone()).unwrap();
     assert_eq!(min_volume, min_volume_maker);
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn test_sell_min_volume_dust() {
+    let bob_passphrase = get_passphrase(&".env.client", "BOB_PASSPHRASE").unwrap();
+
+    let coins = json! ([
+        {"coin":"RICK","asset":"RICK","dust":10000000,"required_confirmations":0,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
+        {"coin":"MORTY","asset":"MORTY","required_confirmations":0,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
+        {"coin":"ETH","name":"ethereum","protocol":{"type":"ETH"}},
+        {"coin":"JST","name":"jst","protocol":{"type":"ERC20","protocol_data":{"platform":"ETH","contract_address":"0x2b294F029Fde858b2c62184e8390591755521d8E"}}}
+    ]);
+
+    let mut mm_bob = MarketMakerIt::start(
+        json! ({
+            "gui": "nogui",
+            "netid": 8999,
+            "dht": "on",  // Enable DHT without delay.
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| s.parse::<i64>().unwrap()),
+            "passphrase": bob_passphrase,
+            "coins": coins,
+            "rpc_password": "password",
+            "i_am_seed": true,
+        }),
+        "password".into(),
+        local_start!("bob"),
+    )
+    .unwrap();
+
+    let (_bob_dump_log, _bob_dump_dashboard) = mm_bob.mm_dump();
+    log! ({"Bob log path: {}", mm_bob.log_path.display()});
+    block_on(mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
+    log!([block_on(enable_coins_eth_electrum(&mm_bob, &[
+        "http://195.201.0.6:8565"
+    ]))]);
+
+    log!("Issue bob RICK/MORTY sell request");
+    let rc = block_on(mm_bob.rpc(json! ({
+        "userpass": mm_bob.userpass,
+        "method": "sell",
+        "base": "RICK",
+        "rel": "MORTY",
+        "price": "1",
+        "volume": "1",
+        "order_type": {
+            "type": "FillOrKill"
+        }
+    })))
+    .unwrap();
+    assert!(rc.0.is_success(), "!sell: {}", rc.1);
+    let response: BuyOrSellRpcResult = json::from_str(&rc.1).unwrap();
+    let expected_min = BigDecimal::from(1);
+    assert_eq!(response.result.min_volume, expected_min);
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn test_setprice_min_volume_dust() {
+    let bob_passphrase = get_passphrase(&".env.client", "BOB_PASSPHRASE").unwrap();
+
+    let coins = json! ([
+        {"coin":"RICK","asset":"RICK","dust":10000000,"required_confirmations":0,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
+        {"coin":"MORTY","asset":"MORTY","required_confirmations":0,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
+        {"coin":"ETH","name":"ethereum","protocol":{"type":"ETH"}},
+        {"coin":"JST","name":"jst","protocol":{"type":"ERC20","protocol_data":{"platform":"ETH","contract_address":"0x2b294F029Fde858b2c62184e8390591755521d8E"}}}
+    ]);
+
+    let mut mm_bob = MarketMakerIt::start(
+        json! ({
+            "gui": "nogui",
+            "netid": 8999,
+            "dht": "on",  // Enable DHT without delay.
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| s.parse::<i64>().unwrap()),
+            "passphrase": bob_passphrase,
+            "coins": coins,
+            "rpc_password": "password",
+            "i_am_seed": true,
+        }),
+        "password".into(),
+        local_start!("bob"),
+    )
+    .unwrap();
+
+    let (_bob_dump_log, _bob_dump_dashboard) = mm_bob.mm_dump();
+    log! ({"Bob log path: {}", mm_bob.log_path.display()});
+    block_on(mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
+    log!([block_on(enable_coins_eth_electrum(&mm_bob, &[
+        "http://195.201.0.6:8565"
+    ]))]);
+
+    log!("Issue bob RICK/MORTY sell request");
+    let rc = block_on(mm_bob.rpc(json! ({
+        "userpass": mm_bob.userpass,
+        "method": "setprice",
+        "base": "RICK",
+        "rel": "MORTY",
+        "price": "1",
+        "volume": "1",
+    })))
+    .unwrap();
+    assert!(rc.0.is_success(), "!setprice: {}", rc.1);
+    let response: SetPriceResult = json::from_str(&rc.1).unwrap();
+    let expected_min = BigDecimal::from(1);
+    assert_eq!(expected_min, response.result.min_base_vol);
 }
 
 #[test]
@@ -5249,17 +5361,16 @@ fn test_buy_min_volume() {
         "min_volume": min_volume,
         "order_type": {
             "type": "GoodTillCancelled"
-        }
+        },
+        "timeout": 2,
     })))
     .unwrap();
     assert!(rc.0.is_success(), "!sell: {}", rc.1);
-    let rc_json: Json = json::from_str(&rc.1).unwrap();
-    let uuid: Uuid = json::from_value(rc_json["result"]["uuid"].clone()).unwrap();
-    let min_volume_response: BigDecimal = json::from_value(rc_json["result"]["min_volume"].clone()).unwrap();
-    assert_eq!(min_volume, min_volume_response);
+    let response: BuyOrSellRpcResult = json::from_str(&rc.1).unwrap();
+    assert_eq!(min_volume, response.result.min_volume);
 
-    log!("Wait for 40 seconds for Bob order to be converted to maker");
-    thread::sleep(Duration::from_secs(40));
+    log!("Wait for 4 seconds for Bob order to be converted to maker");
+    thread::sleep(Duration::from_secs(4));
 
     let rc = block_on(mm_bob.rpc(json! ({
         "userpass": mm_bob.userpass,
@@ -5267,16 +5378,17 @@ fn test_buy_min_volume() {
     })))
     .unwrap();
     assert!(rc.0.is_success(), "!my_orders: {}", rc.1);
-    let my_orders: Json = json::from_str(&rc.1).unwrap();
-    let my_maker_orders: HashMap<Uuid, Json> = json::from_value(my_orders["result"]["maker_orders"].clone()).unwrap();
-    let my_taker_orders: HashMap<Uuid, Json> = json::from_value(my_orders["result"]["taker_orders"].clone()).unwrap();
-    assert_eq!(1, my_maker_orders.len(), "maker_orders must have exactly 1 order");
-    assert!(my_taker_orders.is_empty(), "taker_orders must be empty");
-    let maker_order = my_maker_orders.get(&uuid).unwrap();
+    let my_orders: MyOrdersRpcResult = json::from_str(&rc.1).unwrap();
+    assert_eq!(
+        1,
+        my_orders.result.maker_orders.len(),
+        "maker_orders must have exactly 1 order"
+    );
+    assert!(my_orders.result.taker_orders.is_empty(), "taker_orders must be empty");
+    let maker_order = my_orders.result.maker_orders.get(&response.result.uuid).unwrap();
 
     let expected_min_volume: BigDecimal = "0.2".parse().unwrap();
-    let min_volume_maker: BigDecimal = json::from_value(maker_order["min_base_vol"].clone()).unwrap();
-    assert_eq!(expected_min_volume, min_volume_maker);
+    assert_eq!(expected_min_volume, maker_order.min_base_vol);
 }
 
 #[test]
@@ -5329,6 +5441,8 @@ fn test_best_orders() {
         ("MORTY", "RICK", "0.8", "0.9", None),
         ("MORTY", "RICK", "0.9", "0.9", None),
         ("ETH", "RICK", "0.8", "0.9", None),
+        ("MORTY", "ETH", "0.8", "0.8", None),
+        ("MORTY", "ETH", "0.7", "0.8", Some("0.8")),
     ];
     for (base, rel, price, volume, min_volume) in bob_orders.iter() {
         let rc = block_on(mm_bob.rpc(json! ({
@@ -5428,6 +5542,24 @@ fn test_best_orders() {
 
     let best_eth_orders = response.result.get("ETH").unwrap();
     assert_eq!(expected_price, best_eth_orders[0].price);
+
+    let rc = block_on(mm_alice.rpc(json! ({
+        "userpass": mm_alice.userpass,
+        "method": "best_orders",
+        "coin": "ETH",
+        "action": "sell",
+        "volume": "0.1",
+    })))
+    .unwrap();
+    assert!(rc.0.is_success(), "!best_orders: {}", rc.1);
+    let response: BestOrdersResponse = json::from_str(&rc.1).unwrap();
+
+    let expected_price: BigDecimal = "1.25".parse().unwrap();
+
+    let best_morty_orders = response.result.get("MORTY").unwrap();
+    assert_eq!(expected_price, best_morty_orders[0].price);
+    assert_eq!("MORTY", best_morty_orders[0].coin);
+    assert_eq!(1, best_morty_orders.len());
 
     block_on(mm_bob.stop()).unwrap();
     block_on(mm_alice.stop()).unwrap();
@@ -5648,6 +5780,7 @@ mod wasm_bindgen_tests {
             1.into(),
             taker_persistent_pub,
             uuid,
+            None,
             conf_settings.clone(),
             eth_taker,
             jst_taker,
@@ -5661,6 +5794,7 @@ mod wasm_bindgen_tests {
             1.into(),
             maker_persistent_pub,
             uuid,
+            None,
             conf_settings,
             eth_maker,
             jst_maker,

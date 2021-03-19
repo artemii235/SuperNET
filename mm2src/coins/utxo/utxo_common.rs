@@ -556,6 +556,12 @@ pub fn p2sh_spending_tx(
     sequence: u32,
     lock_time: u32,
 ) -> Result<UtxoTx, String> {
+    let lock_time_by_now = if coin.conf.ticker == "KMD" {
+        (now_ms() / 1000) as u32 - 3600 + 2 * 777
+    } else {
+        (now_ms() / 1000) as u32 - 3600
+    };
+    let lock_time = lock_time_by_now.max(lock_time);
     let n_time = if coin.conf.is_pos {
         Some((now_ms() / 1000) as u32)
     } else {
