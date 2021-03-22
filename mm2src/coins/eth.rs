@@ -416,7 +416,7 @@ async fn withdraw_impl(ctx: MmArc, coin: EthCoin, req: WithdrawRequest) -> Resul
         EthCoinType::Erc20 { platform, token_addr } => {
             let function = try_s!(ERC20_CONTRACT.function("transfer"));
             let data = try_s!(function.encode_input(&[Token::Address(to_addr), Token::Uint(wei_amount)]));
-            (0.into(), data, token_addr.clone(), platform.as_str())
+            (0.into(), data, *token_addr, platform.as_str())
         },
     };
 
