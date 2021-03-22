@@ -10,8 +10,6 @@ trigger:
   branches:
     include:
       - refs/heads/*
-    exclude:
-      - refs/heads/mm2.1-bsc
   paths:
     exclude:
       - README.md
