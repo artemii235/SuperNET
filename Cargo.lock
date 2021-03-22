@@ -5784,7 +5784,7 @@ dependencies = [
 [[package]]
 name = "web3"
 version = "0.6.0"
-source = "git+https://github.com/artemii235/rust-web3#d19e290aee455bba982fe655686b501ebf4eb963"
+source = "git+https://github.com/artemii235/rust-web3#9357249d31c258c5a7d47dfc51e9bb7d980056f1"
 dependencies = [
  "arrayvec 0.4.12",
  "base64 0.10.1",
