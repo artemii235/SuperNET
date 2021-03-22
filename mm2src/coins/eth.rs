@@ -423,8 +423,14 @@ async fn withdraw_impl(ctx: MmArc, coin: EthCoin, req: WithdrawRequest) -> Resul
         Some(_) => return ERR!("Unsupported input fee type"),
         None => {
             let gas_price = try_s!(coin.get_gas_price().compat().await);
+            // covering edge case by deducting the standard transfer fee when we want to max withdraw ETH
+            let eth_value_for_estimate = if req.max && coin.coin_type == EthCoinType::Eth {
+                eth_value - gas_price * U256::from(21000)
+            } else {
+                eth_value
+            };
             let estimate_gas_req = CallRequest {
-                value: Some(eth_value),
+                value: Some(eth_value_for_estimate),
                 data: Some(data.clone().into()),
                 from: Some(coin.my_address),
                 to: call_addr,
