@@ -1,6 +1,6 @@
 use super::*;
 #[cfg(not(target_arch = "wasm32"))]
-use crate::common::log::LOG_OUTPUT;
+use crate::common::log::{register_callback, FfiCallback};
 use crate::common::mm_ctx::MmArc;
 use futures01::Future;
 use gstuff::{any_to_str, now_float};
@@ -53,9 +53,7 @@ pub unsafe extern "C" fn mm2_main(conf: *const c_char, log_cb: extern "C" fn(lin
     };
     let conf = conf.to_owned();
 
-    let mut log_output = LOG_OUTPUT.lock();
-    *log_output = Some(log_cb);
-
+    register_callback(FfiCallback::with_ffi_function(log_cb));
     let rc = thread::Builder::new().name("lp_main".into()).spawn(move || {
         if LP_MAIN_RUNNING.compare_and_swap(false, true, Ordering::Relaxed) {
             log!("lp_main already started!");
@@ -86,7 +84,7 @@ pub extern "C" fn mm2_main_status() -> i8 { mm2_status() as i8 }
 #[no_mangle]
 #[cfg(not(target_arch = "wasm32"))]
 pub extern "C" fn mm2_test(torch: i32, log_cb: extern "C" fn(line: *const c_char)) -> i32 {
-    *LOG_OUTPUT.lock() = Some(log_cb);
+    register_callback(FfiCallback::with_ffi_function(log_cb));
 
     static RUNNING: AtomicBool = AtomicBool::new(false);
     if RUNNING.compare_and_swap(false, true, Ordering::Relaxed) {

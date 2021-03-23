@@ -41,7 +41,6 @@ use mm2_libp2p::{decode_signed, encode_and_sign, encode_message, pub_sub_topic, 
 use num_rational::BigRational;
 use num_traits::identities::Zero;
 use order_requests_tracker::OrderRequestsTracker;
-use parity_util_mem::malloc_size;
 use rpc::v1::types::H256 as H256Json;
 use serde_json::{self as json, Value as Json};
 use sp_trie::{delta_trie_root, DBValue, HashDBT, MemoryDB, Trie, TrieConfiguration, TrieDB, TrieDBMut, TrieHash,
@@ -1816,7 +1815,14 @@ fn populate_trie<'db, T: TrieConfiguration>(
     Ok(t)
 }
 
+/// `parity_util_mem::malloc_size` crushes for some reason on wasm32
+#[cfg(target_arch = "wasm32")]
+fn collect_orderbook_metrics(_ctx: &MmArc, _orderbook: &Orderbook) {}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn collect_orderbook_metrics(ctx: &MmArc, orderbook: &Orderbook) {
+    use parity_util_mem::malloc_size;
+
     fn history_committed_changes(history: &HashMap<AlbOrderedOrderbookPair, TrieOrderHistory>) -> i64 {
         let total = history
             .iter()

@@ -1,4 +1,4 @@
-use super::lp_main;
+use super::{lp_main, LpMainParams};
 use bigdecimal::BigDecimal;
 #[cfg(target_arch = "wasm32")] use common::call_back;
 use common::executor::Timer;
@@ -152,7 +152,8 @@ fn test_mm_start() {
     if let Ok(conf) = var("_MM2_TEST_CONF") {
         log!("test_mm_start] Starting the MarketMaker...");
         let conf: Json = json::from_str(&conf).unwrap();
-        lp_main(conf, &|_ctx| ()).unwrap()
+        let params = LpMainParams::with_conf(conf);
+        block_on(lp_main(params, &|_ctx| ())).unwrap()
     }
 }
 
@@ -200,7 +201,8 @@ fn local_start_impl(folder: PathBuf, log_path: PathBuf, mut conf: Json) {
 
             chdir(&folder);
 
-            lp_main(conf, &|_ctx| ()).unwrap()
+            let params = LpMainParams::with_conf(conf);
+            block_on(lp_main(params, &|_ctx| ())).unwrap()
         })
         .unwrap();
 }

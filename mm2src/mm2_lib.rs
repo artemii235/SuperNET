@@ -27,10 +27,12 @@ mod mm2_wasm_lib;
 
 use crate::common::mm_ctx::MmArc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+#[cfg(target_arch = "wasm32")] use wasm_bindgen::prelude::*;
 
 static LP_MAIN_RUNNING: AtomicBool = AtomicBool::new(false);
 static CTX: AtomicU32 = AtomicU32::new(0);
 
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 pub enum MainStatus {
     /// MM2 is not running yet.
     NotRunning = 0,
