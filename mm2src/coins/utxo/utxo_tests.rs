@@ -2414,6 +2414,5 @@ fn firo_mtp() {
         .get_median_time_past(356730, NonZeroU64::new(11).unwrap())
         .wait()
         .unwrap();
-    println!("{}", mtp);
-    // assert_eq!(mtp, 1614849084);
+    assert_eq!(mtp, 1616492629);
 }
