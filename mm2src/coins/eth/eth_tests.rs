@@ -24,7 +24,17 @@ fn eth_coin_for_test(coin_type: EthCoinType, urls: Vec<String>) -> (MmArc, EthCo
     .unwrap();
     let transport = Web3Transport::new(urls).unwrap();
     let web3 = Web3::new(transport);
-    let ctx = MmCtxBuilder::new().into_mm_arc();
+    let conf = json!({
+        "coins":[
+           {"coin":"ETH","name":"ethereum","protocol":{"type":"ETH"},"rpcport":80,"mm2":1},
+           {"coin":"JST","name":"jst","rpcport":80,"mm2":1,"protocol":{"type":"ERC20","protocol_data":{"platform":"ETH","contract_address":"0x2b294F029Fde858b2c62184e8390591755521d8E"}}}
+        ]
+    });
+    let ctx = MmCtxBuilder::new().with_conf(conf.clone()).into_mm_arc();
+    let ticker = match coin_type {
+        EthCoinType::Eth => "ETH".to_string(),
+        EthCoinType::Erc20 { .. } => "JST".to_string(),
+    };
 
     let eth_coin = EthCoin(Arc::new(EthCoinImpl {
         coin_type,
@@ -34,7 +44,7 @@ fn eth_coin_for_test(coin_type: EthCoinType, urls: Vec<String>) -> (MmArc, EthCo
         my_address: key_pair.address(),
         key_pair,
         swap_contract_address: Address::from("0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94"),
-        ticker: "ETH".into(),
+        ticker,
         web3_instances: vec![Web3Instance {
             web3: web3.clone(),
             is_parity: true,
@@ -186,7 +196,10 @@ fn send_and_refund_erc20_payment() {
     let ctx = MmCtxBuilder::new().into_mm_arc();
     let coin = EthCoin(Arc::new(EthCoinImpl {
         ticker: "ETH".into(),
-        coin_type: EthCoinType::Erc20(Address::from("0xc0eb7AeD740E1796992A08962c15661bDEB58003")),
+        coin_type: EthCoinType::Erc20 {
+            platform: "ETH".to_string(),
+            token_addr: Address::from("0xc0eb7AeD740E1796992A08962c15661bDEB58003"),
+        },
         my_address: key_pair.address(),
         key_pair,
         swap_contract_address: Address::from("0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94"),
@@ -483,7 +496,10 @@ fn test_search_for_swap_tx_spend_was_refunded() {
 
     let swap_contract_address = Address::from("0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94");
     let coin = EthCoin(Arc::new(EthCoinImpl {
-        coin_type: EthCoinType::Erc20(Address::from("0xc0eb7aed740e1796992a08962c15661bdeb58003")),
+        coin_type: EthCoinType::Erc20 {
+            platform: "ETH".to_string(),
+            token_addr: Address::from("0xc0eb7aed740e1796992a08962c15661bdeb58003"),
+        },
         decimals: 18,
         gas_station_url: None,
         history_sync_state: Mutex::new(HistorySyncState::NotEnabled),
@@ -550,6 +566,47 @@ fn test_withdraw_impl_manual_fee() {
         amount: 1.into(),
         to: "0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94".to_string(),
         coin: "ETH".to_string(),
+        max: false,
+        fee: Some(WithdrawFee::EthGas {
+            gas: 150000,
+            gas_price: 1.into(),
+        }),
+    };
+    coin.my_balance().wait().unwrap();
+
+    let tx_details = block_on(withdraw_impl(ctx, coin.clone(), withdraw_req)).unwrap();
+    let expected = Some(
+        EthTxFeeDetails {
+            coin: "ETH".into(),
+            gas_price: "0.000000001".parse().unwrap(),
+            gas: 150000,
+            total_fee: "0.00015".parse().unwrap(),
+        }
+        .into(),
+    );
+    assert_eq!(expected, tx_details.fee_details);
+}
+
+#[test]
+fn test_withdraw_impl_fee_details() {
+    let (ctx, coin) = eth_coin_for_test(
+        EthCoinType::Erc20 {
+            platform: "ETH".to_string(),
+            token_addr: Address::from("0x2b294F029Fde858b2c62184e8390591755521d8E"),
+        },
+        vec!["http://dummy.dummy".into()],
+    );
+
+    EthCoin::my_balance.mock_safe(|_| {
+        let balance = wei_from_big_decimal(&1000000000.into(), 18).unwrap();
+        MockResult::Return(Box::new(futures01::future::ok(balance)))
+    });
+    get_addr_nonce.mock_safe(|_, _| MockResult::Return(Box::new(futures01::future::ok(0.into()))));
+
+    let withdraw_req = WithdrawRequest {
+        amount: 1.into(),
+        to: "0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94".to_string(),
+        coin: "JST".to_string(),
         max: false,
         fee: Some(WithdrawFee::EthGas {
             gas: 150000,
@@ -686,7 +743,10 @@ fn get_erc20_sender_trade_preimage() {
     }
 
     let (_ctx, coin) = eth_coin_for_test(
-        EthCoinType::Erc20(Address::default()),
+        EthCoinType::Erc20 {
+            platform: "ETH".to_string(),
+            token_addr: Address::default(),
+        },
         vec!["http://dummy.dummy".into()],
     );
 
@@ -762,7 +822,7 @@ fn test_get_fee_to_send_taker_fee() {
 
     EthCoinImpl::get_gas_price.mock_safe(|_| MockResult::Return(Box::new(futures01::future::ok(GAS_PRICE.into()))));
     EthCoinImpl::estimate_gas
-        .mock_safe(|_, _, _| MockResult::Return(Box::new(futures01::future::ok(TRANSFER_GAS_LIMIT.into()))));
+        .mock_safe(|_, _| MockResult::Return(Box::new(futures01::future::ok(TRANSFER_GAS_LIMIT.into()))));
 
     // fee to send taker fee is `TRANSFER_GAS_LIMIT * gas_price` always.
     let amount = u256_to_big_decimal((TRANSFER_GAS_LIMIT * GAS_PRICE).into(), 18).expect("!u256_to_big_decimal");
@@ -781,7 +841,10 @@ fn test_get_fee_to_send_taker_fee() {
     assert_eq!(actual, expected_fee);
 
     let (_ctx, coin) = eth_coin_for_test(
-        EthCoinType::Erc20(Address::from("0xaD22f63404f7305e4713CcBd4F296f34770513f4")),
+        EthCoinType::Erc20 {
+            platform: "ETH".to_string(),
+            token_addr: Address::from("0xaD22f63404f7305e4713CcBd4F296f34770513f4"),
+        },
         vec!["http://dummy.dummy".into()],
     );
     let actual = coin
@@ -800,7 +863,10 @@ fn test_get_fee_to_send_taker_fee_insufficient_balance() {
 
     EthCoinImpl::get_gas_price.mock_safe(|_| MockResult::Return(Box::new(futures01::future::ok(40.into()))));
     let (_ctx, coin) = eth_coin_for_test(
-        EthCoinType::Erc20(Address::from("0xaD22f63404f7305e4713CcBd4F296f34770513f4")),
+        EthCoinType::Erc20 {
+            platform: "ETH".to_string(),
+            token_addr: Address::from("0xaD22f63404f7305e4713CcBd4F296f34770513f4"),
+        },
         vec!["http://eth1.cipig.net:8555".into()],
     );
     let dex_fee_amount = u256_to_big_decimal(DEX_FEE_AMOUNT.into(), 18).expect("!u256_to_big_decimal");
@@ -839,7 +905,10 @@ fn validate_dex_fee_invalid_sender_eth() {
 #[test]
 fn validate_dex_fee_invalid_sender_erc() {
     let (_ctx, coin) = eth_coin_for_test(
-        EthCoinType::Erc20("0xa1d6df714f91debf4e0802a542e13067f31b8262".into()),
+        EthCoinType::Erc20 {
+            platform: "ETH".to_string(),
+            token_addr: "0xa1d6df714f91debf4e0802a542e13067f31b8262".into(),
+        },
         vec!["http://eth1.cipig.net:8555".into()],
     );
     // the real dex fee sent on mainnet
@@ -896,7 +965,10 @@ fn validate_dex_fee_eth_confirmed_before_min_block() {
 #[test]
 fn validate_dex_fee_erc_confirmed_before_min_block() {
     let (_ctx, coin) = eth_coin_for_test(
-        EthCoinType::Erc20("0xa1d6df714f91debf4e0802a542e13067f31b8262".into()),
+        EthCoinType::Erc20 {
+            platform: "ETH".to_string(),
+            token_addr: "0xa1d6df714f91debf4e0802a542e13067f31b8262".into(),
+        },
         vec!["http://eth1.cipig.net:8555".into()],
     );
     // the real dex fee sent on mainnet
