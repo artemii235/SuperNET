@@ -7,9 +7,8 @@ use common::for_tests::{check_my_swap_status, check_recent_swaps, check_stats_sw
                         find_metrics_in_json, from_env_file, get_passphrase, mm_spat, LocalStart, MarketMakerIt,
                         RaiiDump, MAKER_ERROR_EVENTS, MAKER_SUCCESS_EVENTS, TAKER_ERROR_EVENTS, TAKER_SUCCESS_EVENTS};
 use common::mm_metrics::{MetricType, MetricsJson};
-use common::mm_number::Fraction;
+use common::mm_number::{Fraction, MmNumber};
 use common::privkey::key_pair_from_seed;
-use common::BigInt;
 use common::{block_on, slurp};
 use http::StatusCode;
 #[cfg(not(target_arch = "wasm32"))]
@@ -2043,7 +2042,8 @@ fn test_all_orders_per_pair_per_node_must_be_displayed_in_orderbook() {
 
 #[test]
 #[cfg(not(target_arch = "wasm32"))]
-fn orderbook_should_display_rational_amounts() {
+// https://github.com/KomodoPlatform/atomicDEX-API/issues/859
+fn orderbook_extended_data() {
     let coins = json!([
         {"coin":"RICK","asset":"RICK","protocol":{"type":"UTXO"}},
         {"coin":"MORTY","asset":"MORTY","protocol":{"type":"UTXO"}},
@@ -2082,21 +2082,28 @@ fn orderbook_should_display_rational_amounts() {
         "electrum1.cipig.net:10018",
     ]));
 
-    let price = BigRational::new(9.into(), 10.into());
-    let volume = BigRational::new(9.into(), 10.into());
+    let bob_orders = &[
+        // (base, rel, price, volume)
+        ("RICK", "MORTY", "0.9", "0.9"),
+        ("RICK", "MORTY", "0.8", "0.9"),
+        ("RICK", "MORTY", "0.7", "0.9"),
+        ("MORTY", "RICK", "0.8", "0.9"),
+        ("MORTY", "RICK", "0.9", "0.9"),
+    ];
 
-    // create order with rational amount and price
-    let rc = block_on(mm.rpc(json! ({
-        "userpass": mm.userpass,
-        "method": "setprice",
-        "base": "RICK",
-        "rel": "MORTY",
-        "price": price,
-        "volume": volume,
-        "cancel_previous": false,
-    })))
-    .unwrap();
-    assert!(rc.0.is_success(), "!setprice: {}", rc.1);
+    for (base, rel, price, volume) in bob_orders {
+        let rc = block_on(mm.rpc(json!({
+            "userpass": mm.userpass,
+            "method": "setprice",
+            "base": base,
+            "rel": rel,
+            "price": price,
+            "volume": volume,
+            "cancel_previous": false,
+        })))
+        .unwrap();
+        assert!(rc.0.is_success(), "!setprice: {}", rc.1);
+    }
 
     thread::sleep(Duration::from_secs(1));
     log!("Get RICK/MORTY orderbook");
@@ -2110,44 +2117,9 @@ fn orderbook_should_display_rational_amounts() {
     assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
 
     let orderbook: OrderbookResponse = json::from_str(&rc.1).unwrap();
-    log!("orderbook "[orderbook]);
-    assert_eq!(orderbook.asks.len(), 1, "RICK/MORTY orderbook must have exactly 1 ask");
-    assert_eq!(price, orderbook.asks[0].price_rat);
-    assert_eq!(volume, orderbook.asks[0].max_volume_rat);
-
-    let nine = BigInt::from(9);
-    let ten = BigInt::from(10);
-    // should also display fraction
-    assert_eq!(nine, *orderbook.asks[0].price_fraction.numer());
-    assert_eq!(ten, *orderbook.asks[0].price_fraction.denom());
-
-    assert_eq!(nine, *orderbook.asks[0].max_volume_fraction.numer());
-    assert_eq!(ten, *orderbook.asks[0].max_volume_fraction.denom());
-
-    log!("Get MORTY/RICK orderbook");
-    let rc = block_on(mm.rpc(json! ({
-        "userpass": mm.userpass,
-        "method": "orderbook",
-        "base": "MORTY",
-        "rel": "RICK",
-    })))
-    .unwrap();
-    assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
-
-    let orderbook: OrderbookResponse = json::from_str(&rc.1).unwrap();
-    log!("orderbook "[orderbook]);
-    assert_eq!(orderbook.bids.len(), 1, "MORTY/RICK orderbook must have exactly 1 bid");
-
-    let price = BigRational::new(10.into(), 9.into());
-    assert_eq!(price, orderbook.bids[0].price_rat);
-    assert_eq!(volume, orderbook.bids[0].max_volume_rat);
-
-    // should also display fraction
-    assert_eq!(ten, *orderbook.bids[0].price_fraction.numer());
-    assert_eq!(nine, *orderbook.bids[0].price_fraction.denom());
-
-    assert_eq!(nine, *orderbook.bids[0].max_volume_fraction.numer());
-    assert_eq!(ten, *orderbook.bids[0].max_volume_fraction.denom());
+    log!("orderbook "[rc.1]);
+    let expected_total_asks_base_vol = MmNumber::from("2.7");
+    assert_eq!(expected_total_asks_base_vol.to_decimal(), orderbook.total_asks_base_vol);
 }
 
 #[test]

@@ -45,6 +45,13 @@ macro_rules! construct_detailed {
                     }
                 }
             }
+
+            #[allow(dead_code)]
+            impl $name {
+                pub fn as_ratio(&self) -> &BigRational {
+                    &self.[<$base_field _rat>]
+                }
+            }
         }
     };
 }

@@ -215,6 +215,12 @@ pub struct BestOrdersResponse {
 pub struct OrderbookResponse {
     #[serde(rename = "askdepth")]
     pub ask_depth: usize,
+    pub total_asks_base_vol: BigDecimal,
+    pub total_asks_base_vol_rat: BigRational,
+    pub total_asks_base_vol_fraction: Fraction,
+    pub total_asks_rel_vol: BigDecimal,
+    pub total_asks_rel_vol_rat: BigRational,
+    pub total_asks_rel_vol_fraction: Fraction,
     pub asks: Vec<OrderbookEntry>,
     pub bids: Vec<OrderbookEntry>,
 }
