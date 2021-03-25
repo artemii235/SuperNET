@@ -5,7 +5,7 @@
 // will "boot" the module and make it ready to use. Currently browsers
 // don't support natively imported WebAssembly as an ES module, but
 // eventually the manual initialization won't be required!
-import init, {mm2_main, mm2_main_status, LogLevel, Mm2MainErr, MainStatus} from "./deps/pkg/mm2.js";
+import init, {mm2_main, mm2_main_status, mm2_rpc, LogLevel, Mm2MainErr, MainStatus, Mm2RpcErr} from "./deps/pkg/mm2.js";
 
 const LOG_LEVEL = LogLevel.Debug;
 
@@ -42,19 +42,29 @@ async function run_mm2(params) {
                 return;
         }
     }
-
-    // wait for the MM2 instance is ready
-    try {
-        await wait_for_ready();
-    } catch (e) {
-        alert(e);
-        return;
-    }
-
-    console.info("script.js] Mm2 instance has started");
 }
 
-// async function
+async function rpc_request(request_js) {
+    try {
+        const response = await mm2_rpc(request_js);
+        console.log(response);
+    } catch (e) {
+        switch (e) {
+            case Mm2RpcErr.NotRunning:
+                alert("MM2 is not running yet");
+                break;
+            case Mm2RpcErr.InvalidPayload:
+                alert(`Invalid payload: ${request_js}`);
+                break;
+            case Mm2RpcErr.InternalError:
+                alert(`An MM2 internal error`);
+                break;
+            default:
+                alert(`Unexpected error: ${e}`);
+                break;
+        }
+    }
+}
 
 function handle_log(level, line) {
     switch (level) {
@@ -102,28 +112,66 @@ async function wait_for_ready() {
     throw new Error("Timeout expired waiting for a RocIsUp");
 }
 
+function spawn_mm2_status_checking() {
+    setInterval(function () {
+        const run_button = document.getElementById("wid_run_mm2_button");
+        const rpc_button = document.getElementById("wid_mm2_rpc_button");
+
+        const status = mm2_main_status();
+        switch (status) {
+            case MainStatus.NotRunning:
+            case MainStatus.NoContext:
+            case MainStatus.NoRpc:
+                rpc_button.disabled = true;
+                run_button.disabled = false;
+                break;
+            case MainStatus.RpcIsUp:
+                rpc_button.disabled = false;
+                run_button.disabled = true;
+                break;
+            default:
+                throw new Error(`Expected MainStatus, found: ${status}`);
+        }
+    }, 50)
+}
+
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 // The script starts here
 
-init_wasm();
+init_wasm().then(function () {
+    spawn_mm2_status_checking();
+    const run_mm2_button = document.getElementById("wid_run_mm2_button");
+    run_mm2_button.addEventListener('click', async () => {
+        const conf = document.getElementById("wid_conf_input").value;
+        let params;
+        try {
+            const conf_js = JSON.parse(conf);
+            params = {
+                conf: conf_js,
+                log_level: LOG_LEVEL,
+            };
+        } catch (e) {
+            alert(`Expected config in JSON, found '${conf}'\nError : ${e}`);
+            return;
+        }
 
-const run_mm2_button = document.getElementById("wid_run_mm2_button");
-run_mm2_button.addEventListener('click', async () => {
-    const conf = document.getElementById("wid_conf_input").value;
-    let params;
-    try {
-        const conf_js = JSON.parse(conf);
-        params = {
-            conf: conf_js,
-            log_level: LOG_LEVEL,
-        };
-    } catch (e) {
-        alert(`Expected config in JSON, found '${conf}'\nError : ${e}`);
-        return;
-    }
+        await run_mm2(params);
+    });
 
-    await run_mm2(params);
+    const rpc_request_button = document.getElementById("wid_mm2_rpc_button");
+    rpc_request_button.addEventListener('click', async () => {
+        const request_payload = document.getElementById("wid_rpc_input").value;
+        let request_js;
+        try {
+            request_js = JSON.parse(request_payload);
+        } catch (e) {
+            alert(`Expected request in JSON, found '${request_payload}'\nError : ${e}`);
+            return;
+        }
+
+        await rpc_request(request_js);
+    });
 });

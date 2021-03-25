@@ -393,18 +393,19 @@ impl MarketMakerIt {
     /// Invokes the locally running MM and returns its reply.
     #[cfg(target_arch = "wasm32")]
     pub async fn rpc(&self, payload: Json) -> Result<(StatusCode, String, HeaderMap), String> {
-        let uri = format!("http://{}:7783", self.ip);
-        log!("sending rpc request " (json::to_string(&payload).unwrap()) " to " (uri));
-        let empty_payload: Vec<u8> = Vec::new();
-        let request = try_s!(Request::builder().method("POST").uri(uri).body(empty_payload));
-        let (parts, _) = request.into_parts();
-
-        let rpc_service = try_s!(crate::header::RPC_SERVICE.as_option().ok_or("!RPC_SERVICE"));
-        let client: SocketAddr = try_s!("127.0.0.1:1".parse());
-        let f = rpc_service(self.ctx.clone(), parts, payload, client);
-        let response = try_s!(f.await);
-        let (parts, body) = response.into_parts();
-        Ok((parts.status, try_s!(String::from_utf8(body)), parts.headers))
+        let wasm_rpc = self
+            .ctx
+            .wasm_rpc
+            .as_option()
+            .expect("'MmCtx::rpc' must be initialized already");
+        match wasm_rpc.request(payload).await {
+            // Please note a new type of error will be introduced soon.
+            Ok(body) => {
+                let body_str = json::to_string(&body).expect(&format!("Response {:?} is not a valid JSON", body));
+                Ok((StatusCode::OK, body_str, HeaderMap::new()))
+            },
+            Err(e) => Ok((StatusCode::INTERNAL_SERVER_ERROR, e, HeaderMap::new())),
+        }
     }
 
     /// Invokes the locally running MM and returns its reply.

@@ -16,6 +16,7 @@ use super::*;
 use crate::mm2::LpMainParams;
 use common::executor;
 use common::log::{register_callback, LogLevel, WasmCallback};
+use common::wasm_rpc::WasmRpcResponse;
 use gstuff::any_to_str;
 use js_sys::Array;
 use num_traits::FromPrimitive;
@@ -25,7 +26,7 @@ use std::sync::Mutex;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 
-/// The MarketMaker2 errors that can be thrown when using the library functions.
+/// The errors can be thrown when using the `mm2_main` function incorrectly.
 #[wasm_bindgen]
 #[derive(Primitive)]
 pub enum Mm2MainErr {
@@ -108,3 +109,65 @@ pub fn mm2_main(params: JsValue, log_cb: js_sys::Function) -> Result<(), JsValue
 /// Get the MarketMaker2 status.
 #[wasm_bindgen]
 pub fn mm2_main_status() -> MainStatus { mm2_status() }
+
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub enum Mm2RpcResponse {
+    Ok(Json),
+    Err { error: String },
+}
+
+impl From<WasmRpcResponse> for Mm2RpcResponse {
+    fn from(response: WasmRpcResponse) -> Self {
+        match response {
+            Ok(payload) => Mm2RpcResponse::Ok(payload),
+            Err(error) => Mm2RpcResponse::Err { error },
+        }
+    }
+}
+
+/// The errors can be thrown when using the `mm2_rpc` function incorrectly.
+#[wasm_bindgen]
+#[derive(Primitive)]
+pub enum Mm2RpcErr {
+    NotRunning = 1,
+    InvalidPayload = 2,
+    InternalError = 3,
+}
+
+impl From<Mm2RpcErr> for JsValue {
+    fn from(e: Mm2RpcErr) -> Self { JsValue::from(e as i32) }
+}
+
+#[wasm_bindgen]
+pub async fn mm2_rpc(payload: JsValue) -> Result<JsValue, JsValue> {
+    let request_json: Json = match payload.into_serde() {
+        Ok(p) => p,
+        Err(e) => {
+            console_err!("Payload is not a valid JSON: {}", e);
+            return Err(Mm2MainErr::InvalidParams.into());
+        },
+    };
+
+    if !LP_MAIN_RUNNING.load(Ordering::Relaxed) {
+        return Err(Mm2RpcErr::NotRunning.into());
+    }
+
+    let ctx = CTX.load(Ordering::Relaxed);
+    if ctx == 0 {
+        return Err(Mm2RpcErr::NotRunning.into());
+    }
+
+    let ctx = match MmArc::from_ffi_handle(ctx) {
+        Ok(ctx) => ctx,
+        Err(_) => return Err(Mm2RpcErr::NotRunning.into()),
+    };
+
+    let wasm_rpc = ctx.wasm_rpc.ok_or(JsValue::from(Mm2RpcErr::NotRunning))?;
+    let response: Mm2RpcResponse = wasm_rpc.request(request_json).await.into();
+
+    JsValue::from_serde(&response).map_err(|e| {
+        console_err!("Couldn't represent the response '{:?}' as a JsValue: {}", response, e);
+        JsValue::from(Mm2RpcErr::InternalError)
+    })
+}

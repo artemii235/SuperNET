@@ -70,12 +70,12 @@ pub mod custom_futures;
 pub mod duplex_mutex;
 pub mod file_lock;
 #[cfg(not(target_arch = "wasm32"))] pub mod for_c;
-#[cfg(target_arch = "wasm32")] pub mod header;
 pub mod iguana_utils;
 pub mod mm_ctx;
 pub mod mm_number;
 pub mod privkey;
 pub mod seri;
+#[cfg(target_arch = "wasm32")] pub mod wasm_rpc;
 
 use atomic::Atomic;
 use bigdecimal::BigDecimal;
@@ -1233,7 +1233,7 @@ where
         .body(Vec::from(body))
     {
         Ok(r) => future::ok::<Response<Vec<u8>>, String>(r),
-        Err(err) => future::err::<Response<Vec<u8>>, String>(ERRL!("{}", err)),
+        Err(err) => future::err::<Response<Vec<u8>>, String>(json!({ "error": err.to_string() }).to_string()),
     };
     Box::new(rf)
 }
