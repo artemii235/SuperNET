@@ -206,6 +206,42 @@ pub struct OrderbookEntry {
     pub is_mine: bool,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct OrderbookEntryVolumeAggregate {
+    pub coin: String,
+    pub address: String,
+    pub price: BigDecimal,
+    pub price_rat: BigRational,
+    pub price_fraction: Fraction,
+    #[serde(rename = "maxvolume")]
+    pub max_volume: BigDecimal,
+    pub max_volume_rat: BigRational,
+    pub max_volume_fraction: Fraction,
+    pub base_max_volume: BigDecimal,
+    pub base_max_volume_rat: BigRational,
+    pub base_max_volume_fraction: Fraction,
+    pub base_min_volume: BigDecimal,
+    pub base_min_volume_rat: BigRational,
+    pub base_min_volume_fraction: Fraction,
+    pub rel_max_volume: BigDecimal,
+    pub rel_max_volume_rat: BigRational,
+    pub rel_max_volume_fraction: Fraction,
+    pub rel_min_volume: BigDecimal,
+    pub rel_min_volume_rat: BigRational,
+    pub rel_min_volume_fraction: Fraction,
+    pub min_volume: BigDecimal,
+    pub min_volume_rat: BigRational,
+    pub min_volume_fraction: Fraction,
+    pub pubkey: String,
+    pub age: i64,
+    pub zcredits: u64,
+    pub uuid: Uuid,
+    pub is_mine: bool,
+    pub base_max_volume_aggr: BigDecimal,
+    pub base_max_volume_aggr_rat: BigRational,
+    pub base_max_volume_aggr_fraction: Fraction,
+}
+
 #[derive(Deserialize)]
 pub struct BestOrdersResponse {
     pub result: HashMap<String, Vec<OrderbookEntry>>,
@@ -227,8 +263,8 @@ pub struct OrderbookResponse {
     pub total_bids_rel_vol: BigDecimal,
     pub total_bids_rel_vol_rat: BigRational,
     pub total_bids_rel_vol_fraction: Fraction,
-    pub asks: Vec<OrderbookEntry>,
-    pub bids: Vec<OrderbookEntry>,
+    pub asks: Vec<OrderbookEntryVolumeAggregate>,
+    pub bids: Vec<OrderbookEntryVolumeAggregate>,
 }
 
 #[derive(Deserialize)]
