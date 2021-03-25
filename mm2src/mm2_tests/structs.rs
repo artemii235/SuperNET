@@ -221,6 +221,12 @@ pub struct OrderbookResponse {
     pub total_asks_rel_vol: BigDecimal,
     pub total_asks_rel_vol_rat: BigRational,
     pub total_asks_rel_vol_fraction: Fraction,
+    pub total_bids_base_vol: BigDecimal,
+    pub total_bids_base_vol_rat: BigRational,
+    pub total_bids_base_vol_fraction: Fraction,
+    pub total_bids_rel_vol: BigDecimal,
+    pub total_bids_rel_vol_rat: BigRational,
+    pub total_bids_rel_vol_fraction: Fraction,
     pub asks: Vec<OrderbookEntry>,
     pub bids: Vec<OrderbookEntry>,
 }

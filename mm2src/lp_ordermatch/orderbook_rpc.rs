@@ -17,6 +17,8 @@ struct OrderbookReq {
 
 construct_detailed!(TotalAsksBaseVol, total_asks_base_vol);
 construct_detailed!(TotalAsksRelVol, total_asks_rel_vol);
+construct_detailed!(TotalBidsBaseVol, total_bids_base_vol);
+construct_detailed!(TotalBidsRelVol, total_bids_rel_vol);
 
 #[derive(Debug, Serialize)]
 pub struct OrderbookResponse {
@@ -38,6 +40,17 @@ pub struct OrderbookResponse {
     total_asks_base: TotalAsksBaseVol,
     #[serde(flatten)]
     total_asks_rel: TotalAsksRelVol,
+    #[serde(flatten)]
+    total_bids_base: TotalBidsBaseVol,
+    #[serde(flatten)]
+    total_bids_rel: TotalBidsRelVol,
+}
+
+fn sum_entries_by(entries: &[RpcOrderbookEntry], getter: fn(&RpcOrderbookEntry) -> &BigRational) -> MmNumber {
+    entries
+        .iter()
+        .fold(BigRational::zero(), |total, entry| &total + getter(entry))
+        .into()
 }
 
 pub async fn orderbook_rpc(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
@@ -81,12 +94,8 @@ pub async fn orderbook_rpc(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, S
         None => Vec::new(),
     };
     asks.sort_unstable_by(|ask1, ask2| ask2.price_rat.cmp(&ask1.price_rat));
-    let total_asks_base_vol: MmNumber = asks
-        .iter()
-        .fold(BigRational::zero(), |total, ask| {
-            &total + ask.base_max_volume.as_ratio()
-        })
-        .into();
+    let total_asks_base_vol = sum_entries_by(&asks, |ask| ask.base_max_volume.as_ratio());
+    let total_asks_rel_vol = sum_entries_by(&asks, |ask| ask.rel_max_volume.as_ratio());
 
     let mut bids = match orderbook.unordered.get(&(req.rel.clone(), req.base.clone())) {
         Some(uuids) => {
@@ -109,6 +118,8 @@ pub async fn orderbook_rpc(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, S
         None => vec![],
     };
     bids.sort_unstable_by(|bid1, bid2| bid2.price_rat.cmp(&bid1.price_rat));
+    let total_bids_base_vol = sum_entries_by(&bids, |bid| bid.base_max_volume.as_ratio());
+    let total_bids_rel_vol = sum_entries_by(&bids, |bid| bid.rel_max_volume.as_ratio());
 
     let response = OrderbookResponse {
         num_asks: asks.len(),
@@ -122,7 +133,9 @@ pub async fn orderbook_rpc(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, S
         rel: req.rel,
         timestamp: now_ms() / 1000,
         total_asks_base: total_asks_base_vol.into(),
-        total_asks_rel: MmNumber::from(0).into(),
+        total_asks_rel: total_asks_rel_vol.into(),
+        total_bids_base: total_bids_base_vol.into(),
+        total_bids_rel: total_bids_rel_vol.into(),
     };
     let response = try_s!(json::to_vec(&response));
     Ok(try_s!(Response::builder().body(response)))

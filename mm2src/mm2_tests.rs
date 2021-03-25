@@ -2120,6 +2120,15 @@ fn orderbook_extended_data() {
     log!("orderbook "[rc.1]);
     let expected_total_asks_base_vol = MmNumber::from("2.7");
     assert_eq!(expected_total_asks_base_vol.to_decimal(), orderbook.total_asks_base_vol);
+
+    let expected_total_bids_base_vol = MmNumber::from("1.53");
+    assert_eq!(expected_total_bids_base_vol.to_decimal(), orderbook.total_bids_base_vol);
+
+    let expected_total_asks_rel_vol = MmNumber::from("2.16");
+    assert_eq!(expected_total_asks_rel_vol.to_decimal(), orderbook.total_asks_rel_vol);
+
+    let expected_total_bids_rel_vol = MmNumber::from("1.8");
+    assert_eq!(expected_total_bids_rel_vol.to_decimal(), orderbook.total_bids_rel_vol);
 }
 
 #[test]
