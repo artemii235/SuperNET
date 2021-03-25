@@ -2088,7 +2088,7 @@ fn orderbook_extended_data() {
         ("RICK", "MORTY", "0.8", "0.9"),
         ("RICK", "MORTY", "0.7", "0.9"),
         ("MORTY", "RICK", "0.8", "0.9"),
-        ("MORTY", "RICK", "0.9", "0.9"),
+        ("MORTY", "RICK", "1", "0.9"),
     ];
 
     for (base, rel, price, volume) in bob_orders {
@@ -2121,7 +2121,7 @@ fn orderbook_extended_data() {
     let expected_total_asks_base_vol = MmNumber::from("2.7");
     assert_eq!(expected_total_asks_base_vol.to_decimal(), orderbook.total_asks_base_vol);
 
-    let expected_total_bids_base_vol = MmNumber::from("1.53");
+    let expected_total_bids_base_vol = MmNumber::from("1.62");
     assert_eq!(expected_total_bids_base_vol.to_decimal(), orderbook.total_bids_base_vol);
 
     let expected_total_asks_rel_vol = MmNumber::from("2.16");
@@ -2129,6 +2129,29 @@ fn orderbook_extended_data() {
 
     let expected_total_bids_rel_vol = MmNumber::from("1.8");
     assert_eq!(expected_total_bids_rel_vol.to_decimal(), orderbook.total_bids_rel_vol);
+
+    fn check_price_and_vol_aggr(
+        order: &OrderbookEntryAggregate,
+        price: &'static str,
+        base_aggr: &'static str,
+        rel_aggr: &'static str,
+    ) {
+        let price = MmNumber::from(price);
+        assert_eq!(price.to_decimal(), order.price);
+
+        let base_aggr = MmNumber::from(base_aggr);
+        assert_eq!(base_aggr.to_decimal(), order.base_max_volume_aggr);
+
+        let rel_aggr = MmNumber::from(rel_aggr);
+        assert_eq!(rel_aggr.to_decimal(), order.rel_max_volume_aggr);
+    }
+
+    check_price_and_vol_aggr(&orderbook.asks[0], "0.9", "2.7", "2.16");
+    check_price_and_vol_aggr(&orderbook.asks[1], "0.8", "1.8", "1.35");
+    check_price_and_vol_aggr(&orderbook.asks[2], "0.7", "0.9", "0.63");
+
+    check_price_and_vol_aggr(&orderbook.bids[0], "1.25", "0.72", "0.9");
+    check_price_and_vol_aggr(&orderbook.bids[1], "1", "1.62", "1.8");
 }
 
 #[test]

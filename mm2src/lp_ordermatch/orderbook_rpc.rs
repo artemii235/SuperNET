@@ -19,16 +19,28 @@ construct_detailed!(TotalAsksBaseVol, total_asks_base_vol);
 construct_detailed!(TotalAsksRelVol, total_asks_rel_vol);
 construct_detailed!(TotalBidsBaseVol, total_bids_base_vol);
 construct_detailed!(TotalBidsRelVol, total_bids_rel_vol);
+construct_detailed!(AggregatedBaseVol, base_max_volume_aggr);
+construct_detailed!(AggregatedRelVol, rel_max_volume_aggr);
+
+#[derive(Debug, Serialize)]
+pub struct AggregatedOrderbookEntry {
+    #[serde(flatten)]
+    entry: RpcOrderbookEntry,
+    #[serde(flatten)]
+    base_max_volume_aggr: AggregatedBaseVol,
+    #[serde(flatten)]
+    rel_max_volume_aggr: AggregatedRelVol,
+}
 
 #[derive(Debug, Serialize)]
 pub struct OrderbookResponse {
     #[serde(rename = "askdepth")]
     ask_depth: u32,
-    asks: Vec<RpcOrderbookEntry>,
+    asks: Vec<AggregatedOrderbookEntry>,
     base: String,
     #[serde(rename = "biddepth")]
     bid_depth: u32,
-    bids: Vec<RpcOrderbookEntry>,
+    bids: Vec<AggregatedOrderbookEntry>,
     netid: u16,
     #[serde(rename = "numasks")]
     num_asks: usize,
@@ -46,11 +58,26 @@ pub struct OrderbookResponse {
     total_bids_rel: TotalBidsRelVol,
 }
 
-fn sum_entries_by(entries: &[RpcOrderbookEntry], getter: fn(&RpcOrderbookEntry) -> &BigRational) -> MmNumber {
-    entries
-        .iter()
-        .fold(BigRational::zero(), |total, entry| &total + getter(entry))
-        .into()
+fn build_aggregated_entries(entries: Vec<RpcOrderbookEntry>) -> (Vec<AggregatedOrderbookEntry>, MmNumber, MmNumber) {
+    let mut aggregated = Vec::with_capacity(entries.len());
+    let (total_base, total_rel) = entries
+        .into_iter()
+        .fold(
+            (BigRational::zero(), BigRational::zero()),
+            |(total_base, total_rel), entry| {
+                let new_total_base = total_base + entry.base_max_volume.as_ratio();
+                let new_total_rel = total_rel + entry.rel_max_volume.as_ratio();
+                let aggregated_entry = AggregatedOrderbookEntry {
+                    entry,
+                    base_max_volume_aggr: MmNumber::from(new_total_base.clone()).into(),
+                    rel_max_volume_aggr: MmNumber::from(new_total_rel.clone()).into(),
+                };
+                aggregated.push(aggregated_entry);
+                (new_total_base, new_total_rel)
+            },
+        )
+        .into();
+    (aggregated, total_base.into(), total_rel.into())
 }
 
 pub async fn orderbook_rpc(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
@@ -93,9 +120,9 @@ pub async fn orderbook_rpc(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, S
         },
         None => Vec::new(),
     };
-    asks.sort_unstable_by(|ask1, ask2| ask2.price_rat.cmp(&ask1.price_rat));
-    let total_asks_base_vol = sum_entries_by(&asks, |ask| ask.base_max_volume.as_ratio());
-    let total_asks_rel_vol = sum_entries_by(&asks, |ask| ask.rel_max_volume.as_ratio());
+    asks.sort_unstable_by(|ask1, ask2| ask1.price_rat.cmp(&ask2.price_rat));
+    let (mut asks, total_asks_base_vol, total_asks_rel_vol) = build_aggregated_entries(asks);
+    asks.reverse();
 
     let mut bids = match orderbook.unordered.get(&(req.rel.clone(), req.base.clone())) {
         Some(uuids) => {
@@ -118,8 +145,7 @@ pub async fn orderbook_rpc(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, S
         None => vec![],
     };
     bids.sort_unstable_by(|bid1, bid2| bid2.price_rat.cmp(&bid1.price_rat));
-    let total_bids_base_vol = sum_entries_by(&bids, |bid| bid.base_max_volume.as_ratio());
-    let total_bids_rel_vol = sum_entries_by(&bids, |bid| bid.rel_max_volume.as_ratio());
+    let (bids, total_bids_base_vol, total_bids_rel_vol) = build_aggregated_entries(bids);
 
     let response = OrderbookResponse {
         num_asks: asks.len(),

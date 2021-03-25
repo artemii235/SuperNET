@@ -207,7 +207,7 @@ pub struct OrderbookEntry {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct OrderbookEntryVolumeAggregate {
+pub struct OrderbookEntryAggregate {
     pub coin: String,
     pub address: String,
     pub price: BigDecimal,
@@ -240,6 +240,9 @@ pub struct OrderbookEntryVolumeAggregate {
     pub base_max_volume_aggr: BigDecimal,
     pub base_max_volume_aggr_rat: BigRational,
     pub base_max_volume_aggr_fraction: Fraction,
+    pub rel_max_volume_aggr: BigDecimal,
+    pub rel_max_volume_aggr_rat: BigRational,
+    pub rel_max_volume_aggr_fraction: Fraction,
 }
 
 #[derive(Deserialize)]
@@ -263,8 +266,8 @@ pub struct OrderbookResponse {
     pub total_bids_rel_vol: BigDecimal,
     pub total_bids_rel_vol_rat: BigRational,
     pub total_bids_rel_vol_fraction: Fraction,
-    pub asks: Vec<OrderbookEntryVolumeAggregate>,
-    pub bids: Vec<OrderbookEntryVolumeAggregate>,
+    pub asks: Vec<OrderbookEntryAggregate>,
+    pub bids: Vec<OrderbookEntryAggregate>,
 }
 
 #[derive(Deserialize)]

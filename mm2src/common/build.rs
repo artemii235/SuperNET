@@ -130,7 +130,11 @@ fn root() -> PathBuf {
 /// Absolute path taken from SuperNET's root + `path`.  
 fn rabs(rrel: &str) -> PathBuf { root().join(rrel) }
 
-fn path2s(path: PathBuf) -> String { path.to_str().expect(&format!("Non-stringy path {:?}", path)).into() }
+fn path2s(path: PathBuf) -> String {
+    path.to_str()
+        .unwrap_or_else(|| panic!("Non-stringy path {:?}", path))
+        .into()
+}
 
 /// Loads the `path`, runs `update` on it and saves back the result if it differs.
 fn _in_place(path: &dyn AsRef<Path>, update: &mut dyn FnMut(Vec<u8>) -> Vec<u8>) {
