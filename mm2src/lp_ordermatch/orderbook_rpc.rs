@@ -59,24 +59,20 @@ pub struct OrderbookResponse {
 }
 
 fn build_aggregated_entries(entries: Vec<RpcOrderbookEntry>) -> (Vec<AggregatedOrderbookEntry>, MmNumber, MmNumber) {
-    let mut aggregated = Vec::with_capacity(entries.len());
-    let (total_base, total_rel) = entries
+    let mut total_base = BigRational::zero();
+    let mut total_rel = BigRational::zero();
+    let aggregated = entries
         .into_iter()
-        .fold(
-            (BigRational::zero(), BigRational::zero()),
-            |(total_base, total_rel), entry| {
-                let new_total_base = total_base + entry.base_max_volume.as_ratio();
-                let new_total_rel = total_rel + entry.rel_max_volume.as_ratio();
-                let aggregated_entry = AggregatedOrderbookEntry {
-                    entry,
-                    base_max_volume_aggr: MmNumber::from(new_total_base.clone()).into(),
-                    rel_max_volume_aggr: MmNumber::from(new_total_rel.clone()).into(),
-                };
-                aggregated.push(aggregated_entry);
-                (new_total_base, new_total_rel)
-            },
-        )
-        .into();
+        .map(|entry| {
+            total_base += entry.base_max_volume.as_ratio();
+            total_rel += entry.rel_max_volume.as_ratio();
+            AggregatedOrderbookEntry {
+                entry,
+                base_max_volume_aggr: MmNumber::from(total_base.clone()).into(),
+                rel_max_volume_aggr: MmNumber::from(total_rel.clone()).into(),
+            }
+        })
+        .collect();
     (aggregated, total_base.into(), total_rel.into())
 }
 
