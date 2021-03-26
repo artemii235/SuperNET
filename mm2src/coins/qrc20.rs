@@ -7,9 +7,9 @@ use crate::utxo::utxo_common::{self, big_decimal_from_sat, check_all_inputs_sign
 use crate::utxo::{qtum, sign_tx, ActualTxFee, AdditionalTxData, FeePolicy, GenerateTransactionError,
                   RecentlySpentOutPoints, UtxoCoinBuilder, UtxoCoinFields, UtxoCommonOps, UtxoTx,
                   VerboseTransactionFrom, UTXO_LOCK};
-use crate::{CoinBalance, FeeApproxStage, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeFee,
-            TradePreimageError, TradePreimageValue, TransactionDetails, TransactionEnum, TransactionFut,
-            ValidateAddressResult, WithdrawFee, WithdrawRequest};
+use crate::{CoinBalance, FeeApproxStage, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, ReceiverTradeFee,
+            SwapOps, TradeFee, TradePreimageError, TradePreimageValue, TransactionDetails, TransactionEnum,
+            TransactionFut, ValidateAddressResult, WithdrawFee, WithdrawRequest};
 use async_trait::async_trait;
 use bigdecimal::BigDecimal;
 use bitcrypto::{dhash160, sha256};
@@ -1024,7 +1024,7 @@ impl MmCoin for Qrc20Coin {
     fn get_receiver_trade_fee(
         &self,
         stage: FeeApproxStage,
-    ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
+    ) -> Box<dyn Future<Item = ReceiverTradeFee, Error = TradePreimageError> + Send> {
         let selfi = self.clone();
         let fut = async move {
             // pass the dummy params
@@ -1043,9 +1043,10 @@ impl MmCoin for Qrc20Coin {
             let total_fee = selfi
                 .preimage_trade_fee_required_to_send_outputs(vec![output], &stage)
                 .await?;
-            Ok(TradeFee {
+            Ok(ReceiverTradeFee {
                 coin: selfi.platform.clone(),
                 amount: total_fee.into(),
+                paid_from_trading_vol: false,
             })
         };
         Box::new(fut.boxed().compat())

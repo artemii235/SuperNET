@@ -1543,9 +1543,9 @@ mod docker_tests {
                 },
                 "rel_coin_fee": {
                     "coin": "MYCOIN1",
-                    "amount": "0",
-                    "amount_fraction": { "numer": "0", "denom": "1" },
-                    "amount_rat": [[0,[]],[1,[1]]]
+                    "amount": "0.00002",
+                    "amount_fraction": { "numer": "1", "denom": "50000" },
+                    "amount_rat": [[1,[1]],[1,[50000]]]
                 },
                 "volume": "9.99999",
                 "volume_fraction": { "numer": "999999", "denom": "100000" },
@@ -1556,6 +1556,12 @@ mod docker_tests {
                         "amount": "0.00001",
                         "amount_fraction": { "numer": "1", "denom": "100000" },
                         "amount_rat": [[1,[1]],[1,[100000]]]
+                    },
+                    {
+                        "coin": "MYCOIN1",
+                        "amount": "0.00002",
+                        "amount_fraction": { "numer": "1", "denom": "50000" },
+                        "amount_rat": [[1,[1]],[1,[50000]]]
                     },
                 ],
             }
@@ -1583,9 +1589,9 @@ mod docker_tests {
                 },
                 "rel_coin_fee": {
                     "coin": "MYCOIN",
-                    "amount": "0",
-                    "amount_fraction": { "numer": "0", "denom": "1" },
-                    "amount_rat": [[0,[]],[1,[1]]]
+                    "amount": "0.00001",
+                    "amount_fraction": { "numer": "1", "denom": "100000" },
+                    "amount_rat": [[1,[1]],[1,[100000]]]
                 },
                 "volume": "19.99998",
                 "volume_fraction": { "numer": "999999", "denom": "50000" },
@@ -1596,6 +1602,12 @@ mod docker_tests {
                         "amount": "0.00002",
                         "amount_fraction": { "numer": "1", "denom": "50000" },
                         "amount_rat": [[1,[1]],[1,[50000]]]
+                    },
+                    {
+                        "coin": "MYCOIN",
+                        "amount": "0.00001",
+                        "amount_fraction": { "numer": "1", "denom": "100000" },
+                        "amount_rat": [[1,[1]],[1,[100000]]]
                     }
                 ],
             }
@@ -1623,9 +1635,9 @@ mod docker_tests {
                 },
                 "rel_coin_fee": {
                     "coin": "MYCOIN",
-                    "amount": "0",
-                    "amount_fraction": { "numer": "0", "denom": "1" },
-                    "amount_rat": [[0,[]],[1,[1]]]
+                    "amount": "0.00001",
+                    "amount_fraction": { "numer": "1", "denom": "100000" },
+                    "amount_rat": [[1,[1]],[1,[100000]]]
                 },
                 "total_fees": [
                     {
@@ -1633,6 +1645,12 @@ mod docker_tests {
                         "amount": "0.00002",
                         "amount_fraction": { "numer": "1", "denom": "50000" },
                         "amount_rat": [[1,[1]],[1,[50000]]]
+                    },
+                    {
+                        "coin": "MYCOIN",
+                        "amount": "0.00001",
+                        "amount_fraction": { "numer": "1", "denom": "100000" },
+                        "amount_rat": [[1,[1]],[1,[100000]]]
                     }
                 ],
             }
@@ -1720,9 +1738,9 @@ mod docker_tests {
                 },
                 "rel_coin_fee": {
                     "coin": "MYCOIN1",
-                    "amount": "0",
-                    "amount_fraction": { "numer": "0", "denom": "1" },
-                    "amount_rat": [[0,[]],[1,[1]]]
+                    "amount": "0.00002",
+                    "amount_fraction": { "numer": "1", "denom": "50000" },
+                    "amount_rat": [[1,[1]],[1,[50000]]]
                 },
                 "taker_fee": {
                     "coin": "MYCOIN",
@@ -1742,6 +1760,12 @@ mod docker_tests {
                         "amount": "0.01002",
                         "amount_fraction": { "numer": "501", "denom": "50000" },
                         "amount_rat": [[1,[501]],[1,[50000]]]
+                    },
+                    {
+                        "coin": "MYCOIN1",
+                        "amount": "0.00002",
+                        "amount_fraction": { "numer": "1", "denom": "50000" },
+                        "amount_rat": [[1,[1]],[1,[50000]]]
                     }
                 ],
             }
@@ -1764,9 +1788,9 @@ mod docker_tests {
             "result": {
                 "base_coin_fee": {
                     "coin": "MYCOIN",
-                    "amount": "0",
-                    "amount_fraction": { "numer": "0", "denom": "1" },
-                    "amount_rat": [[0,[]],[1,[1]]]
+                    "amount": "0.00001",
+                    "amount_fraction": { "numer": "1", "denom": "100000" },
+                    "amount_rat": [[1,[1]],[1,[100000]]]
                 },
                 "rel_coin_fee": {
                     "coin": "MYCOIN1",
@@ -1787,6 +1811,12 @@ mod docker_tests {
                     "amount_rat": [[1,[1]],[1,[50000]]]
                 },
                 "total_fees": [
+                    {
+                        "coin": "MYCOIN",
+                        "amount": "0.00001",
+                        "amount_fraction": { "numer": "1", "denom": "100000" },
+                        "amount_rat": [[1,[1]],[1,[100000]]]
+                    },
                     {
                         "coin": "MYCOIN1",
                         "amount": "0.02004",

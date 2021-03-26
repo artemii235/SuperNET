@@ -1,7 +1,7 @@
 use super::{CoinBalance, HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeFee, TransactionDetails,
             TransactionEnum, TransactionFut};
-use crate::{FeeApproxStage, FoundSwapTxSpend, TradePreimageError, TradePreimageValue, ValidateAddressResult,
-            WithdrawRequest};
+use crate::{FeeApproxStage, FoundSwapTxSpend, ReceiverTradeFee, TradePreimageError, TradePreimageValue,
+            ValidateAddressResult, WithdrawRequest};
 use bigdecimal::BigDecimal;
 use common::mm_ctx::MmArc;
 use futures01::Future;
@@ -239,7 +239,7 @@ impl MmCoin for TestCoin {
     fn get_receiver_trade_fee(
         &self,
         stage: FeeApproxStage,
-    ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
+    ) -> Box<dyn Future<Item = ReceiverTradeFee, Error = TradePreimageError> + Send> {
         unimplemented!()
     }
 

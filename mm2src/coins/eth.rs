@@ -62,6 +62,7 @@ pub use rlp;
 
 mod web3_transport;
 use self::web3_transport::Web3Transport;
+use crate::ReceiverTradeFee;
 
 #[cfg(test)] mod eth_tests;
 #[cfg(target_arch = "wasm32")] mod eth_wasm_tests;
@@ -2543,7 +2544,7 @@ impl MmCoin for EthCoin {
     fn get_receiver_trade_fee(
         &self,
         stage: FeeApproxStage,
-    ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
+    ) -> Box<dyn Future<Item = ReceiverTradeFee, Error = TradePreimageError> + Send> {
         let coin = self.clone();
         let fut = async move {
             let gas_price = try_map!(coin.get_gas_price().compat().await, TradePreimageError::Other);
@@ -2554,9 +2555,10 @@ impl MmCoin for EthCoin {
                 EthCoinType::Eth => &coin.ticker,
                 EthCoinType::Erc20 { platform, .. } => platform,
             };
-            Ok(TradeFee {
+            Ok(ReceiverTradeFee {
                 coin: fee_coin.into(),
                 amount: amount.into(),
+                paid_from_trading_vol: false,
             })
         };
         Box::new(fut.boxed().compat())

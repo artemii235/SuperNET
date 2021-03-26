@@ -32,7 +32,8 @@ pub use chain::Transaction as UtxoTx;
 
 use self::rpc_clients::{electrum_script_hash, UnspentInfo, UtxoRpcClientEnum};
 use crate::utxo::rpc_clients::UtxoRpcClientOps;
-use crate::{CanRefundHtlc, CoinBalance, FeeApproxStage, TradePreimageError, TradePreimageValue, ValidateAddressResult};
+use crate::{CanRefundHtlc, CoinBalance, FeeApproxStage, ReceiverTradeFee, TradePreimageError, TradePreimageValue,
+            ValidateAddressResult};
 use common::{block_on, Traceable};
 
 macro_rules! true_or {
@@ -1977,17 +1978,21 @@ where
     Box::new(fut.boxed().compat())
 }
 
-/// Payment sender should not pay fee for sending Maker Payment.
-/// Even if refund will be required the fee will be deducted from P2SH input.
-pub fn get_receiver_trade_fee<T>(coin: &T) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send>
+/// The fee to spend (receive) other payment is deducted from the trading amount so we should display it
+pub fn get_receiver_trade_fee<T>(coin: T) -> Box<dyn Future<Item = ReceiverTradeFee, Error = TradePreimageError> + Send>
 where
-    T: AsRef<UtxoCoinFields>,
+    T: AsRef<UtxoCoinFields> + UtxoCommonOps + Send + Sync + 'static,
 {
-    let trade_fee = TradeFee {
-        coin: coin.as_ref().conf.ticker.clone(),
-        amount: 0.into(),
+    let fut = async move {
+        let amount_sat = try_map!(get_htlc_spend_fee(&coin).await, TradePreimageError::Other);
+        let amount = big_decimal_from_sat_unsigned(amount_sat, coin.as_ref().decimals).into();
+        Ok(ReceiverTradeFee {
+            coin: coin.as_ref().conf.ticker.clone(),
+            amount,
+            paid_from_trading_vol: true,
+        })
     };
-    Box::new(futures01::future::ok(trade_fee))
+    Box::new(fut.boxed().compat())
 }
 
 pub fn get_fee_to_send_taker_fee<T>(
@@ -2226,6 +2231,10 @@ pub fn swap_contract_address() -> Option<BytesJson> { None }
 
 /// Convert satoshis to BigDecimal amount of coin units
 pub fn big_decimal_from_sat(satoshis: i64, decimals: u8) -> BigDecimal {
+    BigDecimal::from(satoshis) / BigDecimal::from(10u64.pow(decimals as u32))
+}
+
+pub fn big_decimal_from_sat_unsigned(satoshis: u64, decimals: u8) -> BigDecimal {
     BigDecimal::from(satoshis) / BigDecimal::from(10u64.pow(decimals as u32))
 }
 

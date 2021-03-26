@@ -432,6 +432,22 @@ pub struct TradeFee {
     pub amount: MmNumber,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ReceiverTradeFee {
+    pub coin: String,
+    pub amount: MmNumber,
+    pub paid_from_trading_vol: bool,
+}
+
+impl From<ReceiverTradeFee> for TradeFee {
+    fn from(receiver_fee: ReceiverTradeFee) -> TradeFee {
+        TradeFee {
+            coin: receiver_fee.coin,
+            amount: receiver_fee.amount,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub struct CoinBalance {
     pub spendable: BigDecimal,
@@ -585,7 +601,7 @@ pub trait MmCoin: SwapOps + MarketCoinOps + fmt::Debug + Send + Sync + 'static {
     fn get_receiver_trade_fee(
         &self,
         stage: FeeApproxStage,
-    ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send>;
+    ) -> Box<dyn Future<Item = ReceiverTradeFee, Error = TradePreimageError> + Send>;
 
     /// Get transaction fee the Taker has to pay to send a `TakerFee` transaction and check if the wallet has sufficient balance to pay the fee.
     fn get_fee_to_send_taker_fee(

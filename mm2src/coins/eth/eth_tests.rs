@@ -803,9 +803,10 @@ fn get_receiver_trade_preimage() {
 
     let (_ctx, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://dummy.dummy".into()]);
     let amount = u256_to_big_decimal((150_000 * GAS_PRICE).into(), 18).expect("!u256_to_big_decimal");
-    let expected_fee = TradeFee {
+    let expected_fee = ReceiverTradeFee {
         coin: "ETH".to_owned(),
         amount: amount.into(),
+        paid_from_trading_vol: false,
     };
 
     let actual = coin

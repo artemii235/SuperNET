@@ -705,9 +705,10 @@ fn test_receiver_trade_preimage() {
         .expect("!get_receiver_trade_fee");
     // only one contract call should be included into the expected trade fee
     let expected_receiver_fee = big_decimal_from_sat(CONTRACT_CALL_GAS_FEE + EXPECTED_TX_FEE, coin.utxo.decimals);
-    let expected = TradeFee {
+    let expected = ReceiverTradeFee {
         coin: "QTUM".to_owned(),
         amount: expected_receiver_fee.into(),
+        paid_from_trading_vol: false,
     };
     assert_eq!(actual, expected);
 }

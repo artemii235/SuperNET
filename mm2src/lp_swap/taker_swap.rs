@@ -8,7 +8,8 @@ use super::{ban_pubkey, broadcast_my_swap_status, broadcast_swap_message_every, 
 use crate::mm2::lp_network::subscribe_to_topic;
 use atomic::Atomic;
 use bigdecimal::BigDecimal;
-use coins::{lp_coinfind, CanRefundHtlc, FeeApproxStage, FoundSwapTxSpend, MmCoinEnum, TradeFee, TradePreimageValue};
+use coins::{lp_coinfind, CanRefundHtlc, FeeApproxStage, FoundSwapTxSpend, MmCoinEnum, ReceiverTradeFee, TradeFee,
+            TradePreimageValue};
 use common::executor::Timer;
 use common::log::{debug, error, warn};
 use common::mm_ctx::MmArc;
@@ -1463,7 +1464,7 @@ pub struct TakerSwapPreparedParams {
     dex_fee: MmNumber,
     fee_to_send_dex_fee: TradeFee,
     taker_payment_trade_fee: TradeFee,
-    maker_payment_spend_trade_fee: TradeFee,
+    maker_payment_spend_trade_fee: ReceiverTradeFee,
 }
 
 pub async fn check_balance_for_taker_swap(
@@ -1592,8 +1593,8 @@ pub async fn taker_swap_trade_preimage(ctx: &MmArc, req: TradePreimageRequest) -
     let other_coin_trade_fee = try_s!(other_coin.get_receiver_trade_fee(stage).compat().await);
 
     let (base_coin_fee, rel_coin_fee) = match req.swap_method {
-        TradePreimageMethod::Sell => (my_coin_trade_fee, other_coin_trade_fee),
-        _ => (other_coin_trade_fee, my_coin_trade_fee),
+        TradePreimageMethod::Sell => (my_coin_trade_fee, other_coin_trade_fee.into()),
+        _ => (other_coin_trade_fee.into(), my_coin_trade_fee),
     };
     Ok(TakerTradePreimage {
         base_coin_fee,

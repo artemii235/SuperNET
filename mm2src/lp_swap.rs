@@ -58,7 +58,7 @@
 use crate::mm2::lp_network::broadcast_p2p_msg;
 use async_std::sync as async_std_sync;
 use bigdecimal::BigDecimal;
-use coins::{lp_coinfind, MmCoinEnum, TradeFee, TradePreimageError, TransactionEnum};
+use coins::{lp_coinfind, MmCoinEnum, ReceiverTradeFee, TradeFee, TradePreimageError, TransactionEnum};
 use common::{bits256, block_on, calc_total_pages,
              executor::{spawn, Timer},
              log::{error, info},
@@ -435,8 +435,12 @@ pub async fn check_other_coin_balance_for_swap(
     ctx: &MmArc,
     coin: &MmCoinEnum,
     swap_uuid: Option<&Uuid>,
-    trade_fee: TradeFee,
+    trade_fee: ReceiverTradeFee,
 ) -> Result<(), CheckBalanceError> {
+    if trade_fee.paid_from_trading_vol {
+        return Ok(());
+    }
+    let trade_fee = TradeFee::from(trade_fee);
     let ticker = coin.ticker();
     info!("Check other_coin '{}' balance for swap", ticker);
     let balance = MmNumber::from(try_map!(
@@ -938,6 +942,15 @@ impl From<SavedTradeFee> for TradeFee {
 
 impl From<TradeFee> for SavedTradeFee {
     fn from(orig: TradeFee) -> Self {
+        SavedTradeFee {
+            coin: orig.coin,
+            amount: orig.amount.to_decimal(),
+        }
+    }
+}
+
+impl From<ReceiverTradeFee> for SavedTradeFee {
+    fn from(orig: ReceiverTradeFee) -> Self {
         SavedTradeFee {
             coin: orig.coin,
             amount: orig.amount.to_decimal(),
