@@ -1233,7 +1233,10 @@ where
         .body(Vec::from(body))
     {
         Ok(r) => future::ok::<Response<Vec<u8>>, String>(r),
-        Err(err) => future::err::<Response<Vec<u8>>, String>(json!({ "error": err.to_string() }).to_string()),
+        Err(err) => {
+            let err = ERRL!("{}", err);
+            future::err::<Response<Vec<u8>>, String>(json!({ "error": err }).to_string())
+        },
     };
     Box::new(rf)
 }

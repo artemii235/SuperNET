@@ -401,8 +401,13 @@ impl MarketMakerIt {
         match wasm_rpc.request(payload).await {
             // Please note a new type of error will be introduced soon.
             Ok(body) => {
+                let status_code = if body["error"].is_null() {
+                    StatusCode::OK
+                } else {
+                    StatusCode::INTERNAL_SERVER_ERROR
+                };
                 let body_str = json::to_string(&body).expect(&format!("Response {:?} is not a valid JSON", body));
-                Ok((StatusCode::OK, body_str, HeaderMap::new()))
+                Ok((status_code, body_str, HeaderMap::new()))
             },
             Err(e) => Ok((StatusCode::INTERNAL_SERVER_ERROR, e, HeaderMap::new())),
         }
@@ -857,18 +862,12 @@ pub async fn check_recent_swaps(mm: &MarketMakerIt, expected_len: usize) {
 ///
 /// Panic if the `RUST_LOG` environment variable doesn't equal to the `required_level`.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn require_log_level(expected: &[LogLevel]) {
-    let actual = match LogLevel::from_env() {
-        Some(level) => level,
-        None => panic!(
-            "Expected one of the {:?} log levels. It seems `RUST_LOG` env is not set",
-            expected
-        ),
-    };
+pub fn require_log_level(expected: LogLevel) {
+    let actual = LogLevel::from_env().unwrap_or(LogLevel::Info);
     assert!(
-        expected.contains(&actual),
-        "Expected one of {:?} log levels, found '{:?}'",
+        actual >= expected,
+        "Expected at least {:?} log level, found {:?}",
         expected,
-        actual,
+        actual
     );
 }

@@ -914,7 +914,7 @@ impl fmt::Display for LogLevel {
     }
 }
 
-/// It's a temporary `log::Record` formatter.
+/// It's the temporary `log::Record` formatter.
 /// Format: `{d(%d %H:%M:%S)(utc)}, {f}:{L}] {l} {m}`
 pub fn format_record(record: &Record) -> String {
     const DATE_FORMAT: &str = "%d %H:%M:%S";

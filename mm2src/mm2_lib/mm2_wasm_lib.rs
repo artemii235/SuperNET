@@ -53,15 +53,36 @@ impl From<MainParams> for LpMainParams {
 ///
 /// # Parameters
 ///
-/// The `conf` first argument is a UTF-8 string JSON.
-/// The `log_cb` second argument is a JS function with the following signature:
+/// * `conf` is a UTF-8 string JSON.
+/// * `log_cb` is a JS function with the following signature:
 /// ```typescript
 /// function(level: number, line: string)
 /// ```
 ///
 /// # Usage
 ///
-/// TODO
+/// ```javascript
+/// import init, {mm2_main, LogLevel, Mm2MainErr} from "./path/to/mm2.js";
+///
+/// const params = {
+///     conf: { "gui":"WASMTEST", mm2:1, "passphrase":"YOUR_PASSPHRASE_HERE", "rpc_password":"test123", "coins":[{"coin":"ETH","protocol":{"type":"ETH"}}] },
+///     log_level: LogLevel.Info,
+/// };
+/// let handle_log = function (_level, line) { console.log(line) };
+/// try {
+///     mm2_main(params, handle_log);
+/// } catch (e) {
+///     switch (e) {
+///         case Mm2MainErr.AlreadyRuns:
+///             alert("MarketMaker2 already runs...");
+///             break;
+///         // handle other errors...
+///         default:
+///             alert(`Unexpected error: ${e}`);
+///             break;
+///     }
+/// }
+/// ```
 #[wasm_bindgen]
 pub fn mm2_main(params: JsValue, log_cb: js_sys::Function) -> Result<(), JsValue> {
     let params: MainParams = match params.into_serde() {
@@ -139,13 +160,46 @@ impl From<Mm2RpcErr> for JsValue {
     fn from(e: Mm2RpcErr) -> Self { JsValue::from(e as i32) }
 }
 
+/// Invoke an RPC request.
+///
+/// # Parameters
+///
+/// * `payload` is a UTF-8 string JSON.
+///
+/// # Usage
+///
+/// ```javascript
+/// import init, {mm2_rpc, Mm2RpcErr} from "./path/to/mm2.js";
+///
+/// async function version () {
+///     try {
+///         const payload = {
+///             "userpass": "test123",
+///             "method": "version",
+///         };
+///         const response = mm2_rpc(payload).await;
+///         return response.result;
+///     } catch (e) {
+///         switch (e) {
+///             case Mm2RpcErr.NotRunning:
+///                 alert("MarketMaker2 not running yet...");
+///                 break;
+///             // handle other errors...
+///             default:
+///                 alert(`Unexpected error: ${e}`);
+///                 break;
+///         }
+///     }
+/// }
+///
+/// ```
 #[wasm_bindgen]
 pub async fn mm2_rpc(payload: JsValue) -> Result<JsValue, JsValue> {
     let request_json: Json = match payload.into_serde() {
         Ok(p) => p,
         Err(e) => {
             console_err!("Payload is not a valid JSON: {}", e);
-            return Err(Mm2MainErr::InvalidParams.into());
+            return Err(Mm2RpcErr::InvalidPayload.into());
         },
     };
 

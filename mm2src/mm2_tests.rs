@@ -5394,7 +5394,7 @@ fn test_buy_min_volume() {
 #[test]
 #[cfg(not(target_arch = "wasm32"))]
 fn test_best_orders() {
-    require_log_level(&[LogLevel::Debug, LogLevel::Trace]);
+    require_log_level(LogLevel::Debug);
 
     let bob_passphrase = get_passphrase(&".env.seed", "BOB_PASSPHRASE").unwrap();
 
@@ -5602,7 +5602,7 @@ fn request_and_check_orderbook_depth(mm_alice: &MarketMakerIt) {
 #[test]
 #[cfg(not(target_arch = "wasm32"))]
 fn test_orderbook_depth() {
-    common::for_tests::require_log_level(&[LogLevel::Debug, LogLevel::Trace]);
+    require_log_level(LogLevel::Debug);
 
     let bob_passphrase = get_passphrase(&".env.seed", "BOB_PASSPHRASE").unwrap();
 

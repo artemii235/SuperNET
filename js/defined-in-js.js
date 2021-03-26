@@ -29,11 +29,6 @@ export function host_env(name, name2, rbuf, rcap) {
     return 0;
 }
 
-// pub fn date_now() -> f64;
-export function date_now() {
-    return 0;
-}
-
 // pub fn host_slurp(path_p: *const c_char, path_l: i32, rbuf: *mut c_char, rcap: i32) -> i32;
 export function host_slurp(path_p, path_l, rbuf, rcap) {
     return 0;

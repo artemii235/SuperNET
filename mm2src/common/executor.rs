@@ -27,7 +27,7 @@ pub fn spawn_local(future: impl Future<Output = ()> + 'static) { wasm_bindgen_fu
 /// See the [example](https://rustwasm.github.io/docs/wasm-bindgen/reference/passing-rust-closures-to-js.html#heap-allocated-closures).
 ///
 /// According to the [blogpost](https://rustwasm.github.io/2018/10/24/multithreading-rust-and-wasm.html),
-/// very few types in [`wasm_bindgen`] are `Send` and `Sync`, and the [`wasm_bindgen::closure::Closure`] is not an exception.
+/// very few types in [`wasm_bindgen`] are `Send` and `Sync`, and [`wasm_bindgen::closure::Closure`] is not an exception.
 /// Although wasm is currently single-threaded, we can implement the `Send` trait for the `Timer`,
 /// but it won't be safe when wasm becomes multi-threaded.
 #[must_use = "futures do nothing unless polled"]

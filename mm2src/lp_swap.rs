@@ -1404,7 +1404,7 @@ pub fn swap_kick_starts(ctx: MmArc) -> HashSet<String> {
                                     thread::sleep(Duration::from_secs(5));
                                 },
                                 Err(e) => {
-                                    info!("Error {} on {} find attempt", e, maker_coin_ticker);
+                                    error!("Error {} on {} find attempt", e, maker_coin_ticker);
                                     return;
                                 },
                             };

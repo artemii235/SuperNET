@@ -1,14 +1,13 @@
-use super::{chunk2log, LevelFilter, LogCallback};
+use super::{chunk2log, format_record, LevelFilter, LogCallback};
 use log::Record;
-use log4rs::encode::{pattern, writer::simple};
+use log4rs::encode::pattern;
 use log4rs::{append, config};
 use std::os::raw::c_char;
 
-const MM_FORMAT: &str = "{d(%d %H:%M:%S)(utc)}, {f}:{L}] {l} {m}";
-const DEFAULT_FORMAT: &str = "[{d(%Y-%m-%d %H:%M:%S %Z)(utc)} {h({l})} {M}:{f}:{L}] {m}";
+const DEFAULT_CONSOLE_FORMAT: &str = "[{d(%Y-%m-%d %H:%M:%S %Z)(utc)} {h({l})} {M}:{f}:{L}] {m}\n";
 const DEFAULT_LEVEL_FILTER: LogLevel = LogLevel::Info;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
 pub enum LogLevel {
     /// A level lower than all log levels.
     Off = 0,
@@ -57,8 +56,7 @@ impl LogCallback for FfiCallback {
 
 pub struct UnifiedLoggerBuilder {
     console_format: String,
-    mm_format: String,
-    filter: LevelPolicy,
+    filter: LogLevel,
     console: bool,
     mm_log: bool,
 }
@@ -66,9 +64,8 @@ pub struct UnifiedLoggerBuilder {
 impl Default for UnifiedLoggerBuilder {
     fn default() -> UnifiedLoggerBuilder {
         UnifiedLoggerBuilder {
-            console_format: DEFAULT_FORMAT.to_owned(),
-            mm_format: MM_FORMAT.to_owned(),
-            filter: LevelPolicy::Exact(DEFAULT_LEVEL_FILTER),
+            console_format: DEFAULT_CONSOLE_FORMAT.to_owned(),
+            filter: DEFAULT_LEVEL_FILTER,
             console: true,
             mm_log: false,
         }
@@ -83,18 +80,8 @@ impl UnifiedLoggerBuilder {
         self
     }
 
-    pub fn mm_format(mut self, mm_format: &str) -> UnifiedLoggerBuilder {
-        self.mm_format = mm_format.to_owned();
-        self
-    }
-
     pub fn level_filter(mut self, filter: LogLevel) -> UnifiedLoggerBuilder {
-        self.filter = LevelPolicy::Exact(filter);
-        self
-    }
-
-    pub fn level_filter_from_env_or_default(mut self, default: LogLevel) -> UnifiedLoggerBuilder {
-        self.filter = LevelPolicy::FromEnvOrDefault(default);
+        self.filter = filter;
         self
     }
 
@@ -110,17 +97,11 @@ impl UnifiedLoggerBuilder {
 
     pub fn try_init(self) -> Result<(), String> {
         let mut appenders = Vec::new();
-        let level_filter = match self.filter {
-            LevelPolicy::Exact(l) => l,
-            LevelPolicy::FromEnvOrDefault(default) => LogLevel::from_env().unwrap_or(default),
-        };
 
         if self.mm_log {
-            let appender = MmLogAppender::new(&self.mm_format);
-            appenders.push(config::Appender::builder().build("mm_log", Box::new(appender)));
+            appenders.push(config::Appender::builder().build("mm_log", Box::new(MmLogAppender)));
         }
 
-        // TODO console appender prints without '/n'
         if self.console {
             let encoder = Box::new(pattern::PatternEncoder::new(&self.console_format));
             let appender = append::console::ConsoleAppender::builder()
@@ -133,7 +114,7 @@ impl UnifiedLoggerBuilder {
         let app_names: Vec<_> = appenders.iter().map(|app| app.name()).collect();
         let root = config::Root::builder()
             .appenders(app_names)
-            .build(LevelFilter::from(level_filter));
+            .build(LevelFilter::from(self.filter));
         let config = try_s!(config::Config::builder().appenders(appenders).build(root));
 
         try_s!(log4rs::init_config(config));
@@ -141,30 +122,12 @@ impl UnifiedLoggerBuilder {
     }
 }
 
-enum LevelPolicy {
-    Exact(LogLevel),
-    FromEnvOrDefault(LogLevel),
-}
-
 #[derive(Debug)]
-struct MmLogAppender {
-    pattern: Box<dyn log4rs::encode::Encode>,
-}
-
-impl MmLogAppender {
-    fn new(pattern: &str) -> MmLogAppender {
-        MmLogAppender {
-            pattern: Box::new(pattern::PatternEncoder::new(pattern)),
-        }
-    }
-}
+struct MmLogAppender;
 
 impl append::Append for MmLogAppender {
     fn append(&self, record: &Record) -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
-        let mut buf = Vec::new();
-        // TODO use `format_record` instead
-        self.pattern.encode(&mut simple::SimpleWriter(&mut buf), record)?;
-        let as_string = String::from_utf8(buf).map_err(Box::new)?;
+        let as_string = format_record(record);
         let level = LogLevel::from(record.metadata().level());
         chunk2log(as_string, level);
         Ok(())

@@ -21,7 +21,6 @@ async function init_wasm() {
     }
 }
 
-// TODO add params
 async function run_mm2(params) {
     // run an MM2 instance
     try {
@@ -83,33 +82,11 @@ function handle_log(level, line) {
             console.log(line);
             break;
         case LogLevel.Trace:
-            // TODO add why the `console.trace` is not used
-            console.debug(line);
-            break;
         default:
+            // The console.trace method outputs some extra trace from the generated JS glue code which we don't want.
             console.debug(line);
             break;
     }
-}
-
-async function wait_for_ready() {
-    for (let i = 0; i < 10; ++i) {
-        const status = mm2_main_status();
-        switch (status) {
-            case MainStatus.NotRunning:
-            case MainStatus.NoContext:
-            case MainStatus.NoRpc:
-                break;
-            case MainStatus.RpcIsUp:
-                return;
-            default:
-                throw new Error(`Expected MainStatus, found: ${status}`);
-        }
-
-        await sleep(1000);
-    }
-
-    throw new Error("Timeout expired waiting for a RocIsUp");
 }
 
 function spawn_mm2_status_checking() {
@@ -132,11 +109,7 @@ function spawn_mm2_status_checking() {
             default:
                 throw new Error(`Expected MainStatus, found: ${status}`);
         }
-    }, 50)
-}
-
-function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    }, 100)
 }
 
 // The script starts here

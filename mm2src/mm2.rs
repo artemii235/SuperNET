@@ -79,10 +79,6 @@ pub async fn lp_main(params: LpMainParams, ctx_cb: &dyn Fn(u32)) -> Result<(), S
         log!("Logger initialization failed: "(e))
     }
 
-    // Is used for wasm_build tests
-    common::log::info!("Start lp_main");
-    common::executor::Timer::sleep(0.5).await;
-
     let conf = params.conf;
     if !conf["rpc_password"].is_null() {
         if !conf["rpc_password"].is_string() {
@@ -326,12 +322,15 @@ fn on_update_config(args: &[OsString]) -> Result<(), String> {
 fn init_logger(level: Option<LogLevel>) -> Result<(), String> {
     use common::log::UnifiedLoggerBuilder;
 
-    let builder = UnifiedLoggerBuilder::default();
-    let builder = match level {
-        Some(level) => builder.level_filter(level),
-        None => builder.level_filter_from_env_or_default(DEFAULT_LOG_FILTER),
+    let level = match level {
+        Some(l) => l,
+        None => LogLevel::from_env().unwrap_or(DEFAULT_LOG_FILTER),
     };
-    builder.console(false).mm_log(true).try_init()
+    UnifiedLoggerBuilder::default()
+        .level_filter(level)
+        .console(false)
+        .mm_log(true)
+        .try_init()
 }
 
 #[cfg(target_arch = "wasm32")]
