@@ -602,6 +602,7 @@ fn test_get_trade_fee() {
     let expected = TradeFee {
         coin: "QTUM".into(),
         amount: expected_trade_fee_amount.into(),
+        paid_from_trading_vol: false,
     };
     assert_eq!(actual_trade_fee, expected);
 }
@@ -635,6 +636,7 @@ fn test_sender_trade_preimage_zero_allowance() {
     let expected = TradeFee {
         coin: "QTUM".to_owned(),
         amount: (erc20_payment_fee_with_one_approve + sender_refund_fee).into(),
+        paid_from_trading_vol: false,
     };
     assert_eq!(actual, expected);
 }
@@ -671,6 +673,7 @@ fn test_sender_trade_preimage_with_allowance() {
     let expected = TradeFee {
         coin: "QTUM".to_owned(),
         amount: (erc20_payment_fee_without_approve + sender_refund_fee.clone()).into(),
+        paid_from_trading_vol: false,
     };
     assert_eq!(actual, expected);
 
@@ -682,6 +685,7 @@ fn test_sender_trade_preimage_with_allowance() {
     let expected = TradeFee {
         coin: "QTUM".to_owned(),
         amount: (erc20_payment_fee_with_two_approves + sender_refund_fee).into(),
+        paid_from_trading_vol: false,
     };
     assert_eq!(actual, expected);
 }
@@ -705,7 +709,7 @@ fn test_receiver_trade_preimage() {
         .expect("!get_receiver_trade_fee");
     // only one contract call should be included into the expected trade fee
     let expected_receiver_fee = big_decimal_from_sat(CONTRACT_CALL_GAS_FEE + EXPECTED_TX_FEE, coin.utxo.decimals);
-    let expected = ReceiverTradeFee {
+    let expected = TradeFee {
         coin: "QTUM".to_owned(),
         amount: expected_receiver_fee.into(),
         paid_from_trading_vol: false,
@@ -741,6 +745,7 @@ fn test_taker_fee_tx_fee() {
     let expected = TradeFee {
         coin: "QTUM".to_owned(),
         amount: expected_receiver_fee.into(),
+        paid_from_trading_vol: false,
     };
     assert_eq!(actual, expected);
 }

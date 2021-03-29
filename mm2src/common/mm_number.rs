@@ -63,7 +63,7 @@ pub struct MmNumber(BigRational);
 
 /// Rational number representation de/serializable in human readable form
 /// Should simplify the visual perception and parsing in code
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct Fraction {
     /// Numerator
     numer: BigIntStr,

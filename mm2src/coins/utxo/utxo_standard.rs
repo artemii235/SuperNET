@@ -1,6 +1,5 @@
 use super::*;
-use crate::{CanRefundHtlc, CoinBalance, ReceiverTradeFee, SwapOps, TradePreimageError, TradePreimageValue,
-            ValidateAddressResult};
+use crate::{CanRefundHtlc, CoinBalance, SwapOps, TradePreimageError, TradePreimageValue, ValidateAddressResult};
 use common::mm_metrics::MetricsArc;
 use futures::{FutureExt, TryFutureExt};
 
@@ -425,7 +424,7 @@ impl MmCoin for UtxoStandardCoin {
     fn get_receiver_trade_fee(
         &self,
         _stage: FeeApproxStage,
-    ) -> Box<dyn Future<Item = ReceiverTradeFee, Error = TradePreimageError> + Send> {
+    ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
         utxo_common::get_receiver_trade_fee(self.clone())
     }
 

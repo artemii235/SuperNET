@@ -32,8 +32,7 @@ pub use chain::Transaction as UtxoTx;
 
 use self::rpc_clients::{electrum_script_hash, UnspentInfo, UtxoRpcClientEnum};
 use crate::utxo::rpc_clients::UtxoRpcClientOps;
-use crate::{CanRefundHtlc, CoinBalance, FeeApproxStage, ReceiverTradeFee, TradePreimageError, TradePreimageValue,
-            ValidateAddressResult};
+use crate::{CanRefundHtlc, CoinBalance, FeeApproxStage, TradePreimageError, TradePreimageValue, ValidateAddressResult};
 use common::{block_on, Traceable};
 
 macro_rules! true_or {
@@ -1853,6 +1852,7 @@ where
         Ok(TradeFee {
             coin: ticker,
             amount: big_decimal_from_sat(amount as i64, decimals).into(),
+            paid_from_trading_vol: false,
         })
     };
     Box::new(fut.boxed().compat())
@@ -1973,20 +1973,21 @@ where
         Ok(TradeFee {
             coin: coin.as_ref().conf.ticker.clone(),
             amount: fee_amount.into(),
+            paid_from_trading_vol: false,
         })
     };
     Box::new(fut.boxed().compat())
 }
 
 /// The fee to spend (receive) other payment is deducted from the trading amount so we should display it
-pub fn get_receiver_trade_fee<T>(coin: T) -> Box<dyn Future<Item = ReceiverTradeFee, Error = TradePreimageError> + Send>
+pub fn get_receiver_trade_fee<T>(coin: T) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send>
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps + Send + Sync + 'static,
 {
     let fut = async move {
         let amount_sat = try_map!(get_htlc_spend_fee(&coin).await, TradePreimageError::Other);
         let amount = big_decimal_from_sat_unsigned(amount_sat, coin.as_ref().decimals).into();
-        Ok(ReceiverTradeFee {
+        Ok(TradeFee {
             coin: coin.as_ref().conf.ticker.clone(),
             amount,
             paid_from_trading_vol: true,
@@ -2021,6 +2022,7 @@ where
         Ok(TradeFee {
             coin: coin.ticker().to_owned(),
             amount: fee_amount.into(),
+            paid_from_trading_vol: false,
         })
     };
     Box::new(fut.boxed().compat())

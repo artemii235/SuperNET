@@ -684,6 +684,7 @@ fn get_sender_trade_preimage() {
         TradeFee {
             coin: "ETH".to_owned(),
             amount: amount.into(),
+            paid_from_trading_vol: false,
         }
     }
 
@@ -739,6 +740,7 @@ fn get_erc20_sender_trade_preimage() {
         TradeFee {
             coin: "ETH".to_owned(),
             amount: amount.into(),
+            paid_from_trading_vol: false,
         }
     }
 
@@ -803,7 +805,7 @@ fn get_receiver_trade_preimage() {
 
     let (_ctx, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://dummy.dummy".into()]);
     let amount = u256_to_big_decimal((150_000 * GAS_PRICE).into(), 18).expect("!u256_to_big_decimal");
-    let expected_fee = ReceiverTradeFee {
+    let expected_fee = TradeFee {
         coin: "ETH".to_owned(),
         amount: amount.into(),
         paid_from_trading_vol: false,
@@ -830,6 +832,7 @@ fn test_get_fee_to_send_taker_fee() {
     let expected_fee = TradeFee {
         coin: "ETH".to_owned(),
         amount: amount.into(),
+        paid_from_trading_vol: false,
     };
 
     let dex_fee_amount = u256_to_big_decimal(DEX_FEE_AMOUNT.into(), 18).expect("!u256_to_big_decimal");

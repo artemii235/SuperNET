@@ -9,8 +9,8 @@ use crate::mm2::{lp_network::subscribe_to_topic, lp_swap::NegotiationDataMsg};
 use atomic::Atomic;
 use bigdecimal::BigDecimal;
 use bitcrypto::dhash160;
-use coins::{lp_coinfind, CanRefundHtlc, FeeApproxStage, FoundSwapTxSpend, MmCoinEnum, ReceiverTradeFee, TradeFee,
-            TradePreimageValue, TransactionEnum};
+use coins::{lp_coinfind, CanRefundHtlc, FeeApproxStage, FoundSwapTxSpend, MmCoinEnum, TradeFee, TradePreimageValue,
+            TransactionEnum};
 use common::{bits256, executor::Timer, file_lock::FileLock, log::error, mm_ctx::MmArc, mm_number::MmNumber, now_ms,
              slurp, write, Traceable, DEX_FEE_ADDR_RAW_PUBKEY, MM_VERSION};
 use futures::{compat::Future01CompatExt, select, FutureExt};
@@ -1475,7 +1475,7 @@ pub async fn run_maker_swap(swap: RunMakerSwapInput, ctx: MmArc) {
 
 pub struct MakerSwapPreparedParams {
     maker_payment_trade_fee: TradeFee,
-    taker_payment_spend_trade_fee: ReceiverTradeFee,
+    taker_payment_spend_trade_fee: TradeFee,
 }
 
 pub async fn check_balance_for_maker_swap(
@@ -1558,7 +1558,7 @@ pub async fn maker_swap_trade_preimage(ctx: &MmArc, req: TradePreimageRequest) -
     let volume = if req.max { Some(volume) } else { None };
     Ok(MakerTradePreimage {
         base_coin_fee,
-        rel_coin_fee: rel_coin_fee.into(),
+        rel_coin_fee,
         volume,
     })
 }
