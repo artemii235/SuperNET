@@ -1,10 +1,10 @@
 use super::*;
-#[cfg(not(target_arch = "wasm32"))]
-use crate::common::log::{register_callback, FfiCallback};
-use crate::common::mm_ctx::MmArc;
+use common::crash_reports::init_crash_reports;
+use common::log::{register_callback, FfiCallback};
+use common::mm_ctx::MmArc;
 use futures01::Future;
 use gstuff::{any_to_str, now_float};
-#[cfg(not(target_arch = "wasm32"))] use libc::c_char;
+use libc::c_char;
 use num_traits::FromPrimitive;
 use serde_json::{self as json};
 use std::ffi::{CStr, CString};
@@ -24,9 +24,9 @@ enum MainErr {
 
 /// Starts the MM2 in a detached singleton thread.
 #[no_mangle]
-#[cfg(not(target_arch = "wasm32"))]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn mm2_main(conf: *const c_char, log_cb: extern "C" fn(line: *const c_char)) -> i8 {
+    init_crash_reports();
     macro_rules! log {
         ($($args: tt)+) => {{
             let msg = fomat! ("mm2_lib:" ((line!())) "] " $($args)+ '\0');
@@ -81,8 +81,17 @@ pub unsafe extern "C" fn mm2_main(conf: *const c_char, log_cb: extern "C" fn(lin
 #[no_mangle]
 pub extern "C" fn mm2_main_status() -> i8 { mm2_status() as i8 }
 
+/// Run a few hand-picked tests.
+///
+/// The tests are wrapped into a library method in order to run them in such embedded environments
+/// where running "cargo test" is not an easy option.
+///
+/// MM2 is mostly used as a library in environments where we can't simpy run it as a separate process
+/// and we can't spawn multiple MM2 instances in the same process YET
+/// therefore our usual process-spawning tests can not be used here.
+///
+/// Returns the `torch` (as in Olympic flame torch) if the tests have passed. Panics otherwise.
 #[no_mangle]
-#[cfg(not(target_arch = "wasm32"))]
 pub extern "C" fn mm2_test(torch: i32, log_cb: extern "C" fn(line: *const c_char)) -> i32 {
     register_callback(FfiCallback::with_ffi_function(log_cb));
 
