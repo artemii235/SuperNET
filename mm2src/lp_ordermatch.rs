@@ -3126,8 +3126,8 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
     }
 
     let ordermatch_ctx = try_s!(OrdermatchContext::from_ctx(&ctx));
-    let mut my_orders = ordermatch_ctx.my_maker_orders.lock().await;
     if req.cancel_previous {
+        let mut my_orders = ordermatch_ctx.my_maker_orders.lock().await;
         let mut cancelled = vec![];
         // remove the previous orders if there're some to allow multiple setprice call per pair
         // it's common use case now as `autoprice` doesn't work with new ordermatching and
@@ -3199,6 +3199,7 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
     maker_order_created_p2p_notify(ctx.clone(), &new_order).await;
     let rpc_result = MakerOrderForRpc::from(&new_order);
     let res = try_s!(json::to_vec(&json!({ "result": rpc_result })));
+    let mut my_orders = ordermatch_ctx.my_maker_orders.lock().await;
     my_orders.insert(new_order.uuid, new_order);
     Ok(try_s!(Response::builder().body(res)))
 }
