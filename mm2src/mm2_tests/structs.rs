@@ -296,3 +296,44 @@ pub struct EnableElectrumResponse {
     pub requires_notarization: bool,
     pub result: String,
 }
+
+#[derive(Debug, Deserialize)]
+pub struct TradeFee {
+    pub coin: String,
+    pub amount: BigDecimal,
+    pub amount_rat: BigRational,
+    pub amount_fraction: Fraction,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TakerPreimage {
+    pub base_coin_fee: TradeFee,
+    pub rel_coin_fee: TradeFee,
+    pub taker_fee: TradeFee,
+    pub fee_to_send_taker_fee: TradeFee,
+    // the order of fees is not deterministic
+    pub total_fees: Vec<TradeFee>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MakerPreimage {
+    base_coin_fee: TradeFee,
+    rel_coin_fee: TradeFee,
+    volume: Option<BigDecimal>,
+    volume_rat: Option<BigRational>,
+    volume_fraction: Option<Fraction>,
+    // the order of fees is not deterministic
+    total_fees: Vec<TradeFee>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum TradePreimageResult {
+    TakerPreimage(TakerPreimage),
+    MakerPreimage {},
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TradePreimageResponse {
+    pub result: TradePreimageResult,
+}

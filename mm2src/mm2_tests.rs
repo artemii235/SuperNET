@@ -24,7 +24,7 @@ use std::thread;
 use std::time::Duration;
 use uuid::Uuid;
 
-#[path = "mm2_tests/structs.rs"] mod structs;
+#[path = "mm2_tests/structs.rs"] pub mod structs;
 use structs::*;
 
 // TODO: Consider and/or try moving the integration tests into separate Rust files.

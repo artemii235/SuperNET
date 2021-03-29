@@ -53,7 +53,7 @@ pub mod database;
 
 #[cfg(any(test, target_arch = "wasm32"))]
 #[path = "mm2_tests.rs"]
-mod mm2_tests;
+pub mod mm2_tests;
 
 /// * `ctx_cb` - callback used to share the `MmCtx` ID with the call site.
 pub fn lp_main(conf: Json, ctx_cb: &dyn Fn(u32)) -> Result<(), String> {
