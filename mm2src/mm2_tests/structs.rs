@@ -379,6 +379,34 @@ impl TradeFeeForTest {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct TotalTradeFeeForTest {
+    pub coin: String,
+    pub amount: BigDecimal,
+    pub amount_rat: BigRational,
+    pub amount_fraction: Fraction,
+    pub required_balance: BigDecimal,
+    pub required_balance_rat: BigRational,
+    pub required_balance_fraction: Fraction,
+}
+
+impl TotalTradeFeeForTest {
+    pub fn new(coin: &str, amount: &'static str, required_balance: &'static str) -> TotalTradeFeeForTest {
+        let amount_mm = MmNumber::from(amount);
+        let required_mm = MmNumber::from(required_balance);
+        TotalTradeFeeForTest {
+            coin: coin.into(),
+            amount: amount_mm.to_decimal(),
+            amount_rat: amount_mm.to_ratio(),
+            amount_fraction: amount_mm.to_fraction(),
+            required_balance: required_mm.to_decimal(),
+            required_balance_rat: required_mm.to_ratio(),
+            required_balance_fraction: required_mm.to_fraction(),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct TakerPreimage {
@@ -387,7 +415,7 @@ pub struct TakerPreimage {
     pub taker_fee: TradeFeeForTest,
     pub fee_to_send_taker_fee: TradeFeeForTest,
     // the order of fees is not deterministic
-    pub total_fees: Vec<TradeFeeForTest>,
+    pub total_fees: Vec<TotalTradeFeeForTest>,
 }
 
 #[derive(Debug, Deserialize, Eq, PartialEq)]
@@ -399,7 +427,7 @@ pub struct MakerPreimage {
     pub volume_rat: Option<BigRational>,
     pub volume_fraction: Option<Fraction>,
     // the order of fees is not deterministic
-    pub total_fees: Vec<TradeFeeForTest>,
+    pub total_fees: Vec<TotalTradeFeeForTest>,
 }
 
 #[derive(Debug, Deserialize, Eq, PartialEq)]

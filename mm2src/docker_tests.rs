@@ -1511,13 +1511,16 @@ mod docker_tests {
         let rel_coin_fee = TradeFeeForTest::new("MYCOIN1", "0.00002", true);
         let volume = MmNumber::from("9.99999");
 
+        let my_coin_total = TotalTradeFeeForTest::new("MYCOIN", "0.00001", "0.00001");
+        let my_coin1_total = TotalTradeFeeForTest::new("MYCOIN1", "0.00002", "0");
+
         let expected = TradePreimageResult::MakerPreimage(MakerPreimage {
             base_coin_fee: base_coin_fee.clone(),
             rel_coin_fee: rel_coin_fee.clone(),
             volume: Some(volume.to_decimal()),
             volume_rat: Some(volume.to_ratio()),
             volume_fraction: Some(volume.to_fraction()),
-            total_fees: vec![base_coin_fee, rel_coin_fee],
+            total_fees: vec![my_coin_total, my_coin1_total],
         });
 
         let mut actual: TradePreimageResponse = json::from_str(&rc.1).unwrap();
@@ -1541,13 +1544,15 @@ mod docker_tests {
         let rel_coin_fee = TradeFeeForTest::new("MYCOIN", "0.00001", true);
         let volume = MmNumber::from("19.99998");
 
+        let my_coin_total = TotalTradeFeeForTest::new("MYCOIN", "0.00001", "0");
+        let my_coin1_total = TotalTradeFeeForTest::new("MYCOIN1", "0.00002", "0.00002");
         let expected = TradePreimageResult::MakerPreimage(MakerPreimage {
             base_coin_fee: base_coin_fee.clone(),
             rel_coin_fee: rel_coin_fee.clone(),
             volume: Some(volume.to_decimal()),
             volume_rat: Some(volume.to_ratio()),
             volume_fraction: Some(volume.to_fraction()),
-            total_fees: vec![rel_coin_fee, base_coin_fee],
+            total_fees: vec![my_coin_total, my_coin1_total],
         });
 
         actual.sort_total_fees();
@@ -1569,13 +1574,16 @@ mod docker_tests {
         let base_coin_fee = TradeFeeForTest::new("MYCOIN1", "0.00002", false);
         let rel_coin_fee = TradeFeeForTest::new("MYCOIN", "0.00001", true);
 
+        let total_my_coin = TotalTradeFeeForTest::new("MYCOIN", "0.00001", "0");
+        let total_my_coin1 = TotalTradeFeeForTest::new("MYCOIN1", "0.00002", "0.00002");
+
         let expected = TradePreimageResult::MakerPreimage(MakerPreimage {
             base_coin_fee: base_coin_fee.clone(),
             rel_coin_fee: rel_coin_fee.clone(),
             volume: None,
             volume_rat: None,
             volume_fraction: None,
-            total_fees: vec![rel_coin_fee, base_coin_fee],
+            total_fees: vec![total_my_coin, total_my_coin1],
         });
 
         actual.sort_total_fees();
@@ -1659,8 +1667,9 @@ mod docker_tests {
         let rel_coin_fee = TradeFeeForTest::new("MYCOIN1", "0.00002", true);
         let taker_fee = TradeFeeForTest::new("MYCOIN", "0.01", false);
         let fee_to_send_taker_fee = TradeFeeForTest::new("MYCOIN", "0.00001", false);
-        let my_coin_total_fee = TradeFeeForTest::new("MYCOIN", "0.01002", false);
-        let my_coin1_total_fee = rel_coin_fee.clone();
+
+        let my_coin_total_fee = TotalTradeFeeForTest::new("MYCOIN", "0.01002", "0.01002");
+        let my_coin1_total_fee = TotalTradeFeeForTest::new("MYCOIN1", "0.00002", "0");
 
         let expected = TradePreimageResult::TakerPreimage(TakerPreimage {
             base_coin_fee,
@@ -1689,8 +1698,9 @@ mod docker_tests {
         let rel_coin_fee = TradeFeeForTest::new("MYCOIN1", "0.00002", false);
         let taker_fee = TradeFeeForTest::new("MYCOIN1", "0.02", false);
         let fee_to_send_taker_fee = TradeFeeForTest::new("MYCOIN1", "0.00002", false);
-        let my_coin_total_fee = base_coin_fee.clone();
-        let my_coin1_total_fee = TradeFeeForTest::new("MYCOIN1", "0.02004", false);
+
+        let my_coin_total_fee = TotalTradeFeeForTest::new("MYCOIN", "0.00001", "0");
+        let my_coin1_total_fee = TotalTradeFeeForTest::new("MYCOIN1", "0.02004", "0.02004");
 
         let expected = TradePreimageResult::TakerPreimage(TakerPreimage {
             base_coin_fee,
