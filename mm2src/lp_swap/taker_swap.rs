@@ -1748,6 +1748,7 @@ mod taker_swap_tests {
     use coins::utxo::UtxoTx;
     use coins::{FoundSwapTxSpend, MarketCoinOps, MmCoin, SwapOps, TestCoin};
     use common::mm_ctx::MmCtxBuilder;
+    use common::new_uuid;
     use common::privkey::key_pair_from_seed;
     use mocktopus::mocking::*;
 
@@ -2252,7 +2253,7 @@ mod taker_swap_tests {
         let actual = get_locked_amount(&ctx, "RICK");
         assert_eq!(actual, MmNumber::from(0));
 
-        let actual = get_locked_amount_by_other_swaps(&ctx, &Uuid::new_v4(), "RICK");
+        let actual = get_locked_amount_by_other_swaps(&ctx, &new_uuid(), "RICK");
         assert_eq!(actual, MmNumber::from(0));
     }
 }
