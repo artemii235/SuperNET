@@ -356,7 +356,7 @@ pub fn get_locked_amount(ctx: &MmArc, coin: &str) -> MmNumber {
                 total_amount = total_amount + locked.amount;
             }
             if let Some(trade_fee) = locked.trade_fee {
-                if trade_fee.coin == coin {
+                if trade_fee.coin == coin && !trade_fee.paid_from_trading_vol {
                     total_amount = total_amount + trade_fee.amount;
                 }
             }
@@ -390,7 +390,7 @@ fn get_locked_amount_by_other_swaps(ctx: &MmArc, except_uuid: &Uuid, coin: &str)
                 total_amount = total_amount + locked.amount;
             }
             if let Some(trade_fee) = locked.trade_fee {
-                if trade_fee.coin == coin {
+                if trade_fee.coin == coin && !trade_fee.paid_from_trading_vol {
                     total_amount = total_amount + trade_fee.amount;
                 }
             }
@@ -928,6 +928,8 @@ impl SavedSwap {
 pub struct SavedTradeFee {
     coin: String,
     amount: BigDecimal,
+    #[serde(default)]
+    paid_from_trading_vol: bool,
 }
 
 impl From<SavedTradeFee> for TradeFee {
@@ -936,21 +938,17 @@ impl From<SavedTradeFee> for TradeFee {
         TradeFee {
             coin: orig.coin,
             amount: orig.amount.into(),
-            paid_from_trading_vol: false,
+            paid_from_trading_vol: orig.paid_from_trading_vol,
         }
     }
 }
 
 impl From<TradeFee> for SavedTradeFee {
     fn from(orig: TradeFee) -> Self {
-        let amount = if orig.paid_from_trading_vol {
-            0.into()
-        } else {
-            orig.amount.into()
-        };
         SavedTradeFee {
             coin: orig.coin,
-            amount,
+            amount: orig.amount.into(),
+            paid_from_trading_vol: orig.paid_from_trading_vol,
         }
     }
 }
