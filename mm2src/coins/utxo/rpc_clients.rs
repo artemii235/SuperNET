@@ -45,7 +45,7 @@ use std::num::NonZeroU64;
 use std::ops::Deref;
 #[cfg(target_arch = "wasm32")] use std::os::raw::c_char;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
@@ -423,8 +423,7 @@ pub struct NativeClientImpl {
     /// Transport event handlers
     pub event_handlers: Vec<RpcTransportEventHandlerShared>,
     pub request_id: AtomicU64,
-    pub list_unspent_in_progress: AtomicBool,
-    pub list_unspent_subs: AsyncMutex<Vec<RpcReqSub<Vec<NativeUnspent>>>>,
+    pub list_unspent_concurrent_map: ConcurrentRequestMap<String, Vec<NativeUnspent>>,
 }
 
 #[cfg(test)]
@@ -436,8 +435,7 @@ impl Default for NativeClientImpl {
             auth: "".to_string(),
             event_handlers: vec![],
             request_id: Default::default(),
-            list_unspent_in_progress: Default::default(),
-            list_unspent_subs: Default::default(),
+            list_unspent_concurrent_map: ConcurrentRequestMap::new(),
         }
     }
 }
@@ -510,8 +508,13 @@ impl JsonRpcClient for NativeClientImpl {
 #[cfg_attr(test, mockable)]
 impl UtxoRpcClientOps for NativeClient {
     fn list_unspent(&self, address: &Address, decimals: u8) -> UtxoRpcRes<Vec<UnspentInfo>> {
-        let fut = self
-            .list_unspent_impl(0, std::i32::MAX, vec![address.to_string()])
+        let request_fut = self.list_unspent_impl(0, std::i32::MAX, vec![address.to_string()]);
+        let arc = self.clone();
+        let address = address.to_string();
+        let fut = async move { arc.list_unspent_concurrent_map.wrap_request(address, request_fut).await };
+        let fut = fut
+            .boxed()
+            .compat()
             .map_err(|e| ERRL!("{}", e))
             .and_then(move |unspents| {
                 let unspents: Result<Vec<_>, _> = unspents
@@ -657,32 +660,7 @@ impl NativeClient {
         max_conf: i32,
         addresses: Vec<String>,
     ) -> RpcRes<Vec<NativeUnspent>> {
-        let arc = self.clone();
-        if self
-            .list_unspent_in_progress
-            .compare_and_swap(false, true, AtomicOrdering::Relaxed)
-        {
-            let fut = async move {
-                let (tx, rx) = async_oneshot::channel();
-                arc.list_unspent_subs.lock().await.push(tx);
-                rx.await.unwrap()
-            };
-            Box::new(fut.boxed().compat())
-        } else {
-            let fut = async move {
-                let unspents_res = rpc_func!(arc, "listunspent", min_conf, max_conf, addresses)
-                    .compat()
-                    .await;
-                for sub in arc.list_unspent_subs.lock().await.drain(..) {
-                    if sub.send(unspents_res.clone()).is_err() {
-                        log!("list_unspent_sub is dropped");
-                    }
-                }
-                arc.list_unspent_in_progress.store(false, AtomicOrdering::Relaxed);
-                unspents_res
-            };
-            Box::new(fut.boxed().compat())
-        }
+        rpc_func!(self, "listunspent", min_conf, max_conf, addresses)
     }
 }
 
@@ -1124,16 +1102,60 @@ impl Drop for ElectrumConnection {
 }
 
 #[derive(Debug)]
-struct ConcurrentRequestState<T> {
+struct ConcurrentRequestState<V> {
     is_running: bool,
-    subscribers: Vec<RpcReqSub<T>>,
+    subscribers: Vec<RpcReqSub<V>>,
 }
 
-impl<T> ConcurrentRequestState<T> {
+impl<V> ConcurrentRequestState<V> {
     fn new() -> Self {
         ConcurrentRequestState {
             is_running: false,
             subscribers: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct ConcurrentRequestMap<K, V> {
+    inner: AsyncMutex<HashMap<K, ConcurrentRequestState<V>>>,
+}
+
+impl<K, V> Default for ConcurrentRequestMap<K, V> {
+    fn default() -> Self {
+        ConcurrentRequestMap {
+            inner: AsyncMutex::new(HashMap::new()),
+        }
+    }
+}
+
+impl<K: Clone + Eq + std::hash::Hash, V: Clone> ConcurrentRequestMap<K, V> {
+    pub fn new() -> ConcurrentRequestMap<K, V> { ConcurrentRequestMap::default() }
+
+    async fn wrap_request(&self, request_arg: K, request_fut: RpcRes<V>) -> Result<V, JsonRpcError> {
+        let mut map = self.inner.lock().await;
+        let state = map
+            .entry(request_arg.clone())
+            .or_insert_with(ConcurrentRequestState::new);
+        if state.is_running {
+            let (tx, rx) = async_oneshot::channel();
+            state.subscribers.push(tx);
+            // drop here to avoid holding the lock during await
+            drop(map);
+            rx.await.unwrap()
+        } else {
+            // drop here to avoid holding the lock during await
+            drop(map);
+            let request_res = request_fut.compat().await;
+            let mut map = self.inner.lock().await;
+            let state = map.get_mut(&request_arg).unwrap();
+            for sub in state.subscribers.drain(..) {
+                if sub.send(request_res.clone()).is_err() {
+                    log!("subscriber is dropped");
+                }
+            }
+            state.is_running = false;
+            request_res
         }
     }
 }
@@ -1145,14 +1167,8 @@ pub struct ElectrumClientImpl {
     next_id: AtomicU64,
     event_handlers: Vec<RpcTransportEventHandlerShared>,
     protocol_version: OrdRange<f32>,
-    get_balance_state: AsyncMutex<ConcurrentRequestState<ElectrumBalance>>,
-    /*
-    list_unspent_in_progress: AtomicBool,
-    list_unspent_subs: AsyncMutex<Vec<RpcReqSub<Vec<ElectrumUnspent>>>>,
-    get_balance_in_progress: AtomicBool,
-    get_balance_subs: AsyncMutex<Vec<async_oneshot::Sender<Result<ElectrumBalance, JsonRpcError>>>>,
-
-     */
+    get_balance_concurrent_map: ConcurrentRequestMap<String, ElectrumBalance>,
+    list_unspent_concurrent_map: ConcurrentRequestMap<String, Vec<ElectrumUnspent>>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1427,7 +1443,7 @@ impl ElectrumClient {
     /// It can return duplicates sometimes: https://github.com/artemii235/SuperNET/issues/269
     /// We should remove them to build valid transactions
     fn scripthash_list_unspent(&self, hash: &str) -> RpcRes<Vec<ElectrumUnspent>> {
-        Box::new(rpc_func!(self, "blockchain.scripthash.listunspent", hash).and_then(
+        let request_fut = Box::new(rpc_func!(self, "blockchain.scripthash.listunspent", hash).and_then(
             move |unspents: Vec<ElectrumUnspent>| {
                 let mut map: HashMap<(H256Json, u32), bool> = HashMap::new();
                 let unspents = unspents
@@ -1442,51 +1458,11 @@ impl ElectrumClient {
                     .collect();
                 Ok(unspents)
             },
-        ))
-        /*
+        ));
         let arc = self.clone();
         let hash = hash.to_owned();
-        if self
-            .list_unspent_in_progress
-            .compare_and_swap(false, true, AtomicOrdering::Relaxed)
-        {
-            let fut = async move {
-                let (tx, rx) = async_oneshot::channel();
-                arc.list_unspent_subs.lock().await.push(tx);
-                rx.await.unwrap()
-            };
-            Box::new(fut.boxed().compat())
-        } else {
-            let fut = async move {
-                let unspents_res = rpc_func!(arc, "blockchain.scripthash.listunspent", hash)
-                    .and_then(move |unspents: Vec<ElectrumUnspent>| {
-                        let mut map: HashMap<(H256Json, u32), bool> = HashMap::new();
-                        let unspents = unspents
-                            .into_iter()
-                            .filter(|unspent| match map.entry((unspent.tx_hash.clone(), unspent.tx_pos)) {
-                                Entry::Occupied(_) => false,
-                                Entry::Vacant(e) => {
-                                    e.insert(true);
-                                    true
-                                },
-                            })
-                            .collect();
-                        Ok(unspents)
-                    })
-                    .compat()
-                    .await;
-                for sub in arc.list_unspent_subs.lock().await.drain(..) {
-                    if sub.send(unspents_res.clone()).is_err() {
-                        log!("list_unspent_sub is dropped");
-                    }
-                }
-                arc.list_unspent_in_progress.store(false, AtomicOrdering::Relaxed);
-                unspents_res
-            };
-            Box::new(fut.boxed().compat())
-        }
-
-        */
+        let fut = async move { arc.list_unspent_concurrent_map.wrap_request(hash, request_fut).await };
+        Box::new(fut.boxed().compat())
     }
 
     /// https://electrumx.readthedocs.io/en/latest/protocol-methods.html#blockchain-scripthash-get-history
@@ -1499,24 +1475,9 @@ impl ElectrumClient {
         let arc = self.clone();
         let hash = hash.to_owned();
         let fut = async move {
-            let mut state = arc.get_balance_state.lock().await;
-            if state.is_running {
-                let (tx, rx) = async_oneshot::channel();
-                state.subscribers.push(tx);
-                drop(state);
-                rx.await.unwrap()
-            } else {
-                drop(state);
-                let balance_res = rpc_func!(arc, "blockchain.scripthash.get_balance", hash).compat().await;
-                let mut state = arc.get_balance_state.lock().await;
-                for sub in state.subscribers.drain(..) {
-                    if sub.send(balance_res.clone()).is_err() {
-                        log!("list_unspent_sub is dropped");
-                    }
-                }
-                state.is_running = false;
-                balance_res
-            }
+            let hash_ref = &hash;
+            let request = rpc_func!(arc, "blockchain.scripthash.get_balance", hash_ref);
+            arc.get_balance_concurrent_map.wrap_request(hash, request).await
         };
         Box::new(fut.boxed().compat())
     }
@@ -1693,14 +1654,8 @@ impl ElectrumClientImpl {
             next_id: 0.into(),
             event_handlers,
             protocol_version,
-            /*
-            list_unspent_in_progress: Default::default(),
-            list_unspent_subs: Default::default(),
-            get_balance_in_progress: Default::default(),
-            get_balance_subs: Default::default(),
-
-             */
-            get_balance_state: AsyncMutex::new(ConcurrentRequestState::new()),
+            get_balance_concurrent_map: ConcurrentRequestMap::new(),
+            list_unspent_concurrent_map: ConcurrentRequestMap::new(),
         }
     }
 

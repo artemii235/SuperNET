@@ -74,6 +74,7 @@ use super::{CoinTransportMetrics, CoinsContext, FeeApproxStage, FoundSwapTxSpend
             MmCoin, RpcClientType, RpcTransportEventHandler, RpcTransportEventHandlerShared, TradeFee,
             TradePreimageError, Transaction, TransactionDetails, TransactionEnum, TransactionFut, WithdrawFee,
             WithdrawRequest};
+use crate::utxo::rpc_clients::ConcurrentRequestMap;
 
 #[cfg(test)] pub mod utxo_tests;
 
@@ -1153,8 +1154,7 @@ pub trait UtxoCoinBuilder {
             auth: format!("Basic {}", base64_encode(&auth_str, URL_SAFE)),
             event_handlers,
             request_id: 0u64.into(),
-            list_unspent_in_progress: false.into(),
-            list_unspent_subs: AsyncMutex::new(Vec::new()),
+            list_unspent_concurrent_map: ConcurrentRequestMap::new(),
         });
 
         Ok(NativeClient(client))
