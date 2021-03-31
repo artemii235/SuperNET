@@ -20,7 +20,7 @@ pub fn qrc20_coin_for_test(priv_key: &[u8]) -> (MmArc, Qrc20Coin) {
         "wiftype":128,
         "segwit":true,
         "mm2":1,
-        "mature_confirmations":500,
+        "mature_confirmations":2000,
     });
     let req = json!({
         "method": "electrum",
@@ -765,7 +765,7 @@ fn test_coin_from_conf_without_decimals() {
         "wiftype":128,
         "segwit":true,
         "mm2":1,
-        "mature_confirmations":500,
+        "mature_confirmations":2000,
     });
     let req = json!({
         "method": "electrum",
