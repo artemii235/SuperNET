@@ -423,7 +423,7 @@ pub struct NativeClientImpl {
     /// Transport event handlers
     pub event_handlers: Vec<RpcTransportEventHandlerShared>,
     pub request_id: AtomicU64,
-    pub list_unspent_concurrent_map: ConcurrentRequestMap<String, Vec<NativeUnspent>>,
+    pub list_unspent_concurrent_map: ConcurrentRequestMap<(i32, i32, Vec<String>), Vec<NativeUnspent>>,
 }
 
 #[cfg(test)]
@@ -508,13 +508,8 @@ impl JsonRpcClient for NativeClientImpl {
 #[cfg_attr(test, mockable)]
 impl UtxoRpcClientOps for NativeClient {
     fn list_unspent(&self, address: &Address, decimals: u8) -> UtxoRpcRes<Vec<UnspentInfo>> {
-        let request_fut = self.list_unspent_impl(0, std::i32::MAX, vec![address.to_string()]);
-        let arc = self.clone();
-        let address = address.to_string();
-        let fut = async move { arc.list_unspent_concurrent_map.wrap_request(address, request_fut).await };
-        let fut = fut
-            .boxed()
-            .compat()
+        let fut = self
+            .list_unspent_impl(0, std::i32::MAX, vec![address.to_string()])
             .map_err(|e| ERRL!("{}", e))
             .and_then(move |unspents| {
                 let unspents: Result<Vec<_>, _> = unspents
@@ -660,7 +655,11 @@ impl NativeClient {
         max_conf: i32,
         addresses: Vec<String>,
     ) -> RpcRes<Vec<NativeUnspent>> {
-        rpc_func!(self, "listunspent", min_conf, max_conf, addresses)
+        let request_fut = rpc_func!(self, "listunspent", &min_conf, &max_conf, &addresses);
+        let arc = self.clone();
+        let args = (min_conf, max_conf, addresses);
+        let fut = async move { arc.list_unspent_concurrent_map.wrap_request(args, request_fut).await };
+        Box::new(fut.boxed().compat())
     }
 }
 
@@ -1475,8 +1474,7 @@ impl ElectrumClient {
         let arc = self.clone();
         let hash = hash.to_owned();
         let fut = async move {
-            let hash_ref = &hash;
-            let request = rpc_func!(arc, "blockchain.scripthash.get_balance", hash_ref);
+            let request = rpc_func!(arc, "blockchain.scripthash.get_balance", &hash);
             arc.get_balance_concurrent_map.wrap_request(hash, request).await
         };
         Box::new(fut.boxed().compat())
