@@ -54,7 +54,7 @@ pub mod database;
 
 #[cfg(any(test, target_arch = "wasm32"))]
 #[path = "mm2_tests.rs"]
-mod mm2_tests;
+pub mod mm2_tests;
 
 const DEFAULT_LOG_FILTER: LogLevel = LogLevel::Info;
 

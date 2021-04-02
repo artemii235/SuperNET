@@ -131,8 +131,9 @@ fn root() -> PathBuf {
 fn rabs(rrel: &str) -> PathBuf { root().join(rrel) }
 
 fn path2s(path: PathBuf) -> String {
-    let error_msg = format!("Non-stringy path {:?}", path);
-    path.to_str().expect(&error_msg).into()
+    path.to_str()
+        .unwrap_or_else(|| panic!("Non-stringy path {:?}", path))
+        .into()
 }
 
 /// Loads the `path`, runs `update` on it and saves back the result if it differs.
@@ -211,8 +212,6 @@ fn build_c_code() {
         }
         println!("cargo:rustc-link-lib=static=seh");
         println!("cargo:rustc-link-search=native={}", out_dir);
-    } else {
-        println!("cargo:rustc-link-lib=crypto");
     }
 }
 
