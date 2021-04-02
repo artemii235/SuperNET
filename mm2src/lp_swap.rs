@@ -724,7 +724,7 @@ fn dex_fee_threshold(min_tx_amount: MmNumber) -> MmNumber {
 }
 
 fn dex_fee_rate(base: &str, rel: &str) -> MmNumber {
-    if base == "KMD" || rel == "KMD" {
+    if base == "KMD" || rel == "KMD" || base == "MYCOIN1" || rel == "MYCOIN1" {
         // 1/777 - 10%
         BigRational::new(9.into(), 7770.into()).into()
     } else {

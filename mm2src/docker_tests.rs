@@ -1264,6 +1264,104 @@ mod docker_tests {
     }
 
     #[test]
+    fn test_max_taker_vol_swap() {
+        let (_ctx, _, bob_priv_key) = generate_coin_with_random_privkey("MYCOIN", 1000.into());
+        let (_ctx, _, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN1", 50.into());
+        let coins = json! ([
+            {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
+            {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
+        ]);
+        let mut mm_bob = MarketMakerIt::start(
+            json! ({
+                "gui": "nogui",
+                "netid": 9000,
+                "dht": "on",  // Enable DHT without delay.
+                "passphrase": format!("0x{}", hex::encode(bob_priv_key)),
+                "coins": coins,
+                "rpc_password": "pass",
+                "i_am_seed": true,
+            }),
+            "pass".to_string(),
+            None,
+        )
+        .unwrap();
+        let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
+        block_on(mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
+
+        let mut mm_alice = MarketMakerIt::start(
+            json! ({
+                "gui": "nogui",
+                "netid": 9000,
+                "dht": "on",  // Enable DHT without delay.
+                "passphrase": format!("0x{}", hex::encode(alice_priv_key)),
+                "coins": coins,
+                "rpc_password": "pass",
+                "seednodes": vec![format!("{}", mm_bob.ip)],
+            }),
+            "pass".to_string(),
+            None,
+        )
+        .unwrap();
+        let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
+        block_on(mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
+
+        log!([block_on(enable_native(&mm_bob, "MYCOIN", &[]))]);
+        log!([block_on(enable_native(&mm_bob, "MYCOIN1", &[]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN", &[]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN1", &[]))]);
+        let price = MmNumber::from((100, 1620));
+        let rc = block_on(mm_bob.rpc(json! ({
+            "userpass": mm_bob.userpass,
+            "method": "setprice",
+            "base": "MYCOIN",
+            "rel": "MYCOIN1",
+            "price": price,
+            "max": true,
+        })))
+        .unwrap();
+        assert!(rc.0.is_success(), "!setprice: {}", rc.1);
+
+        let rc = block_on(mm_alice.rpc(json! ({
+            "userpass": mm_alice.userpass,
+            "method": "orderbook",
+            "base": "MYCOIN1",
+            "rel": "MYCOIN",
+        })))
+        .unwrap();
+        assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
+        log!((rc.1));
+        thread::sleep(Duration::from_secs(3));
+
+        let rc = block_on(mm_alice.rpc(json! ({
+            "userpass": mm_alice.userpass,
+            "method": "max_taker_vol",
+            "coin": "MYCOIN1",
+        })))
+        .unwrap();
+        assert!(rc.0.is_success(), "!max_taker_vol: {}", rc.1);
+        let vol: MaxTakerVolResponse = json::from_str(&rc.1).unwrap();
+
+        let rc = block_on(mm_alice.rpc(json! ({
+            "userpass": mm_alice.userpass,
+            "method": "sell",
+            "base": "MYCOIN1",
+            "rel": "MYCOIN",
+            "price": "16",
+            "volume": vol.result,
+        })))
+        .unwrap();
+        assert!(rc.0.is_success(), "!sell: {}", rc.1);
+
+        block_on(mm_bob.wait_for_log(22., |log| log.contains("Entering the maker_swap_loop MYCOIN/MYCOIN1"))).unwrap();
+        block_on(mm_alice.wait_for_log(22., |log| log.contains("Entering the taker_swap_loop MYCOIN/MYCOIN1")))
+            .unwrap();
+
+        block_on(mm_alice.wait_for_log(200., |log| log.contains("Finished"))).unwrap();
+        block_on(mm_bob.stop()).unwrap();
+        block_on(mm_alice.stop()).unwrap();
+    }
+
+    #[test]
     fn test_buy_when_coins_locked_by_other_swap() {
         let (_ctx, _, bob_priv_key) = generate_coin_with_random_privkey("MYCOIN", 1000.into());
         let (_ctx, _, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN1", 2.into());
