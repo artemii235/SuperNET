@@ -92,7 +92,7 @@ pub use maker_swap::{calc_max_maker_vol, check_balance_for_maker_swap, maker_swa
 use maker_swap::{stats_maker_swap_file_path, MakerSwapEvent};
 pub use taker_swap::{calc_max_taker_vol, check_balance_for_taker_swap, max_taker_vol, max_taker_vol_from_available,
                      run_taker_swap, stats_taker_swap_dir, taker_swap_trade_preimage, RunTakerSwapInput,
-                     TakerSavedSwap, TakerSwap, TakerTradePreimage};
+                     TakerSavedSwap, TakerSwap, TakerSwapPreparedParams, TakerTradePreimage};
 use taker_swap::{stats_taker_swap_file_path, TakerSwapEvent};
 
 pub const SWAP_PREFIX: TopicPrefix = "swap";

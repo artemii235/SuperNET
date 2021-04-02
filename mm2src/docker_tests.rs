@@ -85,7 +85,8 @@ mod docker_tests {
     #[rustfmt::skip]
     mod qrc20_tests;
 
-    use crate::mm2::lp_swap::dex_fee_amount;
+    use crate::mm2::lp_swap::{calc_max_taker_vol, check_balance_for_taker_swap, dex_fee_amount,
+                              dex_fee_amount_from_taker_coin, TakerSwapPreparedParams};
     use crate::mm2::mm2_tests::structs::*;
     use bigdecimal::BigDecimal;
     use bitcrypto::ChecksumType;
@@ -93,7 +94,8 @@ mod docker_tests {
     use coins::utxo::rpc_clients::{UnspentInfo, UtxoRpcClientEnum, UtxoRpcClientOps};
     use coins::utxo::utxo_standard::{utxo_standard_coin_from_conf_and_request, UtxoStandardCoin};
     use coins::utxo::{coin_daemon_data_dir, dhash160, zcash_params_path, UtxoCoinFields, UtxoCommonOps};
-    use coins::{FoundSwapTxSpend, MarketCoinOps, MmCoin, SwapOps, TransactionEnum};
+    use coins::{FeeApproxStage, FoundSwapTxSpend, MarketCoinOps, MmCoin, MmCoinEnum, SwapOps, TestCoin, TradeFee,
+                TradePreimageValue, TransactionEnum};
     use common::block_on;
     use common::for_tests::enable_electrum;
     use common::mm_number::MmNumber;
@@ -103,6 +105,7 @@ mod docker_tests {
     use futures01::Future;
     use gstuff::now_ms;
     use keys::{KeyPair, Private};
+    use mocktopus::mocking::*;
     use primitives::hash::H160;
     use qrc20_tests::{qtum_docker_node, QtumDockerOps, QTUM_REGTEST_DOCKER_IMAGE};
     use secp256k1::{PublicKey, SecretKey};
@@ -118,6 +121,7 @@ mod docker_tests {
     use testcontainers::clients::Cli;
     use testcontainers::images::generic::{GenericImage, WaitFor};
     use testcontainers::{Container, Docker, Image};
+    use uuid::Uuid;
 
     fn rmd160_from_priv(privkey: [u8; 32]) -> H160 {
         let secret = SecretKey::parse(&privkey).unwrap();
@@ -1103,7 +1107,7 @@ mod docker_tests {
 
     // https://github.com/KomodoPlatform/atomicDEX-API/issues/471
     #[test]
-    fn test_match_and_trade_max() {
+    fn test_match_and_trade_setprice_max() {
         let (_ctx, _, bob_priv_key) = generate_coin_with_random_privkey("MYCOIN", 1000.into());
         let (_ctx, _, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN1", 2000.into());
         let coins = json! ([
@@ -1204,6 +1208,59 @@ mod docker_tests {
         assert!(!order_path.exists());
         block_on(mm_bob.stop()).unwrap();
         block_on(mm_alice.stop()).unwrap();
+    }
+
+    // https://github.com/KomodoPlatform/atomicDEX-API/issues/888
+    #[test]
+    fn test_max_taker_vol_and_balance_check() {
+        let (ctx, coin, _) = generate_coin_with_random_privkey("MYCOIN1", 50.into());
+        let coin = coin.into();
+        let volume = block_on(calc_max_taker_vol(&ctx, &coin, "KMD", FeeApproxStage::TradePreimage)).unwrap();
+        let dex_fee = &volume * &9.into() / 7770.into();
+        let miner_fee = MmNumber::from("0.00002");
+
+        let expected = MmNumber::from(50);
+        let actual = &volume + &dex_fee + miner_fee;
+        assert_eq!(expected, actual);
+
+        let kmd_coin = MmCoinEnum::Test(TestCoin::new("KMD"));
+
+        let stage = FeeApproxStage::StartSwap;
+        let dex_fee = dex_fee_amount_from_taker_coin(&coin, "KMD", &volume);
+        let preimage_value = TradePreimageValue::Exact(volume.to_decimal());
+
+        let fee_to_send_dex_fee_fut = coin.get_fee_to_send_taker_fee(dex_fee.to_decimal(), stage.clone());
+        let fee_to_send_dex_fee = fee_to_send_dex_fee_fut.wait().unwrap();
+        let get_sender_trade_fee_fut = coin.get_sender_trade_fee(preimage_value, stage.clone());
+        let taker_payment_trade_fee = get_sender_trade_fee_fut.wait().unwrap();
+
+        TestCoin::get_receiver_trade_fee.mock_safe(|_, _| {
+            MockResult::Return(Box::new(futures01::future::ok(TradeFee {
+                coin: "KMD".into(),
+                amount: MmNumber::from("0.00001"),
+                paid_from_trading_vol: true,
+            })))
+        });
+        let maker_payment_spend_trade_fee_fut = kmd_coin.get_receiver_trade_fee(stage.clone());
+        let maker_payment_spend_trade_fee = maker_payment_spend_trade_fee_fut.wait().unwrap();
+
+        let params = TakerSwapPreparedParams {
+            dex_fee: dex_fee.clone(),
+            fee_to_send_dex_fee: fee_to_send_dex_fee.clone(),
+            taker_payment_trade_fee: taker_payment_trade_fee.clone(),
+            maker_payment_spend_trade_fee: maker_payment_spend_trade_fee.clone(),
+        };
+
+        let check_balance = block_on(check_balance_for_taker_swap(
+            &ctx,
+            &coin,
+            &kmd_coin,
+            volume,
+            Some(&Uuid::new_v4()),
+            Some(params),
+            stage,
+        ))
+        .unwrap();
     }
 
     #[test]

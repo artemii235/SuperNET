@@ -1460,10 +1460,10 @@ impl AtomicSwap for TakerSwap {
 }
 
 pub struct TakerSwapPreparedParams {
-    dex_fee: MmNumber,
-    fee_to_send_dex_fee: TradeFee,
-    taker_payment_trade_fee: TradeFee,
-    maker_payment_spend_trade_fee: TradeFee,
+    pub dex_fee: MmNumber,
+    pub fee_to_send_dex_fee: TradeFee,
+    pub taker_payment_trade_fee: TradeFee,
+    pub maker_payment_spend_trade_fee: TradeFee,
 }
 
 pub async fn check_balance_for_taker_swap(
@@ -1518,7 +1518,11 @@ pub async fn check_balance_for_taker_swap(
         )
         .await
     );
-    try_s!(check_other_coin_balance_for_swap(ctx, other_coin, swap_uuid, params.maker_payment_spend_trade_fee).await);
+    if !params.maker_payment_spend_trade_fee.paid_from_trading_vol {
+        try_s!(
+            check_other_coin_balance_for_swap(ctx, other_coin, swap_uuid, params.maker_payment_spend_trade_fee).await
+        );
+    }
     Ok(())
 }
 
