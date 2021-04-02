@@ -10,6 +10,7 @@ use common::custom_futures::select_ok_sequential;
 use common::executor::{spawn, Timer};
 use common::jsonrpc_client::{JsonRpcClient, JsonRpcError, JsonRpcMultiClient, JsonRpcRemoteAddr, JsonRpcRequest,
                              JsonRpcResponse, JsonRpcResponseFut, RpcRes};
+use common::log::warn;
 use common::mm_number::MmNumber;
 use common::wio::slurp_req;
 use common::{median, OrdRange, StringError};
@@ -408,6 +409,13 @@ pub struct VerboseBlock {
 
 pub type RpcReqSub<T> = async_oneshot::Sender<Result<T, JsonRpcError>>;
 
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct ListUnspentArgs {
+    min_conf: i32,
+    max_conf: i32,
+    addresses: Vec<String>,
+}
+
 /// RPC client for UTXO based coins
 /// https://developer.bitcoin.org/reference/rpc/index.html - Bitcoin RPC API reference
 /// Other coins have additional methods or miss some of these
@@ -423,7 +431,7 @@ pub struct NativeClientImpl {
     /// Transport event handlers
     pub event_handlers: Vec<RpcTransportEventHandlerShared>,
     pub request_id: AtomicU64,
-    pub list_unspent_concurrent_map: ConcurrentRequestMap<(i32, i32, Vec<String>), Vec<NativeUnspent>>,
+    pub list_unspent_concurrent_map: ConcurrentRequestMap<ListUnspentArgs, Vec<NativeUnspent>>,
 }
 
 #[cfg(test)]
@@ -657,7 +665,11 @@ impl NativeClient {
     ) -> RpcRes<Vec<NativeUnspent>> {
         let request_fut = rpc_func!(self, "listunspent", &min_conf, &max_conf, &addresses);
         let arc = self.clone();
-        let args = (min_conf, max_conf, addresses);
+        let args = ListUnspentArgs {
+            min_conf,
+            max_conf,
+            addresses,
+        };
         let fut = async move { arc.list_unspent_concurrent_map.wrap_request(args, request_fut).await };
         Box::new(fut.boxed().compat())
     }
@@ -1150,7 +1162,7 @@ impl<K: Clone + Eq + std::hash::Hash, V: Clone> ConcurrentRequestMap<K, V> {
             let state = map.get_mut(&request_arg).unwrap();
             for sub in state.subscribers.drain(..) {
                 if sub.send(request_res.clone()).is_err() {
-                    log!("subscriber is dropped");
+                    warn!("subscriber is dropped");
                 }
             }
             state.is_running = false;

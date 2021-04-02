@@ -66,15 +66,14 @@ use utxo_common::{big_decimal_from_sat, display_address};
 
 pub use chain::Transaction as UtxoTx;
 
-use self::rpc_clients::{ElectrumClient, ElectrumClientImpl, ElectrumRpcRequest, EstimateFeeMethod, EstimateFeeMode,
-                        UnspentInfo, UtxoRpcClientEnum};
+use self::rpc_clients::{ConcurrentRequestMap, ElectrumClient, ElectrumClientImpl, ElectrumRpcRequest,
+                        EstimateFeeMethod, EstimateFeeMode, UnspentInfo, UtxoRpcClientEnum};
 #[cfg(not(target_arch = "wasm32"))]
 use self::rpc_clients::{NativeClient, NativeClientImpl};
 use super::{CoinTransportMetrics, CoinsContext, FeeApproxStage, FoundSwapTxSpend, HistorySyncState, MarketCoinOps,
             MmCoin, RpcClientType, RpcTransportEventHandler, RpcTransportEventHandlerShared, TradeFee,
             TradePreimageError, Transaction, TransactionDetails, TransactionEnum, TransactionFut, WithdrawFee,
             WithdrawRequest};
-use crate::utxo::rpc_clients::ConcurrentRequestMap;
 
 #[cfg(test)] pub mod utxo_tests;
 
