@@ -1340,6 +1340,7 @@ mod docker_tests {
         .unwrap();
         assert!(rc.0.is_success(), "!max_taker_vol: {}", rc.1);
         let vol: MaxTakerVolResponse = json::from_str(&rc.1).unwrap();
+        log!([vol]);
 
         let rc = block_on(mm_alice.rpc(json! ({
             "userpass": mm_alice.userpass,
@@ -1356,7 +1357,6 @@ mod docker_tests {
         block_on(mm_alice.wait_for_log(22., |log| log.contains("Entering the taker_swap_loop MYCOIN/MYCOIN1")))
             .unwrap();
 
-        block_on(mm_alice.wait_for_log(200., |log| log.contains("Finished"))).unwrap();
         block_on(mm_bob.stop()).unwrap();
         block_on(mm_alice.stop()).unwrap();
     }
