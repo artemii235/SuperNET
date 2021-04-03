@@ -3126,33 +3126,6 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
         return ERR!("Rel coin is wallet only");
     }
 
-    let ordermatch_ctx = try_s!(OrdermatchContext::from_ctx(&ctx));
-    let mut my_orders = ordermatch_ctx.my_maker_orders.lock().await;
-
-    if req.cancel_previous {
-        let mut cancelled = vec![];
-        // remove the previous orders if there're some to allow multiple setprice call per pair
-        // it's common use case now as `autoprice` doesn't work with new ordermatching and
-        // MM2 users request the coins price from aggregators by their own scripts issuing
-        // repetitive setprice calls with new price
-        *my_orders = my_orders
-            .drain()
-            .filter_map(|(uuid, order)| {
-                let to_delete = order.base == req.base && order.rel == req.rel;
-                if to_delete {
-                    delete_my_maker_order(&ctx, &order);
-                    cancelled.push(order);
-                    None
-                } else {
-                    Some((uuid, order))
-                }
-            })
-            .collect();
-        for order in cancelled {
-            maker_order_cancelled_p2p_notify(ctx.clone(), &order).await;
-        }
-    }
-
     let my_balance = try_s!(base_coin.my_spendable_balance().compat().await);
     let volume = if req.max {
         // first check if `rel_coin` balance is sufficient
@@ -3179,8 +3152,35 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
             )
             .await
         );
-        req.volume
+        req.volume.clone()
     };
+
+    let ordermatch_ctx = try_s!(OrdermatchContext::from_ctx(&ctx));
+    let mut my_orders = ordermatch_ctx.my_maker_orders.lock().await;
+
+    if req.cancel_previous {
+        let mut cancelled = vec![];
+        // remove the previous orders if there're some to allow multiple setprice call per pair
+        // it's common use case now as `autoprice` doesn't work with new ordermatching and
+        // MM2 users request the coins price from aggregators by their own scripts issuing
+        // repetitive setprice calls with new price
+        *my_orders = my_orders
+            .drain()
+            .filter_map(|(uuid, order)| {
+                let to_delete = order.base == req.base && order.rel == req.rel;
+                if to_delete {
+                    delete_my_maker_order(&ctx, &order);
+                    cancelled.push(order);
+                    None
+                } else {
+                    Some((uuid, order))
+                }
+            })
+            .collect();
+        for order in cancelled {
+            maker_order_cancelled_p2p_notify(ctx.clone(), &order).await;
+        }
+    }
 
     let conf_settings = OrderConfirmationsSettings {
         base_confs: req.base_confs.unwrap_or_else(|| base_coin.required_confirmations()),
