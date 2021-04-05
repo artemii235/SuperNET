@@ -4340,6 +4340,9 @@ fn test_qrc20_tx_history() {
     // Wait till tx_history will not be loaded
     block_on(mm.wait_for_log(22., |log| log.contains("history has been loaded successfully"))).unwrap();
 
+    // let the MarketMaker save the history to the file
+    block_on(Timer::sleep(1.));
+
     let tx_history = block_on(mm.rpc(json!({
         "userpass": mm.userpass,
         "method": "my_tx_history",
