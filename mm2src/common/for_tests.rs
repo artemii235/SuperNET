@@ -216,7 +216,12 @@ impl MarketMakerIt {
     /// * `local` - Function to start the MarketMaker in a local thread, instead of spawning a process.
     /// It's required to manually add 127.0.0.* IPs aliases on Mac to make it properly work.
     /// cf. https://superuser.com/a/458877, https://superuser.com/a/635327
-    pub fn start(mut conf: Json, userpass: String, local: Option<LocalStart>) -> Result<MarketMakerIt, String> {
+    pub fn start(
+        mut conf: Json,
+        userpass: String,
+        local: Option<LocalStart>,
+        envs: &[(&str, &str)],
+    ) -> Result<MarketMakerIt, String> {
         let ip: IpAddr = if conf["myipaddr"].is_null() {
             // Generate an unique IP.
             let mut attempts = 0;
@@ -301,6 +306,7 @@ impl MarketMakerIt {
                     .current_dir(&folder)
                     .env("_MM2_TEST_CONF", try_s!(json::to_string(&conf)))
                     .env("MM2_UNBUFFERED_OUTPUT", "1")
+                    .envs(envs.to_vec())
                     .stdout(try_s!(log.try_clone()))
                     .stderr(log)
                     .spawn());
@@ -608,6 +614,7 @@ pub fn mm_spat(
             Ok(ref e) if e == "1" => Some(local_start),
             _ => None,
         },
+        &[],
     )
     .unwrap();
     let (dump_log, dump_dashboard) = mm_dump(&mm.log_path);

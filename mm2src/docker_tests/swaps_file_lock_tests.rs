@@ -36,7 +36,7 @@ fn swap_file_lock_prevents_double_swap_start_on_kick_start(swap_json: &str) {
         "i_am_seed": true,
         "dbdir": db_folder.to_str().unwrap(),
     });
-    let mut mm_bob = MarketMakerIt::start(bob_conf, "pass".to_string(), None).unwrap();
+    let mut mm_bob = MarketMakerIt::start(bob_conf, "pass".to_string(), None, &[]).unwrap();
     let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
     block_on(mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
     log!([block_on(enable_native(&mm_bob, "MYCOIN", &[]))]);
@@ -80,7 +80,7 @@ fn test_swaps_should_kick_start_if_process_was_killed() {
         "rpc_password": "pass",
         "i_am_seed": true,
     });
-    let mut mm_bob = MarketMakerIt::start(bob_conf.clone(), "pass".to_string(), None).unwrap();
+    let mut mm_bob = MarketMakerIt::start(bob_conf.clone(), "pass".to_string(), None, &[]).unwrap();
     let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
     block_on(mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
@@ -93,7 +93,7 @@ fn test_swaps_should_kick_start_if_process_was_killed() {
         "rpc_password": "pass",
         "seednodes": vec![format!("{}", mm_bob.ip)],
     });
-    let mut mm_alice = MarketMakerIt::start(alice_conf.clone(), "pass".to_string(), None).unwrap();
+    let mut mm_alice = MarketMakerIt::start(alice_conf.clone(), "pass".to_string(), None, &[]).unwrap();
     let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
     block_on(mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
@@ -144,7 +144,7 @@ fn test_swaps_should_kick_start_if_process_was_killed() {
     bob_conf["log"] = mm_bob.folder.join("mm2_dup.log").to_str().unwrap().into();
     // dropping instead of graceful stop to retain swap file locks
     drop(mm_bob);
-    let mut mm_bob_dup = MarketMakerIt::start(bob_conf, "pass".to_string(), None).unwrap();
+    let mut mm_bob_dup = MarketMakerIt::start(bob_conf, "pass".to_string(), None, &[]).unwrap();
     let (_bob_dup_dump_log, _bob_dup_dump_dashboard) = mm_dump(&mm_bob_dup.log_path);
     block_on(mm_bob_dup.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
     log!([block_on(enable_native(&mm_bob_dup, "MYCOIN", &[]))]);
@@ -158,7 +158,7 @@ fn test_swaps_should_kick_start_if_process_was_killed() {
     // dropping instead of graceful stop to retain swap file locks
     drop(mm_alice);
 
-    let mut mm_alice_dup = MarketMakerIt::start(alice_conf, "pass".to_string(), None).unwrap();
+    let mut mm_alice_dup = MarketMakerIt::start(alice_conf, "pass".to_string(), None, &[]).unwrap();
     let (_alice_dup_dump_log, _alice_dup_dump_dashboard) = mm_dump(&mm_alice_dup.log_path);
     block_on(mm_alice_dup.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
     log!([block_on(enable_native(&mm_alice_dup, "MYCOIN", &[]))]);
@@ -206,7 +206,7 @@ fn swap_should_not_kick_start_if_finished_during_waiting_for_file_lock(
         "i_am_seed": true,
         "dbdir": db_folder.to_str().unwrap(),
     });
-    let mut mm_bob = MarketMakerIt::start(bob_conf, "pass".to_string(), None).unwrap();
+    let mut mm_bob = MarketMakerIt::start(bob_conf, "pass".to_string(), None, &[]).unwrap();
     let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
     block_on(mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
     log!([block_on(enable_native(&mm_bob, "MYCOIN", &[]))]);

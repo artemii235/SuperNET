@@ -64,7 +64,7 @@ use common::{bits256, block_on, calc_total_pages,
              log::{error, info},
              mm_ctx::{from_ctx, MmArc},
              mm_number::{Fraction, MmNumber},
-             now_ms, read_dir, rpc_response, slurp, write, HyRes, TraceSource, Traceable};
+             now_ms, read_dir, rpc_response, slurp, var, write, HyRes, TraceSource, Traceable};
 use futures::compat::Future01CompatExt;
 use futures::future::{abortable, AbortHandle, TryFutureExt};
 use http::Response;
@@ -724,7 +724,12 @@ fn dex_fee_threshold(min_tx_amount: MmNumber) -> MmNumber {
 }
 
 fn dex_fee_rate(base: &str, rel: &str) -> MmNumber {
-    if base == "KMD" || rel == "KMD" || base == "MYCOIN1" || rel == "MYCOIN1" {
+    let fee_discount_tickers: &[&str] = if cfg!(test) && var("MYCOIN_FEE_DISCOUNT").is_ok() {
+        &["KMD", "MYCOIN"]
+    } else {
+        &["KMD"]
+    };
+    if fee_discount_tickers.contains(&base) || fee_discount_tickers.contains(&rel) {
         // 1/777 - 10%
         BigRational::new(9.into(), 7770.into()).into()
     } else {

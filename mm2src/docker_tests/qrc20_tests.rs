@@ -413,6 +413,7 @@ fn trade_base_rel((base, rel): (&str, &str)) {
         }),
         "pass".to_string(),
         None,
+        &[],
     )
     .unwrap();
     let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
@@ -430,6 +431,7 @@ fn trade_base_rel((base, rel): (&str, &str)) {
         }),
         "pass".to_string(),
         None,
+        &[],
     )
     .unwrap();
     let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
@@ -1185,6 +1187,7 @@ fn test_check_balance_on_order_post_base_coin_locked() {
         }),
         "pass".into(),
         None,
+        &[],
     )
     .unwrap();
     let (_dump_log, _dump_dashboard) = mm_dump(&mm_bob.log_path);
@@ -1208,6 +1211,7 @@ fn test_check_balance_on_order_post_base_coin_locked() {
         }),
         "pass".into(),
         None,
+        &[],
     )
     .unwrap();
     let (_dump_log, _dump_dashboard) = mm_dump(&mm_alice.log_path);
@@ -1284,6 +1288,7 @@ fn test_get_max_taker_vol_and_trade_with_dynamic_trade_fee(coin: QtumCoin, priv_
         }),
         "pass".to_string(),
         None,
+        &[],
     )
     .unwrap();
     let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm.log_path);

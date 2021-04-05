@@ -177,6 +177,10 @@ impl From<BigRational> for MmNumber {
     fn from(r: BigRational) -> MmNumber { MmNumber(r) }
 }
 
+impl From<Fraction> for MmNumber {
+    fn from(f: Fraction) -> MmNumber { MmNumber(f.into()) }
+}
+
 impl From<MmNumber> for BigDecimal {
     fn from(n: MmNumber) -> BigDecimal { from_ratio_to_dec(&n.0) }
 }
