@@ -30,7 +30,7 @@ use common::log::error;
 use common::mm_ctx::{from_ctx, MmArc, MmWeak};
 use common::mm_number::{Fraction, MmNumber};
 use common::{bits256, json_dir_entries, log, new_uuid, now_ms, remove_file, write};
-use futures::{compat::Future01CompatExt, lock::Mutex as AsyncMutex, StreamExt};
+use futures::{compat::Future01CompatExt, lock::Mutex as AsyncMutex, StreamExt, TryFutureExt};
 use gstuff::slurp;
 use hash256_std_hasher::Hash256StdHasher;
 use hash_db::{Hasher, EMPTY_PREFIX};
@@ -3106,6 +3106,38 @@ impl<'a> From<&'a MakerOrder> for MakerOrderForRpc<'a> {
     }
 }
 
+/// Cancels the orders in case of error on different checks
+/// https://github.com/KomodoPlatform/atomicDEX-API/issues/794
+async fn cancel_orders_on_error<T, E>(ctx: &MmArc, req: &SetPriceReq, error: E) -> Result<T, E> {
+    if req.cancel_previous {
+        let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
+        let mut my_orders = ordermatch_ctx.my_maker_orders.lock().await;
+
+        let mut cancelled = vec![];
+        // remove the previous orders if there're some to allow multiple setprice call per pair
+        // it's common use case now as `autoprice` doesn't work with new ordermatching and
+        // MM2 users request the coins price from aggregators by their own scripts issuing
+        // repetitive setprice calls with new price
+        *my_orders = my_orders
+            .drain()
+            .filter_map(|(uuid, order)| {
+                let to_delete = order.base == req.base && order.rel == req.rel;
+                if to_delete {
+                    delete_my_maker_order(&ctx, &order);
+                    cancelled.push(order);
+                    None
+                } else {
+                    Some((uuid, order))
+                }
+            })
+            .collect();
+        for order in cancelled {
+            maker_order_cancelled_p2p_notify(ctx.clone(), &order).await;
+        }
+    }
+    Err(error)
+}
+
 pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
     let req: SetPriceReq = try_s!(json::from_value(req));
 
@@ -3126,19 +3158,34 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
         return ERR!("Rel coin is wallet only");
     }
 
-    let my_balance = try_s!(base_coin.my_spendable_balance().compat().await);
+    let my_balance = try_s!(
+        base_coin
+            .my_spendable_balance()
+            .compat()
+            .or_else(|e| cancel_orders_on_error(&ctx, &req, e))
+            .await
+    );
     let volume = if req.max {
         // first check if `rel_coin` balance is sufficient
         let rel_coin_trade_fee = try_s!(
             rel_coin
                 .get_receiver_trade_fee(FeeApproxStage::OrderIssue)
                 .compat()
+                .or_else(|e| cancel_orders_on_error(&ctx, &req, e))
                 .await
         );
-        try_s!(check_other_coin_balance_for_swap(&ctx, &rel_coin, None, rel_coin_trade_fee).await);
+        try_s!(
+            check_other_coin_balance_for_swap(&ctx, &rel_coin, None, rel_coin_trade_fee)
+                .or_else(|e| cancel_orders_on_error(&ctx, &req, e))
+                .await
+        );
         // calculate max maker volume
         // note the `calc_max_maker_vol` returns [`CheckBalanceError::NotSufficientBalance`] error if the balance of `base_coin` is not sufficient
-        try_s!(calc_max_maker_vol(&ctx, &base_coin, &my_balance, FeeApproxStage::OrderIssue).await)
+        try_s!(
+            calc_max_maker_vol(&ctx, &base_coin, &my_balance, FeeApproxStage::OrderIssue)
+                .or_else(|e| cancel_orders_on_error(&ctx, &req, e))
+                .await
+        )
     } else {
         try_s!(
             check_balance_for_maker_swap(
@@ -3150,6 +3197,7 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
                 None,
                 FeeApproxStage::OrderIssue
             )
+            .or_else(|e| cancel_orders_on_error(&ctx, &req, e))
             .await
         );
         req.volume.clone()
