@@ -1,4 +1,4 @@
-use super::{ban_pubkey, broadcast_my_swap_status, broadcast_swap_message_every, check_base_coin_balance_for_swap,
+use super::{broadcast_my_swap_status, broadcast_swap_message_every, check_base_coin_balance_for_swap,
             check_my_coin_balance_for_swap, check_other_coin_balance_for_swap, dex_fee_amount_from_taker_coin,
             get_locked_amount, my_swap_file_path, my_swaps_dir, recv_swap_msg, swap_topic, AtomicSwap,
             CheckBalanceError, LockedAmount, MySwapInfo, RecoveredSwap, RecoveredSwapAction, SavedSwap, SavedTradeFee,
@@ -19,10 +19,12 @@ use parking_lot::Mutex as PaMutex;
 use primitives::hash::H264;
 use rand::Rng;
 use rpc::v1::types::{Bytes as BytesJson, H160 as H160Json, H256 as H256Json, H264 as H264Json};
-use serde_json::{self as json};
+use serde_json as json;
 use std::path::PathBuf;
 use std::sync::{atomic::Ordering, Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use uuid::Uuid;
+
+use super::pubkey_banning::ban_pubkey_on_failed_swap;
 
 pub fn stats_maker_swap_dir(ctx: &MmArc) -> PathBuf { ctx.dbdir().join("SWAPS").join("STATS").join("MAKER") }
 
@@ -1440,7 +1442,7 @@ pub async fn run_maker_swap(swap: RunMakerSwapInput, ctx: MmArc) {
 
                     save_my_maker_swap_event(&ctx, &running_swap, to_save).expect("!save_my_maker_swap_event");
                     if event.should_ban_taker() {
-                        ban_pubkey(
+                        ban_pubkey_on_failed_swap(
                             &ctx,
                             running_swap.taker.bytes.into(),
                             &running_swap.uuid,
