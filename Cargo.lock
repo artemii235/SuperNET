@@ -755,6 +755,7 @@ dependencies = [
  "cc",
  "chrono",
  "crossbeam",
+ "derive_more",
  "findshlibs",
  "fomat-macros 0.2.1",
  "fomat-macros 0.3.1",

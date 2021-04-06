@@ -22,6 +22,7 @@ bytes = "0.4"
 # Using the `chrono` because the `time` formatting has serious limits, like the lack of subsecond support, IIRC.
 chrono = "0.4"
 crossbeam = "0.7"
+derive_more = "0.99"
 findshlibs = "0.5"
 fomat-macros = "0.2"
 futures01 = { version = "0.1", package = "futures" }

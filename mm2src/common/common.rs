@@ -14,6 +14,7 @@
 #![feature(non_ascii_idents, integer_atomics, panic_info_message)]
 #![feature(async_closure)]
 #![feature(hash_raw_entry)]
+#![feature(negative_impls)]
 #![feature(optin_builtin_traits)]
 #![feature(drain_filter)]
 #![feature(const_fn)]
@@ -73,6 +74,7 @@ pub mod file_lock;
 #[cfg(target_arch = "wasm32")] pub mod header;
 pub mod iguana_utils;
 pub mod mm_ctx;
+pub mod mm_error;
 pub mod mm_number;
 pub mod privkey;
 pub mod seri;
