@@ -110,6 +110,7 @@ pub fn mm2_main(params: JsValue, log_cb: js_sys::Function) -> Result<(), JsValue
             return;
         }
         let ctx_cb = |ctx| CTX.store(ctx, Ordering::Relaxed);
+        // TODO figure out how to use catch_unwind here
         // use futures::FutureExt;
         // match mm2::lp_main(params, &ctx_cb).catch_unwind().await {
         //     Ok(Ok(_)) => console_info!("run_lp_main finished"),
