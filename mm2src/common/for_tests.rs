@@ -393,18 +393,24 @@ impl MarketMakerIt {
     /// Invokes the locally running MM and returns its reply.
     #[cfg(target_arch = "wasm32")]
     pub async fn rpc(&self, payload: Json) -> Result<(StatusCode, String, HeaderMap), String> {
-        let uri = format!("http://{}:7783", self.ip);
-        log!("sending rpc request " (json::to_string(&payload).unwrap()) " to " (uri));
-        let empty_payload: Vec<u8> = Vec::new();
-        let request = try_s!(Request::builder().method("POST").uri(uri).body(empty_payload));
-        let (parts, _) = request.into_parts();
-
-        let rpc_service = try_s!(crate::header::RPC_SERVICE.as_option().ok_or("!RPC_SERVICE"));
-        let client: SocketAddr = try_s!("127.0.0.1:1".parse());
-        let f = rpc_service(self.ctx.clone(), parts, payload, client);
-        let response = try_s!(f.await);
-        let (parts, body) = response.into_parts();
-        Ok((parts.status, try_s!(String::from_utf8(body)), parts.headers))
+        let wasm_rpc = self
+            .ctx
+            .wasm_rpc
+            .as_option()
+            .expect("'MmCtx::rpc' must be initialized already");
+        match wasm_rpc.request(payload).await {
+            // Please note a new type of error will be introduced soon.
+            Ok(body) => {
+                let status_code = if body["error"].is_null() {
+                    StatusCode::OK
+                } else {
+                    StatusCode::INTERNAL_SERVER_ERROR
+                };
+                let body_str = json::to_string(&body).expect(&format!("Response {:?} is not a valid JSON", body));
+                Ok((status_code, body_str, HeaderMap::new()))
+            },
+            Err(e) => Ok((StatusCode::INTERNAL_SERVER_ERROR, e, HeaderMap::new())),
+        }
     }
 
     /// Invokes the locally running MM and returns its reply.
@@ -856,18 +862,12 @@ pub async fn check_recent_swaps(mm: &MarketMakerIt, expected_len: usize) {
 ///
 /// Panic if the `RUST_LOG` environment variable doesn't equal to the `required_level`.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn require_log_level(expected: &[LogLevel]) {
-    let actual = match LogLevel::from_env() {
-        Some(level) => level,
-        None => panic!(
-            "Expected one of the {:?} log levels. It seems `RUST_LOG` env is not set",
-            expected
-        ),
-    };
+pub fn require_log_level(expected: LogLevel) {
+    let actual = LogLevel::from_env().unwrap_or(LogLevel::Info);
     assert!(
-        expected.contains(&actual),
-        "Expected one of {:?} log levels, found '{:?}'",
+        actual >= expected,
+        "Expected at least {:?} log level, found {:?}",
         expected,
-        actual,
+        actual
     );
 }

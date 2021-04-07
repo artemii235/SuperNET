@@ -66,8 +66,8 @@ use utxo_common::{big_decimal_from_sat, display_address};
 
 pub use chain::Transaction as UtxoTx;
 
-use self::rpc_clients::{ElectrumClient, ElectrumClientImpl, ElectrumRpcRequest, EstimateFeeMethod, EstimateFeeMode,
-                        UnspentInfo, UtxoRpcClientEnum};
+use self::rpc_clients::{ConcurrentRequestMap, ElectrumClient, ElectrumClientImpl, ElectrumRpcRequest,
+                        EstimateFeeMethod, EstimateFeeMode, UnspentInfo, UtxoRpcClientEnum};
 #[cfg(not(target_arch = "wasm32"))]
 use self::rpc_clients::{NativeClient, NativeClientImpl};
 use super::{CoinTransportMetrics, CoinsContext, FeeApproxStage, FoundSwapTxSpend, HistorySyncState, MarketCoinOps,
@@ -1153,8 +1153,7 @@ pub trait UtxoCoinBuilder {
             auth: format!("Basic {}", base64_encode(&auth_str, URL_SAFE)),
             event_handlers,
             request_id: 0u64.into(),
-            list_unspent_in_progress: false.into(),
-            list_unspent_subs: AsyncMutex::new(Vec::new()),
+            list_unspent_concurrent_map: ConcurrentRequestMap::new(),
         });
 
         Ok(NativeClient(client))

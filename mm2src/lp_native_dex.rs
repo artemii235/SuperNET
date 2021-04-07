@@ -321,6 +321,7 @@ fn seed_to_ipv4_string(seed: &str) -> Option<String> {
     }
 }
 
+#[cfg_attr(target_arch = "wasm32", allow(unused_variables))]
 /// * `ctx_cb` - callback used to share the `MmCtx` ID with the call site.
 pub async fn lp_init(mypubport: u16, ctx: MmArc) -> Result<(), String> {
     info!("Version: {} DT {}", MM_VERSION, MM_DATETIME);
@@ -334,7 +335,7 @@ pub async fn lp_init(mypubport: u16, ctx: MmArc) -> Result<(), String> {
         try_s!(migrate_db(&ctx));
     }
 
-    // #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(target_arch = "wasm32"))]
     try_s!(init_p2p(mypubport, ctx.clone()).await);
 
     let balance_update_ordermatch_handler = BalanceUpdateOrdermatchHandler::new(ctx.clone());
@@ -354,13 +355,6 @@ pub async fn lp_init(mypubport: u16, ctx: MmArc) -> Result<(), String> {
     spawn(lp_ordermatch_loop(ctx.clone()));
 
     spawn(broadcast_maker_orders_keep_alive_loop(ctx.clone()));
-
-    #[cfg(target_arch = "wasm32")]
-    {
-        if 1 == 1 {
-            return Ok(());
-        }
-    } // TODO: Gradually move this point further down.
 
     let ctx_id = try_s!(ctx.ffi_handle());
 

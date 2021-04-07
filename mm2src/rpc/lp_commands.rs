@@ -128,6 +128,18 @@ pub async fn enable(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> 
     Ok(try_s!(Response::builder().body(res)))
 }
 
+#[cfg(target_arch = "wasm32")]
+pub fn help() -> HyRes {
+    rpc_response(
+        500,
+        json!({
+            "error":"'help' is only supported in native mode"
+        })
+        .to_string(),
+    )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub fn help() -> HyRes {
     rpc_response(
         200,
