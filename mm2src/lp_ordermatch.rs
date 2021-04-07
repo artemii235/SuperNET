@@ -252,6 +252,17 @@ async fn request_and_fill_orderbook(ctx: &MmArc, base: &str, rel: &str) -> Resul
 
     let alb_pair = alb_ordered_pair(base, rel);
     for (pubkey, GetOrderbookPubkeyItem { orders, .. }) in pubkey_orders {
+        let pubkey_bytes = match hex::decode(&pubkey) {
+            Ok(b) => b,
+            Err(e) => {
+                log::warn!("Error {} decoding pubkey {}", e, pubkey);
+                continue;
+            },
+        };
+        if is_pubkey_banned(ctx, &pubkey_bytes[1..].into()) {
+            log::warn!("Pubkey {} is banned", pubkey);
+            continue;
+        }
         let _new_root = process_pubkey_full_trie(&mut orderbook, &pubkey, &alb_pair, orders);
     }
 
