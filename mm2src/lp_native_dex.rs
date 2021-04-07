@@ -43,7 +43,7 @@ use common::privkey::key_pair_from_seed;
 use common::{slurp_url, MM_DATETIME, MM_VERSION};
 
 const IP_PROVIDERS: [&str; 2] = ["http://checkip.amazonaws.com/", "http://api.ipify.org"];
-const NETID_7777_SEEDNODES: [&str; 3] = ["seed1.kmd.io:0", "seed2.kmd.io:0", "seed3.kmd.io:0"];
+const NETID_7777_SEEDNODES: [&str; 3] = ["seed1.defimania.live:0", "seed2.defimania.live:0", "seed3.defimania.live:0"];
 
 pub fn lp_ports(netid: u16) -> Result<(u16, u16, u16), String> {
     const LP_RPCPORT: u16 = 7783;
