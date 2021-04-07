@@ -216,7 +216,20 @@ impl MarketMakerIt {
     /// * `local` - Function to start the MarketMaker in a local thread, instead of spawning a process.
     /// It's required to manually add 127.0.0.* IPs aliases on Mac to make it properly work.
     /// cf. https://superuser.com/a/458877, https://superuser.com/a/635327
-    pub fn start(
+    pub fn start(conf: Json, userpass: String, local: Option<LocalStart>) -> Result<MarketMakerIt, String> {
+        MarketMakerIt::start_with_envs(conf, userpass, local, &[])
+    }
+
+    /// Create a new temporary directory and start a new MarketMaker process there.
+    ///
+    /// * `conf` - The command-line configuration passed to the MarketMaker.
+    ///            Unique local IP address is injected as "myipaddr" unless this field is already present.
+    /// * `userpass` - RPC API key. We should probably extract it automatically from the MM log.
+    /// * `local` - Function to start the MarketMaker in a local thread, instead of spawning a process.
+    /// * `envs` - The enviroment variables passed to the process
+    /// It's required to manually add 127.0.0.* IPs aliases on Mac to make it properly work.
+    /// cf. https://superuser.com/a/458877, https://superuser.com/a/635327
+    pub fn start_with_envs(
         mut conf: Json,
         userpass: String,
         local: Option<LocalStart>,
@@ -614,7 +627,6 @@ pub fn mm_spat(
             Ok(ref e) if e == "1" => Some(local_start),
             _ => None,
         },
-        &[],
     )
     .unwrap();
     let (dump_log, dump_dashboard) = mm_dump(&mm.log_path);

@@ -602,7 +602,6 @@ mod docker_tests {
             }),
             "pass".to_string(),
             None,
-            &[],
         )
         .unwrap();
         let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
@@ -722,7 +721,6 @@ mod docker_tests {
             }),
             "pass".to_string(),
             None,
-            &[],
         )
         .unwrap();
         let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
@@ -740,7 +738,6 @@ mod docker_tests {
             }),
             "pass".to_string(),
             None,
-            &[],
         )
         .unwrap();
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
@@ -862,7 +859,6 @@ mod docker_tests {
             }),
             "pass".to_string(),
             None,
-            &[],
         )
         .unwrap();
         let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
@@ -880,7 +876,6 @@ mod docker_tests {
             }),
             "pass".to_string(),
             None,
-            &[],
         )
         .unwrap();
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
@@ -1016,7 +1011,6 @@ mod docker_tests {
             }),
             "pass".to_string(),
             None,
-            &[],
         )
         .unwrap();
         let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
@@ -1034,7 +1028,6 @@ mod docker_tests {
             }),
             "pass".to_string(),
             None,
-            &[],
         )
         .unwrap();
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
@@ -1129,7 +1122,6 @@ mod docker_tests {
             }),
             "pass".to_string(),
             None,
-            &[],
         )
         .unwrap();
         let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
@@ -1147,7 +1139,6 @@ mod docker_tests {
             }),
             "pass".to_string(),
             None,
-            &[],
         )
         .unwrap();
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
@@ -1224,7 +1215,7 @@ mod docker_tests {
             {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
             {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
         ]);
-        let mut mm_bob = MarketMakerIt::start(
+        let mut mm_bob = MarketMakerIt::start_with_envs(
             json! ({
                 "gui": "nogui",
                 "netid": 9000,
@@ -1242,7 +1233,7 @@ mod docker_tests {
         let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
         block_on(mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
-        let mut mm_alice = MarketMakerIt::start(
+        let mut mm_alice = MarketMakerIt::start_with_envs(
             json! ({
                 "gui": "nogui",
                 "netid": 9000,
@@ -1357,7 +1348,6 @@ mod docker_tests {
             }),
             "pass".to_string(),
             None,
-            &[],
         )
         .unwrap();
         let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
@@ -1375,7 +1365,6 @@ mod docker_tests {
             }),
             "pass".to_string(),
             None,
-            &[],
         )
         .unwrap();
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
@@ -1458,7 +1447,6 @@ mod docker_tests {
             }),
             "pass".to_string(),
             None,
-            &[],
         )
         .unwrap();
         let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
@@ -1476,7 +1464,6 @@ mod docker_tests {
             }),
             "pass".to_string(),
             None,
-            &[],
         )
         .unwrap();
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
@@ -1558,7 +1545,6 @@ mod docker_tests {
             }),
             "pass".to_string(),
             None,
-            &[],
         )
         .unwrap();
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
@@ -1625,7 +1611,6 @@ mod docker_tests {
             }),
             "pass".to_string(),
             None,
-            &[],
         )
         .unwrap();
         let (_dump_log, _dump_dashboard) = mm_dump(&mm.log_path);
@@ -1753,7 +1738,6 @@ mod docker_tests {
             }),
             "pass".to_string(),
             None,
-            &[],
         )
         .unwrap();
         let (_dump_log, _dump_dashboard) = mm_dump(&mm.log_path);
@@ -1869,7 +1853,6 @@ mod docker_tests {
             }),
             "pass".to_string(),
             None,
-            &[],
         )
         .unwrap();
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
@@ -1928,7 +1911,6 @@ mod docker_tests {
             }),
             "pass".to_string(),
             None,
-            &[],
         )
         .unwrap();
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
@@ -1991,7 +1973,6 @@ mod docker_tests {
             }),
             "pass".to_string(),
             None,
-            &[],
         )
         .unwrap();
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm.log_path);
@@ -2048,7 +2029,6 @@ mod docker_tests {
             }),
             "pass".to_string(),
             None,
-            &[],
         )
         .unwrap();
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
@@ -2110,7 +2090,6 @@ mod docker_tests {
             }),
             "pass".to_string(),
             None,
-            &[],
         )
         .unwrap();
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
@@ -2170,7 +2149,6 @@ mod docker_tests {
             }),
             "pass".to_string(),
             None,
-            &[],
         )
         .unwrap();
         let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
@@ -2188,7 +2166,6 @@ mod docker_tests {
             }),
             "pass".to_string(),
             None,
-            &[],
         )
         .unwrap();
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
@@ -2267,7 +2244,7 @@ mod docker_tests {
             "rpc_password": "pass",
             "i_am_seed": true,
         });
-        let mut mm_bob = MarketMakerIt::start(bob_conf.clone(), "pass".to_string(), None, &[]).unwrap();
+        let mut mm_bob = MarketMakerIt::start(bob_conf.clone(), "pass".to_string(), None).unwrap();
         let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
         block_on(mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
@@ -2289,7 +2266,7 @@ mod docker_tests {
         bob_conf["log"] = mm_bob.folder.join("mm2_dup.log").to_str().unwrap().into();
         block_on(mm_bob.stop()).unwrap();
 
-        let mut mm_bob_dup = MarketMakerIt::start(bob_conf, "pass".to_string(), None, &[]).unwrap();
+        let mut mm_bob_dup = MarketMakerIt::start(bob_conf, "pass".to_string(), None).unwrap();
         let (_bob_dup_dump_log, _bob_dup_dump_dashboard) = mm_dump(&mm_bob_dup.log_path);
         block_on(mm_bob_dup.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
         log!([block_on(enable_native(&mm_bob_dup, "MYCOIN", &[]))]);
@@ -2331,7 +2308,7 @@ mod docker_tests {
             "rpc_password": "pass",
             "i_am_seed": true,
         });
-        let mut relay = MarketMakerIt::start(relay_conf, "pass".to_string(), None, &[]).unwrap();
+        let mut relay = MarketMakerIt::start(relay_conf, "pass".to_string(), None).unwrap();
         let (_relay_dump_log, _relay_dump_dashboard) = mm_dump(&relay.log_path);
         block_on(relay.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
@@ -2345,7 +2322,7 @@ mod docker_tests {
             "seednodes": vec![format!("{}", relay.ip)],
             "i_am_seed": false,
         });
-        let mut mm_bob = MarketMakerIt::start(bob_conf.clone(), "pass".to_string(), None, &[]).unwrap();
+        let mut mm_bob = MarketMakerIt::start(bob_conf.clone(), "pass".to_string(), None).unwrap();
         let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
         block_on(mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
@@ -2361,7 +2338,6 @@ mod docker_tests {
             }),
             "pass".to_string(),
             None,
-            &[],
         )
         .unwrap();
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
@@ -2388,7 +2364,7 @@ mod docker_tests {
         bob_conf["log"] = mm_bob.folder.join("mm2_dup.log").to_str().unwrap().into();
         block_on(mm_bob.stop()).unwrap();
 
-        let mut mm_bob_dup = MarketMakerIt::start(bob_conf, "pass".to_string(), None, &[]).unwrap();
+        let mut mm_bob_dup = MarketMakerIt::start(bob_conf, "pass".to_string(), None).unwrap();
         let (_bob_dup_dump_log, _bob_dup_dump_dashboard) = mm_dump(&mm_bob_dup.log_path);
         block_on(mm_bob_dup.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
         log!([block_on(enable_native(&mm_bob_dup, "MYCOIN", &[]))]);
@@ -2434,7 +2410,6 @@ mod docker_tests {
             }),
             "pass".to_string(),
             None,
-            &[],
         )
         .unwrap();
         let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
@@ -2452,7 +2427,6 @@ mod docker_tests {
             }),
             "pass".to_string(),
             None,
-            &[],
         )
         .unwrap();
         let (_alice_1_dump_log, _alice_1_dump_dashboard) = mm_dump(&mm_alice_1.log_path);
@@ -2470,7 +2444,6 @@ mod docker_tests {
             }),
             "pass".to_string(),
             None,
-            &[],
         )
         .unwrap();
         let (_alice_2_dump_log, _alice_2_dump_dashboard) = mm_dump(&mm_alice_2.log_path);
@@ -2548,7 +2521,6 @@ mod docker_tests {
             }),
             "pass".to_string(),
             None,
-            &[],
         )
         .unwrap();
         let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
@@ -2566,7 +2538,6 @@ mod docker_tests {
             }),
             "pass".to_string(),
             None,
-            &[],
         )
         .unwrap();
         let (_alice_1_dump_log, _alice_1_dump_dashboard) = mm_dump(&mm_alice.log_path);
@@ -2628,7 +2599,6 @@ mod docker_tests {
             }),
             "pass".to_string(),
             None,
-            &[],
         )
         .unwrap();
         let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
@@ -2646,7 +2616,6 @@ mod docker_tests {
             }),
             "pass".to_string(),
             None,
-            &[],
         )
         .unwrap();
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
@@ -2759,7 +2728,6 @@ mod docker_tests {
             }),
             "pass".to_string(),
             None,
-            &[],
         )
         .unwrap();
         let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
@@ -2817,7 +2785,6 @@ mod docker_tests {
             }),
             "pass".to_string(),
             None,
-            &[],
         )
         .unwrap();
         let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);

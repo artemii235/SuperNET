@@ -34,7 +34,6 @@ fn test_confirmation_settings_sync_correctly_on_buy(
         }),
         "pass".to_string(),
         None,
-        &[],
     )
     .unwrap();
     let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
@@ -52,7 +51,6 @@ fn test_confirmation_settings_sync_correctly_on_buy(
         }),
         "pass".to_string(),
         None,
-        &[],
     )
     .unwrap();
     let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
@@ -203,7 +201,6 @@ fn test_confirmation_settings_sync_correctly_on_sell(
         }),
         "pass".to_string(),
         None,
-        &[],
     )
     .unwrap();
     let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
@@ -221,7 +218,6 @@ fn test_confirmation_settings_sync_correctly_on_sell(
         }),
         "pass".to_string(),
         None,
-        &[],
     )
     .unwrap();
     let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);

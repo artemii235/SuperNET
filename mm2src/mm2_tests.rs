@@ -258,7 +258,6 @@ fn alice_can_see_the_active_order_after_connection() {
         }),
         "pass".into(),
         local_start!("bob"),
-        &[],
     )
     .unwrap();
     let (_bob_dump_log, _bob_dump_dashboard) = mm_bob.mm_dump();
@@ -309,7 +308,6 @@ fn alice_can_see_the_active_order_after_connection() {
         }),
         "pass".into(),
         local_start!("bob"),
-        &[],
     )
     .unwrap();
     let (_eve_dump_log, _eve_dump_dashboard) = mm_eve.mm_dump();
@@ -403,7 +401,6 @@ fn alice_can_see_the_active_order_after_connection() {
         }),
         "pass".into(),
         local_start!("alice"),
-        &[],
     )
     .unwrap();
 
@@ -469,7 +466,6 @@ fn test_my_balance() {
         }),
         "pass".into(),
         local_start!("bob"),
-        &[],
     )
     .unwrap();
     let (_dump_log, _dump_dashboard) = mm.mm_dump();
@@ -572,7 +568,6 @@ fn test_check_balance_on_order_post() {
         }),
         "pass".into(),
         local_start!("bob"),
-        &[],
     )
     .unwrap();
     let (_dump_log, _dump_dashboard) = mm.mm_dump();
@@ -628,7 +623,6 @@ fn test_rpc_password_from_json() {
         }),
         "password".into(),
         local_start!("bob"),
-        &[],
     )
     .unwrap();
     block_on(err_mm1.wait_for_log(5., |log| log.contains("rpc_password must not be empty"))).unwrap();
@@ -645,7 +639,6 @@ fn test_rpc_password_from_json() {
         }),
         "password".into(),
         local_start!("bob"),
-        &[],
     )
     .unwrap();
     block_on(err_mm2.wait_for_log(5., |log| log.contains("rpc_password must be string"))).unwrap();
@@ -661,7 +654,6 @@ fn test_rpc_password_from_json() {
         }),
         "password".into(),
         local_start!("bob"),
-        &[],
     )
     .unwrap();
     let (_dump_log, _dump_dashboard) = mm.mm_dump();
@@ -752,7 +744,6 @@ fn test_rpc_password_from_json_no_userpass() {
         }),
         "password".into(),
         local_start!("bob"),
-        &[],
     )
     .unwrap();
     let (_dump_log, _dump_dashboard) = mm.mm_dump();
@@ -802,7 +793,6 @@ async fn trade_base_rel_electrum(pairs: Vec<(&'static str, &'static str)>) {
         }),
         "password".into(),
         local_start!("bob"),
-        &[],
     )
     .unwrap();
 
@@ -837,7 +827,6 @@ async fn trade_base_rel_electrum(pairs: Vec<(&'static str, &'static str)>) {
         }),
         "password".into(),
         local_start!("alice"),
-        &[],
     )
     .unwrap();
 
@@ -1105,7 +1094,6 @@ fn test_withdraw_and_send() {
             Ok(ref e) if e == "alice" => Some(local_start()),
             _ => None,
         },
-        &[],
     )
     .unwrap();
 
@@ -1220,7 +1208,6 @@ fn test_swap_status() {
             Ok(ref e) if e == "alice" => Some(local_start()),
             _ => None,
         },
-        &[],
     )
     .unwrap();
 
@@ -1285,7 +1272,6 @@ fn test_order_errors_when_base_equal_rel() {
             Ok(ref e) if e == "bob" => Some(local_start()),
             _ => None,
         },
-        &[],
     )
     .unwrap();
     let (_dump_log, _dump_dashboard) = mm.mm_dump();
@@ -1352,7 +1338,6 @@ fn startup_passphrase(passphrase: &str, expected_address: &str) {
             Ok(ref e) if e == "bob" => Some(local_start()),
             _ => None,
         },
-        &[],
     )
     .unwrap();
     let (_dump_log, _dump_dashboard) = mm.mm_dump();
@@ -1426,7 +1411,6 @@ fn test_cancel_order() {
             Ok(ref e) if e == "bob" => Some(local_start()),
             _ => None,
         },
-        &[],
     )
     .unwrap();
     let (_bob_dump_log, _bob_dump_dashboard) = mm_bob.mm_dump();
@@ -1466,7 +1450,6 @@ fn test_cancel_order() {
             Ok(ref e) if e == "alice" => Some(local_start()),
             _ => None,
         },
-        &[],
     )
     .unwrap();
 
@@ -1576,7 +1559,6 @@ fn test_cancel_all_orders() {
             Ok(ref e) if e == "bob" => Some(local_start()),
             _ => None,
         },
-        &[],
     )
     .unwrap();
     let (_bob_dump_log, _bob_dump_dashboard) = mm_bob.mm_dump();
@@ -1616,7 +1598,6 @@ fn test_cancel_all_orders() {
             Ok(ref e) if e == "alice" => Some(local_start()),
             _ => None,
         },
-        &[],
     )
     .unwrap();
 
@@ -1729,7 +1710,6 @@ fn test_electrum_enable_conn_errors() {
             Ok(ref e) if e == "bob" => Some(local_start()),
             _ => None,
         },
-        &[],
     )
     .unwrap();
     let (_bob_dump_log, _bob_dump_dashboard) = mm_bob.mm_dump();
@@ -1780,7 +1760,6 @@ fn test_order_should_not_be_displayed_when_node_is_down() {
             Ok(ref e) if e == "bob" => Some(local_start()),
             _ => None,
         },
-        &[],
     )
     .unwrap();
     let (_bob_dump_log, _bob_dump_dashboard) = mm_bob.mm_dump();
@@ -1820,7 +1799,6 @@ fn test_order_should_not_be_displayed_when_node_is_down() {
             Ok(ref e) if e == "alice" => Some(local_start()),
             _ => None,
         },
-        &[],
     )
     .unwrap();
 
@@ -1923,7 +1901,6 @@ fn test_own_orders_should_not_be_removed_from_orderbook() {
             Ok(ref e) if e == "bob" => Some(local_start()),
             _ => None,
         },
-        &[],
     )
     .unwrap();
     let (_bob_dump_log, _bob_dump_dashboard) = mm_bob.mm_dump();
@@ -2004,7 +1981,6 @@ fn test_all_orders_per_pair_per_node_must_be_displayed_in_orderbook() {
             Ok(ref e) if e == "bob" => Some(local_start()),
             _ => None,
         },
-        &[],
     )
     .unwrap();
     let (_dump_log, _dump_dashboard) = mm.mm_dump();
@@ -2090,7 +2066,6 @@ fn orderbook_extended_data() {
             Ok(ref e) if e == "bob" => Some(local_start()),
             _ => None,
         },
-        &[],
     )
     .unwrap();
     let (_dump_log, _dump_dashboard) = &mm.mm_dump();
@@ -2204,7 +2179,6 @@ fn orderbook_should_display_base_rel_volumes() {
             Ok(ref e) if e == "bob" => Some(local_start()),
             _ => None,
         },
-        &[],
     )
     .unwrap();
     let (_dump_log, _dump_dashboard) = &mm.mm_dump();
@@ -2319,7 +2293,6 @@ fn test_show_priv_key() {
             Ok(ref e) if e == "bob" => Some(local_start()),
             _ => None,
         },
-        &[],
     )
     .unwrap();
 
@@ -2362,7 +2335,6 @@ fn test_electrum_and_enable_response() {
             Ok(ref e) if e == "bob" => Some(local_start()),
             _ => None,
         },
-        &[],
     )
     .unwrap();
 
@@ -2519,7 +2491,6 @@ fn setprice_buy_sell_too_low_volume() {
             Ok(ref e) if e == "bob" => Some(local_start()),
             _ => None,
         },
-        &[],
     )
     .unwrap();
 
@@ -2564,7 +2535,6 @@ fn setprice_min_volume_should_be_displayed_in_orderbook() {
             Ok(ref e) if e == "bob" => Some(local_start()),
             _ => None,
         },
-        &[],
     )
     .unwrap();
 
@@ -2589,7 +2559,6 @@ fn setprice_min_volume_should_be_displayed_in_orderbook() {
             Ok(ref e) if e == "alice" => Some(local_start()),
             _ => None,
         },
-        &[],
     )
     .unwrap();
 
@@ -2690,7 +2659,6 @@ fn orderbook_should_work_without_coins_activation() {
             Ok(ref e) if e == "bob" => Some(local_start()),
             _ => None,
         },
-        &[],
     )
     .unwrap();
 
@@ -2715,7 +2683,6 @@ fn orderbook_should_work_without_coins_activation() {
             Ok(ref e) if e == "alice" => Some(local_start()),
             _ => None,
         },
-        &[],
     )
     .unwrap();
 
@@ -2781,7 +2748,6 @@ fn test_fill_or_kill_taker_order_should_not_transform_to_maker() {
         }),
         "password".into(),
         local_start!("bob"),
-        &[],
     )
     .unwrap();
 
@@ -2854,7 +2820,6 @@ fn test_gtc_taker_order_should_transform_to_maker() {
         }),
         "password".into(),
         local_start!("bob"),
-        &[],
     )
     .unwrap();
 
@@ -2933,7 +2898,6 @@ fn test_set_price_must_save_order_to_db() {
         }),
         "password".into(),
         local_start!("bob"),
-        &[],
     )
     .unwrap();
 
@@ -2992,7 +2956,6 @@ fn test_set_price_response_format() {
         }),
         "password".into(),
         local_start!("bob"),
-        &[],
     )
     .unwrap();
 
@@ -3054,7 +3017,6 @@ fn set_price_with_cancel_previous_should_broadcast_cancelled_message() {
             Ok(ref e) if e == "bob" => Some(local_start()),
             _ => None,
         },
-        &[],
     )
     .unwrap();
     let (_bob_dump_log, _bob_dump_dashboard) = mm_bob.mm_dump();
@@ -3092,7 +3054,6 @@ fn set_price_with_cancel_previous_should_broadcast_cancelled_message() {
             Ok(ref e) if e == "alice" => Some(local_start()),
             _ => None,
         },
-        &[],
     )
     .unwrap();
 
@@ -3189,7 +3150,6 @@ fn test_batch_requests() {
             Ok(ref e) if e == "bob" => Some(local_start()),
             _ => None,
         },
-        &[],
     )
     .unwrap();
     let (_bob_dump_log, _bob_dump_dashboard) = mm_bob.mm_dump();
@@ -3265,7 +3225,6 @@ fn test_metrics_method() {
         }),
         "pass".into(),
         local_start!("bob"),
-        &[],
     )
     .unwrap();
     let (_dump_log, _dump_dashboard) = mm.mm_dump();
@@ -3323,7 +3282,6 @@ fn test_electrum_tx_history() {
         }),
         "pass".into(),
         local_start!("bob"),
-        &[],
     )
     .unwrap();
     let (_dump_log, _dump_dashboard) = mm.mm_dump();
@@ -3384,7 +3342,6 @@ fn spin_n_nodes(seednodes: &[&str], coins: &Json, n: usize) -> Vec<(MarketMakerI
             }),
             "pass".into(),
             local_start!("alice"),
-            &[],
         )
         .unwrap();
 
@@ -3419,7 +3376,6 @@ fn test_withdraw_cashaddresses() {
         }),
         "pass".into(),
         local_start!("bob"),
-        &[],
     )
     .unwrap();
     let (_dump_log, _dump_dashboard) = mm.mm_dump();
@@ -3510,7 +3466,6 @@ fn test_common_cashaddresses() {
         }),
         "pass".into(),
         local_start!("bob"),
-        &[],
     )
     .unwrap();
     let (_dump_log, _dump_dashboard) = mm.mm_dump();
@@ -3596,7 +3551,6 @@ fn test_convert_utxo_address() {
         }),
         "pass".into(),
         local_start!("bob"),
-        &[],
     )
     .unwrap();
     let (_dump_log, _dump_dashboard) = mm.mm_dump();
@@ -3723,7 +3677,6 @@ fn test_convert_eth_address() {
             Ok(ref e) if e == "bob" => Some(local_start()),
             _ => None,
         },
-        &[],
     )
     .unwrap();
     let (_dump_log, _dump_dashboard) = mm.mm_dump();
@@ -3821,7 +3774,6 @@ fn test_convert_qrc20_address() {
         }),
         "password".into(),
         local_start!("bob"),
-        &[],
     )
     .unwrap();
 
@@ -3973,7 +3925,6 @@ fn test_validateaddress() {
             Ok(ref e) if e == "bob" => Some(local_start()),
             _ => None,
         },
-        &[],
     )
     .unwrap();
     let (_dump_log, _dump_dashboard) = mm.mm_dump();
@@ -4124,7 +4075,6 @@ fn qrc20_activate_electrum() {
         }),
         "password".into(),
         local_start!("bob"),
-        &[],
     )
     .unwrap();
 
@@ -4169,7 +4119,6 @@ fn test_qrc20_withdraw() {
         }),
         "password".into(),
         local_start!("bob"),
-        &[],
     )
     .unwrap();
 
@@ -4248,7 +4197,6 @@ fn test_qrc20_withdraw_error() {
         }),
         "password".into(),
         local_start!("bob"),
-        &[],
     )
     .unwrap();
     let (_dump_log, _dump_dashboard) = mm.mm_dump();
@@ -4360,7 +4308,6 @@ fn test_qrc20_tx_history() {
         }),
         "pass".into(),
         local_start!("bob"),
-        &[],
     )
     .unwrap();
     let (_dump_log, _dump_dashboard) = mm.mm_dump();
@@ -4467,7 +4414,6 @@ fn test_buy_conf_settings() {
         }),
         "password".into(),
         local_start!("bob"),
-        &[],
     )
     .unwrap();
 
@@ -4545,7 +4491,6 @@ fn test_buy_response_format() {
         }),
         "password".into(),
         local_start!("bob"),
-        &[],
     )
     .unwrap();
 
@@ -4601,7 +4546,6 @@ fn test_sell_response_format() {
         }),
         "password".into(),
         local_start!("bob"),
-        &[],
     )
     .unwrap();
 
@@ -4657,7 +4601,6 @@ fn test_my_orders_response_format() {
         }),
         "password".into(),
         local_start!("bob"),
-        &[],
     )
     .unwrap();
 
@@ -4736,7 +4679,6 @@ fn test_my_orders_after_matched() {
         }),
         "pass".to_string(),
         None,
-        &[],
     )
     .unwrap();
     let (_bob_dump_log, _bob_dump_dashboard) = mm_bob.mm_dump();
@@ -4754,7 +4696,6 @@ fn test_my_orders_after_matched() {
         }),
         "pass".to_string(),
         None,
-        &[],
     )
     .unwrap();
     let (_alice_dump_log, _alice_dump_dashboard) = mm_alice.mm_dump();
@@ -4832,7 +4773,6 @@ fn test_sell_conf_settings() {
         }),
         "password".into(),
         local_start!("bob"),
-        &[],
     )
     .unwrap();
 
@@ -4910,7 +4850,6 @@ fn test_set_price_conf_settings() {
         }),
         "password".into(),
         local_start!("bob"),
-        &[],
     )
     .unwrap();
 
@@ -4993,7 +4932,6 @@ fn test_trade_fee_returns_numbers_in_various_formats() {
             Ok(ref e) if e == "bob" => Some(local_start()),
             _ => None,
         },
-        &[],
     )
     .unwrap();
     let (_bob_dump_log, _bob_dump_dashboard) = mm_bob.mm_dump();
@@ -5044,7 +4982,6 @@ fn test_orderbook_is_mine_orders() {
             Ok(ref e) if e == "bob" => Some(local_start()),
             _ => None,
         },
-        &[],
     )
     .unwrap();
     let (_bob_dump_log, _bob_dump_dashboard) = mm_bob.mm_dump();
@@ -5082,7 +5019,6 @@ fn test_orderbook_is_mine_orders() {
             Ok(ref e) if e == "alice" => Some(local_start()),
             _ => None,
         },
-        &[],
     )
     .unwrap();
 
@@ -5217,7 +5153,6 @@ fn test_sell_min_volume() {
         }),
         "password".into(),
         local_start!("bob"),
-        &[],
     )
     .unwrap();
 
@@ -5296,7 +5231,6 @@ fn test_sell_min_volume_dust() {
         }),
         "password".into(),
         local_start!("bob"),
-        &[],
     )
     .unwrap();
 
@@ -5353,7 +5287,6 @@ fn test_setprice_min_volume_dust() {
         }),
         "password".into(),
         local_start!("bob"),
-        &[],
     )
     .unwrap();
 
@@ -5407,7 +5340,6 @@ fn test_buy_min_volume() {
         }),
         "password".into(),
         local_start!("bob"),
-        &[],
     )
     .unwrap();
 
@@ -5490,7 +5422,6 @@ fn test_best_orders() {
         }),
         "pass".into(),
         local_start!("bob"),
-        &[],
     )
     .unwrap();
     let (_bob_dump_log, _bob_dump_dashboard) = mm_bob.mm_dump();
@@ -5543,7 +5474,6 @@ fn test_best_orders() {
         }),
         "pass".into(),
         local_start!("alice"),
-        &[],
     )
     .unwrap();
 
@@ -5698,7 +5628,6 @@ fn test_orderbook_depth() {
         }),
         "pass".into(),
         local_start!("bob"),
-        &[],
     )
     .unwrap();
     let (_bob_dump_log, _bob_dump_dashboard) = mm_bob.mm_dump();
@@ -5749,7 +5678,6 @@ fn test_orderbook_depth() {
         }),
         "pass".into(),
         local_start!("alice"),
-        &[],
     )
     .unwrap();
 
