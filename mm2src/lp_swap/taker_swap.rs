@@ -530,8 +530,7 @@ impl TakerSwapEvent {
 
     fn should_ban_maker(&self) -> bool {
         matches!(self,
-            TakerSwapEvent::NegotiateFailed(_)
-            | TakerSwapEvent::MakerPaymentValidateFailed(_)
+            TakerSwapEvent::MakerPaymentValidateFailed(_)
             | TakerSwapEvent::TakerPaymentWaitForSpendFailed(_))
     }
 
@@ -2022,9 +2021,6 @@ mod taker_swap_tests {
 
         let event = TakerSwapEvent::MakerPaymentWaitConfirmFailed("err".into());
         assert!(!event.should_ban_maker());
-
-        let event = TakerSwapEvent::NegotiateFailed("err".into());
-        assert!(event.should_ban_maker());
 
         let event = TakerSwapEvent::MakerPaymentValidateFailed("err".into());
         assert!(event.should_ban_maker());

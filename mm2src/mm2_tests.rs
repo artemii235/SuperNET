@@ -538,6 +538,11 @@ fn orders_of_banned_pubkeys_should_not_be_displayed() {
         "Alice RICK/MORTY orderbook must have no asks"
     );
 
+    block_on(mm_alice.wait_for_log(22., |log| {
+        log.contains("Pubkey 022cd3021a2197361fb70b862c412bc8e44cff6951fa1de45ceabfdd9b4c520420 is banned")
+    }))
+    .unwrap();
+
     block_on(mm_bob.stop()).unwrap();
     block_on(mm_alice.stop()).unwrap();
 }
