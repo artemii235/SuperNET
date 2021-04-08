@@ -124,9 +124,6 @@ use uuid::Uuid;
 pub use num_bigint::BigInt;
 #[cfg(not(target_arch = "wasm32"))] pub use rusqlite;
 
-pub const MM_DATETIME: &str = env!("MM_DATETIME");
-pub const MM_VERSION: &str = env!("MM_VERSION");
-
 pub const SATOSHIS: u64 = 100_000_000;
 
 pub const DEX_FEE_ADDR_PUBKEY: &str = "03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc06";

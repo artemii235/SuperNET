@@ -6,6 +6,7 @@ use super::{broadcast_my_swap_status, broadcast_swap_message_every, check_my_coi
             TakerFeeAdditionalInfo, TradePreimageMethod, TradePreimageRequest, TransactionIdentifier,
             WAIT_CONFIRM_INTERVAL};
 use crate::mm2::lp_network::subscribe_to_topic;
+use crate::mm2::MM_VERSION;
 use atomic::Atomic;
 use bigdecimal::BigDecimal;
 use coins::{lp_coinfind, CanRefundHtlc, FeeApproxStage, FoundSwapTxSpend, MmCoinEnum, TradeFee, TradePreimageValue};
@@ -13,7 +14,7 @@ use common::executor::Timer;
 use common::log::{debug, error, warn};
 use common::mm_ctx::MmArc;
 use common::mm_number::MmNumber;
-use common::{bits256, file_lock::FileLock, now_ms, slurp, write, Traceable, DEX_FEE_ADDR_RAW_PUBKEY, MM_VERSION};
+use common::{bits256, file_lock::FileLock, now_ms, slurp, write, Traceable, DEX_FEE_ADDR_RAW_PUBKEY};
 use futures::{compat::Future01CompatExt, select, FutureExt};
 use futures01::Future;
 use http::Response;

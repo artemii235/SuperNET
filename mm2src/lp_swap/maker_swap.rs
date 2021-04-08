@@ -5,14 +5,14 @@ use super::{broadcast_my_swap_status, broadcast_swap_message_every, check_base_c
             SwapConfirmationsSettings, SwapError, SwapMsg, SwapsContext, TradePreimageRequest, TransactionIdentifier,
             WAIT_CONFIRM_INTERVAL};
 
-use crate::mm2::{lp_network::subscribe_to_topic, lp_swap::NegotiationDataMsg};
+use crate::mm2::{lp_network::subscribe_to_topic, lp_swap::NegotiationDataMsg, MM_VERSION};
 use atomic::Atomic;
 use bigdecimal::BigDecimal;
 use bitcrypto::dhash160;
 use coins::{lp_coinfind, CanRefundHtlc, FeeApproxStage, FoundSwapTxSpend, MmCoinEnum, TradeFee, TradePreimageValue,
             TransactionEnum};
 use common::{bits256, executor::Timer, file_lock::FileLock, log::error, mm_ctx::MmArc, mm_number::MmNumber, now_ms,
-             slurp, write, Traceable, DEX_FEE_ADDR_RAW_PUBKEY, MM_VERSION};
+             slurp, write, Traceable, DEX_FEE_ADDR_RAW_PUBKEY};
 use futures::{compat::Future01CompatExt, select, FutureExt};
 use futures01::Future;
 use parking_lot::Mutex as PaMutex;

@@ -25,7 +25,7 @@
 use common::crash_reports::init_crash_reports;
 use common::log::LogLevel;
 use common::mm_ctx::MmCtxBuilder;
-use common::{block_on, double_panic_crash, MM_DATETIME, MM_VERSION};
+use common::{block_on, double_panic_crash};
 
 use gstuff::slurp;
 
@@ -57,6 +57,8 @@ pub mod database;
 pub mod mm2_tests;
 
 const DEFAULT_LOG_FILTER: LogLevel = LogLevel::Info;
+pub const MM_DATETIME: &str = env!("MM_DATETIME");
+pub const MM_VERSION: &str = env!("MM_VERSION");
 
 pub struct LpMainParams {
     conf: Json,
@@ -93,7 +95,10 @@ pub async fn lp_main(params: LpMainParams, ctx_cb: &dyn Fn(u32)) -> Result<(), S
     if conf["passphrase"].is_string() {
         let netid = conf["netid"].as_u64().unwrap_or(0) as u16;
         let (_, pubport, _) = try_s!(lp_ports(netid));
-        let ctx = MmCtxBuilder::new().with_conf(conf).into_mm_arc();
+        let ctx = MmCtxBuilder::new()
+            .with_conf(conf)
+            .with_version(MM_VERSION.into())
+            .into_mm_arc();
         ctx_cb(try_s!(ctx.ffi_handle()));
         try_s!(lp_init(pubport, ctx).await);
         Ok(())
