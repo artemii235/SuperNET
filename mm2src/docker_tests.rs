@@ -1096,7 +1096,7 @@ mod docker_tests {
 
     // https://github.com/KomodoPlatform/atomicDEX-API/issues/471
     #[test]
-    fn test_match_and_trade_max() {
+    fn test_match_and_trade_setprice_max() {
         let (_ctx, _, bob_priv_key) = generate_coin_with_random_privkey("MYCOIN", 1000.into());
         let (_ctx, _, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN1", 2000.into());
         let coins = json! ([
@@ -1193,6 +1193,128 @@ mod docker_tests {
         ));
         log!("Order path "(order_path.display()));
         assert!(!order_path.exists());
+        block_on(mm_bob.stop()).unwrap();
+        block_on(mm_alice.stop()).unwrap();
+    }
+
+    #[test]
+    // https://github.com/KomodoPlatform/atomicDEX-API/issues/888
+    fn test_max_taker_vol_swap() {
+        let (_ctx, _, bob_priv_key) = generate_coin_with_random_privkey("MYCOIN", 1000.into());
+        let (_ctx, _, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN1", 50.into());
+        let coins = json! ([
+            {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
+            {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
+        ]);
+        let mut mm_bob = MarketMakerIt::start_with_envs(
+            json! ({
+                "gui": "nogui",
+                "netid": 9000,
+                "dht": "on",  // Enable DHT without delay.
+                "passphrase": format!("0x{}", hex::encode(bob_priv_key)),
+                "coins": coins,
+                "rpc_password": "pass",
+                "i_am_seed": true,
+            }),
+            "pass".to_string(),
+            None,
+            &[("MYCOIN_FEE_DISCOUNT", "")],
+        )
+        .unwrap();
+        let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
+        block_on(mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
+
+        let mut mm_alice = MarketMakerIt::start_with_envs(
+            json! ({
+                "gui": "nogui",
+                "netid": 9000,
+                "dht": "on",  // Enable DHT without delay.
+                "passphrase": format!("0x{}", hex::encode(alice_priv_key)),
+                "coins": coins,
+                "rpc_password": "pass",
+                "seednodes": vec![format!("{}", mm_bob.ip)],
+            }),
+            "pass".to_string(),
+            None,
+            &[("MYCOIN_FEE_DISCOUNT", "")],
+        )
+        .unwrap();
+        let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
+        block_on(mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
+
+        log!([block_on(enable_native(&mm_bob, "MYCOIN", &[]))]);
+        log!([block_on(enable_native(&mm_bob, "MYCOIN1", &[]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN", &[]))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN1", &[]))]);
+        let price = MmNumber::from((100, 1620));
+        let rc = block_on(mm_bob.rpc(json! ({
+            "userpass": mm_bob.userpass,
+            "method": "setprice",
+            "base": "MYCOIN",
+            "rel": "MYCOIN1",
+            "price": price,
+            "max": true,
+        })))
+        .unwrap();
+        assert!(rc.0.is_success(), "!setprice: {}", rc.1);
+
+        let rc = block_on(mm_alice.rpc(json! ({
+            "userpass": mm_alice.userpass,
+            "method": "orderbook",
+            "base": "MYCOIN1",
+            "rel": "MYCOIN",
+        })))
+        .unwrap();
+        assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
+        log!((rc.1));
+        thread::sleep(Duration::from_secs(3));
+
+        let rc = block_on(mm_alice.rpc(json! ({
+            "userpass": mm_alice.userpass,
+            "method": "max_taker_vol",
+            "coin": "MYCOIN1",
+            "trade_with": "MYCOIN",
+        })))
+        .unwrap();
+        assert!(rc.0.is_success(), "!max_taker_vol: {}", rc.1);
+        let vol: MaxTakerVolResponse = json::from_str(&rc.1).unwrap();
+        let expected_vol = MmNumber::from((647499741, 12965000));
+
+        let actual_vol = MmNumber::from(vol.result.clone());
+        assert_eq!(expected_vol, actual_vol);
+
+        let rc = block_on(mm_alice.rpc(json! ({
+            "userpass": mm_alice.userpass,
+            "method": "sell",
+            "base": "MYCOIN1",
+            "rel": "MYCOIN",
+            "price": "16",
+            "volume": vol.result,
+        })))
+        .unwrap();
+        assert!(rc.0.is_success(), "!sell: {}", rc.1);
+        let sell_res: BuyOrSellRpcResult = json::from_str(&rc.1).unwrap();
+
+        block_on(mm_bob.wait_for_log(22., |log| log.contains("Entering the maker_swap_loop MYCOIN/MYCOIN1"))).unwrap();
+        block_on(mm_alice.wait_for_log(22., |log| log.contains("Entering the taker_swap_loop MYCOIN/MYCOIN1")))
+            .unwrap();
+
+        thread::sleep(Duration::from_secs(3));
+
+        let rc = block_on(mm_alice.rpc(json! ({
+            "userpass": mm_alice.userpass,
+            "method": "my_swap_status",
+            "params": {
+                "uuid": sell_res.result.uuid
+            }
+        })))
+        .unwrap();
+        assert!(rc.0.is_success(), "!my_swap_status: {}", rc.1);
+
+        let status_response: Json = json::from_str(&rc.1).unwrap();
+        let events_array = status_response["result"]["events"].as_array().unwrap();
+        let first_event_type = events_array[0]["event"]["type"].as_str().unwrap();
+        assert_eq!("Started", first_event_type);
         block_on(mm_bob.stop()).unwrap();
         block_on(mm_alice.stop()).unwrap();
     }

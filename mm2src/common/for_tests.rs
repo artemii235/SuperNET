@@ -215,7 +215,25 @@ impl MarketMakerIt {
     /// * `local` - Function to start the MarketMaker in a local thread, instead of spawning a process.
     /// It's required to manually add 127.0.0.* IPs aliases on Mac to make it properly work.
     /// cf. https://superuser.com/a/458877, https://superuser.com/a/635327
-    pub fn start(mut conf: Json, userpass: String, local: Option<LocalStart>) -> Result<MarketMakerIt, String> {
+    pub fn start(conf: Json, userpass: String, local: Option<LocalStart>) -> Result<MarketMakerIt, String> {
+        MarketMakerIt::start_with_envs(conf, userpass, local, &[])
+    }
+
+    /// Create a new temporary directory and start a new MarketMaker process there.
+    ///
+    /// * `conf` - The command-line configuration passed to the MarketMaker.
+    ///            Unique local IP address is injected as "myipaddr" unless this field is already present.
+    /// * `userpass` - RPC API key. We should probably extract it automatically from the MM log.
+    /// * `local` - Function to start the MarketMaker in a local thread, instead of spawning a process.
+    /// * `envs` - The enviroment variables passed to the process
+    /// It's required to manually add 127.0.0.* IPs aliases on Mac to make it properly work.
+    /// cf. https://superuser.com/a/458877, https://superuser.com/a/635327
+    pub fn start_with_envs(
+        mut conf: Json,
+        userpass: String,
+        local: Option<LocalStart>,
+        envs: &[(&str, &str)],
+    ) -> Result<MarketMakerIt, String> {
         let ip: IpAddr = if conf["myipaddr"].is_null() {
             // Generate an unique IP.
             let mut attempts = 0;
@@ -301,6 +319,7 @@ impl MarketMakerIt {
                     .env("_MM2_TEST_CONF", try_s!(json::to_string(&conf)))
                     .env("MM2_UNBUFFERED_OUTPUT", "1")
                     .env("RUST_LOG", "debug")
+                    .envs(envs.to_vec())
                     .stdout(try_s!(log.try_clone()))
                     .stderr(log)
                     .spawn());
