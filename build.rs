@@ -18,8 +18,7 @@ fn path2s(path: PathBuf) -> String {
 
 /// SuperNET's root.
 fn root() -> PathBuf {
-    let common = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let super_net = common.join("../..");
+    let super_net = Path::new(env!("CARGO_MANIFEST_DIR"));
     let super_net = match super_net.canonicalize() {
         Ok(p) => p,
         Err(err) => panic!("Can't canonicalize {:?}: {}", super_net, err),
