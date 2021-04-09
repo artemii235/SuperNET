@@ -90,6 +90,7 @@ pub struct MmCtx {
     pub wasm_rpc: Constructible<WasmRpcSender>,
     #[cfg(not(target_arch = "wasm32"))]
     pub sqlite_connection: Constructible<Mutex<Connection>>,
+    pub mm_version: String,
 }
 
 impl MmCtx {
@@ -115,6 +116,7 @@ impl MmCtx {
             wasm_rpc: Constructible::default(),
             #[cfg(not(target_arch = "wasm32"))]
             sqlite_connection: Constructible::default(),
+            mm_version: "".into(),
         }
     }
 
@@ -229,6 +231,8 @@ impl MmCtx {
     }
 
     pub fn gui(&self) -> Option<&str> { self.conf["gui"].as_str() }
+
+    pub fn mm_version(&self) -> &str { &self.mm_version }
 
     #[cfg(not(target_arch = "wasm32"))]
     pub fn init_sqlite_connection(&self) -> Result<(), String> {
@@ -449,6 +453,7 @@ where
 pub struct MmCtxBuilder {
     conf: Option<Json>,
     key_pair: Option<KeyPair>,
+    version: String,
 }
 
 impl MmCtxBuilder {
@@ -464,6 +469,11 @@ impl MmCtxBuilder {
         self
     }
 
+    pub fn with_version(mut self, version: String) -> Self {
+        self.version = version;
+        self
+    }
+
     pub fn into_mm_arc(self) -> MmArc {
         // NB: We avoid recreating LogState
         // in order not to interfere with the integration tests checking LogState drop on shutdown.
@@ -473,6 +483,7 @@ impl MmCtxBuilder {
             LogState::in_memory()
         };
         let mut ctx = MmCtx::with_log_state(log);
+        ctx.mm_version = self.version;
         if let Some(conf) = self.conf {
             ctx.conf = conf
         }

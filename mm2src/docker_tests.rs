@@ -587,7 +587,7 @@ mod docker_tests {
             {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
             {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
         ]);
-        let mut mm_bob = MarketMakerIt::start(
+        let mm_bob = MarketMakerIt::start(
             json! ({
                 "gui": "nogui",
                 "netid": 9000,
@@ -605,7 +605,6 @@ mod docker_tests {
         )
         .unwrap();
         let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
-        block_on(mm_bob.wait_for_log(60., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
         log!([block_on(enable_native(&mm_bob, "MYCOIN", &[]))]);
         log!([block_on(enable_native(&mm_bob, "MYCOIN1", &[]))]);
         let rc = block_on(mm_bob.rpc(json! ({
@@ -706,7 +705,7 @@ mod docker_tests {
             {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
             {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
         ]);
-        let mut mm_bob = MarketMakerIt::start(
+        let mm_bob = MarketMakerIt::start(
             json! ({
                 "gui": "nogui",
                 "netid": 9000,
@@ -724,9 +723,8 @@ mod docker_tests {
         )
         .unwrap();
         let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
-        block_on(mm_bob.wait_for_log(60., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
-        let mut mm_alice = MarketMakerIt::start(
+        let mm_alice = MarketMakerIt::start(
             json! ({
                 "gui": "nogui",
                 "netid": 9000,
@@ -741,7 +739,6 @@ mod docker_tests {
         )
         .unwrap();
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
-        block_on(mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
         log!([block_on(enable_native(&mm_bob, "MYCOIN", &[]))]);
         log!([block_on(enable_native(&mm_bob, "MYCOIN1", &[]))]);
@@ -844,7 +841,7 @@ mod docker_tests {
             {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
             {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
         ]);
-        let mut mm_bob = MarketMakerIt::start(
+        let mm_bob = MarketMakerIt::start(
             json! ({
                 "gui": "nogui",
                 "netid": 9000,
@@ -862,9 +859,8 @@ mod docker_tests {
         )
         .unwrap();
         let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
-        block_on(mm_bob.wait_for_log(60., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
-        let mut mm_alice = MarketMakerIt::start(
+        let mm_alice = MarketMakerIt::start(
             json! ({
                 "gui": "nogui",
                 "netid": 9000,
@@ -879,7 +875,6 @@ mod docker_tests {
         )
         .unwrap();
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
-        block_on(mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
         log!([block_on(enable_native(&mm_bob, "MYCOIN", &[]))]);
         log!([block_on(enable_native(&mm_bob, "MYCOIN1", &[]))]);
@@ -1014,7 +1009,6 @@ mod docker_tests {
         )
         .unwrap();
         let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
-        block_on(mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
         let mut mm_alice = MarketMakerIt::start(
             json! ({
@@ -1031,7 +1025,6 @@ mod docker_tests {
         )
         .unwrap();
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
-        block_on(mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
         log!([block_on(enable_native(&mm_bob, "MYCOIN", &[]))]);
         log!([block_on(enable_native(&mm_bob, "MYCOIN1", &[]))]);
@@ -1125,7 +1118,6 @@ mod docker_tests {
         )
         .unwrap();
         let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
-        block_on(mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
         let mut mm_alice = MarketMakerIt::start(
             json! ({
@@ -1142,7 +1134,6 @@ mod docker_tests {
         )
         .unwrap();
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
-        block_on(mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
         log!([block_on(enable_native(&mm_bob, "MYCOIN", &[]))]);
         log!([block_on(enable_native(&mm_bob, "MYCOIN1", &[]))]);
@@ -1351,7 +1342,6 @@ mod docker_tests {
         )
         .unwrap();
         let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
-        block_on(mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
         let mut mm_alice = MarketMakerIt::start(
             json! ({
@@ -1368,7 +1358,6 @@ mod docker_tests {
         )
         .unwrap();
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
-        block_on(mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
         log!([block_on(enable_native(&mm_bob, "MYCOIN", &[]))]);
         log!([block_on(enable_native(&mm_bob, "MYCOIN1", &[]))]);
@@ -1450,7 +1439,6 @@ mod docker_tests {
         )
         .unwrap();
         let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
-        block_on(mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
         let mut mm_alice = MarketMakerIt::start(
             json! ({
@@ -1467,7 +1455,6 @@ mod docker_tests {
         )
         .unwrap();
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
-        block_on(mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
         log!([block_on(enable_native(&mm_bob, "MYCOIN", &[]))]);
         log!([block_on(enable_native(&mm_bob, "MYCOIN1", &[]))]);
@@ -1533,7 +1520,7 @@ mod docker_tests {
             {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
             {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
         ]);
-        let mut mm_alice = MarketMakerIt::start(
+        let mm_alice = MarketMakerIt::start(
             json! ({
                 "gui": "nogui",
                 "netid": 9000,
@@ -1548,7 +1535,6 @@ mod docker_tests {
         )
         .unwrap();
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
-        block_on(mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
         log!([block_on(enable_native(&mm_alice, "MYCOIN", &[]))]);
         log!([block_on(enable_native(&mm_alice, "MYCOIN1", &[]))]);
@@ -1599,7 +1585,7 @@ mod docker_tests {
             {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
             {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":2000,"protocol":{"type":"UTXO"}},
         ]);
-        let mut mm = MarketMakerIt::start(
+        let mm = MarketMakerIt::start(
             json! ({
                 "gui": "nogui",
                 "netid": 9000,
@@ -1614,7 +1600,6 @@ mod docker_tests {
         )
         .unwrap();
         let (_dump_log, _dump_dashboard) = mm_dump(&mm.log_path);
-        block_on(mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
         log!([block_on(enable_native(&mm, "MYCOIN1", &[]))]);
         log!([block_on(enable_native(&mm, "MYCOIN", &[]))]);
@@ -1726,7 +1711,7 @@ mod docker_tests {
             {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
             {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":2000,"protocol":{"type":"UTXO"}},
         ]);
-        let mut mm = MarketMakerIt::start(
+        let mm = MarketMakerIt::start(
             json! ({
                 "gui": "nogui",
                 "netid": 9000,
@@ -1741,7 +1726,6 @@ mod docker_tests {
         )
         .unwrap();
         let (_dump_log, _dump_dashboard) = mm_dump(&mm.log_path);
-        block_on(mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
         log!([block_on(enable_native(&mm, "MYCOIN1", &[]))]);
         log!([block_on(enable_native(&mm, "MYCOIN", &[]))]);
@@ -1841,7 +1825,7 @@ mod docker_tests {
             {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
             {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
         ]);
-        let mut mm_alice = MarketMakerIt::start(
+        let mm_alice = MarketMakerIt::start(
             json! ({
                 "gui": "nogui",
                 "netid": 9000,
@@ -1856,7 +1840,6 @@ mod docker_tests {
         )
         .unwrap();
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
-        block_on(mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
         log!([block_on(enable_native(&mm_alice, "MYCOIN1", &[]))]);
         log!([block_on(enable_native(&mm_alice, "MYCOIN", &[]))]);
@@ -1899,7 +1882,7 @@ mod docker_tests {
             {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":10000,"protocol":{"type":"UTXO"}},
             {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":10000,"protocol":{"type":"UTXO"}},
         ]);
-        let mut mm_alice = MarketMakerIt::start(
+        let mm_alice = MarketMakerIt::start(
             json! ({
                 "gui": "nogui",
                 "netid": 9000,
@@ -1914,7 +1897,6 @@ mod docker_tests {
         )
         .unwrap();
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
-        block_on(mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
         log!([block_on(enable_native(&mm_alice, "MYCOIN1", &[]))]);
         log!([block_on(enable_native(&mm_alice, "MYCOIN", &[]))]);
@@ -1961,7 +1943,7 @@ mod docker_tests {
             {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":10000,"protocol":{"type":"UTXO"}},
             {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":10000,"protocol":{"type":"UTXO"},"dust":72800},
         ]);
-        let mut mm = MarketMakerIt::start(
+        let mm = MarketMakerIt::start(
             json! ({
                 "gui": "nogui",
                 "netid": 9000,
@@ -1976,7 +1958,6 @@ mod docker_tests {
         )
         .unwrap();
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm.log_path);
-        block_on(mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
         log!([block_on(enable_native(&mm, "MYCOIN1", &[]))]);
         log!([block_on(enable_native(&mm, "MYCOIN", &[]))]);
@@ -2017,7 +1998,7 @@ mod docker_tests {
             {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":10000,"protocol":{"type":"UTXO"}},
             {"coin":"KMD","txversion":4,"overwintered":1,"txfee":10000,"protocol":{"type":"UTXO"}},
         ]);
-        let mut mm_alice = MarketMakerIt::start(
+        let mm_alice = MarketMakerIt::start(
             json! ({
                 "gui": "nogui",
                 "netid": 9000,
@@ -2032,7 +2013,6 @@ mod docker_tests {
         )
         .unwrap();
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
-        block_on(mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
         log!([block_on(enable_native(&mm_alice, "MYCOIN1", &[]))]);
         log!([block_on(enable_native(&mm_alice, "MYCOIN", &[]))]);
@@ -2078,7 +2058,7 @@ mod docker_tests {
             {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
             {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
         ]);
-        let mut mm_alice = MarketMakerIt::start(
+        let mm_alice = MarketMakerIt::start(
             json! ({
                 "gui": "nogui",
                 "netid": 9000,
@@ -2093,7 +2073,6 @@ mod docker_tests {
         )
         .unwrap();
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
-        block_on(mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
         log!([block_on(enable_native(&mm_alice, "MYCOIN", &[]))]);
         log!([block_on(enable_native(&mm_alice, "MYCOIN1", &[]))]);
@@ -2152,7 +2131,6 @@ mod docker_tests {
         )
         .unwrap();
         let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
-        block_on(mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
         let mut mm_alice = MarketMakerIt::start(
             json! ({
@@ -2169,7 +2147,6 @@ mod docker_tests {
         )
         .unwrap();
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
-        block_on(mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
         log!([block_on(enable_native(&mm_bob, "MYCOIN", &[]))]);
         log!([block_on(enable_native(&mm_bob, "MYCOIN1", &[]))]);
@@ -2244,9 +2221,8 @@ mod docker_tests {
             "rpc_password": "pass",
             "i_am_seed": true,
         });
-        let mut mm_bob = MarketMakerIt::start(bob_conf.clone(), "pass".to_string(), None).unwrap();
+        let mm_bob = MarketMakerIt::start(bob_conf.clone(), "pass".to_string(), None).unwrap();
         let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
-        block_on(mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
         log!([block_on(enable_native(&mm_bob, "MYCOIN", &[]))]);
         log!([block_on(enable_native(&mm_bob, "MYCOIN1", &[]))]);
@@ -2266,9 +2242,8 @@ mod docker_tests {
         bob_conf["log"] = mm_bob.folder.join("mm2_dup.log").to_str().unwrap().into();
         block_on(mm_bob.stop()).unwrap();
 
-        let mut mm_bob_dup = MarketMakerIt::start(bob_conf, "pass".to_string(), None).unwrap();
+        let mm_bob_dup = MarketMakerIt::start(bob_conf, "pass".to_string(), None).unwrap();
         let (_bob_dup_dump_log, _bob_dup_dump_dashboard) = mm_dump(&mm_bob_dup.log_path);
-        block_on(mm_bob_dup.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
         log!([block_on(enable_native(&mm_bob_dup, "MYCOIN", &[]))]);
         log!([block_on(enable_native(&mm_bob_dup, "MYCOIN1", &[]))]);
 
@@ -2308,9 +2283,8 @@ mod docker_tests {
             "rpc_password": "pass",
             "i_am_seed": true,
         });
-        let mut relay = MarketMakerIt::start(relay_conf, "pass".to_string(), None).unwrap();
+        let relay = MarketMakerIt::start(relay_conf, "pass".to_string(), None).unwrap();
         let (_relay_dump_log, _relay_dump_dashboard) = mm_dump(&relay.log_path);
-        block_on(relay.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
         let mut bob_conf = json! ({
             "gui": "nogui",
@@ -2322,9 +2296,8 @@ mod docker_tests {
             "seednodes": vec![format!("{}", relay.ip)],
             "i_am_seed": false,
         });
-        let mut mm_bob = MarketMakerIt::start(bob_conf.clone(), "pass".to_string(), None).unwrap();
+        let mm_bob = MarketMakerIt::start(bob_conf.clone(), "pass".to_string(), None).unwrap();
         let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
-        block_on(mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
         let mut mm_alice = MarketMakerIt::start(
             json! ({
@@ -2341,7 +2314,6 @@ mod docker_tests {
         )
         .unwrap();
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
-        block_on(mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
         log!([block_on(enable_native(&mm_bob, "MYCOIN", &[]))]);
         log!([block_on(enable_native(&mm_bob, "MYCOIN1", &[]))]);
@@ -2366,7 +2338,6 @@ mod docker_tests {
 
         let mut mm_bob_dup = MarketMakerIt::start(bob_conf, "pass".to_string(), None).unwrap();
         let (_bob_dup_dump_log, _bob_dup_dump_dashboard) = mm_dump(&mm_bob_dup.log_path);
-        block_on(mm_bob_dup.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
         log!([block_on(enable_native(&mm_bob_dup, "MYCOIN", &[]))]);
         log!([block_on(enable_native(&mm_bob_dup, "MYCOIN1", &[]))]);
 
@@ -2398,7 +2369,7 @@ mod docker_tests {
             {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
             {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
         ]);
-        let mut mm_bob = MarketMakerIt::start(
+        let mm_bob = MarketMakerIt::start(
             json! ({
                 "gui": "nogui",
                 "netid": 9000,
@@ -2413,7 +2384,6 @@ mod docker_tests {
         )
         .unwrap();
         let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
-        block_on(mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
         let mut mm_alice_1 = MarketMakerIt::start(
             json! ({
@@ -2430,7 +2400,6 @@ mod docker_tests {
         )
         .unwrap();
         let (_alice_1_dump_log, _alice_1_dump_dashboard) = mm_dump(&mm_alice_1.log_path);
-        block_on(mm_alice_1.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
         let mut mm_alice_2 = MarketMakerIt::start(
             json! ({
@@ -2447,7 +2416,6 @@ mod docker_tests {
         )
         .unwrap();
         let (_alice_2_dump_log, _alice_2_dump_dashboard) = mm_dump(&mm_alice_2.log_path);
-        block_on(mm_alice_2.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
         log!([block_on(enable_native(&mm_bob, "MYCOIN", &[]))]);
         log!([block_on(enable_native(&mm_bob, "MYCOIN1", &[]))]);
@@ -2524,7 +2492,6 @@ mod docker_tests {
         )
         .unwrap();
         let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
-        block_on(mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
         let mut mm_alice = MarketMakerIt::start(
             json! ({
@@ -2541,7 +2508,6 @@ mod docker_tests {
         )
         .unwrap();
         let (_alice_1_dump_log, _alice_1_dump_dashboard) = mm_dump(&mm_alice.log_path);
-        block_on(mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
         log!([block_on(enable_native(&mm_bob, "MYCOIN", &[]))]);
         log!([block_on(enable_native(&mm_bob, "MYCOIN1", &[]))]);
@@ -2602,7 +2568,6 @@ mod docker_tests {
         )
         .unwrap();
         let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
-        block_on(mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
         let mut mm_alice = MarketMakerIt::start(
             json! ({
@@ -2619,7 +2584,6 @@ mod docker_tests {
         )
         .unwrap();
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm_alice.log_path);
-        block_on(mm_alice.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
         log!([block_on(enable_native(&mm_bob, "MYCOIN", &[]))]);
         log!([block_on(enable_native(&mm_bob, "MYCOIN1", &[]))]);
@@ -2731,7 +2695,6 @@ mod docker_tests {
         )
         .unwrap();
         let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
-        block_on(mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
         let native = block_on(mm_bob.rpc(json! ({
             "userpass": mm_bob.userpass,
@@ -2788,7 +2751,6 @@ mod docker_tests {
         )
         .unwrap();
         let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm_bob.log_path);
-        block_on(mm_bob.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
         let native = block_on(mm_bob.rpc(json! ({
             "userpass": mm_bob.userpass,

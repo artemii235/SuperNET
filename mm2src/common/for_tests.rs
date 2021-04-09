@@ -25,7 +25,6 @@ use std::time::Duration;
 
 use crate::executor::Timer;
 #[cfg(target_arch = "wasm32")] use crate::helperᶜ;
-#[cfg(not(target_arch = "wasm32"))] use crate::log::LogLevel;
 use crate::log::{dashboard_path, LogState};
 use crate::mm_ctx::MmArc;
 use crate::mm_metrics::{MetricType, MetricsJson};
@@ -307,7 +306,7 @@ impl MarketMakerIt {
             // Note that this should only be used while running a single test,
             // using this option while running multiple tests (or multiple MarketMaker instances) is currently UB.
             let pc = if let Some(local) = local {
-                local(folder.clone(), log_path.clone(), conf);
+                local(folder.clone(), log_path.clone(), conf.clone());
                 None
             } else {
                 let executable = try_s!(env::args().next().ok_or("No program name"));
@@ -319,6 +318,7 @@ impl MarketMakerIt {
                     .current_dir(&folder)
                     .env("_MM2_TEST_CONF", try_s!(json::to_string(&conf)))
                     .env("MM2_UNBUFFERED_OUTPUT", "1")
+                    .env("RUST_LOG", "debug")
                     .envs(envs.to_vec())
                     .stdout(try_s!(log.try_clone()))
                     .stderr(log)
@@ -326,13 +326,33 @@ impl MarketMakerIt {
                 Some(RaiiKill::from_handle(child))
             };
 
-            Ok(MarketMakerIt {
+            let mut mm = MarketMakerIt {
                 folder,
                 ip,
                 log_path,
                 pc,
                 userpass,
-            })
+            };
+
+            let skip_startup_checks = conf["skip_startup_checks"].as_bool().unwrap_or_default();
+            if !skip_startup_checks {
+                let is_seed = conf["i_am_seed"].as_bool().unwrap_or_default();
+                if is_seed {
+                    try_s!(block_on(mm.wait_for_log(22., |log| log.contains("INFO Listening on"))));
+                }
+                try_s!(block_on(
+                    mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))
+                ));
+
+                let skip_seednodes_check = conf["skip_seednodes_check"].as_bool().unwrap_or_default();
+                if conf["seednodes"].as_array().is_some() && !skip_seednodes_check {
+                    // wait for at least 1 node to be added to relay mesh
+                    try_s!(block_on(mm.wait_for_log(22., |log| {
+                        log.contains("Completed IAmrelay handling for peer")
+                    })));
+                }
+            }
+            Ok(mm)
         }
     }
 
@@ -873,20 +893,4 @@ pub async fn check_recent_swaps(mm: &MarketMakerIt, expected_len: usize) {
     let swaps_response: Json = json::from_str(&response.1).unwrap();
     let swaps: &Vec<Json> = swaps_response["result"]["swaps"].as_array().unwrap();
     assert_eq!(expected_len, swaps.len());
-}
-
-/// Ensure the `RUST_LOG` environment variable is expected.
-///
-/// # Panic
-///
-/// Panic if the `RUST_LOG` environment variable doesn't equal to the `required_level`.
-#[cfg(not(target_arch = "wasm32"))]
-pub fn require_log_level(expected: LogLevel) {
-    let actual = LogLevel::from_env().unwrap_or(LogLevel::Info);
-    assert!(
-        actual >= expected,
-        "Expected at least {:?} log level, found {:?}",
-        expected,
-        actual
-    );
 }

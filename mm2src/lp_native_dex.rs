@@ -35,12 +35,13 @@ use crate::mm2::lp_ordermatch::{broadcast_maker_orders_keep_alive_loop, lp_order
                                 BalanceUpdateOrdermatchHandler};
 use crate::mm2::lp_swap::{running_swaps_num, swap_kick_starts};
 use crate::mm2::rpc::spawn_rpc;
+use crate::mm2::{MM_DATETIME, MM_VERSION};
 use bitcrypto::sha256;
 use common::executor::{spawn, spawn_boxed, Timer};
 use common::log::{error, info, warn};
 use common::mm_ctx::{MmArc, MmCtx};
 use common::privkey::key_pair_from_seed;
-use common::{slurp_url, MM_DATETIME, MM_VERSION};
+use common::slurp_url;
 
 const IP_PROVIDERS: [&str; 2] = ["http://checkip.amazonaws.com/", "http://api.ipify.org"];
 const NETID_7777_SEEDNODES: [&str; 3] = [

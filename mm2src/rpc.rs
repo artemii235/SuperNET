@@ -39,9 +39,9 @@ use std::net::SocketAddr;
 
 use crate::mm2::lp_ordermatch::{best_orders_rpc, buy, cancel_all_orders, cancel_order, my_orders, order_status,
                                 orderbook_depth_rpc, orderbook_rpc, sell, set_price};
-use crate::mm2::lp_swap::{active_swaps_rpc, all_swaps_uuids_by_filter, coins_needed_for_kick_start, import_swaps,
-                          list_banned_pubkeys, max_taker_vol, my_recent_swaps, my_swap_status, recover_funds_of_swap,
-                          stats_swap_status, trade_preimage, unban_pubkeys};
+use crate::mm2::lp_swap::{active_swaps_rpc, all_swaps_uuids_by_filter, ban_pubkey_rpc, coins_needed_for_kick_start,
+                          import_swaps, list_banned_pubkeys_rpc, max_taker_vol, my_recent_swaps, my_swap_status,
+                          recover_funds_of_swap, stats_swap_status, trade_preimage, unban_pubkeys_rpc};
 
 use self::lp_commands::*;
 #[path = "rpc/lp_commands.rs"] pub mod lp_commands;
@@ -120,6 +120,7 @@ pub fn dispatcher(req: Json, ctx: MmArc) -> DispatcherRes {
         // "autoprice" => lp_autoprice (ctx, req),
         "active_swaps" => hyres(active_swaps_rpc(ctx, req)),
         "all_swaps_uuids_by_filter" => all_swaps_uuids_by_filter(ctx, req),
+        "ban_pubkey" => hyres(ban_pubkey_rpc(ctx, req)),
         "best_orders" => hyres(best_orders_rpc(ctx, req)),
         "buy" => hyres(buy(ctx, req)),
         "cancel_all_orders" => hyres(cancel_all_orders(ctx, req)),
@@ -184,7 +185,7 @@ pub fn dispatcher(req: Json, ctx: MmArc) -> DispatcherRes {
         "stats_swap_status" => stats_swap_status(ctx, req),
         "stop" => stop(ctx),
         "trade_preimage" => hyres(trade_preimage(ctx, req)),
-        "unban_pubkeys" => hyres(unban_pubkeys(ctx, req)),
+        "unban_pubkeys" => hyres(unban_pubkeys_rpc(ctx, req)),
         "validateaddress" => hyres(validate_address(ctx, req)),
         "version" => version(),
         "withdraw" => hyres(withdraw(ctx, req)),

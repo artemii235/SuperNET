@@ -60,6 +60,7 @@ use crate::mm2::lp_swap::{calc_max_maker_vol, check_balance_for_maker_swap, chec
                           lp_atomic_locktime, run_maker_swap, run_taker_swap, AtomicLocktimeVersion,
                           CheckBalanceError, MakerSwap, RunMakerSwapInput, RunTakerSwapInput,
                           SwapConfirmationsSettings, TakerSwap};
+
 pub use best_orders::best_orders_rpc;
 pub use orderbook_depth::orderbook_depth_rpc;
 pub use orderbook_rpc::orderbook_rpc;
@@ -250,6 +251,17 @@ async fn request_and_fill_orderbook(ctx: &MmArc, base: &str, rel: &str) -> Resul
 
     let alb_pair = alb_ordered_pair(base, rel);
     for (pubkey, GetOrderbookPubkeyItem { orders, .. }) in pubkey_orders {
+        let pubkey_bytes = match hex::decode(&pubkey) {
+            Ok(b) => b,
+            Err(e) => {
+                log::warn!("Error {} decoding pubkey {}", e, pubkey);
+                continue;
+            },
+        };
+        if is_pubkey_banned(ctx, &pubkey_bytes[1..].into()) {
+            log::warn!("Pubkey {} is banned", pubkey);
+            continue;
+        }
         let _new_root = process_pubkey_full_trie(&mut orderbook, &pubkey, &alb_pair, orders);
     }
 
@@ -335,40 +347,46 @@ fn remove_and_purge_pubkey_pair_orders(orderbook: &mut Orderbook, pubkey: &str, 
 /// Attempts to decode a message and process it returning whether the message is valid and worth rebroadcasting
 pub async fn process_msg(ctx: MmArc, _topics: Vec<String>, from_peer: String, msg: &[u8], i_am_relay: bool) -> bool {
     match decode_signed::<new_protocol::OrdermatchMessage>(msg) {
-        Ok((message, _sig, pubkey)) => match message {
-            new_protocol::OrdermatchMessage::MakerOrderCreated(created_msg) => {
-                let order: OrderbookItem = (created_msg, hex::encode(pubkey.to_bytes().as_slice())).into();
-                insert_or_update_order(&ctx, order).await;
-                true
-            },
-            new_protocol::OrdermatchMessage::PubkeyKeepAlive(keep_alive) => {
-                process_orders_keep_alive(ctx, from_peer, pubkey.to_hex(), keep_alive, i_am_relay).await
-            },
-            new_protocol::OrdermatchMessage::TakerRequest(taker_request) => {
-                let msg = TakerRequest::from_new_proto_and_pubkey(taker_request, pubkey.unprefixed().into());
-                process_taker_request(ctx, pubkey.unprefixed().into(), msg).await;
-                true
-            },
-            new_protocol::OrdermatchMessage::MakerReserved(maker_reserved) => {
-                let msg = MakerReserved::from_new_proto_and_pubkey(maker_reserved, pubkey.unprefixed().into());
-                process_maker_reserved(ctx, pubkey.unprefixed().into(), msg).await;
-                true
-            },
-            new_protocol::OrdermatchMessage::TakerConnect(taker_connect) => {
-                process_taker_connect(ctx, pubkey.unprefixed().into(), taker_connect.into()).await;
-                true
-            },
-            new_protocol::OrdermatchMessage::MakerConnected(maker_connected) => {
-                process_maker_connected(ctx, pubkey.unprefixed().into(), maker_connected.into()).await;
-                true
-            },
-            new_protocol::OrdermatchMessage::MakerOrderCancelled(cancelled_msg) => {
-                delete_order(&ctx, &pubkey.to_hex(), cancelled_msg.uuid.into()).await;
-                true
-            },
-            new_protocol::OrdermatchMessage::MakerOrderUpdated(updated_msg) => {
-                process_maker_order_updated(ctx, pubkey.to_hex(), updated_msg).await
-            },
+        Ok((message, _sig, pubkey)) => {
+            if is_pubkey_banned(&ctx, &pubkey.unprefixed().into()) {
+                log::warn!("Pubkey {} is banned", pubkey.to_hex());
+                return false;
+            }
+            match message {
+                new_protocol::OrdermatchMessage::MakerOrderCreated(created_msg) => {
+                    let order: OrderbookItem = (created_msg, hex::encode(pubkey.to_bytes().as_slice())).into();
+                    insert_or_update_order(&ctx, order).await;
+                    true
+                },
+                new_protocol::OrdermatchMessage::PubkeyKeepAlive(keep_alive) => {
+                    process_orders_keep_alive(ctx, from_peer, pubkey.to_hex(), keep_alive, i_am_relay).await
+                },
+                new_protocol::OrdermatchMessage::TakerRequest(taker_request) => {
+                    let msg = TakerRequest::from_new_proto_and_pubkey(taker_request, pubkey.unprefixed().into());
+                    process_taker_request(ctx, pubkey.unprefixed().into(), msg).await;
+                    true
+                },
+                new_protocol::OrdermatchMessage::MakerReserved(maker_reserved) => {
+                    let msg = MakerReserved::from_new_proto_and_pubkey(maker_reserved, pubkey.unprefixed().into());
+                    process_maker_reserved(ctx, pubkey.unprefixed().into(), msg).await;
+                    true
+                },
+                new_protocol::OrdermatchMessage::TakerConnect(taker_connect) => {
+                    process_taker_connect(ctx, pubkey.unprefixed().into(), taker_connect.into()).await;
+                    true
+                },
+                new_protocol::OrdermatchMessage::MakerConnected(maker_connected) => {
+                    process_maker_connected(ctx, pubkey.unprefixed().into(), maker_connected.into()).await;
+                    true
+                },
+                new_protocol::OrdermatchMessage::MakerOrderCancelled(cancelled_msg) => {
+                    delete_order(&ctx, &pubkey.to_hex(), cancelled_msg.uuid.into()).await;
+                    true
+                },
+                new_protocol::OrdermatchMessage::MakerOrderUpdated(updated_msg) => {
+                    process_maker_order_updated(ctx, pubkey.to_hex(), updated_msg).await
+                },
+            }
         },
         Err(e) => {
             log::error!("Error {} while decoding signed message", e);
@@ -2439,11 +2457,6 @@ async fn process_maker_reserved(ctx: MmArc, from_pubkey: H256Json, reserved_msg:
         return;
     }
 
-    if is_pubkey_banned(&ctx, &reserved_msg.sender_pubkey) {
-        log::info!("Sender pubkey {:?} is banned", reserved_msg.sender_pubkey);
-        return;
-    }
-
     let mut my_taker_orders = ordermatch_ctx.my_taker_orders.lock().await;
     let my_order = match my_taker_orders.entry(reserved_msg.taker_order_uuid) {
         Entry::Vacant(_) => return,
@@ -2516,11 +2529,6 @@ async fn process_taker_request(ctx: MmArc, from_pubkey: H256Json, taker_request:
         return;
     }
     log::debug!("Processing request {:?}", taker_request);
-
-    if is_pubkey_banned(&ctx, &taker_request.sender_pubkey) {
-        log::info!("Sender pubkey {:?} is banned", taker_request.sender_pubkey);
-        return;
-    }
 
     if !taker_request.can_match_with_maker_pubkey(&our_public_id) {
         return;

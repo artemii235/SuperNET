@@ -70,7 +70,7 @@ use futures::future::{abortable, AbortHandle, TryFutureExt};
 use http::Response;
 use mm2_libp2p::{decode_signed, encode_and_sign, pub_sub_topic, TopicPrefix};
 use num_rational::BigRational;
-use primitives::hash::{H160, H256, H264};
+use primitives::hash::{H160, H264};
 use rpc::v1::types::{Bytes as BytesJson, H256 as H256Json};
 use serde_json::{self as json, Value as Json};
 use std::collections::{HashMap, HashSet};
@@ -87,6 +87,8 @@ use uuid::Uuid;
 
 #[path = "lp_swap/taker_swap.rs"] mod taker_swap;
 
+#[path = "lp_swap/pubkey_banning.rs"] mod pubkey_banning;
+
 pub use maker_swap::{calc_max_maker_vol, check_balance_for_maker_swap, maker_swap_trade_preimage, run_maker_swap,
                      stats_maker_swap_dir, MakerSavedSwap, MakerSwap, MakerTradePreimage, RunMakerSwapInput};
 use maker_swap::{stats_maker_swap_file_path, MakerSwapEvent};
@@ -94,6 +96,9 @@ pub use taker_swap::{calc_max_taker_vol, check_balance_for_taker_swap, max_taker
                      run_taker_swap, stats_taker_swap_dir, taker_swap_trade_preimage, RunTakerSwapInput,
                      TakerSavedSwap, TakerSwap, TakerSwapPreparedParams, TakerTradePreimage};
 use taker_swap::{stats_taker_swap_file_path, TakerSwapEvent};
+
+use pubkey_banning::BanReason;
+pub use pubkey_banning::{ban_pubkey_rpc, is_pubkey_banned, list_banned_pubkeys_rpc, unban_pubkeys_rpc};
 
 pub const SWAP_PREFIX: TopicPrefix = "swap";
 
@@ -275,16 +280,10 @@ impl Into<SwapEvent> for TakerSwapEvent {
     fn into(self) -> SwapEvent { SwapEvent::Taker(self) }
 }
 
-#[derive(Serialize)]
-struct BanReason {
-    caused_by_swap: Uuid,
-    caused_by_event: SwapEvent,
-}
-
 struct SwapsContext {
     running_swaps: Mutex<Vec<Weak<dyn AtomicSwap>>>,
     banned_pubkeys: Mutex<HashMap<H256Json, BanReason>>,
-    /// The clonable receiver of multi-consumer async channel awaiting for shutdown_tx.send() to be
+    /// The cloneable receiver of multi-consumer async channel awaiting for shutdown_tx.send() to be
     /// invoked to stop all running swaps.
     /// MM2 is used as static lib on some platforms e.g. iOS so it doesn't run as separate process.
     /// So when stop was invoked the swaps could stay running on shared executors causing
@@ -324,21 +323,6 @@ impl SwapsContext {
         let store = SwapMsgStore::new(accept_only_from);
         self.swap_msgs.lock().unwrap().insert(uuid, store);
     }
-}
-
-pub fn ban_pubkey(ctx: &MmArc, pubkey: H256, swap_uuid: &Uuid, event: SwapEvent) {
-    let ctx = SwapsContext::from_ctx(ctx).unwrap();
-    let mut banned = ctx.banned_pubkeys.lock().unwrap();
-    banned.insert(pubkey.into(), BanReason {
-        caused_by_swap: *swap_uuid,
-        caused_by_event: event,
-    });
-}
-
-pub fn is_pubkey_banned(ctx: &MmArc, pubkey: &H256Json) -> bool {
-    let ctx = SwapsContext::from_ctx(ctx).unwrap();
-    let banned = ctx.banned_pubkeys.lock().unwrap();
-    banned.contains_key(pubkey)
 }
 
 /// Get total amount of selected coin locked by all currently ongoing swaps
@@ -1567,52 +1551,6 @@ pub async fn import_swaps(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, St
     Ok(try_s!(Response::builder().body(res)))
 }
 
-pub async fn list_banned_pubkeys(ctx: MmArc) -> Result<Response<Vec<u8>>, String> {
-    let ctx = try_s!(SwapsContext::from_ctx(&ctx));
-    let res = try_s!(json::to_vec(&json!({
-        "result": *try_s!(ctx.banned_pubkeys.lock()),
-    })));
-    Ok(try_s!(Response::builder().body(res)))
-}
-
-#[derive(Deserialize)]
-#[serde(tag = "type", content = "data")]
-enum UnbanPubkeysReq {
-    All,
-    Few(Vec<H256Json>),
-}
-
-pub async fn unban_pubkeys(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
-    let req: UnbanPubkeysReq = try_s!(json::from_value(req["unban_by"].clone()));
-    let ctx = try_s!(SwapsContext::from_ctx(&ctx));
-    let mut banned_pubs = try_s!(ctx.banned_pubkeys.lock());
-    let mut unbanned = HashMap::new();
-    let mut were_not_banned = vec![];
-    match req {
-        UnbanPubkeysReq::All => {
-            unbanned = banned_pubs.drain().collect();
-        },
-        UnbanPubkeysReq::Few(pubkeys) => {
-            for pubkey in pubkeys {
-                match banned_pubs.remove(&pubkey) {
-                    Some(removed) => {
-                        unbanned.insert(pubkey, removed);
-                    },
-                    None => were_not_banned.push(pubkey),
-                }
-            }
-        },
-    }
-    let res = try_s!(json::to_vec(&json!({
-        "result": {
-            "still_banned": *banned_pubs,
-            "unbanned": unbanned,
-            "were_not_banned": were_not_banned,
-        },
-    })));
-    Ok(try_s!(Response::builder().body(res)))
-}
-
 #[derive(Deserialize)]
 struct ActiveSwapsReq {
     #[serde(default)]
@@ -1662,8 +1600,9 @@ pub async fn active_swaps_rpc(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>
 
 #[cfg(test)]
 mod lp_swap_tests {
-    use super::*;
     use serialization::{deserialize, serialize};
+
+    use super::*;
 
     #[test]
     fn test_dex_fee_amount() {

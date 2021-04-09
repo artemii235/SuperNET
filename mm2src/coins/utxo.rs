@@ -36,7 +36,7 @@ use common::first_char_to_upper;
 use common::jsonrpc_client::JsonRpcError;
 use common::mm_ctx::MmArc;
 use common::mm_metrics::MetricsArc;
-use common::{small_rng, MM_VERSION};
+use common::small_rng;
 #[cfg(not(target_arch = "wasm32"))] use dirs::home_dir;
 use futures::channel::mpsc;
 use futures::compat::Future01CompatExt;
@@ -1115,7 +1115,7 @@ pub trait UtxoCoinBuilder {
         let client = Arc::new(client);
 
         let weak_client = Arc::downgrade(&client);
-        let client_name = format!("{} GUI/MM2 {}", ctx.gui().unwrap_or("UNKNOWN"), MM_VERSION);
+        let client_name = format!("{} GUI/MM2 {}", ctx.gui().unwrap_or("UNKNOWN"), ctx.mm_version());
         spawn_electrum_version_loop(weak_client, on_connect_rx, client_name);
 
         try_s!(wait_for_protocol_version_checked(&client).await);
