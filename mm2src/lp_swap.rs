@@ -63,7 +63,7 @@ use common::{bits256, block_on, calc_total_pages,
              executor::{spawn, Timer},
              log::{error, info},
              mm_ctx::{from_ctx, MmArc},
-             mm_number::{Fraction, MmNumber},
+             mm_number::MmNumber,
              now_ms, read_dir, rpc_response, slurp, var, write, HyRes, TraceSource, Traceable};
 use futures::compat::Future01CompatExt;
 use futures::future::{abortable, AbortHandle, TryFutureExt};

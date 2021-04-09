@@ -298,6 +298,9 @@ pub trait MarketCoinOps {
 
     /// Get the minimum amount to send.
     fn min_tx_amount(&self) -> BigDecimal;
+
+    /// Get the minimum amount to trade.
+    fn min_trading_vol(&self) -> MmNumber;
 }
 
 #[derive(Deserialize)]

@@ -313,6 +313,35 @@ pub async fn get_my_peer_id(ctx: MmArc) -> Result<Response<Vec<u8>>, String> {
     Ok(try_s!(Response::builder().body(res)))
 }
 
+construct_detailed!(DetailedMinTradingVol, min_trading_vol);
+
+#[derive(Serialize)]
+struct MinTradingVolResponse<'a> {
+    coin: &'a str,
+    #[serde(flatten)]
+    volume: DetailedMinTradingVol,
+}
+
+/// Get min_trading_vol of a coin
+pub async fn min_trading_vol(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
+    let ticker = try_s!(req["coin"].as_str().ok_or("No 'coin' field")).to_owned();
+    let coin = match lp_coinfind(&ctx, &ticker).await {
+        Ok(Some(t)) => t,
+        Ok(None) => return ERR!("No such coin: {}", ticker),
+        Err(err) => return ERR!("!lp_coinfind({}): {}", ticker, err),
+    };
+    let min_trading_vol = coin.min_trading_vol();
+    let response = MinTradingVolResponse {
+        coin: &ticker,
+        volume: min_trading_vol.into(),
+    };
+    let res = json!({
+        "result": response,
+    });
+    let res = try_s!(json::to_vec(&res));
+    Ok(try_s!(Response::builder().body(res)))
+}
+
 // AP: Inventory is not documented and not used as of now, commented out
 /*
 pub fn inventory (ctx: MmArc, req: Json) -> HyRes {

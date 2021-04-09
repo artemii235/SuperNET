@@ -2228,7 +2228,7 @@ fn orderbook_should_display_base_rel_volumes() {
     let orderbook: OrderbookResponse = json::from_str(&rc.1).unwrap();
     log!("orderbook "[orderbook]);
     assert_eq!(orderbook.asks.len(), 1, "RICK/MORTY orderbook must have exactly 1 ask");
-    let min_volume = BigRational::new(777.into(), 100000.into());
+    let min_volume = BigRational::new(1.into(), 10000.into());
     assert_eq!(volume, orderbook.asks[0].base_max_volume_rat);
     assert_eq!(min_volume, orderbook.asks[0].base_min_volume_rat);
 
@@ -2248,7 +2248,7 @@ fn orderbook_should_display_base_rel_volumes() {
     let orderbook: OrderbookResponse = json::from_str(&rc.1).unwrap();
     log!("orderbook "[orderbook]);
     assert_eq!(orderbook.bids.len(), 1, "MORTY/RICK orderbook must have exactly 1 bid");
-    let min_volume = BigRational::new(777.into(), 100000.into());
+    let min_volume = BigRational::new(1.into(), 10000.into());
     assert_eq!(volume, orderbook.bids[0].rel_max_volume_rat);
     assert_eq!(min_volume, orderbook.bids[0].rel_min_volume_rat);
 
@@ -2423,7 +2423,7 @@ fn check_too_low_volume_order_creation_fails(mm: &MarketMakerIt, base: &str, rel
         "base": base,
         "rel": rel,
         "price": "1",
-        "volume": "0.00776",
+        "volume": "0.00000099",
         "cancel_previous": false,
     })))
     .unwrap();
@@ -2434,7 +2434,7 @@ fn check_too_low_volume_order_creation_fails(mm: &MarketMakerIt, base: &str, rel
         "method": "setprice",
         "base": base,
         "rel": rel,
-        "price": "0.00776",
+        "price": "0.00000099",
         "volume": "1",
         "cancel_previous": false,
     })))
@@ -2447,7 +2447,7 @@ fn check_too_low_volume_order_creation_fails(mm: &MarketMakerIt, base: &str, rel
         "base": base,
         "rel": rel,
         "price": "1",
-        "volume": "0.00776",
+        "volume": "0.00000099",
     })))
     .unwrap();
     assert!(!rc.0.is_success(), "sell success, but should be error {}", rc.1);
@@ -2458,7 +2458,7 @@ fn check_too_low_volume_order_creation_fails(mm: &MarketMakerIt, base: &str, rel
         "base": base,
         "rel": rel,
         "price": "1",
-        "volume": "0.00776",
+        "volume": "0.00000099",
     })))
     .unwrap();
     assert!(!rc.0.is_success(), "buy success, but should be error {}", rc.1);
