@@ -153,7 +153,7 @@ pub fn dispatcher(req: Json, ctx: MmArc) -> DispatcherRes {
         },
         "kmd_rewards_info" => hyres(kmd_rewards_info(ctx)),
         // "inventory" => inventory (ctx, req),
-        "list_banned_pubkeys" => hyres(list_banned_pubkeys(ctx)),
+        "list_banned_pubkeys" => hyres(list_banned_pubkeys_rpc(ctx)),
         "max_taker_vol" => hyres(max_taker_vol(ctx, req)),
         "metrics" => metrics(ctx),
         "min_trading_vol" => hyres(min_trading_vol(ctx, req)),
