@@ -2,14 +2,15 @@ use crate::eth::{self, u256_to_big_decimal, wei_from_big_decimal, TryToAddress};
 use crate::qrc20::rpc_clients::{LogEntry, Qrc20ElectrumOps, Qrc20NativeOps, Qrc20RpcOps, TopicFilter, TxReceipt,
                                 ViewContractCallType};
 use crate::utxo::qtum::QtumBasedCoin;
-use crate::utxo::rpc_clients::{ElectrumClient, NativeClient, UnspentInfo, UtxoRpcClientEnum, UtxoRpcClientOps};
+use crate::utxo::rpc_clients::{ElectrumClient, MmRpcResult, NativeClient, UnspentInfo, UtxoRpcClientEnum,
+                               UtxoRpcClientOps};
 use crate::utxo::utxo_common::{self, big_decimal_from_sat, check_all_inputs_signed_by_pub};
-use crate::utxo::{qtum, sign_tx, ActualTxFee, AdditionalTxData, FeePolicy, GenerateTransactionError,
+use crate::utxo::{qtum, sign_tx, ActualTxFee, AdditionalTxData, FeePolicy, GenerateTxError, GenerateTxResult,
                   RecentlySpentOutPoints, UtxoCoinBuilder, UtxoCoinFields, UtxoCommonOps, UtxoTx,
                   VerboseTransactionFrom, UTXO_LOCK};
 use crate::{CoinBalance, FeeApproxStage, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeFee,
             TradePreimageError, TradePreimageValue, TransactionDetails, TransactionEnum, TransactionFut,
-            ValidateAddressResult, WithdrawFee, WithdrawRequest};
+            ValidateAddressResult, WithdrawError, WithdrawFee, WithdrawFut, WithdrawRequest, WithdrawResult};
 use async_trait::async_trait;
 use bigdecimal::BigDecimal;
 use bitcrypto::{dhash160, sha256};
@@ -18,6 +19,7 @@ use common::executor::Timer;
 use common::jsonrpc_client::{JsonRpcClient, JsonRpcError, JsonRpcRequest, RpcRes};
 use common::log::{error, warn};
 use common::mm_ctx::MmArc;
+use common::mm_error::prelude::*;
 use common::{block_on, Traceable};
 use ethabi::{Function, Token};
 use ethereum_types::{H160, U256};
@@ -174,23 +176,6 @@ impl UtxoCoinBuilder for Qrc20CoinBuilder<'_> {
     }
 }
 
-macro_rules! stringify_gen_tx_error {
-    ($selff: expr, $exp: expr) => {
-        match $exp {
-            GenerateTransactionError::EmptyUtxoSet => ERRL!(
-                "Not enough {} to Pay Fee: {}",
-                $selff.platform,
-                GenerateTransactionError::EmptyUtxoSet
-            ),
-            GenerateTransactionError::NotSufficientBalance { description }
-            | GenerateTransactionError::DeductFeeFromOutputFailed { description } => {
-                ERRL!("Not enough {} to Pay Fee: {}", $selff.platform, description)
-            },
-            e => ERRL!("{}", e),
-        }
-    };
-}
-
 pub async fn qrc20_coin_from_conf_and_request(
     ctx: &MmArc,
     ticker: &str,
@@ -333,7 +318,7 @@ impl Qrc20Coin {
         let GenerateQrc20TxResult { signed, .. } = self
             .generate_qrc20_transaction(outputs)
             .await
-            .map_err(|e| stringify_gen_tx_error!(self, e))?;
+            .map_err(|e| ERRL!("Not enough QTUM to Pay Fee: {}", e))?; // TODO
         let _tx = try_s!(self.utxo.rpc_client.send_transaction(&signed).compat().await);
         Ok(signed.into())
     }
@@ -343,11 +328,12 @@ impl Qrc20Coin {
     async fn generate_qrc20_transaction(
         &self,
         contract_outputs: Vec<ContractCallOutput>,
-    ) -> Result<GenerateQrc20TxResult, GenerateTransactionError> {
-        let (unspents, _) = try_map!(
-            self.ordered_mature_unspents(&self.utxo.my_address).await,
-            GenerateTransactionError::Other
-        );
+    ) -> Result<GenerateQrc20TxResult, MmError<GenerateTxError>> {
+        let (unspents, _) = self
+            .ordered_mature_unspents(&self.utxo.my_address)
+            .await
+            // TODO `ordered_mature_unspents` may fail for various reasons. Temporary map the error into `GenerateTxError::InternalError`
+            .into_mm_and(GenerateTxError::Internal)?;
 
         let mut gas_fee = 0;
         let mut outputs = Vec::with_capacity(contract_outputs.len());
@@ -362,16 +348,16 @@ impl Qrc20Coin {
             .generate_transaction(unspents, outputs, fee_policy, tx_fee, Some(gas_fee))
             .await?;
         let prev_script = ScriptBuilder::build_p2pkh(&self.utxo.my_address.hash);
-        let signed = try_map!(
-            sign_tx(
-                unsigned,
-                &self.utxo.key_pair,
-                prev_script,
-                self.utxo.conf.signature_version,
-                self.utxo.conf.fork_id
-            ),
-            GenerateTransactionError::Other
-        );
+        let signed = sign_tx(
+            unsigned,
+            &self.utxo.key_pair,
+            prev_script,
+            self.utxo.conf.signature_version,
+            self.utxo.conf.fork_id,
+        )
+        // TODO make not sure it's an internal error
+        .into_mm_and(GenerateTxError::Internal)?;
+
         let miner_fee = data.fee_amount + data.unused_change.unwrap_or_default();
         Ok(GenerateQrc20TxResult {
             signed,
@@ -452,7 +438,7 @@ impl UtxoCommonOps for Qrc20Coin {
         utxo_common::address_from_str(&self.utxo.conf, address)
     }
 
-    async fn get_current_mtp(&self) -> Result<u32, String> { utxo_common::get_current_mtp(&self.utxo).await }
+    async fn get_current_mtp(&self) -> MmRpcResult<u32> { utxo_common::get_current_mtp(&self.utxo).await }
 
     fn is_unspent_mature(&self, output: &RpcTransaction) -> bool { self.is_qtum_unspent_mature(output) }
 
@@ -464,7 +450,7 @@ impl UtxoCommonOps for Qrc20Coin {
         fee_policy: FeePolicy,
         fee: Option<ActualTxFee>,
         gas_fee: Option<u64>,
-    ) -> Result<(TransactionInputSigner, AdditionalTxData), GenerateTransactionError> {
+    ) -> GenerateTxResult {
         utxo_common::generate_transaction(self, utxos, outputs, fee_policy, fee, gas_fee).await
     }
 
@@ -473,7 +459,7 @@ impl UtxoCommonOps for Qrc20Coin {
         unsigned: TransactionInputSigner,
         data: AdditionalTxData,
         my_script_pub: ScriptBytes,
-    ) -> Result<(TransactionInputSigner, AdditionalTxData), String> {
+    ) -> MmRpcResult<(TransactionInputSigner, AdditionalTxData)> {
         utxo_common::calc_interest_if_required(self, unsigned, data, my_script_pub).await
     }
 
@@ -843,7 +829,7 @@ impl MarketCoinOps for Qrc20Coin {
             .rpc_contract_call(ViewContractCallType::BalanceOf, &contract_address, params)
             .map_err(|e| ERRL!("{}", e))
             .and_then(move |tokens| match tokens.first() {
-                Some(Token::Uint(bal)) => u256_to_big_decimal(*bal, decimals),
+                Some(Token::Uint(bal)) => u256_to_big_decimal(*bal, decimals).map_err(|e| ERRL!("{}", e)),
                 Some(_) => ERR!(r#"Expected Uint as "balanceOf" result but got {:?}"#, tokens),
                 None => ERR!(r#"Expected Uint as "balanceOf" result but got nothing"#),
             })
@@ -921,7 +907,7 @@ impl MmCoin for Qrc20Coin {
 
     fn wallet_only(&self) -> bool { false }
 
-    fn withdraw(&self, req: WithdrawRequest) -> Box<dyn Future<Item = TransactionDetails, Error = String> + Send> {
+    fn withdraw(&self, req: WithdrawRequest) -> WithdrawFut {
         Box::new(qrc20_withdraw(self.clone(), req).boxed().compat())
     }
 
@@ -1128,55 +1114,71 @@ pub struct Qrc20FeeDetails {
     total_gas_fee: BigDecimal,
 }
 
-async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> Result<TransactionDetails, String> {
-    let to_addr = try_s!(UtxoAddress::from_str(&req.to));
+async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> WithdrawResult {
+    let to_addr = UtxoAddress::from_str(&req.to)
+        .map_err(|e| e.to_string())
+        .into_mm_and(WithdrawError::InvalidAddress)?;
     let conf = &coin.utxo.conf;
     let is_p2pkh = to_addr.prefix == conf.pub_addr_prefix && to_addr.t_addr_prefix == conf.pub_t_addr_prefix;
     let is_p2sh =
         to_addr.prefix == conf.p2sh_addr_prefix && to_addr.t_addr_prefix == conf.p2sh_t_addr_prefix && conf.segwit;
     if !is_p2pkh && !is_p2sh {
-        return ERR!("Address {} has invalid format", to_addr);
+        let error = "Expected either P2PKH or P2SH".to_owned();
+        return MmError::err(WithdrawError::InvalidAddress(error));
     }
 
     let _utxo_lock = UTXO_LOCK.lock().await;
 
-    let qrc20_balance = try_s!(coin.my_spendable_balance().compat().await);
+    let qrc20_balance = coin
+        .my_spendable_balance()
+        .compat()
+        .await
+        // Generally [`MarketCoinOps::my_spendable_balance`] and [`MarketCoinOps::my_balance`] fail due to the transport errors
+        .into_mm_and(WithdrawError::Transport)?;
 
     // the qrc20_amount_sat is used only within smart contract calls
     let (qrc20_amount_sat, qrc20_amount) = if req.max {
-        let amount = try_s!(wei_from_big_decimal(&qrc20_balance, coin.utxo.decimals));
+        let amount = wei_from_big_decimal(&qrc20_balance, coin.utxo.decimals)?;
         if amount.is_zero() {
-            return ERR!("Balance is 0");
+            return MmError::err(WithdrawError::ZeroBalanceToWithdrawMax);
         }
         (amount, qrc20_balance.clone())
     } else {
-        let amount_sat = try_s!(wei_from_big_decimal(&req.amount, coin.utxo.decimals));
+        let amount_sat = wei_from_big_decimal(&req.amount, coin.utxo.decimals)?;
         if amount_sat.is_zero() {
-            return ERR!("The amount {} is too small", req.amount);
+            return MmError::err(WithdrawError::AmountIsTooSmall {
+                amount: req.amount.clone(),
+            });
         }
 
         if req.amount > qrc20_balance {
-            return ERR!(
-                "The amount {} to withdraw is larger than balance {}",
-                req.amount,
-                qrc20_balance
-            );
+            return MmError::err(WithdrawError::NotSufficientBalance {
+                coin: coin.ticker().to_owned(),
+                available: qrc20_balance,
+                required: req.amount,
+            });
         }
         (amount_sat, req.amount)
     };
 
     let (gas_limit, gas_price) = match req.fee {
         Some(WithdrawFee::Qrc20Gas { gas_limit, gas_price }) => (gas_limit, gas_price),
-        Some(_) => return ERR!("Unsupported input fee type"),
+        Some(fee_policy) => {
+            let error = format!("Expected 'Qrc20Gas' fee type, found {:?}", fee_policy);
+            return MmError::err(WithdrawError::InvalidFeePolicy(error));
+        },
         None => (QRC20_GAS_LIMIT_DEFAULT, QRC20_GAS_PRICE_DEFAULT),
     };
 
-    let transfer_output = try_s!(coin.transfer_output(
-        qtum::contract_addr_from_utxo_addr(to_addr.clone()),
-        qrc20_amount_sat,
-        gas_limit,
-        gas_price
-    ));
+    // [`Qrc20Coin::transfer_output`] shouldn't fail if the arguments are correct
+    let transfer_output = coin
+        .transfer_output(
+            qtum::contract_addr_from_utxo_addr(to_addr.clone()),
+            qrc20_amount_sat,
+            gas_limit,
+            gas_price,
+        )
+        .into_mm_and(WithdrawError::InternalError)?;
     let outputs = vec![transfer_output];
 
     let GenerateQrc20TxResult {
@@ -1186,7 +1188,7 @@ async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> Result<Transac
     } = coin
         .generate_qrc20_transaction(outputs)
         .await
-        .map_err(|e| stringify_gen_tx_error!(coin, e))?;
+        .mm_err(|gen_tx_error| gen_tx_error.into_withdraw_error(coin.platform.clone(), coin.utxo.decimals))?;
 
     let received_by_me = if to_addr == coin.utxo.my_address {
         qrc20_amount.clone()
@@ -1194,8 +1196,13 @@ async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> Result<Transac
         0.into()
     };
     let my_balance_change = &received_by_me - &qrc20_amount;
-    let my_address = try_s!(coin.my_address());
-    let to_address = try_s!(coin.display_address(&to_addr));
+
+    // [`MarketCoinOps::my_address`] and [`UtxoCommonOps::display_address`] shouldn't fail
+    let my_address = coin.my_address().into_mm_and(WithdrawError::InternalError)?;
+    let to_address = coin
+        .display_address(&to_addr)
+        .into_mm_and(WithdrawError::InternalError)?;
+
     let fee_details = Qrc20FeeDetails {
         // QRC20 fees are paid in base platform currency (in particular Qtum)
         coin: coin.platform.clone(),

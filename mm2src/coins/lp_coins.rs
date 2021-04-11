@@ -31,12 +31,14 @@
 #[macro_use] extern crate serde_json;
 
 use async_trait::async_trait;
-use bigdecimal::BigDecimal;
+use bigdecimal::{BigDecimal, ParseBigDecimalError};
 use common::executor::{spawn, Timer};
 use common::mm_ctx::{from_ctx, MmArc};
+use common::mm_error::prelude::*;
 use common::mm_metrics::MetricsWeak;
 use common::mm_number::MmNumber;
 use common::{block_on, calc_total_pages, now_ms, rpc_err_response, rpc_response, HyRes, TraceSource, Traceable};
+use derive_more::Display;
 use futures::compat::Future01CompatExt;
 use futures::lock::Mutex as AsyncMutex;
 use futures01::Future;
@@ -63,6 +65,15 @@ macro_rules! try_fus {
     };
 }
 
+macro_rules! try_f {
+    ($e: expr) => {
+        match $e {
+            Ok(ok) => ok,
+            Err(e) => return Box::new(futures01::future::err(e)),
+        }
+    };
+}
+
 #[doc(hidden)]
 #[cfg(test)]
 pub mod coins_tests;
@@ -72,13 +83,17 @@ use self::eth::{eth_coin_from_conf_and_request, EthCoin, EthTxFeeDetails, Signed
 pub mod utxo;
 use self::utxo::qtum::{self, qtum_coin_from_conf_and_request, QtumCoin};
 use self::utxo::utxo_standard::{utxo_standard_coin_from_conf_and_request, UtxoStandardCoin};
-use self::utxo::{GenerateTransactionError, UtxoFeeDetails, UtxoTx};
+use self::utxo::{GenerateTxError, UtxoFeeDetails, UtxoTx};
 pub mod qrc20;
 use qrc20::{qrc20_coin_from_conf_and_request, Qrc20Coin, Qrc20FeeDetails};
 #[doc(hidden)]
 #[allow(unused_variables)]
 pub mod test_coin;
 pub use test_coin::TestCoin;
+
+pub type WithdrawResult = Result<TransactionDetails, MmError<WithdrawError>>;
+pub type WithdrawFut = Box<dyn Future<Item = TransactionDetails, Error = MmError<WithdrawError>> + Send>;
+pub type NumConversResult<T> = Result<T, MmError<NumConversError>>;
 
 pub trait Transaction: fmt::Debug + 'static {
     /// Raw transaction bytes of the transaction
@@ -300,7 +315,7 @@ pub trait MarketCoinOps {
     fn min_tx_amount(&self) -> BigDecimal;
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
 pub enum WithdrawFee {
     UtxoFixed {
@@ -484,19 +499,64 @@ impl Traceable for TradePreimageError {
     }
 }
 
-impl From<GenerateTransactionError> for TradePreimageError {
-    fn from(e: GenerateTransactionError) -> Self {
-        match e {
-            GenerateTransactionError::EmptyUtxoSet => {
-                TradePreimageError::NotSufficientBalance(GenerateTransactionError::EmptyUtxoSet.to_string())
-            },
-            GenerateTransactionError::NotSufficientBalance { description }
-            | GenerateTransactionError::DeductFeeFromOutputFailed { description } => {
-                TradePreimageError::NotSufficientBalance(description)
-            },
-            e => TradePreimageError::Other(e.to_string()),
+impl From<GenerateTxError> for TradePreimageError {
+    fn from(e: GenerateTxError) -> Self {
+        if matches!(e,
+            GenerateTxError::EmptyUtxoSet {..}
+            | GenerateTxError::DeductFeeFromOutputFailed {..}
+            | GenerateTxError::NotEnoughUtxos {..})
+        {
+            TradePreimageError::NotSufficientBalance(e.to_string())
+        } else {
+            TradePreimageError::Other(e.to_string())
         }
     }
+}
+
+/// The reason of unsuccessful conversion of two internal numbers, e.g. `u64` from `BigNumber`.
+#[derive(Debug, Display)]
+pub struct NumConversError(String);
+
+impl From<ParseBigDecimalError> for NumConversError {
+    fn from(e: ParseBigDecimalError) -> Self { NumConversError::new(e.to_string()) }
+}
+
+impl NumConversError {
+    pub fn new(description: String) -> NumConversError { NumConversError(description) }
+
+    pub fn description(&self) -> &str { &self.0 }
+}
+
+#[derive(Debug, Deserialize, Display, Serialize)]
+#[serde(tag = "error_type", content = "error_data")]
+pub enum WithdrawError {
+    #[display(
+        fmt = "Not enough {} to withdraw: available {}, required {}",
+        coin,
+        available,
+        required
+    )]
+    NotSufficientBalance {
+        coin: String,
+        available: BigDecimal,
+        required: BigDecimal,
+    },
+    #[display(fmt = "Balance is zero")]
+    ZeroBalanceToWithdrawMax,
+    #[display(fmt = "The amount {} is too small", amount)]
+    AmountIsTooSmall { amount: BigDecimal },
+    #[display(fmt = "Invalid address: {}", _0)]
+    InvalidAddress(String),
+    #[display(fmt = "Invalid fee policy: {}", _0)]
+    InvalidFeePolicy(String),
+    #[display(fmt = "Transport error: {}", _0)]
+    Transport(String),
+    #[display(fmt = "Internal error: {}", _0)]
+    InternalError(String),
+}
+
+impl From<NumConversError> for WithdrawError {
+    fn from(e: NumConversError) -> Self { WithdrawError::InternalError(e.to_string()) }
 }
 
 /// NB: Implementations are expected to follow the pImpl idiom, providing cheap reference-counted cloning and garbage collection.
@@ -512,7 +572,7 @@ pub trait MmCoin: SwapOps + MarketCoinOps + fmt::Debug + Send + Sync + 'static {
     /// The coin can be initialized, but it cannot participate in the swaps.
     fn wallet_only(&self) -> bool;
 
-    fn withdraw(&self, req: WithdrawRequest) -> Box<dyn Future<Item = TransactionDetails, Error = String> + Send>;
+    fn withdraw(&self, req: WithdrawRequest) -> WithdrawFut;
 
     /// Maximum number of digits after decimal point used to denominate integer coin units (satoshis, wei, etc.)
     fn decimals(&self) -> u8;

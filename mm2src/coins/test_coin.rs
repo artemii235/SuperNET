@@ -1,7 +1,6 @@
-use super::{CoinBalance, HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeFee, TransactionDetails,
-            TransactionEnum, TransactionFut};
+use super::{CoinBalance, HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeFee, TransactionEnum, TransactionFut};
 use crate::{FeeApproxStage, FoundSwapTxSpend, TradePreimageError, TradePreimageValue, ValidateAddressResult,
-            WithdrawRequest};
+            WithdrawFut, WithdrawRequest};
 use bigdecimal::BigDecimal;
 use common::mm_ctx::MmArc;
 use futures01::Future;
@@ -221,9 +220,7 @@ impl MmCoin for TestCoin {
 
     fn wallet_only(&self) -> bool { unimplemented!() }
 
-    fn withdraw(&self, req: WithdrawRequest) -> Box<dyn Future<Item = TransactionDetails, Error = String> + Send> {
-        unimplemented!()
-    }
+    fn withdraw(&self, req: WithdrawRequest) -> WithdrawFut { unimplemented!() }
 
     fn decimals(&self) -> u8 { unimplemented!() }
 

@@ -692,6 +692,7 @@ dependencies = [
  "bytes 0.4.12",
  "chain",
  "common",
+ "derive_more",
  "dirs 1.0.5",
  "ethabi",
  "ethcore-transaction",

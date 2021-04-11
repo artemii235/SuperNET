@@ -7,7 +7,9 @@ use common::executor::Timer;
 use common::jsonrpc_client::{JsonRpcError, JsonRpcErrorType};
 use common::log::{error, info, warn};
 use common::mm_ctx::MmArc;
+use common::mm_error::prelude::*;
 use common::mm_metrics::MetricsArc;
+use common::{block_on, Traceable};
 use futures::compat::Future01CompatExt;
 use futures::future::{FutureExt, TryFutureExt};
 use futures01::future::Either;
@@ -30,15 +32,14 @@ use std::time::Duration;
 
 pub use chain::Transaction as UtxoTx;
 
-use self::rpc_clients::{electrum_script_hash, UnspentInfo, UtxoRpcClientEnum};
-use crate::utxo::rpc_clients::UtxoRpcClientOps;
-use crate::{CanRefundHtlc, CoinBalance, FeeApproxStage, TradePreimageError, TradePreimageValue, ValidateAddressResult};
-use common::{block_on, Traceable};
+use self::rpc_clients::{electrum_script_hash, MmRpcResult, UnspentInfo, UtxoRpcClientEnum, UtxoRpcClientOps};
+use crate::{CanRefundHtlc, CoinBalance, FeeApproxStage, TradePreimageError, TradePreimageValue, ValidateAddressResult,
+            WithdrawResult};
 
 macro_rules! true_or {
     ($cond: expr, $etype: expr) => {
         if !$cond {
-            return Err($etype);
+            return Err(MmError::new($etype));
         }
     };
 }
@@ -244,8 +245,8 @@ pub fn address_from_str(conf: &UtxoCoinConf, address: &str) -> Result<Address, S
     }
 }
 
-pub async fn get_current_mtp(coin: &UtxoCoinFields) -> Result<u32, String> {
-    let current_block = try_s!(coin.rpc_client.get_block_count().compat().await);
+pub async fn get_current_mtp(coin: &UtxoCoinFields) -> MmRpcResult<u32> {
+    let current_block = coin.rpc_client.get_block_count().compat().await?;
     coin.rpc_client
         .get_median_time_past(current_block, coin.conf.mtp_block_count)
         .compat()
@@ -276,7 +277,7 @@ pub async fn generate_transaction<T>(
     fee_policy: FeePolicy,
     fee: Option<ActualTxFee>,
     gas_fee: Option<u64>,
-) -> Result<(TransactionInputSigner, AdditionalTxData), GenerateTransactionError>
+) -> GenerateTxResult
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps,
 {
@@ -285,23 +286,20 @@ where
     let change_script_pubkey = Builder::build_p2pkh(&coin.as_ref().my_address.hash).to_bytes();
     let coin_tx_fee = match fee {
         Some(f) => f,
-        None => try_map!(coin.get_tx_fee().await, GenerateTransactionError::Other),
+        None => coin.get_tx_fee().await?,
     };
-    true_or!(!utxos.is_empty(), GenerateTransactionError::EmptyUtxoSet);
-    true_or!(!outputs.is_empty(), GenerateTransactionError::EmptyOutputs);
+
+    true_or!(!outputs.is_empty(), GenerateTxError::EmptyOutputs);
 
     let mut sum_outputs_value = 0;
     let mut received_by_me = 0;
     for output in outputs.iter() {
         let script: Script = output.script_pubkey.clone().into();
         if script.opcodes().next() != Some(Ok(Opcode::OP_RETURN)) {
-            true_or!(
-                output.value >= dust,
-                GenerateTransactionError::OutputValueLessThanDust {
-                    value: output.value,
-                    dust
-                }
-            );
+            true_or!(output.value >= dust, GenerateTxError::OutputValueLessThanDust {
+                value: output.value,
+                dust
+            });
         }
         sum_outputs_value += output.value;
         if output.script_pubkey == change_script_pubkey {
@@ -310,10 +308,12 @@ where
     }
 
     if let Some(gas_fee) = gas_fee {
-        sum_outputs_value = sum_outputs_value
-            .checked_add(gas_fee)
-            .ok_or(GenerateTransactionError::TooLargeGasFee)?;
+        sum_outputs_value += gas_fee;
     }
+
+    true_or!(!utxos.is_empty(), GenerateTxError::EmptyUtxoSet {
+        required: sum_outputs_value
+    });
 
     let str_d_zeel = if coin.as_ref().conf.ticker == "NAV" {
         Some("".into())
@@ -346,14 +346,8 @@ where
     let mut sum_inputs = 0;
     let mut tx_fee = 0;
     let min_relay_fee = if coin.as_ref().conf.force_min_relay_fee {
-        let fee_dec = try_map!(
-            coin.as_ref().rpc_client.get_relay_fee().compat().await,
-            GenerateTransactionError::Other
-        );
-        let min_relay_fee = try_map!(
-            sat_from_big_decimal(&fee_dec, coin.as_ref().decimals),
-            GenerateTransactionError::Other
-        );
+        let fee_dec = coin.as_ref().rpc_client.get_relay_fee().compat().await?;
+        let min_relay_fee = sat_from_big_decimal(&fee_dec, coin.as_ref().decimals)?;
         Some(min_relay_fee)
     } else {
         None
@@ -439,11 +433,10 @@ where
         FeePolicy::DeductFromOutput(i) => {
             let min_output = tx_fee + dust;
             let val = tx.outputs[i].value;
-            true_or!(val >= min_output, GenerateTransactionError::DeductFeeFromOutputFailed {
-                description: format!(
-                    "Output {} value {} is too small, required no less than {}",
-                    i, val, min_output
-                ),
+            true_or!(val >= min_output, GenerateTxError::DeductFeeFromOutputFailed {
+                output_idx: i,
+                output_value: val,
+                required: min_output,
             });
             tx.outputs[i].value -= tx_fee;
             if tx.outputs[i].script_pubkey == change_script_pubkey {
@@ -451,15 +444,10 @@ where
             }
         },
     };
-    true_or!(
-        sum_inputs >= sum_outputs_value,
-        GenerateTransactionError::NotSufficientBalance {
-            description: format!(
-                "Couldn't collect enough value from utxos {:?} to create tx with outputs {:?}",
-                utxos, tx.outputs
-            )
-        }
-    );
+    true_or!(sum_inputs >= sum_outputs_value, GenerateTxError::NotEnoughUtxos {
+        sum_utxos: sum_inputs,
+        required: sum_outputs_value
+    });
 
     let change = sum_inputs - sum_outputs_value;
     let unused_change = if change > dust {
@@ -484,10 +472,7 @@ where
         unused_change,
     };
 
-    Ok(try_map!(
-        coin.calc_interest_if_required(tx, data, change_script_pubkey).await,
-        GenerateTransactionError::Other
-    ))
+    Ok(coin.calc_interest_if_required(tx, data, change_script_pubkey).await?)
 }
 
 /// Calculates interest if the coin is KMD
@@ -498,24 +483,23 @@ pub async fn calc_interest_if_required<T>(
     mut unsigned: TransactionInputSigner,
     mut data: AdditionalTxData,
     my_script_pub: Bytes,
-) -> Result<(TransactionInputSigner, AdditionalTxData), String>
+) -> MmRpcResult<(TransactionInputSigner, AdditionalTxData)>
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps,
 {
     if coin.as_ref().conf.ticker != "KMD" {
         return Ok((unsigned, data));
     }
-    unsigned.lock_time = try_s!(coin.get_current_mtp().await);
+    unsigned.lock_time = coin.get_current_mtp().await?;
     let mut interest = 0;
     for input in unsigned.inputs.iter() {
         let prev_hash = input.previous_output.hash.reversed().into();
-        let tx = try_s!(
-            coin.as_ref()
-                .rpc_client
-                .get_verbose_transaction(prev_hash)
-                .compat()
-                .await
-        );
+        let tx = coin
+            .as_ref()
+            .rpc_client
+            .get_verbose_transaction(prev_hash)
+            .compat()
+            .await?;
         if let Ok(output_interest) =
             kmd_interest(tx.height, input.amount, tx.locktime as u64, unsigned.lock_time as u64)
         {
@@ -1318,11 +1302,13 @@ pub fn min_tx_amount(coin: &UtxoCoinFields) -> BigDecimal {
 
 pub fn is_asset_chain(coin: &UtxoCoinFields) -> bool { coin.conf.asset_chain }
 
-pub async fn withdraw<T>(coin: T, req: WithdrawRequest) -> Result<TransactionDetails, String>
+pub async fn withdraw<T>(coin: T, req: WithdrawRequest) -> WithdrawResult
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps + MarketCoinOps,
 {
-    let to = try_s!(coin.address_from_str(&req.to));
+    let to = coin
+        .address_from_str(&req.to)
+        .into_mm_and(WithdrawError::InvalidAddress)?;
 
     let conf = &coin.as_ref().conf;
     let is_p2pkh = to.prefix == conf.pub_addr_prefix && to.t_addr_prefix == conf.pub_t_addr_prefix;
@@ -1333,64 +1319,77 @@ where
     } else if is_p2sh {
         Builder::build_p2sh(&to.hash)
     } else {
-        return ERR!("Address {} has invalid format", to);
+        let error = "Expected either P2PKH or P2SH".to_owned();
+        return MmError::err(WithdrawError::InvalidAddress(error));
     };
 
     if to.checksum_type != coin.as_ref().conf.checksum_type {
-        return ERR!(
+        let error = format!(
             "Address {} has invalid checksum type, it must be {:?}",
             to,
             coin.as_ref().conf.checksum_type
         );
+        return MmError::err(WithdrawError::InvalidAddress(error));
     }
 
     let script_pubkey = script_pubkey.to_bytes();
 
     let _utxo_lock = UTXO_LOCK.lock().await;
-    let (unspents, _) = try_s!(coin.ordered_mature_unspents(&coin.as_ref().my_address).await);
+    let (unspents, _) = coin
+        .ordered_mature_unspents(&coin.as_ref().my_address)
+        .await
+        // TODO `ordered_mature_unspents` may fail for various reasons. Temporary map the error into `WithdrawError::InternalError`
+        .into_mm_and(WithdrawError::InternalError)?;
     let (value, fee_policy) = if req.max {
         (
             unspents.iter().fold(0, |sum, unspent| sum + unspent.value),
             FeePolicy::DeductFromOutput(0),
         )
     } else {
-        (
-            try_s!(sat_from_big_decimal(&req.amount, coin.as_ref().decimals)),
-            FeePolicy::SendExact,
-        )
+        let value = sat_from_big_decimal(&req.amount, coin.as_ref().decimals)?;
+        (value, FeePolicy::SendExact)
     };
     let outputs = vec![TransactionOutput { value, script_pubkey }];
     let fee = match req.fee {
-        Some(WithdrawFee::UtxoFixed { amount }) => Some(ActualTxFee::Fixed(try_s!(sat_from_big_decimal(
-            &amount,
-            coin.as_ref().decimals
-        )))),
-        Some(WithdrawFee::UtxoPerKbyte { amount }) => Some(ActualTxFee::Dynamic(try_s!(sat_from_big_decimal(
-            &amount,
-            coin.as_ref().decimals
-        )))),
-        Some(_) => return ERR!("Unsupported input fee type"),
+        Some(WithdrawFee::UtxoFixed { amount }) => {
+            let fixed = sat_from_big_decimal(&amount, coin.as_ref().decimals)?;
+            Some(ActualTxFee::Fixed(fixed))
+        },
+        Some(WithdrawFee::UtxoPerKbyte { amount }) => {
+            let dynamic = sat_from_big_decimal(&amount, coin.as_ref().decimals)?;
+            Some(ActualTxFee::Dynamic(dynamic))
+        },
+        Some(fee_policy) => {
+            let error = format!(
+                "Expected 'UtxoFixed' or 'UtxoPerKbyte' fee types, found {:?}",
+                fee_policy
+            );
+            return MmError::err(WithdrawError::InvalidFeePolicy(error));
+        },
         None => None,
     };
     let gas_fee = None;
-    let (unsigned, data) = try_s!(
-        coin.generate_transaction(unspents, outputs, fee_policy, fee, gas_fee)
-            .await
-    );
+    let (unsigned, data) = coin
+        .generate_transaction(unspents, outputs, fee_policy, fee, gas_fee)
+        .await
+        .mm_err(|gen_tx_error| gen_tx_error.into_withdraw_error(coin.ticker().to_owned(), coin.as_ref().decimals))?;
     let prev_script = Builder::build_p2pkh(&coin.as_ref().my_address.hash);
-    let signed = try_s!(sign_tx(
+    let signed = sign_tx(
         unsigned,
         &coin.as_ref().key_pair,
         prev_script,
         coin.as_ref().conf.signature_version,
-        coin.as_ref().conf.fork_id
-    ));
+        coin.as_ref().conf.fork_id,
+    )
+    // TODO make not sure it's an internal error
+    .into_mm_and(WithdrawError::InternalError)?;
+
     let fee_amount = data.fee_amount + data.unused_change.unwrap_or_default();
     let fee_details = UtxoFeeDetails {
         amount: big_decimal_from_sat(fee_amount as i64, coin.as_ref().decimals),
     };
-    let my_address = try_s!(coin.my_address());
-    let to_address = try_s!(coin.display_address(&to));
+    let my_address = coin.my_address().into_mm_and(WithdrawError::InternalError)?;
+    let to_address = coin.display_address(&to).into_mm_and(WithdrawError::InternalError)?;
     Ok(TransactionDetails {
         from: vec![my_address],
         to: vec![to_address],
@@ -1899,7 +1898,10 @@ where
             );
 
             let actual_tx_fee = Some(ActualTxFee::Dynamic(dynamic_fee));
-            let (tx, data) = generate_transaction(coin, unspents, outputs, fee_policy, actual_tx_fee, gas_fee).await?;
+            let (tx, data) = generate_transaction(coin, unspents, outputs, fee_policy, actual_tx_fee, gas_fee)
+                .await
+                // TODO
+                .map_err(|e| e.into_inner())?;
 
             let total_fee = if tx.outputs.len() == outputs_count {
                 // take into account the change output
@@ -1918,7 +1920,10 @@ where
                 TradePreimageError::Other
             );
 
-            let (tx, data) = generate_transaction(coin, unspents, outputs, fee_policy, Some(tx_fee), gas_fee).await?;
+            let (tx, data) = generate_transaction(coin, unspents, outputs, fee_policy, Some(tx_fee), gas_fee)
+                .await
+                // TODO
+                .map_err(|e| e.into_inner())?;
 
             let total_fee = if tx.outputs.len() == outputs_count {
                 // take into account the change output if tx_size_kb(tx with change) > tx_size_kb(tx without change)
@@ -2625,15 +2630,20 @@ where
         let to_wait = locktime - now + 1;
         return Box::new(futures01::future::ok(CanRefundHtlc::HaveToWait(to_wait.max(3600))));
     }
-    Box::new(coin.get_current_mtp().compat().map(move |mtp| {
-        let mtp = mtp as u64;
-        if locktime < mtp {
-            CanRefundHtlc::CanRefundNow
-        } else {
-            let to_wait = locktime - mtp + 1;
-            CanRefundHtlc::HaveToWait(to_wait.max(3600))
-        }
-    }))
+    Box::new(
+        coin.get_current_mtp()
+            .compat()
+            .map(move |mtp| {
+                let mtp = mtp as u64;
+                if locktime < mtp {
+                    CanRefundHtlc::CanRefundNow
+                } else {
+                    let to_wait = locktime - mtp + 1;
+                    CanRefundHtlc::HaveToWait(to_wait.max(3600))
+                }
+            })
+            .map_err(|e| ERRL!("{}", e)),
+    )
 }
 
 #[test]

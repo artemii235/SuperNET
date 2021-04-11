@@ -1148,6 +1148,8 @@ macro_rules! try_h {
 /// Maps an error by applying a `map_f` expression to an error within `exp` and return the result on a failure.
 ///
 /// Unlike `$exp.map_err($map_f)` this macro applies `ERRL` to an error before the `map_f` is called.
+///
+/// TODO remove it
 #[macro_export]
 macro_rules! try_map {
     ($exp: expr, $map_f: expr) => {
@@ -1161,6 +1163,7 @@ macro_rules! try_map {
     };
 }
 
+/// TODO remove it
 #[macro_export]
 macro_rules! source {
     () => {
@@ -1168,6 +1171,7 @@ macro_rules! source {
     };
 }
 
+/// TODO remove it
 pub struct TraceSource {
     filename: &'static str,
     line: u32,
@@ -1179,6 +1183,7 @@ impl TraceSource {
     pub fn with_msg(&self, msg: &str) -> String { format!("{}:{}] {}", self.filename, self.line, msg) }
 }
 
+/// TODO remove it
 pub trait Traceable {
     fn trace(self, source: TraceSource) -> Self;
 }
@@ -1240,6 +1245,7 @@ where
     Box::new(rf)
 }
 
+/// TODO remove it
 #[derive(Serialize)]
 struct ErrResponse {
     error: String,

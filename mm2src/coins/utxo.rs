@@ -35,8 +35,10 @@ use common::executor::{spawn, Timer};
 use common::first_char_to_upper;
 use common::jsonrpc_client::JsonRpcError;
 use common::mm_ctx::MmArc;
+use common::mm_error::prelude::*;
 use common::mm_metrics::MetricsArc;
 use common::{small_rng, MM_VERSION};
+use derive_more::Display;
 #[cfg(not(target_arch = "wasm32"))] use dirs::home_dir;
 use futures::channel::mpsc;
 use futures::compat::Future01CompatExt;
@@ -67,13 +69,13 @@ use utxo_common::{big_decimal_from_sat, display_address};
 pub use chain::Transaction as UtxoTx;
 
 use self::rpc_clients::{ElectrumClient, ElectrumClientImpl, ElectrumRpcRequest, EstimateFeeMethod, EstimateFeeMode,
-                        UnspentInfo, UtxoRpcClientEnum};
+                        MmRpcResult, RpcErrorType, UnspentInfo, UtxoRpcClientEnum};
 #[cfg(not(target_arch = "wasm32"))]
 use self::rpc_clients::{NativeClient, NativeClientImpl};
 use super::{CoinTransportMetrics, CoinsContext, FeeApproxStage, FoundSwapTxSpend, HistorySyncState, MarketCoinOps,
-            MmCoin, RpcClientType, RpcTransportEventHandler, RpcTransportEventHandlerShared, TradeFee,
-            TradePreimageError, Transaction, TransactionDetails, TransactionEnum, TransactionFut, WithdrawFee,
-            WithdrawRequest};
+            MmCoin, NumConversError, NumConversResult, RpcClientType, RpcTransportEventHandler,
+            RpcTransportEventHandlerShared, TradeFee, TradePreimageError, Transaction, TransactionDetails,
+            TransactionEnum, TransactionFut, WithdrawError, WithdrawFee, WithdrawRequest};
 
 #[cfg(test)] pub mod utxo_tests;
 
@@ -426,7 +428,7 @@ pub trait UtxoCommonOps {
     /// and if it failed inform user that he used a wrong format.
     fn address_from_str(&self, address: &str) -> Result<Address, String>;
 
-    async fn get_current_mtp(&self) -> Result<u32, String>;
+    async fn get_current_mtp(&self) -> MmRpcResult<u32>;
 
     /// Check if the output is spendable (is not coinbase or it has enough confirmations).
     fn is_unspent_mature(&self, output: &RpcTransaction) -> bool;
@@ -443,7 +445,7 @@ pub trait UtxoCommonOps {
         fee_policy: FeePolicy,
         fee: Option<ActualTxFee>,
         gas_fee: Option<u64>,
-    ) -> Result<(TransactionInputSigner, AdditionalTxData), GenerateTransactionError>;
+    ) -> GenerateTxResult;
 
     /// Calculates interest if the coin is KMD
     /// Adds the value to existing output to my_script_pub or creates additional interest output
@@ -453,7 +455,7 @@ pub trait UtxoCommonOps {
         mut unsigned: TransactionInputSigner,
         mut data: AdditionalTxData,
         my_script_pub: Bytes,
-    ) -> Result<(TransactionInputSigner, AdditionalTxData), String>;
+    ) -> MmRpcResult<(TransactionInputSigner, AdditionalTxData)>;
 
     fn p2sh_spending_tx(
         &self,
@@ -548,6 +550,102 @@ lazy_static! {
     pub static ref UTXO_LOCK: AsyncMutex<()> = AsyncMutex::new(());
 }
 
+pub type GenerateTxResult = Result<(TransactionInputSigner, AdditionalTxData), MmError<GenerateTxError>>;
+
+#[derive(Debug, Display)]
+pub enum GenerateTxError {
+    #[display(
+        fmt = "Couldn't generate tx from empty UTXOs set, required no less than {} satoshis",
+        required
+    )]
+    EmptyUtxoSet { required: u64 },
+    #[display(fmt = "Couldn't generate tx with empty output set")]
+    EmptyOutputs,
+    #[display(fmt = "Output value {} less than dust {}", value, dust)]
+    OutputValueLessThanDust { value: u64, dust: u64 },
+    #[display(
+        fmt = "Output {} value {} is too small, required no less than {}",
+        output_idx,
+        output_value,
+        required
+    )]
+    DeductFeeFromOutputFailed {
+        output_idx: usize,
+        output_value: u64,
+        required: u64,
+    },
+    #[display(
+        fmt = "Sum of input values {} is too small, required no less than {}",
+        sum_utxos,
+        required
+    )]
+    NotEnoughUtxos { sum_utxos: u64, required: u64 },
+    #[display(fmt = "Transport error: {}", _0)]
+    Transport(String),
+    #[display(fmt = "Internal error: {}", _0)]
+    Internal(String),
+}
+
+impl From<JsonRpcError> for GenerateTxError {
+    fn from(rpc_err: JsonRpcError) -> Self { GenerateTxError::Transport(rpc_err.to_string()) }
+}
+
+impl From<RpcErrorType> for GenerateTxError {
+    fn from(e: RpcErrorType) -> Self {
+        match e {
+            RpcErrorType::Transport(error) => GenerateTxError::Transport(error.to_string()),
+            RpcErrorType::InvalidResponse(error) => GenerateTxError::Transport(error),
+        }
+    }
+}
+
+impl From<NumConversError> for GenerateTxError {
+    fn from(e: NumConversError) -> Self { GenerateTxError::Internal(e.to_string()) }
+}
+
+impl GenerateTxError {
+    /// Convert [`GenerateTxError`] into [`WithdrawError`] using additional `coin` and `decimals`.
+    /// Unfortunately, we cannot implement [`From<GenerateTxError>`] directly for [`WithdrawError`].
+    pub fn into_withdraw_error(self, coin: String, decimals: u8) -> WithdrawError {
+        match self {
+            GenerateTxError::EmptyUtxoSet { required } => {
+                let required = utxo_common::big_decimal_from_sat_unsigned(required, decimals);
+                WithdrawError::NotSufficientBalance {
+                    coin,
+                    available: BigDecimal::from(0),
+                    required,
+                }
+            },
+            GenerateTxError::EmptyOutputs | GenerateTxError::OutputValueLessThanDust { .. } => {
+                WithdrawError::InternalError(self.to_string())
+            },
+            GenerateTxError::DeductFeeFromOutputFailed {
+                output_value, required, ..
+            } => {
+                let available = utxo_common::big_decimal_from_sat_unsigned(output_value, decimals);
+                let required = utxo_common::big_decimal_from_sat_unsigned(required, decimals);
+                WithdrawError::NotSufficientBalance {
+                    coin,
+                    available,
+                    required,
+                }
+            },
+            GenerateTxError::NotEnoughUtxos { sum_utxos, required } => {
+                let available = utxo_common::big_decimal_from_sat_unsigned(sum_utxos, decimals);
+                let required = utxo_common::big_decimal_from_sat_unsigned(required, decimals);
+                WithdrawError::NotSufficientBalance {
+                    coin,
+                    available,
+                    required,
+                }
+            },
+            GenerateTxError::Transport(e) => WithdrawError::Transport(e),
+            GenerateTxError::Internal(e) => WithdrawError::InternalError(e),
+        }
+    }
+}
+
+/// TODO remove
 #[derive(Debug)]
 pub enum GenerateTransactionError {
     EmptyUtxoSet,
@@ -1495,14 +1593,13 @@ where
 }
 
 /// Denominate BigDecimal amount of coin units to satoshis
-pub fn sat_from_big_decimal(amount: &BigDecimal, decimals: u8) -> Result<u64, String> {
+pub fn sat_from_big_decimal(amount: &BigDecimal, decimals: u8) -> NumConversResult<u64> {
     (amount * BigDecimal::from(10u64.pow(decimals as u32)))
         .to_u64()
-        .ok_or(ERRL!(
-            "Could not get sat from amount {} with decimals {}",
-            amount,
-            decimals
-        ))
+        .or_mm_err(|| {
+            let err = format!("Could not get sat from amount {} with decimals {}", amount, decimals);
+            NumConversError::new(err)
+        })
 }
 
 pub(crate) fn sign_tx(

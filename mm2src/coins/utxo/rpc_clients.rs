@@ -10,9 +10,11 @@ use common::custom_futures::select_ok_sequential;
 use common::executor::{spawn, Timer};
 use common::jsonrpc_client::{JsonRpcClient, JsonRpcError, JsonRpcMultiClient, JsonRpcRemoteAddr, JsonRpcRequest,
                              JsonRpcResponse, JsonRpcResponseFut, RpcRes};
+use common::mm_error::prelude::*;
 use common::mm_number::MmNumber;
 use common::wio::slurp_req;
 use common::{median, OrdRange, StringError};
+use derive_more::Display;
 use futures::channel::oneshot as async_oneshot;
 #[cfg(target_arch = "wasm32")]
 use futures::channel::oneshot::Sender as ShotSender;
@@ -179,6 +181,23 @@ pub struct UnspentInfo {
 
 pub type UtxoRpcRes<T> = Box<dyn Future<Item = T, Error = String> + Send + 'static>;
 
+pub type MmRpcResult<T> = Result<T, MmError<RpcErrorType>>;
+pub type MmRpcFut<T> = Box<dyn Future<Item = T, Error = MmError<RpcErrorType>> + Send + 'static>;
+
+#[derive(Debug, Display)]
+pub enum RpcErrorType {
+    Transport(JsonRpcError),
+    InvalidResponse(String),
+}
+
+impl From<JsonRpcError> for RpcErrorType {
+    fn from(e: JsonRpcError) -> Self { RpcErrorType::Transport(e) }
+}
+
+impl From<serialization::Error> for RpcErrorType {
+    fn from(e: serialization::Error) -> Self { RpcErrorType::InvalidResponse(format!("{:?}", e)) }
+}
+
 /// Common operations that both types of UTXO clients have but implement them differently
 pub trait UtxoRpcClientOps: fmt::Debug + Send + Sync + 'static {
     fn list_unspent(&self, address: &Address, decimals: u8) -> UtxoRpcRes<Vec<UnspentInfo>>;
@@ -214,11 +233,7 @@ pub trait UtxoRpcClientOps: fmt::Debug + Send + Sync + 'static {
     ) -> Box<dyn Future<Item = Option<UtxoTx>, Error = String> + Send>;
 
     /// Get median time past for `count` blocks in the past including `starting_block`
-    fn get_median_time_past(
-        &self,
-        starting_block: u64,
-        count: NonZeroU64,
-    ) -> Box<dyn Future<Item = u32, Error = String> + Send>;
+    fn get_median_time_past(&self, starting_block: u64, count: NonZeroU64) -> MmRpcFut<u32>;
 }
 
 #[derive(Clone, Deserialize, Debug)]
@@ -617,15 +632,11 @@ impl UtxoRpcClientOps for NativeClient {
         Box::new(fut.boxed().compat())
     }
 
-    fn get_median_time_past(
-        &self,
-        starting_block: u64,
-        count: NonZeroU64,
-    ) -> Box<dyn Future<Item = u32, Error = String> + Send> {
+    fn get_median_time_past(&self, starting_block: u64, count: NonZeroU64) -> MmRpcFut<u32> {
         let selfi = self.clone();
         let fut = async move {
-            let starting_block_hash = try_s!(selfi.get_block_hash(starting_block).compat().await);
-            let starting_block_data = try_s!(selfi.get_block(starting_block_hash).compat().await);
+            let starting_block_hash = selfi.get_block_hash(starting_block).compat().await?;
+            let starting_block_data = selfi.get_block(starting_block_hash).compat().await?;
             if let Some(median) = starting_block_data.mediantime {
                 return Ok(median);
             }
@@ -637,8 +648,8 @@ impl UtxoRpcClientOps for NativeClient {
                 starting_block - count.get() + 1
             };
             for block_n in from..starting_block {
-                let block_hash = try_s!(selfi.get_block_hash(block_n).compat().await);
-                let block_data = try_s!(selfi.get_block(block_hash).compat().await);
+                let block_hash = selfi.get_block_hash(block_n).compat().await?;
+                let block_data = selfi.get_block(block_hash).compat().await?;
                 block_timestamps.push(block_data.time);
             }
             // can unwrap because count is non zero
@@ -1632,11 +1643,7 @@ impl UtxoRpcClientOps for ElectrumClient {
         Box::new(fut.boxed().compat())
     }
 
-    fn get_median_time_past(
-        &self,
-        starting_block: u64,
-        count: NonZeroU64,
-    ) -> Box<dyn Future<Item = u32, Error = String> + Send> {
+    fn get_median_time_past(&self, starting_block: u64, count: NonZeroU64) -> MmRpcFut<u32> {
         let from = if starting_block <= count.get() {
             0
         } else {
@@ -1644,16 +1651,17 @@ impl UtxoRpcClientOps for ElectrumClient {
         };
         Box::new(
             self.blockchain_block_headers(from, count)
-                .map_err(|e| ERRL!("{}", e))
+                // TODO consider to implement an into_mm_and()
+                .map_err(|e| MmError::new(RpcErrorType::Transport(e)))
                 .and_then(|res| {
                     if res.count == 0 {
-                        return ERR!("Server returned zero count");
+                        return MmError::err(RpcErrorType::InvalidResponse("Server returned zero count".to_owned()));
                     }
                     let len = CompactInteger::from(res.count);
                     let mut serialized = serialize(&len).take();
                     serialized.extend(res.hex.0.into_iter());
                     let mut reader = Reader::new(serialized.as_slice());
-                    let headers = try_s!(reader.read_list::<BlockHeader>().map_err(|e| ERRL!("{:?}", e)));
+                    let headers = reader.read_list::<BlockHeader>()?;
                     let mut timestamps: Vec<_> = headers.into_iter().map(|block| block.time).collect();
                     // can unwrap because count is non zero
                     Ok(median(timestamps.as_mut_slice()).unwrap())

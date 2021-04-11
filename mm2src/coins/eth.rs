@@ -23,6 +23,7 @@ use bitcrypto::sha256;
 use common::custom_futures::TimedAsyncMutex;
 use common::executor::Timer;
 use common::mm_ctx::{MmArc, MmWeak};
+use common::mm_error::prelude::*;
 use common::{block_on, now_ms, slurp_url, small_rng, DEX_FEE_ADDR_RAW_PUBKEY};
 use ethabi::{Contract, Token};
 use ethcore_transaction::{Action, Transaction as UnSignedEthTx, UnverifiedTransaction};
@@ -54,14 +55,17 @@ use web3::types::{Action as TraceAction, BlockId, BlockNumber, Bytes, CallReques
 use web3::{self, Web3};
 
 use super::{CoinBalance, CoinProtocol, CoinTransportMetrics, CoinsContext, FeeApproxStage, FoundSwapTxSpend,
-            HistorySyncState, MarketCoinOps, MmCoin, RpcClientType, RpcTransportEventHandler,
-            RpcTransportEventHandlerShared, SwapOps, TradeFee, TradePreimageError, TradePreimageValue, Transaction,
-            TransactionDetails, TransactionEnum, TransactionFut, ValidateAddressResult, WithdrawFee, WithdrawRequest};
+            HistorySyncState, MarketCoinOps, MmCoin, NumConversError, NumConversResult, RpcClientType,
+            RpcTransportEventHandler, RpcTransportEventHandlerShared, SwapOps, TradeFee, TradePreimageError,
+            TradePreimageValue, Transaction, TransactionDetails, TransactionEnum, TransactionFut,
+            ValidateAddressResult, WithdrawError, WithdrawFee, WithdrawFut, WithdrawRequest, WithdrawResult};
 pub use ethcore_transaction::SignedTransaction as SignedEthTx;
 pub use rlp;
 
 mod web3_transport;
 use self::web3_transport::Web3Transport;
+
+// TODO add a transport error for my_balance, get_gas_price etc
 
 #[cfg(test)] mod eth_tests;
 #[cfg(target_arch = "wasm32")] mod eth_wasm_tests;
@@ -397,31 +401,64 @@ impl EthCoinImpl {
     }
 }
 
-async fn withdraw_impl(ctx: MmArc, coin: EthCoin, req: WithdrawRequest) -> Result<TransactionDetails, String> {
-    let to_addr = try_s!(coin.address_from_str(&req.to));
-    let my_balance = try_s!(coin.my_balance().compat().await);
-    let mut wei_amount = if req.max {
-        my_balance
+impl From<ethabi::Error> for WithdrawError {
+    fn from(e: ethabi::Error) -> Self {
+        // Currently, we use the `ethabi` crate to work with a smart contract ABI known at compile time.
+        // It's an internal error if there are any issues during working with a smart contract ABI.
+        WithdrawError::InternalError(e.to_string())
+    }
+}
+
+impl From<web3::Error> for WithdrawError {
+    fn from(e: web3::Error) -> Self { WithdrawError::Transport(e.to_string()) }
+}
+
+async fn withdraw_impl(ctx: MmArc, coin: EthCoin, req: WithdrawRequest) -> WithdrawResult {
+    let to_addr = coin
+        .address_from_str(&req.to)
+        .into_mm_and(WithdrawError::InvalidAddress)?;
+    let my_balance = coin.my_balance().compat().await.into_mm_and(WithdrawError::Transport)?;
+    let my_balance_dec = u256_to_big_decimal(my_balance, coin.decimals)?;
+
+    let (mut wei_amount, dec_amount) = if req.max {
+        (my_balance, my_balance_dec.clone())
     } else {
-        try_s!(wei_from_big_decimal(&req.amount, coin.decimals))
+        let wei_amount = wei_from_big_decimal(&req.amount, coin.decimals)?;
+        (wei_amount, req.amount.clone())
     };
     if wei_amount > my_balance {
-        return ERR!("The amount {} to withdraw is larger than balance", req.amount);
+        return MmError::err(WithdrawError::NotSufficientBalance {
+            coin: coin.ticker.clone(),
+            available: my_balance_dec.clone(),
+            required: dec_amount,
+        });
     };
     let (mut eth_value, data, call_addr, fee_coin) = match &coin.coin_type {
         EthCoinType::Eth => (wei_amount, vec![], to_addr, coin.ticker()),
         EthCoinType::Erc20 { platform, token_addr } => {
-            let function = try_s!(ERC20_CONTRACT.function("transfer"));
-            let data = try_s!(function.encode_input(&[Token::Address(to_addr), Token::Uint(wei_amount)]));
+            let function = ERC20_CONTRACT.function("transfer")?;
+            let data = function.encode_input(&[Token::Address(to_addr), Token::Uint(wei_amount)])?;
             (0.into(), data, *token_addr, platform.as_str())
         },
     };
+    let eth_value_dec = u256_to_big_decimal(eth_value, coin.decimals)?;
 
     let (gas, gas_price) = match req.fee {
-        Some(WithdrawFee::EthGas { gas_price, gas }) => (gas.into(), try_s!(wei_from_big_decimal(&gas_price, 9))),
-        Some(_) => return ERR!("Unsupported input fee type"),
+        Some(WithdrawFee::EthGas { gas_price, gas }) => {
+            let gas_price = wei_from_big_decimal(&gas_price, 9)?;
+            (gas.into(), gas_price)
+        },
+        Some(fee_policy) => {
+            let error = format!("Expected 'EthGas' fee type, found {:?}", fee_policy);
+            return MmError::err(WithdrawError::InvalidFeePolicy(error));
+        },
         None => {
-            let gas_price = try_s!(coin.get_gas_price().compat().await);
+            let gas_price = coin
+                .get_gas_price()
+                .compat()
+                .await
+                // TODO change get_gas_price error type
+                .into_mm_and(WithdrawError::Transport)?;
             // covering edge case by deducting the standard transfer fee when we want to max withdraw ETH
             let eth_value_for_estimate = if req.max && coin.coin_type == EthCoinType::Eth {
                 eth_value - gas_price * U256::from(21000)
@@ -438,33 +475,34 @@ async fn withdraw_impl(ctx: MmArc, coin: EthCoin, req: WithdrawRequest) -> Resul
                 // logic on gas price, e.g. TUSD: https://github.com/KomodoPlatform/atomicDEX-API/issues/643
                 gas_price: Some(gas_price),
             };
-            let gas_fut = coin.estimate_gas(estimate_gas_req).compat();
-            (try_s!(gas_fut.await), gas_price)
+            // TODO Note if the wallet's balance is insufficient to withdraw, then `estimate_gas` may fail with the `Exception` error.
+            // TODO Ideally we should determine the case when we have the insufficient balance and return `WithdrawError::NotSufficientBalance`.
+            let gas_limit = coin.estimate_gas(estimate_gas_req).compat().await?;
+            (gas_limit, gas_price)
         },
     };
     let total_fee = gas * gas_price;
 
     if req.max && coin.coin_type == EthCoinType::Eth {
         if eth_value < total_fee || wei_amount < total_fee {
-            return ERR!("The value {} to withdraw is lower than fee {}", eth_value, total_fee);
+            return MmError::err(WithdrawError::AmountIsTooSmall { amount: eth_value_dec });
         }
         eth_value -= total_fee;
         wei_amount -= total_fee;
     };
-    let _nonce_lock = try_s!(
-        NONCE_LOCK
-            .lock(|_start, _now| {
-                if ctx.is_stopping() {
-                    return ERR!("MM is stopping, aborting withdraw_impl in NONCE_LOCK");
-                }
-                Ok(0.5)
-            })
-            .await
-    );
+    let _nonce_lock = NONCE_LOCK
+        .lock(|_start, _now| {
+            if ctx.is_stopping() {
+                let error = "MM is stopping, aborting withdraw_impl in NONCE_LOCK".to_owned();
+                return MmError::err(WithdrawError::InternalError(error));
+            }
+            Ok(0.5)
+        })
+        .await?;
     let nonce_fut = get_addr_nonce(coin.my_address, coin.web3_instances.clone()).compat();
     let nonce = match select(nonce_fut, Timer::sleep(30.)).await {
-        Either::Left((nonce_res, _)) => try_s!(nonce_res),
-        Either::Right(_) => return ERR!("Get address nonce timed out"),
+        Either::Left((nonce_res, _)) => nonce_res.into_mm_and(WithdrawError::Transport)?,
+        Either::Right(_) => return MmError::err(WithdrawError::Transport("Get address nonce timed out".to_owned())),
     };
     let tx = UnSignedEthTx {
         nonce,
@@ -477,20 +515,21 @@ async fn withdraw_impl(ctx: MmArc, coin: EthCoin, req: WithdrawRequest) -> Resul
 
     let signed = tx.sign(coin.key_pair.secret(), None);
     let bytes = rlp::encode(&signed);
-    let amount_decimal = try_s!(u256_to_big_decimal(wei_amount, coin.decimals));
+    let amount_decimal = u256_to_big_decimal(wei_amount, coin.decimals)?;
     let mut spent_by_me = amount_decimal.clone();
     let received_by_me = if to_addr == coin.my_address {
         amount_decimal.clone()
     } else {
         0.into()
     };
-    let fee_details = try_s!(EthTxFeeDetails::new(gas, gas_price, fee_coin));
+    let fee_details = EthTxFeeDetails::new(gas, gas_price, fee_coin)?;
     if coin.coin_type == EthCoinType::Eth {
         spent_by_me += &fee_details.total_fee;
     }
+    let my_address = coin.my_address().into_mm_and(WithdrawError::InternalError)?;
     Ok(TransactionDetails {
         to: vec![checksum_address(&format!("{:#02x}", to_addr))],
-        from: vec![try_s!(coin.my_address())],
+        from: vec![my_address],
         total_amount: amount_decimal,
         my_balance_change: &received_by_me - &spent_by_me,
         spent_by_me,
@@ -2418,11 +2457,11 @@ pub struct EthTxFeeDetails {
 }
 
 impl EthTxFeeDetails {
-    fn new(gas: U256, gas_price: U256, coin: &str) -> Result<EthTxFeeDetails, String> {
+    fn new(gas: U256, gas_price: U256, coin: &str) -> NumConversResult<EthTxFeeDetails> {
         let total_fee = gas * gas_price;
         // Fees are always paid in ETH, can use 18 decimals by default
-        let total_fee = try_s!(u256_to_big_decimal(total_fee, 18));
-        let gas_price = try_s!(u256_to_big_decimal(gas_price, 18));
+        let total_fee = u256_to_big_decimal(total_fee, 18)?;
+        let gas_price = u256_to_big_decimal(gas_price, 18)?;
 
         Ok(EthTxFeeDetails {
             coin: coin.to_owned(),
@@ -2438,8 +2477,8 @@ impl MmCoin for EthCoin {
 
     fn wallet_only(&self) -> bool { false }
 
-    fn withdraw(&self, req: WithdrawRequest) -> Box<dyn Future<Item = TransactionDetails, Error = String> + Send> {
-        let ctx = try_fus!(MmArc::from_weak(&self.ctx).ok_or("!ctx"));
+    fn withdraw(&self, req: WithdrawRequest) -> WithdrawFut {
+        let ctx = try_f!(MmArc::from_weak(&self.ctx).or_mm_err(|| WithdrawError::InternalError("!ctx".to_owned())));
         Box::new(Box::pin(withdraw_impl(ctx, self.clone(), req)).compat())
     }
 
@@ -2682,12 +2721,12 @@ fn display_u256_with_decimal_point(number: U256, decimals: u8) -> String {
     string.trim_end_matches('0').into()
 }
 
-pub fn u256_to_big_decimal(number: U256, decimals: u8) -> Result<BigDecimal, String> {
+pub fn u256_to_big_decimal(number: U256, decimals: u8) -> NumConversResult<BigDecimal> {
     let string = display_u256_with_decimal_point(number, decimals);
-    Ok(try_s!(string.parse()))
+    Ok(string.parse::<BigDecimal>()?)
 }
 
-pub fn wei_from_big_decimal(amount: &BigDecimal, decimals: u8) -> Result<U256, String> {
+pub fn wei_from_big_decimal(amount: &BigDecimal, decimals: u8) -> NumConversResult<U256> {
     let mut amount = amount.to_string();
     let dot = amount.find(|c| c == '.');
     let decimals = decimals as usize;
@@ -2703,7 +2742,9 @@ pub fn wei_from_big_decimal(amount: &BigDecimal, decimals: u8) -> Result<U256, S
     } else {
         amount.insert_str(amount.len(), &"0".repeat(decimals));
     }
-    Ok(try_s!(U256::from_dec_str(&amount).map_err(|e| ERRL!("{:?}", e))))
+    U256::from_dec_str(&amount)
+        .map_err(|e| format!("{:?}", e))
+        .into_mm_and(NumConversError::new)
 }
 
 impl Transaction for SignedEthTx {

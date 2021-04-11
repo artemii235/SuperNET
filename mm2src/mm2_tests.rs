@@ -1153,7 +1153,7 @@ fn test_withdraw_and_send() {
     assert!(withdraw_json["error"]
         .as_str()
         .unwrap()
-        .contains("Address bUN5nesdt1xsAjCtAaYUnNbQhGqUWwQT1Q has invalid format"));
+        .contains("Expected either P2PKH or P2SH"));
 
     // but must allow to withdraw to P2SH addresses if Segwit flag is true
     let withdraw = block_on(mm_alice.rpc(json! ({
@@ -4263,7 +4263,7 @@ fn test_qrc20_withdraw_error() {
     log!([withdraw.1]);
     assert!(withdraw
         .1
-        .contains("The amount 11 to withdraw is larger than balance 10"));
+        .contains("Not enough QRC20 to withdraw: available 10, required 11"));
 
     // try to transfer with zero QTUM balance
     let withdraw = block_on(mm.rpc(json! ({
@@ -4272,6 +4272,11 @@ fn test_qrc20_withdraw_error() {
         "coin": "QRC20",
         "to": "qHmJ3KA6ZAjR9wGjpFASn4gtUSeFAqdZgs",
         "amount": "2",
+        "fee": {
+            "type": "Qrc20Gas",
+            "gas_limit": 100_000,
+            "gas_price": 40,
+        }
     })))
     .unwrap();
     assert!(
@@ -4280,9 +4285,10 @@ fn test_qrc20_withdraw_error() {
         withdraw
     );
     log!([withdraw.1]);
+    // 0.04 = 100_000 * 40 / 100_000_000
     assert!(withdraw
         .1
-        .contains("Not enough QTUM to Pay Fee: Couldn't generate tx from empty UTXOs set"));
+        .contains("Not enough QTUM to withdraw: available 0, required 0.04"));
 }
 
 #[test]

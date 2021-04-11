@@ -4,12 +4,22 @@ use serde::ser;
 use serde::{Serialize, Serializer};
 use serde_json::{self as json, Value as Json};
 use std::fmt;
-use std::fmt::Display;
 use std::panic::Location;
 
+pub mod prelude {
+    pub use super::{IntoMapMmResult, IntoMmResult, MapMmError, MmError, OrMmError};
+}
+
 pub auto trait NotSame {}
+pub auto trait NotMmError {}
 
 impl<X> !NotSame for (X, X) {}
+
+impl<E> !NotMmError for MmError<E> {}
+
+/// This is required because an auto trait is not automatically implemented for a non-sized types,
+/// e.g for Box<dyn Trait>.
+impl<T: ?Sized> NotMmError for Box<T> {}
 
 /// The unified error representation tracing an error path.
 ///
@@ -38,9 +48,8 @@ impl<X> !NotSame for (X, X) {}
 //  }
 /// ```
 #[derive(Debug, Display, Eq, PartialEq)]
-#[display(bound = "E: Display")]
 #[display(fmt = "{} {}", "trace.formatted()", etype)]
-pub struct MmError<E> {
+pub struct MmError<E: NotMmError> {
     etype: E,
     trace: Vec<TraceLocation>,
 }
@@ -48,7 +57,8 @@ pub struct MmError<E> {
 /// Track the location whenever `MmError<E2>::from(MmError<E1>)` is called.
 impl<E1, E2> From<MmError<E1>> for MmError<E2>
 where
-    E2: From<E1>,
+    E1: NotMmError,
+    E2: From<E1> + NotMmError,
     (E1, E2): NotSame,
 {
     #[track_caller]
@@ -62,11 +72,20 @@ where
     }
 }
 
-impl<T, E> From<MmError<E>> for Result<T, MmError<E>> {
-    fn from(e: MmError<E>) -> Self { Err(e) }
+/// Track the location whenever `MmError<E2>::from(E1)` is called.
+impl<E1, E2> From<E1> for MmError<E2>
+where
+    E1: NotMmError,
+    E2: From<E1> + NotMmError,
+{
+    #[track_caller]
+    fn from(e1: E1) -> Self { MmError::new(E2::from(e1)) }
 }
 
-impl<E: fmt::Display + Serialize> Serialize for MmError<E> {
+impl<E> Serialize for MmError<E>
+where
+    E: fmt::Display + Serialize + NotMmError,
+{
     fn serialize<S>(&self, serializer: S) -> Result<<S as Serializer>::Ok, <S as Serializer>::Error>
     where
         S: Serializer,
@@ -93,7 +112,7 @@ impl<E: fmt::Display + Serialize> Serialize for MmError<E> {
     }
 }
 
-impl<E> MmError<E> {
+impl<E: NotMmError> MmError<E> {
     #[track_caller]
     pub fn new(etype: E) -> MmError<E> {
         let location = TraceLocation::from(Location::caller());
@@ -102,6 +121,13 @@ impl<E> MmError<E> {
             trace: vec![location],
         }
     }
+
+    #[track_caller]
+    pub fn err<T>(etype: E) -> Result<T, MmError<E>> { Err(MmError::new(etype)) }
+
+    pub fn get_inner(&self) -> &E { &self.etype }
+
+    pub fn into_inner(self) -> E { self.etype }
 
     /// Format the [`MmError::trace`] similar to JSON path notation: `mm2.lp_swap.utxo.rpc_client`.
     /// The return path is deduplicated.
@@ -126,7 +152,10 @@ impl<E> MmError<E> {
     }
 }
 
-impl<E: Serialize> MmError<E> {
+impl<E> MmError<E>
+where
+    E: Serialize + NotMmError,
+{
     /// Check if the [`MmError::etype`] serialized representation flattens into `error_type` tag and `error_data` content.
     fn check_serialized_etype<SerdeError: ser::Error>(&self) -> Result<(), SerdeError> {
         macro_rules! serde_err {
@@ -159,6 +188,142 @@ impl<E: Serialize> MmError<E> {
                     found
                 ))
             },
+        }
+    }
+}
+
+pub trait IntoMmResult<T, E: NotMmError> {
+    fn into_mm(self) -> Result<T, MmError<E>>;
+}
+
+impl<T, E: NotMmError> IntoMmResult<T, E> for Result<T, E> {
+    /// Maps a [`Result<T, E>`] to [`Result<T, MmError<E>>`].
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// let res: Result<(), String> = Err("An error".to_owned();
+    /// let mapped_res: Result<(), MmError<String>> = res.into_mm_res();
+    /// ```
+    #[track_caller]
+    fn into_mm(self) -> Result<T, MmError<E>> {
+        // do not use [`Result::map_err`], because we should keep the `track_caller` chain
+        match self {
+            Ok(x) => Ok(x),
+            Err(e) => MmError::err(e),
+        }
+    }
+}
+
+pub trait IntoMapMmResult<T, E1, E2>: IntoMmResult<T, E1> + Sized
+where
+    E1: NotMmError,
+    E2: NotMmError,
+{
+    /// Maps a [`Result<T, E1>`] to [`Result<T, MmError<E2>>`] by applying a function to a
+    /// contained [`Err`] value, leaving an [`Ok`] value untouched.
+    ///
+    /// # Important
+    ///
+    /// Please consider using `?` operator if `E2: From<E1>`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// let res: Result<(), String> = Err("An error".to_owned();
+    /// let mapped_res: Result<(), MmError<String>> = res.into_mm_res();
+    /// ```
+    #[track_caller]
+    fn into_mm_and<F>(self, f: F) -> Result<T, MmError<E2>>
+    where
+        F: FnOnce(E1) -> E2,
+    {
+        match self.into_mm() {
+            Ok(x) => Ok(x),
+            Err(e1) => {
+                let e2 = f(e1.etype);
+                let trace = e1.trace;
+                // do not push the current location, because we have tracked it already within [`IntoMmResult::into_mm`]
+                Err(MmError { etype: e2, trace })
+            },
+        }
+    }
+}
+
+impl<T, E1, E2> IntoMapMmResult<T, E1, E2> for Result<T, E1>
+where
+    E1: NotMmError,
+    E2: NotMmError,
+{
+}
+
+pub trait MapMmError<T, E1, E2: NotMmError> {
+    fn mm_err<F>(self, f: F) -> Result<T, MmError<E2>>
+    where
+        F: FnOnce(E1) -> E2;
+}
+
+/// Implement mapping from [`Result<T, MmError<E1>>`] into [`Result<T, MmError<E2>>`].
+impl<T, E1, E2> MapMmError<T, E1, E2> for Result<T, MmError<E1>>
+where
+    E1: NotMmError,
+    E2: NotMmError,
+{
+    /// Maps a [`Result<T, MmError<E1>`] to [`Result<T, MmError<E2>>`] by applying a function to a
+    /// contained [`Err`] value, leaving an [`Ok`] value untouched.
+    ///
+    /// # Important
+    ///
+    /// Please consider using `?` operator if `E2: From<E1>`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// let res: Result<(), MmError<String>> = MmError::err("An error".to_owned());
+    /// let mapped_res: Result<(), MmError<usize>> = res.mm_err(|e: String| e.len());
+    /// ```
+    #[track_caller]
+    fn mm_err<F>(self, f: F) -> Result<T, MmError<E2>>
+    where
+        F: FnOnce(E1) -> E2,
+    {
+        // do not use [`Result::map_err`], because we should keep the `track_caller` chain
+        match self {
+            Ok(x) => Ok(x),
+            Err(e1) => {
+                let e2 = f(e1.etype);
+                let mut trace = e1.trace;
+                trace.push(TraceLocation::from(Location::caller()));
+                Err(MmError { etype: e2, trace })
+            },
+        }
+    }
+}
+
+pub trait OrMmError<T, E: NotMmError> {
+    fn or_mm_err<F>(self, f: F) -> Result<T, MmError<E>>
+    where
+        F: FnOnce() -> E;
+}
+
+impl<T, E: NotMmError> OrMmError<T, E> for Option<T> {
+    /// Transforms the `Option<T>` into a [`Result<T, MmError<E>>`], mapping [`Some(v)`] to
+    /// [`Ok(v)`] and [`None`] to [`Err(MmError<E>)`].
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// let res: Option<String> = None;
+    /// let mapped_res: Result<(), MmError<usize>> = res.or_mm_err(|| 123usize);
+    /// ```
+    #[track_caller]
+    fn or_mm_err<F>(self, f: F) -> Result<T, MmError<E>>
+    where
+        F: FnOnce() -> E,
+    {
+        match self {
+            Some(x) => Ok(x),
+            None => MmError::err(f()),
         }
     }
 }
@@ -277,6 +442,28 @@ mod tests {
             }
         });
         assert_eq!(actual_json, expected_json);
+    }
+
+    #[test]
+    fn test_map_error() {
+        let res: Result<(), _> = Err("An error".to_string());
+
+        let into_mm_line = line!() + 1;
+        let mm_res = res.clone().into_mm().expect_err("Expected MmError<String>");
+        assert_eq!(mm_res.etype, "An error");
+        assert_eq!(mm_res.trace, vec![TraceLocation::new("mm_error", into_mm_line)]);
+
+        let into_mm_with_line = line!() + 1;
+        let mm_res = res.into_mm_and(|e| e.len()).expect_err("Expected MmError<usize>");
+        assert_eq!(mm_res.etype, 8);
+        assert_eq!(mm_res.trace, vec![TraceLocation::new("mm_error", into_mm_with_line)]);
+
+        let error_line = line!() + 1;
+        let mm_res: Result<(), _> = None.or_mm_err(|| "An error".to_owned());
+        let mm_err = mm_res.expect_err("Expected MmError<String>");
+
+        assert_eq!(mm_err.etype, "An error");
+        assert_eq!(mm_err.trace, vec![TraceLocation::new("mm_error", error_line)]);
     }
 
     #[test]

@@ -1,5 +1,6 @@
 use super::*;
-use crate::{CanRefundHtlc, CoinBalance, SwapOps, TradePreimageError, TradePreimageValue, ValidateAddressResult};
+use crate::{CanRefundHtlc, CoinBalance, SwapOps, TradePreimageError, TradePreimageValue, ValidateAddressResult,
+            WithdrawFut};
 use common::mm_metrics::MetricsArc;
 use futures::{FutureExt, TryFutureExt};
 
@@ -56,7 +57,7 @@ impl UtxoCommonOps for UtxoStandardCoin {
         utxo_common::address_from_str(&self.utxo_arc.conf, address)
     }
 
-    async fn get_current_mtp(&self) -> Result<u32, String> { utxo_common::get_current_mtp(&self.utxo_arc).await }
+    async fn get_current_mtp(&self) -> MmRpcResult<u32> { utxo_common::get_current_mtp(&self.utxo_arc).await }
 
     fn is_unspent_mature(&self, output: &RpcTransaction) -> bool {
         utxo_common::is_unspent_mature(self.utxo_arc.conf.mature_confirmations, output)
@@ -69,7 +70,7 @@ impl UtxoCommonOps for UtxoStandardCoin {
         fee_policy: FeePolicy,
         fee: Option<ActualTxFee>,
         gas_fee: Option<u64>,
-    ) -> Result<(TransactionInputSigner, AdditionalTxData), GenerateTransactionError> {
+    ) -> GenerateTxResult {
         utxo_common::generate_transaction(self, utxos, outputs, fee_policy, fee, gas_fee).await
     }
 
@@ -78,7 +79,7 @@ impl UtxoCommonOps for UtxoStandardCoin {
         unsigned: TransactionInputSigner,
         data: AdditionalTxData,
         my_script_pub: Bytes,
-    ) -> Result<(TransactionInputSigner, AdditionalTxData), String> {
+    ) -> MmRpcResult<(TransactionInputSigner, AdditionalTxData)> {
         utxo_common::calc_interest_if_required(self, unsigned, data, my_script_pub).await
     }
 
@@ -393,7 +394,7 @@ impl MmCoin for UtxoStandardCoin {
 
     fn wallet_only(&self) -> bool { false }
 
-    fn withdraw(&self, req: WithdrawRequest) -> Box<dyn Future<Item = TransactionDetails, Error = String> + Send> {
+    fn withdraw(&self, req: WithdrawRequest) -> WithdrawFut {
         Box::new(utxo_common::withdraw(self.clone(), req).boxed().compat())
     }
 
