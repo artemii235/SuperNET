@@ -54,10 +54,10 @@ use web3::types::{Action as TraceAction, BlockId, BlockNumber, Bytes, CallReques
                   TraceFilterBuilder, Transaction as Web3Transaction, TransactionId};
 use web3::{self, Web3};
 
-use super::{CoinBalance, CoinProtocol, CoinTransportMetrics, CoinsContext, FeeApproxStage, FoundSwapTxSpend,
-            HistorySyncState, MarketCoinOps, MmCoin, NumConversError, NumConversResult, RpcClientType,
-            RpcTransportEventHandler, RpcTransportEventHandlerShared, SwapOps, TradeFee, TradePreimageError,
-            TradePreimageValue, Transaction, TransactionDetails, TransactionEnum, TransactionFut,
+use super::{BalanceError, BalanceFut, CoinBalance, CoinProtocol, CoinTransportMetrics, CoinsContext, FeeApproxStage,
+            FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, NumConversError, NumConversResult,
+            RpcClientType, RpcTransportEventHandler, RpcTransportEventHandlerShared, SwapOps, TradeFee,
+            TradePreimageError, TradePreimageValue, Transaction, TransactionDetails, TransactionEnum, TransactionFut,
             ValidateAddressResult, WithdrawError, WithdrawFee, WithdrawFut, WithdrawRequest, WithdrawResult};
 pub use ethcore_transaction::SignedTransaction as SignedEthTx;
 pub use rlp;
@@ -102,6 +102,30 @@ const APPROVE_GAS_LIMIT: u64 = 50_000;
 lazy_static! {
     pub static ref SWAP_CONTRACT: Contract = Contract::load(SWAP_CONTRACT_ABI.as_bytes()).unwrap();
     pub static ref ERC20_CONTRACT: Contract = Contract::load(ERC20_ABI.as_bytes()).unwrap();
+}
+
+impl From<ethabi::Error> for WithdrawError {
+    fn from(e: ethabi::Error) -> Self {
+        // Currently, we use the `ethabi` crate to work with a smart contract ABI known at compile time.
+        // It's an internal error if there are any issues during working with a smart contract ABI.
+        WithdrawError::InternalError(e.to_string())
+    }
+}
+
+impl From<web3::Error> for WithdrawError {
+    fn from(e: web3::Error) -> Self { WithdrawError::Transport(e.to_string()) }
+}
+
+impl From<ethabi::Error> for BalanceError {
+    fn from(e: ethabi::Error) -> Self {
+        // Currently, we use the `ethabi` crate to work with a smart contract ABI known at compile time.
+        // It's an internal error if there are any issues during working with a smart contract ABI.
+        BalanceError::Internal(e.to_string())
+    }
+}
+
+impl From<web3::Error> for BalanceError {
+    fn from(e: web3::Error) -> Self { BalanceError::Transport(e.to_string()) }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -401,23 +425,11 @@ impl EthCoinImpl {
     }
 }
 
-impl From<ethabi::Error> for WithdrawError {
-    fn from(e: ethabi::Error) -> Self {
-        // Currently, we use the `ethabi` crate to work with a smart contract ABI known at compile time.
-        // It's an internal error if there are any issues during working with a smart contract ABI.
-        WithdrawError::InternalError(e.to_string())
-    }
-}
-
-impl From<web3::Error> for WithdrawError {
-    fn from(e: web3::Error) -> Self { WithdrawError::Transport(e.to_string()) }
-}
-
 async fn withdraw_impl(ctx: MmArc, coin: EthCoin, req: WithdrawRequest) -> WithdrawResult {
     let to_addr = coin
         .address_from_str(&req.to)
         .into_mm_and(WithdrawError::InvalidAddress)?;
-    let my_balance = coin.my_balance().compat().await.into_mm_and(WithdrawError::Transport)?;
+    let my_balance = coin.my_balance().compat().await?;
     let my_balance_dec = u256_to_big_decimal(my_balance, coin.decimals)?;
 
     let (mut wei_amount, dec_amount) = if req.max {
@@ -925,11 +937,11 @@ impl MarketCoinOps for EthCoin {
 
     fn my_address(&self) -> Result<String, String> { Ok(checksum_address(&format!("{:#02x}", self.my_address))) }
 
-    fn my_balance(&self) -> Box<dyn Future<Item = CoinBalance, Error = String> + Send> {
+    fn my_balance(&self) -> BalanceFut<CoinBalance> {
         let decimals = self.decimals;
         let fut = self
             .my_balance()
-            .and_then(move |result| Ok(try_s!(u256_to_big_decimal(result, decimals))))
+            .and_then(move |result| Ok(u256_to_big_decimal(result, decimals)?))
             .map(|spendable| CoinBalance {
                 spendable,
                 unspendable: BigDecimal::from(0),
@@ -937,10 +949,10 @@ impl MarketCoinOps for EthCoin {
         Box::new(fut)
     }
 
-    fn base_coin_balance(&self) -> Box<dyn Future<Item = BigDecimal, Error = String> + Send> {
+    fn base_coin_balance(&self) -> BalanceFut<BigDecimal> {
         Box::new(
             self.eth_balance()
-                .and_then(move |result| Ok(try_s!(u256_to_big_decimal(result, 18)))),
+                .and_then(move |result| Ok(u256_to_big_decimal(result, 18)?)),
         )
     }
 
@@ -1288,7 +1300,7 @@ impl EthCoin {
                 Box::new(allowance_fut.and_then(move |allowed| -> EthTxFut {
                     if allowed < value {
                         let balance_f = arc.my_balance();
-                        Box::new(balance_f.and_then(move |balance| {
+                        Box::new(balance_f.map_err(|e| ERRL!("{}", e)).and_then(move |balance| {
                             arc.approve(swap_contract_address, balance).and_then(move |_approved| {
                                 arc.sign_and_send_transaction(
                                     0.into(),
@@ -1459,41 +1471,45 @@ impl EthCoin {
         }
     }
 
-    fn my_balance(&self) -> Box<dyn Future<Item = U256, Error = String> + Send> {
-        match &self.coin_type {
-            EthCoinType::Eth => Box::new(
-                self.web3
+    fn my_balance(&self) -> BalanceFut<U256> {
+        let coin = self.clone();
+        let fut = async move {
+            match coin.coin_type {
+                EthCoinType::Eth => Ok(coin
+                    .web3
                     .eth()
-                    .balance(self.my_address, Some(BlockNumber::Latest))
-                    .map_err(|e| ERRL!("{}", e)),
-            ),
-            EthCoinType::Erc20 {
-                platform: _,
-                token_addr,
-            } => {
-                let function = try_fus!(ERC20_CONTRACT.function("balanceOf"));
-                let data = try_fus!(function.encode_input(&[Token::Address(self.my_address),]));
+                    .balance(coin.my_address, Some(BlockNumber::Latest))
+                    .compat()
+                    .await?),
+                EthCoinType::Erc20 { ref token_addr, .. } => {
+                    let function = ERC20_CONTRACT.function("balanceOf")?;
+                    let data = function.encode_input(&[Token::Address(coin.my_address)])?;
 
-                let call_fut = self.call_request(*token_addr, None, Some(data.into()));
-
-                Box::new(call_fut.and_then(move |res| {
-                    let decoded = try_s!(function.decode_output(&res.0));
-
+                    let res = coin
+                        .call_request(*token_addr, None, Some(data.into()))
+                        .compat()
+                        .await
+                        .into_mm_and(BalanceError::Transport)?;
+                    let decoded = function.decode_output(&res.0)?;
                     match decoded[0] {
                         Token::Uint(number) => Ok(number),
-                        _ => ERR!("Expected U256 as balanceOf result but got {:?}", decoded),
+                        _ => {
+                            let error = format!("Expected U256 as balanceOf result but got {:?}", decoded);
+                            MmError::err(BalanceError::InvalidResponse(error))
+                        },
                     }
-                }))
-            },
-        }
+                },
+            }
+        };
+        Box::new(fut.boxed().compat())
     }
 
-    fn eth_balance(&self) -> Box<dyn Future<Item = U256, Error = String> + Send> {
+    fn eth_balance(&self) -> BalanceFut<U256> {
         Box::new(
             self.web3
                 .eth()
                 .balance(self.my_address, Some(BlockNumber::Latest))
-                .map_err(|e| ERRL!("{}", e)),
+                .map_err(|e| MmError::new(BalanceError::from(e))),
         )
     }
 

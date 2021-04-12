@@ -206,11 +206,11 @@ pub fn denominate_satoshis(coin: &UtxoCoinFields, satoshi: i64) -> f64 {
     satoshi as f64 / 10f64.powf(coin.decimals as f64)
 }
 
-pub fn base_coin_balance<T>(coin: &T) -> Box<dyn Future<Item = BigDecimal, Error = String> + Send>
+pub fn base_coin_balance<T>(coin: &T) -> BalanceFut<BigDecimal>
 where
     T: MarketCoinOps,
 {
-    Box::new(coin.my_spendable_balance())
+    coin.my_spendable_balance()
 }
 
 pub fn display_address(conf: &UtxoCoinConf, address: &Address) -> Result<String, String> {
@@ -1200,16 +1200,16 @@ where
     coin.display_address(&coin.as_ref().my_address)
 }
 
-pub fn my_balance(coin: &UtxoCoinFields) -> Box<dyn Future<Item = CoinBalance, Error = String> + Send> {
+pub fn my_balance(coin: &UtxoCoinFields) -> BalanceFut<CoinBalance> {
     Box::new(
         coin.rpc_client
             .display_balance(coin.my_address.clone(), coin.decimals)
+            .map_err(|e| MmError::new(BalanceError::Transport(e.to_string())))
             // at the moment standard UTXO coins do not have an unspendable balance
             .map(|spendable| CoinBalance {
                 spendable,
                 unspendable: BigDecimal::from(0),
-            })
-            .map_err(|e| ERRL!("{}", e)),
+            }),
     )
 }
 
@@ -2199,13 +2199,17 @@ pub async fn cache_transaction_if_possible(_coin: &UtxoCoinFields, _tx: &RpcTran
     Ok(())
 }
 
-pub async fn my_unspendable_balance<T>(coin: &T, total_balance: &BigDecimal) -> Result<BigDecimal, String>
+pub async fn my_unspendable_balance<T>(coin: &T, total_balance: &BigDecimal) -> BalanceResult<BigDecimal>
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps + MarketCoinOps + ?Sized,
 {
     let mut attempts = 0i32;
     loop {
-        let (mature_unspents, _) = try_s!(coin.ordered_mature_unspents(&coin.as_ref().my_address).await);
+        let (mature_unspents, _) = coin
+            .ordered_mature_unspents(&coin.as_ref().my_address)
+            .await
+            // TODO `ordered_mature_unspents` may fail for various reasons. Temporary map the error into `BalanceError::Internal`
+            .into_mm_and(BalanceError::Internal)?;
         let spendable_balance = mature_unspents.iter().fold(BigDecimal::zero(), |acc, x| {
             acc + big_decimal_from_sat(x.value as i64, coin.as_ref().decimals)
         });
@@ -2214,11 +2218,11 @@ where
         }
 
         if attempts == 2 {
-            return ERR!(
+            let error = format!(
                 "Spendable balance {} greater than total balance {}",
-                spendable_balance,
-                total_balance
+                spendable_balance, total_balance
             );
+            return MmError::err(BalanceError::Internal(error));
         }
 
         warn!(

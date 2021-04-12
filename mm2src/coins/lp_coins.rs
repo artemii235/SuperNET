@@ -94,6 +94,8 @@ pub use test_coin::TestCoin;
 pub type WithdrawResult = Result<TransactionDetails, MmError<WithdrawError>>;
 pub type WithdrawFut = Box<dyn Future<Item = TransactionDetails, Error = MmError<WithdrawError>> + Send>;
 pub type NumConversResult<T> = Result<T, MmError<NumConversError>>;
+pub type BalanceResult<T> = Result<T, MmError<BalanceError>>;
+pub type BalanceFut<T> = Box<dyn Future<Item = T, Error = MmError<BalanceError>> + Send>;
 
 pub trait Transaction: fmt::Debug + 'static {
     /// Raw transaction bytes of the transaction
@@ -274,14 +276,14 @@ pub trait MarketCoinOps {
 
     fn my_address(&self) -> Result<String, String>;
 
-    fn my_balance(&self) -> Box<dyn Future<Item = CoinBalance, Error = String> + Send>;
+    fn my_balance(&self) -> BalanceFut<CoinBalance>;
 
-    fn my_spendable_balance(&self) -> Box<dyn Future<Item = BigDecimal, Error = String> + Send> {
+    fn my_spendable_balance(&self) -> BalanceFut<BigDecimal> {
         Box::new(self.my_balance().map(|CoinBalance { spendable, .. }| spendable))
     }
 
     /// Base coin balance for tokens, e.g. ETH balance in ERC20 case
-    fn base_coin_balance(&self) -> Box<dyn Future<Item = BigDecimal, Error = String> + Send>;
+    fn base_coin_balance(&self) -> BalanceFut<BigDecimal>;
 
     /// Receives raw transaction bytes in hexadecimal format as input and returns tx hash in hexadecimal format
     fn send_raw_tx(&self, tx: &str) -> Box<dyn Future<Item = String, Error = String> + Send>;
@@ -527,6 +529,20 @@ impl NumConversError {
     pub fn description(&self) -> &str { &self.0 }
 }
 
+#[derive(Debug, Display, PartialEq)]
+pub enum BalanceError {
+    #[display(fmt = "Transport: {}", _0)]
+    Transport(String),
+    #[display(fmt = "Invalid response: {}", _0)]
+    InvalidResponse(String),
+    #[display(fmt = "Internal: {}", _0)]
+    Internal(String),
+}
+
+impl From<NumConversError> for BalanceError {
+    fn from(e: NumConversError) -> Self { BalanceError::Internal(e.to_string()) }
+}
+
 #[derive(Debug, Deserialize, Display, Serialize)]
 #[serde(tag = "error_type", content = "error_data")]
 pub enum WithdrawError {
@@ -557,6 +573,15 @@ pub enum WithdrawError {
 
 impl From<NumConversError> for WithdrawError {
     fn from(e: NumConversError) -> Self { WithdrawError::InternalError(e.to_string()) }
+}
+
+impl From<BalanceError> for WithdrawError {
+    fn from(e: BalanceError) -> Self {
+        match e {
+            BalanceError::Transport(error) | BalanceError::InvalidResponse(error) => WithdrawError::Transport(error),
+            BalanceError::Internal(internal) => WithdrawError::InternalError(internal),
+        }
+    }
 }
 
 /// NB: Implementations are expected to follow the pImpl idiom, providing cheap reference-counted cloning and garbage collection.
@@ -1056,6 +1081,31 @@ pub async fn validate_address(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>
     let body = try_s!(json::to_vec(&res));
     Ok(try_s!(Response::builder().body(body)))
 }
+
+// #[derive(Deserialize, Serialize)]
+// pub enum MmRpcVersion {
+//     #[serde(rename = "1.0")]
+//     V1,
+//     #[serde(rename = "2.0")]
+//     V2,
+// }
+//
+// impl Default for MmRpcVersion {
+//     fn default() -> Self { MmRpcVersion::V1 }
+// }
+//
+// #[derive(Serialize)]
+// pub enum MmRpcResult<T: serde::Serialize, E: serde::Serialize> {
+//     Ok(T),
+//     Err(MmError<E>),
+// }
+//
+// #[derive(Serialize)]
+// pub struct MmRpcResponse<R: serde::Serialize, E: serde::Serialize> {
+//     mmrpc: MmRpcVersion,
+//     result: Result<R, MmError<E>>,
+//     id: Option<usize>,
+// }
 
 pub async fn withdraw(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
     let ticker = try_s!(req["coin"].as_str().ok_or("No 'coin' field")).to_owned();

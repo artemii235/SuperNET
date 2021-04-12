@@ -72,10 +72,11 @@ use self::rpc_clients::{ElectrumClient, ElectrumClientImpl, ElectrumRpcRequest, 
                         MmRpcResult, RpcErrorType, UnspentInfo, UtxoRpcClientEnum};
 #[cfg(not(target_arch = "wasm32"))]
 use self::rpc_clients::{NativeClient, NativeClientImpl};
-use super::{CoinTransportMetrics, CoinsContext, FeeApproxStage, FoundSwapTxSpend, HistorySyncState, MarketCoinOps,
-            MmCoin, NumConversError, NumConversResult, RpcClientType, RpcTransportEventHandler,
-            RpcTransportEventHandlerShared, TradeFee, TradePreimageError, Transaction, TransactionDetails,
-            TransactionEnum, TransactionFut, WithdrawError, WithdrawFee, WithdrawRequest};
+use super::{BalanceError, BalanceFut, BalanceResult, CoinTransportMetrics, CoinsContext, FeeApproxStage,
+            FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, NumConversError, NumConversResult,
+            RpcClientType, RpcTransportEventHandler, RpcTransportEventHandlerShared, TradeFee, TradePreimageError,
+            Transaction, TransactionDetails, TransactionEnum, TransactionFut, WithdrawError, WithdrawFee,
+            WithdrawRequest};
 
 #[cfg(test)] pub mod utxo_tests;
 
@@ -122,6 +123,10 @@ impl Transaction for UtxoTx {
     fn tx_hex(&self) -> Vec<u8> { serialize(self).into() }
 
     fn tx_hash(&self) -> BytesJson { self.hash().reversed().to_vec().into() }
+}
+
+impl From<JsonRpcError> for BalanceError {
+    fn from(e: JsonRpcError) -> Self { BalanceError::Transport(e.to_string()) }
 }
 
 /// Additional transaction data that can't be easily got from raw transaction without calling

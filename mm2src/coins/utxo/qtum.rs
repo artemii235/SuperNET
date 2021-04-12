@@ -21,16 +21,15 @@ pub enum QtumAddressFormat {
 
 #[async_trait]
 pub trait QtumBasedCoin: AsRef<UtxoCoinFields> + UtxoCommonOps + MarketCoinOps {
-    async fn qtum_balance(&self) -> Result<CoinBalance, String> {
-        let balance = try_s!(
-            self.as_ref()
-                .rpc_client
-                .display_balance(self.as_ref().my_address.clone(), self.as_ref().decimals)
-                .compat()
-                .await
-        );
+    async fn qtum_balance(&self) -> BalanceResult<CoinBalance> {
+        let balance = self
+            .as_ref()
+            .rpc_client
+            .display_balance(self.as_ref().my_address.clone(), self.as_ref().decimals)
+            .compat()
+            .await?;
 
-        let unspendable = try_s!(utxo_common::my_unspendable_balance(self, &balance).await);
+        let unspendable = utxo_common::my_unspendable_balance(self, &balance).await?;
         let spendable = &balance - &unspendable;
         Ok(CoinBalance { spendable, unspendable })
     }
@@ -435,13 +434,13 @@ impl MarketCoinOps for QtumCoin {
 
     fn my_address(&self) -> Result<String, String> { utxo_common::my_address(self) }
 
-    fn my_balance(&self) -> Box<dyn Future<Item = CoinBalance, Error = String> + Send> {
+    fn my_balance(&self) -> BalanceFut<CoinBalance> {
         let selfi = self.clone();
-        let fut = async move { Ok(try_s!(selfi.qtum_balance().await)) };
+        let fut = async move { selfi.qtum_balance().await };
         Box::new(fut.boxed().compat())
     }
 
-    fn base_coin_balance(&self) -> Box<dyn Future<Item = BigDecimal, Error = String> + Send> {
+    fn base_coin_balance(&self) -> BalanceFut<BigDecimal> {
         utxo_common::base_coin_balance(self)
     }
 

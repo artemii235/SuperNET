@@ -8,9 +8,10 @@ use crate::utxo::utxo_common::{self, big_decimal_from_sat, check_all_inputs_sign
 use crate::utxo::{qtum, sign_tx, ActualTxFee, AdditionalTxData, FeePolicy, GenerateTxError, GenerateTxResult,
                   RecentlySpentOutPoints, UtxoCoinBuilder, UtxoCoinFields, UtxoCommonOps, UtxoTx,
                   VerboseTransactionFrom, UTXO_LOCK};
-use crate::{CoinBalance, FeeApproxStage, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeFee,
-            TradePreimageError, TradePreimageValue, TransactionDetails, TransactionEnum, TransactionFut,
-            ValidateAddressResult, WithdrawError, WithdrawFee, WithdrawFut, WithdrawRequest, WithdrawResult};
+use crate::{BalanceError, BalanceFut, CoinBalance, FeeApproxStage, FoundSwapTxSpend, HistorySyncState, MarketCoinOps,
+            MmCoin, SwapOps, TradeFee, TradePreimageError, TradePreimageValue, TransactionDetails, TransactionEnum,
+            TransactionFut, ValidateAddressResult, WithdrawError, WithdrawFee, WithdrawFut, WithdrawRequest,
+            WithdrawResult};
 use async_trait::async_trait;
 use bigdecimal::BigDecimal;
 use bitcrypto::{dhash160, sha256};
@@ -817,33 +818,41 @@ impl MarketCoinOps for Qrc20Coin {
 
     fn my_address(&self) -> Result<String, String> { utxo_common::my_address(self) }
 
-    fn my_balance(&self) -> Box<dyn Future<Item = CoinBalance, Error = String> + Send> {
+    fn my_balance(&self) -> BalanceFut<CoinBalance> {
         let my_address = self.my_addr_as_contract_addr();
-        let params = &[Token::Address(my_address)];
+        let params = [Token::Address(my_address)];
         let contract_address = self.contract_address;
         let decimals = self.utxo.decimals;
 
-        let fut = self
-            .utxo
-            .rpc_client
-            .rpc_contract_call(ViewContractCallType::BalanceOf, &contract_address, params)
-            .map_err(|e| ERRL!("{}", e))
-            .and_then(move |tokens| match tokens.first() {
-                Some(Token::Uint(bal)) => u256_to_big_decimal(*bal, decimals).map_err(|e| ERRL!("{}", e)),
-                Some(_) => ERR!(r#"Expected Uint as "balanceOf" result but got {:?}"#, tokens),
-                None => ERR!(r#"Expected Uint as "balanceOf" result but got nothing"#),
-            })
-            .map(|spendable| CoinBalance {
+        let coin = self.clone();
+        let fut = async move {
+            let tokens = coin
+                .utxo
+                .rpc_client
+                .rpc_contract_call(ViewContractCallType::BalanceOf, &contract_address, &params)
+                .compat()
+                .await
+                // TODO currently map it
+                .into_mm_and(BalanceError::Transport)?;
+            let spendable = match tokens.first() {
+                Some(Token::Uint(bal)) => u256_to_big_decimal(*bal, decimals)?,
+                _ => {
+                    let error = format!("Expected U256 as balanceOf result but got {:?}", tokens);
+                    return MmError::err(BalanceError::InvalidResponse(error));
+                },
+            };
+            Ok(CoinBalance {
                 spendable,
                 unspendable: BigDecimal::from(0),
-            });
-        Box::new(fut)
+            })
+        };
+        Box::new(fut.boxed().compat())
     }
 
-    fn base_coin_balance(&self) -> Box<dyn Future<Item = BigDecimal, Error = String> + Send> {
+    fn base_coin_balance(&self) -> BalanceFut<BigDecimal> {
         let selfi = self.clone();
         let fut = async move {
-            let CoinBalance { spendable, .. } = try_s!(selfi.qtum_balance().await);
+            let CoinBalance { spendable, .. } = selfi.qtum_balance().await?;
             Ok(spendable)
         };
         Box::new(fut.boxed().compat())
@@ -1129,12 +1138,7 @@ async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> WithdrawResult
 
     let _utxo_lock = UTXO_LOCK.lock().await;
 
-    let qrc20_balance = coin
-        .my_spendable_balance()
-        .compat()
-        .await
-        // Generally [`MarketCoinOps::my_spendable_balance`] and [`MarketCoinOps::my_balance`] fail due to the transport errors
-        .into_mm_and(WithdrawError::Transport)?;
+    let qrc20_balance = coin.my_spendable_balance().compat().await?;
 
     // the qrc20_amount_sat is used only within smart contract calls
     let (qrc20_amount_sat, qrc20_amount) = if req.max {

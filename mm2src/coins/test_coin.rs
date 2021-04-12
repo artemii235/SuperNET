@@ -1,6 +1,6 @@
 use super::{CoinBalance, HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeFee, TransactionEnum, TransactionFut};
-use crate::{FeeApproxStage, FoundSwapTxSpend, TradePreimageError, TradePreimageValue, ValidateAddressResult,
-            WithdrawFut, WithdrawRequest};
+use crate::{BalanceFut, FeeApproxStage, FoundSwapTxSpend, TradePreimageError, TradePreimageValue,
+            ValidateAddressResult, WithdrawFut, WithdrawRequest};
 use bigdecimal::BigDecimal;
 use common::mm_ctx::MmArc;
 use futures01::Future;
@@ -30,9 +30,9 @@ impl MarketCoinOps for TestCoin {
 
     fn my_address(&self) -> Result<String, String> { unimplemented!() }
 
-    fn my_balance(&self) -> Box<dyn Future<Item = CoinBalance, Error = String> + Send> { unimplemented!() }
+    fn my_balance(&self) -> BalanceFut<CoinBalance> { unimplemented!() }
 
-    fn base_coin_balance(&self) -> Box<dyn Future<Item = BigDecimal, Error = String> + Send> { unimplemented!() }
+    fn base_coin_balance(&self) -> BalanceFut<BigDecimal> { unimplemented!() }
 
     /// Receives raw transaction bytes in hexadecimal format as input and returns tx hash in hexadecimal format
     fn send_raw_tx(&self, tx: &str) -> Box<dyn Future<Item = String, Error = String> + Send> { unimplemented!() }
