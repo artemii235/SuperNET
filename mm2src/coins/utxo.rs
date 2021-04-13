@@ -69,7 +69,7 @@ use utxo_common::{big_decimal_from_sat, display_address};
 pub use chain::Transaction as UtxoTx;
 
 use self::rpc_clients::{ElectrumClient, ElectrumClientImpl, ElectrumRpcRequest, EstimateFeeMethod, EstimateFeeMode,
-                        MmRpcResult, RpcErrorType, UnspentInfo, UtxoRpcClientEnum};
+                        UnspentInfo, UtxoRpcClientEnum, UtxoRpcError, UtxoRpcResult};
 #[cfg(not(target_arch = "wasm32"))]
 use self::rpc_clients::{NativeClient, NativeClientImpl};
 use super::{BalanceError, BalanceFut, BalanceResult, CoinTransportMetrics, CoinsContext, FeeApproxStage,
@@ -127,6 +127,27 @@ impl Transaction for UtxoTx {
 
 impl From<JsonRpcError> for BalanceError {
     fn from(e: JsonRpcError) -> Self { BalanceError::Transport(e.to_string()) }
+}
+
+impl From<UtxoRpcError> for BalanceError {
+    fn from(e: UtxoRpcError) -> Self {
+        match e {
+            UtxoRpcError::Internal(desc) => BalanceError::Internal(desc),
+            _ => BalanceError::Transport(e.to_string()),
+        }
+    }
+}
+
+impl From<UtxoRpcError> for WithdrawError {
+    fn from(e: UtxoRpcError) -> Self {
+        match e {
+            UtxoRpcError::Transport(transport) | UtxoRpcError::ResponseParseError(transport) => {
+                WithdrawError::Transport(transport.to_string())
+            },
+            UtxoRpcError::InvalidResponse(resp) => WithdrawError::Transport(resp),
+            UtxoRpcError::Internal(internal) => WithdrawError::InternalError(internal),
+        }
+    }
 }
 
 /// Additional transaction data that can't be easily got from raw transaction without calling
@@ -433,7 +454,7 @@ pub trait UtxoCommonOps {
     /// and if it failed inform user that he used a wrong format.
     fn address_from_str(&self, address: &str) -> Result<Address, String>;
 
-    async fn get_current_mtp(&self) -> MmRpcResult<u32>;
+    async fn get_current_mtp(&self) -> UtxoRpcResult<u32>;
 
     /// Check if the output is spendable (is not coinbase or it has enough confirmations).
     fn is_unspent_mature(&self, output: &RpcTransaction) -> bool;
@@ -460,7 +481,7 @@ pub trait UtxoCommonOps {
         mut unsigned: TransactionInputSigner,
         mut data: AdditionalTxData,
         my_script_pub: Bytes,
-    ) -> MmRpcResult<(TransactionInputSigner, AdditionalTxData)>;
+    ) -> UtxoRpcResult<(TransactionInputSigner, AdditionalTxData)>;
 
     fn p2sh_spending_tx(
         &self,
@@ -476,7 +497,7 @@ pub trait UtxoCommonOps {
     async fn ordered_mature_unspents<'a>(
         &'a self,
         address: &Address,
-    ) -> Result<(Vec<UnspentInfo>, AsyncMutexGuard<'a, RecentlySpentOutPoints>), String>;
+    ) -> UtxoRpcResult<(Vec<UnspentInfo>, AsyncMutexGuard<'a, RecentlySpentOutPoints>)>;
 
     /// Try load verbose transaction from cache or try to request it from Rpc client.
     fn get_verbose_transaction_from_cache_or_rpc(
@@ -492,7 +513,7 @@ pub trait UtxoCommonOps {
     async fn list_unspent_ordered(
         &self,
         address: &Address,
-    ) -> Result<(Vec<UnspentInfo>, AsyncMutexGuard<'_, RecentlySpentOutPoints>), String>;
+    ) -> UtxoRpcResult<(Vec<UnspentInfo>, AsyncMutexGuard<'_, RecentlySpentOutPoints>)>;
 
     async fn preimage_trade_fee_required_to_send_outputs(
         &self,
@@ -595,11 +616,14 @@ impl From<JsonRpcError> for GenerateTxError {
     fn from(rpc_err: JsonRpcError) -> Self { GenerateTxError::Transport(rpc_err.to_string()) }
 }
 
-impl From<RpcErrorType> for GenerateTxError {
-    fn from(e: RpcErrorType) -> Self {
+impl From<UtxoRpcError> for GenerateTxError {
+    fn from(e: UtxoRpcError) -> Self {
         match e {
-            RpcErrorType::Transport(error) => GenerateTxError::Transport(error.to_string()),
-            RpcErrorType::InvalidResponse(error) => GenerateTxError::Transport(error),
+            UtxoRpcError::Transport(rpc) | UtxoRpcError::ResponseParseError(rpc) => {
+                GenerateTxError::Transport(rpc.to_string())
+            },
+            UtxoRpcError::InvalidResponse(error) => GenerateTxError::Transport(error),
+            UtxoRpcError::Internal(error) => GenerateTxError::Internal(error),
         }
     }
 }
@@ -649,40 +673,6 @@ impl GenerateTxError {
         }
     }
 }
-
-/// TODO remove
-#[derive(Debug)]
-pub enum GenerateTransactionError {
-    EmptyUtxoSet,
-    EmptyOutputs,
-    OutputValueLessThanDust { value: u64, dust: u64 },
-    TooLargeGasFee,
-    DeductFeeFromOutputFailed { description: String },
-    NotSufficientBalance { description: String },
-    Other(String),
-}
-
-impl std::fmt::Display for GenerateTransactionError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            GenerateTransactionError::EmptyUtxoSet => write!(f, "Couldn't generate tx from empty UTXOs set"),
-            GenerateTransactionError::EmptyOutputs => write!(f, "Couldn't generate tx with empty output set"),
-            GenerateTransactionError::OutputValueLessThanDust { value, dust } => {
-                write!(f, "Output value {} less than dust amount {}", value, dust)
-            },
-            GenerateTransactionError::TooLargeGasFee => write!(f, "Too large gas_fee"),
-            GenerateTransactionError::DeductFeeFromOutputFailed { description } => {
-                write!(f, "Error on deduct fee from an output: {:?}", description)
-            },
-            GenerateTransactionError::NotSufficientBalance { description } => {
-                write!(f, "Not sufficient balance: {}", description)
-            },
-            GenerateTransactionError::Other(e) => write!(f, "{}", e),
-        }
-    }
-}
-
-impl std::error::Error for GenerateTransactionError {}
 
 pub enum RequestTxHistoryResult {
     Ok(Vec<(H256Json, u64)>),

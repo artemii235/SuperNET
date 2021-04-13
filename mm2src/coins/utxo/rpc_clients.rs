@@ -3,13 +3,13 @@
 #![cfg_attr(target_arch = "wasm32", allow(dead_code))]
 
 use crate::utxo::sat_from_big_decimal;
-use crate::{RpcTransportEventHandler, RpcTransportEventHandlerShared};
+use crate::{NumConversError, RpcTransportEventHandler, RpcTransportEventHandlerShared};
 use bigdecimal::BigDecimal;
 use chain::{BlockHeader, OutPoint, Transaction as UtxoTx};
 use common::custom_futures::select_ok_sequential;
 use common::executor::{spawn, Timer};
-use common::jsonrpc_client::{JsonRpcClient, JsonRpcError, JsonRpcMultiClient, JsonRpcRemoteAddr, JsonRpcRequest,
-                             JsonRpcResponse, JsonRpcResponseFut, RpcRes};
+use common::jsonrpc_client::{JsonRpcClient, JsonRpcError, JsonRpcErrorType, JsonRpcMultiClient, JsonRpcRemoteAddr,
+                             JsonRpcRequest, JsonRpcResponse, JsonRpcResponseFut, RpcRes};
 use common::mm_error::prelude::*;
 use common::mm_number::MmNumber;
 use common::wio::slurp_req;
@@ -179,30 +179,39 @@ pub struct UnspentInfo {
     pub height: Option<u64>,
 }
 
-pub type UtxoRpcRes<T> = Box<dyn Future<Item = T, Error = String> + Send + 'static>;
-
-pub type MmRpcResult<T> = Result<T, MmError<RpcErrorType>>;
-pub type MmRpcFut<T> = Box<dyn Future<Item = T, Error = MmError<RpcErrorType>> + Send + 'static>;
+pub type UtxoRpcResult<T> = Result<T, MmError<UtxoRpcError>>;
+pub type UtxoRpcFut<T> = Box<dyn Future<Item = T, Error = MmError<UtxoRpcError>> + Send + 'static>;
 
 #[derive(Debug, Display)]
-pub enum RpcErrorType {
+pub enum UtxoRpcError {
     Transport(JsonRpcError),
+    ResponseParseError(JsonRpcError),
     InvalidResponse(String),
+    Internal(String),
 }
 
-impl From<JsonRpcError> for RpcErrorType {
-    fn from(e: JsonRpcError) -> Self { RpcErrorType::Transport(e) }
+impl From<JsonRpcError> for UtxoRpcError {
+    fn from(e: JsonRpcError) -> Self {
+        match e.error {
+            JsonRpcErrorType::Transport(_) => UtxoRpcError::Transport(e),
+            JsonRpcErrorType::Parse(_, _) | JsonRpcErrorType::Response(_, _) => UtxoRpcError::ResponseParseError(e),
+        }
+    }
 }
 
-impl From<serialization::Error> for RpcErrorType {
-    fn from(e: serialization::Error) -> Self { RpcErrorType::InvalidResponse(format!("{:?}", e)) }
+impl From<serialization::Error> for UtxoRpcError {
+    fn from(e: serialization::Error) -> Self { UtxoRpcError::InvalidResponse(format!("{:?}", e)) }
+}
+
+impl From<NumConversError> for UtxoRpcError {
+    fn from(e: NumConversError) -> Self { UtxoRpcError::Internal(e.to_string()) }
 }
 
 /// Common operations that both types of UTXO clients have but implement them differently
 pub trait UtxoRpcClientOps: fmt::Debug + Send + Sync + 'static {
-    fn list_unspent(&self, address: &Address, decimals: u8) -> UtxoRpcRes<Vec<UnspentInfo>>;
+    fn list_unspent(&self, address: &Address, decimals: u8) -> UtxoRpcFut<Vec<UnspentInfo>>;
 
-    fn send_transaction(&self, tx: &UtxoTx) -> UtxoRpcRes<H256Json>;
+    fn send_transaction(&self, tx: &UtxoTx) -> Box<dyn Future<Item = H256Json, Error = String> + Send + 'static>;
 
     fn send_raw_transaction(&self, tx: BytesJson) -> RpcRes<H256Json>;
 
@@ -233,7 +242,7 @@ pub trait UtxoRpcClientOps: fmt::Debug + Send + Sync + 'static {
     ) -> Box<dyn Future<Item = Option<UtxoTx>, Error = String> + Send>;
 
     /// Get median time past for `count` blocks in the past including `starting_block`
-    fn get_median_time_past(&self, starting_block: u64, count: NonZeroU64) -> MmRpcFut<u32>;
+    fn get_median_time_past(&self, starting_block: u64, count: NonZeroU64) -> UtxoRpcFut<u32>;
 }
 
 #[derive(Clone, Deserialize, Debug)]
@@ -524,12 +533,12 @@ impl JsonRpcClient for NativeClientImpl {
 
 #[cfg_attr(test, mockable)]
 impl UtxoRpcClientOps for NativeClient {
-    fn list_unspent(&self, address: &Address, decimals: u8) -> UtxoRpcRes<Vec<UnspentInfo>> {
+    fn list_unspent(&self, address: &Address, decimals: u8) -> UtxoRpcFut<Vec<UnspentInfo>> {
         let fut = self
             .list_unspent_impl(0, std::i32::MAX, vec![address.to_string()])
-            .map_err(|e| ERRL!("{}", e))
+            .map_err(|e| MmError::new(UtxoRpcError::from(e)))
             .and_then(move |unspents| {
-                let unspents: Result<Vec<_>, _> = unspents
+                let unspents: UtxoRpcResult<Vec<_>> = unspents
                     .into_iter()
                     .map(|unspent| {
                         Ok(UnspentInfo {
@@ -537,17 +546,17 @@ impl UtxoRpcClientOps for NativeClient {
                                 hash: unspent.txid.reversed().into(),
                                 index: unspent.vout,
                             },
-                            value: try_s!(sat_from_big_decimal(&unspent.amount.to_decimal(), decimals)),
+                            value: sat_from_big_decimal(&unspent.amount.to_decimal(), decimals)?,
                             height: None,
                         })
                     })
                     .collect();
-                Ok(try_s!(unspents))
+                unspents
             });
         Box::new(fut)
     }
 
-    fn send_transaction(&self, tx: &UtxoTx) -> UtxoRpcRes<H256Json> {
+    fn send_transaction(&self, tx: &UtxoTx) -> Box<dyn Future<Item = H256Json, Error = String> + Send + 'static> {
         let tx_bytes = BytesJson::from(serialize(tx));
         Box::new(self.send_raw_transaction(tx_bytes).map_err(|e| ERRL!("{}", e)))
     }
@@ -632,7 +641,7 @@ impl UtxoRpcClientOps for NativeClient {
         Box::new(fut.boxed().compat())
     }
 
-    fn get_median_time_past(&self, starting_block: u64, count: NonZeroU64) -> MmRpcFut<u32> {
+    fn get_median_time_past(&self, starting_block: u64, count: NonZeroU64) -> UtxoRpcFut<u32> {
         let selfi = self.clone();
         let fut = async move {
             let starting_block_hash = selfi.get_block_hash(starting_block).compat().await?;
@@ -709,7 +718,11 @@ impl NativeClientImpl {
         rpc_func!(self, "validateaddress", address)
     }
 
-    pub fn output_amount(&self, txid: H256Json, index: usize) -> UtxoRpcRes<u64> {
+    pub fn output_amount(
+        &self,
+        txid: H256Json,
+        index: usize,
+    ) -> Box<dyn Future<Item = u64, Error = String> + Send + 'static> {
         let fut = self.get_raw_transaction_bytes(txid).map_err(|e| ERRL!("{}", e));
         Box::new(fut.and_then(move |bytes| {
             let tx: UtxoTx = try_s!(deserialize(bytes.as_slice()).map_err(|e| ERRL!(
@@ -1540,12 +1553,12 @@ impl ElectrumClient {
 
 #[cfg_attr(test, mockable)]
 impl UtxoRpcClientOps for ElectrumClient {
-    fn list_unspent(&self, address: &Address, _decimals: u8) -> UtxoRpcRes<Vec<UnspentInfo>> {
+    fn list_unspent(&self, address: &Address, _decimals: u8) -> UtxoRpcFut<Vec<UnspentInfo>> {
         let script = Builder::build_p2pkh(&address.hash);
         let script_hash = electrum_script_hash(&script);
         Box::new(
             self.scripthash_list_unspent(&hex::encode(script_hash))
-                .map_err(|e| ERRL!("{}", e))
+                .map_err(|e| MmError::new(UtxoRpcError::from(e)))
                 .map(move |unspents| {
                     unspents
                         .iter()
@@ -1562,7 +1575,7 @@ impl UtxoRpcClientOps for ElectrumClient {
         )
     }
 
-    fn send_transaction(&self, tx: &UtxoTx) -> UtxoRpcRes<H256Json> {
+    fn send_transaction(&self, tx: &UtxoTx) -> Box<dyn Future<Item = H256Json, Error = String> + Send + 'static> {
         let bytes = BytesJson::from(serialize(tx));
         Box::new(self.blockchain_transaction_broadcast(bytes).map_err(|e| ERRL!("{}", e)))
     }
@@ -1643,7 +1656,7 @@ impl UtxoRpcClientOps for ElectrumClient {
         Box::new(fut.boxed().compat())
     }
 
-    fn get_median_time_past(&self, starting_block: u64, count: NonZeroU64) -> MmRpcFut<u32> {
+    fn get_median_time_past(&self, starting_block: u64, count: NonZeroU64) -> UtxoRpcFut<u32> {
         let from = if starting_block <= count.get() {
             0
         } else {
@@ -1651,11 +1664,10 @@ impl UtxoRpcClientOps for ElectrumClient {
         };
         Box::new(
             self.blockchain_block_headers(from, count)
-                // TODO consider to implement an into_mm_and()
-                .map_err(|e| MmError::new(RpcErrorType::Transport(e)))
+                .map_err(|e| MmError::new(UtxoRpcError::from(e)))
                 .and_then(|res| {
                     if res.count == 0 {
-                        return MmError::err(RpcErrorType::InvalidResponse("Server returned zero count".to_owned()));
+                        return MmError::err(UtxoRpcError::InvalidResponse("Server returned zero count".to_owned()));
                     }
                     let len = CompactInteger::from(res.count);
                     let mut serialized = serialize(&len).take();

@@ -2,8 +2,8 @@ use crate::eth::{self, u256_to_big_decimal, wei_from_big_decimal, TryToAddress};
 use crate::qrc20::rpc_clients::{LogEntry, Qrc20ElectrumOps, Qrc20NativeOps, Qrc20RpcOps, TopicFilter, TxReceipt,
                                 ViewContractCallType};
 use crate::utxo::qtum::QtumBasedCoin;
-use crate::utxo::rpc_clients::{ElectrumClient, MmRpcResult, NativeClient, UnspentInfo, UtxoRpcClientEnum,
-                               UtxoRpcClientOps};
+use crate::utxo::rpc_clients::{ElectrumClient, NativeClient, UnspentInfo, UtxoRpcClientEnum, UtxoRpcClientOps,
+                               UtxoRpcResult};
 use crate::utxo::utxo_common::{self, big_decimal_from_sat, check_all_inputs_signed_by_pub};
 use crate::utxo::{qtum, sign_tx, ActualTxFee, AdditionalTxData, FeePolicy, GenerateTxError, GenerateTxResult,
                   RecentlySpentOutPoints, UtxoCoinBuilder, UtxoCoinFields, UtxoCommonOps, UtxoTx,
@@ -330,11 +330,7 @@ impl Qrc20Coin {
         &self,
         contract_outputs: Vec<ContractCallOutput>,
     ) -> Result<GenerateQrc20TxResult, MmError<GenerateTxError>> {
-        let (unspents, _) = self
-            .ordered_mature_unspents(&self.utxo.my_address)
-            .await
-            // TODO `ordered_mature_unspents` may fail for various reasons. Temporary map the error into `GenerateTxError::InternalError`
-            .into_mm_and(GenerateTxError::Internal)?;
+        let (unspents, _) = self.ordered_mature_unspents(&self.utxo.my_address).await?;
 
         let mut gas_fee = 0;
         let mut outputs = Vec::with_capacity(contract_outputs.len());
@@ -356,7 +352,6 @@ impl Qrc20Coin {
             self.utxo.conf.signature_version,
             self.utxo.conf.fork_id,
         )
-        // TODO make not sure it's an internal error
         .into_mm_and(GenerateTxError::Internal)?;
 
         let miner_fee = data.fee_amount + data.unused_change.unwrap_or_default();
@@ -439,7 +434,7 @@ impl UtxoCommonOps for Qrc20Coin {
         utxo_common::address_from_str(&self.utxo.conf, address)
     }
 
-    async fn get_current_mtp(&self) -> MmRpcResult<u32> { utxo_common::get_current_mtp(&self.utxo).await }
+    async fn get_current_mtp(&self) -> UtxoRpcResult<u32> { utxo_common::get_current_mtp(&self.utxo).await }
 
     fn is_unspent_mature(&self, output: &RpcTransaction) -> bool { self.is_qtum_unspent_mature(output) }
 
@@ -460,7 +455,7 @@ impl UtxoCommonOps for Qrc20Coin {
         unsigned: TransactionInputSigner,
         data: AdditionalTxData,
         my_script_pub: ScriptBytes,
-    ) -> MmRpcResult<(TransactionInputSigner, AdditionalTxData)> {
+    ) -> UtxoRpcResult<(TransactionInputSigner, AdditionalTxData)> {
         utxo_common::calc_interest_if_required(self, unsigned, data, my_script_pub).await
     }
 
@@ -487,7 +482,7 @@ impl UtxoCommonOps for Qrc20Coin {
     async fn ordered_mature_unspents<'a>(
         &'a self,
         address: &Address,
-    ) -> Result<(Vec<UnspentInfo>, AsyncMutexGuard<'a, RecentlySpentOutPoints>), String> {
+    ) -> UtxoRpcResult<(Vec<UnspentInfo>, AsyncMutexGuard<'a, RecentlySpentOutPoints>)> {
         utxo_common::ordered_mature_unspents(self, address).await
     }
 
@@ -507,7 +502,7 @@ impl UtxoCommonOps for Qrc20Coin {
     async fn list_unspent_ordered<'a>(
         &'a self,
         address: &Address,
-    ) -> Result<(Vec<UnspentInfo>, AsyncMutexGuard<'a, RecentlySpentOutPoints>), String> {
+    ) -> UtxoRpcResult<(Vec<UnspentInfo>, AsyncMutexGuard<'a, RecentlySpentOutPoints>)> {
         utxo_common::ordered_mature_unspents(self, address).await
     }
 
@@ -831,9 +826,7 @@ impl MarketCoinOps for Qrc20Coin {
                 .rpc_client
                 .rpc_contract_call(ViewContractCallType::BalanceOf, &contract_address, &params)
                 .compat()
-                .await
-                // TODO currently map it
-                .into_mm_and(BalanceError::Transport)?;
+                .await?;
             let spendable = match tokens.first() {
                 Some(Token::Uint(bal)) => u256_to_big_decimal(*bal, decimals)?,
                 _ => {

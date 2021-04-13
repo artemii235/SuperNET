@@ -32,7 +32,7 @@ use std::time::Duration;
 
 pub use chain::Transaction as UtxoTx;
 
-use self::rpc_clients::{electrum_script_hash, MmRpcResult, UnspentInfo, UtxoRpcClientEnum, UtxoRpcClientOps};
+use self::rpc_clients::{electrum_script_hash, UnspentInfo, UtxoRpcClientEnum, UtxoRpcClientOps, UtxoRpcResult};
 use crate::{CanRefundHtlc, CoinBalance, FeeApproxStage, TradePreimageError, TradePreimageValue, ValidateAddressResult,
             WithdrawResult};
 
@@ -245,7 +245,7 @@ pub fn address_from_str(conf: &UtxoCoinConf, address: &str) -> Result<Address, S
     }
 }
 
-pub async fn get_current_mtp(coin: &UtxoCoinFields) -> MmRpcResult<u32> {
+pub async fn get_current_mtp(coin: &UtxoCoinFields) -> UtxoRpcResult<u32> {
     let current_block = coin.rpc_client.get_block_count().compat().await?;
     coin.rpc_client
         .get_median_time_past(current_block, coin.conf.mtp_block_count)
@@ -483,7 +483,7 @@ pub async fn calc_interest_if_required<T>(
     mut unsigned: TransactionInputSigner,
     mut data: AdditionalTxData,
     my_script_pub: Bytes,
-) -> MmRpcResult<(TransactionInputSigner, AdditionalTxData)>
+) -> UtxoRpcResult<(TransactionInputSigner, AdditionalTxData)>
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps,
 {
@@ -1204,7 +1204,7 @@ pub fn my_balance(coin: &UtxoCoinFields) -> BalanceFut<CoinBalance> {
     Box::new(
         coin.rpc_client
             .display_balance(coin.my_address.clone(), coin.decimals)
-            .map_err(|e| MmError::new(BalanceError::Transport(e.to_string())))
+            .map_err(|e| MmError::new(BalanceError::from(e)))
             // at the moment standard UTXO coins do not have an unspendable balance
             .map(|spendable| CoinBalance {
                 spendable,
@@ -1335,11 +1335,7 @@ where
     let script_pubkey = script_pubkey.to_bytes();
 
     let _utxo_lock = UTXO_LOCK.lock().await;
-    let (unspents, _) = coin
-        .ordered_mature_unspents(&coin.as_ref().my_address)
-        .await
-        // TODO `ordered_mature_unspents` may fail for various reasons. Temporary map the error into `WithdrawError::InternalError`
-        .into_mm_and(WithdrawError::InternalError)?;
+    let (unspents, _) = coin.ordered_mature_unspents(&coin.as_ref().my_address).await?;
     let (value, fee_policy) = if req.max {
         (
             unspents.iter().fold(0, |sum, unspent| sum + unspent.value),
@@ -1381,7 +1377,6 @@ where
         coin.as_ref().conf.signature_version,
         coin.as_ref().conf.fork_id,
     )
-    // TODO make not sure it's an internal error
     .into_mm_and(WithdrawError::InternalError)?;
 
     let fee_amount = data.fee_amount + data.unused_change.unwrap_or_default();
@@ -2057,36 +2052,36 @@ pub fn set_requires_notarization(coin: &UtxoCoinFields, requires_nota: bool) {
 pub async fn ordered_mature_unspents<'a, T>(
     coin: &'a T,
     address: &Address,
-) -> Result<(Vec<UnspentInfo>, AsyncMutexGuard<'a, RecentlySpentOutPoints>), String>
+) -> UtxoRpcResult<(Vec<UnspentInfo>, AsyncMutexGuard<'a, RecentlySpentOutPoints>)>
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps,
 {
-    fn calc_actual_cached_tx_confirmations(tx: &RpcTransaction, block_count: u64) -> Result<u32, String> {
-        let tx_height = tx
-            .height
-            .ok_or(ERRL!(r#"Warning, height of cached "{:?}" tx is unknown"#, tx.txid))?;
+    fn calc_actual_cached_tx_confirmations(tx: &RpcTransaction, block_count: u64) -> UtxoRpcResult<u32> {
+        let tx_height = tx.height.or_mm_err(|| {
+            UtxoRpcError::Internal(format!(r#"Warning, height of cached "{:?}" tx is unknown"#, tx.txid))
+        })?;
         // utxo_common::cache_transaction_if_possible() shouldn't cache transaction with height == 0
         if tx_height == 0 {
-            return ERR!(
+            let error = format!(
                 r#"Warning, height of cached "{:?}" tx is expected to be non-zero"#,
                 tx.txid
             );
+            return MmError::err(UtxoRpcError::Internal(error));
         }
         if block_count < tx_height {
-            return ERR!(
+            let error = format!(
                 r#"Warning, actual block_count {} less than cached tx_height {} of {:?}"#,
-                block_count,
-                tx_height,
-                tx.txid
+                block_count, tx_height, tx.txid
             );
+            return MmError::err(UtxoRpcError::Internal(error));
         }
 
         let confirmations = block_count - tx_height + 1;
         Ok(confirmations as u32)
     }
 
-    let (unspents, recently_spent) = try_s!(list_unspent_ordered(coin, address).await);
-    let block_count = try_s!(coin.as_ref().rpc_client.get_block_count().compat().await);
+    let (unspents, recently_spent) = list_unspent_ordered(coin, address).await?;
+    let block_count = coin.as_ref().rpc_client.get_block_count().compat().await?;
 
     let mut result = Vec::with_capacity(unspents.len());
     for unspent in unspents {
@@ -2205,11 +2200,7 @@ where
 {
     let mut attempts = 0i32;
     loop {
-        let (mature_unspents, _) = coin
-            .ordered_mature_unspents(&coin.as_ref().my_address)
-            .await
-            // TODO `ordered_mature_unspents` may fail for various reasons. Temporary map the error into `BalanceError::Internal`
-            .into_mm_and(BalanceError::Internal)?;
+        let (mature_unspents, _) = coin.ordered_mature_unspents(&coin.as_ref().my_address).await?;
         let spendable_balance = mature_unspents.iter().fold(BigDecimal::zero(), |acc, x| {
             acc + big_decimal_from_sat(x.value as i64, coin.as_ref().decimals)
         });
@@ -2521,19 +2512,17 @@ fn p2sh_spend(
 pub async fn list_unspent_ordered<'a, T>(
     coin: &'a T,
     address: &Address,
-) -> Result<(Vec<UnspentInfo>, AsyncMutexGuard<'a, RecentlySpentOutPoints>), String>
+) -> UtxoRpcResult<(Vec<UnspentInfo>, AsyncMutexGuard<'a, RecentlySpentOutPoints>)>
 where
     T: AsRef<UtxoCoinFields>,
 {
     let decimals = coin.as_ref().decimals;
-    let mut unspents = try_s!(
-        coin.as_ref()
-            .rpc_client
-            .list_unspent(address, decimals)
-            .map_err(|e| ERRL!("{}", e))
-            .compat()
-            .await
-    );
+    let mut unspents = coin
+        .as_ref()
+        .rpc_client
+        .list_unspent(address, decimals)
+        .compat()
+        .await?;
     let recently_spent = coin.as_ref().recently_spent_outpoints.lock().await;
     unspents = recently_spent
         .replace_spent_outputs_with_cache(unspents.into_iter().collect())

@@ -25,6 +25,7 @@ use common::executor::Timer;
 use common::mm_ctx::{MmArc, MmWeak};
 use common::mm_error::prelude::*;
 use common::{block_on, now_ms, slurp_url, small_rng, DEX_FEE_ADDR_RAW_PUBKEY};
+use derive_more::Display;
 use ethabi::{Contract, Token};
 use ethcore_transaction::{Action, Transaction as UnSignedEthTx, UnverifiedTransaction};
 use ethereum_types::{Address, H160, U256};
@@ -104,6 +105,37 @@ lazy_static! {
     pub static ref ERC20_CONTRACT: Contract = Contract::load(ERC20_ABI.as_bytes()).unwrap();
 }
 
+pub type Web3RpcFut<T> = Box<dyn Future<Item = T, Error = MmError<Web3RpcError>> + Send>;
+pub type Web3RpcResult<T> = Result<T, MmError<Web3RpcError>>;
+
+#[derive(Debug, Display)]
+pub enum Web3RpcError {
+    #[display(fmt = "Transport: {}", _0)]
+    Transport(String),
+    #[display(fmt = "Invalid response: {}", _0)]
+    InvalidResponse(String),
+    #[display(fmt = "Internal: {}", _0)]
+    Internal(String),
+}
+
+impl From<serde_json::Error> for Web3RpcError {
+    fn from(e: serde_json::Error) -> Self { Web3RpcError::InvalidResponse(e.to_string()) }
+}
+
+impl From<web3::Error> for Web3RpcError {
+    fn from(e: web3::Error) -> Self {
+        let error_str = e.to_string();
+        match e.kind() {
+            web3::ErrorKind::InvalidResponse(_)
+            | web3::ErrorKind::Decoder(_)
+            | web3::ErrorKind::Msg(_)
+            | web3::ErrorKind::Rpc(_) => Web3RpcError::InvalidResponse(error_str),
+            web3::ErrorKind::Transport(_) | web3::ErrorKind::Io(_) => Web3RpcError::Transport(error_str),
+            _ => Web3RpcError::Internal(error_str),
+        }
+    }
+}
+
 impl From<ethabi::Error> for WithdrawError {
     fn from(e: ethabi::Error) -> Self {
         // Currently, we use the `ethabi` crate to work with a smart contract ABI known at compile time.
@@ -114,6 +146,15 @@ impl From<ethabi::Error> for WithdrawError {
 
 impl From<web3::Error> for WithdrawError {
     fn from(e: web3::Error) -> Self { WithdrawError::Transport(e.to_string()) }
+}
+
+impl From<Web3RpcError> for WithdrawError {
+    fn from(e: Web3RpcError) -> Self {
+        match e {
+            Web3RpcError::Transport(err) | Web3RpcError::InvalidResponse(err) => WithdrawError::Transport(err),
+            Web3RpcError::Internal(internal) => WithdrawError::InternalError(internal),
+        }
+    }
 }
 
 impl From<ethabi::Error> for BalanceError {
@@ -309,13 +350,18 @@ impl EthCoinImpl {
     }
 
     /// Get gas price
-    fn get_gas_price(&self) -> Box<dyn Future<Item = U256, Error = String> + Send> {
+    fn get_gas_price(&self) -> Web3RpcFut<U256> {
         let fut = if let Some(url) = &self.gas_station_url {
             Either01::A(
                 GasStationData::get_gas_price(&url).map(|price| increase_by_percent_one_gwei(price, GAS_PRICE_PERCENT)),
             )
         } else {
-            Either01::B(self.web3.eth().gas_price().map_err(|e| ERRL!("{}", e)))
+            Either01::B(
+                self.web3
+                    .eth()
+                    .gas_price()
+                    .map_err(|e| MmError::new(Web3RpcError::from(e))),
+            )
         };
         Box::new(fut)
     }
@@ -465,12 +511,7 @@ async fn withdraw_impl(ctx: MmArc, coin: EthCoin, req: WithdrawRequest) -> Withd
             return MmError::err(WithdrawError::InvalidFeePolicy(error));
         },
         None => {
-            let gas_price = coin
-                .get_gas_price()
-                .compat()
-                .await
-                // TODO change get_gas_price error type
-                .into_mm_and(WithdrawError::Transport)?;
+            let gas_price = coin.get_gas_price().compat().await?;
             // covering edge case by deducting the standard transfer fee when we want to max withdraw ETH
             let eth_value_for_estimate = if req.max && coin.coin_type == EthCoinType::Eth {
                 eth_value - gas_price * U256::from(21000)
@@ -2534,18 +2575,22 @@ impl MmCoin for EthCoin {
 
     fn get_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = String> + Send> {
         let coin = self.clone();
-        Box::new(self.get_gas_price().and_then(move |gas_price| {
-            let fee = gas_price * U256::from(150_000);
-            let fee_coin = match &coin.coin_type {
-                EthCoinType::Eth => &coin.ticker,
-                EthCoinType::Erc20 { platform, .. } => platform,
-            };
-            Ok(TradeFee {
-                coin: fee_coin.into(),
-                amount: try_s!(u256_to_big_decimal(fee, 18)).into(),
-                paid_from_trading_vol: false,
-            })
-        }))
+        Box::new(
+            self.get_gas_price()
+                .map_err(|e| e.to_string())
+                .and_then(move |gas_price| {
+                    let fee = gas_price * U256::from(150_000);
+                    let fee_coin = match &coin.coin_type {
+                        EthCoinType::Eth => &coin.ticker,
+                        EthCoinType::Erc20 { platform, .. } => platform,
+                    };
+                    Ok(TradeFee {
+                        coin: fee_coin.into(),
+                        amount: try_s!(u256_to_big_decimal(fee, 18)).into(),
+                        paid_from_trading_vol: false,
+                    })
+                }),
+        )
     }
 
     fn get_sender_trade_fee(
@@ -2818,17 +2863,23 @@ impl GasStationData {
         U256::from(self.average as u64) * U256::exp10(8)
     }
 
-    fn get_gas_price(uri: &str) -> Box<dyn Future<Item = U256, Error = String> + Send> {
+    fn get_gas_price(uri: &str) -> Web3RpcFut<U256> {
         let uri = uri.to_owned();
         let fut = async move { slurp_url(&uri).await };
-        Box::new(fut.boxed().compat().and_then(|res| -> Result<U256, String> {
-            if res.0 != StatusCode::OK {
-                return ERR!("Gas price request failed with status code {}", res.0);
-            }
+        Box::new(
+            fut.boxed()
+                .compat()
+                .map_err(|e| MmError::new(Web3RpcError::Transport(e)))
+                .and_then(|res| -> Web3RpcResult<U256> {
+                    if res.0 != StatusCode::OK {
+                        let error = format!("Gas price request failed with status code {}", res.0);
+                        return MmError::err(Web3RpcError::Transport(error));
+                    }
 
-            let result: GasStationData = try_s!(json::from_slice(&res.2));
-            Ok(result.average_gwei())
-        }))
+                    let result: GasStationData = json::from_slice(&res.2)?;
+                    Ok(result.average_gwei())
+                }),
+        )
     }
 }
 

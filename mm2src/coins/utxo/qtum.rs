@@ -161,7 +161,7 @@ impl UtxoCommonOps for QtumCoin {
         utxo_common::address_from_str(&self.utxo_arc.conf, address)
     }
 
-    async fn get_current_mtp(&self) -> MmRpcResult<u32> { utxo_common::get_current_mtp(&self.utxo_arc).await }
+    async fn get_current_mtp(&self) -> UtxoRpcResult<u32> { utxo_common::get_current_mtp(&self.utxo_arc).await }
 
     fn is_unspent_mature(&self, output: &RpcTransaction) -> bool { self.is_qtum_unspent_mature(output) }
 
@@ -181,7 +181,7 @@ impl UtxoCommonOps for QtumCoin {
         unsigned: TransactionInputSigner,
         data: AdditionalTxData,
         my_script_pub: Bytes,
-    ) -> MmRpcResult<(TransactionInputSigner, AdditionalTxData)> {
+    ) -> UtxoRpcResult<(TransactionInputSigner, AdditionalTxData)> {
         utxo_common::calc_interest_if_required(self, unsigned, data, my_script_pub).await
     }
 
@@ -208,7 +208,7 @@ impl UtxoCommonOps for QtumCoin {
     async fn ordered_mature_unspents<'a>(
         &'a self,
         address: &Address,
-    ) -> Result<(Vec<UnspentInfo>, AsyncMutexGuard<'a, RecentlySpentOutPoints>), String> {
+    ) -> UtxoRpcResult<(Vec<UnspentInfo>, AsyncMutexGuard<'a, RecentlySpentOutPoints>)> {
         utxo_common::ordered_mature_unspents(self, address).await
     }
 
@@ -228,7 +228,7 @@ impl UtxoCommonOps for QtumCoin {
     async fn list_unspent_ordered<'a>(
         &'a self,
         address: &Address,
-    ) -> Result<(Vec<UnspentInfo>, AsyncMutexGuard<'a, RecentlySpentOutPoints>), String> {
+    ) -> UtxoRpcResult<(Vec<UnspentInfo>, AsyncMutexGuard<'a, RecentlySpentOutPoints>)> {
         utxo_common::ordered_mature_unspents(self, address).await
     }
 
@@ -440,9 +440,7 @@ impl MarketCoinOps for QtumCoin {
         Box::new(fut.boxed().compat())
     }
 
-    fn base_coin_balance(&self) -> BalanceFut<BigDecimal> {
-        utxo_common::base_coin_balance(self)
-    }
+    fn base_coin_balance(&self) -> BalanceFut<BigDecimal> { utxo_common::base_coin_balance(self) }
 
     fn send_raw_tx(&self, tx: &str) -> Box<dyn Future<Item = String, Error = String> + Send> {
         utxo_common::send_raw_tx(&self.utxo_arc, tx)
