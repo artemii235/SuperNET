@@ -536,7 +536,7 @@ impl UtxoRpcClientOps for NativeClient {
     fn list_unspent(&self, address: &Address, decimals: u8) -> UtxoRpcFut<Vec<UnspentInfo>> {
         let fut = self
             .list_unspent_impl(0, std::i32::MAX, vec![address.to_string()])
-            .map_err(|e| MmError::new(UtxoRpcError::from(e)))
+            .into_mm_fut(UtxoRpcError::from)
             .and_then(move |unspents| {
                 let unspents: UtxoRpcResult<Vec<_>> = unspents
                     .into_iter()
@@ -1558,7 +1558,7 @@ impl UtxoRpcClientOps for ElectrumClient {
         let script_hash = electrum_script_hash(&script);
         Box::new(
             self.scripthash_list_unspent(&hex::encode(script_hash))
-                .map_err(|e| MmError::new(UtxoRpcError::from(e)))
+                .into_mm_fut(UtxoRpcError::from)
                 .map(move |unspents| {
                     unspents
                         .iter()
@@ -1664,7 +1664,7 @@ impl UtxoRpcClientOps for ElectrumClient {
         };
         Box::new(
             self.blockchain_block_headers(from, count)
-                .map_err(|e| MmError::new(UtxoRpcError::from(e)))
+                .into_mm_fut(UtxoRpcError::from)
                 .and_then(|res| {
                     if res.count == 0 {
                         return MmError::err(UtxoRpcError::InvalidResponse("Server returned zero count".to_owned()));

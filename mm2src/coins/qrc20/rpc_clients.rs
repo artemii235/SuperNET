@@ -389,9 +389,7 @@ impl Qrc20RpcOps for UtxoRpcClientEnum {
         tokens: &[Token],
     ) -> UtxoRpcFut<Vec<Token>> {
         let function = func.as_function().clone();
-        let params = try_f!(function
-            .encode_input(tokens)
-            .map_err(|e| MmError::new(UtxoRpcError::from(e))));
+        let params = try_f!(function.encode_input(tokens).into_mm(UtxoRpcError::from));
         let contract_addr = contract_addr_into_rpc_format(contract_addr);
 
         let rpc_client = self.clone();

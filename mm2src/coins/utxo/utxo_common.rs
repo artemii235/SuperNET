@@ -1204,7 +1204,7 @@ pub fn my_balance(coin: &UtxoCoinFields) -> BalanceFut<CoinBalance> {
     Box::new(
         coin.rpc_client
             .display_balance(coin.my_address.clone(), coin.decimals)
-            .map_err(|e| MmError::new(BalanceError::from(e)))
+            .into_mm_fut(BalanceError::from)
             // at the moment standard UTXO coins do not have an unspendable balance
             .map(|spendable| CoinBalance {
                 spendable,
@@ -1306,9 +1306,7 @@ pub async fn withdraw<T>(coin: T, req: WithdrawRequest) -> WithdrawResult
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps + MarketCoinOps,
 {
-    let to = coin
-        .address_from_str(&req.to)
-        .into_mm_and(WithdrawError::InvalidAddress)?;
+    let to = coin.address_from_str(&req.to).into_mm(WithdrawError::InvalidAddress)?;
 
     let conf = &coin.as_ref().conf;
     let is_p2pkh = to.prefix == conf.pub_addr_prefix && to.t_addr_prefix == conf.pub_t_addr_prefix;
@@ -1377,14 +1375,14 @@ where
         coin.as_ref().conf.signature_version,
         coin.as_ref().conf.fork_id,
     )
-    .into_mm_and(WithdrawError::InternalError)?;
+    .into_mm(WithdrawError::InternalError)?;
 
     let fee_amount = data.fee_amount + data.unused_change.unwrap_or_default();
     let fee_details = UtxoFeeDetails {
         amount: big_decimal_from_sat(fee_amount as i64, coin.as_ref().decimals),
     };
-    let my_address = coin.my_address().into_mm_and(WithdrawError::InternalError)?;
-    let to_address = coin.display_address(&to).into_mm_and(WithdrawError::InternalError)?;
+    let my_address = coin.my_address().into_mm(WithdrawError::InternalError)?;
+    let to_address = coin.display_address(&to).into_mm(WithdrawError::InternalError)?;
     Ok(TransactionDetails {
         from: vec![my_address],
         to: vec![to_address],

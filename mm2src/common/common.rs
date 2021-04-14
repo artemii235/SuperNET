@@ -58,7 +58,6 @@ macro_rules! ifrom {
     };
 }
 
-pub mod crash_reports;
 #[macro_use]
 pub mod jsonrpc_client;
 #[macro_use]
@@ -67,6 +66,7 @@ pub mod log;
 pub mod mm_metrics;
 
 pub mod big_int_str;
+pub mod crash_reports;
 pub mod custom_futures;
 pub mod duplex_mutex;
 pub mod file_lock;
@@ -74,7 +74,7 @@ pub mod file_lock;
 #[cfg(target_arch = "wasm32")] pub mod header;
 pub mod iguana_utils;
 pub mod mm_ctx;
-pub mod mm_error;
+#[path = "mm_error/mm_error.rs"] pub mod mm_error;
 pub mod mm_number;
 pub mod privkey;
 pub mod seri;
