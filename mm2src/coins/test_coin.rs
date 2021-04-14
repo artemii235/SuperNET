@@ -3,6 +3,7 @@ use crate::{BalanceFut, FeeApproxStage, FoundSwapTxSpend, TradePreimageError, Tr
             ValidateAddressResult, WithdrawFut, WithdrawRequest};
 use bigdecimal::BigDecimal;
 use common::mm_ctx::MmArc;
+use common::mm_number::MmNumber;
 use futures01::Future;
 use mocktopus::macros::*;
 use rpc::v1::types::Bytes as BytesJson;
@@ -67,6 +68,8 @@ impl MarketCoinOps for TestCoin {
     fn display_priv_key(&self) -> String { unimplemented!() }
 
     fn min_tx_amount(&self) -> BigDecimal { unimplemented!() }
+
+    fn min_trading_vol(&self) -> MmNumber { MmNumber::from("0.00777") }
 }
 
 #[mockable]

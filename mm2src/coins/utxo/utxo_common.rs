@@ -35,6 +35,9 @@ pub use chain::Transaction as UtxoTx;
 use self::rpc_clients::{electrum_script_hash, UnspentInfo, UtxoRpcClientEnum, UtxoRpcClientOps, UtxoRpcResult};
 use crate::{CanRefundHtlc, CoinBalance, FeeApproxStage, TradePreimageError, TradePreimageValue, ValidateAddressResult,
             WithdrawResult};
+use common::mm_number::MmNumber;
+
+const MIN_BTC_TRADING_VOL: &str = "0.00777";
 
 macro_rules! true_or {
     ($cond: expr, $etype: expr) => {
@@ -1298,6 +1301,14 @@ pub fn display_priv_key(coin: &UtxoCoinFields) -> String { format!("{}", coin.ke
 
 pub fn min_tx_amount(coin: &UtxoCoinFields) -> BigDecimal {
     big_decimal_from_sat(coin.dust_amount as i64, coin.decimals)
+}
+
+pub fn min_trading_vol(coin: &UtxoCoinFields) -> MmNumber {
+    if coin.conf.ticker == "BTC" {
+        return MmNumber::from(MIN_BTC_TRADING_VOL);
+    }
+    let dust_multiplier = MmNumber::from(10);
+    dust_multiplier * min_tx_amount(coin).into()
 }
 
 pub fn is_asset_chain(coin: &UtxoCoinFields) -> bool { coin.conf.asset_chain }

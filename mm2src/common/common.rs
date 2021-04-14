@@ -71,13 +71,13 @@ pub mod custom_futures;
 pub mod duplex_mutex;
 pub mod file_lock;
 #[cfg(not(target_arch = "wasm32"))] pub mod for_c;
-#[cfg(target_arch = "wasm32")] pub mod header;
 pub mod iguana_utils;
 pub mod mm_ctx;
 #[path = "mm_error/mm_error.rs"] pub mod mm_error;
 pub mod mm_number;
 pub mod privkey;
 pub mod seri;
+#[cfg(target_arch = "wasm32")] pub mod wasm_rpc;
 
 use atomic::Atomic;
 use bigdecimal::BigDecimal;
@@ -125,9 +125,6 @@ use uuid::Uuid;
 
 pub use num_bigint::BigInt;
 #[cfg(not(target_arch = "wasm32"))] pub use rusqlite;
-
-pub const MM_DATETIME: &str = env!("MM_DATETIME");
-pub const MM_VERSION: &str = env!("MM_VERSION");
 
 pub const SATOSHIS: u64 = 100_000_000;
 
@@ -1240,7 +1237,10 @@ where
         .body(Vec::from(body))
     {
         Ok(r) => future::ok::<Response<Vec<u8>>, String>(r),
-        Err(err) => future::err::<Response<Vec<u8>>, String>(ERRL!("{}", err)),
+        Err(err) => {
+            let err = ERRL!("{}", err);
+            future::err::<Response<Vec<u8>>, String>(json!({ "error": err }).to_string())
+        },
     };
     Box::new(rf)
 }
@@ -1504,13 +1504,8 @@ where
 use backtrace::SymbolName;
 
 #[cfg(target_arch = "wasm32")]
-pub fn now_ms() -> u64 {
-    #[wasm_bindgen(raw_module = "../../../js/defined-in-js.js")]
-    extern "C" {
-        pub fn date_now() -> f64;
-    }
-    date_now() as u64
-}
+pub fn now_ms() -> u64 { js_sys::Date::now() as u64 }
+
 #[cfg(target_arch = "wasm32")]
 pub fn now_float() -> f64 {
     use gstuff::duration_to_float;
