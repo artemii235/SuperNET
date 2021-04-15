@@ -58,7 +58,7 @@
 use crate::mm2::lp_network::broadcast_p2p_msg;
 use async_std::sync as async_std_sync;
 use bigdecimal::BigDecimal;
-use coins::{lp_coinfind, MmCoinEnum, TradeFee, TradePreimageError, TransactionEnum};
+use coins::{coin_conf, lp_coinfind, tx_hash_by_coin_conf, MmCoinEnum, TradeFee, TradePreimageError, TransactionEnum};
 use common::{bits256, block_on, calc_total_pages,
              executor::{spawn, Timer},
              log::{error, info},
@@ -911,6 +911,69 @@ impl SavedSwap {
         try_s!(std::fs::write(path, &content));
         Ok(())
     }
+
+    fn status_json(&self, ctx: &MmArc) -> Json {
+        let mut json = json::to_value(self).expect("serialization should not fail");
+
+        let maker_coin = match self.maker_coin_ticker() {
+            Ok(t) => t,
+            Err(_) => return json,
+        };
+
+        let taker_coin = match self.maker_coin_ticker() {
+            Ok(t) => t,
+            Err(_) => return json,
+        };
+
+        let maker_coin_conf = coin_conf(ctx, &maker_coin);
+        let taker_coin_conf = coin_conf(ctx, &taker_coin);
+
+        match self {
+            SavedSwap::Maker(_) => {
+                for event in json["events"].as_array_mut().unwrap() {
+                    let event_type = event["event"]["type"].as_str().unwrap().to_owned();
+                    let event_data = &mut event["event"]["data"];
+
+                    if event_type == "MakerPaymentSent" {
+                        let new_hash = tx_hash_by_coin_conf(&maker_coin_conf, event_data["tx_hash"].as_str().unwrap());
+                        event_data["tx_hash"] = new_hash.into();
+                    }
+
+                    let taker_coin_events = ["TakerFeeValidated", "TakerPaymentReceived", "TakerPaymentSpent"];
+                    if taker_coin_events.contains(&event_type.as_str()) {
+                        let new_hash = tx_hash_by_coin_conf(&taker_coin_conf, event_data["tx_hash"].as_str().unwrap());
+                        event_data["tx_hash"] = new_hash.into();
+                    }
+                }
+            },
+            SavedSwap::Taker(_) => {
+                for event in json["events"].as_array_mut().unwrap() {
+                    let event_type = event["event"]["type"].as_str().unwrap().to_owned();
+                    let event_data = &mut event["event"]["data"];
+
+                    if event_type == "MakerPaymentReceived" || event_type == "MakerPaymentSpent" {
+                        let new_hash = tx_hash_by_coin_conf(&maker_coin_conf, event_data["tx_hash"].as_str().unwrap());
+                        event_data["tx_hash"] = new_hash.into();
+                    }
+
+                    if event_type == "TakerFeeSent" || event_type == "TakerPaymentSent" {
+                        let new_hash = tx_hash_by_coin_conf(&taker_coin_conf, event_data["tx_hash"].as_str().unwrap());
+                        event_data["tx_hash"] = new_hash.into();
+                    }
+
+                    if event_type == "TakerPaymentSpent" {
+                        let new_hash = tx_hash_by_coin_conf(
+                            &taker_coin_conf,
+                            event_data["transaction"]["tx_hash"].as_str().unwrap(),
+                        );
+                        event_data["transaction"]["tx_hash"] = new_hash.into();
+                    }
+                }
+            },
+        }
+
+        json
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
@@ -956,17 +1019,18 @@ impl Into<SwapError> for &str {
 }
 
 #[derive(Serialize)]
-struct MySwapStatusResponse<'a> {
+struct MySwapStatusResponse {
     #[serde(flatten)]
-    swap: &'a SavedSwap,
+    swap: Json,
     my_info: Option<MySwapInfo>,
     recoverable: bool,
 }
 
-impl<'a> From<&'a SavedSwap> for MySwapStatusResponse<'a> {
-    fn from(swap: &'a SavedSwap) -> MySwapStatusResponse {
+impl MySwapStatusResponse {
+    fn from_swap_and_ctx(swap: &SavedSwap, ctx: &MmArc) -> Self {
+        let json = swap.status_json(ctx);
         MySwapStatusResponse {
-            swap,
+            swap: json,
             my_info: swap.get_my_info(),
             recoverable: swap.is_recoverable(),
         }
@@ -991,7 +1055,7 @@ pub fn my_swap_status(ctx: MmArc, req: Json) -> HyRes {
 
     rpc_response(
         200,
-        json!({ "result": MySwapStatusResponse::from(&status) }).to_string(),
+        json!({ "result": MySwapStatusResponse::from_swap_and_ctx(&status, &ctx) }).to_string(),
     )
 }
 
@@ -1357,7 +1421,7 @@ pub fn my_recent_swaps(ctx: MmArc, req: Json) -> HyRes {
         .map(|uuid| {
             let path = my_swap_file_path(&ctx, uuid);
             match json::from_slice::<SavedSwap>(&slurp(&path).unwrap()) {
-                Ok(swap) => json::to_value(MySwapStatusResponse::from(&swap)).unwrap(),
+                Ok(swap) => json::to_value(MySwapStatusResponse::from_swap_and_ctx(&swap, &ctx)).unwrap(),
                 Err(e) => {
                     error!("Error {} parsing JSON from {}", e, path.display());
                     Json::Null

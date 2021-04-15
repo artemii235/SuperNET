@@ -693,6 +693,10 @@ pub enum CoinProtocol {
     ERC20 { platform: String, contract_address: String },
 }
 
+impl CoinProtocol {
+    pub fn is_eth_or_erc20(&self) -> bool { matches!(self, CoinProtocol::ETH | CoinProtocol::ERC20 { .. }) }
+}
+
 pub type RpcTransportEventHandlerShared = Arc<dyn RpcTransportEventHandler + Send + Sync + 'static>;
 
 /// Common methods to measure the outgoing requests and incoming responses statistics.
@@ -1344,4 +1348,16 @@ pub fn address_by_coin_conf_and_pubkey_str(coin: &str, conf: &Json, pubkey: &str
             utxo::address_by_conf_and_pubkey_str(coin, conf, pubkey)
         },
     }
+}
+
+pub fn tx_hash_by_coin_conf(conf: &Json, hash: &str) -> String {
+    let mut hash: String = hash.into();
+    let protocol: CoinProtocol = match json::from_value(conf["protocol"].clone()) {
+        Ok(p) => p,
+        Err(_) => return hash,
+    };
+    if protocol.is_eth_or_erc20() && !hash.starts_with("0x") {
+        hash.insert_str(0, "0x");
+    }
+    hash
 }
