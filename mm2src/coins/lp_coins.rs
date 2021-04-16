@@ -626,6 +626,10 @@ pub enum MmCoinEnum {
     Test(TestCoin),
 }
 
+impl MmCoinEnum {
+    fn is_eth_or_erc20(&self) -> bool { matches!(self, MmCoinEnum::EthCoin(_)) }
+}
+
 impl From<UtxoStandardCoin> for MmCoinEnum {
     fn from(c: UtxoStandardCoin) -> MmCoinEnum { MmCoinEnum::UtxoCoin(c) }
 }
@@ -1104,6 +1108,13 @@ pub fn my_tx_history(ctx: MmArc, req: Json) -> HyRes {
                 } else {
                     Json::from(0)
                 };
+                if coin.is_eth_or_erc20() {
+                    let mut tx_hash = json["tx_hash"].as_str().expect("tx hash is string").to_owned();
+                    if !tx_hash.starts_with("0x") {
+                        tx_hash.insert_str(0, "0x");
+                    }
+                    json["tx_hash"] = tx_hash.into();
+                }
                 json
             })
             .collect();

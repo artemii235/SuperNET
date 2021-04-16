@@ -931,40 +931,52 @@ impl SavedSwap {
         match self {
             SavedSwap::Maker(_) => {
                 for event in json["events"].as_array_mut().unwrap() {
-                    let event_type = event["event"]["type"].as_str().unwrap().to_owned();
+                    let event_type = event["event"]["type"].as_str().expect("must be string").to_owned();
                     let event_data = &mut event["event"]["data"];
 
                     if event_type == "MakerPaymentSent" {
-                        let new_hash = tx_hash_by_coin_conf(&maker_coin_conf, event_data["tx_hash"].as_str().unwrap());
+                        let new_hash = tx_hash_by_coin_conf(
+                            &maker_coin_conf,
+                            event_data["tx_hash"].as_str().expect("must be string"),
+                        );
                         event_data["tx_hash"] = new_hash.into();
                     }
 
                     let taker_coin_events = ["TakerFeeValidated", "TakerPaymentReceived", "TakerPaymentSpent"];
                     if taker_coin_events.contains(&event_type.as_str()) {
-                        let new_hash = tx_hash_by_coin_conf(&taker_coin_conf, event_data["tx_hash"].as_str().unwrap());
+                        let new_hash = tx_hash_by_coin_conf(
+                            &taker_coin_conf,
+                            event_data["tx_hash"].as_str().expect("must be string"),
+                        );
                         event_data["tx_hash"] = new_hash.into();
                     }
                 }
             },
             SavedSwap::Taker(_) => {
                 for event in json["events"].as_array_mut().unwrap() {
-                    let event_type = event["event"]["type"].as_str().unwrap().to_owned();
+                    let event_type = event["event"]["type"].as_str().expect("must be string").to_owned();
                     let event_data = &mut event["event"]["data"];
 
                     if event_type == "MakerPaymentReceived" || event_type == "MakerPaymentSpent" {
-                        let new_hash = tx_hash_by_coin_conf(&maker_coin_conf, event_data["tx_hash"].as_str().unwrap());
+                        let new_hash = tx_hash_by_coin_conf(
+                            &maker_coin_conf,
+                            event_data["tx_hash"].as_str().expect("must be string"),
+                        );
                         event_data["tx_hash"] = new_hash.into();
                     }
 
                     if event_type == "TakerFeeSent" || event_type == "TakerPaymentSent" {
-                        let new_hash = tx_hash_by_coin_conf(&taker_coin_conf, event_data["tx_hash"].as_str().unwrap());
+                        let new_hash = tx_hash_by_coin_conf(
+                            &taker_coin_conf,
+                            event_data["tx_hash"].as_str().expect("must be string"),
+                        );
                         event_data["tx_hash"] = new_hash.into();
                     }
 
                     if event_type == "TakerPaymentSpent" {
                         let new_hash = tx_hash_by_coin_conf(
                             &taker_coin_conf,
-                            event_data["transaction"]["tx_hash"].as_str().unwrap(),
+                            event_data["transaction"]["tx_hash"].as_str().expect("must be string"),
                         );
                         event_data["transaction"]["tx_hash"] = new_hash.into();
                     }
