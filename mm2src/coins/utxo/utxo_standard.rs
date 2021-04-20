@@ -394,8 +394,6 @@ impl MarketCoinOps for UtxoStandardCoin {
 impl MmCoin for UtxoStandardCoin {
     fn is_asset_chain(&self) -> bool { utxo_common::is_asset_chain(&self.utxo_arc) }
 
-    fn wallet_only(&self) -> bool { false }
-
     fn withdraw(&self, req: WithdrawRequest) -> Box<dyn Future<Item = TransactionDetails, Error = String> + Send> {
         Box::new(utxo_common::withdraw(self.clone(), req).boxed().compat())
     }

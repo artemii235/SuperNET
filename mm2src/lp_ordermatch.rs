@@ -2676,11 +2676,11 @@ pub async fn buy(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
     let rel_coin = try_s!(rel_coin.ok_or("Rel coin is not found or inactive"));
     let base_coin = try_s!(lp_coinfind(&ctx, &input.base).await);
     let base_coin: MmCoinEnum = try_s!(base_coin.ok_or("Base coin is not found or inactive"));
-    if base_coin.wallet_only() {
-        return ERR!("Base coin is wallet only");
+    if base_coin.wallet_only(&ctx) {
+        return ERR!("Base coin {} is wallet only", input.base);
     }
-    if rel_coin.wallet_only() {
-        return ERR!("Rel coin is wallet only");
+    if rel_coin.wallet_only(&ctx) {
+        return ERR!("Rel coin {} is wallet only", input.rel);
     }
     let my_amount = &input.volume * &input.price;
     try_s!(
@@ -2708,11 +2708,11 @@ pub async fn sell(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
     let base_coin = try_s!(base_coin.ok_or("Base coin is not found or inactive"));
     let rel_coin = try_s!(lp_coinfind(&ctx, &input.rel).await);
     let rel_coin = try_s!(rel_coin.ok_or("Rel coin is not found or inactive"));
-    if base_coin.wallet_only() {
-        return ERR!("Base coin is wallet only");
+    if base_coin.wallet_only(&ctx) {
+        return ERR!("Base coin {} is wallet only", input.base);
     }
-    if rel_coin.wallet_only() {
-        return ERR!("Rel coin is wallet only");
+    if rel_coin.wallet_only(&ctx) {
+        return ERR!("Rel coin {} is wallet only", input.rel);
     }
     try_s!(
         check_balance_for_taker_swap(
@@ -3183,11 +3183,11 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
         None => return ERR!("Rel coin {} is not found", req.rel),
     };
 
-    if base_coin.wallet_only() {
-        return ERR!("Base coin is wallet only");
+    if base_coin.wallet_only(&ctx) {
+        return ERR!("Base coin {} is wallet only", req.base);
     }
-    if rel_coin.wallet_only() {
-        return ERR!("Rel coin is wallet only");
+    if rel_coin.wallet_only(&ctx) {
+        return ERR!("Rel coin {} is wallet only", req.rel);
     }
 
     let my_balance = try_s!(

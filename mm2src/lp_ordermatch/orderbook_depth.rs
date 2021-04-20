@@ -1,5 +1,6 @@
 use super::{orderbook_topic_from_base_rel, OrdermatchContext, OrdermatchRequest};
 use crate::mm2::lp_network::{request_any_relay, P2PRequest};
+use coins::coin_conf;
 use common::{log, mm_ctx::MmArc};
 use http::Response;
 use serde_json::{self as json, Value as Json};
@@ -30,6 +31,30 @@ struct PairWithDepth {
 pub async fn orderbook_depth_rpc(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
     let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
     let req: OrderbookDepthReq = try_s!(json::from_value(req));
+
+    let wallet_only_pairs: Vec<_> = req
+        .pairs
+        .clone()
+        .into_iter()
+        .filter_map(|pair| {
+            let first_pair_coin_conf = coin_conf(&ctx, &pair.0);
+            if first_pair_coin_conf["wallet_only"].as_bool().unwrap_or(false) {
+                Some(pair)
+            } else {
+                let second_pair_coin_conf = coin_conf(&ctx, &pair.1);
+                if second_pair_coin_conf["wallet_only"].as_bool().unwrap_or(false) {
+                    Some(pair)
+                } else {
+                    None
+                }
+            }
+        })
+        .collect();
+
+    if !wallet_only_pairs.is_empty() {
+        return ERR!("Pairs {:?} has wallet only coins", wallet_only_pairs);
+    }
+
     let mut result = Vec::with_capacity(req.pairs.len());
 
     let orderbook = ordermatch_ctx.orderbook.lock().await;

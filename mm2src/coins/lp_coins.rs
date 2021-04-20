@@ -513,7 +513,10 @@ pub trait MmCoin: SwapOps + MarketCoinOps + fmt::Debug + Send + Sync + 'static {
     fn is_asset_chain(&self) -> bool;
 
     /// The coin can be initialized, but it cannot participate in the swaps.
-    fn wallet_only(&self) -> bool;
+    fn wallet_only(&self, ctx: &MmArc) -> bool {
+        let coin_conf = coin_conf(&ctx, &self.ticker());
+        coin_conf["wallet_only"].as_bool().unwrap_or(false)
+    }
 
     fn withdraw(&self, req: WithdrawRequest) -> Box<dyn Future<Item = TransactionDetails, Error = String> + Send>;
 

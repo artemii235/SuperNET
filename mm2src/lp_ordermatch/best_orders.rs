@@ -106,6 +106,10 @@ pub async fn process_best_orders_p2p_request(
 
 pub async fn best_orders_rpc(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
     let req: BestOrdersRequest = try_s!(json::from_value(req));
+    let req_coin_conf = coin_conf(&ctx, &req.coin);
+    if req_coin_conf["wallet_only"].as_bool().unwrap_or(false) {
+        return ERR!("Coin {} is wallet only", &req.coin);
+    }
     let p2p_request = OrdermatchRequest::BestOrders {
         coin: req.coin,
         action: req.action,
@@ -122,6 +126,9 @@ pub async fn best_orders_rpc(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>,
             if coin_conf.is_null() {
                 log::warn!("Coin {} is not found in config", coin);
                 continue;
+            }
+            if coin_conf["wallet_only"].as_bool().unwrap_or(false) {
+                return ERR!("Coin {} is wallet only", coin);
             }
             for order_w_proof in orders_w_proofs {
                 let order = order_w_proof.order;

@@ -82,9 +82,15 @@ pub async fn orderbook_rpc(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, S
     if base_coin_conf.is_null() {
         return ERR!("Coin {} is not found in config", req.base);
     }
+    if base_coin_conf["wallet_only"].as_bool().unwrap_or(false) {
+        return ERR!("Base Coin {} is wallet only", req.base);
+    }
     let rel_coin_conf = coin_conf(&ctx, &req.rel);
     if rel_coin_conf.is_null() {
         return ERR!("Coin {} is not found in config", req.rel);
+    }
+    if rel_coin_conf["wallet_only"].as_bool().unwrap_or(false) {
+        return ERR!("Base Coin {} is wallet only", req.rel);
     }
     let request_orderbook = true;
     try_s!(subscribe_to_orderbook_topic(&ctx, &req.base, &req.rel, request_orderbook).await);
