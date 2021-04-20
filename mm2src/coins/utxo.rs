@@ -916,7 +916,11 @@ impl<'a> UtxoConfBuilder<'a> {
     }
 
     fn fork_id(&self) -> u32 {
-        let hex_string = self.conf["fork_id"].as_str().unwrap_or("0x0");
+        let default_fork_id = match self.ticker {
+            "BCH" => "0x40",
+            _ => "0x0"
+        };
+        let hex_string = self.conf["fork_id"].as_str().unwrap_or(default_fork_id);
         let fork_id = u32::from_str_radix(hex_string.trim_start_matches("0x"), 16).unwrap();
         fork_id
     }
