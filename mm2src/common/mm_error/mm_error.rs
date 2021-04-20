@@ -1,4 +1,6 @@
+use crate::HttpStatusCode;
 use derive_more::Display;
+use http::StatusCode;
 use itertools::Itertools;
 use serde::ser;
 use serde::{Serialize, Serializer};
@@ -11,7 +13,7 @@ pub mod prelude {
     pub use crate::mm_error::into_mm_fut::IntoMmFutureExt;
     pub use crate::mm_error::map_mm_error::MapMmError;
     pub use crate::mm_error::or_mm_error::OrMmError;
-    pub use crate::mm_error::MmError;
+    pub use crate::mm_error::{MmError, NotMmError, SerializeErrorType};
 }
 
 mod into_mm;
@@ -29,6 +31,10 @@ impl<E> !NotMmError for MmError<E> {}
 /// This is required because an auto trait is not automatically implemented for a non-sized types,
 /// e.g for Box<dyn Trait>.
 impl<T: ?Sized> NotMmError for Box<T> {}
+
+pub trait SerializeErrorType: Serialize + fmt::Display + NotMmError {}
+
+impl<E> SerializeErrorType for E where E: Serialize + fmt::Display + NotMmError {}
 
 /// The unified error representation tracing an error path.
 ///
@@ -93,7 +99,7 @@ where
 
 impl<E> Serialize for MmError<E>
 where
-    E: fmt::Display + Serialize + NotMmError,
+    E: SerializeErrorType,
 {
     fn serialize<S>(&self, serializer: S) -> Result<<S as Serializer>::Ok, <S as Serializer>::Error>
     where
@@ -119,6 +125,13 @@ where
         };
         helper.serialize(serializer)
     }
+}
+
+impl<E> HttpStatusCode for MmError<E>
+where
+    E: HttpStatusCode + NotMmError,
+{
+    fn status_code(&self) -> StatusCode { self.etype.status_code() }
 }
 
 impl<E: NotMmError> MmError<E> {
@@ -163,7 +176,7 @@ impl<E: NotMmError> MmError<E> {
 
 impl<E> MmError<E>
 where
-    E: Serialize + NotMmError,
+    E: SerializeErrorType,
 {
     /// Check if the [`MmError::etype`] serialized representation flattens into `error_type` tag and `error_data` content.
     fn check_serialized_etype<SerdeError: ser::Error>(&self) -> Result<(), SerdeError> {

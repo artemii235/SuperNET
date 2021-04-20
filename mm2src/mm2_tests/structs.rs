@@ -7,8 +7,30 @@ use bigdecimal::BigDecimal;
 use common::mm_number::{Fraction, MmNumber};
 use num_rational::BigRational;
 use rpc::v1::types::H256 as H256Json;
+use serde_json::Value as Json;
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RpcSuccessResponse<T> {
+    pub mmrpc: String,
+    pub result: T,
+    pub id: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RpcErrorResponse<E> {
+    pub mmrpc: String,
+    /// The legacy error description
+    pub error: String,
+    pub error_path: String,
+    pub error_trace: String,
+    pub error_type: String,
+    pub error_data: Option<E>,
+    pub id: Option<usize>,
+}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -461,4 +483,40 @@ impl TradePreimageResponse {
 #[serde(deny_unknown_fields)]
 pub struct MaxTakerVolResponse {
     pub result: Fraction,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TransactionDetails {
+    pub tx_hex: String,
+    pub tx_hash: String,
+    pub from: Vec<String>,
+    pub to: Vec<String>,
+    pub total_amount: BigDecimal,
+    pub spent_by_me: BigDecimal,
+    pub received_by_me: BigDecimal,
+    pub my_balance_change: BigDecimal,
+    pub block_height: u64,
+    pub timestamp: u64,
+    pub fee_details: Json,
+    pub coin: String,
+    pub internal_id: String,
+}
+
+pub mod withdraw_error {
+    use bigdecimal::BigDecimal;
+
+    #[derive(Debug, Deserialize, PartialEq)]
+    #[serde(deny_unknown_fields)]
+    pub struct NotSufficientBalance {
+        pub coin: String,
+        pub available: BigDecimal,
+        pub required: BigDecimal,
+    }
+
+    #[derive(Debug, Deserialize, PartialEq)]
+    #[serde(deny_unknown_fields)]
+    pub struct AmountIsTooSmall {
+        pub amount: BigDecimal,
+    }
 }

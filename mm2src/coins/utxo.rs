@@ -68,11 +68,10 @@ use utxo_common::{big_decimal_from_sat, display_address};
 
 pub use chain::Transaction as UtxoTx;
 
-use self::rpc_clients::{ConcurrentRequestMap, ElectrumClient, ElectrumClientImpl, ElectrumRpcRequest,
-                        EstimateFeeMethod, EstimateFeeMode, UnspentInfo, UtxoRpcClientEnum, UtxoRpcError,
-                        UtxoRpcResult};
 #[cfg(not(target_arch = "wasm32"))]
-use self::rpc_clients::{NativeClient, NativeClientImpl};
+use self::rpc_clients::{ConcurrentRequestMap, NativeClient, NativeClientImpl};
+use self::rpc_clients::{ElectrumClient, ElectrumClientImpl, ElectrumRpcRequest, EstimateFeeMethod, EstimateFeeMode,
+                        UnspentInfo, UtxoRpcClientEnum, UtxoRpcError, UtxoRpcResult};
 use super::{BalanceError, BalanceFut, BalanceResult, CoinTransportMetrics, CoinsContext, FeeApproxStage,
             FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, NumConversError, NumConversResult,
             RpcClientType, RpcTransportEventHandler, RpcTransportEventHandlerShared, TradeFee, TradePreimageError,
@@ -646,8 +645,10 @@ impl GenerateTxError {
                     required,
                 }
             },
-            GenerateTxError::EmptyOutputs | GenerateTxError::OutputValueLessThanDust { .. } => {
-                WithdrawError::InternalError(self.to_string())
+            GenerateTxError::EmptyOutputs => WithdrawError::InternalError(self.to_string()),
+            GenerateTxError::OutputValueLessThanDust { value, .. } => {
+                let amount = utxo_common::big_decimal_from_sat_unsigned(value, decimals);
+                WithdrawError::AmountIsTooSmall { amount }
             },
             GenerateTxError::DeductFeeFromOutputFailed {
                 output_value, required, ..

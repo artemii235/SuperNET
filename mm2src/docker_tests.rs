@@ -2779,4 +2779,89 @@ mod docker_tests {
         // 4 utxos are merged of 5 so the resulting unspents len must be 2
         assert_eq!(unspents.len(), 2);
     }
+
+    #[test]
+    fn test_withdraw_not_sufficient_balance() {
+        let privkey = SecretKey::random(&mut rand4::thread_rng()).serialize();
+        let coins = json! ([
+            {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
+            {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
+        ]);
+        let mm = MarketMakerIt::start(
+            json! ({
+                "gui": "nogui",
+                "netid": 9000,
+                "dht": "on",  // Enable DHT without delay.
+                "passphrase": format!("0x{}", hex::encode(privkey)),
+                "coins": coins,
+                "rpc_password": "pass",
+                "i_am_seed": true,
+            }),
+            "pass".to_string(),
+            None,
+        )
+        .unwrap();
+        let (_bob_dump_log, _bob_dump_dashboard) = mm_dump(&mm.log_path);
+        log!([block_on(enable_native(&mm, "MYCOIN", &[]))]);
+
+        // balance = 0, but amount = 1
+        let amount = BigDecimal::from(1);
+        let withdraw = block_on(mm.rpc(json! ({
+            "mmrpc": "2.0",
+            "userpass": mm.userpass,
+            "method": "withdraw",
+            "params": {
+                "coin": "MYCOIN",
+                "to": "RJTYiYeJ8eVvJ53n2YbrVmxWNNMVZjDGLh",
+                "amount": amount,
+            },
+            "id": 0,
+        })))
+        .unwrap();
+
+        assert!(withdraw.0.is_client_error(), "RICK withdraw: {}", withdraw.1);
+        log!("error: "[withdraw.1]);
+        let error: RpcErrorResponse<withdraw_error::NotSufficientBalance> =
+            json::from_str(&withdraw.1).expect("Expected 'RpcErrorResponse<NotSufficientBalance>'");
+        let expected_error = withdraw_error::NotSufficientBalance {
+            coin: "MYCOIN".to_owned(),
+            available: 0.into(),
+            required: amount,
+        };
+        assert_eq!(error.error_type, "NotSufficientBalance");
+        assert_eq!(error.error_data, Some(expected_error));
+
+        // fill the MYCOIN balance
+        let balance = BigDecimal::from(1) / BigDecimal::from(2);
+        let (_ctx, coin) = utxo_coin_from_privkey("MYCOIN", &privkey);
+        fill_address(&coin, &coin.my_address().unwrap(), balance.clone(), 30);
+
+        // txfee = 0.00001, amount = 0.5 => required = 0.50001
+        // but balance = 0.5
+        let txfee = BigDecimal::from(1) / BigDecimal::from(100000);
+        let withdraw = block_on(mm.rpc(json! ({
+            "mmrpc": "2.0",
+            "userpass": mm.userpass,
+            "method": "withdraw",
+            "params": {
+                "coin": "MYCOIN",
+                "to": "RJTYiYeJ8eVvJ53n2YbrVmxWNNMVZjDGLh",
+                "amount": balance,
+            },
+            "id": 0,
+        })))
+        .unwrap();
+
+        assert!(withdraw.0.is_client_error(), "RICK withdraw: {}", withdraw.1);
+        log!("error: "[withdraw.1]);
+        let error: RpcErrorResponse<withdraw_error::NotSufficientBalance> =
+            json::from_str(&withdraw.1).expect("Expected 'RpcErrorResponse<NotSufficientBalance>'");
+        let expected_error = withdraw_error::NotSufficientBalance {
+            coin: "MYCOIN".to_owned(),
+            available: balance.clone(),
+            required: balance + txfee,
+        };
+        assert_eq!(error.error_type, "NotSufficientBalance");
+        assert_eq!(error.error_data, Some(expected_error));
+    }
 }

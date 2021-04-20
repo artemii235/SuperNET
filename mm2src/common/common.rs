@@ -547,6 +547,10 @@ pub type SlurpRes = Result<(StatusCode, HeaderMap, Vec<u8>), String>;
 /// the handler is responsible for spawning the future on another reactor if it doesn't fit the `CORE` well.
 pub type HyRes = Box<dyn Future<Item = Response<Vec<u8>>, Error = String> + Send>;
 
+pub trait HttpStatusCode {
+    fn status_code(&self) -> StatusCode;
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 struct HostedHttpRequest {
     method: String,

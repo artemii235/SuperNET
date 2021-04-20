@@ -37,13 +37,14 @@ use common::mm_ctx::{from_ctx, MmArc};
 use common::mm_error::prelude::*;
 use common::mm_metrics::MetricsWeak;
 use common::mm_number::MmNumber;
-use common::{block_on, calc_total_pages, now_ms, rpc_err_response, rpc_response, HyRes, TraceSource, Traceable};
+use common::{block_on, calc_total_pages, now_ms, rpc_err_response, rpc_response, HttpStatusCode, HyRes, TraceSource,
+             Traceable};
 use derive_more::Display;
 use futures::compat::Future01CompatExt;
 use futures::lock::Mutex as AsyncMutex;
 use futures01::Future;
 use gstuff::slurp;
-use http::Response;
+use http::{Response, StatusCode};
 use rpc::v1::types::Bytes as BytesJson;
 use serde::{Deserialize, Deserializer};
 use serde_json::{self as json, Value as Json};
@@ -568,10 +569,26 @@ pub enum WithdrawError {
     InvalidAddress(String),
     #[display(fmt = "Invalid fee policy: {}", _0)]
     InvalidFeePolicy(String),
+    #[display(fmt = "No such coin {}", coin)]
+    NoSuchCoin { coin: String },
     #[display(fmt = "Transport error: {}", _0)]
     Transport(String),
     #[display(fmt = "Internal error: {}", _0)]
     InternalError(String),
+}
+
+impl HttpStatusCode for WithdrawError {
+    fn status_code(&self) -> StatusCode {
+        match self {
+            WithdrawError::NotSufficientBalance { .. }
+            | WithdrawError::ZeroBalanceToWithdrawMax
+            | WithdrawError::AmountIsTooSmall { .. }
+            | WithdrawError::InvalidAddress(_)
+            | WithdrawError::InvalidFeePolicy(_)
+            | WithdrawError::NoSuchCoin { .. } => StatusCode::BAD_REQUEST,
+            WithdrawError::Transport(_) | WithdrawError::InternalError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        }
+    }
 }
 
 impl From<NumConversError> for WithdrawError {
@@ -1085,42 +1102,16 @@ pub async fn validate_address(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>
     Ok(try_s!(Response::builder().body(body)))
 }
 
-// #[derive(Deserialize, Serialize)]
-// pub enum MmRpcVersion {
-//     #[serde(rename = "1.0")]
-//     V1,
-//     #[serde(rename = "2.0")]
-//     V2,
-// }
-//
-// impl Default for MmRpcVersion {
-//     fn default() -> Self { MmRpcVersion::V1 }
-// }
-//
-// #[derive(Serialize)]
-// pub enum MmRpcResult<T: serde::Serialize, E: serde::Serialize> {
-//     Ok(T),
-//     Err(MmError<E>),
-// }
-//
-// #[derive(Serialize)]
-// pub struct MmRpcResponse<R: serde::Serialize, E: serde::Serialize> {
-//     mmrpc: MmRpcVersion,
-//     result: Result<R, MmError<E>>,
-//     id: Option<usize>,
-// }
+pub async fn withdraw(ctx: MmArc, req: WithdrawRequest) -> WithdrawResult {
+    let ticker = &req.coin;
 
-pub async fn withdraw(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
-    let ticker = try_s!(req["coin"].as_str().ok_or("No 'coin' field")).to_owned();
-    let coin = match lp_coinfind(&ctx, &ticker).await {
+    let coin = match lp_coinfind(&ctx, ticker).await {
         Ok(Some(t)) => t,
-        Ok(None) => return ERR!("No such coin: {}", ticker),
-        Err(err) => return ERR!("!lp_coinfind({}): {}", ticker, err),
+        Ok(None) => return MmError::err(WithdrawError::NoSuchCoin { coin: ticker.clone() }),
+        // TODO add LpCoinError
+        Err(err) => return MmError::err(WithdrawError::InternalError(err)),
     };
-    let withdraw_req: WithdrawRequest = try_s!(json::from_value(req));
-    let res = try_s!(coin.withdraw(withdraw_req).compat().await);
-    let body = try_s!(json::to_vec(&res));
-    Ok(try_s!(Response::builder().body(body)))
+    coin.withdraw(req).compat().await
 }
 
 pub async fn send_raw_transaction(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
