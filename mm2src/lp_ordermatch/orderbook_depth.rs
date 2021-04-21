@@ -1,6 +1,6 @@
 use super::{orderbook_topic_from_base_rel, OrdermatchContext, OrdermatchRequest};
 use crate::mm2::lp_network::{request_any_relay, P2PRequest};
-use coins::coin_conf;
+use coins::is_wallet_only_ticker;
 use common::{log, mm_ctx::MmArc};
 use http::Response;
 use serde_json::{self as json, Value as Json};
@@ -34,21 +34,8 @@ pub async fn orderbook_depth_rpc(ctx: MmArc, req: Json) -> Result<Response<Vec<u
 
     let wallet_only_pairs: Vec<_> = req
         .pairs
-        .clone()
-        .into_iter()
-        .filter_map(|pair| {
-            let first_pair_coin_conf = coin_conf(&ctx, &pair.0);
-            if first_pair_coin_conf["wallet_only"].as_bool().unwrap_or(false) {
-                Some(pair)
-            } else {
-                let second_pair_coin_conf = coin_conf(&ctx, &pair.1);
-                if second_pair_coin_conf["wallet_only"].as_bool().unwrap_or(false) {
-                    Some(pair)
-                } else {
-                    None
-                }
-            }
-        })
+        .iter()
+        .filter(|pair| is_wallet_only_ticker(&ctx, &pair.0) || is_wallet_only_ticker(&ctx, &pair.1))
         .collect();
 
     if !wallet_only_pairs.is_empty() {

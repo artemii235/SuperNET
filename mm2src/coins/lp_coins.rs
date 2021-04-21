@@ -831,6 +831,15 @@ pub fn coin_conf(ctx: &MmArc, ticker: &str) -> Json {
     }
 }
 
+pub fn is_wallet_only_conf(conf: &Json) -> bool {
+    conf["wallet_only"].as_bool().unwrap_or(false)
+}
+
+pub fn is_wallet_only_ticker(ctx: &MmArc, ticker: &str) -> bool {
+    let coin_conf = coin_conf(ctx, ticker);
+    coin_conf["wallet_only"].as_bool().unwrap_or(false)
+}
+
 /// Adds a new currency into the list of currencies configured.
 ///
 /// Returns an error if the currency already exists. Initializing the same currency twice is a bad habit
