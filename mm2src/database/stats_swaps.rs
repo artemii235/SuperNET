@@ -31,6 +31,13 @@ const INSERT_STATS_SWAP: &str = "INSERT INTO stats_swaps (
     is_success
 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)";
 
+const ADD_SPLIT_TICKERS: &str = r#"
+    ALTER TABLE stats_swaps ADD COLUMN maker_coin_ticker VARCHAR(255) NOT NULL DEFAULT ""
+    ALTER TABLE stats_swaps ADD COLUMN maker_coin_platform VARCHAR(255) NOT NULL DEFAULT ""   
+    ALTER TABLE stats_swaps ADD COLUMN taker_coin_ticker VARCHAR(255) NOT NULL DEFAULT ""
+    ALTER TABLE stats_swaps ADD COLUMN taker_coin_platform VARCHAR(255) NOT NULL DEFAULT ""
+"#;
+
 pub const ADD_STARTED_AT_INDEX: &str = "CREATE INDEX timestamp_index ON stats_swaps (started_at);";
 
 const SELECT_ID_BY_UUID: &str = "SELECT id FROM stats_swaps WHERE uuid = ?1";
@@ -197,3 +204,5 @@ pub fn add_swap_to_index(conn: &Connection, swap: &SavedSwap) {
         error!("Error {} on query {} with params {:?}", e, sql, params);
     };
 }
+
+pub fn add_and_split_tickers() -> Vec<(&'static str, Vec<String>)> { vec![(ADD_SPLIT_TICKERS, vec![])] }
