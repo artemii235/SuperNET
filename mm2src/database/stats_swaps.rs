@@ -31,12 +31,16 @@ const INSERT_STATS_SWAP: &str = "INSERT INTO stats_swaps (
     is_success
 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)";
 
-const ADD_SPLIT_TICKERS: &str = r#"
-    ALTER TABLE stats_swaps ADD COLUMN maker_coin_ticker VARCHAR(255) NOT NULL DEFAULT ""
-    ALTER TABLE stats_swaps ADD COLUMN maker_coin_platform VARCHAR(255) NOT NULL DEFAULT ""   
-    ALTER TABLE stats_swaps ADD COLUMN taker_coin_ticker VARCHAR(255) NOT NULL DEFAULT ""
-    ALTER TABLE stats_swaps ADD COLUMN taker_coin_platform VARCHAR(255) NOT NULL DEFAULT ""
-"#;
+const ADD_SPLIT_TICKERS: &[&str] = &[
+    "ALTER TABLE stats_swaps ADD COLUMN maker_coin_ticker VARCHAR(255) NOT NULL DEFAULT '';",
+    "ALTER TABLE stats_swaps ADD COLUMN maker_coin_platform VARCHAR(255) NOT NULL DEFAULT '';",
+    "ALTER TABLE stats_swaps ADD COLUMN taker_coin_ticker VARCHAR(255) NOT NULL DEFAULT '';",
+    "ALTER TABLE stats_swaps ADD COLUMN taker_coin_platform VARCHAR(255) NOT NULL DEFAULT '';",
+    "UPDATE stats_swaps SET maker_coin_ticker = substr(maker_coin, 0, instr(maker_coin, '-'));",
+    "UPDATE stats_swaps SET maker_coin_platform = substr(maker_coin, instr(maker_coin, '-')+1);",
+    "UPDATE stats_swaps SET taker_coin_ticker = substr(taker_coin, 0, instr(taker_coin, '-'));",
+    "UPDATE stats_swaps SET taker_coin_platform = substr(taker_coin, instr(taker_coin, '-')+1);",
+];
 
 pub const ADD_STARTED_AT_INDEX: &str = "CREATE INDEX timestamp_index ON stats_swaps (started_at);";
 
@@ -205,4 +209,6 @@ pub fn add_swap_to_index(conn: &Connection, swap: &SavedSwap) {
     };
 }
 
-pub fn add_and_split_tickers() -> Vec<(&'static str, Vec<String>)> { vec![(ADD_SPLIT_TICKERS, vec![])] }
+pub fn add_and_split_tickers() -> Vec<(&'static str, Vec<String>)> {
+    ADD_SPLIT_TICKERS.into_iter().map(|sql| (*sql, vec![])).collect()
+}
