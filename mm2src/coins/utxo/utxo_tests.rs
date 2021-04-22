@@ -2428,3 +2428,33 @@ fn verus_mtp() {
         .unwrap();
     assert_eq!(mtp, 1618579909);
 }
+
+#[test]
+fn mint_slp_token() {
+    use bitcoin_cash_slp::{slp_genesis_output, SlpTokenType};
+    let ctx = MmCtxBuilder::new().into_mm_arc();
+    let conf = json!({
+        "decimals": 8,
+        "network": "regtest",
+        "confpath": "/home/artem/.bch/bch.conf",
+        "address_format": {
+            "format": "cashaddress",
+            "network": "bchreg",
+        },
+        "pubtype": 111,
+        "p2shtype": 196,
+    });
+    let req = json!({
+        "method": "enable",
+    });
+    let priv_key = hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap();
+    let coin = block_on(utxo_standard_coin_from_conf_and_request(
+        &ctx, "BCH", &conf, &req, &priv_key,
+    ))
+    .unwrap();
+    let address = coin.my_address().unwrap();
+    println!("{}", address);
+
+    let balance = coin.my_balance().wait().unwrap();
+    println!("{}", balance.spendable);
+}
