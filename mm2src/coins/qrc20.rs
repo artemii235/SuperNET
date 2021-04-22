@@ -359,17 +359,8 @@ impl Qrc20Coin {
         let (unsigned, data) = self
             .generate_transaction(unspents, outputs, fee_policy, tx_fee, Some(gas_fee))
             .await?;
-        let prev_script = ScriptBuilder::build_p2pkh(&self.utxo.my_address.hash);
-        let signed = try_map!(
-            sign_tx(
-                unsigned,
-                &self.utxo.key_pair,
-                prev_script,
-                self.utxo.conf.signature_version,
-                self.utxo.conf.fork_id
-            ),
-            GenerateTransactionError::Other
-        );
+        // let prev_script = ScriptBuilder::build_p2pkh(&self.utxo.my_address.hash);
+        let signed = try_map!(sign_tx(unsigned, &self), GenerateTransactionError::Other);
         let miner_fee = data.fee_amount + data.unused_change.unwrap_or_default();
         Ok(GenerateQrc20TxResult {
             signed,
@@ -1125,9 +1116,12 @@ pub struct Qrc20FeeDetails {
 async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> Result<TransactionDetails, String> {
     let to_addr = try_s!(UtxoAddress::from_str(&req.to));
     let conf = &coin.utxo.conf;
+    log!("qrc20_withdraw: p2sh_addr_prefix \t "(conf.p2sh_addr_prefix));
+    log!("qrc20_withdraw: to_addr prefix\t "(to_addr.prefix));
+    log!("qrc20_withdraw: pub_t_addr_prefix \t "(conf.pub_t_addr_prefix));
+    log!("qrc20_withdraw: to_addr t_addr_prefix\t "(to_addr.t_addr_prefix));
     let is_p2pkh = to_addr.prefix == conf.pub_addr_prefix && to_addr.t_addr_prefix == conf.pub_t_addr_prefix;
-    let is_p2sh =
-        to_addr.prefix == conf.p2sh_addr_prefix && to_addr.t_addr_prefix == conf.p2sh_t_addr_prefix && conf.segwit;
+    let is_p2sh = to_addr.prefix == conf.p2sh_addr_prefix && to_addr.t_addr_prefix == conf.p2sh_t_addr_prefix;
     if !is_p2pkh && !is_p2sh {
         return ERR!("Address {} has invalid format", to_addr);
     }

@@ -1,5 +1,6 @@
 use super::rpc_clients::{ElectrumProtocol, ListSinceBlockRes, NetworkInfo};
 use super::*;
+use crate::utxo;
 use crate::utxo::qtum::{qtum_coin_from_conf_and_request, QtumBasedCoin, QtumCoin};
 use crate::utxo::rpc_clients::{GetAddressInfoRes, UtxoRpcClientOps, ValidateAddressRes, VerboseBlock};
 use crate::utxo::utxo_common::{generate_transaction, UtxoArcBuilder};
@@ -13,6 +14,7 @@ use common::{block_on, OrdRange, DEX_FEE_ADDR_RAW_PUBKEY};
 use futures::future::join_all;
 use gstuff::now_ms;
 use mocktopus::mocking::*;
+use num_traits::Zero;
 use rpc::v1::types::H256 as H256Json;
 use serialization::deserialize;
 use std::collections::HashMap;
@@ -78,7 +80,8 @@ fn utxo_coin_fields_for_test(rpc_client: UtxoRpcClientEnum, force_seed: Option<&
             is_pos: false,
             requires_notarization: false.into(),
             overwintered: true,
-            segwit: false,
+            segwit: utxo::DEFAULT_SUPPORTED_SEGWIT,
+            account_address_type: Default::default(),
             tx_version: 4,
             address_format: UtxoAddressFormat::Standard,
             asset_chain: true,
@@ -1163,6 +1166,177 @@ fn test_address_from_str_with_cashaddress_activated() {
         .err()
         .unwrap();
     assert!(error.contains("Checksum verification failed"));
+}
+
+#[test]
+fn test_address_segwit_p2_s_h_w_p_k_h() {
+    let config = json!({
+        "coin": "tBTC",
+        "name": "tbitcoin",
+        "fname": "tBitcoin",
+        "rpcport": 18332,
+        "pubtype": 111,
+        "p2shtype": 196,
+        "wiftype": 239,
+        "txfee": 0,
+        "estimate_fee_mode": "ECONOMICAL",
+        "mm2": 1,
+        "required_confirmations": 0,
+        "protocol": {
+            "type": "UTXO"
+        }
+    });
+    let request = json!({
+        "method": "electrum",
+        "coin": "tBTC",
+        "servers": [{"url": "electrum1.cipig.net:10068"},{"url": "electrum2.cipig.net:10068"},{"url": "electrum3.cipig.net:10068"}],
+        "full_segwit": AccountAddressType::P2SHWPKH.as_u32(),
+        "account_type": AccountAddressType::P2SHWPKH.as_u32()
+    });
+    let ctx = MmCtxBuilder::new().into_mm_arc();
+
+    // the private key obtained from the following seed:
+    // let default_seed = "spice describe gravity federal blast come thank unfair canal monkey style afraid";
+    // spice describe gravity federal blast come thank unfair canal monkey style afraid
+    let priv_key = [
+        128, 148, 101, 177, 125, 10, 77, 219, 62, 76, 105, 232, 242, 60, 44, 171, 173, 134, 143, 81, 248, 190, 213,
+        199, 101, 173, 29, 101, 22, 195, 48, 111,
+    ];
+    let coin = block_on(utxo_standard_coin_from_conf_and_request(
+        &ctx, "tBTC", &config, &request, &priv_key,
+    ))
+    .expect("!utxo_standard_coin_from_conf_and_request");
+
+    let address = &coin.as_ref().my_address;
+    log!("addr: \t"(address));
+
+    let balance = block_on(coin.my_balance().compat()).unwrap();
+    log!([balance]);
+
+    let (unspents, _) = block_on(coin.ordered_mature_unspents(&coin.as_ref().my_address)).unwrap();
+    log!([unspents]);
+
+    assert!(balance.unspendable > BigDecimal::zero())
+}
+
+#[test]
+fn test_spend_segwit_p2_s_h_w_p_k_h() {
+    let config = json!({
+        "coin": "tBTC",
+        "name": "tbitcoin",
+        "fname": "tBitcoin",
+        "rpcport": 18332,
+        "pubtype": 111,
+        "p2shtype": 196,
+        "wiftype": 239,
+        "txfee": 0,
+        "estimate_fee_mode": "ECONOMICAL",
+        "mm2": 1,
+        "required_confirmations": 0,
+        "protocol": {
+            "type": "UTXO"
+        }
+    });
+    let request = json!({
+        "method": "electrum",
+        "coin": "tBTC",
+        "servers": [{"url": "electrum1.cipig.net:10068"},{"url": "electrum2.cipig.net:10068"},{"url": "electrum3.cipig.net:10068"}],
+        "full_segwit": AccountAddressType::P2SHWPKH.as_u32(),
+        "account_type": AccountAddressType::P2SHWPKH.as_u32()
+    });
+    let ctx = MmCtxBuilder::new().into_mm_arc();
+
+    // the private key obtained from the following seed:
+    // let default_seed = "spice describe gravity federal blast come thank unfair canal monkey style afraid";
+    // spice describe gravity federal blast come thank unfair canal monkey style afraid
+    let priv_key = [
+        128, 148, 101, 177, 125, 10, 77, 219, 62, 76, 105, 232, 242, 60, 44, 171, 173, 134, 143, 81, 248, 190, 213,
+        199, 101, 173, 29, 101, 22, 195, 48, 111,
+    ];
+    let coin = block_on(utxo_standard_coin_from_conf_and_request(
+        &ctx, "tBTC", &config, &request, &priv_key,
+    ))
+    .expect("!utxo_standard_coin_from_conf_and_request");
+
+    let address = &coin.as_ref().my_address;
+    log!("addr: \t"(address));
+
+    let balance = block_on(coin.my_balance().compat()).unwrap();
+    log!([balance]);
+
+    // let target_addr = "tb1qm5tfegjevj27yvvna9elym9lnzcf0zraxgl8z2";
+
+    let outputs = vec![TransactionOutput {
+        script_pubkey: Builder::build_p2pkh(&coin.as_ref().my_address.hash).to_bytes(),
+        value: 10,
+    }];
+
+    let _ = block_on(send_outputs_from_my_address_impl(coin, outputs));
+
+    assert!(true)
+}
+
+#[test]
+fn test_withdraw_segwit_p2_s_h_w_p_k_h() {
+    let config = json!({
+        "coin": "tBTC",
+        "name": "tbitcoin",
+        "fname": "tBitcoin",
+        "rpcport": 18332,
+        "pubtype": 111,
+        "p2shtype": 196,
+        "wiftype": 239,
+        "txfee": 0,
+        "estimate_fee_mode": "ECONOMICAL",
+        "mm2": 1,
+        "required_confirmations": 0,
+        "protocol": {
+            "type": "UTXO"
+        }
+    });
+    let request = json!({
+        "method": "electrum",
+        "coin": "tBTC",
+        "servers": [{"url": "electrum1.cipig.net:10068"},{"url": "electrum2.cipig.net:10068"},{"url": "electrum3.cipig.net:10068"}],
+        "full_segwit": AccountAddressType::P2SHWPKH.as_u32(),
+        "account_type": AccountAddressType::P2SHWPKH.as_u32()
+    });
+    let ctx = MmCtxBuilder::new().into_mm_arc();
+
+    // the private key obtained from the following seed:
+    // let default_seed = "spice describe gravity federal blast come thank unfair canal monkey style afraid";
+    // spice describe gravity federal blast come thank unfair canal monkey style afraid
+    let priv_key = [
+        128, 148, 101, 177, 125, 10, 77, 219, 62, 76, 105, 232, 242, 60, 44, 171, 173, 134, 143, 81, 248, 190, 213,
+        199, 101, 173, 29, 101, 22, 195, 48, 111,
+    ];
+    let coin = block_on(utxo_standard_coin_from_conf_and_request(
+        &ctx, "tBTC", &config, &request, &priv_key,
+    ))
+    .expect("!utxo_standard_coin_from_conf_and_request");
+
+    let address = &coin.as_ref().my_address;
+    log!("addr: \t"(address));
+
+    let balance = block_on(coin.my_balance().compat()).unwrap();
+    log!([balance]);
+
+    let (unspents, _) = block_on(coin.ordered_mature_unspents(&coin.as_ref().my_address)).unwrap();
+    log!([unspents]);
+
+    let withdraw_req = WithdrawRequest {
+        amount: 1.into(),
+        to: "tb1qm5tfegjevj27yvvna9elym9lnzcf0zraxgl8z2".to_string(),
+        coin: coin.ticker().into(),
+        max: false,
+        fee: Some(WithdrawFee::UtxoFixed {
+            amount: "0.1".parse().unwrap(),
+        }),
+    };
+
+    let _tx_details = coin.withdraw(withdraw_req).wait().unwrap();
+
+    assert!(balance.unspendable > BigDecimal::zero())
 }
 
 #[test]

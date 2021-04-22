@@ -1320,7 +1320,9 @@ where
 
     let conf = &coin.as_ref().conf;
     let is_p2pkh = to.prefix == conf.pub_addr_prefix && to.t_addr_prefix == conf.pub_t_addr_prefix;
-    let is_p2sh = to.prefix == conf.p2sh_addr_prefix && to.t_addr_prefix == conf.p2sh_t_addr_prefix && conf.segwit;
+    let is_p2sh = to.prefix == conf.p2sh_addr_prefix
+        && to.t_addr_prefix == conf.p2sh_t_addr_prefix
+        && conf.segwit == AccountAddressType::P2SHWPKH.as_u32();
 
     let script_pubkey = if is_p2pkh {
         Builder::build_p2pkh(&to.hash)
@@ -1372,13 +1374,7 @@ where
             .await
     );
     let prev_script = Builder::build_p2pkh(&coin.as_ref().my_address.hash);
-    let signed = try_s!(sign_tx(
-        unsigned,
-        &coin.as_ref().key_pair,
-        prev_script,
-        coin.as_ref().conf.signature_version,
-        coin.as_ref().conf.fork_id
-    ));
+    let signed = try_s!(sign_tx(unsigned, &coin,));
     let fee_amount = data.fee_amount + data.unused_change.unwrap_or_default();
     let fee_details = UtxoFeeDetails {
         amount: big_decimal_from_sat(fee_amount as i64, coin.as_ref().decimals),
@@ -1445,7 +1441,7 @@ where
         && address.t_addr_prefix == coin.as_ref().conf.pub_t_addr_prefix;
     let is_p2sh = address.prefix == coin.as_ref().conf.p2sh_addr_prefix
         && address.t_addr_prefix == coin.as_ref().conf.p2sh_t_addr_prefix
-        && coin.as_ref().conf.segwit;
+        && coin.as_ref().conf.segwit == AccountAddressType::P2SHWPKH.as_u32();
 
     if is_p2pkh || is_p2sh {
         ValidateAddressResult {
@@ -2470,7 +2466,7 @@ fn p2sh_spend(
         signer.inputs[input_index].amount,
         &redeem_script,
         signature_version,
-        1 | fork_id,
+        Sighash::from_u32(signature_version, 1 | fork_id),
     );
 
     let sig = try_s!(script_sig(&sighash, &key_pair, fork_id));
