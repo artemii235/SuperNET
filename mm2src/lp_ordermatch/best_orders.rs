@@ -1,6 +1,6 @@
 use super::{OrderbookItemWithProof, OrdermatchContext, OrdermatchRequest};
 use crate::mm2::lp_network::{request_any_relay, P2PRequest};
-use coins::{address_by_coin_conf_and_pubkey_str, coin_conf, is_wallet_only_ticker, is_wallet_only_conf};
+use coins::{address_by_coin_conf_and_pubkey_str, coin_conf, is_wallet_only_conf, is_wallet_only_ticker};
 use common::log;
 use common::mm_ctx::MmArc;
 use common::mm_number::MmNumber;
@@ -127,7 +127,10 @@ pub async fn best_orders_rpc(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>,
                 continue;
             }
             if is_wallet_only_conf(&coin_conf) {
-                log::warn!("Coin {} was removed from best orders because it's defined as wallet only in config", coin);
+                log::warn!(
+                    "Coin {} was removed from best orders because it's defined as wallet only in config",
+                    coin
+                );
                 continue;
             }
             for order_w_proof in orders_w_proofs {

@@ -5710,7 +5710,6 @@ fn test_best_orders_filter_response() {
     let best_eth_orders = response.result.get("ETH").unwrap();
     assert_eq!(1, best_eth_orders.len());
 
-
     block_on(mm_bob.stop()).unwrap();
     block_on(mm_alice.stop()).unwrap();
 }
