@@ -127,7 +127,8 @@ pub async fn best_orders_rpc(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>,
                 continue;
             }
             if is_wallet_only_conf(&coin_conf) {
-                return ERR!("Coin {} is wallet only", coin);
+                log::warn!("Coin {} was removed from best orders because it's defined as wallet only in config", coin);
+                continue;
             }
             for order_w_proof in orders_w_proofs {
                 let order = order_w_proof.order;
