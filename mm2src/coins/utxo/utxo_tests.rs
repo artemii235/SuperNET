@@ -2457,4 +2457,11 @@ fn mint_slp_token() {
 
     let balance = coin.my_balance().wait().unwrap();
     println!("{}", balance.spendable);
+
+    let output = slp_genesis_output(SlpTokenType::Fungible, "ADEX", "ADEX", "", "", 8, None, 1000_0000_0000);
+    let mm2_output = TransactionOutput {
+        value: output.value,
+        script_pubkey: output.script.serialize().unwrap().to_vec().into(),
+    };
+    block_on(send_outputs_from_my_address_impl(coin, vec![mm2_output])).unwrap();
 }
