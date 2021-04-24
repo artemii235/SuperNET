@@ -2555,8 +2555,6 @@ impl EthTxFeeDetails {
 impl MmCoin for EthCoin {
     fn is_asset_chain(&self) -> bool { false }
 
-    fn wallet_only(&self) -> bool { false }
-
     fn withdraw(&self, req: WithdrawRequest) -> WithdrawFut {
         let ctx = try_f!(MmArc::from_weak(&self.ctx).or_mm_err(|| WithdrawError::InternalError("!ctx".to_owned())));
         Box::new(Box::pin(withdraw_impl(ctx, self.clone(), req)).compat())

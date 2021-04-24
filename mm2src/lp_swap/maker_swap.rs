@@ -12,8 +12,7 @@ use crate::mm2::MM_VERSION;
 use atomic::Atomic;
 use bigdecimal::BigDecimal;
 use bitcrypto::dhash160;
-use coins::{lp_coinfind, CanRefundHtlc, FeeApproxStage, FoundSwapTxSpend, MmCoinEnum, TradeFee, TradePreimageValue,
-            TransactionEnum};
+use coins::{CanRefundHtlc, FeeApproxStage, FoundSwapTxSpend, MmCoinEnum, TradeFee, TradePreimageValue, TransactionEnum};
 use common::mm_error::prelude::*;
 use common::{bits256, executor::Timer, file_lock::FileLock, log::error, mm_ctx::MmArc, mm_number::MmNumber, now_ms,
              slurp, write, DEX_FEE_ADDR_RAW_PUBKEY};
@@ -1526,20 +1525,9 @@ pub struct MakerTradePreimage {
 pub async fn maker_swap_trade_preimage(
     ctx: &MmArc,
     req: TradePreimageRequest,
+    base_coin: MmCoinEnum,
+    rel_coin: MmCoinEnum,
 ) -> TradePreimageRpcResult<MakerTradePreimage> {
-    let base_coin = match lp_coinfind(&ctx, &req.base).await {
-        Ok(Some(t)) => t,
-        Ok(None) => return MmError::err(TradePreimageRpcError::NoSuchCoin { coin: req.base.clone() }),
-        // TODO
-        Err(err) => return MmError::err(TradePreimageRpcError::InternalError(err)),
-    };
-    let rel_coin = match lp_coinfind(&ctx, &req.rel).await {
-        Ok(Some(t)) => t,
-        Ok(None) => return MmError::err(TradePreimageRpcError::NoSuchCoin { coin: req.rel.clone() }),
-        // TODO
-        Err(err) => return MmError::err(TradePreimageRpcError::InternalError(err)),
-    };
-
     let volume = if req.max {
         let balance = base_coin.my_spendable_balance().compat().await?;
         calc_max_maker_vol(&ctx, &base_coin, &balance, FeeApproxStage::TradePreimage).await?

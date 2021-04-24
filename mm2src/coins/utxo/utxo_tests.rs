@@ -2419,3 +2419,13 @@ fn firo_mtp() {
         .unwrap();
     assert_eq!(mtp, 1616492629);
 }
+
+#[test]
+fn verus_mtp() {
+    let electrum = electrum_client_for_test(&["el0.verus.io:17485", "el1.verus.io:17485", "el2.verus.io:17485"]);
+    let mtp = electrum
+        .get_median_time_past(1480113, NonZeroU64::new(11).unwrap())
+        .wait()
+        .unwrap();
+    assert_eq!(mtp, 1618579909);
+}

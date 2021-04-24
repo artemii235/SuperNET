@@ -702,7 +702,10 @@ pub trait MmCoin: SwapOps + MarketCoinOps + fmt::Debug + Send + Sync + 'static {
     fn is_asset_chain(&self) -> bool;
 
     /// The coin can be initialized, but it cannot participate in the swaps.
-    fn wallet_only(&self) -> bool;
+    fn wallet_only(&self, ctx: &MmArc) -> bool {
+        let coin_conf = coin_conf(&ctx, &self.ticker());
+        coin_conf["wallet_only"].as_bool().unwrap_or(false)
+    }
 
     fn withdraw(&self, req: WithdrawRequest) -> WithdrawFut;
 
@@ -1008,6 +1011,13 @@ pub fn coin_conf(ctx: &MmArc, ticker: &str) -> Json {
             .unwrap_or(Json::Null),
         None => Json::Null,
     }
+}
+
+pub fn is_wallet_only_conf(conf: &Json) -> bool { conf["wallet_only"].as_bool().unwrap_or(false) }
+
+pub fn is_wallet_only_ticker(ctx: &MmArc, ticker: &str) -> bool {
+    let coin_conf = coin_conf(ctx, ticker);
+    coin_conf["wallet_only"].as_bool().unwrap_or(false)
 }
 
 /// Adds a new currency into the list of currencies configured.

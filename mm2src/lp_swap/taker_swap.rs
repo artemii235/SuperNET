@@ -1541,35 +1541,21 @@ pub struct TakerTradePreimage {
 }
 
 pub async fn taker_swap_trade_preimage(
-    ctx: &MmArc,
+    _ctx: &MmArc,
     req: TradePreimageRequest,
+    base_coin: MmCoinEnum,
+    rel_coin: MmCoinEnum,
 ) -> TradePreimageRpcResult<TakerTradePreimage> {
-    let (my_coin_ticker, other_coin_ticker) = match req.swap_method {
+    let (my_coin, other_coin) = match req.swap_method {
         TradePreimageMethod::SetPrice => {
             let error = "Internal error: expected 'sell' or 'buy' method".to_owned();
             return MmError::err(TradePreimageRpcError::InternalError(error));
         },
-        TradePreimageMethod::Sell => (req.base, req.rel),
-        TradePreimageMethod::Buy => (req.rel, req.base),
+        TradePreimageMethod::Sell => (base_coin, rel_coin),
+        TradePreimageMethod::Buy => (rel_coin, base_coin),
     };
-    let my_coin = match lp_coinfind(&ctx, &my_coin_ticker).await {
-        Ok(Some(t)) => t,
-        Ok(None) => {
-            return MmError::err(TradePreimageRpcError::NoSuchCoin {
-                coin: my_coin_ticker.clone(),
-            })
-        },
-        Err(err) => return MmError::err(TradePreimageRpcError::InternalError(err)),
-    };
-    let other_coin = match lp_coinfind(&ctx, &other_coin_ticker).await {
-        Ok(Some(t)) => t,
-        Ok(None) => {
-            return MmError::err(TradePreimageRpcError::NoSuchCoin {
-                coin: other_coin_ticker.clone(),
-            })
-        },
-        Err(err) => return MmError::err(TradePreimageRpcError::InternalError(err)),
-    };
+    let my_coin_ticker = my_coin.ticker();
+    let other_coin_ticker = other_coin.ticker();
 
     if req.max {
         return MmError::err(TradePreimageRpcError::InvalidParam {
@@ -1598,9 +1584,9 @@ pub async fn taker_swap_trade_preimage(
         TradePreimageMethod::Buy => req.price * req.volume,
     };
 
-    let dex_amount = dex_fee_amount_from_taker_coin(&my_coin, &other_coin_ticker, &my_coin_volume);
+    let dex_amount = dex_fee_amount_from_taker_coin(&my_coin, other_coin_ticker, &my_coin_volume);
     let taker_fee = TradeFee {
-        coin: my_coin_ticker.clone(),
+        coin: my_coin_ticker.to_owned(),
         amount: dex_amount.clone(),
         paid_from_trading_vol: false,
     };
@@ -1609,19 +1595,19 @@ pub async fn taker_swap_trade_preimage(
         .get_fee_to_send_taker_fee(dex_amount.to_decimal(), stage.clone())
         .compat()
         .await
-        .mm_err(|e| TradePreimageRpcError::from_trade_preimage_error(e, &my_coin_ticker))?;
+        .mm_err(|e| TradePreimageRpcError::from_trade_preimage_error(e, my_coin_ticker))?;
 
     let preimage_value = TradePreimageValue::Exact(my_coin_volume.to_decimal());
     let my_coin_trade_fee = my_coin
         .get_sender_trade_fee(preimage_value, stage.clone())
         .compat()
         .await
-        .mm_err(|e| TradePreimageRpcError::from_trade_preimage_error(e, &my_coin_ticker))?;
+        .mm_err(|e| TradePreimageRpcError::from_trade_preimage_error(e, my_coin_ticker))?;
     let other_coin_trade_fee = other_coin
         .get_receiver_trade_fee(stage)
         .compat()
         .await
-        .mm_err(|e| TradePreimageRpcError::from_trade_preimage_error(e, &other_coin_ticker))?;
+        .mm_err(|e| TradePreimageRpcError::from_trade_preimage_error(e, other_coin_ticker))?;
 
     let (base_coin_fee, rel_coin_fee) = match req.swap_method {
         TradePreimageMethod::Sell => (my_coin_trade_fee, other_coin_trade_fee),

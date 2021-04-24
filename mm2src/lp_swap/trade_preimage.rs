@@ -1,7 +1,7 @@
 use super::{maker_swap_trade_preimage, taker_swap_trade_preimage, CheckBalanceError, MakerTradePreimage,
             TakerTradePreimage};
 use bigdecimal::BigDecimal;
-use coins::{BalanceError, TradeFee, TradePreimageError};
+use coins::{is_wallet_only_ticker, lp_coinfind, BalanceError, TradeFee, TradePreimageError};
 use common::mm_ctx::MmArc;
 use common::mm_error::prelude::*;
 use common::mm_number::MmNumber;
@@ -20,13 +20,35 @@ pub async fn trade_preimage_rpc(
     ctx: MmArc,
     req: TradePreimageRequest,
 ) -> TradePreimageRpcResult<TradePreimageResponse> {
+    if is_wallet_only_ticker(&ctx, &req.base) {
+        return MmError::err(TradePreimageRpcError::CoinIsWalletOnly { coin: req.base });
+    }
+    if is_wallet_only_ticker(&ctx, &req.rel) {
+        return MmError::err(TradePreimageRpcError::CoinIsWalletOnly { coin: req.rel });
+    }
+
+    let base_coin = match lp_coinfind(&ctx, &req.base).await {
+        Ok(Some(t)) => t,
+        Ok(None) => return MmError::err(TradePreimageRpcError::NoSuchCoin { coin: req.base.clone() }),
+        // TODO
+        Err(err) => return MmError::err(TradePreimageRpcError::InternalError(err)),
+    };
+    let rel_coin = match lp_coinfind(&ctx, &req.rel).await {
+        Ok(Some(t)) => t,
+        Ok(None) => return MmError::err(TradePreimageRpcError::NoSuchCoin { coin: req.rel.clone() }),
+        // TODO
+        Err(err) => return MmError::err(TradePreimageRpcError::InternalError(err)),
+    };
+
     match req.swap_method {
-        TradePreimageMethod::SetPrice => maker_swap_trade_preimage(&ctx, req)
+        TradePreimageMethod::SetPrice => maker_swap_trade_preimage(&ctx, req, base_coin, rel_coin)
             .await
             .map(TradePreimageResponse::from),
-        TradePreimageMethod::Buy | TradePreimageMethod::Sell => taker_swap_trade_preimage(&ctx, req)
-            .await
-            .map(TradePreimageResponse::from),
+        TradePreimageMethod::Buy | TradePreimageMethod::Sell => {
+            taker_swap_trade_preimage(&ctx, req, base_coin, rel_coin)
+                .await
+                .map(TradePreimageResponse::from)
+        },
     }
 }
 
@@ -193,6 +215,8 @@ pub enum TradePreimageRpcError {
     VolumeIsTooSmall { volume: BigDecimal },
     #[display(fmt = "No such coin {}", coin)]
     NoSuchCoin { coin: String },
+    #[display(fmt = "Coin is wallet only")]
+    CoinIsWalletOnly { coin: String },
     #[display(fmt = "Incorrect use of the '{}' parameter: {}", param, reason)]
     InvalidParam { param: String, reason: String },
     #[display(fmt = "Expected non-zero 'price'")]
@@ -211,6 +235,7 @@ impl HttpStatusCode for TradePreimageRpcError {
             | TradePreimageRpcError::MaxVolumeLessThanDust { .. }
             | TradePreimageRpcError::VolumeIsTooSmall { .. }
             | TradePreimageRpcError::NoSuchCoin { .. }
+            | TradePreimageRpcError::CoinIsWalletOnly { .. }
             | TradePreimageRpcError::InvalidParam { .. }
             | TradePreimageRpcError::ZeroPrice => StatusCode::BAD_REQUEST,
             TradePreimageRpcError::Transport(_) | TradePreimageRpcError::InternalError(_) => {
