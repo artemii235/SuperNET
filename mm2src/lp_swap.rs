@@ -59,14 +59,12 @@ use crate::mm2::lp_network::broadcast_p2p_msg;
 use async_std::sync as async_std_sync;
 use bigdecimal::BigDecimal;
 use coins::{lp_coinfind, MmCoinEnum, TradeFee, TransactionEnum};
-use common::mm_error::prelude::*;
 use common::{bits256, block_on, calc_total_pages,
              executor::{spawn, Timer},
              log::{error, info},
              mm_ctx::{from_ctx, MmArc},
              mm_number::MmNumber,
              now_ms, read_dir, rpc_response, slurp, var, write, HyRes};
-use futures::compat::Future01CompatExt;
 use futures::future::{abortable, AbortHandle, TryFutureExt};
 use http::Response;
 use mm2_libp2p::{decode_signed, encode_and_sign, pub_sub_topic, TopicPrefix};
@@ -93,7 +91,7 @@ use uuid::Uuid;
 #[path = "lp_swap/check_balance.rs"] mod check_balance;
 #[path = "lp_swap/trade_preimage.rs"] mod trade_preimage;
 
-pub use check_balance::{CheckBalanceError, CheckBalanceResult};
+pub use check_balance::{check_other_coin_balance_for_swap};
 pub use maker_swap::{calc_max_maker_vol, check_balance_for_maker_swap, maker_swap_trade_preimage, run_maker_swap,
                      stats_maker_swap_dir, MakerSavedSwap, MakerSwap, MakerTradePreimage, RunMakerSwapInput};
 use maker_swap::{stats_maker_swap_file_path, MakerSwapEvent};
@@ -385,165 +383,6 @@ fn get_locked_amount_by_other_swaps(ctx: &MmArc, except_uuid: &Uuid, coin: &str)
             }
             total_amount
         })
-}
-
-pub async fn check_other_coin_balance_for_swap(
-    ctx: &MmArc,
-    coin: &MmCoinEnum,
-    swap_uuid: Option<&Uuid>,
-    trade_fee: TradeFee,
-) -> CheckBalanceResult<()> {
-    if trade_fee.paid_from_trading_vol {
-        return Ok(());
-    }
-    let ticker = coin.ticker();
-    info!("Check other_coin '{}' balance for swap", ticker);
-    let balance: MmNumber = coin.my_spendable_balance().compat().await?.into();
-
-    let locked = match swap_uuid {
-        Some(u) => get_locked_amount_by_other_swaps(ctx, u, ticker),
-        None => get_locked_amount(ctx, ticker),
-    };
-
-    if ticker == trade_fee.coin {
-        let available = &balance - &locked;
-        let required = trade_fee.amount;
-        info!(
-            "{} balance {:?}, locked {:?}, required {:?}",
-            ticker,
-            balance.to_fraction(),
-            locked.to_fraction(),
-            required.to_fraction(),
-        );
-        if available < required {
-            return MmError::err(CheckBalanceError::NotSufficientBalance {
-                coin: ticker.to_owned(),
-                available: available.to_decimal(),
-                required: required.to_decimal(),
-                locked_by_swaps: Some(locked.to_decimal()),
-            });
-        }
-    } else {
-        let base_coin_balance: MmNumber = coin.base_coin_balance().compat().await?.into();
-        check_base_coin_balance_for_swap(ctx, &base_coin_balance, trade_fee, swap_uuid).await?;
-    }
-
-    Ok(())
-}
-
-pub struct TakerFeeAdditionalInfo {
-    dex_fee: MmNumber,
-    fee_to_send_dex_fee: TradeFee,
-}
-
-/// Check the coin balance before the swap has started.
-///
-/// `swap_uuid` is used if our swap is running already and we should except this swap locked amount from the following calculations.
-pub async fn check_my_coin_balance_for_swap(
-    ctx: &MmArc,
-    coin: &MmCoinEnum,
-    swap_uuid: Option<&Uuid>,
-    volume: MmNumber,
-    mut trade_fee: TradeFee,
-    taker_fee: Option<TakerFeeAdditionalInfo>,
-) -> CheckBalanceResult<()> {
-    let ticker = coin.ticker();
-    info!("Check my_coin '{}' balance for swap", ticker);
-    let balance: MmNumber = coin.my_spendable_balance().compat().await?.into();
-
-    let locked = match swap_uuid {
-        Some(u) => get_locked_amount_by_other_swaps(ctx, u, ticker),
-        None => get_locked_amount(ctx, ticker),
-    };
-
-    let dex_fee = match taker_fee {
-        Some(TakerFeeAdditionalInfo {
-            dex_fee,
-            fee_to_send_dex_fee,
-        }) => {
-            if fee_to_send_dex_fee.coin != trade_fee.coin {
-                let err = format!(
-                    "trade_fee {:?} and fee_to_send_dex_fee {:?} coins are expected to be the same",
-                    trade_fee.coin, fee_to_send_dex_fee.coin
-                );
-                return MmError::err(CheckBalanceError::InternalError(err));
-            }
-            // increase `trade_fee` by the `fee_to_send_dex_fee`
-            trade_fee.amount += fee_to_send_dex_fee.amount;
-            dex_fee
-        },
-        None => MmNumber::from(0),
-    };
-
-    let total_trade_fee = if ticker == trade_fee.coin {
-        trade_fee.amount
-    } else {
-        let base_coin_balance: MmNumber = coin.base_coin_balance().compat().await?.into();
-        check_base_coin_balance_for_swap(ctx, &base_coin_balance, trade_fee, swap_uuid).await?;
-        MmNumber::from(0)
-    };
-
-    info!(
-        "{} balance {:?}, locked {:?}, volume {:?}, fee {:?}, dex_fee {:?}",
-        ticker,
-        balance.to_fraction(),
-        locked.to_fraction(),
-        volume.to_fraction(),
-        total_trade_fee.to_fraction(),
-        dex_fee.to_fraction()
-    );
-
-    let required = volume + total_trade_fee + dex_fee;
-    let available = &balance - &locked;
-
-    if available < required {
-        return MmError::err(CheckBalanceError::NotSufficientBalance {
-            coin: ticker.to_owned(),
-            available: available.to_decimal(),
-            required: required.to_decimal(),
-            locked_by_swaps: Some(locked.to_decimal()),
-        });
-    }
-
-    Ok(())
-}
-
-pub async fn check_base_coin_balance_for_swap(
-    ctx: &MmArc,
-    balance: &MmNumber,
-    trade_fee: TradeFee,
-    swap_uuid: Option<&Uuid>,
-) -> CheckBalanceResult<()> {
-    let ticker = trade_fee.coin.as_str();
-    let trade_fee_fraction = trade_fee.amount.to_fraction();
-    info!(
-        "Check if the base coin '{}' has sufficient balance to pay the trade fee {:?}",
-        ticker, trade_fee_fraction
-    );
-
-    let required = trade_fee.amount;
-    let locked = match swap_uuid {
-        Some(uuid) => get_locked_amount_by_other_swaps(ctx, uuid, ticker),
-        None => get_locked_amount(ctx, ticker),
-    };
-    let available = balance - &locked;
-
-    info!(
-        "{} balance {:?}, locked {:?}",
-        ticker,
-        balance.to_fraction(),
-        locked.to_fraction()
-    );
-    if available < required {
-        MmError::err(CheckBalanceError::NotSufficientBaseCoinBalance {
-            coin: ticker.to_owned(),
-            available: available.to_decimal(),
-            required: required.to_decimal(),
-            locked_by_swaps: Some(locked.to_decimal()),
-        })
-    } else {
-        Ok(())
-    }
 }
 
 pub fn active_swaps_using_coin(ctx: &MmArc, coin: &str) -> Result<Vec<Uuid>, String> {

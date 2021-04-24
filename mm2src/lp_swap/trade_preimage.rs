@@ -1,5 +1,5 @@
-use super::{maker_swap_trade_preimage, taker_swap_trade_preimage, CheckBalanceError, MakerTradePreimage,
-            TakerTradePreimage};
+use super::check_balance::CheckBalanceError;
+use super::{maker_swap_trade_preimage, taker_swap_trade_preimage, MakerTradePreimage, TakerTradePreimage};
 use bigdecimal::BigDecimal;
 use coins::{is_wallet_only_ticker, lp_coinfind_or_err, BalanceError, CoinFindError, TradeFee, TradePreimageError};
 use common::mm_ctx::MmArc;

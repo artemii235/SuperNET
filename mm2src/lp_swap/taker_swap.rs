@@ -1,11 +1,12 @@
+use super::check_balance::{check_my_coin_balance_for_swap, CheckBalanceError, CheckBalanceResult,
+                           TakerFeeAdditionalInfo};
 use super::pubkey_banning::ban_pubkey_on_failed_swap;
 use super::trade_preimage::{TradePreimageMethod, TradePreimageRequest, TradePreimageRpcError, TradePreimageRpcResult};
-use super::{broadcast_my_swap_status, broadcast_swap_message_every, check_my_coin_balance_for_swap,
-            check_other_coin_balance_for_swap, dex_fee_amount_from_taker_coin, dex_fee_rate, dex_fee_threshold,
-            get_locked_amount, my_swap_file_path, my_swaps_dir, recv_swap_msg, swap_topic, AtomicSwap,
-            CheckBalanceError, CheckBalanceResult, LockedAmount, MySwapInfo, NegotiationDataMsg, RecoveredSwap,
-            RecoveredSwapAction, SavedSwap, SavedTradeFee, SwapConfirmationsSettings, SwapError, SwapMsg,
-            SwapsContext, TakerFeeAdditionalInfo, TransactionIdentifier, WAIT_CONFIRM_INTERVAL};
+use super::{broadcast_my_swap_status, broadcast_swap_message_every, check_other_coin_balance_for_swap,
+            dex_fee_amount_from_taker_coin, dex_fee_rate, dex_fee_threshold, get_locked_amount, my_swap_file_path,
+            my_swaps_dir, recv_swap_msg, swap_topic, AtomicSwap, LockedAmount, MySwapInfo, NegotiationDataMsg,
+            RecoveredSwap, RecoveredSwapAction, SavedSwap, SavedTradeFee, SwapConfirmationsSettings, SwapError,
+            SwapMsg, SwapsContext, TransactionIdentifier, WAIT_CONFIRM_INTERVAL};
 use crate::mm2::lp_network::subscribe_to_topic;
 use crate::mm2::MM_VERSION;
 use atomic::Atomic;

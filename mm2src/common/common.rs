@@ -1202,7 +1202,6 @@ where
     Box::new(rf)
 }
 
-/// TODO remove it
 #[derive(Serialize)]
 struct ErrResponse {
     error: String,
