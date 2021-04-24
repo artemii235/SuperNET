@@ -102,6 +102,7 @@ pub type WithdrawResult = Result<TransactionDetails, MmError<WithdrawError>>;
 pub type WithdrawFut = Box<dyn Future<Item = TransactionDetails, Error = MmError<WithdrawError>> + Send>;
 pub type TradePreimageResult<T> = Result<T, MmError<TradePreimageError>>;
 pub type TradePreimageFut<T> = Box<dyn Future<Item = T, Error = MmError<TradePreimageError>> + Send>;
+pub type CoinFindResult<T> = Result<T, MmError<CoinFindError>>;
 
 pub trait Transaction: fmt::Debug + 'static {
     /// Raw transaction bytes of the transaction
@@ -648,6 +649,15 @@ impl From<BalanceError> for WithdrawError {
     }
 }
 
+impl From<CoinFindError> for WithdrawError {
+    fn from(e: CoinFindError) -> Self {
+        match e {
+            CoinFindError::NoCoinsContext(internal) => WithdrawError::InternalError(internal),
+            CoinFindError::NoSuchCoin { coin } => WithdrawError::NoSuchCoin { coin },
+        }
+    }
+}
+
 impl WithdrawError {
     /// Construct [`WithdrawError`] from [`GenerateTxError`] using additional `coin` and `decimals`.
     pub fn from_generate_tx_error(gen_tx_err: GenerateTxError, coin: String, decimals: u8) -> WithdrawError {
@@ -1127,6 +1137,24 @@ pub async fn lp_coinfind(ctx: &MmArc, ticker: &str) -> Result<Option<MmCoinEnum>
     Ok(coins.get(ticker).cloned())
 }
 
+#[derive(Display)]
+pub enum CoinFindError {
+    #[display(fmt = "No CoinsContext: {}", _0)]
+    NoCoinsContext(String),
+    #[display(fmt = "No such coin: {}", coin)]
+    NoSuchCoin { coin: String },
+}
+
+pub async fn lp_coinfind_or_err(ctx: &MmArc, ticker: &str) -> CoinFindResult<MmCoinEnum> {
+    match lp_coinfind(ctx, ticker).await {
+        Ok(Some(coin)) => Ok(coin),
+        Ok(None) => MmError::err(CoinFindError::NoSuchCoin {
+            coin: ticker.to_owned(),
+        }),
+        Err(e) => MmError::err(CoinFindError::NoCoinsContext(e)),
+    }
+}
+
 #[derive(Deserialize)]
 struct ConvertAddressReq {
     coin: String,
@@ -1193,14 +1221,7 @@ pub async fn validate_address(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>
 }
 
 pub async fn withdraw(ctx: MmArc, req: WithdrawRequest) -> WithdrawResult {
-    let ticker = &req.coin;
-
-    let coin = match lp_coinfind(&ctx, ticker).await {
-        Ok(Some(t)) => t,
-        Ok(None) => return MmError::err(WithdrawError::NoSuchCoin { coin: ticker.clone() }),
-        // TODO add LpCoinError
-        Err(err) => return MmError::err(WithdrawError::InternalError(err)),
-    };
+    let coin = lp_coinfind_or_err(&ctx, &req.coin).await?;
     coin.withdraw(req).compat().await
 }
 

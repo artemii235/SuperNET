@@ -1,7 +1,7 @@
 use super::{maker_swap_trade_preimage, taker_swap_trade_preimage, CheckBalanceError, MakerTradePreimage,
             TakerTradePreimage};
 use bigdecimal::BigDecimal;
-use coins::{is_wallet_only_ticker, lp_coinfind, BalanceError, TradeFee, TradePreimageError};
+use coins::{is_wallet_only_ticker, lp_coinfind_or_err, BalanceError, CoinFindError, TradeFee, TradePreimageError};
 use common::mm_ctx::MmArc;
 use common::mm_error::prelude::*;
 use common::mm_number::MmNumber;
@@ -27,18 +27,8 @@ pub async fn trade_preimage_rpc(
         return MmError::err(TradePreimageRpcError::CoinIsWalletOnly { coin: req.rel });
     }
 
-    let base_coin = match lp_coinfind(&ctx, &req.base).await {
-        Ok(Some(t)) => t,
-        Ok(None) => return MmError::err(TradePreimageRpcError::NoSuchCoin { coin: req.base.clone() }),
-        // TODO
-        Err(err) => return MmError::err(TradePreimageRpcError::InternalError(err)),
-    };
-    let rel_coin = match lp_coinfind(&ctx, &req.rel).await {
-        Ok(Some(t)) => t,
-        Ok(None) => return MmError::err(TradePreimageRpcError::NoSuchCoin { coin: req.rel.clone() }),
-        // TODO
-        Err(err) => return MmError::err(TradePreimageRpcError::InternalError(err)),
-    };
+    let base_coin = lp_coinfind_or_err(&ctx, &req.base).await?;
+    let rel_coin = lp_coinfind_or_err(&ctx, &req.rel).await?;
 
     match req.swap_method {
         TradePreimageMethod::SetPrice => maker_swap_trade_preimage(&ctx, req, base_coin, rel_coin)
@@ -215,7 +205,7 @@ pub enum TradePreimageRpcError {
     VolumeIsTooSmall { volume: BigDecimal },
     #[display(fmt = "No such coin {}", coin)]
     NoSuchCoin { coin: String },
-    #[display(fmt = "Coin is wallet only")]
+    #[display(fmt = "Coin {} is wallet only", coin)]
     CoinIsWalletOnly { coin: String },
     #[display(fmt = "Incorrect use of the '{}' parameter: {}", param, reason)]
     InvalidParam { param: String, reason: String },
@@ -287,6 +277,15 @@ impl From<CheckBalanceError> for TradePreimageRpcError {
             CheckBalanceError::VolumeIsTooSmall { volume } => TradePreimageRpcError::VolumeIsTooSmall { volume },
             CheckBalanceError::Transport(transport) => TradePreimageRpcError::Transport(transport),
             CheckBalanceError::InternalError(internal) => TradePreimageRpcError::InternalError(internal),
+        }
+    }
+}
+
+impl From<CoinFindError> for TradePreimageRpcError {
+    fn from(e: CoinFindError) -> Self {
+        match e {
+            CoinFindError::NoCoinsContext(internal) => TradePreimageRpcError::InternalError(internal),
+            CoinFindError::NoSuchCoin { coin } => TradePreimageRpcError::NoSuchCoin { coin },
         }
     }
 }
