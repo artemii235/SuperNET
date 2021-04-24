@@ -1,6 +1,6 @@
 use super::{CoinBalance, HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeFee, TransactionEnum, TransactionFut};
-use crate::{BalanceFut, FeeApproxStage, FoundSwapTxSpend, TradePreimageError, TradePreimageValue,
-            ValidateAddressResult, WithdrawFut, WithdrawRequest};
+use crate::{BalanceFut, FeeApproxStage, FoundSwapTxSpend, TradePreimageFut, TradePreimageValue, ValidateAddressResult,
+            WithdrawFut, WithdrawRequest};
 use bigdecimal::BigDecimal;
 use common::mm_ctx::MmArc;
 use common::mm_number::MmNumber;
@@ -238,26 +238,17 @@ impl MmCoin for TestCoin {
     /// Get fee to be paid per 1 swap transaction
     fn get_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = String> + Send> { unimplemented!() }
 
-    fn get_sender_trade_fee(
-        &self,
-        value: TradePreimageValue,
-        stage: FeeApproxStage,
-    ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
+    fn get_sender_trade_fee(&self, value: TradePreimageValue, stage: FeeApproxStage) -> TradePreimageFut<TradeFee> {
         unimplemented!()
     }
 
-    fn get_receiver_trade_fee(
-        &self,
-        stage: FeeApproxStage,
-    ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
-        unimplemented!()
-    }
+    fn get_receiver_trade_fee(&self, stage: FeeApproxStage) -> TradePreimageFut<TradeFee> { unimplemented!() }
 
     fn get_fee_to_send_taker_fee(
         &self,
         dex_fee_amount: BigDecimal,
         stage: FeeApproxStage,
-    ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
+    ) -> TradePreimageFut<TradeFee> {
         unimplemented!()
     }
 

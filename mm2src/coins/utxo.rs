@@ -75,8 +75,8 @@ use self::rpc_clients::{ElectrumClient, ElectrumClientImpl, ElectrumRpcRequest, 
 use super::{BalanceError, BalanceFut, BalanceResult, CoinTransportMetrics, CoinsContext, FeeApproxStage,
             FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, NumConversError, NumConversResult,
             RpcClientType, RpcTransportEventHandler, RpcTransportEventHandlerShared, TradeFee, TradePreimageError,
-            Transaction, TransactionDetails, TransactionEnum, TransactionFut, WithdrawError, WithdrawFee,
-            WithdrawRequest};
+            TradePreimageFut, TradePreimageResult, Transaction, TransactionDetails, TransactionEnum, TransactionFut,
+            WithdrawError, WithdrawFee, WithdrawRequest};
 
 #[cfg(test)] pub mod utxo_tests;
 
@@ -146,6 +146,22 @@ impl From<UtxoRpcError> for WithdrawError {
             },
             UtxoRpcError::InvalidResponse(resp) => WithdrawError::Transport(resp),
             UtxoRpcError::Internal(internal) => WithdrawError::InternalError(internal),
+        }
+    }
+}
+
+impl From<JsonRpcError> for TradePreimageError {
+    fn from(e: JsonRpcError) -> Self { TradePreimageError::Transport(e.to_string()) }
+}
+
+impl From<UtxoRpcError> for TradePreimageError {
+    fn from(e: UtxoRpcError) -> Self {
+        match e {
+            UtxoRpcError::Transport(transport) | UtxoRpcError::ResponseParseError(transport) => {
+                TradePreimageError::Transport(transport.to_string())
+            },
+            UtxoRpcError::InvalidResponse(resp) => TradePreimageError::Transport(resp),
+            UtxoRpcError::Internal(internal) => TradePreimageError::InternalError(internal),
         }
     }
 }
@@ -440,7 +456,7 @@ pub struct UtxoCoinFields {
 pub trait UtxoCommonOps {
     async fn get_tx_fee(&self) -> Result<ActualTxFee, JsonRpcError>;
 
-    async fn get_htlc_spend_fee(&self) -> Result<u64, String>;
+    async fn get_htlc_spend_fee(&self) -> UtxoRpcResult<u64>;
 
     fn addresses_from_script(&self, script: &Script) -> Result<Vec<Address>, String>;
 
@@ -521,7 +537,7 @@ pub trait UtxoCommonOps {
         fee_policy: FeePolicy,
         gas_fee: Option<u64>,
         stage: &FeeApproxStage,
-    ) -> Result<BigDecimal, TradePreimageError>;
+    ) -> TradePreimageResult<BigDecimal>;
 
     /// Increase the given `dynamic_fee` according to the fee approximation `stage`.
     /// The method is used to predict a possible increase in dynamic fee.
@@ -630,50 +646,6 @@ impl From<UtxoRpcError> for GenerateTxError {
 
 impl From<NumConversError> for GenerateTxError {
     fn from(e: NumConversError) -> Self { GenerateTxError::Internal(e.to_string()) }
-}
-
-impl GenerateTxError {
-    /// Convert [`GenerateTxError`] into [`WithdrawError`] using additional `coin` and `decimals`.
-    /// Unfortunately, we cannot implement [`From<GenerateTxError>`] directly for [`WithdrawError`].
-    pub fn into_withdraw_error(self, coin: String, decimals: u8) -> WithdrawError {
-        match self {
-            GenerateTxError::EmptyUtxoSet { required } => {
-                let required = utxo_common::big_decimal_from_sat_unsigned(required, decimals);
-                WithdrawError::NotSufficientBalance {
-                    coin,
-                    available: BigDecimal::from(0),
-                    required,
-                }
-            },
-            GenerateTxError::EmptyOutputs => WithdrawError::InternalError(self.to_string()),
-            GenerateTxError::OutputValueLessThanDust { value, .. } => {
-                let amount = utxo_common::big_decimal_from_sat_unsigned(value, decimals);
-                WithdrawError::AmountIsTooSmall { amount }
-            },
-            GenerateTxError::DeductFeeFromOutputFailed {
-                output_value, required, ..
-            } => {
-                let available = utxo_common::big_decimal_from_sat_unsigned(output_value, decimals);
-                let required = utxo_common::big_decimal_from_sat_unsigned(required, decimals);
-                WithdrawError::NotSufficientBalance {
-                    coin,
-                    available,
-                    required,
-                }
-            },
-            GenerateTxError::NotEnoughUtxos { sum_utxos, required } => {
-                let available = utxo_common::big_decimal_from_sat_unsigned(sum_utxos, decimals);
-                let required = utxo_common::big_decimal_from_sat_unsigned(required, decimals);
-                WithdrawError::NotSufficientBalance {
-                    coin,
-                    available,
-                    required,
-                }
-            },
-            GenerateTxError::Transport(e) => WithdrawError::Transport(e),
-            GenerateTxError::Internal(e) => WithdrawError::InternalError(e),
-        }
-    }
 }
 
 pub enum RequestTxHistoryResult {

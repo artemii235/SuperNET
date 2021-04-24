@@ -1,6 +1,5 @@
 use super::*;
-use crate::{eth, CanRefundHtlc, CoinBalance, SwapOps, TradePreimageError, TradePreimageValue, ValidateAddressResult,
-            WithdrawFut};
+use crate::{eth, CanRefundHtlc, CoinBalance, SwapOps, TradePreimageValue, ValidateAddressResult, WithdrawFut};
 use common::mm_metrics::MetricsArc;
 use common::mm_number::MmNumber;
 use ethereum_types::H160;
@@ -144,7 +143,7 @@ impl QtumBasedCoin for QtumCoin {}
 impl UtxoCommonOps for QtumCoin {
     async fn get_tx_fee(&self) -> Result<ActualTxFee, JsonRpcError> { utxo_common::get_tx_fee(&self.utxo_arc).await }
 
-    async fn get_htlc_spend_fee(&self) -> Result<u64, String> { utxo_common::get_htlc_spend_fee(self).await }
+    async fn get_htlc_spend_fee(&self) -> UtxoRpcResult<u64> { utxo_common::get_htlc_spend_fee(self).await }
 
     fn addresses_from_script(&self, script: &Script) -> Result<Vec<Address>, String> {
         utxo_common::addresses_from_script(&self.utxo_arc.conf, script)
@@ -239,7 +238,7 @@ impl UtxoCommonOps for QtumCoin {
         fee_policy: FeePolicy,
         gas_fee: Option<u64>,
         stage: &FeeApproxStage,
-    ) -> Result<BigDecimal, TradePreimageError> {
+    ) -> TradePreimageResult<BigDecimal> {
         utxo_common::preimage_trade_fee_required_to_send_outputs(self, outputs, fee_policy, gas_fee, stage).await
     }
 
@@ -520,18 +519,11 @@ impl MmCoin for QtumCoin {
         utxo_common::get_trade_fee(self.clone())
     }
 
-    fn get_sender_trade_fee(
-        &self,
-        value: TradePreimageValue,
-        stage: FeeApproxStage,
-    ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
+    fn get_sender_trade_fee(&self, value: TradePreimageValue, stage: FeeApproxStage) -> TradePreimageFut<TradeFee> {
         utxo_common::get_sender_trade_fee(self.clone(), value, stage)
     }
 
-    fn get_receiver_trade_fee(
-        &self,
-        _stage: FeeApproxStage,
-    ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
+    fn get_receiver_trade_fee(&self, _stage: FeeApproxStage) -> TradePreimageFut<TradeFee> {
         utxo_common::get_receiver_trade_fee(self.clone())
     }
 
@@ -539,7 +531,7 @@ impl MmCoin for QtumCoin {
         &self,
         dex_fee_amount: BigDecimal,
         stage: FeeApproxStage,
-    ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
+    ) -> TradePreimageFut<TradeFee> {
         utxo_common::get_fee_to_send_taker_fee(self.clone(), dex_fee_amount, stage)
     }
 

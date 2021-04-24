@@ -13,7 +13,7 @@ use crate::mm2::lp_ordermatch::{best_orders_rpc, buy, cancel_all_orders, cancel_
                                 orderbook_depth_rpc, orderbook_rpc, sell, set_price};
 use crate::mm2::lp_swap::{active_swaps_rpc, all_swaps_uuids_by_filter, ban_pubkey_rpc, coins_needed_for_kick_start,
                           import_swaps, list_banned_pubkeys_rpc, max_taker_vol, my_recent_swaps, my_swap_status,
-                          recover_funds_of_swap, stats_swap_status, trade_preimage, unban_pubkeys_rpc};
+                          recover_funds_of_swap, stats_swap_status, unban_pubkeys_rpc};
 use coins::{convert_address, convert_utxo_address, get_enabled_coins, get_trade_fee, kmd_rewards_info, my_tx_history,
             send_raw_transaction, set_required_confirmations, set_requires_notarization, show_priv_key,
             validate_address};
@@ -124,7 +124,7 @@ pub fn dispatcher(req: Json, ctx: MmArc) -> DispatcherRes {
         "setprice" => hyres(set_price(ctx, req)),
         "stats_swap_status" => stats_swap_status(ctx, req),
         "stop" => stop(ctx),
-        "trade_preimage" => hyres(trade_preimage(ctx, req)),
+        "trade_preimage" => hyres(into_legacy::trade_preimage(ctx, req)),
         "unban_pubkeys" => hyres(unban_pubkeys_rpc(ctx, req)),
         "validateaddress" => hyres(validate_address(ctx, req)),
         "version" => version(),
@@ -155,11 +155,20 @@ pub async fn process_single_request(
 /// The set of functions that convert the result of the updated handlers into the legacy format.
 mod into_legacy {
     use super::*;
+    use crate::mm2::lp_swap;
 
     pub async fn withdraw(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
         let params = try_s!(json::from_value(req));
         let result = try_s!(coins::withdraw(ctx, params).await);
         let body = try_s!(json::to_vec(&result));
+        Ok(try_s!(Response::builder().body(body)))
+    }
+
+    pub async fn trade_preimage(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
+        let params = try_s!(json::from_value(req));
+        let result = try_s!(lp_swap::trade_preimage_rpc(ctx, params).await);
+        let res = json!({ "result": result });
+        let body = try_s!(json::to_vec(&res));
         Ok(try_s!(Response::builder().body(body)))
     }
 }

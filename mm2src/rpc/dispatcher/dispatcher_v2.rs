@@ -1,7 +1,8 @@
 use super::lp_protocol::{MmRpcBuilder, MmRpcRequest};
 use super::{DispatcherError, DispatcherResult, PUBLIC_METHODS};
+use crate::mm2::lp_swap::trade_preimage_rpc;
 use coins::withdraw;
-use common::log::warn;
+use common::log::{error, warn};
 use common::mm_ctx::MmArc;
 use common::mm_error::prelude::*;
 use common::HttpStatusCode;
@@ -53,6 +54,9 @@ where
 {
     let params = json::from_value(request.params)?;
     let result = handler(ctx, params).await;
+    if let Err(ref e) = result {
+        error!("RPC error response: {}", e);
+    }
 
     let response = MmRpcBuilder::from_result(result)
         .version(request.mmrpc)
@@ -80,6 +84,7 @@ fn auth(request: &MmRpcRequest, ctx: &MmArc) -> DispatcherResult<()> {
 async fn dispatcher(request: MmRpcRequest, ctx: MmArc) -> DispatcherResult<Response<Vec<u8>>> {
     match request.method.as_str() {
         "withdraw" => handle_mmrpc(ctx, request, withdraw).await,
+        "trade_preimage" => handle_mmrpc(ctx, request, trade_preimage_rpc).await,
         _ => MmError::err(DispatcherError::NoSuchMethod { method: request.method }),
     }
 }

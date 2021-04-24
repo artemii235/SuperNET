@@ -37,8 +37,7 @@ use common::mm_ctx::{from_ctx, MmArc};
 use common::mm_error::prelude::*;
 use common::mm_metrics::MetricsWeak;
 use common::mm_number::MmNumber;
-use common::{block_on, calc_total_pages, now_ms, rpc_err_response, rpc_response, HttpStatusCode, HyRes, TraceSource,
-             Traceable};
+use common::{block_on, calc_total_pages, now_ms, rpc_err_response, rpc_response, HttpStatusCode, HyRes};
 use derive_more::Display;
 use futures::compat::Future01CompatExt;
 use futures::lock::Mutex as AsyncMutex;
@@ -80,23 +79,29 @@ macro_rules! try_f {
 pub mod coins_tests;
 
 pub mod eth;
-use self::eth::{eth_coin_from_conf_and_request, EthCoin, EthTxFeeDetails, SignedEthTx};
+use eth::{eth_coin_from_conf_and_request, EthCoin, EthTxFeeDetails, SignedEthTx};
+
 pub mod utxo;
-use self::utxo::qtum::{self, qtum_coin_from_conf_and_request, QtumCoin};
-use self::utxo::utxo_standard::{utxo_standard_coin_from_conf_and_request, UtxoStandardCoin};
-use self::utxo::{GenerateTxError, UtxoFeeDetails, UtxoTx};
+use utxo::qtum::{self, qtum_coin_from_conf_and_request, QtumCoin};
+use utxo::utxo_common::big_decimal_from_sat_unsigned;
+use utxo::utxo_standard::{utxo_standard_coin_from_conf_and_request, UtxoStandardCoin};
+use utxo::{GenerateTxError, UtxoFeeDetails, UtxoTx};
+
 pub mod qrc20;
 use qrc20::{qrc20_coin_from_conf_and_request, Qrc20Coin, Qrc20FeeDetails};
+
 #[doc(hidden)]
 #[allow(unused_variables)]
 pub mod test_coin;
 pub use test_coin::TestCoin;
 
-pub type WithdrawResult = Result<TransactionDetails, MmError<WithdrawError>>;
-pub type WithdrawFut = Box<dyn Future<Item = TransactionDetails, Error = MmError<WithdrawError>> + Send>;
-pub type NumConversResult<T> = Result<T, MmError<NumConversError>>;
 pub type BalanceResult<T> = Result<T, MmError<BalanceError>>;
 pub type BalanceFut<T> = Box<dyn Future<Item = T, Error = MmError<BalanceError>> + Send>;
+pub type NumConversResult<T> = Result<T, MmError<NumConversError>>;
+pub type WithdrawResult = Result<TransactionDetails, MmError<WithdrawError>>;
+pub type WithdrawFut = Box<dyn Future<Item = TransactionDetails, Error = MmError<WithdrawError>> + Send>;
+pub type TradePreimageResult<T> = Result<T, MmError<TradePreimageError>>;
+pub type TradePreimageFut<T> = Box<dyn Future<Item = T, Error = MmError<TradePreimageError>> + Send>;
 
 pub trait Transaction: fmt::Debug + 'static {
     /// Raw transaction bytes of the transaction
@@ -479,42 +484,81 @@ pub enum TradePreimageValue {
     UpperBound(BigDecimal),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Display)]
 pub enum TradePreimageError {
-    NotSufficientBalance(String),
-    Other(String),
+    #[display(
+        fmt = "Not enough {} to preimage the trade: available {}, required at least {}",
+        coin,
+        available,
+        required
+    )]
+    NotSufficientBalance {
+        coin: String,
+        available: BigDecimal,
+        required: BigDecimal,
+    },
+    #[display(fmt = "The amount {} is too small", amount)]
+    AmountIsTooSmall { amount: BigDecimal },
+    #[display(fmt = "The max available amount {} is too small", amount)]
+    UpperBoundAmountIsTooSmall { amount: BigDecimal },
+    #[display(fmt = "Transport error: {}", _0)]
+    Transport(String),
+    #[display(fmt = "Internal error: {}", _0)]
+    InternalError(String),
 }
 
-impl fmt::Display for TradePreimageError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            TradePreimageError::NotSufficientBalance(e) => write!(f, "Not sufficient balance: {}", e),
-            TradePreimageError::Other(e) => write!(f, "{}", e),
-        }
-    }
+impl From<NumConversError> for TradePreimageError {
+    fn from(e: NumConversError) -> Self { TradePreimageError::InternalError(e.to_string()) }
 }
 
-impl Traceable for TradePreimageError {
-    fn trace(self, source: TraceSource) -> Self {
-        match self {
-            TradePreimageError::NotSufficientBalance(e) => {
-                TradePreimageError::NotSufficientBalance(source.with_msg(&e))
+impl TradePreimageError {
+    /// Construct [`TradePreimageError`] from [`GenerateTxError`] using additional `coin` and `decimals`.
+    pub fn from_generate_tx_error(
+        gen_tx_err: GenerateTxError,
+        coin: String,
+        decimals: u8,
+        is_upper_bound: bool,
+    ) -> TradePreimageError {
+        match gen_tx_err {
+            GenerateTxError::EmptyUtxoSet { required } => {
+                let required = big_decimal_from_sat_unsigned(required, decimals);
+                TradePreimageError::NotSufficientBalance {
+                    coin,
+                    available: BigDecimal::from(0),
+                    required,
+                }
             },
-            TradePreimageError::Other(e) => TradePreimageError::Other(source.with_msg(&e)),
-        }
-    }
-}
-
-impl From<GenerateTxError> for TradePreimageError {
-    fn from(e: GenerateTxError) -> Self {
-        if matches!(e,
-            GenerateTxError::EmptyUtxoSet {..}
-            | GenerateTxError::DeductFeeFromOutputFailed {..}
-            | GenerateTxError::NotEnoughUtxos {..})
-        {
-            TradePreimageError::NotSufficientBalance(e.to_string())
-        } else {
-            TradePreimageError::Other(e.to_string())
+            GenerateTxError::EmptyOutputs => TradePreimageError::InternalError(gen_tx_err.to_string()),
+            GenerateTxError::OutputValueLessThanDust { value, .. } => {
+                let amount = big_decimal_from_sat_unsigned(value, decimals);
+                if is_upper_bound {
+                    TradePreimageError::UpperBoundAmountIsTooSmall { amount }
+                } else {
+                    TradePreimageError::AmountIsTooSmall { amount }
+                }
+            },
+            GenerateTxError::DeductFeeFromOutputFailed {
+                output_value, required, ..
+            } => {
+                let available = big_decimal_from_sat_unsigned(output_value, decimals);
+                let required = big_decimal_from_sat_unsigned(required, decimals);
+                TradePreimageError::NotSufficientBalance {
+                    coin,
+                    available,
+                    required,
+                }
+            },
+            GenerateTxError::NotEnoughUtxos { sum_utxos, required } => {
+                let available = big_decimal_from_sat_unsigned(sum_utxos, decimals);
+                let required = big_decimal_from_sat_unsigned(required, decimals);
+                TradePreimageError::NotSufficientBalance {
+                    coin,
+                    available,
+                    required,
+                }
+            },
+            GenerateTxError::Transport(e) => TradePreimageError::Transport(e),
+            GenerateTxError::Internal(e) => TradePreimageError::InternalError(e),
         }
     }
 }
@@ -551,7 +595,7 @@ impl From<NumConversError> for BalanceError {
 #[serde(tag = "error_type", content = "error_data")]
 pub enum WithdrawError {
     #[display(
-        fmt = "Not enough {} to withdraw: available {}, required {}",
+        fmt = "Not enough {} to withdraw: available {}, required at least {}",
         coin,
         available,
         required
@@ -600,6 +644,49 @@ impl From<BalanceError> for WithdrawError {
         match e {
             BalanceError::Transport(error) | BalanceError::InvalidResponse(error) => WithdrawError::Transport(error),
             BalanceError::Internal(internal) => WithdrawError::InternalError(internal),
+        }
+    }
+}
+
+impl WithdrawError {
+    /// Construct [`WithdrawError`] from [`GenerateTxError`] using additional `coin` and `decimals`.
+    pub fn from_generate_tx_error(gen_tx_err: GenerateTxError, coin: String, decimals: u8) -> WithdrawError {
+        match gen_tx_err {
+            GenerateTxError::EmptyUtxoSet { required } => {
+                let required = big_decimal_from_sat_unsigned(required, decimals);
+                WithdrawError::NotSufficientBalance {
+                    coin,
+                    available: BigDecimal::from(0),
+                    required,
+                }
+            },
+            GenerateTxError::EmptyOutputs => WithdrawError::InternalError(gen_tx_err.to_string()),
+            GenerateTxError::OutputValueLessThanDust { value, .. } => {
+                let amount = big_decimal_from_sat_unsigned(value, decimals);
+                WithdrawError::AmountIsTooSmall { amount }
+            },
+            GenerateTxError::DeductFeeFromOutputFailed {
+                output_value, required, ..
+            } => {
+                let available = big_decimal_from_sat_unsigned(output_value, decimals);
+                let required = big_decimal_from_sat_unsigned(required, decimals);
+                WithdrawError::NotSufficientBalance {
+                    coin,
+                    available,
+                    required,
+                }
+            },
+            GenerateTxError::NotEnoughUtxos { sum_utxos, required } => {
+                let available = big_decimal_from_sat_unsigned(sum_utxos, decimals);
+                let required = big_decimal_from_sat_unsigned(required, decimals);
+                WithdrawError::NotSufficientBalance {
+                    coin,
+                    available,
+                    required,
+                }
+            },
+            GenerateTxError::Transport(e) => WithdrawError::Transport(e),
+            GenerateTxError::Internal(e) => WithdrawError::InternalError(e),
         }
     }
 }
@@ -681,24 +768,17 @@ pub trait MmCoin: SwapOps + MarketCoinOps + fmt::Debug + Send + Sync + 'static {
     fn get_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = String> + Send>;
 
     /// Get fee to be paid by sender per whole swap using the sending value and check if the wallet has sufficient balance to pay the fee.
-    fn get_sender_trade_fee(
-        &self,
-        value: TradePreimageValue,
-        stage: FeeApproxStage,
-    ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send>;
+    fn get_sender_trade_fee(&self, value: TradePreimageValue, stage: FeeApproxStage) -> TradePreimageFut<TradeFee>;
 
     /// Get fee to be paid by receiver per whole swap and check if the wallet has sufficient balance to pay the fee.
-    fn get_receiver_trade_fee(
-        &self,
-        stage: FeeApproxStage,
-    ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send>;
+    fn get_receiver_trade_fee(&self, stage: FeeApproxStage) -> TradePreimageFut<TradeFee>;
 
     /// Get transaction fee the Taker has to pay to send a `TakerFee` transaction and check if the wallet has sufficient balance to pay the fee.
     fn get_fee_to_send_taker_fee(
         &self,
         dex_fee_amount: BigDecimal,
         stage: FeeApproxStage,
-    ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send>;
+    ) -> TradePreimageFut<TradeFee>;
 
     /// required transaction confirmations number to ensure double-spend safety
     fn required_confirmations(&self) -> u64;

@@ -3,26 +3,27 @@ use crate::qrc20::rpc_clients::{LogEntry, Qrc20ElectrumOps, Qrc20NativeOps, Qrc2
                                 ViewContractCallType};
 use crate::utxo::qtum::QtumBasedCoin;
 use crate::utxo::rpc_clients::{ElectrumClient, NativeClient, UnspentInfo, UtxoRpcClientEnum, UtxoRpcClientOps,
-                               UtxoRpcResult};
+                               UtxoRpcError, UtxoRpcResult};
 use crate::utxo::utxo_common::{self, big_decimal_from_sat, check_all_inputs_signed_by_pub};
 use crate::utxo::{qtum, sign_tx, ActualTxFee, AdditionalTxData, FeePolicy, GenerateTxError, GenerateTxResult,
                   RecentlySpentOutPoints, UtxoCoinBuilder, UtxoCoinFields, UtxoCommonOps, UtxoTx,
                   VerboseTransactionFrom, UTXO_LOCK};
 use crate::{BalanceError, BalanceFut, CoinBalance, FeeApproxStage, FoundSwapTxSpend, HistorySyncState, MarketCoinOps,
-            MmCoin, SwapOps, TradeFee, TradePreimageError, TradePreimageValue, TransactionDetails, TransactionEnum,
-            TransactionFut, ValidateAddressResult, WithdrawError, WithdrawFee, WithdrawFut, WithdrawRequest,
-            WithdrawResult};
+            MmCoin, SwapOps, TradeFee, TradePreimageError, TradePreimageFut, TradePreimageResult, TradePreimageValue,
+            TransactionDetails, TransactionEnum, TransactionFut, ValidateAddressResult, WithdrawError, WithdrawFee,
+            WithdrawFut, WithdrawRequest, WithdrawResult};
 use async_trait::async_trait;
 use bigdecimal::BigDecimal;
 use bitcrypto::{dhash160, sha256};
 use chain::TransactionOutput;
+use common::block_on;
 use common::executor::Timer;
 use common::jsonrpc_client::{JsonRpcClient, JsonRpcError, JsonRpcRequest, RpcRes};
 use common::log::{error, warn};
 use common::mm_ctx::MmArc;
 use common::mm_error::prelude::*;
 use common::mm_number::MmNumber;
-use common::{block_on, Traceable};
+use derive_more::Display;
 use ethabi::{Function, Token};
 use ethereum_types::{H160, U256};
 use futures::compat::Future01CompatExt;
@@ -61,6 +62,8 @@ const QRC20_TRANSFER_TOPIC: &str = "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4
 const QRC20_PAYMENT_SENT_TOPIC: &str = "ccc9c05183599bd3135da606eaaf535daffe256e9de33c048014cffcccd4ad57";
 const QRC20_RECEIVER_SPENT_TOPIC: &str = "36c177bcb01c6d568244f05261e2946c8c977fa50822f3fa098c470770ee1f3e";
 const QRC20_SENDER_REFUNDED_TOPIC: &str = "1797d500133f8e427eb9da9523aa4a25cb40f50ebc7dbda3c7c81778973f35ba";
+
+pub type Qrc20ABIResult<T> = Result<T, MmError<Qrc20ABIError>>;
 
 struct Qrc20CoinBuilder<'a> {
     ctx: &'a MmArc,
@@ -299,6 +302,39 @@ struct GenerateQrc20TxResult {
     gas_fee: u64,
 }
 
+#[derive(Debug, Display)]
+pub enum Qrc20ABIError {
+    #[display(fmt = "Invalid QRC20 ABI params: {}", _0)]
+    InvalidParams(String),
+    #[display(fmt = "QRC20 ABI error: {}", _0)]
+    ABIError(String),
+}
+
+impl From<ethabi::Error> for Qrc20ABIError {
+    fn from(e: ethabi::Error) -> Qrc20ABIError { Qrc20ABIError::ABIError(e.to_string()) }
+}
+
+impl From<Qrc20ABIError> for TradePreimageError {
+    fn from(e: Qrc20ABIError) -> Self {
+        // `Qrc20ABIError` is always an internal error
+        TradePreimageError::InternalError(e.to_string())
+    }
+}
+
+impl From<Qrc20ABIError> for WithdrawError {
+    fn from(e: Qrc20ABIError) -> Self {
+        // `Qrc20ABIError` is always an internal error
+        WithdrawError::InternalError(e.to_string())
+    }
+}
+
+impl From<Qrc20ABIError> for UtxoRpcError {
+    fn from(e: Qrc20ABIError) -> Self {
+        // `Qrc20ABIError` is always an internal error
+        UtxoRpcError::Internal(e.to_string())
+    }
+}
+
 impl Qrc20Coin {
     /// `gas_fee` should be calculated by: gas_limit * gas_price * (count of contract calls),
     /// or should be sum of gas fee of all contract calls.
@@ -317,10 +353,13 @@ impl Qrc20Coin {
         // Move over all QRC20 tokens should share the same cache with each other and base QTUM coin
         let _utxo_lock = UTXO_LOCK.lock().await;
 
+        let platform = self.platform.clone();
+        let decimals = self.utxo.decimals;
         let GenerateQrc20TxResult { signed, .. } = self
             .generate_qrc20_transaction(outputs)
             .await
-            .map_err(|e| ERRL!("Not enough QTUM to Pay Fee: {}", e))?; // TODO
+            .mm_err(|e| WithdrawError::from_generate_tx_error(e, platform, decimals))
+            .map_err(|e| ERRL!("{}", e))?;
         let _tx = try_s!(self.utxo.rpc_client.send_transaction(&signed).compat().await);
         Ok(signed.into())
     }
@@ -369,17 +408,12 @@ impl Qrc20Coin {
         amount: U256,
         gas_limit: u64,
         gas_price: u64,
-    ) -> Result<ContractCallOutput, String> {
-        let function = try_s!(eth::ERC20_CONTRACT.function("transfer"));
-        let params = try_s!(function.encode_input(&[Token::Address(to_addr), Token::Uint(amount)]));
+    ) -> Qrc20ABIResult<ContractCallOutput> {
+        let function = eth::ERC20_CONTRACT.function("transfer")?;
+        let params = function.encode_input(&[Token::Address(to_addr), Token::Uint(amount)])?;
 
-        let script_pubkey = try_s!(generate_contract_call_script_pubkey(
-            &params,
-            gas_limit,
-            gas_price,
-            &self.contract_address,
-        ))
-        .to_bytes();
+        let script_pubkey =
+            generate_contract_call_script_pubkey(&params, gas_limit, gas_price, &self.contract_address)?.to_bytes();
 
         Ok(ContractCallOutput {
             value: OUTPUT_QTUM_AMOUNT,
@@ -393,7 +427,7 @@ impl Qrc20Coin {
         &self,
         contract_outputs: Vec<ContractCallOutput>,
         stage: &FeeApproxStage,
-    ) -> Result<BigDecimal, TradePreimageError> {
+    ) -> TradePreimageResult<BigDecimal> {
         let decimals = self.as_ref().decimals;
         let mut gas_fee = 0;
         let mut outputs = Vec::with_capacity(contract_outputs.len());
@@ -404,8 +438,7 @@ impl Qrc20Coin {
         let fee_policy = FeePolicy::SendExact;
         let miner_fee =
             UtxoCommonOps::preimage_trade_fee_required_to_send_outputs(self, outputs, fee_policy, Some(gas_fee), stage)
-                .await
-                .trace(source!())?;
+                .await?;
         let gas_fee = big_decimal_from_sat(gas_fee as i64, decimals);
         Ok(miner_fee + gas_fee)
     }
@@ -417,7 +450,7 @@ impl UtxoCommonOps for Qrc20Coin {
     /// Get only QTUM transaction fee.
     async fn get_tx_fee(&self) -> Result<ActualTxFee, JsonRpcError> { utxo_common::get_tx_fee(&self.utxo).await }
 
-    async fn get_htlc_spend_fee(&self) -> Result<u64, String> { utxo_common::get_htlc_spend_fee(self).await }
+    async fn get_htlc_spend_fee(&self) -> UtxoRpcResult<u64> { utxo_common::get_htlc_spend_fee(self).await }
 
     fn addresses_from_script(&self, script: &Script) -> Result<Vec<UtxoAddress>, String> {
         utxo_common::addresses_from_script(&self.utxo.conf, script)
@@ -513,7 +546,7 @@ impl UtxoCommonOps for Qrc20Coin {
         fee_policy: FeePolicy,
         gas_fee: Option<u64>,
         stage: &FeeApproxStage,
-    ) -> Result<BigDecimal, TradePreimageError> {
+    ) -> TradePreimageResult<BigDecimal> {
         utxo_common::preimage_trade_fee_required_to_send_outputs(self, outputs, fee_policy, gas_fee, stage).await
     }
 
@@ -948,11 +981,7 @@ impl MmCoin for Qrc20Coin {
         Box::new(fut.boxed().compat())
     }
 
-    fn get_sender_trade_fee(
-        &self,
-        value: TradePreimageValue,
-        stage: FeeApproxStage,
-    ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
+    fn get_sender_trade_fee(&self, value: TradePreimageValue, stage: FeeApproxStage) -> TradePreimageFut<TradeFee> {
         let selfi = self.clone();
         let decimals = self.utxo.decimals;
         let fut = async move {
@@ -965,46 +994,38 @@ impl MmCoin for Qrc20Coin {
             let my_balance = U256::max_value();
             let value = match value {
                 TradePreimageValue::Exact(value) | TradePreimageValue::UpperBound(value) => {
-                    try_map!(wei_from_big_decimal(&value, decimals), TradePreimageError::Other)
+                    wei_from_big_decimal(&value, decimals)?
                 },
             };
 
             let erc20_payment_fee = {
-                let erc20_payment_outputs = try_map!(
-                    selfi
-                        .generate_swap_payment_outputs(
-                            my_balance,
-                            swap_id.clone(),
-                            value,
-                            timelock,
-                            secret_hash.clone(),
-                            receiver_addr,
-                            selfi.swap_contract_address,
-                        )
-                        .await,
-                    TradePreimageError::Other
-                );
+                let erc20_payment_outputs = selfi
+                    .generate_swap_payment_outputs(
+                        my_balance,
+                        swap_id.clone(),
+                        value,
+                        timelock,
+                        secret_hash.clone(),
+                        receiver_addr,
+                        selfi.swap_contract_address,
+                    )
+                    .await?;
                 selfi
                     .preimage_trade_fee_required_to_send_outputs(erc20_payment_outputs, &stage)
-                    .await
-                    .trace(source!())?
+                    .await?
             };
 
             let sender_refund_fee = {
-                let sender_refund_output = try_map!(
-                    selfi.sender_refund_output(
-                        &selfi.swap_contract_address,
-                        swap_id,
-                        value,
-                        secret_hash,
-                        receiver_addr
-                    ),
-                    TradePreimageError::Other
-                );
+                let sender_refund_output = selfi.sender_refund_output(
+                    &selfi.swap_contract_address,
+                    swap_id,
+                    value,
+                    secret_hash,
+                    receiver_addr,
+                )?;
                 selfi
                     .preimage_trade_fee_required_to_send_outputs(vec![sender_refund_output], &stage)
-                    .await
-                    .trace(source!())?
+                    .await?
             };
 
             let total_fee = erc20_payment_fee + sender_refund_fee;
@@ -1017,10 +1038,7 @@ impl MmCoin for Qrc20Coin {
         Box::new(fut.boxed().compat())
     }
 
-    fn get_receiver_trade_fee(
-        &self,
-        stage: FeeApproxStage,
-    ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
+    fn get_receiver_trade_fee(&self, stage: FeeApproxStage) -> TradePreimageFut<TradeFee> {
         let selfi = self.clone();
         let fut = async move {
             // pass the dummy params
@@ -1031,10 +1049,8 @@ impl MmCoin for Qrc20Coin {
             // get the max available value that we can pass into the contract call params
             // see `generate_contract_call_script_pubkey`
             let value = u64::max_value().into();
-            let output = try_map!(
-                selfi.receiver_spend_output(&selfi.swap_contract_address, swap_id, value, secret, sender_addr),
-                TradePreimageError::Other
-            );
+            let output =
+                selfi.receiver_spend_output(&selfi.swap_contract_address, swap_id, value, secret, sender_addr)?;
 
             let total_fee = selfi
                 .preimage_trade_fee_required_to_send_outputs(vec![output], &stage)
@@ -1052,25 +1068,19 @@ impl MmCoin for Qrc20Coin {
         &self,
         dex_fee_amount: BigDecimal,
         stage: FeeApproxStage,
-    ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
+    ) -> TradePreimageFut<TradeFee> {
         let selfi = self.clone();
         let fut = async move {
-            let amount = try_map!(
-                wei_from_big_decimal(&dex_fee_amount, selfi.utxo.decimals),
-                TradePreimageError::Other
-            );
+            let amount = wei_from_big_decimal(&dex_fee_amount, selfi.utxo.decimals)?;
 
             // pass the dummy params
             let to_addr = H160::default();
-            let transfer_output = try_map!(
-                selfi.transfer_output(to_addr, amount, QRC20_GAS_LIMIT_DEFAULT, QRC20_GAS_PRICE_DEFAULT),
-                TradePreimageError::Other
-            );
+            let transfer_output =
+                selfi.transfer_output(to_addr, amount, QRC20_GAS_LIMIT_DEFAULT, QRC20_GAS_PRICE_DEFAULT)?;
 
             let total_fee = selfi
                 .preimage_trade_fee_required_to_send_outputs(vec![transfer_output], &stage)
-                .await
-                .trace(source!())?;
+                .await?;
             Ok(TradeFee {
                 coin: selfi.platform.clone(),
                 amount: total_fee.into(),
@@ -1174,24 +1184,21 @@ async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> WithdrawResult
     };
 
     // [`Qrc20Coin::transfer_output`] shouldn't fail if the arguments are correct
-    let transfer_output = coin
-        .transfer_output(
-            qtum::contract_addr_from_utxo_addr(to_addr.clone()),
-            qrc20_amount_sat,
-            gas_limit,
-            gas_price,
-        )
-        .into_mm(WithdrawError::InternalError)?;
+    let transfer_output = coin.transfer_output(
+        qtum::contract_addr_from_utxo_addr(to_addr.clone()),
+        qrc20_amount_sat,
+        gas_limit,
+        gas_price,
+    )?;
     let outputs = vec![transfer_output];
 
     let GenerateQrc20TxResult {
         signed,
         miner_fee,
         gas_fee,
-    } = coin
-        .generate_qrc20_transaction(outputs)
-        .await
-        .mm_err(|gen_tx_error| gen_tx_error.into_withdraw_error(coin.platform.clone(), coin.utxo.decimals))?;
+    } = coin.generate_qrc20_transaction(outputs).await.mm_err(|gen_tx_error| {
+        WithdrawError::from_generate_tx_error(gen_tx_error, coin.platform.clone(), coin.utxo.decimals)
+    })?;
 
     let received_by_me = if to_addr == coin.utxo.my_address {
         qrc20_amount.clone()

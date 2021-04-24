@@ -460,6 +460,19 @@ pub enum TradePreimageResult {
     MakerPreimage(MakerPreimage),
 }
 
+impl TradePreimageResult {
+    pub fn sort_total_fees(&mut self) {
+        match self {
+            TradePreimageResult::MakerPreimage(ref mut preimage) => {
+                preimage.total_fees.sort_by(|fee1, fee2| fee1.coin.cmp(&fee2.coin))
+            },
+            TradePreimageResult::TakerPreimage(ref mut preimage) => {
+                preimage.total_fees.sort_by(|fee1, fee2| fee1.coin.cmp(&fee2.coin))
+            },
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TradePreimageResponse {
@@ -467,16 +480,7 @@ pub struct TradePreimageResponse {
 }
 
 impl TradePreimageResponse {
-    pub fn sort_total_fees(&mut self) {
-        match &mut self.result {
-            TradePreimageResult::MakerPreimage(preimage) => {
-                preimage.total_fees.sort_by(|fee1, fee2| fee1.coin.cmp(&fee2.coin))
-            },
-            TradePreimageResult::TakerPreimage(preimage) => {
-                preimage.total_fees.sort_by(|fee1, fee2| fee1.coin.cmp(&fee2.coin))
-            },
-        }
-    }
+    pub fn sort_total_fees(&mut self) { self.result.sort_total_fees() }
 }
 
 #[derive(Debug, Deserialize)]
@@ -518,5 +522,37 @@ pub mod withdraw_error {
     #[serde(deny_unknown_fields)]
     pub struct AmountIsTooSmall {
         pub amount: BigDecimal,
+    }
+}
+
+pub mod trade_preimage_error {
+    use bigdecimal::BigDecimal;
+
+    #[derive(Debug, Deserialize, PartialEq)]
+    #[serde(deny_unknown_fields)]
+    pub struct NotSufficientBalance {
+        pub coin: String,
+        pub available: BigDecimal,
+        pub required: BigDecimal,
+        pub locked_by_swaps: Option<BigDecimal>,
+    }
+
+    #[derive(Debug, Deserialize, PartialEq)]
+    #[serde(deny_unknown_fields)]
+    pub struct VolumeIsTooSmall {
+        pub volume: BigDecimal,
+    }
+
+    #[derive(Debug, Deserialize, PartialEq)]
+    #[serde(deny_unknown_fields)]
+    pub struct NoSuchCoin {
+        pub coin: String,
+    }
+
+    #[derive(Debug, Deserialize, PartialEq)]
+    #[serde(deny_unknown_fields)]
+    pub struct InvalidParam {
+        pub param: String,
+        pub reason: String,
     }
 }

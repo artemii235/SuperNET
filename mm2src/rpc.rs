@@ -155,10 +155,22 @@ async fn process_json_request(ctx: MmArc, req_json: Json, client: SocketAddr) ->
     process_single_request(ctx, req_json, client).await
 }
 
+fn response_from_dispatcher_error(
+    error: MmError<DispatcherError>,
+    version: MmRpcVersion,
+    id: Option<usize>,
+) -> Response<Vec<u8>> {
+    error!("RPC dispatcher error: {}", error);
+    let response: MmRpcResponse<(), _> = MmRpcBuilder::err(error).version(version).id(id).build();
+    response.serialize_http_response()
+}
+
 async fn process_single_request(ctx: MmArc, req: Json, client: SocketAddr) -> Result<Response<Vec<u8>>, String> {
     let local_only = ctx.conf["rpc_local_only"].as_bool().unwrap_or(true);
     if req["mmrpc"].is_null() {
-        return dispatcher_legacy::process_single_request(ctx, req, client, local_only).await;
+        return dispatcher_legacy::process_single_request(ctx, req, client, local_only)
+            .await
+            .map_err(|e| ERRL!("{}", e));
     }
 
     let id = req["id"].as_u64().map(|id| id as usize);
@@ -167,17 +179,15 @@ async fn process_single_request(ctx: MmArc, req: Json, client: SocketAddr) -> Re
         Err(e) => {
             let error = MmError::new(DispatcherError::InvalidMmRpcVersion(e.to_string()));
             // use the latest `MmRpcVersion` if the version is not recognized
-            let response: MmRpcResponse<(), _> = MmRpcBuilder::err(error).version(MmRpcVersion::V2).id(id).build();
-            return Ok(response.serialize_http_response());
+            return Ok(response_from_dispatcher_error(error, MmRpcVersion::V2, id));
         },
     };
 
     match dispatcher_v2::process_single_request(ctx, req, client, local_only).await {
         Ok(response) => Ok(response),
         Err(e) => {
-            let response: MmRpcResponse<(), _> = MmRpcBuilder::err(e).version(version).id(id).build();
             // return always serialized response
-            Ok(response.serialize_http_response())
+            return Ok(response_from_dispatcher_error(e, version, id));
         },
     }
 }

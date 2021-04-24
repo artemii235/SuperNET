@@ -1441,7 +1441,7 @@ fn test_withdraw_legacy() {
         .or(alice_file_passphrase)
         .expect("No ALICE_PASSPHRASE or .env.client/PASSPHRASE");
 
-    let coins = json! ([
+    let coins = json!([
         {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
         {"coin":"MORTY","asset":"MORTY","rpcport":8923,"txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
         {"coin":"MORTY_SEGWIT","asset":"MORTY_SEGWIT","txversion":4,"overwintered":1,"segwit":true,"txfee":1000,"protocol":{"type":"UTXO"}},
@@ -1450,7 +1450,7 @@ fn test_withdraw_legacy() {
     ]);
 
     let mm_alice = MarketMakerIt::start(
-        json! ({
+        json!({
             "gui": "nogui",
             "netid": 8100,
             "myipaddr": env::var ("ALICE_TRADE_IP") .ok(),
@@ -1469,7 +1469,7 @@ fn test_withdraw_legacy() {
     .unwrap();
 
     let (_alice_dump_log, _alice_dump_dashboard) = mm_alice.mm_dump();
-    log! ({"Alice log path: {}", mm_alice.log_path.display()});
+    log!({ "Alice log path: {}", mm_alice.log_path.display() });
 
     // wait until RPC API is active
 
@@ -1485,7 +1485,7 @@ fn test_withdraw_legacy() {
     );
     log!("enable_coins (alice): "[enable_res]);
 
-    let withdraw = block_on(mm_alice.rpc(json! ({
+    let withdraw = block_on(mm_alice.rpc(json!({
         "userpass": mm_alice.userpass,
         "method": "withdraw",
         "coin": "MORTY",
@@ -1497,7 +1497,7 @@ fn test_withdraw_legacy() {
     let _: TransactionDetails = json::from_str(&withdraw.1).expect("Expected 'TransactionDetails'");
 
     // must not allow to withdraw to non-P2PKH addresses
-    let withdraw = block_on(mm_alice.rpc(json! ({
+    let withdraw = block_on(mm_alice.rpc(json!({
         "userpass": mm_alice.userpass,
         "method": "withdraw",
         "coin": "MORTY",
@@ -4552,7 +4552,7 @@ fn test_qrc20_withdraw_error() {
     log!([withdraw.1]);
     assert!(withdraw
         .1
-        .contains("Not enough QRC20 to withdraw: available 10, required 11"));
+        .contains("Not enough QRC20 to withdraw: available 10, required at least 11"));
 
     // try to transfer with zero QTUM balance
     let withdraw = block_on(mm.rpc(json! ({
@@ -4577,7 +4577,7 @@ fn test_qrc20_withdraw_error() {
     // 0.04 = 100_000 * 40 / 100_000_000
     assert!(withdraw
         .1
-        .contains("Not enough QTUM to withdraw: available 0, required 0.04"));
+        .contains("Not enough QTUM to withdraw: available 0, required at least 0.04"));
 }
 
 #[test]

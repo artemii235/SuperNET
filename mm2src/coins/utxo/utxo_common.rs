@@ -3,13 +3,14 @@ use bigdecimal::{BigDecimal, Zero};
 pub use bitcrypto::{dhash160, sha256, ChecksumType};
 use chain::constants::SEQUENCE_FINAL;
 use chain::{OutPoint, TransactionInput, TransactionOutput};
+use common::block_on;
 use common::executor::Timer;
 use common::jsonrpc_client::{JsonRpcError, JsonRpcErrorType};
 use common::log::{error, info, warn};
 use common::mm_ctx::MmArc;
 use common::mm_error::prelude::*;
 use common::mm_metrics::MetricsArc;
-use common::{block_on, Traceable};
+use common::mm_number::MmNumber;
 use futures::compat::Future01CompatExt;
 use futures::future::{FutureExt, TryFutureExt};
 use futures01::future::Either;
@@ -33,9 +34,7 @@ use std::time::Duration;
 pub use chain::Transaction as UtxoTx;
 
 use self::rpc_clients::{electrum_script_hash, UnspentInfo, UtxoRpcClientEnum, UtxoRpcClientOps, UtxoRpcResult};
-use crate::{CanRefundHtlc, CoinBalance, FeeApproxStage, TradePreimageError, TradePreimageValue, ValidateAddressResult,
-            WithdrawResult};
-use common::mm_number::MmNumber;
+use crate::{CanRefundHtlc, CoinBalance, TradePreimageValue, ValidateAddressResult, WithdrawResult};
 
 const MIN_BTC_TRADING_VOL: &str = "0.00777";
 
@@ -160,11 +159,11 @@ pub async fn get_tx_fee(coin: &UtxoCoinFields) -> Result<ActualTxFee, JsonRpcErr
 }
 
 /// returns the fee required to be paid for HTLC spend transaction
-pub async fn get_htlc_spend_fee<T>(coin: &T) -> Result<u64, String>
+pub async fn get_htlc_spend_fee<T>(coin: &T) -> UtxoRpcResult<u64>
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps,
 {
-    let coin_fee = try_s!(coin.get_tx_fee().await);
+    let coin_fee = coin.get_tx_fee().await?;
     let mut fee = match coin_fee {
         ActualTxFee::Fixed(fee) => fee,
         // atomic swap payment spend transaction is slightly more than 300 bytes in average as of now
@@ -173,8 +172,8 @@ where
         ActualTxFee::FixedPerKb(satoshis) => satoshis,
     };
     if coin.as_ref().conf.force_min_relay_fee {
-        let relay_fee = try_s!(coin.as_ref().rpc_client.get_relay_fee().compat().await);
-        let relay_fee_sat = try_s!(sat_from_big_decimal(&relay_fee, coin.as_ref().decimals));
+        let relay_fee = coin.as_ref().rpc_client.get_relay_fee().compat().await?;
+        let relay_fee_sat = sat_from_big_decimal(&relay_fee, coin.as_ref().decimals)?;
         if fee < relay_fee_sat {
             fee = relay_fee_sat;
         }
@@ -1377,7 +1376,9 @@ where
     let (unsigned, data) = coin
         .generate_transaction(unspents, outputs, fee_policy, fee, gas_fee)
         .await
-        .mm_err(|gen_tx_error| gen_tx_error.into_withdraw_error(coin.ticker().to_owned(), coin.as_ref().decimals))?;
+        .mm_err(|gen_tx_error| {
+            WithdrawError::from_generate_tx_error(gen_tx_error, coin.ticker().to_owned(), coin.as_ref().decimals)
+        })?;
     let prev_script = Builder::build_p2pkh(&coin.as_ref().my_address.hash);
     let signed = sign_tx(
         unsigned,
@@ -1879,12 +1880,16 @@ pub async fn preimage_trade_fee_required_to_send_outputs<T>(
     fee_policy: FeePolicy,
     gas_fee: Option<u64>,
     stage: &FeeApproxStage,
-) -> Result<BigDecimal, TradePreimageError>
+) -> TradePreimageResult<BigDecimal>
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps,
 {
+    let ticker = coin.as_ref().conf.ticker.clone();
     let decimals = coin.as_ref().decimals;
-    let tx_fee = try_map!(coin.get_tx_fee().await, TradePreimageError::Other);
+    let tx_fee = coin.get_tx_fee().await?;
+    // [`FeePolicy::DeductFromOutput`] is used if the value is [`TradePreimageValue::UpperBound`] only
+    let is_amount_upper_bound = matches!(fee_policy, FeePolicy::DeductFromOutput(_));
+
     match tx_fee {
         ActualTxFee::Fixed(fee_amount) => {
             let amount = big_decimal_from_sat(fee_amount as i64, decimals);
@@ -1896,16 +1901,12 @@ where
             let dynamic_fee = coin.increase_dynamic_fee_by_stage(fee, stage);
 
             let outputs_count = outputs.len();
-            let (unspents, _recently_sent_txs) = try_map!(
-                coin.list_unspent_ordered(&coin.as_ref().my_address).await,
-                TradePreimageError::Other
-            );
+            let (unspents, _recently_sent_txs) = coin.list_unspent_ordered(&coin.as_ref().my_address).await?;
 
             let actual_tx_fee = Some(ActualTxFee::Dynamic(dynamic_fee));
             let (tx, data) = generate_transaction(coin, unspents, outputs, fee_policy, actual_tx_fee, gas_fee)
                 .await
-                // TODO
-                .map_err(|e| e.into_inner())?;
+                .mm_err(|e| TradePreimageError::from_generate_tx_error(e, ticker, decimals, is_amount_upper_bound))?;
 
             let total_fee = if tx.outputs.len() == outputs_count {
                 // take into account the change output
@@ -1919,15 +1920,11 @@ where
         },
         ActualTxFee::FixedPerKb(fee) => {
             let outputs_count = outputs.len();
-            let (unspents, _recently_sent_txs) = try_map!(
-                coin.list_unspent_ordered(&coin.as_ref().my_address).await,
-                TradePreimageError::Other
-            );
+            let (unspents, _recently_sent_txs) = coin.list_unspent_ordered(&coin.as_ref().my_address).await?;
 
             let (tx, data) = generate_transaction(coin, unspents, outputs, fee_policy, Some(tx_fee), gas_fee)
                 .await
-                // TODO
-                .map_err(|e| e.into_inner())?;
+                .mm_err(|e| TradePreimageError::from_generate_tx_error(e, ticker, decimals, is_amount_upper_bound))?;
 
             let total_fee = if tx.outputs.len() == outputs_count {
                 // take into account the change output if tx_size_kb(tx with change) > tx_size_kb(tx without change)
@@ -1952,11 +1949,7 @@ where
 /// Even if refund will be required the fee will be deducted from P2SH input.
 /// Please note the `get_sender_trade_fee` satisfies the following condition:
 /// `get_sender_trade_fee(x) <= get_sender_trade_fee(y)` for any `x < y`.
-pub fn get_sender_trade_fee<T>(
-    coin: T,
-    value: TradePreimageValue,
-    stage: FeeApproxStage,
-) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send>
+pub fn get_sender_trade_fee<T>(coin: T, value: TradePreimageValue, stage: FeeApproxStage) -> TradePreimageFut<TradeFee>
 where
     T: AsRef<UtxoCoinFields> + MarketCoinOps + UtxoCommonOps + Send + Sync + 'static,
 {
@@ -1970,15 +1963,15 @@ where
         let time_lock = (now_ms() / 1000) as u32;
         let other_pub = &[0; 33]; // H264 is 33 bytes
         let secret_hash = &[0; 20]; // H160 is 20 bytes
-        let SwapPaymentOutputsResult { outputs, .. } = try_map!(
-            generate_swap_payment_outputs(&coin, time_lock, other_pub, secret_hash, amount),
-            TradePreimageError::Other
-        );
+
+        // `generate_swap_payment_outputs` may fail due to either invalid `other_pub` or a number conversation error
+        let SwapPaymentOutputsResult { outputs, .. } =
+            generate_swap_payment_outputs(&coin, time_lock, other_pub, secret_hash, amount)
+                .into_mm(TradePreimageError::InternalError)?;
         let gas_fee = None;
         let fee_amount = coin
             .preimage_trade_fee_required_to_send_outputs(outputs, fee_policy, gas_fee, &stage)
-            .await
-            .trace(source!())?;
+            .await?;
         Ok(TradeFee {
             coin: coin.as_ref().conf.ticker.clone(),
             amount: fee_amount.into(),
@@ -1989,12 +1982,12 @@ where
 }
 
 /// The fee to spend (receive) other payment is deducted from the trading amount so we should display it
-pub fn get_receiver_trade_fee<T>(coin: T) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send>
+pub fn get_receiver_trade_fee<T>(coin: T) -> TradePreimageFut<TradeFee>
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps + Send + Sync + 'static,
 {
     let fut = async move {
-        let amount_sat = try_map!(get_htlc_spend_fee(&coin).await, TradePreimageError::Other);
+        let amount_sat = get_htlc_spend_fee(&coin).await?;
         let amount = big_decimal_from_sat_unsigned(amount_sat, coin.as_ref().decimals).into();
         Ok(TradeFee {
             coin: coin.as_ref().conf.ticker.clone(),
@@ -2009,16 +2002,13 @@ pub fn get_fee_to_send_taker_fee<T>(
     coin: T,
     dex_fee_amount: BigDecimal,
     stage: FeeApproxStage,
-) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send>
+) -> TradePreimageFut<TradeFee>
 where
     T: AsRef<UtxoCoinFields> + MarketCoinOps + UtxoCommonOps + Send + Sync + 'static,
 {
     let decimals = coin.as_ref().decimals;
     let fut = async move {
-        let value = try_map!(
-            sat_from_big_decimal(&dex_fee_amount, decimals),
-            TradePreimageError::Other
-        );
+        let value = sat_from_big_decimal(&dex_fee_amount, decimals)?;
         let output = TransactionOutput {
             value,
             script_pubkey: Builder::build_p2pkh(&AddressHash::default()).to_bytes(),
@@ -2026,8 +2016,7 @@ where
         let gas_fee = None;
         let fee_amount = coin
             .preimage_trade_fee_required_to_send_outputs(vec![output], FeePolicy::SendExact, gas_fee, &stage)
-            .await
-            .trace(source!())?;
+            .await?;
         Ok(TradeFee {
             coin: coin.ticker().to_owned(),
             amount: fee_amount.into(),
@@ -2413,6 +2402,7 @@ struct SwapPaymentOutputsResult {
     outputs: Vec<TransactionOutput>,
 }
 
+// TODO
 fn generate_swap_payment_outputs<T>(
     coin: T,
     time_lock: u32,

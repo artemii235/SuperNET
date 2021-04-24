@@ -57,9 +57,8 @@ use uuid::Uuid;
 use crate::mm2::lp_network::{broadcast_p2p_msg, request_any_relay, request_one_peer, subscribe_to_topic, P2PRequest};
 use crate::mm2::lp_swap::{calc_max_maker_vol, check_balance_for_maker_swap, check_balance_for_taker_swap,
                           check_other_coin_balance_for_swap, insert_new_swap_to_db, is_pubkey_banned,
-                          lp_atomic_locktime, run_maker_swap, run_taker_swap, AtomicLocktimeVersion,
-                          CheckBalanceError, MakerSwap, RunMakerSwapInput, RunTakerSwapInput,
-                          SwapConfirmationsSettings, TakerSwap};
+                          lp_atomic_locktime, run_maker_swap, run_taker_swap, AtomicLocktimeVersion, MakerSwap,
+                          RunMakerSwapInput, RunTakerSwapInput, SwapConfirmationsSettings, TakerSwap};
 
 pub use best_orders::best_orders_rpc;
 pub use orderbook_depth::orderbook_depth_rpc;
@@ -794,7 +793,7 @@ impl BalanceTradeFeeUpdatedHandler for BalanceUpdateOrdermatchHandler {
         // Note although the maker orders are issued already, but they are not matched yet, so pass the `OrderIssue` stage.
         let new_volume = match calc_max_maker_vol(&self.ctx, coin, new_balance, FeeApproxStage::OrderIssue).await {
             Ok(v) => v,
-            Err(CheckBalanceError::NotSufficientBalance(_)) => MmNumber::from(0),
+            Err(e) if e.get_inner().not_sufficient_balance() => MmNumber::from(0),
             Err(e) => {
                 log::warn!("Couldn't handle the 'balance_updated' event: {}", e);
                 return;

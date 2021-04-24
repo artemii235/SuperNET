@@ -1411,7 +1411,7 @@ mod docker_tests {
         })))
         .unwrap();
         assert!(!rc.0.is_success(), "buy success, but should fail: {}", rc.1);
-        assert!(rc.1.contains("is larger than available"), rc.1);
+        assert!(rc.1.contains("Not enough MYCOIN1 for swap"), rc.1);
         block_on(mm_bob.stop()).unwrap();
         block_on(mm_alice.stop()).unwrap();
     }
@@ -1508,7 +1508,7 @@ mod docker_tests {
         })))
         .unwrap();
         assert!(!rc.0.is_success(), "sell success, but should fail: {}", rc.1);
-        assert!(rc.1.contains("is larger than available"), rc.1);
+        assert!(rc.1.contains("Not enough MYCOIN1 for swap"), rc.1);
         block_on(mm_bob.stop()).unwrap();
         block_on(mm_alice.stop()).unwrap();
     }
@@ -1574,9 +1574,11 @@ mod docker_tests {
     #[test]
     fn test_maker_trade_preimage() {
         let priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
+
         let (_ctx, mycoin) = utxo_coin_from_privkey("MYCOIN", &priv_key);
         let my_address = mycoin.my_address().expect("!my_address");
         fill_address(&mycoin, &my_address, 10.into(), 30);
+
         let (_ctx, mycoin1) = utxo_coin_from_privkey("MYCOIN1", &priv_key);
         let my_address = mycoin1.my_address().expect("!my_address");
         fill_address(&mycoin1, &my_address, 20.into(), 30);
@@ -1606,11 +1608,14 @@ mod docker_tests {
 
         let rc = block_on(mm.rpc(json!({
             "userpass": mm.userpass,
+            "mmrpc": "2.0",
             "method": "trade_preimage",
-            "base": "MYCOIN",
-            "rel": "MYCOIN1",
-            "swap_method": "setprice",
-            "max": true,
+            "params": {
+                "base": "MYCOIN",
+                "rel": "MYCOIN1",
+                "swap_method": "setprice",
+                "max": true,
+            },
         })))
         .unwrap();
         assert!(rc.0.is_success(), "!trade_preimage: {}", rc.1);
@@ -1630,22 +1635,25 @@ mod docker_tests {
             total_fees: vec![my_coin_total, my_coin1_total],
         });
 
-        let mut actual: TradePreimageResponse = json::from_str(&rc.1).unwrap();
-        actual.sort_total_fees();
+        let mut actual: RpcSuccessResponse<TradePreimageResult> = json::from_str(&rc.1).unwrap();
+        actual.result.sort_total_fees();
         assert_eq!(expected, actual.result);
 
         let rc = block_on(mm.rpc(json!({
             "userpass": mm.userpass,
+            "mmrpc": "2.0",
             "method": "trade_preimage",
-            "base": "MYCOIN1",
-            "rel": "MYCOIN",
-            "swap_method": "setprice",
-            "max": true,
+            "params": {
+                "base": "MYCOIN1",
+                "rel": "MYCOIN",
+                "swap_method": "setprice",
+                "max": true,
+            },
         })))
         .unwrap();
         assert!(rc.0.is_success(), "!trade_preimage: {}", rc.1);
-        let mut actual: TradePreimageResponse = json::from_str(&rc.1).unwrap();
-        actual.sort_total_fees();
+        let mut actual: RpcSuccessResponse<TradePreimageResult> = json::from_str(&rc.1).unwrap();
+        actual.result.sort_total_fees();
 
         let base_coin_fee = TradeFeeForTest::new("MYCOIN1", "0.00002", false);
         let rel_coin_fee = TradeFeeForTest::new("MYCOIN", "0.00001", true);
@@ -1662,21 +1670,24 @@ mod docker_tests {
             total_fees: vec![my_coin_total, my_coin1_total],
         });
 
-        actual.sort_total_fees();
+        actual.result.sort_total_fees();
         assert_eq!(expected, actual.result);
 
         let rc = block_on(mm.rpc(json!({
             "userpass": mm.userpass,
+            "mmrpc": "2.0",
             "method": "trade_preimage",
-            "base": "MYCOIN1",
-            "rel": "MYCOIN",
-            "swap_method": "setprice",
-            "volume": "19.99998",
+            "params": {
+                "base": "MYCOIN1",
+                "rel": "MYCOIN",
+                "swap_method": "setprice",
+                "volume": "19.99998",
+            },
         })))
         .unwrap();
         assert!(rc.0.is_success(), "!trade_preimage: {}", rc.1);
-        let mut actual: TradePreimageResponse = json::from_str(&rc.1).unwrap();
-        actual.sort_total_fees();
+        let mut actual: RpcSuccessResponse<TradePreimageResult> = json::from_str(&rc.1).unwrap();
+        actual.result.sort_total_fees();
 
         let base_coin_fee = TradeFeeForTest::new("MYCOIN1", "0.00002", false);
         let rel_coin_fee = TradeFeeForTest::new("MYCOIN", "0.00001", true);
@@ -1693,12 +1704,235 @@ mod docker_tests {
             total_fees: vec![total_my_coin, total_my_coin1],
         });
 
-        actual.sort_total_fees();
+        actual.result.sort_total_fees();
         assert_eq!(expected, actual.result);
     }
 
     #[test]
     fn test_taker_trade_preimage() {
+        let priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
+
+        let (_ctx, mycoin) = utxo_coin_from_privkey("MYCOIN", &priv_key);
+        let my_address = mycoin.my_address().expect("!my_address");
+        fill_address(&mycoin, &my_address, 10.into(), 30);
+
+        let (_ctx, mycoin1) = utxo_coin_from_privkey("MYCOIN1", &priv_key);
+        let my_address = mycoin1.my_address().expect("!my_address");
+        fill_address(&mycoin1, &my_address, 20.into(), 30);
+
+        let coins = json!([
+            {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
+            {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":2000,"protocol":{"type":"UTXO"}},
+        ]);
+        let mm = MarketMakerIt::start(
+            json! ({
+                "gui": "nogui",
+                "netid": 9000,
+                "dht": "on",  // Enable DHT without delay.
+                "passphrase": format!("0x{}", hex::encode(priv_key)),
+                "coins": coins,
+                "rpc_password": "pass",
+                "i_am_see": true,
+            }),
+            "pass".to_string(),
+            None,
+        )
+        .unwrap();
+        let (_dump_log, _dump_dashboard) = mm_dump(&mm.log_path);
+
+        log!([block_on(enable_native(&mm, "MYCOIN1", &[]))]);
+        log!([block_on(enable_native(&mm, "MYCOIN", &[]))]);
+
+        // `max` field is not supported for `buy/sell` swap methods
+        let rc = block_on(mm.rpc(json!({
+            "userpass": mm.userpass,
+            "mmrpc": "2.0",
+            "method": "trade_preimage",
+            "params": {
+                "base": "MYCOIN",
+                "rel": "MYCOIN1",
+                "swap_method": "sell",
+                "max": true,
+            },
+        })))
+        .unwrap();
+        assert!(!rc.0.is_success(), "trade_preimage success, but should fail: {}", rc.1);
+
+        let actual: RpcErrorResponse<trade_preimage_error::InvalidParam> = json::from_str(&rc.1).unwrap();
+        assert_eq!(actual.error_type, "InvalidParam", "Unexpected error_type: {}", rc.1);
+        let expected = trade_preimage_error::InvalidParam {
+            param: "max".to_owned(),
+            reason: "'max' cannot be used with 'sell' or 'buy' method".to_owned(),
+        };
+        assert_eq!(actual.error_data, Some(expected));
+
+        // `price` field is missing
+        let rc = block_on(mm.rpc(json!({
+            "userpass": mm.userpass,
+            "mmrpc": "2.0",
+            "method": "trade_preimage",
+            "params": {
+                "base": "MYCOIN",
+                "rel": "MYCOIN1",
+                "swap_method": "sell",
+                "volume": "10",
+            },
+        })))
+        .unwrap();
+        assert!(!rc.0.is_success(), "trade_preimage success, but should fail: {}", rc.1);
+        let actual: RpcErrorResponse<()> = json::from_str(&rc.1).unwrap();
+        assert_eq!(actual.error_type, "ZeroPrice", "Unexpected error_type: {}", rc.1);
+
+        let rc = block_on(mm.rpc(json!({
+            "userpass": mm.userpass,
+            "mmrpc": "2.0",
+            "method": "trade_preimage",
+            "params": {
+                "base": "MYCOIN",
+                "rel": "MYCOIN1",
+                "swap_method": "sell",
+                "volume": "7.77",
+                "price": "2",
+            },
+        })))
+        .unwrap();
+        assert!(rc.0.is_success(), "!trade_preimage: {}", rc.1);
+
+        let mut actual: RpcSuccessResponse<TradePreimageResult> = json::from_str(&rc.1).unwrap();
+        actual.result.sort_total_fees();
+
+        let base_coin_fee = TradeFeeForTest::new("MYCOIN", "0.00001", false);
+        let rel_coin_fee = TradeFeeForTest::new("MYCOIN1", "0.00002", true);
+        let taker_fee = TradeFeeForTest::new("MYCOIN", "0.01", false);
+        let fee_to_send_taker_fee = TradeFeeForTest::new("MYCOIN", "0.00001", false);
+
+        let my_coin_total_fee = TotalTradeFeeForTest::new("MYCOIN", "0.01002", "0.01002");
+        let my_coin1_total_fee = TotalTradeFeeForTest::new("MYCOIN1", "0.00002", "0");
+
+        let expected = TradePreimageResult::TakerPreimage(TakerPreimage {
+            base_coin_fee,
+            rel_coin_fee,
+            taker_fee,
+            fee_to_send_taker_fee,
+            total_fees: vec![my_coin_total_fee, my_coin1_total_fee],
+        });
+        assert_eq!(expected, actual.result);
+
+        let rc = block_on(mm.rpc(json!({
+            "userpass": mm.userpass,
+            "mmrpc": "2.0",
+            "method": "trade_preimage",
+            "params": {
+                "base": "MYCOIN",
+                "rel": "MYCOIN1",
+                "swap_method": "buy",
+                "volume": "7.77",
+                "price": "2",
+            },
+        })))
+        .unwrap();
+        assert!(rc.0.is_success(), "!trade_preimage: {}", rc.1);
+        let mut actual: RpcSuccessResponse<TradePreimageResult> = json::from_str(&rc.1).unwrap();
+        actual.result.sort_total_fees();
+
+        let base_coin_fee = TradeFeeForTest::new("MYCOIN", "0.00001", true);
+        let rel_coin_fee = TradeFeeForTest::new("MYCOIN1", "0.00002", false);
+        let taker_fee = TradeFeeForTest::new("MYCOIN1", "0.02", false);
+        let fee_to_send_taker_fee = TradeFeeForTest::new("MYCOIN1", "0.00002", false);
+
+        let my_coin_total_fee = TotalTradeFeeForTest::new("MYCOIN", "0.00001", "0");
+        let my_coin1_total_fee = TotalTradeFeeForTest::new("MYCOIN1", "0.02004", "0.02004");
+
+        let expected = TradePreimageResult::TakerPreimage(TakerPreimage {
+            base_coin_fee,
+            rel_coin_fee,
+            taker_fee,
+            fee_to_send_taker_fee,
+            total_fees: vec![my_coin_total_fee, my_coin1_total_fee],
+        });
+        assert_eq!(expected, actual.result);
+    }
+
+    #[test]
+    fn test_trade_preimage_not_sufficient_balance() {
+        let priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
+
+        let (_ctx, mycoin1) = utxo_coin_from_privkey("MYCOIN1", &priv_key);
+        let my_address = mycoin1.my_address().expect("!my_address");
+        fill_address(&mycoin1, &my_address, 20.into(), 30);
+
+        let coins = json!([
+            {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
+            {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1,"txfee":2000,"protocol":{"type":"UTXO"}},
+        ]);
+        let mm = MarketMakerIt::start(
+            json! ({
+                "gui": "nogui",
+                "netid": 9000,
+                "dht": "on",  // Enable DHT without delay.
+                "passphrase": format!("0x{}", hex::encode(priv_key)),
+                "coins": coins,
+                "rpc_password": "pass",
+                "i_am_see": true,
+            }),
+            "pass".to_string(),
+            None,
+        )
+        .unwrap();
+        let (_dump_log, _dump_dashboard) = mm_dump(&mm.log_path);
+
+        log!([block_on(enable_native(&mm, "MYCOIN1", &[]))]);
+        log!([block_on(enable_native(&mm, "MYCOIN", &[]))]);
+
+        // Try sell the max amount with the zero balance.
+        // This RPC call should fail, because if the `max` param is true,
+        // then MM2 would check the account balance, amounts locked by other swaps, etc
+        // and it turns out that the account balance is not sufficient for swap.
+        let rc = block_on(mm.rpc(json!({
+            "userpass": mm.userpass,
+            "mmrpc": "2.0",
+            "method": "trade_preimage",
+            "params": {
+                "base": "MYCOIN",
+                "rel": "MYCOIN1",
+                "swap_method": "setprice",
+                "max": true,
+            },
+        })))
+        .unwrap();
+        assert!(!rc.0.is_success(), "trade_preimage success, but should fail: {}", rc.1);
+        let actual: RpcErrorResponse<trade_preimage_error::NotSufficientBalance> = json::from_str(&rc.1).unwrap();
+        assert_eq!(actual.error_type, "NotSufficientBalance");
+        // Required at least 0.00001 MYCOIN to pay the transaction fee.
+        let required = MmNumber::from("0.00001").to_decimal();
+        let expected = trade_preimage_error::NotSufficientBalance {
+            coin: "MYCOIN".to_owned(),
+            available: BigDecimal::from(0),
+            required,
+            locked_by_swaps: Some(BigDecimal::from(0)),
+        };
+        assert_eq!(actual.error_data, Some(expected));
+
+        // But even if we pass the exact volume, the `trade_preimage` RPC call should not fail,
+        // because MYCOIN and MYCOIN1 have fixed transaction fees.
+        let rc = block_on(mm.rpc(json!({
+            "userpass": mm.userpass,
+            "mmrpc": "2.0",
+            "method": "trade_preimage",
+            "params": {
+                "base": "MYCOIN",
+                "rel": "MYCOIN1",
+                "swap_method": "setprice",
+                "volume": 0.1,
+            },
+        })))
+        .unwrap();
+        assert!(rc.0.is_success(), "!trade_preimage: {}", rc.1);
+        let _: RpcSuccessResponse<TradePreimageResult> = json::from_str(&rc.1).unwrap();
+    }
+
+    #[test]
+    fn test_trade_preimage_legacy() {
         let priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
         let (_ctx, mycoin) = utxo_coin_from_privkey("MYCOIN", &priv_key);
         let my_address = mycoin.my_address().expect("!my_address");
@@ -1730,6 +1964,35 @@ mod docker_tests {
         log!([block_on(enable_native(&mm, "MYCOIN1", &[]))]);
         log!([block_on(enable_native(&mm, "MYCOIN", &[]))]);
 
+        let rc = block_on(mm.rpc(json!({
+            "userpass": mm.userpass,
+            "method": "trade_preimage",
+            "base": "MYCOIN",
+            "rel": "MYCOIN1",
+            "swap_method": "setprice",
+            "max": true,
+        })))
+        .unwrap();
+        assert!(rc.0.is_success(), "!trade_preimage: {}", rc.1);
+        let _: TradePreimageResponse = json::from_str(&rc.1).unwrap();
+
+        // vvv test a taker method vvv
+
+        let rc = block_on(mm.rpc(json!({
+            "userpass": mm.userpass,
+            "method": "trade_preimage",
+            "base": "MYCOIN",
+            "rel": "MYCOIN1",
+            "swap_method": "sell",
+            "volume": "7.77",
+            "price": "2",
+        })))
+        .unwrap();
+        assert!(rc.0.is_success(), "!trade_preimage: {}", rc.1);
+        let _: TradePreimageResponse = json::from_str(&rc.1).unwrap();
+
+        // vvv test the error response vvv
+
         // `max` field is not supported for `buy/sell` swap methods
         let rc = block_on(mm.rpc(json!({
             "userpass": mm.userpass,
@@ -1741,81 +2004,9 @@ mod docker_tests {
         })))
         .unwrap();
         assert!(!rc.0.is_success(), "trade_preimage success, but should fail: {}", rc.1);
-
-        // `price` field is missing
-        let rc = block_on(mm.rpc(json!({
-            "userpass": mm.userpass,
-            "method": "trade_preimage",
-            "base": "MYCOIN",
-            "rel": "MYCOIN1",
-            "swap_method": "sell",
-            "volume": "10",
-        })))
-        .unwrap();
-        assert!(!rc.0.is_success(), "trade_preimage success, but should fail: {}", rc.1);
-
-        let rc = block_on(mm.rpc(json!({
-            "userpass": mm.userpass,
-            "method": "trade_preimage",
-            "base": "MYCOIN",
-            "rel": "MYCOIN1",
-            "swap_method": "sell",
-            "volume": "7.77",
-            "price": "2",
-        })))
-        .unwrap();
-        assert!(rc.0.is_success(), "!trade_preimage: {}", rc.1);
-
-        let mut actual: TradePreimageResponse = json::from_str(&rc.1).unwrap();
-        actual.sort_total_fees();
-
-        let base_coin_fee = TradeFeeForTest::new("MYCOIN", "0.00001", false);
-        let rel_coin_fee = TradeFeeForTest::new("MYCOIN1", "0.00002", true);
-        let taker_fee = TradeFeeForTest::new("MYCOIN", "0.01", false);
-        let fee_to_send_taker_fee = TradeFeeForTest::new("MYCOIN", "0.00001", false);
-
-        let my_coin_total_fee = TotalTradeFeeForTest::new("MYCOIN", "0.01002", "0.01002");
-        let my_coin1_total_fee = TotalTradeFeeForTest::new("MYCOIN1", "0.00002", "0");
-
-        let expected = TradePreimageResult::TakerPreimage(TakerPreimage {
-            base_coin_fee,
-            rel_coin_fee,
-            taker_fee,
-            fee_to_send_taker_fee,
-            total_fees: vec![my_coin_total_fee, my_coin1_total_fee],
-        });
-        assert_eq!(expected, actual.result);
-
-        let rc = block_on(mm.rpc(json!({
-            "userpass": mm.userpass,
-            "method": "trade_preimage",
-            "base": "MYCOIN",
-            "rel": "MYCOIN1",
-            "swap_method": "buy",
-            "volume": "7.77",
-            "price": "2",
-        })))
-        .unwrap();
-        assert!(rc.0.is_success(), "!trade_preimage: {}", rc.1);
-        let mut actual: TradePreimageResponse = json::from_str(&rc.1).unwrap();
-        actual.sort_total_fees();
-
-        let base_coin_fee = TradeFeeForTest::new("MYCOIN", "0.00001", true);
-        let rel_coin_fee = TradeFeeForTest::new("MYCOIN1", "0.00002", false);
-        let taker_fee = TradeFeeForTest::new("MYCOIN1", "0.02", false);
-        let fee_to_send_taker_fee = TradeFeeForTest::new("MYCOIN1", "0.00002", false);
-
-        let my_coin_total_fee = TotalTradeFeeForTest::new("MYCOIN", "0.00001", "0");
-        let my_coin1_total_fee = TotalTradeFeeForTest::new("MYCOIN1", "0.02004", "0.02004");
-
-        let expected = TradePreimageResult::TakerPreimage(TakerPreimage {
-            base_coin_fee,
-            rel_coin_fee,
-            taker_fee,
-            fee_to_send_taker_fee,
-            total_fees: vec![my_coin_total_fee, my_coin1_total_fee],
-        });
-        assert_eq!(expected, actual.result);
+        assert!(rc
+            .1
+            .contains("Incorrect use of the 'max' parameter: 'max' cannot be used with 'sell' or 'buy' method"));
     }
 
     #[test]
