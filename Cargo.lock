@@ -779,6 +779,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "serialization",
+ "serialization_derive",
  "sha2 0.8.2",
  "sha3",
  "tokio",
