@@ -50,7 +50,7 @@ where
     Fut: Future03<Output = Result<T, MmError<E>>>,
     Request: DeserializeOwned,
     T: serde::Serialize + 'static,
-    E: SerializeErrorType + HttpStatusCode + 'static,
+    E: SerMmErrorType + HttpStatusCode + 'static,
 {
     let params = json::from_value(request.params)?;
     let result = handler(ctx, params).await;

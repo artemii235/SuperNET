@@ -48,6 +48,8 @@ serde_bytes = "0.11"
 serde_derive = "1"
 serde_json = { version = "1.0", features = ["raw_value", "preserve_order"] }
 serde_repr = "0.1.6"
+ser_error = { path = "../derives/ser_error" }
+ser_error_derive = { path = "../derives/ser_error_derive" }
 term = "0.5"
 uuid = { version = "0.7", features = ["serde", "v4"] }
 winapi = "0.3"

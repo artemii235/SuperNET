@@ -22,13 +22,13 @@ pub struct MmRpcRequest {
     pub id: Option<usize>,
 }
 
-pub struct MmRpcBuilder<T: Serialize, E: SerializeErrorType> {
+pub struct MmRpcBuilder<T: Serialize, E: SerMmErrorType> {
     version: MmRpcVersion,
     result: MmRpcResult<T, E>,
     id: Option<usize>,
 }
 
-impl<T: Serialize, E: SerializeErrorType> MmRpcBuilder<T, E> {
+impl<T: Serialize, E: SerMmErrorType> MmRpcBuilder<T, E> {
     pub fn ok(r: T) -> Self {
         MmRpcBuilder {
             version: MmRpcVersion::V2,
@@ -73,7 +73,7 @@ impl<T: Serialize, E: SerializeErrorType> MmRpcBuilder<T, E> {
 
 #[derive(Serialize)]
 #[serde(untagged)]
-pub enum MmRpcResult<T: Serialize, E: SerializeErrorType> {
+pub enum MmRpcResult<T: Serialize, E: SerMmErrorType> {
     Ok { result: T },
     Err(MmError<E>),
 }
@@ -81,7 +81,7 @@ pub enum MmRpcResult<T: Serialize, E: SerializeErrorType> {
 impl<T, E> HttpStatusCode for MmRpcResult<T, E>
 where
     T: Serialize,
-    E: HttpStatusCode + SerializeErrorType,
+    E: HttpStatusCode + SerMmErrorType,
 {
     fn status_code(&self) -> StatusCode {
         match self {
@@ -92,7 +92,7 @@ where
 }
 
 #[derive(Serialize)]
-pub struct MmRpcResponse<T: Serialize, E: SerializeErrorType> {
+pub struct MmRpcResponse<T: Serialize, E: SerMmErrorType> {
     mmrpc: MmRpcVersion,
     /// `MmRpcResult` will be flattened into `result` or `error, error_path, error_trace, error_type, error_data` fields.
     #[serde(flatten)]
@@ -100,7 +100,7 @@ pub struct MmRpcResponse<T: Serialize, E: SerializeErrorType> {
     id: Option<usize>,
 }
 
-impl<T: Serialize, E: SerializeErrorType> MmRpcResponse<T, E> {
+impl<T: Serialize, E: SerMmErrorType> MmRpcResponse<T, E> {
     #[allow(dead_code)]
     pub fn serialize_json(&self) -> Json {
         match json::to_value(self) {
@@ -110,7 +110,7 @@ impl<T: Serialize, E: SerializeErrorType> MmRpcResponse<T, E> {
     }
 
     fn error_to_json(&self, error: impl serde::ser::Error) -> Json {
-        #[derive(Display, Serialize)]
+        #[derive(Display, Serialize, SerializeErrorType)]
         #[serde(tag = "error_type", content = "error_data")]
         enum SerializationError {
             #[display(fmt = "Internal error: Couldn't serialize an RPC response: {}", _0)]
@@ -129,7 +129,7 @@ impl<T: Serialize, E: SerializeErrorType> MmRpcResponse<T, E> {
 
 impl<T: Serialize, E> MmRpcResponse<T, E>
 where
-    E: SerializeErrorType + HttpStatusCode,
+    E: SerMmErrorType + HttpStatusCode,
 {
     pub fn serialize_http_response(&self) -> Response<Vec<u8>> {
         let status_code = self.result.status_code();
@@ -149,8 +149,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::Serializer;
 
-    #[derive(Display, Serialize)]
+    #[derive(Display, Serialize, SerializeErrorType)]
     #[serde(tag = "error_type", content = "error_data")]
     enum AnError {
         #[display(fmt = "Not sufficient balance. Top up your balance by {}", missing)]
@@ -159,7 +160,7 @@ mod tests {
 
     #[test]
     fn test_mm_rpc_response_serialize() {
-        let ok: MmRpcResponse<_, String> = MmRpcBuilder::ok(vec![1, 2, 3]).build();
+        let ok: MmRpcResponse<_, AnError> = MmRpcBuilder::ok(vec![1, 2, 3]).build();
         let actual = json::to_value(&ok).expect("Couldn't serialize MmRpcResponse");
         let expected = json!({
             "mmrpc": "2.0",
@@ -168,7 +169,7 @@ mod tests {
         });
         assert_eq!(actual, expected);
 
-        let ok_with_id: MmRpcResponse<_, String> = MmRpcBuilder::ok(vec![1, 2, 3]).id(Some(2)).build();
+        let ok_with_id: MmRpcResponse<_, AnError> = MmRpcBuilder::ok(vec![1, 2, 3]).id(Some(2)).build();
         let actual = json::to_value(&ok_with_id).expect("Couldn't serialize MmRpcResponse");
         let expected = json!({
             "mmrpc": "2.0",
@@ -198,10 +199,22 @@ mod tests {
     #[test]
     fn test_serialization_error() {
         /// An invalid error should cause the serialization error because this enum is not tagged.
-        #[derive(Display, Serialize)]
+        #[derive(Display)]
         enum InvalidError {
             NotSufficientBalance { missing: u64 },
         }
+
+        impl Serialize for InvalidError {
+            fn serialize<S>(&self, serializer: S) -> Result<<S as Serializer>::Ok, <S as Serializer>::Error>
+            where
+                S: Serializer,
+            {
+                Err(serde::ser::Error::custom("An expected error"))
+            }
+        }
+
+        /// Please not [`ser_error::__private::SerializeErrorTypeImpl`] must not be implemented manually outside tests.
+        impl ser_error::__private::SerializeErrorTypeImpl for InvalidError {}
 
         let response: MmRpcResponse<(), _> =
             MmRpcBuilder::err(MmError::new(InvalidError::NotSufficientBalance { missing: 0 })).build();
@@ -209,7 +222,7 @@ mod tests {
         assert!(value["error"]
             .as_str()
             .expect("Expected 'error' field")
-            .contains("Internal error: Couldn't serialize an RPC response:"));
+            .contains("Internal error: Couldn't serialize an RPC response: An expected error"));
         assert_eq!(value["error_type"].as_str(), Some("InternalError"));
     }
 }

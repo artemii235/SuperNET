@@ -2402,7 +2402,6 @@ struct SwapPaymentOutputsResult {
     outputs: Vec<TransactionOutput>,
 }
 
-// TODO
 fn generate_swap_payment_outputs<T>(
     coin: T,
     time_lock: u32,

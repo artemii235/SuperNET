@@ -27,6 +27,9 @@
 #[macro_use] extern crate lazy_static;
 #[macro_use] extern crate serde_derive;
 #[macro_use] extern crate serde_json;
+#[cfg(test)]
+#[macro_use]
+extern crate ser_error_derive;
 
 /// Fills a C character array with a zero-terminated C string,
 /// returning an error if the string is too large.

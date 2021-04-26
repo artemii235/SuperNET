@@ -1,10 +1,95 @@
+//! The MarketMaker2 unified error representation tracing an error path.
+//!
+//! # Tracing while chaining
+//!
+//! `MmError` supports several ways to trace the error path while different error types replace each other along the path.
+//!
+//! ## Operator `?`
+//!
+//! `MmError` main goal is to use the operator `?` to convert one `E1` type into another `E2` type
+//! and track the place where this conversation took place.
+//! Every time [`MmError<E2>`] converts from [`MmError<E1>`] by using the operator `?`, an `MmError` instance tracks where that operator was called.
+//! The main limitation is that the `E2` has to be directly convertible from `E1`, that is `E2: From<E1>`.
+//!
+//! ```rust
+//! fn filename(path: &str) -> Result<String, E1> { Err(E1::new()) }
+//! fn get_file_extension(filename: &str) -> Result<&str, MmError<E1>> { MmError::err(E1::new()) }
+//!
+//! fn is_static_library(path: &str) -> Result<(), MmError<E2>> {
+//!     let filename = filename(path)?;
+//!     let extension = get_file_extension(filename)?;
+//!     if extension == "a" || extension == "lib" {
+//!         Ok(())
+//!     } else {
+//!         MmError::err(E2::new())
+//!     }
+//! }
+//! ```
+//!
+//! ## Map inner error type
+//!
+//! If the `E2` is not directly convertible from `E1`, then it can be mapped into [`Result<T, MmError<E2>>`].
+//! * [`Result<T, E1>`] can be mapped to [`Result<T, MmError<E2>>`] by applying [`IntoMmResult::into_mm`];
+//! * [`Result<T, MmError<E1>>`] can be mapped to [`Result<T, MmError<E2>>`] by applying [`MapMmError::mm_err`];
+//! * [`Option<T>`] can be mapped to [`Result<T, MmError<E>>`] by applying [`OrMmError::or_mm_err`];
+//! * [`Future<Item=T, Error=E1>`] can be mapped to [`Future<Item=T, Error=MmError<E2>>`] by applying [`IntoMmFutureExt::into_mm_fut`].
+//!
+//! Every time one of the methods is called, an `MmError` instance tracks where that method was called.
+//! Let's modify the example:
+//!
+//! ```rust
+//! fn filename(path: &str) -> Result<String, E1> { Err(E1::new()) }
+//! fn get_file_extension(filename: &str) -> Result<&str, MmError<E1>> { MmError::err(E1::new()) }
+//!
+//! fn is_static_library(path: &str) -> Result<(), MmError<E2>> {
+//!     let filename = filename(path).into_mm(|e1| E2::from_e1(e1))?;
+//!     let extension = get_file_extension(filename).mm_err(|e1| E2::from_e1(e1))?;
+//!     if extension == "a" || extension == "lib" {
+//!         Ok(())
+//!     } else {
+//!         MmError::err(E2::new())
+//!     }
+//! }
+//! ```
+//!
+//! # Serialization
+//!
+//! The serialized representation of an [`MmError<E>`] error consists of the following fields:
+//! * `error` - the common error description;
+//! * `error_path` - the error path consisting of file names separated by a dot similar to JSON path notation;
+//!   Example: `rpc.lp_coins.utxo`
+//! * `error_trace` - it is a more detailed error path consisting of file and line number pairs separated by ']';
+//!   Example: `rpc:392] lp_coins:1104] lp_coins:245] utxo:778]`
+//! * `error_type` - the string error identifier of the `E` type;
+//! * `error_data` - an object containing the error data of the `E` type.
+//!
+//! ## Important
+//!
+//! The error type must be [`tagged`](https://serde.rs/enum-representations.html#adjacently-tagged) with the `tag = "error_type"` and `content = "error_data".
+//! Otherwise, the serialized error would conflict with the unified `mmrpc` protocol.
+//! To check at compile time that the error type flattens into `error_type` and `error_data` fields only, it has to implement `SerializeErrorType` trait.
+//!
+//! Please note the `SerializeErrorType` trait can be derived only by adding the `#[derive(SerializeErrorType)]` attribute to the target error type.
+//!
+//! # Example
+//!
+//! ```rust
+//! #[derive(Display, Serialize, SerializeErrorType)]
+//!  #[serde(tag = "error_type", content = "error_data")]
+//!  enum RpcError {
+//!      TransportError {
+//!          reason: String,
+//!      },
+//!      InternalError,
+//!  }
+//! ```
+
 use crate::HttpStatusCode;
 use derive_more::Display;
 use http::StatusCode;
 use itertools::Itertools;
-use serde::ser;
+use ser_error::SerializeErrorType;
 use serde::{Serialize, Serializer};
-use serde_json::{self as json, Value as Json};
 use std::fmt;
 use std::panic::Location;
 
@@ -13,7 +98,8 @@ pub mod prelude {
     pub use crate::mm_error::into_mm_fut::IntoMmFutureExt;
     pub use crate::mm_error::map_mm_error::MapMmError;
     pub use crate::mm_error::or_mm_error::OrMmError;
-    pub use crate::mm_error::{MmError, NotMmError, SerializeErrorType};
+    pub use crate::mm_error::{MmError, NotMmError, SerMmErrorType};
+    pub use ser_error::SerializeErrorType;
 }
 
 mod into_mm;
@@ -32,36 +118,11 @@ impl<E> !NotMmError for MmError<E> {}
 /// e.g for Box<dyn Trait>.
 impl<T: ?Sized> NotMmError for Box<T> {}
 
-pub trait SerializeErrorType: Serialize + fmt::Display + NotMmError {}
+pub trait SerMmErrorType: SerializeErrorType + fmt::Display + NotMmError {}
 
-impl<E> SerializeErrorType for E where E: Serialize + fmt::Display + NotMmError {}
+impl<E> SerMmErrorType for E where E: SerializeErrorType + fmt::Display + NotMmError {}
 
 /// The unified error representation tracing an error path.
-///
-/// # Serialization
-///
-/// The serialized error consists of the following fields:
-/// * `error` - the common error description;
-/// * `error_path` - the error path consisting of file names separated by a dot similar to JSON path notation;
-///   Example: `rpc.lp_coins.utxo`
-/// * `error_trace` - it is a more detailed error path consisting of file and line number pairs separated by ']';
-///   Example: `rpc:392] lp_coins:1104] lp_coins:245] utxo:778]`
-/// * `error_type` - the string error identifier;
-/// * `error_data` - an object containing the error data.
-///
-/// ## Important
-///
-/// The error type must be [`flattened`](https://serde.rs/attr-flatten.html) into `error_type` and `error_data` fields.
-///
-/// Example:
-///
-/// ```rust
-/// #[derive(Display, Serialize)]
-//  #[serde(tag = "error_type", content = "error_data")]
-//  enum RpcError {
-//      InternalError,
-//  }
-/// ```
 #[derive(Debug, Display, Eq, PartialEq)]
 #[display(fmt = "{} {}", "trace.formatted()", etype)]
 pub struct MmError<E: NotMmError> {
@@ -99,7 +160,7 @@ where
 
 impl<E> Serialize for MmError<E>
 where
-    E: SerializeErrorType,
+    E: SerMmErrorType,
 {
     fn serialize<S>(&self, serializer: S) -> Result<<S as Serializer>::Ok, <S as Serializer>::Error>
     where
@@ -110,13 +171,11 @@ where
             error: String,
             error_path: String,
             error_trace: String,
-            /// `etype` will be flatten into `error_type` and `error_data`
+            /// `etype` will be flatten into `error_type` and `error_data` (it's guaranteed by [`ser_error::SerializeErrorType`] trait)
             #[serde(flatten)]
             etype: &'a E,
         }
 
-        // check if the `etype` flattens into the `error_type` and `error_data` fields only.
-        self.check_serialized_etype::<<S as Serializer>::Error>()?;
         let helper = ErrorHelper {
             error: self.etype.to_string(),
             error_path: self.path(),
@@ -174,46 +233,6 @@ impl<E: NotMmError> MmError<E> {
     }
 }
 
-impl<E> MmError<E>
-where
-    E: SerializeErrorType,
-{
-    /// Check if the [`MmError::etype`] serialized representation flattens into `error_type` tag and `error_data` content.
-    fn check_serialized_etype<SerdeError: ser::Error>(&self) -> Result<(), SerdeError> {
-        macro_rules! serde_err {
-            ($($arg:tt)*) => {
-                SerdeError::custom(ERRL!($($arg)*))
-            };
-        }
-
-        #[derive(Serialize)]
-        struct FlattenStruct<'a, E>(&'a E);
-
-        let js_repr = json::to_value(FlattenStruct(&self.etype)).map_err(|e| serde_err!("{}", e))?;
-        let fields = js_repr.as_object().ok_or_else(|| {
-            serde_err!("Error type is expected to be an object with 'error_type' and 'error_data' fields")
-        })?;
-
-        match fields.get("error_type") {
-            Some(Json::String(_)) => (),
-            Some(value) => return Err(serde_err!("'error_type' is expected to be a string, found {:?}", value)),
-            None => return Err(serde_err!("No 'error_type' field")),
-        }
-
-        match fields.len() {
-            1 => Ok(()), // the serialized object contains only `error_type`
-            2 if fields.contains_key("error_data") => Ok(()),
-            _ => {
-                let found: Vec<_> = fields.iter().map(|(name, _value)| name).collect();
-                Err(serde_err!(
-                    "Error type is expected to contain 'error_type' and 'error_data' fields only, found: {:?}",
-                    found
-                ))
-            },
-        }
-    }
-}
-
 pub trait FormattedTrace {
     fn formatted(&self) -> String;
 }
@@ -266,12 +285,13 @@ mod tests {
     use super::prelude::*;
     use super::*;
     use futures01::Future;
+    use serde_json as json;
 
     enum ErrorKind {
         NotSufficientBalance { actual: u64, required: u64 },
     }
 
-    #[derive(Display, Serialize)]
+    #[derive(Display, Serialize, SerializeErrorType)]
     #[serde(tag = "error_type", content = "error_data")]
     enum ForwardedError {
         #[display(fmt = "Not sufficient balance. Top up your balance by {}", missing)]
@@ -362,65 +382,5 @@ mod tests {
             .expect_err("Expected an error");
         assert_eq!(mm_err.etype, 8);
         assert_eq!(mm_err.trace, vec![TraceLocation::new("mm_error", into_mm_line)]);
-    }
-
-    #[test]
-    fn test_serialization_error() {
-        /// Leads to the serialization error.
-        #[derive(Display, Serialize)]
-        enum UntaggedEnum {
-            Inner,
-        }
-
-        /// Leads to the serialization error.
-        #[derive(Display, Serialize)]
-        #[serde(tag = "another_tag", content = "error_data")]
-        enum NoErrorType {
-            Inner,
-        }
-
-        /// Leads to the serialization error.
-        #[derive(Default, Display, Serialize)]
-        #[display(fmt = "")]
-        struct ExtraFields {
-            error_type: String,
-            extra_field: Vec<u8>,
-        }
-
-        /// The valid error type.
-        #[derive(Default, Display, Serialize)]
-        struct ValidErrorStruct {
-            error_type: String,
-        }
-
-        /// The valid error type.
-        #[derive(Debug, Display, Serialize)]
-        #[serde(tag = "error_type", content = "error_data")]
-        enum ValidErrorEnum {
-            #[display(fmt = "")]
-            WithData {
-                field1: i32,
-                field2: &'static str,
-            },
-            WithoutData,
-        }
-
-        // vvv expect errors vvv
-        serde_json::to_string(&MmError::new(UntaggedEnum::Inner))
-            .expect_err("Expected an error when trying to serialize an untagged enum");
-        serde_json::to_string(&MmError::new(NoErrorType::Inner))
-            .expect_err("Expected an error when trying to serialize an error without 'error_type' field");
-        serde_json::to_string(&MmError::new(ExtraFields::default()))
-            .expect_err("Expected an error when trying to serialize an error with extra fields");
-
-        // vvv expect success vvv
-        let _ = serde_json::to_string(&MmError::new(ValidErrorStruct::default())).expect(
-            "Unexpected error when trying to serialize an error with 'error_type' and without 'error_data' fields",
-        );
-        let _ = serde_json::to_string(&MmError::new(ValidErrorEnum::WithData { field1: 0, field2: "" }))
-            .expect("Unexpected error when trying to serialize an error with 'error_type' and 'error_data' fields");
-        let _ = serde_json::to_string(&MmError::new(ValidErrorEnum::WithoutData)).expect(
-            "Unexpected error when trying to serialize an error with 'error_type' and without 'error_data' fields",
-        );
     }
 }

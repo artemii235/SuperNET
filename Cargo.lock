@@ -703,6 +703,8 @@ dependencies = [
  "rust-ini",
  "rustls 0.18.1",
  "script",
+ "ser_error",
+ "ser_error_derive",
  "serde",
  "serde_derive",
  "serde_json",
@@ -771,6 +773,8 @@ dependencies = [
  "rand 0.7.3",
  "regex",
  "rusqlite",
+ "ser_error",
+ "ser_error_derive",
  "serde",
  "serde_bencode",
  "serde_bytes 0.11.5",
@@ -2928,6 +2932,8 @@ dependencies = [
  "rmp-serde",
  "rpc",
  "script",
+ "ser_error",
+ "ser_error_derive",
  "serde",
  "serde_bencode",
  "serde_derive",
@@ -4182,6 +4188,23 @@ name = "send_wrapper"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f638d531eccd6e23b980caf34876660d38e265409d8e99b397ab71eb3612fad0"
+
+[[package]]
+name = "ser_error"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "ser_error_derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote 1.0.7",
+ "ser_error",
+ "syn 1.0.33",
+]
 
 [[package]]
 name = "serde"

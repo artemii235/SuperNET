@@ -168,7 +168,7 @@ impl TradePreimageResponse {
 }
 
 /// The extended `coins::TradePreimageError` error.
-#[derive(Display, Serialize)]
+#[derive(Display, Serialize, SerializeErrorType)]
 #[serde(tag = "error_type", content = "error_data")]
 pub enum TradePreimageRpcError {
     #[display(

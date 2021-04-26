@@ -29,6 +29,7 @@
 #[macro_use] extern crate lazy_static;
 #[macro_use] extern crate serde_derive;
 #[macro_use] extern crate serde_json;
+#[macro_use] extern crate ser_error_derive;
 
 use async_trait::async_trait;
 use bigdecimal::{BigDecimal, ParseBigDecimalError};
@@ -592,7 +593,7 @@ impl From<NumConversError> for BalanceError {
     fn from(e: NumConversError) -> Self { BalanceError::Internal(e.to_string()) }
 }
 
-#[derive(Debug, Deserialize, Display, Serialize)]
+#[derive(Debug, Deserialize, Display, Serialize, SerializeErrorType)]
 #[serde(tag = "error_type", content = "error_data")]
 pub enum WithdrawError {
     #[display(
