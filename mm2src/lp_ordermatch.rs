@@ -1463,14 +1463,14 @@ impl<'a> MakerOrderBuilder<'a> {
         Ok(MakerOrder {
             base: order.base.clone(),
             rel: order.rel.clone(),
-            created_at: order.created_at.clone(),
+            created_at: order.created_at,
             updated_at: now_ms(),
             max_base_vol: self.max_base_vol,
             min_base_vol,
             price: self.price,
             matches: order.matches.clone(),
             started_swaps: order.started_swaps.clone(),
-            uuid: order.uuid.clone(),
+            uuid: order.uuid,
             conf_settings: self.conf_settings,
         })
     }
@@ -3356,49 +3356,37 @@ pub async fn update_maker_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8
         .with_price(my_order.price.clone());
     let mut update_msg = new_protocol::MakerOrderUpdated::new(my_order.uuid);
 
-    match req.new_volume {
-        Some(new_volume) => {
-            try_s!(
-                check_balance_for_maker_swap(
-                    &ctx,
-                    &base_coin,
-                    &rel_coin,
-                    new_volume.clone(),
-                    None,
-                    None,
-                    FeeApproxStage::OrderIssue
-                )
-                .await
-            );
-            builder = builder.with_max_base_vol(new_volume.clone());
-            update_msg = update_msg.with_new_max_volume(new_volume.into());
-        },
-        None => (),
+    if let Some(new_volume) = req.new_volume {
+        try_s!(
+            check_balance_for_maker_swap(
+                &ctx,
+                &base_coin,
+                &rel_coin,
+                new_volume.clone(),
+                None,
+                None,
+                FeeApproxStage::OrderIssue
+            )
+            .await
+        );
+        builder = builder.with_max_base_vol(new_volume.clone());
+        update_msg = update_msg.with_new_max_volume(new_volume.into());
     };
 
-    match req.max {
-        Some(true) => {
-            let max_volume = try_s!(get_max_volume(&ctx, &base_coin, &rel_coin).await);
-            builder = builder.with_max_base_vol(max_volume.clone());
-            update_msg = update_msg.with_new_max_volume(max_volume.into());
-        },
-        _ => (),
+    if let Some(true) = req.max {
+        let max_volume = try_s!(get_max_volume(&ctx, &base_coin, &rel_coin).await);
+        builder = builder.with_max_base_vol(max_volume.clone());
+        update_msg = update_msg.with_new_max_volume(max_volume.into());
     };
 
-    match req.min_volume {
-        Some(min_volume) => {
-            builder = builder.with_min_base_vol(Some(min_volume.clone()));
-            update_msg = update_msg.with_new_min_volume(min_volume.into());
-        },
-        None => (),
-    }
+    if let Some(min_volume) = req.min_volume {
+        builder = builder.with_min_base_vol(Some(min_volume.clone()));
+        update_msg = update_msg.with_new_min_volume(min_volume.into());
+    };
 
-    match req.new_price {
-        Some(new_price) => {
-            builder = builder.with_price(new_price.clone());
-            update_msg = update_msg.with_new_price(new_price.into());
-        },
-        None => (),
+    if let Some(new_price) = req.new_price {
+        builder = builder.with_price(new_price.clone());
+        update_msg = update_msg.with_new_price(new_price.into());
     }
 
     let conf_settings = OrderConfirmationsSettings {
