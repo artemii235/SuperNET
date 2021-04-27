@@ -2430,6 +2430,7 @@ fn verus_mtp() {
 }
 
 #[test]
+#[ignore]
 fn mint_slp_token() {
     use bitcoin_cash_slp::{slp_genesis_output, SlpTokenType};
     let ctx = MmCtxBuilder::new().into_mm_arc();
@@ -2478,6 +2479,7 @@ fn mint_slp_token() {
 }
 
 #[test]
+#[ignore]
 fn transfer_slp_token() {
     use bitcoin_cash_slp::{slp_send_output, SlpTokenType, TokenId};
     let ctx = MmCtxBuilder::new().into_mm_arc();
