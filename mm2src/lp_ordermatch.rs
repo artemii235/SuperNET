@@ -1457,7 +1457,7 @@ impl<'a> MakerOrderBuilder<'a> {
     }
 
     /// Update MakerOrder
-    fn update(self, order: &MakerOrder)  -> Result<MakerOrder, MakerOrderBuildError> {
+    fn update(self, order: &MakerOrder) -> Result<MakerOrder, MakerOrderBuildError> {
         let min_base_vol = self.clone().validate()?;
 
         Ok(MakerOrder {
@@ -3218,12 +3218,7 @@ async fn cancel_orders_on_error<T, E>(ctx: &MmArc, req: &SetPriceReq, error: E) 
 }
 
 async fn get_max_volume(ctx: &MmArc, my_coin: &MmCoinEnum, other_coin: &MmCoinEnum) -> Result<MmNumber, String> {
-    let my_balance = try_s!(
-        my_coin
-            .my_spendable_balance()
-            .compat()
-            .await
-    );
+    let my_balance = try_s!(my_coin.my_spendable_balance().compat().await);
     // first check if `rel_coin` balance is sufficient
     let other_coin_trade_fee = try_s!(
         other_coin
@@ -3231,15 +3226,11 @@ async fn get_max_volume(ctx: &MmArc, my_coin: &MmCoinEnum, other_coin: &MmCoinEn
             .compat()
             .await
     );
-    try_s!(
-        check_other_coin_balance_for_swap(&ctx, &other_coin, None, other_coin_trade_fee)
-            .await
-    );
+    try_s!(check_other_coin_balance_for_swap(&ctx, &other_coin, None, other_coin_trade_fee).await);
     // calculate max maker volume
     // note the `calc_max_maker_vol` returns [`CheckBalanceError::NotSufficientBalance`] error if the balance of `base_coin` is not sufficient
     Ok(try_s!(
-        calc_max_maker_vol(&ctx, &my_coin, &my_balance, FeeApproxStage::OrderIssue)
-            .await
+        calc_max_maker_vol(&ctx, &my_coin, &my_balance, FeeApproxStage::OrderIssue).await
     ))
 }
 
@@ -3264,9 +3255,11 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
     }
 
     let volume = if req.max {
-        try_s!(get_max_volume(&ctx, &base_coin, &rel_coin)
-        .or_else(|e| cancel_orders_on_error(&ctx, &req, e))
-        .await)
+        try_s!(
+            get_max_volume(&ctx, &base_coin, &rel_coin)
+                .or_else(|e| cancel_orders_on_error(&ctx, &req, e))
+                .await
+        )
     } else {
         try_s!(
             check_balance_for_maker_swap(
@@ -3385,11 +3378,10 @@ pub async fn update_maker_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8
 
     match req.max {
         Some(true) => {
-                let max_volume = try_s!(get_max_volume(&ctx, &base_coin, &rel_coin)
-                .await);
-                builder = builder.with_max_base_vol(max_volume.clone());
-                update_msg = update_msg.with_new_max_volume(max_volume.into());
-            },
+            let max_volume = try_s!(get_max_volume(&ctx, &base_coin, &rel_coin).await);
+            builder = builder.with_max_base_vol(max_volume.clone());
+            update_msg = update_msg.with_new_max_volume(max_volume.into());
+        },
         _ => (),
     };
 
@@ -3410,9 +3402,15 @@ pub async fn update_maker_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8
     }
 
     let conf_settings = OrderConfirmationsSettings {
-        base_confs: req.base_confs.unwrap_or_else(|| my_order.conf_settings.unwrap().base_confs),
-        base_nota: req.base_nota.unwrap_or_else(|| my_order.conf_settings.unwrap().base_nota),
-        rel_confs: req.rel_confs.unwrap_or_else(|| my_order.conf_settings.unwrap().rel_confs),
+        base_confs: req
+            .base_confs
+            .unwrap_or_else(|| my_order.conf_settings.unwrap().base_confs),
+        base_nota: req
+            .base_nota
+            .unwrap_or_else(|| my_order.conf_settings.unwrap().base_nota),
+        rel_confs: req
+            .rel_confs
+            .unwrap_or_else(|| my_order.conf_settings.unwrap().rel_confs),
         rel_nota: req.rel_nota.unwrap_or_else(|| my_order.conf_settings.unwrap().rel_nota),
     };
 
@@ -3425,7 +3423,9 @@ pub async fn update_maker_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8
 
     let rpc_result = MakerOrderForRpc::from(&updated_order);
     let res = try_s!(json::to_vec(&json!({ "result": rpc_result })));
-    my_maker_orders.entry(updated_order.uuid).and_modify(|order| *order = updated_order);
+    my_maker_orders
+        .entry(updated_order.uuid)
+        .and_modify(|order| *order = updated_order);
     Ok(try_s!(Response::builder().body(res)))
 }
 

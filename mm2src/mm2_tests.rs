@@ -4978,7 +4978,7 @@ fn test_update_maker_order() {
     log!([block_on(enable_coins_eth_electrum(&mm_bob, &[
         "http://195.201.0.6:8565"
     ]))]);
-    
+
     log!("Get bob balance");
     let my_balance = block_on(mm_bob.rpc(json! ({
         "userpass": mm_bob.userpass,
@@ -5028,7 +5028,11 @@ fn test_update_maker_order() {
         "new_price": 2,
     })))
     .unwrap();
-    assert!(update_maker_order.0.is_success(), "!update_maker_order: {}", update_maker_order.1);
+    assert!(
+        update_maker_order.0.is_success(),
+        "!update_maker_order: {}",
+        update_maker_order.1
+    );
     let update_maker_order_json: Json = json::from_str(&update_maker_order.1).unwrap();
     assert_eq!(update_maker_order_json["result"]["price"], Json::from("2"));
     assert_eq!(update_maker_order_json["result"]["max_base_vol"], Json::from("0.1"));
@@ -5041,9 +5045,14 @@ fn test_update_maker_order() {
         "max": true,
     })))
     .unwrap();
-    assert!(update_maker_order.0.is_success(), "!update_maker_order: {}", update_maker_order.1);
+    assert!(
+        update_maker_order.0.is_success(),
+        "!update_maker_order: {}",
+        update_maker_order.1
+    );
     let update_maker_order_json: Json = json::from_str(&update_maker_order.1).unwrap();
-    let max_base_vol = BigDecimal::from_str(update_maker_order_json["result"]["max_base_vol"].as_str().unwrap()).unwrap();
+    let max_base_vol =
+        BigDecimal::from_str(update_maker_order_json["result"]["max_base_vol"].as_str().unwrap()).unwrap();
     assert_eq!(update_maker_order_json["result"]["price"], Json::from("2"));
     assert_eq!(max_base_vol, max_volume);
 }
