@@ -7,7 +7,7 @@
 //! ## Operator `?`
 //!
 //! `MmError` main goal is to use the operator `?` to convert one `E1` type into another `E2` type
-//! and track the place where this conversation took place.
+//! and track the place where this conversion took place.
 //! Every time [`MmError<E2>`] converts from [`MmError<E1>`] by using the operator `?`, an `MmError` instance tracks where that operator was called.
 //! The main limitation is that the `E2` has to be directly convertible from `E1`, that is `E2: From<E1>`.
 //!
@@ -29,10 +29,10 @@
 //! ## Map inner error type
 //!
 //! If the `E2` is not directly convertible from `E1`, then it can be mapped into [`Result<T, MmError<E2>>`].
-//! * [`Result<T, E1>`] can be mapped to [`Result<T, MmError<E2>>`] by applying [`IntoMmResult::into_mm`];
+//! * [`Result<T, E1>`] can be mapped to [`Result<T, MmError<E2>>`] by applying [`MapToMmResult::map_to_mm`];
 //! * [`Result<T, MmError<E1>>`] can be mapped to [`Result<T, MmError<E2>>`] by applying [`MapMmError::mm_err`];
 //! * [`Option<T>`] can be mapped to [`Result<T, MmError<E>>`] by applying [`OrMmError::or_mm_err`];
-//! * [`Future<Item=T, Error=E1>`] can be mapped to [`Future<Item=T, Error=MmError<E2>>`] by applying [`IntoMmFutureExt::into_mm_fut`].
+//! * [`Future<Item=T, Error=E1>`] can be mapped to [`Future<Item=T, Error=MmError<E2>>`] by applying [`MapToMmFutureExt::map_to_mm_fut`].
 //!
 //! Every time one of the methods is called, an `MmError` instance tracks where that method was called.
 //! Let's modify the example:
@@ -42,7 +42,7 @@
 //! fn get_file_extension(filename: &str) -> Result<&str, MmError<E1>> { MmError::err(E1::new()) }
 //!
 //! fn is_static_library(path: &str) -> Result<(), MmError<E2>> {
-//!     let filename = filename(path).into_mm(|e1| E2::from_e1(e1))?;
+//!     let filename = filename(path).map_to_mm(|e1| E2::from_e1(e1))?;
 //!     let extension = get_file_extension(filename).mm_err(|e1| E2::from_e1(e1))?;
 //!     if extension == "a" || extension == "lib" {
 //!         Ok(())
@@ -94,17 +94,17 @@ use std::fmt;
 use std::panic::Location;
 
 pub mod prelude {
-    pub use crate::mm_error::into_mm::IntoMmResult;
-    pub use crate::mm_error::into_mm_fut::IntoMmFutureExt;
     pub use crate::mm_error::map_mm_error::MapMmError;
+    pub use crate::mm_error::map_to_mm::MapToMmResult;
+    pub use crate::mm_error::map_to_mm_fut::MapToMmFutureExt;
     pub use crate::mm_error::or_mm_error::OrMmError;
     pub use crate::mm_error::{MmError, NotMmError, SerMmErrorType};
     pub use ser_error::SerializeErrorType;
 }
 
-mod into_mm;
-mod into_mm_fut;
 mod map_mm_error;
+mod map_to_mm;
+mod map_to_mm_fut;
 mod or_mm_error;
 
 pub auto trait NotSame {}
@@ -357,7 +357,7 @@ mod tests {
         let res: Result<(), _> = Err("An error".to_string());
 
         let into_mm_with_line = line!() + 1;
-        let mm_res = res.into_mm(|e| e.len()).expect_err("Expected MmError<usize>");
+        let mm_res = res.map_to_mm(|e| e.len()).expect_err("Expected MmError<usize>");
         assert_eq!(mm_res.etype, 8);
         assert_eq!(mm_res.trace, vec![TraceLocation::new("mm_error", into_mm_with_line)]);
 
@@ -377,7 +377,7 @@ mod tests {
 
         let into_mm_line = line!() + 2;
         let mm_err = generate_error("An error")
-            .into_mm_fut(|error| error.len())
+            .map_to_mm_fut(|error| error.len())
             .wait()
             .expect_err("Expected an error");
         assert_eq!(mm_err.etype, 8);

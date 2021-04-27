@@ -385,7 +385,7 @@ impl EthCoinImpl {
                 GasStationData::get_gas_price(&url).map(|price| increase_by_percent_one_gwei(price, GAS_PRICE_PERCENT)),
             )
         } else {
-            Either01::B(self.web3.eth().gas_price().into_mm_fut(Web3RpcError::from))
+            Either01::B(self.web3.eth().gas_price().map_to_mm_fut(Web3RpcError::from))
         };
         Box::new(fut)
     }
@@ -496,7 +496,9 @@ impl EthCoinImpl {
 }
 
 async fn withdraw_impl(ctx: MmArc, coin: EthCoin, req: WithdrawRequest) -> WithdrawResult {
-    let to_addr = coin.address_from_str(&req.to).into_mm(WithdrawError::InvalidAddress)?;
+    let to_addr = coin
+        .address_from_str(&req.to)
+        .map_to_mm(WithdrawError::InvalidAddress)?;
     let my_balance = coin.my_balance().compat().await?;
     let my_balance_dec = u256_to_big_decimal(my_balance, coin.decimals)?;
 
@@ -576,7 +578,7 @@ async fn withdraw_impl(ctx: MmArc, coin: EthCoin, req: WithdrawRequest) -> Withd
         .await?;
     let nonce_fut = get_addr_nonce(coin.my_address, coin.web3_instances.clone()).compat();
     let nonce = match select(nonce_fut, Timer::sleep(30.)).await {
-        Either::Left((nonce_res, _)) => nonce_res.into_mm(WithdrawError::Transport)?,
+        Either::Left((nonce_res, _)) => nonce_res.map_to_mm(WithdrawError::Transport)?,
         Either::Right(_) => return MmError::err(WithdrawError::Transport("Get address nonce timed out".to_owned())),
     };
     let tx = UnSignedEthTx {
@@ -601,7 +603,7 @@ async fn withdraw_impl(ctx: MmArc, coin: EthCoin, req: WithdrawRequest) -> Withd
     if coin.coin_type == EthCoinType::Eth {
         spent_by_me += &fee_details.total_fee;
     }
-    let my_address = coin.my_address().into_mm(WithdrawError::InternalError)?;
+    let my_address = coin.my_address().map_to_mm(WithdrawError::InternalError)?;
     Ok(TransactionDetails {
         to: vec![checksum_address(&format!("{:#02x}", to_addr))],
         from: vec![my_address],
@@ -1573,7 +1575,7 @@ impl EthCoin {
             self.web3
                 .eth()
                 .balance(self.my_address, Some(BlockNumber::Latest))
-                .into_mm_fut(BalanceError::from),
+                .map_to_mm_fut(BalanceError::from),
         )
     }
 
@@ -2807,7 +2809,7 @@ pub fn wei_from_big_decimal(amount: &BigDecimal, decimals: u8) -> NumConversResu
     }
     U256::from_dec_str(&amount)
         .map_err(|e| format!("{:?}", e))
-        .into_mm(NumConversError::new)
+        .map_to_mm(NumConversError::new)
 }
 
 impl Transaction for SignedEthTx {
@@ -2871,7 +2873,7 @@ impl GasStationData {
         Box::new(
             fut.boxed()
                 .compat()
-                .into_mm_fut(Web3RpcError::Transport)
+                .map_to_mm_fut(Web3RpcError::Transport)
                 .and_then(|res| -> Web3RpcResult<U256> {
                     if res.0 != StatusCode::OK {
                         let error = format!("Gas price request failed with status code {}", res.0);

@@ -653,7 +653,6 @@ impl From<BalanceError> for WithdrawError {
 impl From<CoinFindError> for WithdrawError {
     fn from(e: CoinFindError) -> Self {
         match e {
-            CoinFindError::NoCoinsContext(internal) => WithdrawError::InternalError(internal),
             CoinFindError::NoSuchCoin { coin } => WithdrawError::NoSuchCoin { coin },
         }
     }
@@ -1140,8 +1139,6 @@ pub async fn lp_coinfind(ctx: &MmArc, ticker: &str) -> Result<Option<MmCoinEnum>
 
 #[derive(Display)]
 pub enum CoinFindError {
-    #[display(fmt = "No CoinsContext: {}", _0)]
-    NoCoinsContext(String),
     #[display(fmt = "No such coin: {}", coin)]
     NoSuchCoin { coin: String },
 }
@@ -1152,7 +1149,7 @@ pub async fn lp_coinfind_or_err(ctx: &MmArc, ticker: &str) -> CoinFindResult<MmC
         Ok(None) => MmError::err(CoinFindError::NoSuchCoin {
             coin: ticker.to_owned(),
         }),
-        Err(e) => MmError::err(CoinFindError::NoCoinsContext(e)),
+        Err(e) => panic!("Unexpected error: {}", e),
     }
 }
 

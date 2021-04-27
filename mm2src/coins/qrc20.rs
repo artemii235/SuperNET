@@ -392,7 +392,7 @@ impl Qrc20Coin {
             self.utxo.conf.signature_version,
             self.utxo.conf.fork_id,
         )
-        .into_mm(GenerateTxError::Internal)?;
+        .map_to_mm(GenerateTxError::Internal)?;
 
         let miner_fee = data.fee_amount + data.unused_change.unwrap_or_default();
         Ok(GenerateQrc20TxResult {
@@ -1133,7 +1133,7 @@ pub struct Qrc20FeeDetails {
 async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> WithdrawResult {
     let to_addr = UtxoAddress::from_str(&req.to)
         .map_err(|e| e.to_string())
-        .into_mm(WithdrawError::InvalidAddress)?;
+        .map_to_mm(WithdrawError::InvalidAddress)?;
     let conf = &coin.utxo.conf;
     let is_p2pkh = to_addr.prefix == conf.pub_addr_prefix && to_addr.t_addr_prefix == conf.pub_t_addr_prefix;
     let is_p2sh =
@@ -1206,8 +1206,8 @@ async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> WithdrawResult
     let my_balance_change = &received_by_me - &qrc20_amount;
 
     // [`MarketCoinOps::my_address`] and [`UtxoCommonOps::display_address`] shouldn't fail
-    let my_address = coin.my_address().into_mm(WithdrawError::InternalError)?;
-    let to_address = coin.display_address(&to_addr).into_mm(WithdrawError::InternalError)?;
+    let my_address = coin.my_address().map_to_mm(WithdrawError::InternalError)?;
+    let to_address = coin.display_address(&to_addr).map_to_mm(WithdrawError::InternalError)?;
 
     let fee_details = Qrc20FeeDetails {
         // QRC20 fees are paid in base platform currency (in particular Qtum)

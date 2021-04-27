@@ -205,7 +205,7 @@ mod tests {
         }
 
         impl Serialize for InvalidError {
-            fn serialize<S>(&self, serializer: S) -> Result<<S as Serializer>::Ok, <S as Serializer>::Error>
+            fn serialize<S>(&self, _serializer: S) -> Result<<S as Serializer>::Ok, <S as Serializer>::Error>
             where
                 S: Serializer,
             {

@@ -284,7 +284,6 @@ impl From<CheckBalanceError> for TradePreimageRpcError {
 impl From<CoinFindError> for TradePreimageRpcError {
     fn from(e: CoinFindError) -> Self {
         match e {
-            CoinFindError::NoCoinsContext(internal) => TradePreimageRpcError::InternalError(internal),
             CoinFindError::NoSuchCoin { coin } => TradePreimageRpcError::NoSuchCoin { coin },
         }
     }
