@@ -4943,6 +4943,111 @@ fn test_set_price_conf_settings() {
     assert_eq!(json["result"]["conf_settings"]["rel_nota"], Json::from(false));
 }
 
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn test_update_maker_order() {
+    let bob_passphrase = get_passphrase(&".env.client", "BOB_PASSPHRASE").unwrap();
+
+    let coins = json! ([
+        {"coin":"RICK","asset":"RICK","required_confirmations":0,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
+        {"coin":"MORTY","asset":"MORTY","required_confirmations":0,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
+        {"coin":"ETH","name":"ethereum","protocol":{"type":"ETH"}},
+        {"coin":"JST","name":"jst","protocol":{"type":"ERC20","protocol_data":{"platform":"ETH","contract_address":"0x2b294F029Fde858b2c62184e8390591755521d8E"}},"required_confirmations":2}
+    ]);
+
+    let mm_bob = MarketMakerIt::start(
+        json! ({
+            "gui": "nogui",
+            "netid": 8999,
+            "dht": "on",  // Enable DHT without delay.
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| s.parse::<i64>().unwrap()),
+            "passphrase": bob_passphrase,
+            "coins": coins,
+            "rpc_password": "password",
+            "i_am_seed": true,
+        }),
+        "password".into(),
+        local_start!("bob"),
+    )
+    .unwrap();
+
+    let (_bob_dump_log, _bob_dump_dashboard) = mm_bob.mm_dump();
+    log! ({"Bob log path: {}", mm_bob.log_path.display()});
+    log!([block_on(enable_coins_eth_electrum(&mm_bob, &[
+        "http://195.201.0.6:8565"
+    ]))]);
+    
+    log!("Get bob balance");
+    let my_balance = block_on(mm_bob.rpc(json! ({
+        "userpass": mm_bob.userpass,
+        "method": "my_balance",
+        "coin": "RICK",
+    })))
+    .unwrap();
+    assert!(my_balance.0.is_success(), "!my_balance: {}", my_balance.1);
+    let my_balance_json: Json = json::from_str(&my_balance.1).unwrap();
+    let balance: BigDecimal = json::from_value(my_balance_json["balance"].clone()).unwrap();
+
+    log!("Get RICK trade fee");
+    let get_trade_fee = block_on(mm_bob.rpc(json! ({
+        "userpass": mm_bob.userpass,
+        "method": "get_trade_fee",
+        "coin": "RICK",
+    })))
+    .unwrap();
+    assert!(get_trade_fee.0.is_success(), "!get_trade_fee: {}", get_trade_fee.1);
+    let get_trade_fee_json: Json = json::from_str(&get_trade_fee.1).unwrap();
+    let trade_fee: BigDecimal = json::from_value(get_trade_fee_json["result"]["amount"].clone()).unwrap();
+    let max_volume = balance - trade_fee;
+
+    log!("Issue bob sell request");
+    let setprice = block_on(mm_bob.rpc(json! ({
+        "userpass": mm_bob.userpass,
+        "method": "setprice",
+        "base": "RICK",
+        "rel": "MORTY",
+        "price": 1,
+        "volume": 0.1,
+        "base_confs": 5,
+        "base_nota": true,
+        "rel_confs": 4,
+        "rel_nota": false,
+    })))
+    .unwrap();
+    assert!(setprice.0.is_success(), "!setprice: {}", setprice.1);
+    let setprice_json: Json = json::from_str(&setprice.1).unwrap();
+    let uuid: Uuid = json::from_value(setprice_json["result"]["uuid"].clone()).unwrap();
+
+    log!("Issue bob update maker order request");
+    let update_maker_order = block_on(mm_bob.rpc(json! ({
+        "userpass": mm_bob.userpass,
+        "method": "update_maker_order",
+        "uuid": uuid,
+        "new_price": 2,
+    })))
+    .unwrap();
+    assert!(update_maker_order.0.is_success(), "!update_maker_order: {}", update_maker_order.1);
+    let update_maker_order_json: Json = json::from_str(&update_maker_order.1).unwrap();
+    assert_eq!(update_maker_order_json["result"]["price"], Json::from("2"));
+    assert_eq!(update_maker_order_json["result"]["max_base_vol"], Json::from("0.1"));
+
+    log!("Issue another bob update maker order request");
+    let update_maker_order = block_on(mm_bob.rpc(json! ({
+        "userpass": mm_bob.userpass,
+        "method": "update_maker_order",
+        "uuid": uuid,
+        "max": true,
+    })))
+    .unwrap();
+    assert!(update_maker_order.0.is_success(), "!update_maker_order: {}", update_maker_order.1);
+    let update_maker_order_json: Json = json::from_str(&update_maker_order.1).unwrap();
+    let max_base_vol = BigDecimal::from_str(update_maker_order_json["result"]["max_base_vol"].as_str().unwrap()).unwrap();
+    assert_eq!(update_maker_order_json["result"]["price"], Json::from("2"));
+    assert_eq!(max_base_vol, max_volume);
+}
+
 // https://github.com/KomodoPlatform/atomicDEX-API/issues/683
 // trade fee should return numbers in all 3 available formats and
 // "amount" must be always in decimal representation for backwards compatibility
