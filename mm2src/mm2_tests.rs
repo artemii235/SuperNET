@@ -5009,7 +5009,8 @@ fn test_update_maker_order() {
         "base": "RICK",
         "rel": "MORTY",
         "price": 1,
-        "volume": 0.1,
+        "volume": 2,
+        "min_volume": 1,
         "base_confs": 5,
         "base_nota": true,
         "rel_confs": 4,
@@ -5035,7 +5036,8 @@ fn test_update_maker_order() {
     );
     let update_maker_order_json: Json = json::from_str(&update_maker_order.1).unwrap();
     assert_eq!(update_maker_order_json["result"]["price"], Json::from("2"));
-    assert_eq!(update_maker_order_json["result"]["max_base_vol"], Json::from("0.1"));
+    assert_eq!(update_maker_order_json["result"]["max_base_vol"], Json::from("2"));
+    assert_eq!(update_maker_order_json["result"]["min_base_vol"], Json::from("1"));
 
     log!("Issue another bob update maker order request");
     let update_maker_order = block_on(mm_bob.rpc(json! ({
@@ -5121,7 +5123,7 @@ fn test_update_maker_order_fail() {
     .unwrap();
     assert!(
         !update_maker_order.0.is_success(),
-        "sell success, but should be error {}",
+        "update_maker_order success, but should be error {}",
         update_maker_order.1
     );
 
@@ -5136,7 +5138,7 @@ fn test_update_maker_order_fail() {
     .unwrap();
     assert!(
         !update_maker_order.0.is_success(),
-        "sell success, but should be error {}",
+        "update_maker_order success, but should be error {}",
         update_maker_order.1
     );
 
@@ -5151,7 +5153,7 @@ fn test_update_maker_order_fail() {
     .unwrap();
     assert!(
         !update_maker_order.0.is_success(),
-        "sell success, but should be error {}",
+        "update_maker_order success, but should be error {}",
         update_maker_order.1
     );
 
@@ -5166,7 +5168,7 @@ fn test_update_maker_order_fail() {
     .unwrap();
     assert!(
         !update_maker_order.0.is_success(),
-        "sell success, but should be error {}",
+        "update_maker_order success, but should be error {}",
         update_maker_order.1
     );
 
@@ -5181,9 +5183,33 @@ fn test_update_maker_order_fail() {
     .unwrap();
     assert!(
         !update_maker_order.0.is_success(),
-        "sell success, but should be error {}",
+        "update_maker_order success, but should be error {}",
         update_maker_order.1
     );
+
+    log!("Issue bob batch update maker order and cancel order request that should make update maker order fail because Order with UUID has been deleted");
+    let batch_json = json!([
+        {
+            "userpass": mm_bob.userpass,
+            "method": "update_maker_order",
+            "uuid": uuid,
+            "new_price": 1,
+            "new_volume": 3,
+        },
+        {
+            "userpass": mm_bob.userpass,
+            "method": "cancel_order",
+            "uuid": uuid,
+        },
+    ]);
+
+    let rc = block_on(mm_bob.rpc(batch_json)).unwrap();
+    assert!(rc.0.is_success(), "!batch: {}", rc.1);
+    log!((rc.1));
+    let responses = json::from_str::<Vec<Json>>(&rc.1).unwrap();
+    if responses[1]["result"] == Json::from("success") {
+        assert_eq!(responses[0].get("result"), None);
+    }
 }
 
 // https://github.com/KomodoPlatform/atomicDEX-API/issues/683

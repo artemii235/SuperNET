@@ -1387,11 +1387,10 @@ fn validate_max_vol(
     min_base_vol: Option<MmNumber>,
     price: MmNumber,
 ) -> Result<(), MakerOrderBuildError> {
-    if Option::is_some(&min_base_vol) && max_base_vol < min_base_vol.clone().unwrap() {
-        return Err(MakerOrderBuildError::MaxBaseVolBelowMinBaseVol {
-            min: min_base_vol.unwrap(),
-            max: max_base_vol,
-        });
+    if let Some(min) = min_base_vol {
+        if max_base_vol < min {
+            return Err(MakerOrderBuildError::MaxBaseVolBelowMinBaseVol { min, max: max_base_vol });
+        }
     }
 
     if max_base_vol < min_base_amount {
@@ -3374,21 +3373,25 @@ pub async fn update_maker_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8
         update_msg = update_msg.with_new_price(new_price.into());
     }
 
-    // Add min_volume to update_msg if min_volume is found in the request
-    if let Some(min_volume) = req.min_volume.clone() {
-        update_msg = update_msg.with_new_min_volume(min_volume.into());
-    };
-
     let min_base_amount = base_coin.min_trading_vol();
     let min_rel_amount = rel_coin.min_trading_vol();
 
-    // Validate and Calculate Minimum Volume if min_volume is not in the request
-    let actual_min_base_vol = try_s!(validate_and_get_min_vol(
-        min_base_amount.clone(),
-        min_rel_amount.clone(),
-        req.min_volume.clone(),
-        req.new_price.clone().unwrap_or_else(|| my_order.clone().price)
-    ));
+    // Add min_volume to update_msg if min_volume is found in the request
+    let actual_min_base_vol = match req.min_volume.clone() {
+        Some(min_volume) => {
+            // Validate and Calculate Minimum Volume
+            let actual_min_base_vol = try_s!(validate_and_get_min_vol(
+                min_base_amount.clone(),
+                min_rel_amount.clone(),
+                Some(min_volume.clone()),
+                req.new_price.clone().unwrap_or_else(|| my_order.clone().price)
+            ));
+
+            update_msg = update_msg.with_new_min_volume(min_volume.into());
+            actual_min_base_vol
+        },
+        None => my_order.min_base_vol.clone(),
+    };
 
     // Calculate order volume and add to update_msg if new_volume is found in the request
     let volume = if req.max.unwrap_or(false) {
@@ -3457,9 +3460,10 @@ pub async fn update_maker_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8
     let res = try_s!(json::to_vec(&json!({ "result": rpc_result })));
 
     let mut my_maker_orders = ordermatch_ctx.my_maker_orders.lock().await;
-    my_maker_orders
-        .entry(updated_order.uuid)
-        .and_modify(|order| *order = updated_order);
+    let _original_order = match my_maker_orders.entry(updated_order.uuid) {
+        Entry::Vacant(_) => return ERR!("Order with UUID: {} has been deleted", updated_order.uuid),
+        Entry::Occupied(mut entry) => entry.insert(updated_order),
+    };
     maker_order_updated_p2p_notify(ctx.clone(), base, rel, update_msg).await;
 
     Ok(try_s!(Response::builder().body(res)))
