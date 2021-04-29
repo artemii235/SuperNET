@@ -1270,7 +1270,6 @@ pub struct MakerOrder {
     conf_settings: Option<OrderConfirmationsSettings>,
 }
 
-#[derive(Clone)]
 struct MakerOrderBuilder<'a> {
     max_base_vol: MmNumber,
     min_base_vol: Option<MmNumber>,
@@ -1348,6 +1347,71 @@ impl fmt::Display for MakerOrderBuildError {
     }
 }
 
+fn validate_price(price: MmNumber) -> Result<(), MakerOrderBuildError> {
+    let min_price = MmNumber::from(BigRational::new(1.into(), 100_000_000.into()));
+
+    if price < min_price {
+        return Err(MakerOrderBuildError::PriceTooLow {
+            actual: price,
+            threshold: min_price,
+        });
+    }
+
+    Ok(())
+}
+
+fn validate_and_get_min_vol(
+    min_base_amount: MmNumber,
+    min_rel_amount: MmNumber,
+    min_base_vol: Option<MmNumber>,
+    price: MmNumber,
+) -> Result<MmNumber, MakerOrderBuildError> {
+    let base_min_by_rel = min_rel_amount / price;
+    let base_min_vol_threshold = min_base_amount.max(base_min_by_rel);
+    let actual_min_base_vol = min_base_vol.unwrap_or_else(|| base_min_vol_threshold.clone());
+
+    if actual_min_base_vol < base_min_vol_threshold {
+        return Err(MakerOrderBuildError::MinBaseVolTooLow {
+            actual: actual_min_base_vol,
+            threshold: base_min_vol_threshold,
+        });
+    }
+
+    Ok(actual_min_base_vol)
+}
+
+fn validate_max_vol(
+    min_base_amount: MmNumber,
+    min_rel_amount: MmNumber,
+    max_base_vol: MmNumber,
+    min_base_vol: Option<MmNumber>,
+    price: MmNumber,
+) -> Result<(), MakerOrderBuildError> {
+    if Option::is_some(&min_base_vol) && max_base_vol < min_base_vol.clone().unwrap() {
+        return Err(MakerOrderBuildError::MaxBaseVolBelowMinBaseVol {
+            min: min_base_vol.unwrap(),
+            max: max_base_vol,
+        });
+    }
+
+    if max_base_vol < min_base_amount {
+        return Err(MakerOrderBuildError::MaxBaseVolTooLow {
+            actual: max_base_vol,
+            threshold: min_base_amount,
+        });
+    }
+
+    let rel_vol = max_base_vol * price;
+    if rel_vol < min_rel_amount {
+        return Err(MakerOrderBuildError::RelVolTooLow {
+            actual: rel_vol,
+            threshold: min_rel_amount,
+        });
+    }
+
+    Ok(())
+}
+
 impl<'a> MakerOrderBuilder<'a> {
     fn new(base_coin: &'a MmCoinEnum, rel_coin: &'a MmCoinEnum) -> MakerOrderBuilder<'a> {
         MakerOrderBuilder {
@@ -1380,66 +1444,35 @@ impl<'a> MakerOrderBuilder<'a> {
         self
     }
 
-    /// Validate fields
-    fn validate(self) -> Result<MmNumber, MakerOrderBuildError> {
-        let min_price = MmNumber::from(BigRational::new(1.into(), 100_000_000.into()));
-        let min_base_amount = self.base_coin.min_trading_vol();
-        let min_rel_amount = self.rel_coin.min_trading_vol();
-
+    /// Build MakerOrder
+    fn build(self) -> Result<MakerOrder, MakerOrderBuildError> {
         if self.base_coin.ticker() == self.rel_coin.ticker() {
             return Err(MakerOrderBuildError::BaseEqualRel);
-        }
-
-        if self.max_base_vol < min_base_amount {
-            return Err(MakerOrderBuildError::MaxBaseVolTooLow {
-                actual: self.max_base_vol,
-                threshold: min_base_amount,
-            });
-        }
-
-        if self.price < min_price {
-            return Err(MakerOrderBuildError::PriceTooLow {
-                actual: self.price,
-                threshold: min_price,
-            });
-        }
-
-        let rel_vol = &self.max_base_vol * &self.price;
-        if rel_vol < min_rel_amount {
-            return Err(MakerOrderBuildError::RelVolTooLow {
-                actual: rel_vol,
-                threshold: min_rel_amount,
-            });
-        }
-
-        let base_min_by_rel = &min_rel_amount / &self.price;
-        let base_min_vol_threshold = min_base_amount.max(base_min_by_rel);
-
-        let min_base_vol = self.min_base_vol.unwrap_or_else(|| base_min_vol_threshold.clone());
-        if min_base_vol < base_min_vol_threshold {
-            return Err(MakerOrderBuildError::MinBaseVolTooLow {
-                actual: min_base_vol,
-                threshold: base_min_vol_threshold,
-            });
-        }
-
-        if self.max_base_vol < min_base_vol {
-            return Err(MakerOrderBuildError::MaxBaseVolBelowMinBaseVol {
-                min: min_base_vol,
-                max: self.max_base_vol,
-            });
         }
 
         if self.conf_settings.is_none() {
             return Err(MakerOrderBuildError::ConfSettingsNotSet);
         }
 
-        Ok(min_base_vol)
-    }
+        let min_base_amount = self.base_coin.min_trading_vol();
+        let min_rel_amount = self.rel_coin.min_trading_vol();
 
-    /// Build MakerOrder
-    fn build(self) -> Result<MakerOrder, MakerOrderBuildError> {
-        let min_base_vol = self.clone().validate()?;
+        validate_price(self.price.clone())?;
+
+        let actual_min_base_vol = validate_and_get_min_vol(
+            min_base_amount.clone(),
+            min_rel_amount.clone(),
+            self.min_base_vol.clone(),
+            self.price.clone(),
+        )?;
+
+        validate_max_vol(
+            min_base_amount,
+            min_rel_amount,
+            self.max_base_vol.clone(),
+            self.min_base_vol.clone(),
+            self.price.clone(),
+        )?;
 
         Ok(MakerOrder {
             base: self.base_coin.ticker().to_owned(),
@@ -1447,30 +1480,11 @@ impl<'a> MakerOrderBuilder<'a> {
             created_at: now_ms(),
             updated_at: now_ms(),
             max_base_vol: self.max_base_vol,
-            min_base_vol,
+            min_base_vol: actual_min_base_vol,
             price: self.price,
             matches: HashMap::new(),
             started_swaps: Vec::new(),
             uuid: new_uuid(),
-            conf_settings: self.conf_settings,
-        })
-    }
-
-    /// Update MakerOrder
-    fn update(self, order: &MakerOrder) -> Result<MakerOrder, MakerOrderBuildError> {
-        let min_base_vol = self.clone().validate()?;
-
-        Ok(MakerOrder {
-            base: order.base.clone(),
-            rel: order.rel.clone(),
-            created_at: order.created_at,
-            updated_at: now_ms(),
-            max_base_vol: self.max_base_vol,
-            min_base_vol,
-            price: self.price,
-            matches: order.matches.clone(),
-            started_swaps: order.started_swaps.clone(),
-            uuid: order.uuid,
             conf_settings: self.conf_settings,
         })
     }
@@ -3331,12 +3345,14 @@ pub async fn update_maker_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8
     let req: MakerOrderUpdateReq = try_s!(json::from_value(req));
 
     let ordermatch_ctx = try_s!(OrdermatchContext::from_ctx(&ctx));
-    let mut my_maker_orders = ordermatch_ctx.my_maker_orders.lock().await;
+    let my_maker_orders = ordermatch_ctx.my_maker_orders.lock().await;
 
     let my_order = match my_maker_orders.get(&req.uuid) {
-        Some(order) => order,
+        Some(order) => order.clone(),
         None => return ERR!("There is no order with UUID {}", &req.uuid),
     };
+
+    drop(my_maker_orders);
 
     let base = my_order.base.as_str();
     let base_coin: MmCoinEnum = match try_s!(lp_coinfind(&ctx, base).await) {
@@ -3350,44 +3366,62 @@ pub async fn update_maker_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8
         None => return ERR!("Rel coin {} has been removed from config", rel),
     };
 
-    let mut builder = MakerOrderBuilder::new(&base_coin, &rel_coin)
-        .with_max_base_vol(my_order.max_base_vol.clone())
-        .with_min_base_vol(Some(my_order.min_base_vol.clone()))
-        .with_price(my_order.price.clone());
     let mut update_msg = new_protocol::MakerOrderUpdated::new(my_order.uuid);
 
-    if let Some(new_volume) = req.new_volume {
+    // Validate and Add new_price to update_msg if new_price is found in the request
+    if let Some(new_price) = req.new_price.clone() {
+        try_s!(validate_price(new_price.clone()));
+        update_msg = update_msg.with_new_price(new_price.into());
+    }
+
+    // Add min_volume to update_msg if min_volume is found in the request
+    if let Some(min_volume) = req.min_volume.clone() {
+        update_msg = update_msg.with_new_min_volume(min_volume.into());
+    };
+
+    let min_base_amount = base_coin.min_trading_vol();
+    let min_rel_amount = rel_coin.min_trading_vol();
+
+    // Validate and Calculate Minimum Volume if min_volume is not in the request
+    let actual_min_base_vol = try_s!(validate_and_get_min_vol(
+        min_base_amount.clone(),
+        min_rel_amount.clone(),
+        req.min_volume.clone(),
+        req.new_price.clone().unwrap_or_else(|| my_order.clone().price)
+    ));
+
+    // Calculate order volume and add to update_msg if new_volume is found in the request
+    let volume = if req.max.unwrap_or(false) {
+        let max_volume = try_s!(get_max_volume(&ctx, &base_coin, &rel_coin).await);
+        update_msg = update_msg.with_new_max_volume(max_volume.clone().into());
+        max_volume
+    } else if Option::is_some(&req.new_volume) {
         try_s!(
             check_balance_for_maker_swap(
                 &ctx,
                 &base_coin,
                 &rel_coin,
-                new_volume.clone(),
+                req.new_volume.clone().unwrap(),
                 None,
                 None,
                 FeeApproxStage::OrderIssue
             )
             .await
         );
-        builder = builder.with_max_base_vol(new_volume.clone());
-        update_msg = update_msg.with_new_max_volume(new_volume.into());
+        update_msg = update_msg.with_new_max_volume(req.new_volume.clone().unwrap().into());
+        req.new_volume.unwrap()
+    } else {
+        my_order.max_base_vol.clone()
     };
 
-    if let Some(true) = req.max {
-        let max_volume = try_s!(get_max_volume(&ctx, &base_coin, &rel_coin).await);
-        builder = builder.with_max_base_vol(max_volume.clone());
-        update_msg = update_msg.with_new_max_volume(max_volume.into());
-    };
-
-    if let Some(min_volume) = req.min_volume {
-        builder = builder.with_min_base_vol(Some(min_volume.clone()));
-        update_msg = update_msg.with_new_min_volume(min_volume.into());
-    };
-
-    if let Some(new_price) = req.new_price {
-        builder = builder.with_price(new_price.clone());
-        update_msg = update_msg.with_new_price(new_price.into());
-    }
+    // Validate Order Volume
+    try_s!(validate_max_vol(
+        min_base_amount.clone(),
+        min_rel_amount.clone(),
+        volume.clone(),
+        req.min_volume.clone(),
+        req.new_price.clone().unwrap_or_else(|| my_order.clone().price)
+    ));
 
     let conf_settings = OrderConfirmationsSettings {
         base_confs: req
@@ -3402,18 +3436,32 @@ pub async fn update_maker_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8
         rel_nota: req.rel_nota.unwrap_or_else(|| my_order.conf_settings.unwrap().rel_nota),
     };
 
-    builder = builder.with_conf_settings(conf_settings);
     update_msg = update_msg.with_new_conf_settings(conf_settings);
 
-    maker_order_updated_p2p_notify(ctx.clone(), &my_order.base, &my_order.rel, update_msg).await;
-    let updated_order = try_s!(builder.update(my_order));
+    let updated_order = MakerOrder {
+        base: base.to_string(),
+        rel: rel.to_string(),
+        created_at: my_order.created_at,
+        updated_at: now_ms(),
+        max_base_vol: volume,
+        min_base_vol: actual_min_base_vol,
+        price: req.new_price.unwrap_or_else(|| my_order.price.clone()),
+        matches: my_order.matches,
+        started_swaps: my_order.started_swaps,
+        uuid: my_order.uuid,
+        conf_settings: Some(conf_settings),
+    };
     save_my_maker_order(&ctx, &updated_order);
 
     let rpc_result = MakerOrderForRpc::from(&updated_order);
     let res = try_s!(json::to_vec(&json!({ "result": rpc_result })));
+
+    let mut my_maker_orders = ordermatch_ctx.my_maker_orders.lock().await;
     my_maker_orders
         .entry(updated_order.uuid)
         .and_modify(|order| *order = updated_order);
+    maker_order_updated_p2p_notify(ctx.clone(), base, rel, update_msg).await;
+
     Ok(try_s!(Response::builder().body(res)))
 }
 
