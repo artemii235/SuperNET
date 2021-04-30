@@ -1569,6 +1569,26 @@ impl MakerOrder {
             },
         }
     }
+
+    fn apply_updated(&mut self, msg: &new_protocol::MakerOrderUpdated) {
+        if let Some(new_price) = msg.new_price() {
+            self.price = new_price;
+        }
+
+        if let Some(new_max_volume) = msg.new_max_volume() {
+            self.max_base_vol = new_max_volume;
+        }
+
+        if let Some(new_min_volume) = msg.new_min_volume() {
+            self.min_base_vol = new_min_volume;
+        }
+
+        if let Some(conf_settings) = msg.new_conf_settings() {
+            self.conf_settings = conf_settings.into();
+        }
+
+        self.updated_at = now_ms();
+    }
 }
 
 impl Into<MakerOrder> for TakerOrder {
@@ -3346,55 +3366,74 @@ pub async fn update_maker_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8
     let ordermatch_ctx = try_s!(OrdermatchContext::from_ctx(&ctx));
     let my_maker_orders = ordermatch_ctx.my_maker_orders.lock().await;
 
-    let my_order = match my_maker_orders.get(&req.uuid) {
-        Some(order) => order.clone(),
-        None => return ERR!("There is no order with UUID {}", &req.uuid),
-    };
+    let (base_coin, rel_coin, original_price, original_volume, updated_conf_settings, matches) =
+        match my_maker_orders.get(&req.uuid) {
+            Some(order) => {
+                let base = order.base.as_str();
+                let base_coin: MmCoinEnum = match try_s!(lp_coinfind(&ctx, base).await) {
+                    Some(coin) => coin,
+                    None => return ERR!("Base coin {} has been removed from config", base),
+                };
+
+                let rel = order.rel.as_str();
+                let rel_coin: MmCoinEnum = match try_s!(lp_coinfind(&ctx, rel).await) {
+                    Some(coin) => coin,
+                    None => return ERR!("Rel coin {} has been removed from config", rel),
+                };
+
+                let original_conf_settings = order.conf_settings.unwrap();
+
+                let updated_conf_settings = OrderConfirmationsSettings {
+                    base_confs: req.base_confs.unwrap_or(original_conf_settings.base_confs),
+                    base_nota: req.base_nota.unwrap_or(original_conf_settings.base_nota),
+                    rel_confs: req.rel_confs.unwrap_or(original_conf_settings.rel_confs),
+                    rel_nota: req.rel_nota.unwrap_or(original_conf_settings.rel_nota),
+                };
+
+                (
+                    base_coin,
+                    rel_coin,
+                    order.price.clone(),
+                    order.max_base_vol.clone(),
+                    updated_conf_settings,
+                    order.matches.clone(),
+                )
+            },
+            None => return ERR!("There is no order with UUID {}", req.uuid),
+        };
 
     drop(my_maker_orders);
 
-    let base = my_order.base.as_str();
-    let base_coin: MmCoinEnum = match try_s!(lp_coinfind(&ctx, base).await) {
-        Some(coin) => coin,
-        None => return ERR!("Base coin {} has been removed from config", base),
-    };
-
-    let rel = my_order.rel.as_str();
-    let rel_coin: MmCoinEnum = match try_s!(lp_coinfind(&ctx, rel).await) {
-        Some(coin) => coin,
-        None => return ERR!("Rel coin {} has been removed from config", rel),
-    };
-
-    let mut update_msg = new_protocol::MakerOrderUpdated::new(my_order.uuid);
+    let mut update_msg = new_protocol::MakerOrderUpdated::new(req.uuid);
+    update_msg = update_msg.with_new_conf_settings(updated_conf_settings);
 
     // Validate and Add new_price to update_msg if new_price is found in the request
-    if let Some(new_price) = req.new_price.clone() {
-        try_s!(validate_price(new_price.clone()));
-        update_msg = update_msg.with_new_price(new_price.into());
-    }
+    let new_price = match req.new_price {
+        Some(new_price) => {
+            try_s!(validate_price(new_price.clone()));
+            update_msg = update_msg.with_new_price(new_price.clone().into());
+            new_price
+        },
+        None => original_price,
+    };
 
     let min_base_amount = base_coin.min_trading_vol();
     let min_rel_amount = rel_coin.min_trading_vol();
 
     // Add min_volume to update_msg if min_volume is found in the request
-    let actual_min_base_vol = match req.min_volume.clone() {
-        Some(min_volume) => {
-            // Validate and Calculate Minimum Volume
-            let actual_min_base_vol = try_s!(validate_and_get_min_vol(
-                min_base_amount.clone(),
-                min_rel_amount.clone(),
-                Some(min_volume.clone()),
-                req.new_price.clone().unwrap_or_else(|| my_order.clone().price)
-            ));
-
-            update_msg = update_msg.with_new_min_volume(min_volume.into());
-            actual_min_base_vol
-        },
-        None => my_order.min_base_vol.clone(),
-    };
+    if let Some(min_volume) = req.min_volume.clone() {
+        // Validate and Ca lculate Minimum Volume
+        let actual_min_vol = try_s!(validate_and_get_min_vol(
+            min_base_amount.clone(),
+            min_rel_amount.clone(),
+            Some(min_volume),
+            new_price.clone()
+        ));
+        update_msg = update_msg.with_new_min_volume(actual_min_vol.into());
+    }
 
     // Calculate order volume and add to update_msg if new_volume is found in the request
-    let volume = if req.max.unwrap_or(false) {
+    let new_volume = if req.max.unwrap_or(false) {
         let max_volume = try_s!(get_max_volume(&ctx, &base_coin, &rel_coin).await);
         update_msg = update_msg.with_new_max_volume(max_volume.clone().into());
         max_volume
@@ -3414,56 +3453,31 @@ pub async fn update_maker_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8
         update_msg = update_msg.with_new_max_volume(req.new_volume.clone().unwrap().into());
         req.new_volume.unwrap()
     } else {
-        my_order.max_base_vol.clone()
+        original_volume
     };
 
     // Validate Order Volume
     try_s!(validate_max_vol(
         min_base_amount.clone(),
         min_rel_amount.clone(),
-        volume.clone(),
+        new_volume,
         req.min_volume.clone(),
-        req.new_price.clone().unwrap_or_else(|| my_order.clone().price)
+        new_price
     ));
 
-    let conf_settings = OrderConfirmationsSettings {
-        base_confs: req
-            .base_confs
-            .unwrap_or_else(|| my_order.conf_settings.unwrap().base_confs),
-        base_nota: req
-            .base_nota
-            .unwrap_or_else(|| my_order.conf_settings.unwrap().base_nota),
-        rel_confs: req
-            .rel_confs
-            .unwrap_or_else(|| my_order.conf_settings.unwrap().rel_confs),
-        rel_nota: req.rel_nota.unwrap_or_else(|| my_order.conf_settings.unwrap().rel_nota),
-    };
-
-    update_msg = update_msg.with_new_conf_settings(conf_settings);
-
-    let updated_order = MakerOrder {
-        base: base.to_string(),
-        rel: rel.to_string(),
-        created_at: my_order.created_at,
-        updated_at: now_ms(),
-        max_base_vol: volume,
-        min_base_vol: actual_min_base_vol,
-        price: req.new_price.unwrap_or_else(|| my_order.price.clone()),
-        matches: my_order.matches,
-        started_swaps: my_order.started_swaps,
-        uuid: my_order.uuid,
-        conf_settings: Some(conf_settings),
-    };
-    save_my_maker_order(&ctx, &updated_order);
-
-    let rpc_result = MakerOrderForRpc::from(&updated_order);
-    let res = try_s!(json::to_vec(&json!({ "result": rpc_result })));
-
     let mut my_maker_orders = ordermatch_ctx.my_maker_orders.lock().await;
-    let _original_order = match my_maker_orders.entry(updated_order.uuid) {
-        Entry::Vacant(_) => return ERR!("Order with UUID: {} has been deleted", updated_order.uuid),
-        Entry::Occupied(mut entry) => entry.insert(updated_order),
+    let (rpc_result, base, rel) = match my_maker_orders.get_mut(&req.uuid) {
+        None => return ERR!("Order with UUID: {} has been deleted", req.uuid),
+        Some(order) => {
+            if order.matches.len() != matches.len() || !order.matches.keys().all(|k| matches.contains_key(k)) {
+                return ERR!("Order {} is being matched now, can't update", req.uuid);
+            }
+            order.apply_updated(&update_msg);
+            save_my_maker_order(&ctx, &order);
+            (MakerOrderForRpc::from(&*order), order.base.as_str(), order.rel.as_str())
+        },
     };
+    let res = try_s!(json::to_vec(&json!({ "result": rpc_result })));
     maker_order_updated_p2p_notify(ctx.clone(), base, rel, update_msg).await;
 
     Ok(try_s!(Response::builder().body(res)))

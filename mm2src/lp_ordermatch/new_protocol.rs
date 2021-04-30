@@ -187,6 +187,8 @@ impl MakerOrderUpdated {
 
     pub fn new_min_volume(&self) -> Option<MmNumber> { self.new_min_volume.as_ref().map(|num| num.clone().into()) }
 
+    pub fn new_conf_settings(&self) -> Option<OrderConfirmationsSettings> { self.conf_settings }
+
     pub fn uuid(&self) -> Uuid { self.uuid.into() }
 }
 
