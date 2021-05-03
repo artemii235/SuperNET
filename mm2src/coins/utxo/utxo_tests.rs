@@ -1451,7 +1451,8 @@ fn test_qtum_unspendable_balance_failed() {
 
     let error = coin.my_balance().wait().err().unwrap();
     log!("error: "[error]);
-    assert!(error.contains("Spendable balance 69 greater than total balance 68"));
+    let expected_error = BalanceError::Internal("Spendable balance 69 greater than total balance 68".to_owned());
+    assert_eq!(error.get_inner(), &expected_error);
 }
 
 #[test]
