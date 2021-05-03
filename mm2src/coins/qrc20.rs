@@ -488,7 +488,7 @@ impl UtxoCommonOps for Qrc20Coin {
         lock_time: u32,
     ) -> Result<UtxoTx, String> {
         utxo_common::p2sh_spending_tx(
-            &self.utxo,
+            self,
             prev_transaction,
             redeem_script,
             outputs,
@@ -537,6 +537,10 @@ impl UtxoCommonOps for Qrc20Coin {
 
     fn increase_dynamic_fee_by_stage(&self, dynamic_fee: u64, stage: &FeeApproxStage) -> u64 {
         utxo_common::increase_dynamic_fee_by_stage(self, dynamic_fee, stage)
+    }
+
+    fn p2sh_tx_locktime(&self, locktime_from_script: u32) -> u32 {
+        utxo_common::p2sh_tx_locktime(&self.utxo.conf.ticker, locktime_from_script)
     }
 }
 
