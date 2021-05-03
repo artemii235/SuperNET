@@ -2646,13 +2646,13 @@ where
     }))
 }
 
-pub fn p2sh_tx_locktime(ticker: &str, locktime_from_script: u32) -> u32 {
+pub fn p2sh_tx_locktime(ticker: &str, htlc_locktime: u32) -> u32 {
     let lock_time_by_now = if ticker == "KMD" {
         (now_ms() / 1000) as u32 - 3600 + 2 * 777
     } else {
         (now_ms() / 1000) as u32 - 3600
     };
-    lock_time_by_now.max(locktime_from_script)
+    lock_time_by_now.max(htlc_locktime)
 }
 
 #[test]
