@@ -3367,9 +3367,12 @@ pub async fn update_maker_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8
     let ordermatch_ctx = try_s!(OrdermatchContext::from_ctx(&ctx));
     let my_maker_orders = ordermatch_ctx.my_maker_orders.lock().await;
 
-    let (base_coin, rel_coin, original_price, original_volume, updated_conf_settings, matches) =
+    let (base_coin, rel_coin, original_price, original_volume, updated_conf_settings, matches, reserved_amount) =
         match my_maker_orders.get(&req.uuid) {
             Some(order) => {
+                if order.has_ongoing_matches() {
+                    return ERR!("Can't update an order that has ongoing matches");
+                }
                 let base = order.base.as_str();
                 let base_coin: MmCoinEnum = match try_s!(lp_coinfind(&ctx, base).await) {
                     Some(coin) => coin,
@@ -3398,6 +3401,7 @@ pub async fn update_maker_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8
                     order.max_base_vol.clone(),
                     updated_conf_settings,
                     order.matches.clone(),
+                    order.reserved_amount(),
                 )
             },
             None => return ERR!("There is no order with UUID {}", req.uuid),
@@ -3435,7 +3439,7 @@ pub async fn update_maker_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8
 
     // Calculate order volume and add to update_msg if new_volume is found in the request
     let new_volume = if req.max.unwrap_or(false) {
-        let max_volume = try_s!(get_max_volume(&ctx, &base_coin, &rel_coin).await);
+        let max_volume = try_s!(get_max_volume(&ctx, &base_coin, &rel_coin).await) + reserved_amount;
         update_msg = update_msg.with_new_max_volume(max_volume.clone().into());
         max_volume
     } else if Option::is_some(&req.volume_delta) {
