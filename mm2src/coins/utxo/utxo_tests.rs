@@ -2428,3 +2428,105 @@ fn verus_mtp() {
         .unwrap();
     assert_eq!(mtp, 1618579909);
 }
+
+#[test]
+#[ignore]
+fn mint_slp_token() {
+    use bitcoin_cash_slp::{slp_genesis_output, SlpTokenType};
+    let ctx = MmCtxBuilder::new().into_mm_arc();
+    let conf = json!({
+        "decimals": 8,
+        "network": "regtest",
+        "confpath": "/home/artem/.bch/bch.conf",
+        "address_format": {
+            "format": "cashaddress",
+            "network": "bchreg",
+        },
+        "pubtype": 111,
+        "p2shtype": 196,
+        "dust": 546,
+    });
+    let req = json!({
+        "method": "enable",
+    });
+    let priv_key = hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap();
+    let coin = block_on(utxo_standard_coin_from_conf_and_request(
+        &ctx, "BCH", &conf, &req, &priv_key,
+    ))
+    .unwrap();
+    let address = coin.my_address().unwrap();
+    println!("{}", address);
+
+    let balance = coin.my_balance().wait().unwrap();
+    println!("{}", balance.spendable);
+
+    let output = slp_genesis_output(SlpTokenType::Fungible, "ADEX", "ADEX", "", "", 8, None, 1000_0000_0000);
+    let op_return_output = TransactionOutput {
+        value: output.value,
+        script_pubkey: output.script.serialize().unwrap().to_vec().into(),
+    };
+    let mint_output = TransactionOutput {
+        value: 546,
+        script_pubkey: hex::decode("76a91405aab5342166f8594baf17a7d9bef5d56744332788ac")
+            .unwrap()
+            .into(),
+    };
+    block_on(send_outputs_from_my_address_impl(coin, vec![
+        op_return_output,
+        mint_output,
+    ]))
+    .unwrap();
+}
+
+#[test]
+#[ignore]
+fn transfer_slp_token() {
+    use bitcoin_cash_slp::{slp_send_output, SlpTokenType, TokenId};
+    let ctx = MmCtxBuilder::new().into_mm_arc();
+    let conf = json!({
+        "decimals": 8,
+        "network": "regtest",
+        "confpath": "/home/artem/.bch/bch.conf",
+        "address_format": {
+            "format": "cashaddress",
+            "network": "bchreg",
+        },
+        "pubtype": 111,
+        "p2shtype": 196,
+        "dust": 546,
+    });
+    let req = json!({
+        "method": "enable",
+    });
+    let priv_key = hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap();
+    let coin = block_on(utxo_standard_coin_from_conf_and_request(
+        &ctx, "BCH", &conf, &req, &priv_key,
+    ))
+    .unwrap();
+    let token_id = hex::decode("e73b2b28c14db8ebbf97749988b539508990e1708021067f206f49d55807dbf4").unwrap();
+    let token_id = TokenId::from_slice(token_id.as_slice()).unwrap();
+    let address = coin.my_address().unwrap();
+    println!("{}", address);
+
+    let balance = coin.my_balance().wait().unwrap();
+    println!("{}", balance.spendable);
+
+    let output = slp_send_output(SlpTokenType::Fungible, &token_id, &[100000000]);
+    let script_pubkey = output.script.serialize().unwrap().to_vec();
+    println!("{}", hex::encode(&script_pubkey));
+    let op_return_output = TransactionOutput {
+        value: output.value,
+        script_pubkey: script_pubkey.into(),
+    };
+    let mint_output = TransactionOutput {
+        value: 546,
+        script_pubkey: hex::decode("76a91405aab5342166f8594baf17a7d9bef5d56744332788ac")
+            .unwrap()
+            .into(),
+    };
+    block_on(send_outputs_from_my_address_impl(coin, vec![
+        op_return_output,
+        mint_output,
+    ]))
+    .unwrap();
+}

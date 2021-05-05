@@ -21,6 +21,7 @@
 
 pub mod qtum;
 pub mod rpc_clients;
+pub mod slp;
 pub mod utxo_common;
 pub mod utxo_standard;
 
