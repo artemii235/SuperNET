@@ -17,6 +17,7 @@
 #![feature(optin_builtin_traits)]
 #![feature(drain_filter)]
 #![feature(const_fn)]
+#![feature(negative_impls)]
 #![cfg_attr(target_arch = "wasm32", allow(unused_imports))]
 #![cfg_attr(target_arch = "wasm32", allow(dead_code))]
 
@@ -73,9 +74,13 @@ pub mod file_lock;
 pub mod iguana_utils;
 pub mod mm_ctx;
 pub mod mm_number;
+#[path = "patterns/state_machine.rs"] pub mod state_machine;
 pub mod privkey;
 pub mod seri;
 #[cfg(target_arch = "wasm32")] pub mod wasm_rpc;
+#[cfg(target_arch = "wasm32")]
+#[path = "transport/wasm_ws.rs"]
+pub mod wasm_ws;
 
 use atomic::Atomic;
 use bigdecimal::BigDecimal;
@@ -131,6 +136,9 @@ lazy_static! {
     pub static ref DEX_FEE_ADDR_RAW_PUBKEY: Vec<u8> =
         hex::decode(DEX_FEE_ADDR_PUBKEY).expect("DEX_FEE_ADDR_PUBKEY is expected to be a hexadecimal string");
 }
+
+pub auto trait NotSame {}
+impl<X> !NotSame for (X, X) {}
 
 /// Converts u64 satoshis to f64
 pub fn sat_to_f(sat: u64) -> f64 { sat as f64 / SATOSHIS as f64 }
@@ -1480,6 +1488,8 @@ pub fn var(name: &str) -> Result<String, String> {
     }
 }
 
+/// TODO make it wasm32 only
+/// #[cfg(not(target_arch = "wasm32"))]
 pub fn block_on<F>(f: F) -> F::Output
 where
     F: Future03,

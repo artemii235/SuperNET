@@ -1,6 +1,6 @@
 //! Helpers used in the unit and integration tests.
 
-use crate::block_on;
+#[cfg(not(target_arch = "wasm32"))] use crate::block_on;
 use bigdecimal::BigDecimal;
 use bytes::Bytes;
 use chrono::{Local, TimeZone};
@@ -25,6 +25,7 @@ use std::time::Duration;
 
 use crate::executor::Timer;
 #[cfg(target_arch = "wasm32")] use crate::helperᶜ;
+#[cfg(target_arch = "wasm32")] use crate::log::LogLevel;
 use crate::log::{dashboard_path, LogState};
 use crate::mm_ctx::MmArc;
 use crate::mm_metrics::{MetricType, MetricsJson};
@@ -665,6 +666,15 @@ pub fn mm_spat(
     _conf_mod: &dyn Fn(Json) -> Json,
 ) -> (&'static str, MarketMakerIt, RaiiDump, RaiiDump) {
     unimplemented!()
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn register_wasm_log(level: LogLevel) {
+    use crate::log::{register_callback, WasmCallback, WasmLoggerBuilder};
+
+    register_callback(WasmCallback::console_log());
+    // a log is initialized already if [`WasmLoggerBuilder::try_init`] fails
+    let _ = WasmLoggerBuilder::default().level_filter(level).try_init();
 }
 
 /// Asks MM to enable the given currency in electrum mode

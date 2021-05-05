@@ -57,7 +57,8 @@ js-sys = "0.3.27"
 serde_bencode = "0.2"
 wasm-bindgen = { version = "0.2.50", features = ["serde-serialize", "nightly"] }
 wasm-bindgen-futures = "0.4.21"
-web-sys = { version = "0.3.4", features = ["console"] }
+wasm-bindgen-test = { version = "0.3.2" }
+web-sys = { version = "0.3.4", features = ["console", "CloseEvent", "ErrorEvent", "MessageEvent", "WebSocket"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 chrono = "0.4"
