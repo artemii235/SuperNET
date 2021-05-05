@@ -5352,7 +5352,7 @@ fn test_update_maker_order_after_matched() {
     );
     let update_maker_order_json: Json = json::from_str(&update_maker_order.1).unwrap();
     log!((update_maker_order.1));
-    assert_eq!(update_maker_order_json["result"]["max_base_vol"], Json::from("3"));
+    assert_eq!(update_maker_order_json["result"]["max_base_vol"], Json::from("4"));
 
     log!("Issue bob my_orders request");
     let rc = block_on(mm_bob.rpc(json! ({

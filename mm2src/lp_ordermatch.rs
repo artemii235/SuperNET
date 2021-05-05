@@ -3439,7 +3439,7 @@ pub async fn update_maker_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8
 
     // Calculate order volume and add to update_msg if new_volume is found in the request
     let new_volume = if req.max.unwrap_or(false) {
-        let max_volume = try_s!(get_max_volume(&ctx, &base_coin, &rel_coin).await) + reserved_amount;
+        let max_volume = try_s!(get_max_volume(&ctx, &base_coin, &rel_coin).await) + reserved_amount.clone();
         update_msg = update_msg.with_new_max_volume(max_volume.clone().into());
         max_volume
     } else if Option::is_some(&req.volume_delta) {
@@ -3465,11 +3465,19 @@ pub async fn update_maker_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8
         original_volume
     };
 
+    if new_volume <= reserved_amount {
+        return ERR!(
+            "New volume {} should be more than reserved amount for order matches {}",
+            new_volume,
+            reserved_amount
+        );
+    }
+
     // Validate Order Volume
     try_s!(validate_max_vol(
         min_base_amount.clone(),
         min_rel_amount.clone(),
-        new_volume.clone(),
+        new_volume.clone() - reserved_amount.clone(),
         req.min_volume.clone(),
         new_price
     ));
@@ -3481,17 +3489,9 @@ pub async fn update_maker_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8
             if order.matches.len() != matches.len() || !order.matches.keys().all(|k| matches.contains_key(k)) {
                 return ERR!("Order {} is being matched now, can't update", req.uuid);
             }
-            let reserved_amount = order.reserved_amount();
-            if new_volume <= reserved_amount {
-                return ERR!(
-                    "New volume {} should be more than reserved amount for order matches {}",
-                    new_volume,
-                    reserved_amount
-                );
-            }
-            update_msg = update_msg.with_new_max_volume((new_volume - order.reserved_amount()).into());
             order.apply_updated(&update_msg);
             save_my_maker_order(&ctx, &order);
+            update_msg = update_msg.with_new_max_volume((new_volume - reserved_amount).into());
             (MakerOrderForRpc::from(&*order), order.base.as_str(), order.rel.as_str())
         },
     };
