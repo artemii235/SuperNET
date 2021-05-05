@@ -1510,12 +1510,13 @@ impl<'a> MakerOrderBuilder<'a> {
 fn zero_rat() -> BigRational { BigRational::zero() }
 
 impl MakerOrder {
-    fn available_amount(&self) -> MmNumber {
-        let reserved: MmNumber = self.matches.iter().fold(
+    fn available_amount(&self) -> MmNumber { &self.max_base_vol - &self.reserved_amount() }
+
+    fn reserved_amount(&self) -> MmNumber {
+        self.matches.iter().fold(
             MmNumber::from(BigRational::from_integer(0.into())),
             |reserved, (_, order_match)| &reserved + order_match.reserved.get_base_amount(),
-        );
-        &self.max_base_vol - &reserved
+        )
     }
 
     fn is_cancellable(&self) -> bool { !self.has_ongoing_matches() }
@@ -3069,7 +3070,7 @@ struct MakerOrderUpdateReq {
     uuid: Uuid,
     new_price: Option<MmNumber>,
     max: Option<bool>,
-    new_volume: Option<MmNumber>,
+    volume_delta: Option<MmNumber>,
     min_volume: Option<MmNumber>,
     base_confs: Option<u64>,
     base_nota: Option<bool>,
@@ -3437,21 +3438,25 @@ pub async fn update_maker_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8
         let max_volume = try_s!(get_max_volume(&ctx, &base_coin, &rel_coin).await);
         update_msg = update_msg.with_new_max_volume(max_volume.clone().into());
         max_volume
-    } else if Option::is_some(&req.new_volume) {
+    } else if Option::is_some(&req.volume_delta) {
+        let volume = original_volume + req.volume_delta.unwrap();
+        if volume <= MmNumber::from("0") {
+            return ERR!("New volume {} should be more than zero", volume);
+        }
         try_s!(
             check_balance_for_maker_swap(
                 &ctx,
                 &base_coin,
                 &rel_coin,
-                req.new_volume.clone().unwrap(),
+                volume.clone(),
                 None,
                 None,
                 FeeApproxStage::OrderIssue
             )
             .await
         );
-        update_msg = update_msg.with_new_max_volume(req.new_volume.clone().unwrap().into());
-        req.new_volume.unwrap()
+        update_msg = update_msg.with_new_max_volume(volume.clone().into());
+        volume
     } else {
         original_volume
     };
@@ -3460,7 +3465,7 @@ pub async fn update_maker_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8
     try_s!(validate_max_vol(
         min_base_amount.clone(),
         min_rel_amount.clone(),
-        new_volume,
+        new_volume.clone(),
         req.min_volume.clone(),
         new_price
     ));
@@ -3472,6 +3477,15 @@ pub async fn update_maker_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8
             if order.matches.len() != matches.len() || !order.matches.keys().all(|k| matches.contains_key(k)) {
                 return ERR!("Order {} is being matched now, can't update", req.uuid);
             }
+            let reserved_amount = order.reserved_amount();
+            if new_volume <= reserved_amount {
+                return ERR!(
+                    "New volume {} should be more than reserved amount for order matches {}",
+                    new_volume,
+                    reserved_amount
+                );
+            }
+            update_msg = update_msg.with_new_max_volume((new_volume - order.reserved_amount()).into());
             order.apply_updated(&update_msg);
             save_my_maker_order(&ctx, &order);
             (MakerOrderForRpc::from(&*order), order.base.as_str(), order.rel.as_str())
