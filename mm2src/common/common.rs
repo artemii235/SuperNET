@@ -74,9 +74,9 @@ pub mod file_lock;
 pub mod iguana_utils;
 pub mod mm_ctx;
 pub mod mm_number;
-#[path = "patterns/state_machine.rs"] pub mod state_machine;
 pub mod privkey;
 pub mod seri;
+#[path = "patterns/state_machine.rs"] pub mod state_machine;
 #[cfg(target_arch = "wasm32")] pub mod wasm_rpc;
 #[cfg(target_arch = "wasm32")]
 #[path = "transport/wasm_ws.rs"]
