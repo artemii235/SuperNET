@@ -1,5 +1,6 @@
 use super::check_balance::CheckBalanceError;
 use super::{maker_swap_trade_preimage, taker_swap_trade_preimage, MakerTradePreimage, TakerTradePreimage};
+use crate::mm2::lp_ordermatch::MakerOrderBuildError;
 use bigdecimal::BigDecimal;
 use coins::{is_wallet_only_ticker, lp_coinfind_or_err, BalanceError, CoinFindError, TradeFee, TradePreimageError};
 use common::mm_ctx::MmArc;
@@ -51,7 +52,6 @@ pub struct TradePreimageRequest {
     /// The name of the method whose preimage is requested.
     pub swap_method: TradePreimageMethod,
     /// The price in `rel` the user is willing to receive per one unit of the `base` coin.
-    #[serde(default)]
     pub price: MmNumber,
     /// The amount the user is willing to trade.
     /// Ignored if `max = true`.
@@ -199,18 +199,20 @@ pub enum TradePreimageRpcError {
         #[serde(skip_serializing_if = "Option::is_none")]
         locked_by_swaps: Option<BigDecimal>,
     },
-    #[display(fmt = "Max volume {} less than minimum transaction amount", volume)]
-    MaxVolumeLessThanDust { volume: BigDecimal },
-    #[display(fmt = "The volume {} is too small", volume)]
-    VolumeIsTooSmall { volume: BigDecimal },
+    #[display(fmt = "Max volume {} less than minimum transaction amount {}", volume, threshold)]
+    MaxVolumeLessThanDust { volume: BigDecimal, threshold: BigDecimal },
+    #[display(fmt = "The volume {} less than minimum transaction amount {}", volume, threshold)]
+    VolumeIsTooSmall { volume: BigDecimal, threshold: BigDecimal },
     #[display(fmt = "No such coin {}", coin)]
     NoSuchCoin { coin: String },
     #[display(fmt = "Coin {} is wallet only", coin)]
     CoinIsWalletOnly { coin: String },
+    #[display(fmt = "Rel coin can not be same as base")]
+    BaseEqualRel,
     #[display(fmt = "Incorrect use of the '{}' parameter: {}", param, reason)]
     InvalidParam { param: String, reason: String },
-    #[display(fmt = "Expected non-zero 'price'")]
-    ZeroPrice,
+    #[display(fmt = "Price {} is too low, required at least {}", price, threshold)]
+    PriceTooLow { price: BigDecimal, threshold: BigDecimal },
     #[display(fmt = "Transport error: {}", _0)]
     Transport(String),
     #[display(fmt = "Internal error: {}", _0)]
@@ -226,8 +228,9 @@ impl HttpStatusCode for TradePreimageRpcError {
             | TradePreimageRpcError::VolumeIsTooSmall { .. }
             | TradePreimageRpcError::NoSuchCoin { .. }
             | TradePreimageRpcError::CoinIsWalletOnly { .. }
+            | TradePreimageRpcError::BaseEqualRel
             | TradePreimageRpcError::InvalidParam { .. }
-            | TradePreimageRpcError::ZeroPrice => StatusCode::BAD_REQUEST,
+            | TradePreimageRpcError::PriceTooLow { .. } => StatusCode::BAD_REQUEST,
             TradePreimageRpcError::Transport(_) | TradePreimageRpcError::InternalError(_) => {
                 StatusCode::INTERNAL_SERVER_ERROR
             },
@@ -271,10 +274,12 @@ impl From<CheckBalanceError> for TradePreimageRpcError {
                 required,
                 locked_by_swaps,
             },
-            CheckBalanceError::MaxVolumeLessThanDust { volume } => {
-                TradePreimageRpcError::MaxVolumeLessThanDust { volume }
+            CheckBalanceError::MaxVolumeLessThanDust { volume, threshold } => {
+                TradePreimageRpcError::MaxVolumeLessThanDust { volume, threshold }
             },
-            CheckBalanceError::VolumeIsTooSmall { volume } => TradePreimageRpcError::VolumeIsTooSmall { volume },
+            CheckBalanceError::VolumeIsTooSmall { volume, threshold } => {
+                TradePreimageRpcError::VolumeIsTooSmall { volume, threshold }
+            },
             CheckBalanceError::Transport(transport) => TradePreimageRpcError::Transport(transport),
             CheckBalanceError::InternalError(internal) => TradePreimageRpcError::InternalError(internal),
         }
@@ -285,6 +290,33 @@ impl From<CoinFindError> for TradePreimageRpcError {
     fn from(e: CoinFindError) -> Self {
         match e {
             CoinFindError::NoSuchCoin { coin } => TradePreimageRpcError::NoSuchCoin { coin },
+        }
+    }
+}
+
+impl From<MakerOrderBuildError> for TradePreimageRpcError {
+    fn from(e: MakerOrderBuildError) -> Self {
+        match e {
+            MakerOrderBuildError::BaseEqualRel => TradePreimageRpcError::BaseEqualRel,
+            MakerOrderBuildError::MaxBaseVolTooLow { actual, threshold } => TradePreimageRpcError::VolumeIsTooSmall {
+                volume: actual.to_decimal(),
+                threshold: threshold.to_decimal(),
+            },
+            MakerOrderBuildError::PriceTooLow { actual, threshold } => TradePreimageRpcError::PriceTooLow {
+                price: actual.to_decimal(),
+                threshold: threshold.to_decimal(),
+            },
+            // TODO consider separating the VolIsTooSmall into BaseVolIsTooSmall and RelVolIsTooSmall
+            MakerOrderBuildError::RelVolTooLow { actual, threshold } => TradePreimageRpcError::VolumeIsTooSmall {
+                volume: actual.to_decimal(),
+                threshold: threshold.to_decimal(),
+            },
+            // The errors below may occur due to invalid dummy params.
+            error @ MakerOrderBuildError::MinBaseVolTooLow { .. }
+            | error @ MakerOrderBuildError::ConfSettingsNotSet
+            | error @ MakerOrderBuildError::MaxBaseVolBelowMinBaseVol { .. } => {
+                TradePreimageRpcError::InternalError(format!("Unexpected MakerOrderBuildError: {}", error))
+            },
         }
     }
 }

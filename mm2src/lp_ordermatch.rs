@@ -1269,7 +1269,7 @@ pub struct MakerOrder {
     conf_settings: Option<OrderConfirmationsSettings>,
 }
 
-struct MakerOrderBuilder<'a> {
+pub struct MakerOrderBuilder<'a> {
     max_base_vol: MmNumber,
     min_base_vol: Option<MmNumber>,
     price: MmNumber,
@@ -1278,7 +1278,7 @@ struct MakerOrderBuilder<'a> {
     conf_settings: Option<OrderConfirmationsSettings>,
 }
 
-enum MakerOrderBuildError {
+pub enum MakerOrderBuildError {
     BaseEqualRel,
     /// Max base vol too low with threshold
     MaxBaseVolTooLow {
@@ -1411,7 +1411,7 @@ fn validate_max_vol(
 }
 
 impl<'a> MakerOrderBuilder<'a> {
-    fn new(base_coin: &'a MmCoinEnum, rel_coin: &'a MmCoinEnum) -> MakerOrderBuilder<'a> {
+    pub fn new(base_coin: &'a MmCoinEnum, rel_coin: &'a MmCoinEnum) -> MakerOrderBuilder<'a> {
         MakerOrderBuilder {
             base_coin,
             rel_coin,
@@ -1422,28 +1422,28 @@ impl<'a> MakerOrderBuilder<'a> {
         }
     }
 
-    fn with_max_base_vol(mut self, vol: MmNumber) -> Self {
+    pub fn with_max_base_vol(mut self, vol: MmNumber) -> Self {
         self.max_base_vol = vol;
         self
     }
 
-    fn with_min_base_vol(mut self, vol: Option<MmNumber>) -> Self {
+    pub fn with_min_base_vol(mut self, vol: Option<MmNumber>) -> Self {
         self.min_base_vol = vol;
         self
     }
 
-    fn with_price(mut self, price: MmNumber) -> Self {
+    pub fn with_price(mut self, price: MmNumber) -> Self {
         self.price = price;
         self
     }
 
-    fn with_conf_settings(mut self, conf_settings: OrderConfirmationsSettings) -> Self {
+    pub fn with_conf_settings(mut self, conf_settings: OrderConfirmationsSettings) -> Self {
         self.conf_settings = Some(conf_settings);
         self
     }
 
     /// Build MakerOrder
-    fn build(self) -> Result<MakerOrder, MakerOrderBuildError> {
+    pub fn build(self) -> Result<MakerOrder, MakerOrderBuildError> {
         if self.base_coin.ticker() == self.rel_coin.ticker() {
             return Err(MakerOrderBuildError::BaseEqualRel);
         }

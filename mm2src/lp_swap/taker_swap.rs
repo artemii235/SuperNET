@@ -1565,16 +1565,6 @@ pub async fn taker_swap_trade_preimage(
         });
     }
 
-    if req.price.is_zero() {
-        return MmError::err(TradePreimageRpcError::ZeroPrice);
-    }
-
-    if req.volume.is_zero() {
-        return MmError::err(TradePreimageRpcError::VolumeIsTooSmall {
-            volume: req.volume.to_decimal(),
-        });
-    }
-
     let stage = FeeApproxStage::TradePreimage;
     let my_coin_volume = match req.swap_method {
         TradePreimageMethod::SetPrice => {
@@ -1747,6 +1737,7 @@ pub fn max_taker_vol_from_available(
     if &max_vol <= min_tx_amount {
         return MmError::err(CheckBalanceError::MaxVolumeLessThanDust {
             volume: max_vol.to_decimal(),
+            threshold: min_tx_amount.to_decimal(),
         });
     }
     Ok(max_vol)

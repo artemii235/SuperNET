@@ -198,10 +198,10 @@ pub enum CheckBalanceError {
         required: BigDecimal,
         locked_by_swaps: Option<BigDecimal>,
     },
-    #[display(fmt = "Max volume {} less than minimum transaction amount", volume)]
-    MaxVolumeLessThanDust { volume: BigDecimal },
-    #[display(fmt = "The volume {} is too small", volume)]
-    VolumeIsTooSmall { volume: BigDecimal },
+    #[display(fmt = "Max volume {} less than minimum transaction amount {}", volume, threshold)]
+    MaxVolumeLessThanDust { volume: BigDecimal, threshold: BigDecimal },
+    #[display(fmt = "The volume {} less than minimum transaction amount {}", volume, threshold)]
+    VolumeIsTooSmall { volume: BigDecimal, threshold: BigDecimal },
     #[display(fmt = "Transport error: {}", _0)]
     Transport(String),
     #[display(fmt = "Internal error: {}", _0)]
@@ -253,10 +253,16 @@ impl CheckBalanceError {
                     }
                 }
             },
-            TradePreimageError::UpperBoundAmountIsTooSmall { amount } => {
-                CheckBalanceError::MaxVolumeLessThanDust { volume: amount }
+            TradePreimageError::UpperBoundAmountIsTooSmall { amount, threshold } => {
+                CheckBalanceError::MaxVolumeLessThanDust {
+                    volume: amount,
+                    threshold,
+                }
             },
-            TradePreimageError::AmountIsTooSmall { amount } => CheckBalanceError::VolumeIsTooSmall { volume: amount },
+            TradePreimageError::AmountIsTooSmall { amount, threshold } => CheckBalanceError::VolumeIsTooSmall {
+                volume: amount,
+                threshold,
+            },
             TradePreimageError::Transport(transport) => CheckBalanceError::Transport(transport),
             TradePreimageError::InternalError(internal) => CheckBalanceError::InternalError(internal),
         }
