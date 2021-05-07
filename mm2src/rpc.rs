@@ -38,7 +38,7 @@ use std::future::Future as Future03;
 use std::net::SocketAddr;
 
 use crate::mm2::lp_ordermatch::{best_orders_rpc, buy, cancel_all_orders, cancel_order, my_orders, order_status,
-                                orderbook_depth_rpc, orderbook_rpc, sell, set_price};
+                                orderbook_depth_rpc, orderbook_rpc, orders_history_uuids_by_filter, sell, set_price};
 use crate::mm2::lp_swap::{active_swaps_rpc, all_swaps_uuids_by_filter, ban_pubkey_rpc, coins_needed_for_kick_start,
                           import_swaps, list_banned_pubkeys_rpc, max_taker_vol, my_recent_swaps, my_swap_status,
                           recover_funds_of_swap, stats_swap_status, trade_preimage, unban_pubkeys_rpc};
@@ -119,6 +119,7 @@ pub fn dispatcher(req: Json, ctx: MmArc) -> DispatcherRes {
         // Sorted alphanumerically (on the first latter) for readability.
         // "autoprice" => lp_autoprice (ctx, req),
         "active_swaps" => hyres(active_swaps_rpc(ctx, req)),
+        "orders_history_uuids_by_filter" => orders_history_uuids_by_filter(ctx, req),
         "all_swaps_uuids_by_filter" => all_swaps_uuids_by_filter(ctx, req),
         "ban_pubkey" => hyres(ban_pubkey_rpc(ctx, req)),
         "best_orders" => hyres(best_orders_rpc(ctx, req)),

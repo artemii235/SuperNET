@@ -102,7 +102,7 @@ pub struct RecentSwapsSelectSqlResult {
 
 /// Calculates the offset to skip records by uuid of swap.
 /// Expects `query_builder` to have where clauses applied *before* calling this fn.
-fn offset_by_uuid(
+pub fn offset_by_uuid(
     conn: &Connection,
     query_builder: &SqlBuilder,
     params: &[(&str, String)],
