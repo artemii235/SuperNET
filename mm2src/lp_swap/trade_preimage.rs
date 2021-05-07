@@ -310,7 +310,6 @@ impl From<MakerOrderBuildError> for TradePreimageRpcError {
                 price: actual.to_decimal(),
                 threshold: threshold.to_decimal(),
             },
-            // TODO consider separating the VolIsTooSmall into BaseVolIsTooSmall and RelVolIsTooSmall
             MakerOrderBuildError::RelVolTooLow { actual, threshold } => TradePreimageRpcError::VolumeIsTooSmall {
                 volume: actual.to_decimal(),
                 threshold: threshold.to_decimal(),
