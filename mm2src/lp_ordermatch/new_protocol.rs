@@ -143,6 +143,7 @@ pub struct MakerOrderUpdated {
     new_price: Option<BigRational>,
     new_max_volume: Option<BigRational>,
     new_min_volume: Option<BigRational>,
+    conf_settings: Option<OrderConfirmationsSettings>,
     timestamp: u64,
     pair_trie_root: H64,
 }
@@ -154,12 +155,12 @@ impl MakerOrderUpdated {
             new_price: None,
             new_max_volume: None,
             new_min_volume: None,
+            conf_settings: None,
             timestamp: now_ms() / 1000,
             pair_trie_root: H64::default(),
         }
     }
 
-    #[allow(dead_code)]
     pub fn with_new_price(mut self, new_price: BigRational) -> Self {
         self.new_price = Some(new_price);
         self
@@ -170,9 +171,13 @@ impl MakerOrderUpdated {
         self
     }
 
-    #[allow(dead_code)]
     pub fn with_new_min_volume(mut self, new_min_volume: BigRational) -> Self {
         self.new_min_volume = Some(new_min_volume);
+        self
+    }
+
+    pub fn with_new_conf_settings(mut self, conf_settings: OrderConfirmationsSettings) -> Self {
+        self.conf_settings = Some(conf_settings);
         self
     }
 
@@ -181,6 +186,8 @@ impl MakerOrderUpdated {
     pub fn new_max_volume(&self) -> Option<MmNumber> { self.new_max_volume.as_ref().map(|num| num.clone().into()) }
 
     pub fn new_min_volume(&self) -> Option<MmNumber> { self.new_min_volume.as_ref().map(|num| num.clone().into()) }
+
+    pub fn new_conf_settings(&self) -> Option<OrderConfirmationsSettings> { self.conf_settings }
 
     pub fn uuid(&self) -> Uuid { self.uuid.into() }
 }

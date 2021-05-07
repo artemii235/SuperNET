@@ -14,6 +14,7 @@
 #![feature(non_ascii_idents, integer_atomics, panic_info_message)]
 #![feature(async_closure)]
 #![feature(hash_raw_entry)]
+#![feature(negative_impls)]
 #![feature(optin_builtin_traits)]
 #![feature(drain_filter)]
 #![feature(const_fn)]
@@ -26,6 +27,9 @@
 #[macro_use] extern crate lazy_static;
 #[macro_use] extern crate serde_derive;
 #[macro_use] extern crate serde_json;
+#[cfg(test)]
+#[macro_use]
+extern crate ser_error_derive;
 
 /// Fills a C character array with a zero-terminated C string,
 /// returning an error if the string is too large.
@@ -57,7 +61,6 @@ macro_rules! ifrom {
     };
 }
 
-pub mod crash_reports;
 #[macro_use]
 pub mod jsonrpc_client;
 #[macro_use]
@@ -66,16 +69,22 @@ pub mod log;
 pub mod mm_metrics;
 
 pub mod big_int_str;
+pub mod crash_reports;
 pub mod custom_futures;
 pub mod duplex_mutex;
 pub mod file_lock;
 #[cfg(not(target_arch = "wasm32"))] pub mod for_c;
 pub mod iguana_utils;
 pub mod mm_ctx;
+#[path = "mm_error/mm_error.rs"] pub mod mm_error;
 pub mod mm_number;
 pub mod privkey;
 pub mod seri;
+#[path = "patterns/state_machine.rs"] pub mod state_machine;
 #[cfg(target_arch = "wasm32")] pub mod wasm_rpc;
+#[cfg(target_arch = "wasm32")]
+#[path = "transport/wasm_ws.rs"]
+pub mod wasm_ws;
 
 use atomic::Atomic;
 use bigdecimal::BigDecimal;
@@ -131,6 +140,9 @@ lazy_static! {
     pub static ref DEX_FEE_ADDR_RAW_PUBKEY: Vec<u8> =
         hex::decode(DEX_FEE_ADDR_PUBKEY).expect("DEX_FEE_ADDR_PUBKEY is expected to be a hexadecimal string");
 }
+
+pub auto trait NotSame {}
+impl<X> !NotSame for (X, X) {}
 
 /// Converts u64 satoshis to f64
 pub fn sat_to_f(sat: u64) -> f64 { sat as f64 / SATOSHIS as f64 }
@@ -544,6 +556,10 @@ pub type SlurpRes = Result<(StatusCode, HeaderMap, Vec<u8>), String>;
 /// NB: By default the future is executed on the shared asynchronous reactor (`CORE`),
 /// the handler is responsible for spawning the future on another reactor if it doesn't fit the `CORE` well.
 pub type HyRes = Box<dyn Future<Item = Response<Vec<u8>>, Error = String> + Send>;
+
+pub trait HttpStatusCode {
+    fn status_code(&self) -> StatusCode;
+}
 
 #[derive(Debug, Deserialize, Serialize)]
 struct HostedHttpRequest {
@@ -1140,48 +1156,6 @@ macro_rules! try_h {
     };
 }
 
-/// Maps an error by applying a `map_f` expression to an error within `exp` and return the result on a failure.
-///
-/// Unlike `$exp.map_err($map_f)` this macro applies `ERRL` to an error before the `map_f` is called.
-#[macro_export]
-macro_rules! try_map {
-    ($exp: expr, $map_f: expr) => {
-        match $exp {
-            Ok(x) => x,
-            Err(e) => {
-                let err = ERRL!("{}", e);
-                return Err($map_f(err));
-            },
-        }
-    };
-}
-
-#[macro_export]
-macro_rules! source {
-    () => {
-        $crate::TraceSource::new(gstuff::filename(file!()), line!())
-    };
-}
-
-pub struct TraceSource {
-    filename: &'static str,
-    line: u32,
-}
-
-impl TraceSource {
-    pub fn new(filename: &'static str, line: u32) -> TraceSource { TraceSource { filename, line } }
-
-    pub fn with_msg(&self, msg: &str) -> String { format!("{}:{}] {}", self.filename, self.line, msg) }
-}
-
-pub trait Traceable {
-    fn trace(self, source: TraceSource) -> Self;
-}
-
-impl<T, E: Traceable> Traceable for Result<T, E> {
-    fn trace(self, source: TraceSource) -> Self { self.map_err(|e| e.trace(source)) }
-}
-
 /// Executes a GET request, returning the response status, headers and body.
 pub async fn slurp_url(url: &str) -> SlurpRes {
     wio::slurp_req(try_s!(Request::builder().uri(url).body(Vec::new()))).await
@@ -1480,6 +1454,8 @@ pub fn var(name: &str) -> Result<String, String> {
     }
 }
 
+/// TODO make it wasm32 only
+/// #[cfg(not(target_arch = "wasm32"))]
 pub fn block_on<F>(f: F) -> F::Output
 where
     F: Future03,

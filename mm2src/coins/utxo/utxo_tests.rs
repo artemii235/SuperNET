@@ -1451,7 +1451,8 @@ fn test_qtum_unspendable_balance_failed() {
 
     let error = coin.my_balance().wait().err().unwrap();
     log!("error: "[error]);
-    assert!(error.contains("Spendable balance 69 greater than total balance 68"));
+    let expected_error = BalanceError::Internal("Spendable balance 69 greater than total balance 68".to_owned());
+    assert_eq!(error.get_inner(), &expected_error);
 }
 
 #[test]
@@ -2529,4 +2530,32 @@ fn transfer_slp_token() {
         mint_output,
     ]))
     .unwrap();
+}
+
+#[test]
+fn sys_mtp() {
+    let electrum = electrum_client_for_test(&[
+        "electrum1.cipig.net:10064",
+        "electrum2.cipig.net:10064",
+        "electrum3.cipig.net:10064",
+    ]);
+    let mtp = electrum
+        .get_median_time_past(1006678, NonZeroU64::new(11).unwrap())
+        .wait()
+        .unwrap();
+    assert_eq!(mtp, 1620019628);
+}
+
+#[test]
+fn btc_mtp() {
+    let electrum = electrum_client_for_test(&[
+        "electrum1.cipig.net:10000",
+        "electrum2.cipig.net:10000",
+        "electrum3.cipig.net:10000",
+    ]);
+    let mtp = electrum
+        .get_median_time_past(681659, NonZeroU64::new(11).unwrap())
+        .wait()
+        .unwrap();
+    assert_eq!(mtp, 1620019527);
 }

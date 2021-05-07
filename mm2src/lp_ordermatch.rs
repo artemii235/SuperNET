@@ -57,9 +57,8 @@ use uuid::Uuid;
 use crate::mm2::lp_network::{broadcast_p2p_msg, request_any_relay, request_one_peer, subscribe_to_topic, P2PRequest};
 use crate::mm2::lp_swap::{calc_max_maker_vol, check_balance_for_maker_swap, check_balance_for_taker_swap,
                           check_other_coin_balance_for_swap, insert_new_swap_to_db, is_pubkey_banned,
-                          lp_atomic_locktime, run_maker_swap, run_taker_swap, AtomicLocktimeVersion,
-                          CheckBalanceError, MakerSwap, RunMakerSwapInput, RunTakerSwapInput,
-                          SwapConfirmationsSettings, TakerSwap};
+                          lp_atomic_locktime, run_maker_swap, run_taker_swap, AtomicLocktimeVersion, MakerSwap,
+                          RunMakerSwapInput, RunTakerSwapInput, SwapConfirmationsSettings, TakerSwap};
 
 pub use best_orders::best_orders_rpc;
 pub use orderbook_depth::orderbook_depth_rpc;
@@ -794,7 +793,7 @@ impl BalanceTradeFeeUpdatedHandler for BalanceUpdateOrdermatchHandler {
         // Note although the maker orders are issued already, but they are not matched yet, so pass the `OrderIssue` stage.
         let new_volume = match calc_max_maker_vol(&self.ctx, coin, new_balance, FeeApproxStage::OrderIssue).await {
             Ok(v) => v,
-            Err(CheckBalanceError::NotSufficientBalance(_)) => MmNumber::from(0),
+            Err(e) if e.get_inner().not_sufficient_balance() => MmNumber::from(0),
             Err(e) => {
                 log::warn!("Couldn't handle the 'balance_updated' event: {}", e);
                 return;
@@ -1261,6 +1260,7 @@ pub struct MakerOrder {
     pub min_base_vol: MmNumber,
     pub price: MmNumber,
     pub created_at: u64,
+    pub updated_at: u64,
     pub base: String,
     pub rel: String,
     matches: HashMap<Uuid, MakerMatch>,
@@ -1346,6 +1346,70 @@ impl fmt::Display for MakerOrderBuildError {
     }
 }
 
+fn validate_price(price: MmNumber) -> Result<(), MakerOrderBuildError> {
+    let min_price = MmNumber::from(BigRational::new(1.into(), 100_000_000.into()));
+
+    if price < min_price {
+        return Err(MakerOrderBuildError::PriceTooLow {
+            actual: price,
+            threshold: min_price,
+        });
+    }
+
+    Ok(())
+}
+
+fn validate_and_get_min_vol(
+    min_base_amount: MmNumber,
+    min_rel_amount: MmNumber,
+    min_base_vol: Option<MmNumber>,
+    price: MmNumber,
+) -> Result<MmNumber, MakerOrderBuildError> {
+    let base_min_by_rel = min_rel_amount / price;
+    let base_min_vol_threshold = min_base_amount.max(base_min_by_rel);
+    let actual_min_base_vol = min_base_vol.unwrap_or_else(|| base_min_vol_threshold.clone());
+
+    if actual_min_base_vol < base_min_vol_threshold {
+        return Err(MakerOrderBuildError::MinBaseVolTooLow {
+            actual: actual_min_base_vol,
+            threshold: base_min_vol_threshold,
+        });
+    }
+
+    Ok(actual_min_base_vol)
+}
+
+fn validate_max_vol(
+    min_base_amount: MmNumber,
+    min_rel_amount: MmNumber,
+    max_base_vol: MmNumber,
+    min_base_vol: Option<MmNumber>,
+    price: MmNumber,
+) -> Result<(), MakerOrderBuildError> {
+    if let Some(min) = min_base_vol {
+        if max_base_vol < min {
+            return Err(MakerOrderBuildError::MaxBaseVolBelowMinBaseVol { min, max: max_base_vol });
+        }
+    }
+
+    if max_base_vol < min_base_amount {
+        return Err(MakerOrderBuildError::MaxBaseVolTooLow {
+            actual: max_base_vol,
+            threshold: min_base_amount,
+        });
+    }
+
+    let rel_vol = max_base_vol * price;
+    if rel_vol < min_rel_amount {
+        return Err(MakerOrderBuildError::RelVolTooLow {
+            actual: rel_vol,
+            threshold: min_rel_amount,
+        });
+    }
+
+    Ok(())
+}
+
 impl<'a> MakerOrderBuilder<'a> {
     fn new(base_coin: &'a MmCoinEnum, rel_coin: &'a MmCoinEnum) -> MakerOrderBuilder<'a> {
         MakerOrderBuilder {
@@ -1378,66 +1442,43 @@ impl<'a> MakerOrderBuilder<'a> {
         self
     }
 
-    /// Validate fields and build
+    /// Build MakerOrder
     fn build(self) -> Result<MakerOrder, MakerOrderBuildError> {
-        let min_price = MmNumber::from(BigRational::new(1.into(), 100_000_000.into()));
-        let min_base_amount = self.base_coin.min_trading_vol();
-        let min_rel_amount = self.rel_coin.min_trading_vol();
-
         if self.base_coin.ticker() == self.rel_coin.ticker() {
             return Err(MakerOrderBuildError::BaseEqualRel);
-        }
-
-        if self.max_base_vol < min_base_amount {
-            return Err(MakerOrderBuildError::MaxBaseVolTooLow {
-                actual: self.max_base_vol,
-                threshold: min_base_amount,
-            });
-        }
-
-        if self.price < min_price {
-            return Err(MakerOrderBuildError::PriceTooLow {
-                actual: self.price,
-                threshold: min_price,
-            });
-        }
-
-        let rel_vol = &self.max_base_vol * &self.price;
-        if rel_vol < min_rel_amount {
-            return Err(MakerOrderBuildError::RelVolTooLow {
-                actual: rel_vol,
-                threshold: min_rel_amount,
-            });
-        }
-
-        let base_min_by_rel = &min_rel_amount / &self.price;
-        let base_min_vol_threshold = min_base_amount.max(base_min_by_rel);
-
-        let min_base_vol = self.min_base_vol.unwrap_or_else(|| base_min_vol_threshold.clone());
-        if min_base_vol < base_min_vol_threshold {
-            return Err(MakerOrderBuildError::MinBaseVolTooLow {
-                actual: min_base_vol,
-                threshold: base_min_vol_threshold,
-            });
-        }
-
-        if self.max_base_vol < min_base_vol {
-            return Err(MakerOrderBuildError::MaxBaseVolBelowMinBaseVol {
-                min: min_base_vol,
-                max: self.max_base_vol,
-            });
         }
 
         if self.conf_settings.is_none() {
             return Err(MakerOrderBuildError::ConfSettingsNotSet);
         }
 
+        let min_base_amount = self.base_coin.min_trading_vol();
+        let min_rel_amount = self.rel_coin.min_trading_vol();
+
+        validate_price(self.price.clone())?;
+
+        let actual_min_base_vol = validate_and_get_min_vol(
+            min_base_amount.clone(),
+            min_rel_amount.clone(),
+            self.min_base_vol.clone(),
+            self.price.clone(),
+        )?;
+
+        validate_max_vol(
+            min_base_amount,
+            min_rel_amount,
+            self.max_base_vol.clone(),
+            self.min_base_vol.clone(),
+            self.price.clone(),
+        )?;
+
         Ok(MakerOrder {
             base: self.base_coin.ticker().to_owned(),
             rel: self.rel_coin.ticker().to_owned(),
             created_at: now_ms(),
+            updated_at: now_ms(),
             max_base_vol: self.max_base_vol,
-            min_base_vol,
+            min_base_vol: actual_min_base_vol,
             price: self.price,
             matches: HashMap::new(),
             started_swaps: Vec::new(),
@@ -1452,6 +1493,7 @@ impl<'a> MakerOrderBuilder<'a> {
             base: self.base_coin.ticker().to_owned(),
             rel: self.rel_coin.ticker().to_owned(),
             created_at: now_ms(),
+            updated_at: now_ms(),
             max_base_vol: self.max_base_vol,
             min_base_vol: self.min_base_vol.unwrap_or(self.base_coin.min_trading_vol()),
             price: self.price,
@@ -1467,12 +1509,13 @@ impl<'a> MakerOrderBuilder<'a> {
 fn zero_rat() -> BigRational { BigRational::zero() }
 
 impl MakerOrder {
-    fn available_amount(&self) -> MmNumber {
-        let reserved: MmNumber = self.matches.iter().fold(
+    fn available_amount(&self) -> MmNumber { &self.max_base_vol - &self.reserved_amount() }
+
+    fn reserved_amount(&self) -> MmNumber {
+        self.matches.iter().fold(
             MmNumber::from(BigRational::from_integer(0.into())),
             |reserved, (_, order_match)| &reserved + order_match.reserved.get_base_amount(),
-        );
-        &self.max_base_vol - &reserved
+        )
     }
 
     fn is_cancellable(&self) -> bool { !self.has_ongoing_matches() }
@@ -1526,6 +1569,26 @@ impl MakerOrder {
             },
         }
     }
+
+    fn apply_updated(&mut self, msg: &new_protocol::MakerOrderUpdated) {
+        if let Some(new_price) = msg.new_price() {
+            self.price = new_price;
+        }
+
+        if let Some(new_max_volume) = msg.new_max_volume() {
+            self.max_base_vol = new_max_volume;
+        }
+
+        if let Some(new_min_volume) = msg.new_min_volume() {
+            self.min_base_vol = new_min_volume;
+        }
+
+        if let Some(conf_settings) = msg.new_conf_settings() {
+            self.conf_settings = conf_settings.into();
+        }
+
+        self.updated_at = now_ms();
+    }
 }
 
 impl Into<MakerOrder> for TakerOrder {
@@ -1536,6 +1599,7 @@ impl Into<MakerOrder> for TakerOrder {
                 max_base_vol: self.request.get_base_amount().clone(),
                 min_base_vol: self.min_volume,
                 created_at: now_ms(),
+                updated_at: now_ms(),
                 base: self.request.base,
                 rel: self.request.rel,
                 matches: HashMap::new(),
@@ -1552,6 +1616,7 @@ impl Into<MakerOrder> for TakerOrder {
                     max_base_vol: self.request.get_rel_amount().clone(),
                     min_base_vol,
                     created_at: now_ms(),
+                    updated_at: now_ms(),
                     base: self.request.rel,
                     rel: self.request.base,
                     matches: HashMap::new(),
@@ -3012,6 +3077,19 @@ struct SetPriceReq {
     rel_nota: Option<bool>,
 }
 
+#[derive(Deserialize)]
+struct MakerOrderUpdateReq {
+    uuid: Uuid,
+    new_price: Option<MmNumber>,
+    max: Option<bool>,
+    volume_delta: Option<MmNumber>,
+    min_volume: Option<MmNumber>,
+    base_confs: Option<u64>,
+    base_nota: Option<bool>,
+    rel_confs: Option<u64>,
+    rel_nota: Option<bool>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct MakerReservedForRpc<'a> {
     base: &'a str,
@@ -3121,6 +3199,7 @@ struct MakerOrderForRpc<'a> {
     min_base_vol: BigDecimal,
     min_base_vol_rat: &'a MmNumber,
     created_at: u64,
+    updated_at: u64,
     matches: HashMap<Uuid, MakerMatchForRpc<'a>>,
     started_swaps: &'a [Uuid],
     uuid: Uuid,
@@ -3139,6 +3218,7 @@ impl<'a> From<&'a MakerOrder> for MakerOrderForRpc<'a> {
             min_base_vol: order.min_base_vol.to_decimal(),
             min_base_vol_rat: &order.min_base_vol,
             created_at: order.created_at,
+            updated_at: order.updated_at,
             matches: order
                 .matches
                 .iter()
@@ -3183,6 +3263,23 @@ async fn cancel_orders_on_error<T, E>(ctx: &MmArc, req: &SetPriceReq, error: E) 
     Err(error)
 }
 
+async fn get_max_volume(ctx: &MmArc, my_coin: &MmCoinEnum, other_coin: &MmCoinEnum) -> Result<MmNumber, String> {
+    let my_balance = try_s!(my_coin.my_spendable_balance().compat().await);
+    // first check if `rel_coin` balance is sufficient
+    let other_coin_trade_fee = try_s!(
+        other_coin
+            .get_receiver_trade_fee(FeeApproxStage::OrderIssue)
+            .compat()
+            .await
+    );
+    try_s!(check_other_coin_balance_for_swap(&ctx, &other_coin, None, other_coin_trade_fee).await);
+    // calculate max maker volume
+    // note the `calc_max_maker_vol` returns [`CheckBalanceError::NotSufficientBalance`] error if the balance of `base_coin` is not sufficient
+    Ok(try_s!(
+        calc_max_maker_vol(&ctx, &my_coin, &my_balance, FeeApproxStage::OrderIssue).await
+    ))
+}
+
 pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
     let req: SetPriceReq = try_s!(json::from_value(req));
 
@@ -3203,31 +3300,9 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
         return ERR!("Rel coin {} is wallet only", req.rel);
     }
 
-    let my_balance = try_s!(
-        base_coin
-            .my_spendable_balance()
-            .compat()
-            .or_else(|e| cancel_orders_on_error(&ctx, &req, e))
-            .await
-    );
     let volume = if req.max {
-        // first check if `rel_coin` balance is sufficient
-        let rel_coin_trade_fee = try_s!(
-            rel_coin
-                .get_receiver_trade_fee(FeeApproxStage::OrderIssue)
-                .compat()
-                .or_else(|e| cancel_orders_on_error(&ctx, &req, e))
-                .await
-        );
         try_s!(
-            check_other_coin_balance_for_swap(&ctx, &rel_coin, None, rel_coin_trade_fee)
-                .or_else(|e| cancel_orders_on_error(&ctx, &req, e))
-                .await
-        );
-        // calculate max maker volume
-        // note the `calc_max_maker_vol` returns [`CheckBalanceError::NotSufficientBalance`] error if the balance of `base_coin` is not sufficient
-        try_s!(
-            calc_max_maker_vol(&ctx, &base_coin, &my_balance, FeeApproxStage::OrderIssue)
+            get_max_volume(&ctx, &base_coin, &rel_coin)
                 .or_else(|e| cancel_orders_on_error(&ctx, &req, e))
                 .await
         )
@@ -3295,6 +3370,146 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
     let rpc_result = MakerOrderForRpc::from(&new_order);
     let res = try_s!(json::to_vec(&json!({ "result": rpc_result })));
     my_orders.insert(new_order.uuid, new_order);
+    Ok(try_s!(Response::builder().body(res)))
+}
+
+pub async fn update_maker_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
+    let req: MakerOrderUpdateReq = try_s!(json::from_value(req));
+
+    let ordermatch_ctx = try_s!(OrdermatchContext::from_ctx(&ctx));
+    let my_maker_orders = ordermatch_ctx.my_maker_orders.lock().await;
+
+    let (base_coin, rel_coin, original_price, original_volume, updated_conf_settings, matches, reserved_amount) =
+        match my_maker_orders.get(&req.uuid) {
+            Some(order) => {
+                if order.has_ongoing_matches() {
+                    return ERR!("Can't update an order that has ongoing matches");
+                }
+                let base = order.base.as_str();
+                let base_coin: MmCoinEnum = match try_s!(lp_coinfind(&ctx, base).await) {
+                    Some(coin) => coin,
+                    None => return ERR!("Base coin {} has been removed from config", base),
+                };
+
+                let rel = order.rel.as_str();
+                let rel_coin: MmCoinEnum = match try_s!(lp_coinfind(&ctx, rel).await) {
+                    Some(coin) => coin,
+                    None => return ERR!("Rel coin {} has been removed from config", rel),
+                };
+
+                let original_conf_settings = order.conf_settings.unwrap();
+
+                let updated_conf_settings = OrderConfirmationsSettings {
+                    base_confs: req.base_confs.unwrap_or(original_conf_settings.base_confs),
+                    base_nota: req.base_nota.unwrap_or(original_conf_settings.base_nota),
+                    rel_confs: req.rel_confs.unwrap_or(original_conf_settings.rel_confs),
+                    rel_nota: req.rel_nota.unwrap_or(original_conf_settings.rel_nota),
+                };
+
+                (
+                    base_coin,
+                    rel_coin,
+                    order.price.clone(),
+                    order.max_base_vol.clone(),
+                    updated_conf_settings,
+                    order.matches.clone(),
+                    order.reserved_amount(),
+                )
+            },
+            None => return ERR!("There is no order with UUID {}", req.uuid),
+        };
+
+    drop(my_maker_orders);
+
+    let mut update_msg = new_protocol::MakerOrderUpdated::new(req.uuid);
+    update_msg = update_msg.with_new_conf_settings(updated_conf_settings);
+
+    // Validate and Add new_price to update_msg if new_price is found in the request
+    let new_price = match req.new_price {
+        Some(new_price) => {
+            try_s!(validate_price(new_price.clone()));
+            update_msg = update_msg.with_new_price(new_price.clone().into());
+            new_price
+        },
+        None => original_price,
+    };
+
+    let min_base_amount = base_coin.min_trading_vol();
+    let min_rel_amount = rel_coin.min_trading_vol();
+
+    // Add min_volume to update_msg if min_volume is found in the request
+    if let Some(min_volume) = req.min_volume.clone() {
+        // Validate and Ca lculate Minimum Volume
+        let actual_min_vol = try_s!(validate_and_get_min_vol(
+            min_base_amount.clone(),
+            min_rel_amount.clone(),
+            Some(min_volume),
+            new_price.clone()
+        ));
+        update_msg = update_msg.with_new_min_volume(actual_min_vol.into());
+    }
+
+    // Calculate order volume and add to update_msg if new_volume is found in the request
+    let new_volume = if req.max.unwrap_or(false) {
+        let max_volume = try_s!(get_max_volume(&ctx, &base_coin, &rel_coin).await) + reserved_amount.clone();
+        update_msg = update_msg.with_new_max_volume(max_volume.clone().into());
+        max_volume
+    } else if Option::is_some(&req.volume_delta) {
+        let volume = original_volume + req.volume_delta.unwrap();
+        if volume <= MmNumber::from("0") {
+            return ERR!("New volume {} should be more than zero", volume);
+        }
+        try_s!(
+            check_balance_for_maker_swap(
+                &ctx,
+                &base_coin,
+                &rel_coin,
+                volume.clone(),
+                None,
+                None,
+                FeeApproxStage::OrderIssue
+            )
+            .await
+        );
+        update_msg = update_msg.with_new_max_volume(volume.clone().into());
+        volume
+    } else {
+        original_volume
+    };
+
+    if new_volume <= reserved_amount {
+        return ERR!(
+            "New volume {} should be more than reserved amount for order matches {}",
+            new_volume,
+            reserved_amount
+        );
+    }
+
+    // Validate Order Volume
+    try_s!(validate_max_vol(
+        min_base_amount.clone(),
+        min_rel_amount.clone(),
+        new_volume.clone() - reserved_amount.clone(),
+        req.min_volume.clone(),
+        new_price
+    ));
+
+    let mut my_maker_orders = ordermatch_ctx.my_maker_orders.lock().await;
+    let (rpc_result, base, rel) = match my_maker_orders.get_mut(&req.uuid) {
+        None => return ERR!("Order with UUID: {} has been deleted", req.uuid),
+        Some(order) => {
+            if order.matches.len() != matches.len() || !order.matches.keys().all(|k| matches.contains_key(k)) {
+                return ERR!("Order {} is being matched now, can't update", req.uuid);
+            }
+            order.apply_updated(&update_msg);
+            save_my_maker_order(&ctx, &order);
+            update_msg = update_msg.with_new_max_volume((new_volume - reserved_amount).into());
+            (MakerOrderForRpc::from(&*order), order.base.as_str(), order.rel.as_str())
+        },
+    };
+    let res = try_s!(json::to_vec(&json!({ "result": rpc_result })));
+    maker_order_updated_p2p_notify(ctx.clone(), base, rel, update_msg).await;
+
     Ok(try_s!(Response::builder().body(res)))
 }
 

@@ -3,9 +3,9 @@
 
 use super::utxo_standard::UtxoStandardCoin;
 use crate::utxo::{UtxoCommonOps, UtxoTx};
-use crate::{CoinBalance, FeeApproxStage, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeFee,
-            TradePreimageError, TradePreimageValue, TransactionDetails, TransactionEnum, TransactionFut,
-            ValidateAddressResult, WithdrawRequest};
+use crate::{BalanceFut, CoinBalance, FeeApproxStage, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin,
+            SwapOps, TradeFee, TradePreimageFut, TradePreimageValue, TransactionEnum, TransactionFut,
+            ValidateAddressResult, WithdrawFut, WithdrawRequest};
 use common::mm_ctx::MmArc;
 use common::mm_number::{BigDecimal, MmNumber};
 use futures::compat::Future01CompatExt;
@@ -52,26 +52,24 @@ impl MarketCoinOps for SlpToken {
 
     fn my_address(&self) -> Result<String, String> { unimplemented!() }
 
-    fn my_balance(&self) -> Box<dyn Future<Item = CoinBalance, Error = String> + Send> {
+    fn my_balance(&self) -> BalanceFut<CoinBalance> {
         let coin = self.clone();
         let fut = async move {
-            let (unspents, _) = try_s!(
-                coin.platform_utxo
-                    .list_unspent_ordered(&coin.platform_utxo.as_ref().my_address)
-                    .await
-            );
+            let (unspents, _) = coin
+                .platform_utxo
+                .list_unspent_ordered(&coin.platform_utxo.as_ref().my_address)
+                .await?;
             for unspent in unspents {
                 if unspent.value != coin.platform_utxo.as_ref().dust_amount {
                     continue;
                 }
-                let prev_tx_bytes = try_s!(
-                    coin.platform_utxo
-                        .as_ref()
-                        .rpc_client
-                        .get_transaction_bytes(unspent.outpoint.hash.reversed().into())
-                        .compat()
-                        .await
-                );
+                let prev_tx_bytes = coin
+                    .platform_utxo
+                    .as_ref()
+                    .rpc_client
+                    .get_transaction_bytes(unspent.outpoint.hash.reversed().into())
+                    .compat()
+                    .await?;
                 let prev_tx: UtxoTx = deserialize(prev_tx_bytes.0.as_slice()).unwrap();
                 let script: Script = prev_tx.outputs[0].script_pubkey.clone().into();
             }
@@ -83,7 +81,7 @@ impl MarketCoinOps for SlpToken {
         Box::new(fut.boxed().compat())
     }
 
-    fn base_coin_balance(&self) -> Box<dyn Future<Item = BigDecimal, Error = String> + Send> { unimplemented!() }
+    fn base_coin_balance(&self) -> BalanceFut<BigDecimal> { unimplemented!() }
 
     /// Receives raw transaction bytes in hexadecimal format as input and returns tx hash in hexadecimal format
     fn send_raw_tx(&self, tx: &str) -> Box<dyn Future<Item = String, Error = String> + Send> { unimplemented!() }
@@ -267,9 +265,7 @@ impl SwapOps for SlpToken {
 impl MmCoin for SlpToken {
     fn is_asset_chain(&self) -> bool { unimplemented!() }
 
-    fn withdraw(&self, req: WithdrawRequest) -> Box<dyn Future<Item = TransactionDetails, Error = String> + Send> {
-        unimplemented!()
-    }
+    fn withdraw(&self, req: WithdrawRequest) -> WithdrawFut { unimplemented!() }
 
     fn decimals(&self) -> u8 { unimplemented!() }
 
@@ -284,26 +280,17 @@ impl MmCoin for SlpToken {
     /// Get fee to be paid per 1 swap transaction
     fn get_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = String> + Send> { unimplemented!() }
 
-    fn get_sender_trade_fee(
-        &self,
-        value: TradePreimageValue,
-        stage: FeeApproxStage,
-    ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
+    fn get_sender_trade_fee(&self, value: TradePreimageValue, stage: FeeApproxStage) -> TradePreimageFut<TradeFee> {
         unimplemented!()
     }
 
-    fn get_receiver_trade_fee(
-        &self,
-        stage: FeeApproxStage,
-    ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
-        unimplemented!()
-    }
+    fn get_receiver_trade_fee(&self, stage: FeeApproxStage) -> TradePreimageFut<TradeFee> { unimplemented!() }
 
     fn get_fee_to_send_taker_fee(
         &self,
         dex_fee_amount: BigDecimal,
         stage: FeeApproxStage,
-    ) -> Box<dyn Future<Item = TradeFee, Error = TradePreimageError> + Send> {
+    ) -> TradePreimageFut<TradeFee> {
         unimplemented!()
     }
 
