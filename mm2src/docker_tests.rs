@@ -1759,6 +1759,7 @@ mod docker_tests {
                 "rel": "MYCOIN1",
                 "swap_method": "sell",
                 "max": true,
+                "price": 1,
             },
         })))
         .unwrap();
@@ -1771,23 +1772,6 @@ mod docker_tests {
             reason: "'max' cannot be used with 'sell' or 'buy' method".to_owned(),
         };
         assert_eq!(actual.error_data, Some(expected));
-
-        // `price` field is missing
-        let rc = block_on(mm.rpc(json!({
-            "userpass": mm.userpass,
-            "mmrpc": "2.0",
-            "method": "trade_preimage",
-            "params": {
-                "base": "MYCOIN",
-                "rel": "MYCOIN1",
-                "swap_method": "sell",
-                "volume": "10",
-            },
-        })))
-        .unwrap();
-        assert!(!rc.0.is_success(), "trade_preimage success, but should fail: {}", rc.1);
-        let actual: RpcErrorResponse<()> = json::from_str(&rc.1).unwrap();
-        assert_eq!(actual.error_type, "ZeroPrice", "Unexpected error_type: {}", rc.1);
 
         let rc = block_on(mm.rpc(json!({
             "userpass": mm.userpass,
@@ -1862,12 +1846,12 @@ mod docker_tests {
     #[test]
     fn test_trade_preimage_not_sufficient_balance() {
         #[track_caller]
-        fn expect_not_sufficient_balance(res: &str, required: BigDecimal) {
+        fn expect_not_sufficient_balance(res: &str, available: BigDecimal, required: BigDecimal) {
             let actual: RpcErrorResponse<trade_preimage_error::NotSufficientBalance> = json::from_str(res).unwrap();
             assert_eq!(actual.error_type, "NotSufficientBalance");
             let expected = trade_preimage_error::NotSufficientBalance {
                 coin: "MYCOIN".to_owned(),
-                available: BigDecimal::from(0),
+                available,
                 required,
                 locked_by_swaps: Some(BigDecimal::from(0)),
             };
@@ -1875,10 +1859,6 @@ mod docker_tests {
         }
 
         let priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
-
-        let (_ctx, mycoin1) = utxo_coin_from_privkey("MYCOIN1", &priv_key);
-        let my_address = mycoin1.my_address().expect("!my_address");
-        fill_address(&mycoin1, &my_address, 20.into(), 30);
 
         let coins = json!([
             {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1,"txfee":1000,"protocol":{"type":"UTXO"}},
@@ -1918,9 +1898,10 @@ mod docker_tests {
         })))
         .unwrap();
         assert!(!rc.0.is_success(), "trade_preimage success, but should fail: {}", rc.1);
-        // Required at least 0.00001 MYCOIN to pay the transaction fee.
-        let required = MmNumber::from("0.00001").to_decimal();
-        expect_not_sufficient_balance(&rc.1, required);
+        let available = BigDecimal::from(0);
+        // Required at least 0.00002 MYCOIN to pay the transaction_fee(0.00001) and to send a value not less than dust(0.00001).
+        let required = MmNumber::from("0.00002").to_decimal();
+        expect_not_sufficient_balance(&rc.1, available, required);
 
         let rc = block_on(mm.rpc(json!({
             "userpass": mm.userpass,
@@ -1937,8 +1918,9 @@ mod docker_tests {
         .unwrap();
         assert!(!rc.0.is_success(), "trade_preimage success, but should fail: {}", rc.1);
         // Required 0.00001 MYCOIN to pay the transaction fee and the specified 0.1 volume.
+        let available = BigDecimal::from(0);
         let required = MmNumber::from("0.10001").to_decimal();
-        expect_not_sufficient_balance(&rc.1, required);
+        expect_not_sufficient_balance(&rc.1, available, required);
 
         let rc = block_on(mm.rpc(json!({
             "userpass": mm.userpass,
@@ -1949,14 +1931,47 @@ mod docker_tests {
                 "rel": "MYCOIN1",
                 "swap_method": "sell",
                 "price": 1,
-                "volume": 0.1,
+                "volume": 0.01,
             },
         })))
         .unwrap();
         assert!(!rc.0.is_success(), "trade_preimage success, but should fail: {}", rc.1);
-        // Required 0.00001 MYCOIN to pay the transaction fee and the specified 0.1 volume.
-        let required = MmNumber::from("0.10001").to_decimal();
-        expect_not_sufficient_balance(&rc.1, required);
+        let available = BigDecimal::from(0);
+        // `required = volume + fee_to_send_taker_payment + dex_fee + fee_to_send_dex_fee`,
+        // where `volume = 0.01`, `fee_to_send_taker_payment = fee_to_send_dex_fee = 0.00001`, `dex_fee = 0.0001`.
+        // Please note `dex_fee = 0.01 / 7770` < `min_dex_fee = 0.0001`, so `dex_fee = min_dex_fee = 0.0001`
+        let required = MmNumber::from("0.01") + MmNumber::from("0.00012");
+        expect_not_sufficient_balance(&rc.1, available, required.to_decimal());
+
+        // The max available value = balance (0.000015) - transaction_fee (0.00001) = 0.000005 that is less than dust (0.00001).
+        // In this case we have to receive the `NotSufficientBalance` error.
+        //
+        // vvv Fill the MYCOIN balance vvv
+
+        let low_balance = MmNumber::from("0.000015").to_decimal();
+        let (_ctx, mycoin) = utxo_coin_from_privkey("MYCOIN", &priv_key);
+        let my_address = mycoin.my_address().expect("!my_address");
+        fill_address(&mycoin, &my_address, low_balance.clone(), 30);
+
+        let rc = block_on(mm.rpc(json!({
+            "userpass": mm.userpass,
+            "mmrpc": "2.0",
+            "method": "trade_preimage",
+            "params": {
+                "base": "MYCOIN",
+                "rel": "MYCOIN1",
+                "swap_method": "setprice",
+                "price": 1,
+                "max": true,
+            },
+        })))
+        .unwrap();
+        assert!(!rc.0.is_success(), "trade_preimage success, but should fail: {}", rc.1);
+        // balance(0.000015)
+        let available = low_balance;
+        // balance(0.000015) + transaction_fee(0.00001)
+        let required = MmNumber::from("0.00002").to_decimal();
+        expect_not_sufficient_balance(&rc.1, available, required);
     }
 
     /// This test ensures that `trade_preimage` will not succeed on input that will fail on `buy/sell/setprice`.
@@ -2143,6 +2158,7 @@ mod docker_tests {
             "rel": "MYCOIN1",
             "swap_method": "setprice",
             "max": true,
+            "price": "1",
         })))
         .unwrap();
         assert!(rc.0.is_success(), "!trade_preimage: {}", rc.1);
@@ -2173,6 +2189,7 @@ mod docker_tests {
             "rel": "MYCOIN1",
             "swap_method": "sell",
             "max": true,
+            "price": "1",
         })))
         .unwrap();
         assert!(!rc.0.is_success(), "trade_preimage success, but should fail: {}", rc.1);

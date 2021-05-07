@@ -1612,7 +1612,8 @@ pub async fn calc_max_maker_vol(
 ) -> CheckBalanceResult<MmNumber> {
     let ticker = coin.ticker();
     let locked = get_locked_amount(ctx, ticker);
-    let mut vol = &MmNumber::from(balance.clone()) - &locked;
+    let available = &MmNumber::from(balance.clone()) - &locked;
+    let mut vol = available.clone();
 
     let preimage_value = TradePreimageValue::UpperBound(vol.to_decimal());
     let trade_fee = coin
@@ -1621,18 +1622,21 @@ pub async fn calc_max_maker_vol(
         .await
         .mm_err(|e| CheckBalanceError::from_trade_preimage_error(e, ticker))?;
 
+    let mut required_to_pay_fee = MmNumber::from(0);
     if trade_fee.coin == ticker {
-        vol = vol - trade_fee.amount;
+        vol = &vol - &trade_fee.amount;
+        required_to_pay_fee = trade_fee.amount;
     } else {
         let base_coin_balance = coin.base_coin_balance().compat().await?;
-        check_base_coin_balance_for_swap(ctx, &MmNumber::from(base_coin_balance), trade_fee, None).await?;
+        check_base_coin_balance_for_swap(ctx, &MmNumber::from(base_coin_balance), trade_fee.clone(), None).await?;
     }
     let min_tx_amount = MmNumber::from(coin.min_tx_amount());
     if vol < min_tx_amount {
+        let required = min_tx_amount + required_to_pay_fee;
         return MmError::err(CheckBalanceError::NotSufficientBalance {
             coin: ticker.to_owned(),
-            available: balance.clone(),
-            required: min_tx_amount.to_decimal(),
+            available: available.to_decimal(),
+            required: required.to_decimal(),
             locked_by_swaps: Some(locked.to_decimal()),
         });
     }
