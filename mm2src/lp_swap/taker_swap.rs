@@ -1736,7 +1736,8 @@ pub async fn calc_max_taker_vol(
             max_dex_fee.to_fraction(),
             max_fee_to_send_taker_fee.amount.to_fraction()
         );
-        max_taker_vol_from_available(min_max_possible, my_coin, other_coin, &min_tx_amount)?
+        max_taker_vol_from_available(min_max_possible, my_coin, other_coin, &min_tx_amount)
+            .mm_err(|e| CheckBalanceError::from_max_taker_vol_error(e, my_coin.to_owned(), locked.to_decimal()))?
     } else {
         // first case
         debug!(
@@ -1744,10 +1745,17 @@ pub async fn calc_max_taker_vol(
             balance.to_fraction(),
             locked.to_fraction()
         );
-        max_taker_vol_from_available(max_possible, my_coin, other_coin, &min_tx_amount)?
+        max_taker_vol_from_available(max_possible, my_coin, other_coin, &min_tx_amount)
+            .mm_err(|e| CheckBalanceError::from_max_taker_vol_error(e, my_coin.to_owned(), locked.to_decimal()))?
     };
     // do not check if `max_vol < min_tx_amount`, because it is checked within `max_taker_vol_from_available` already
     Ok(max_vol)
+}
+
+#[derive(Debug)]
+pub struct MaxTakerVolumeLessThanDust {
+    pub max_vol: MmNumber,
+    pub min_tx_amount: MmNumber,
 }
 
 pub fn max_taker_vol_from_available(
@@ -1755,7 +1763,7 @@ pub fn max_taker_vol_from_available(
     base: &str,
     rel: &str,
     min_tx_amount: &MmNumber,
-) -> CheckBalanceResult<MmNumber> {
+) -> Result<MmNumber, MmError<MaxTakerVolumeLessThanDust>> {
     let fee_threshold = dex_fee_threshold(min_tx_amount.clone());
     let dex_fee_rate = dex_fee_rate(base, rel);
     let threshold_coef = &(&MmNumber::from(1) + &dex_fee_rate) / &dex_fee_rate;
@@ -1766,9 +1774,9 @@ pub fn max_taker_vol_from_available(
     };
 
     if &max_vol <= min_tx_amount {
-        return MmError::err(CheckBalanceError::MaxVolumeLessThanDust {
-            volume: max_vol.to_decimal(),
-            threshold: min_tx_amount.to_decimal(),
+        return MmError::err(MaxTakerVolumeLessThanDust {
+            max_vol,
+            min_tx_amount: min_tx_amount.clone(),
         });
     }
     Ok(max_vol)

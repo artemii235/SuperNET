@@ -209,8 +209,6 @@ pub enum TradePreimageRpcError {
         #[serde(skip_serializing_if = "Option::is_none")]
         locked_by_swaps: Option<BigDecimal>,
     },
-    #[display(fmt = "Max volume {} less than minimum transaction amount {}", volume, threshold)]
-    MaxVolumeLessThanDust { volume: BigDecimal, threshold: BigDecimal },
     #[display(fmt = "The volume {} less than minimum transaction amount {}", volume, threshold)]
     VolumeIsTooSmall { volume: BigDecimal, threshold: BigDecimal },
     #[display(fmt = "No such coin {}", coin)]
@@ -234,7 +232,6 @@ impl HttpStatusCode for TradePreimageRpcError {
         match self {
             TradePreimageRpcError::NotSufficientBalance { .. }
             | TradePreimageRpcError::NotSufficientBaseCoinBalance { .. }
-            | TradePreimageRpcError::MaxVolumeLessThanDust { .. }
             | TradePreimageRpcError::VolumeIsTooSmall { .. }
             | TradePreimageRpcError::NoSuchCoin { .. }
             | TradePreimageRpcError::CoinIsWalletOnly { .. }
@@ -283,9 +280,6 @@ impl From<CheckBalanceError> for TradePreimageRpcError {
                 available,
                 required,
                 locked_by_swaps,
-            },
-            CheckBalanceError::MaxVolumeLessThanDust { volume, threshold } => {
-                TradePreimageRpcError::MaxVolumeLessThanDust { volume, threshold }
             },
             CheckBalanceError::VolumeIsTooSmall { volume, threshold } => {
                 TradePreimageRpcError::VolumeIsTooSmall { volume, threshold }

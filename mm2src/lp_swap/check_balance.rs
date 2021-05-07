@@ -1,3 +1,4 @@
+use super::taker_swap::MaxTakerVolumeLessThanDust;
 use super::{get_locked_amount, get_locked_amount_by_other_swaps};
 use bigdecimal::BigDecimal;
 use coins::{BalanceError, MmCoinEnum, TradeFee, TradePreimageError};
@@ -198,8 +199,6 @@ pub enum CheckBalanceError {
         required: BigDecimal,
         locked_by_swaps: Option<BigDecimal>,
     },
-    #[display(fmt = "Max volume {} less than minimum transaction amount {}", volume, threshold)]
-    MaxVolumeLessThanDust { volume: BigDecimal, threshold: BigDecimal },
     #[display(fmt = "The volume {} less than minimum transaction amount {}", volume, threshold)]
     VolumeIsTooSmall { volume: BigDecimal, threshold: BigDecimal },
     #[display(fmt = "Transport error: {}", _0)]
@@ -224,7 +223,6 @@ impl CheckBalanceError {
         matches!(self,
             CheckBalanceError::NotSufficientBalance {..}
             | CheckBalanceError::NotSufficientBaseCoinBalance {..}
-            | CheckBalanceError::MaxVolumeLessThanDust {..}
         )
     }
 
@@ -253,18 +251,25 @@ impl CheckBalanceError {
                     }
                 }
             },
-            TradePreimageError::UpperBoundAmountIsTooSmall { amount, threshold } => {
-                CheckBalanceError::MaxVolumeLessThanDust {
-                    volume: amount,
-                    threshold,
-                }
-            },
             TradePreimageError::AmountIsTooSmall { amount, threshold } => CheckBalanceError::VolumeIsTooSmall {
                 volume: amount,
                 threshold,
             },
             TradePreimageError::Transport(transport) => CheckBalanceError::Transport(transport),
             TradePreimageError::InternalError(internal) => CheckBalanceError::InternalError(internal),
+        }
+    }
+
+    pub fn from_max_taker_vol_error(
+        max_vol_err: MaxTakerVolumeLessThanDust,
+        coin: String,
+        locked_by_swaps: BigDecimal,
+    ) -> CheckBalanceError {
+        CheckBalanceError::NotSufficientBalance {
+            coin,
+            available: max_vol_err.max_vol.to_decimal(),
+            required: max_vol_err.min_tx_amount.to_decimal(),
+            locked_by_swaps: Some(locked_by_swaps),
         }
     }
 }

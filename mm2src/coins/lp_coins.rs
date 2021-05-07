@@ -501,8 +501,6 @@ pub enum TradePreimageError {
     },
     #[display(fmt = "The amount {} less than minimum transaction amount {}", amount, threshold)]
     AmountIsTooSmall { amount: BigDecimal, threshold: BigDecimal },
-    #[display(fmt = "Max volume {} less than minimum transaction amount {}", amount, threshold)]
-    UpperBoundAmountIsTooSmall { amount: BigDecimal, threshold: BigDecimal },
     #[display(fmt = "Transport error: {}", _0)]
     Transport(String),
     #[display(fmt = "Internal error: {}", _0)]
@@ -532,12 +530,16 @@ impl TradePreimageError {
             },
             GenerateTxError::EmptyOutputs => TradePreimageError::InternalError(gen_tx_err.to_string()),
             GenerateTxError::OutputValueLessThanDust { value, dust } => {
-                let amount = big_decimal_from_sat_unsigned(value, decimals);
-                let threshold = big_decimal_from_sat_unsigned(dust, decimals);
                 if is_upper_bound {
-                    // TODO consider replacing it with NotSufficientBalance
-                    TradePreimageError::UpperBoundAmountIsTooSmall { amount, threshold }
+                    // If the preimage value is [`TradePreimageValue::UpperBound`], then we had to pass the account balance as the output value.
+                    let error = format!(
+                        "Output value {} (equal to the account balance) less than dust {}. Probably, dust is not set or outdated",
+                        value, dust
+                    );
+                    TradePreimageError::InternalError(error)
                 } else {
+                    let amount = big_decimal_from_sat_unsigned(value, decimals);
+                    let threshold = big_decimal_from_sat_unsigned(dust, decimals);
                     TradePreimageError::AmountIsTooSmall { amount, threshold }
                 }
             },
