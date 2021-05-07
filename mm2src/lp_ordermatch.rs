@@ -3502,7 +3502,7 @@ pub async fn update_maker_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8
                 return ERR!("Order {} is being matched now, can't update", req.uuid);
             }
             order.apply_updated(&update_msg);
-            save_my_maker_order(&ctx, &order);
+            save_my_maker_order(&ctx, &order, "Updated".to_string());
             update_msg = update_msg.with_new_max_volume((new_volume - reserved_amount).into());
             (MakerOrderForRpc::from(&*order), order.base.as_str(), order.rel.as_str())
         },
