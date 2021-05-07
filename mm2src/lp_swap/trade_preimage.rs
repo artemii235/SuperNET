@@ -1,6 +1,6 @@
 use super::check_balance::CheckBalanceError;
 use super::{maker_swap_trade_preimage, taker_swap_trade_preimage, MakerTradePreimage, TakerTradePreimage};
-use crate::mm2::lp_ordermatch::MakerOrderBuildError;
+use crate::mm2::lp_ordermatch::{MakerOrderBuildError, TakerAction, TakerOrderBuildError};
 use bigdecimal::BigDecimal;
 use coins::{is_wallet_only_ticker, lp_coinfind_or_err, BalanceError, CoinFindError, TradeFee, TradePreimageError};
 use common::mm_ctx::MmArc;
@@ -68,6 +68,16 @@ pub enum TradePreimageMethod {
     SetPrice,
     Buy,
     Sell,
+}
+
+impl TradePreimageMethod {
+    pub fn into_taker_action(self) -> Result<TakerAction, String> {
+        match self {
+            TradePreimageMethod::SetPrice => Err("Expected 'sell' or 'buy' method".to_owned()),
+            TradePreimageMethod::Sell => Ok(TakerAction::Sell),
+            TradePreimageMethod::Buy => Ok(TakerAction::Buy),
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -316,6 +326,29 @@ impl From<MakerOrderBuildError> for TradePreimageRpcError {
             | error @ MakerOrderBuildError::ConfSettingsNotSet
             | error @ MakerOrderBuildError::MaxBaseVolBelowMinBaseVol { .. } => {
                 TradePreimageRpcError::InternalError(format!("Unexpected MakerOrderBuildError: {}", error))
+            },
+        }
+    }
+}
+
+impl From<TakerOrderBuildError> for TradePreimageRpcError {
+    fn from(e: TakerOrderBuildError) -> Self {
+        match e {
+            TakerOrderBuildError::BaseEqualRel => TradePreimageRpcError::BaseEqualRel,
+            TakerOrderBuildError::BaseAmountTooLow { actual, threshold } => TradePreimageRpcError::VolumeIsTooSmall {
+                volume: actual.to_decimal(),
+                threshold: threshold.to_decimal(),
+            },
+            TakerOrderBuildError::RelAmountTooLow { actual, threshold } => TradePreimageRpcError::VolumeIsTooSmall {
+                volume: actual.to_decimal(),
+                threshold: threshold.to_decimal(),
+            },
+            // The errors below may occur due to invalid dummy params.
+            error @ TakerOrderBuildError::MinVolumeTooLow { .. }
+            | error @ TakerOrderBuildError::MaxBaseVolBelowMinBaseVol { .. }
+            | error @ TakerOrderBuildError::SenderPubkeyIsZero
+            | error @ TakerOrderBuildError::ConfsSettingsNotSet => {
+                TradePreimageRpcError::InternalError(format!("Unexpected TakerOrderBuildError: {}", error))
             },
         }
     }

@@ -1861,6 +1861,19 @@ mod docker_tests {
 
     #[test]
     fn test_trade_preimage_not_sufficient_balance() {
+        #[track_caller]
+        fn expect_not_sufficient_balance(res: &str, required: BigDecimal) {
+            let actual: RpcErrorResponse<trade_preimage_error::NotSufficientBalance> = json::from_str(res).unwrap();
+            assert_eq!(actual.error_type, "NotSufficientBalance");
+            let expected = trade_preimage_error::NotSufficientBalance {
+                coin: "MYCOIN".to_owned(),
+                available: BigDecimal::from(0),
+                required,
+                locked_by_swaps: Some(BigDecimal::from(0)),
+            };
+            assert_eq!(actual.error_data, Some(expected));
+        }
+
         let priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
 
         let (_ctx, mycoin1) = utxo_coin_from_privkey("MYCOIN1", &priv_key);
@@ -1905,17 +1918,9 @@ mod docker_tests {
         })))
         .unwrap();
         assert!(!rc.0.is_success(), "trade_preimage success, but should fail: {}", rc.1);
-        let actual: RpcErrorResponse<trade_preimage_error::NotSufficientBalance> = json::from_str(&rc.1).unwrap();
-        assert_eq!(actual.error_type, "NotSufficientBalance");
         // Required at least 0.00001 MYCOIN to pay the transaction fee.
         let required = MmNumber::from("0.00001").to_decimal();
-        let expected = trade_preimage_error::NotSufficientBalance {
-            coin: "MYCOIN".to_owned(),
-            available: BigDecimal::from(0),
-            required,
-            locked_by_swaps: Some(BigDecimal::from(0)),
-        };
-        assert_eq!(actual.error_data, Some(expected));
+        expect_not_sufficient_balance(&rc.1, required);
 
         let rc = block_on(mm.rpc(json!({
             "userpass": mm.userpass,
@@ -1931,17 +1936,27 @@ mod docker_tests {
         })))
         .unwrap();
         assert!(!rc.0.is_success(), "trade_preimage success, but should fail: {}", rc.1);
-        let actual: RpcErrorResponse<trade_preimage_error::NotSufficientBalance> = json::from_str(&rc.1).unwrap();
-        assert_eq!(actual.error_type, "NotSufficientBalance");
         // Required 0.00001 MYCOIN to pay the transaction fee and the specified 0.1 volume.
         let required = MmNumber::from("0.10001").to_decimal();
-        let expected = trade_preimage_error::NotSufficientBalance {
-            coin: "MYCOIN".to_owned(),
-            available: BigDecimal::from(0),
-            required,
-            locked_by_swaps: Some(BigDecimal::from(0)),
-        };
-        assert_eq!(actual.error_data, Some(expected));
+        expect_not_sufficient_balance(&rc.1, required);
+
+        let rc = block_on(mm.rpc(json!({
+            "userpass": mm.userpass,
+            "mmrpc": "2.0",
+            "method": "trade_preimage",
+            "params": {
+                "base": "MYCOIN",
+                "rel": "MYCOIN1",
+                "swap_method": "sell",
+                "price": 1,
+                "volume": 0.1,
+            },
+        })))
+        .unwrap();
+        assert!(!rc.0.is_success(), "trade_preimage success, but should fail: {}", rc.1);
+        // Required 0.00001 MYCOIN to pay the transaction fee and the specified 0.1 volume.
+        let required = MmNumber::from("0.10001").to_decimal();
+        expect_not_sufficient_balance(&rc.1, required);
     }
 
     /// This test ensures that `trade_preimage` will not succeed on input that will fail on `buy/sell/setprice`.
@@ -2053,6 +2068,36 @@ mod docker_tests {
         let volume_threshold = BigDecimal::from(1) / BigDecimal::from(10_000);
         let expected = trade_preimage_error::VolumeIsTooSmall {
             volume: low_volume,
+            threshold: volume_threshold,
+        };
+        assert_eq!(actual.error_data, Some(expected));
+
+        // rel volume is too low
+        // Min MYCOIN trading volume is 0.0001.
+        let volume = BigDecimal::from(1) / BigDecimal::from(10_000);
+        let low_price = BigDecimal::from(1) / BigDecimal::from(10);
+        // Min MYCOIN1 trading volume is 0.0001, but the actual volume is 0.00001
+        let low_rel_volume = &volume * &low_price;
+        let rc = block_on(mm.rpc(json!({
+            "userpass": mm.userpass,
+            "mmrpc": "2.0",
+            "method": "trade_preimage",
+            "params": {
+                "base": "MYCOIN",
+                "rel": "MYCOIN1",
+                "swap_method": "sell",
+                "price": low_price,
+                "volume": volume,
+            },
+        })))
+        .unwrap();
+        assert!(!rc.0.is_success(), "trade_preimage success, but should fail: {}", rc.1);
+        let actual: RpcErrorResponse<trade_preimage_error::VolumeIsTooSmall> = json::from_str(&rc.1).unwrap();
+        assert_eq!(actual.error_type, "VolumeIsTooSmall");
+        // Min MYCOIN1 trading volume is 0.0001.
+        let volume_threshold = BigDecimal::from(1) / BigDecimal::from(10_000);
+        let expected = trade_preimage_error::VolumeIsTooSmall {
+            volume: low_rel_volume,
             threshold: volume_threshold,
         };
         assert_eq!(actual.error_data, Some(expected));
