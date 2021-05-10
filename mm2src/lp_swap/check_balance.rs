@@ -199,8 +199,17 @@ pub enum CheckBalanceError {
         required: BigDecimal,
         locked_by_swaps: Option<BigDecimal>,
     },
-    #[display(fmt = "The volume {} less than minimum transaction amount {}", volume, threshold)]
-    VolumeIsTooSmall { volume: BigDecimal, threshold: BigDecimal },
+    #[display(
+        fmt = "The volume {} of the {} coin less than minimum transaction amount {}",
+        coin,
+        volume,
+        threshold
+    )]
+    VolumeTooLow {
+        coin: String,
+        volume: BigDecimal,
+        threshold: BigDecimal,
+    },
     #[display(fmt = "Transport error: {}", _0)]
     Transport(String),
     #[display(fmt = "Internal error: {}", _0)]
@@ -251,7 +260,8 @@ impl CheckBalanceError {
                     }
                 }
             },
-            TradePreimageError::AmountIsTooSmall { amount, threshold } => CheckBalanceError::VolumeIsTooSmall {
+            TradePreimageError::AmountIsTooSmall { amount, threshold } => CheckBalanceError::VolumeTooLow {
+                coin: ticker.to_owned(),
                 volume: amount,
                 threshold,
             },

@@ -71,7 +71,7 @@ pub enum TradePreimageMethod {
 }
 
 impl TradePreimageMethod {
-    pub fn into_taker_action(self) -> Result<TakerAction, String> {
+    pub fn to_taker_action(&self) -> Result<TakerAction, String> {
         match self {
             TradePreimageMethod::SetPrice => Err("Expected 'sell' or 'buy' method".to_owned()),
             TradePreimageMethod::Sell => Ok(TakerAction::Sell),
@@ -209,8 +209,17 @@ pub enum TradePreimageRpcError {
         #[serde(skip_serializing_if = "Option::is_none")]
         locked_by_swaps: Option<BigDecimal>,
     },
-    #[display(fmt = "The volume {} less than minimum transaction amount {}", volume, threshold)]
-    VolumeIsTooSmall { volume: BigDecimal, threshold: BigDecimal },
+    #[display(
+        fmt = "The volume {} of the {} coin less than minimum transaction amount {}",
+        coin,
+        volume,
+        threshold
+    )]
+    VolumeTooLow {
+        coin: String,
+        volume: BigDecimal,
+        threshold: BigDecimal,
+    },
     #[display(fmt = "No such coin {}", coin)]
     NoSuchCoin { coin: String },
     #[display(fmt = "Coin {} is wallet only", coin)]
@@ -232,7 +241,7 @@ impl HttpStatusCode for TradePreimageRpcError {
         match self {
             TradePreimageRpcError::NotSufficientBalance { .. }
             | TradePreimageRpcError::NotSufficientBaseCoinBalance { .. }
-            | TradePreimageRpcError::VolumeIsTooSmall { .. }
+            | TradePreimageRpcError::VolumeTooLow { .. }
             | TradePreimageRpcError::NoSuchCoin { .. }
             | TradePreimageRpcError::CoinIsWalletOnly { .. }
             | TradePreimageRpcError::BaseEqualRel
@@ -281,8 +290,14 @@ impl From<CheckBalanceError> for TradePreimageRpcError {
                 required,
                 locked_by_swaps,
             },
-            CheckBalanceError::VolumeIsTooSmall { volume, threshold } => {
-                TradePreimageRpcError::VolumeIsTooSmall { volume, threshold }
+            CheckBalanceError::VolumeTooLow {
+                coin,
+                volume,
+                threshold,
+            } => TradePreimageRpcError::VolumeTooLow {
+                coin,
+                volume,
+                threshold,
             },
             CheckBalanceError::Transport(transport) => TradePreimageRpcError::Transport(transport),
             CheckBalanceError::InternalError(internal) => TradePreimageRpcError::InternalError(internal),
@@ -298,11 +313,24 @@ impl From<CoinFindError> for TradePreimageRpcError {
     }
 }
 
-impl From<MakerOrderBuildError> for TradePreimageRpcError {
-    fn from(e: MakerOrderBuildError) -> Self {
-        match e {
+impl TradePreimageRpcError {
+    /// Construct [`TradePreimageRpcError`] from [`coins::TradePreimageError`] using the additional `ticker` argument.
+    /// `ticker` is used to identify whether the `NotSufficientBalance` or `NotSufficientBaseCoinBalance` has occurred.
+    pub fn from_trade_preimage_error(trade_preimage_err: TradePreimageError, ticker: &str) -> TradePreimageRpcError {
+        // `CheckBalanceError` has similar variants as `TradePreimageRpcError` and can be obtained from `TradePreimageError`,
+        // so avoid unnecessary boilerplate code.
+        TradePreimageRpcError::from(CheckBalanceError::from_trade_preimage_error(trade_preimage_err, ticker))
+    }
+
+    pub fn from_maker_order_build_error(
+        maker_order_err: MakerOrderBuildError,
+        base: &str,
+        rel: &str,
+    ) -> TradePreimageRpcError {
+        match maker_order_err {
             MakerOrderBuildError::BaseEqualRel => TradePreimageRpcError::BaseEqualRel,
-            MakerOrderBuildError::MaxBaseVolTooLow { actual, threshold } => TradePreimageRpcError::VolumeIsTooSmall {
+            MakerOrderBuildError::MaxBaseVolTooLow { actual, threshold } => TradePreimageRpcError::VolumeTooLow {
+                coin: base.to_owned(),
                 volume: actual.to_decimal(),
                 threshold: threshold.to_decimal(),
             },
@@ -310,7 +338,8 @@ impl From<MakerOrderBuildError> for TradePreimageRpcError {
                 price: actual.to_decimal(),
                 threshold: threshold.to_decimal(),
             },
-            MakerOrderBuildError::RelVolTooLow { actual, threshold } => TradePreimageRpcError::VolumeIsTooSmall {
+            MakerOrderBuildError::RelVolTooLow { actual, threshold } => TradePreimageRpcError::VolumeTooLow {
+                coin: rel.to_owned(),
                 volume: actual.to_decimal(),
                 threshold: threshold.to_decimal(),
             },
@@ -322,17 +351,21 @@ impl From<MakerOrderBuildError> for TradePreimageRpcError {
             },
         }
     }
-}
 
-impl From<TakerOrderBuildError> for TradePreimageRpcError {
-    fn from(e: TakerOrderBuildError) -> Self {
-        match e {
+    pub fn from_taker_order_build_error(
+        taker_order_err: TakerOrderBuildError,
+        base: &str,
+        rel: &str,
+    ) -> TradePreimageRpcError {
+        match taker_order_err {
             TakerOrderBuildError::BaseEqualRel => TradePreimageRpcError::BaseEqualRel,
-            TakerOrderBuildError::BaseAmountTooLow { actual, threshold } => TradePreimageRpcError::VolumeIsTooSmall {
+            TakerOrderBuildError::BaseAmountTooLow { actual, threshold } => TradePreimageRpcError::VolumeTooLow {
+                coin: base.to_owned(),
                 volume: actual.to_decimal(),
                 threshold: threshold.to_decimal(),
             },
-            TakerOrderBuildError::RelAmountTooLow { actual, threshold } => TradePreimageRpcError::VolumeIsTooSmall {
+            TakerOrderBuildError::RelAmountTooLow { actual, threshold } => TradePreimageRpcError::VolumeTooLow {
+                coin: rel.to_owned(),
                 volume: actual.to_decimal(),
                 threshold: threshold.to_decimal(),
             },
@@ -344,16 +377,6 @@ impl From<TakerOrderBuildError> for TradePreimageRpcError {
                 TradePreimageRpcError::InternalError(format!("Unexpected TakerOrderBuildError: {}", error))
             },
         }
-    }
-}
-
-impl TradePreimageRpcError {
-    /// Construct [`TradePreimageRpcError`] from [`coins::TradePreimageError`] using the additional `ticker` argument.
-    /// `ticker` is used to identify whether the `NotSufficientBalance` or `NotSufficientBaseCoinBalance` has occurred.
-    pub fn from_trade_preimage_error(trade_preimage_err: TradePreimageError, ticker: &str) -> TradePreimageRpcError {
-        // `CheckBalanceError` has similar variants as `TradePreimageRpcError` and can be obtained from `TradePreimageError`,
-        // so avoid unnecessary boilerplate code.
-        TradePreimageRpcError::from(CheckBalanceError::from_trade_preimage_error(trade_preimage_err, ticker))
     }
 }
 

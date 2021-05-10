@@ -541,7 +541,8 @@ pub mod trade_preimage_error {
 
     #[derive(Debug, Deserialize, PartialEq)]
     #[serde(deny_unknown_fields)]
-    pub struct VolumeIsTooSmall {
+    pub struct VolumeTooLow {
+        pub coin: String,
         pub volume: BigDecimal,
         pub threshold: BigDecimal,
     }

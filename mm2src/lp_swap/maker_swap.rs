@@ -1533,13 +1533,16 @@ pub async fn maker_swap_trade_preimage(
     base_coin: MmCoinEnum,
     rel_coin: MmCoinEnum,
 ) -> TradePreimageRpcResult<MakerTradePreimage> {
+    let base_coin_ticker = base_coin.ticker();
+    let rel_coin_ticker = rel_coin.ticker();
     let volume = if req.max {
         let balance = base_coin.my_spendable_balance().compat().await?;
         calc_max_maker_vol(&ctx, &base_coin, &balance, FeeApproxStage::TradePreimage).await?
     } else {
         let threshold = base_coin.min_trading_vol().to_decimal();
         if req.volume.is_zero() {
-            return MmError::err(TradePreimageRpcError::VolumeIsTooSmall {
+            return MmError::err(TradePreimageRpcError::VolumeTooLow {
+                coin: base_coin_ticker.to_owned(),
                 volume: req.volume.to_decimal(),
                 threshold,
             });
@@ -1552,12 +1555,12 @@ pub async fn maker_swap_trade_preimage(
         .get_sender_trade_fee(preimage_value, FeeApproxStage::TradePreimage)
         .compat()
         .await
-        .mm_err(|e| TradePreimageRpcError::from_trade_preimage_error(e, base_coin.ticker()))?;
+        .mm_err(|e| TradePreimageRpcError::from_trade_preimage_error(e, base_coin_ticker))?;
     let rel_coin_fee = rel_coin
         .get_receiver_trade_fee(FeeApproxStage::TradePreimage)
         .compat()
         .await
-        .mm_err(|e| TradePreimageRpcError::from_trade_preimage_error(e, rel_coin.ticker()))?;
+        .mm_err(|e| TradePreimageRpcError::from_trade_preimage_error(e, rel_coin_ticker))?;
 
     if req.max {
         // Note the `calc_max_maker_vol` returns [`CheckBalanceError::NotSufficientBalance`] error if the balance of `base_coin` is not sufficient.
@@ -1591,7 +1594,9 @@ pub async fn maker_swap_trade_preimage(
         .with_price(req.price)
         .with_conf_settings(conf_settings);
     // perform an additional validation
-    let _order = builder.build()?;
+    let _order = builder
+        .build()
+        .map_to_mm(|e| TradePreimageRpcError::from_maker_order_build_error(e, base_coin_ticker, rel_coin_ticker))?;
 
     let volume = if req.max { Some(volume) } else { None };
     Ok(MakerTradePreimage {

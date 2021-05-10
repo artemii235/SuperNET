@@ -2053,11 +2053,12 @@ mod docker_tests {
         })))
         .unwrap();
         assert!(!rc.0.is_success(), "trade_preimage success, but should fail: {}", rc.1);
-        let actual: RpcErrorResponse<trade_preimage_error::VolumeIsTooSmall> = json::from_str(&rc.1).unwrap();
-        assert_eq!(actual.error_type, "VolumeIsTooSmall");
+        let actual: RpcErrorResponse<trade_preimage_error::VolumeTooLow> = json::from_str(&rc.1).unwrap();
+        assert_eq!(actual.error_type, "VolumeTooLow");
         // Min MYCOIN trading volume is 0.0001.
         let volume_threshold = BigDecimal::from(1) / BigDecimal::from(10_000);
-        let expected = trade_preimage_error::VolumeIsTooSmall {
+        let expected = trade_preimage_error::VolumeTooLow {
+            coin: "MYCOIN".to_owned(),
             volume: low_volume.clone(),
             threshold: volume_threshold,
         };
@@ -2077,11 +2078,12 @@ mod docker_tests {
         })))
         .unwrap();
         assert!(!rc.0.is_success(), "trade_preimage success, but should fail: {}", rc.1);
-        let actual: RpcErrorResponse<trade_preimage_error::VolumeIsTooSmall> = json::from_str(&rc.1).unwrap();
-        assert_eq!(actual.error_type, "VolumeIsTooSmall");
+        let actual: RpcErrorResponse<trade_preimage_error::VolumeTooLow> = json::from_str(&rc.1).unwrap();
+        assert_eq!(actual.error_type, "VolumeTooLow");
         // Min MYCOIN trading volume is 0.0001.
         let volume_threshold = BigDecimal::from(1) / BigDecimal::from(10_000);
-        let expected = trade_preimage_error::VolumeIsTooSmall {
+        let expected = trade_preimage_error::VolumeTooLow {
+            coin: "MYCOIN".to_owned(),
             volume: low_volume,
             threshold: volume_threshold,
         };
@@ -2107,11 +2109,12 @@ mod docker_tests {
         })))
         .unwrap();
         assert!(!rc.0.is_success(), "trade_preimage success, but should fail: {}", rc.1);
-        let actual: RpcErrorResponse<trade_preimage_error::VolumeIsTooSmall> = json::from_str(&rc.1).unwrap();
-        assert_eq!(actual.error_type, "VolumeIsTooSmall");
+        let actual: RpcErrorResponse<trade_preimage_error::VolumeTooLow> = json::from_str(&rc.1).unwrap();
+        assert_eq!(actual.error_type, "VolumeTooLow");
         // Min MYCOIN1 trading volume is 0.0001.
         let volume_threshold = BigDecimal::from(1) / BigDecimal::from(10_000);
-        let expected = trade_preimage_error::VolumeIsTooSmall {
+        let expected = trade_preimage_error::VolumeTooLow {
+            coin: "MYCOIN1".to_owned(),
             volume: low_rel_volume,
             threshold: volume_threshold,
         };

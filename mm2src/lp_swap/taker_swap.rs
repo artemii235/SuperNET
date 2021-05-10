@@ -1548,7 +1548,7 @@ pub async fn taker_swap_trade_preimage(
 ) -> TradePreimageRpcResult<TakerTradePreimage> {
     let action = req
         .swap_method
-        .into_taker_action()
+        .to_taker_action()
         .map_to_mm(TradePreimageRpcError::InternalError)?;
     let (my_coin, other_coin) = match action {
         TakerAction::Sell => (base_coin.clone(), rel_coin.clone()),
@@ -1565,7 +1565,7 @@ pub async fn taker_swap_trade_preimage(
     }
 
     let base_amount = req.volume.clone();
-    let rel_amount = req.price * req.volume;
+    let rel_amount = &req.price * &req.volume;
 
     let stage = FeeApproxStage::TradePreimage;
     let my_coin_volume = match action {
@@ -1629,7 +1629,9 @@ pub async fn taker_swap_trade_preimage(
         .with_match_by(MatchBy::Any)
         .with_conf_settings(conf_settings)
         .with_sender_pubkey(H256Json::from(our_public_id.bytes));
-    let _ = order_builder.build()?;
+    let _ = order_builder
+        .build()
+        .map_to_mm(|e| TradePreimageRpcError::from_taker_order_build_error(e, &req.base, &req.rel))?;
 
     let (base_coin_fee, rel_coin_fee) = match action {
         TakerAction::Sell => (my_coin_trade_fee, other_coin_trade_fee),
