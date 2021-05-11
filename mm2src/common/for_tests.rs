@@ -233,7 +233,7 @@ impl MarketMakerIt {
         mut conf: Json,
         userpass: String,
         local: Option<LocalStart>,
-        _envs: &[(&str, &str)],
+        envs: &[(&str, &str)],
     ) -> Result<MarketMakerIt, String> {
         let ip: IpAddr = if conf["myipaddr"].is_null() {
             // Generate an unique IP.
