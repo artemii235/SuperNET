@@ -3909,6 +3909,7 @@ fn my_order_history_file_path(ctx: &MmArc, uuid: &Uuid) -> PathBuf {
 // TODO: history field can be part of the MakerOrder Struct Directly as an option,
 // But have to be sure it doesn't break any backward compatability
 // + it will make any response with updated maker order very long
+#[derive(Clone, Deserialize, Serialize)]
 struct UpdateMakerOrderHistory {
     order: MakerOrder,
     history: Vec<MakerOrder>,
