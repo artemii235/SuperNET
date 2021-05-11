@@ -925,7 +925,7 @@ impl TakerRequest {
     fn get_rel_amount(&self) -> &MmNumber { &self.rel_amount }
 }
 
-struct TakerOrderBuilder<'a> {
+pub struct TakerOrderBuilder<'a> {
     base_coin: &'a MmCoinEnum,
     rel_coin: &'a MmCoinEnum,
     base_amount: MmNumber,
@@ -939,7 +939,7 @@ struct TakerOrderBuilder<'a> {
     timeout: u64,
 }
 
-enum TakerOrderBuildError {
+pub enum TakerOrderBuildError {
     BaseEqualRel,
     /// Base amount too low with threshold
     BaseAmountTooLow {
@@ -1000,7 +1000,7 @@ impl fmt::Display for TakerOrderBuildError {
 }
 
 impl<'a> TakerOrderBuilder<'a> {
-    fn new(base_coin: &'a MmCoinEnum, rel_coin: &'a MmCoinEnum) -> TakerOrderBuilder<'a> {
+    pub fn new(base_coin: &'a MmCoinEnum, rel_coin: &'a MmCoinEnum) -> TakerOrderBuilder<'a> {
         TakerOrderBuilder {
             base_coin,
             rel_coin,
@@ -1016,27 +1016,27 @@ impl<'a> TakerOrderBuilder<'a> {
         }
     }
 
-    fn with_base_amount(mut self, vol: MmNumber) -> Self {
+    pub fn with_base_amount(mut self, vol: MmNumber) -> Self {
         self.base_amount = vol;
         self
     }
 
-    fn with_rel_amount(mut self, vol: MmNumber) -> Self {
+    pub fn with_rel_amount(mut self, vol: MmNumber) -> Self {
         self.rel_amount = vol;
         self
     }
 
-    fn with_min_volume(mut self, vol: Option<MmNumber>) -> Self {
+    pub fn with_min_volume(mut self, vol: Option<MmNumber>) -> Self {
         self.min_volume = vol;
         self
     }
 
-    fn with_action(mut self, action: TakerAction) -> Self {
+    pub fn with_action(mut self, action: TakerAction) -> Self {
         self.action = action;
         self
     }
 
-    fn with_match_by(mut self, match_by: MatchBy) -> Self {
+    pub fn with_match_by(mut self, match_by: MatchBy) -> Self {
         self.match_by = match_by;
         self
     }
@@ -1046,23 +1046,23 @@ impl<'a> TakerOrderBuilder<'a> {
         self
     }
 
-    fn with_conf_settings(mut self, settings: OrderConfirmationsSettings) -> Self {
+    pub fn with_conf_settings(mut self, settings: OrderConfirmationsSettings) -> Self {
         self.conf_settings = Some(settings);
         self
     }
 
-    fn with_sender_pubkey(mut self, sender_pubkey: H256Json) -> Self {
+    pub fn with_sender_pubkey(mut self, sender_pubkey: H256Json) -> Self {
         self.sender_pubkey = sender_pubkey;
         self
     }
 
-    fn with_timeout(mut self, timeout: u64) -> Self {
+    pub fn with_timeout(mut self, timeout: u64) -> Self {
         self.timeout = timeout;
         self
     }
 
     /// Validate fields and build
-    fn build(self) -> Result<TakerOrder, TakerOrderBuildError> {
+    pub fn build(self) -> Result<TakerOrder, TakerOrderBuildError> {
         let min_base_amount = self.base_coin.min_trading_vol();
         let min_rel_amount = self.rel_coin.min_trading_vol();
 
@@ -1269,7 +1269,7 @@ pub struct MakerOrder {
     conf_settings: Option<OrderConfirmationsSettings>,
 }
 
-struct MakerOrderBuilder<'a> {
+pub struct MakerOrderBuilder<'a> {
     max_base_vol: MmNumber,
     min_base_vol: Option<MmNumber>,
     price: MmNumber,
@@ -1278,7 +1278,7 @@ struct MakerOrderBuilder<'a> {
     conf_settings: Option<OrderConfirmationsSettings>,
 }
 
-enum MakerOrderBuildError {
+pub enum MakerOrderBuildError {
     BaseEqualRel,
     /// Max base vol too low with threshold
     MaxBaseVolTooLow {
@@ -1411,7 +1411,7 @@ fn validate_max_vol(
 }
 
 impl<'a> MakerOrderBuilder<'a> {
-    fn new(base_coin: &'a MmCoinEnum, rel_coin: &'a MmCoinEnum) -> MakerOrderBuilder<'a> {
+    pub fn new(base_coin: &'a MmCoinEnum, rel_coin: &'a MmCoinEnum) -> MakerOrderBuilder<'a> {
         MakerOrderBuilder {
             base_coin,
             rel_coin,
@@ -1422,28 +1422,28 @@ impl<'a> MakerOrderBuilder<'a> {
         }
     }
 
-    fn with_max_base_vol(mut self, vol: MmNumber) -> Self {
+    pub fn with_max_base_vol(mut self, vol: MmNumber) -> Self {
         self.max_base_vol = vol;
         self
     }
 
-    fn with_min_base_vol(mut self, vol: Option<MmNumber>) -> Self {
+    pub fn with_min_base_vol(mut self, vol: Option<MmNumber>) -> Self {
         self.min_base_vol = vol;
         self
     }
 
-    fn with_price(mut self, price: MmNumber) -> Self {
+    pub fn with_price(mut self, price: MmNumber) -> Self {
         self.price = price;
         self
     }
 
-    fn with_conf_settings(mut self, conf_settings: OrderConfirmationsSettings) -> Self {
+    pub fn with_conf_settings(mut self, conf_settings: OrderConfirmationsSettings) -> Self {
         self.conf_settings = Some(conf_settings);
         self
     }
 
     /// Build MakerOrder
-    fn build(self) -> Result<MakerOrder, MakerOrderBuildError> {
+    pub fn build(self) -> Result<MakerOrder, MakerOrderBuildError> {
         if self.base_coin.ticker() == self.rel_coin.ticker() {
             return Err(MakerOrderBuildError::BaseEqualRel);
         }

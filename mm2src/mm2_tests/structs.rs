@@ -541,8 +541,10 @@ pub mod trade_preimage_error {
 
     #[derive(Debug, Deserialize, PartialEq)]
     #[serde(deny_unknown_fields)]
-    pub struct VolumeIsTooSmall {
+    pub struct VolumeTooLow {
+        pub coin: String,
         pub volume: BigDecimal,
+        pub threshold: BigDecimal,
     }
 
     #[derive(Debug, Deserialize, PartialEq)]
@@ -556,5 +558,12 @@ pub mod trade_preimage_error {
     pub struct InvalidParam {
         pub param: String,
         pub reason: String,
+    }
+
+    #[derive(Debug, Deserialize, PartialEq)]
+    #[serde(deny_unknown_fields)]
+    pub struct PriceTooLow {
+        pub price: BigDecimal,
+        pub threshold: BigDecimal,
     }
 }
