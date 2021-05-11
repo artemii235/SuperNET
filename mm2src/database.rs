@@ -1,7 +1,8 @@
 /// The module responsible to work with SQLite database
 ///
-#[path = "database/my_orders.rs"]
-pub mod my_orders;
+#[path = "database/database_common.rs"]
+pub mod database_common;
+#[path = "database/my_orders.rs"] pub mod my_orders;
 #[path = "database/my_swaps.rs"] pub mod my_swaps;
 #[path = "database/stats_swaps.rs"] pub mod stats_swaps;
 

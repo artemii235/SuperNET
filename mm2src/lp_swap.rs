@@ -55,6 +55,7 @@
 //  marketmaker
 //
 
+use crate::mm2::database::database_common::PagingOptions;
 use crate::mm2::lp_network::broadcast_p2p_msg;
 use async_std::sync as async_std_sync;
 use bigdecimal::BigDecimal;
@@ -74,7 +75,6 @@ use rpc::v1::types::{Bytes as BytesJson, H256 as H256Json};
 use serde_json::{self as json, Value as Json};
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
-use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex, Weak};
@@ -847,10 +847,6 @@ fn broadcast_my_swap_status(uuid: &Uuid, ctx: &MmArc) -> Result<(), String> {
     Ok(())
 }
 
-const fn ten() -> usize { 10 }
-
-fn one() -> NonZeroUsize { NonZeroUsize::new(1).unwrap() }
-
 #[derive(Debug, Deserialize)]
 pub struct MySwapsFilter {
     pub my_coin: Option<String>,
@@ -866,6 +862,8 @@ pub fn all_swaps_uuids_by_filter(_ctx: MmArc, _req: Json) -> HyRes {
     )))
 }
 
+// TODO: Should return the result from SQL like in order history. So it can be clear the exact started_at time
+// and the coins if they are not included in the filter request 
 /// Returns *all* uuids of swaps, which match the selected filter.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn all_swaps_uuids_by_filter(ctx: MmArc, req: Json) -> HyRes {
@@ -888,15 +886,6 @@ pub fn all_swaps_uuids_by_filter(ctx: MmArc, req: Json) -> HyRes {
         })
         .to_string(),
     )
-}
-
-#[derive(Debug, Deserialize)]
-pub struct PagingOptions {
-    #[serde(default = "ten")]
-    pub limit: usize,
-    #[serde(default = "one")]
-    pub page_number: NonZeroUsize,
-    pub from_uuid: Option<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]

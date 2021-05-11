@@ -1,7 +1,6 @@
-use crate::mm2::lp_ordermatch::MyOrdersFilter;
 /// This module contains code to work with my_orders table in MM2 SQLite DB
+use crate::mm2::lp_ordermatch::MyOrdersFilter;
 use crate::mm2::lp_ordermatch::{MakerOrder, TakerAction, TakerOrder};
-use crate::mm2::lp_swap::PagingOptions;
 use common::log::debug;
 use common::mm_ctx::MmArc;
 use common::now_ms;
@@ -10,7 +9,7 @@ use sql_builder::SqlBuilder;
 use std::convert::TryInto;
 use uuid::Uuid;
 
-use super::my_swaps::offset_by_uuid;
+use super::database_common::{offset_by_uuid, PagingOptions};
 
 const MY_ORDERS_TABLE: &str = "my_orders";
 
@@ -31,7 +30,8 @@ pub const CREATE_MY_ORDERS_TABLE: &str = "CREATE TABLE IF NOT EXISTS my_orders (
 
 const INSERT_MY_ORDER: &str = "INSERT INTO my_orders (uuid, type, initial_action, base, rel, price, volume, created_at, last_updated, was_taker, status) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)";
 
-const UPDATE_MY_ORDER: &str = "UPDATE my_orders SET price = ?2, volume = ?3, last_updated = ?4 WHERE uuid = ?1";
+const UPDATE_MY_ORDER: &str =
+    "UPDATE my_orders SET price = ?2, volume = ?3, last_updated = ?4, status = ?5 WHERE uuid = ?1";
 
 const UPDATE_WAS_TAKER: &str = "UPDATE my_orders SET type = ?2, last_updated = ?3, was_taker = ?4 WHERE uuid = ?1";
 
@@ -48,8 +48,7 @@ pub fn insert_maker_order(ctx: &MmArc, uuid: Uuid, order: &MakerOrder) -> SqlRes
         order.price.to_decimal().to_string(),
         order.max_base_vol.to_decimal().to_string(),
         order.created_at.to_string(),
-        // order.updated_at.to_string(),
-        now_ms().to_string(),
+        order.updated_at.unwrap().to_string(),
         0.to_string(),
         "Created".to_string(),
     ];
@@ -73,8 +72,7 @@ pub fn insert_taker_order(ctx: &MmArc, uuid: Uuid, order: &TakerOrder) -> SqlRes
         price.to_string(),
         order.request.base_amount.to_decimal().to_string(),
         order.created_at.to_string(),
-        // order.updated_at.to_string(),
-        now_ms().to_string(),
+        order.created_at.to_string(),
         0.to_string(),
         "Created".to_string(),
     ];
@@ -88,8 +86,8 @@ pub fn update_maker_order(ctx: &MmArc, uuid: Uuid, order: &MakerOrder) -> SqlRes
         uuid.to_string(),
         order.price.to_decimal().to_string(),
         order.max_base_vol.to_decimal().to_string(),
-        // order.updated_at.to_string(),
-        now_ms().to_string(),
+        order.updated_at.unwrap().to_string(),
+        "Updated".to_string(),
     ];
     let conn = ctx.sqlite_connection();
     conn.execute(UPDATE_MY_ORDER, &params).map(|_| ())
@@ -178,13 +176,28 @@ fn apply_my_orders_filter(builder: &mut SqlBuilder, params: &mut Vec<(&str, Stri
 }
 #[derive(Debug, Default)]
 pub struct RecentOrdersSelectSqlResult {
-    /// UUIDs of orders matching the query
-    pub uuids: Vec<Uuid>,
+    /// Orders matching the query
+    pub result: Vec<OrderSqlRow>,
     /// Total count of orders matching the query
     pub total_count: usize,
-    /// The number of skipped UUIDs
+    /// The number of skipped orders
     pub skipped: usize,
 }
+#[derive(Debug, Serialize)]
+pub struct OrderSqlRow {
+    pub uuid: String,
+    pub order_type: String,
+    initial_action: String,
+    base: String,
+    rel: String,
+    price: f64,
+    volume: f64,
+    created_at: i64,
+    last_updated: i64,
+    was_taker: i8,
+    status: String,
+}
+
 #[derive(Debug)]
 pub enum SelectRecentOrdersUuidsErr {
     Sql(SqlError),
@@ -203,7 +216,7 @@ impl From<uuid::parser::ParseError> for SelectRecentOrdersUuidsErr {
     fn from(err: uuid::parser::ParseError) -> Self { SelectRecentOrdersUuidsErr::Parse(err) }
 }
 
-pub fn select_uuids_by_my_orders_filter(
+pub fn select_orders_by_filter(
     conn: &Connection,
     filter: &MyOrdersFilter,
     paging_options: Option<&PagingOptions>,
@@ -226,8 +239,19 @@ pub fn select_uuids_by_my_orders_filter(
         return Ok(RecentOrdersSelectSqlResult::default());
     }
 
-    // query the uuids finally
-    query_builder.field("uuid");
+    // query the orders finally
+    query_builder
+        .field("uuid")
+        .field("type")
+        .field("initial_action")
+        .field("base")
+        .field("rel")
+        .field("price")
+        .field("volume")
+        .field("created_at")
+        .field("last_updated")
+        .field("was_taker")
+        .field("status");
     query_builder.order_desc("created_at");
 
     let skipped = match paging_options {
@@ -247,14 +271,26 @@ pub fn select_uuids_by_my_orders_filter(
     let uuids_query = query_builder.sql().expect("SQL query builder should never fail here");
     debug!("Trying to execute SQL query {} with params {:?}", uuids_query, params);
     let mut stmt = conn.prepare(&uuids_query)?;
-    let uuids = stmt
-        .query_map_named(params_as_trait.as_slice(), |row| row.get(0))?
-        .collect::<SqlResult<Vec<String>>>()?;
-    let uuids: SqlResult<Vec<_>, _> = uuids.into_iter().map(|uuid| uuid.parse()).collect();
-    let uuids = uuids?;
+    let result = stmt
+        .query_map_named(params_as_trait.as_slice(), |row| {
+            Ok(OrderSqlRow {
+                uuid: row.get(0)?,
+                order_type: row.get(1)?,
+                initial_action: row.get(2)?,
+                base: row.get(3)?,
+                rel: row.get(4)?,
+                price: row.get(5)?,
+                volume: row.get(6)?,
+                created_at: row.get(7)?,
+                last_updated: row.get(8)?,
+                was_taker: row.get(9)?,
+                status: row.get(10)?,
+            })
+        })?
+        .collect::<SqlResult<Vec<OrderSqlRow>>>()?;
 
     Ok(RecentOrdersSelectSqlResult {
-        uuids,
+        result,
         total_count,
         skipped,
     })
