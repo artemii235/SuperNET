@@ -3635,10 +3635,14 @@ enum Order {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub fn orders_history_by_filter(_ctx: MmArc, _req: Json) -> HyRes {
-    Box::new(futures01::future::err::<Response<Vec<u8>>, String>(ERRL!(
-        "'orders_history_by_filter' is only supported in native mode yet"
-    )))
+pub async fn orders_history_by_filter(_ctx: MmArc, _req: Json) -> Result<Response<Vec<u8>>, String> {
+    let res = json!({
+        "error": format!("'orders_history_by_filter' is only supported in native mode yet"),
+    });
+    Response::builder()
+        .status(404)
+        .body(json::to_vec(&res).expect("Serialization failed"))
+        .map_err(|e| ERRL!("{}", e))
 }
 
 /// Returns *all* uuids of swaps, which match the selected filter.
@@ -3647,11 +3651,7 @@ pub async fn orders_history_by_filter(ctx: MmArc, req: Json) -> Result<Response<
     use crate::mm2::database::my_orders::select_orders_by_filter;
 
     let filter: MyOrdersFilter = try_s!(json::from_value(req));
-    let db_result = try_s!(select_orders_by_filter(
-        &ctx.sqlite_connection(),
-        &filter,
-        None
-    ));
+    let db_result = try_s!(select_orders_by_filter(&ctx.sqlite_connection(), &filter, None));
 
     let details = if filter.include_details {
         let mut vec = vec![];
@@ -3853,24 +3853,23 @@ fn insert_maker_order_to_db(ctx: &MmArc, uuid: Uuid, order: &MakerOrder) -> Resu
 }
 
 #[cfg(target_arch = "wasm32")]
-fn insert_maker_order_to_db(ctx: &MmArc, uuid: Uuid, order: &MakerOrder) -> Result<(), String> { Ok(()) }
+fn insert_maker_order_to_db(_ctx: &MmArc, _uuid: Uuid, _order: &MakerOrder) -> Result<(), String> { Ok(()) }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn insert_taker_order_to_db(ctx: &MmArc, uuid: Uuid, order: &TakerOrder) -> Result<(), String> {
+fn insert_taker_order_to_db(_ctx: &MmArc, _uuid: Uuid, _order: &TakerOrder) -> Result<(), String> {
     crate::mm2::database::my_orders::insert_taker_order(ctx, uuid, order).map_err(|e| ERRL!("{}", e))
 }
 
 #[cfg(target_arch = "wasm32")]
-fn insert_taker_order_to_db(ctx: &MmArc, uuid: Uuid, order: &TakerOrder) -> Result<(), String> { Ok(()) }
+fn insert_taker_order_to_db(_ctx: &MmArc, _uuid: Uuid, _order: &TakerOrder) -> Result<(), String> { Ok(()) }
 
-#[allow(dead_code)]
 #[cfg(not(target_arch = "wasm32"))]
 fn update_maker_order_in_db(ctx: &MmArc, uuid: Uuid, order: &MakerOrder) -> Result<(), String> {
     crate::mm2::database::my_orders::update_maker_order(ctx, uuid, order).map_err(|e| ERRL!("{}", e))
 }
 
 #[cfg(target_arch = "wasm32")]
-fn update_maker_order_in_db(ctx: &MmArc, uuid: Uuid, order: &MakerOrder) -> Result<(), String> { Ok(()) }
+fn update_maker_order_in_db(_ctx: &MmArc, _uuid: Uuid, _order: &MakerOrder) -> Result<(), String> { Ok(()) }
 
 #[cfg(not(target_arch = "wasm32"))]
 fn update_was_taker_in_db(ctx: &MmArc, uuid: Uuid) -> Result<(), String> {
@@ -3878,7 +3877,7 @@ fn update_was_taker_in_db(ctx: &MmArc, uuid: Uuid) -> Result<(), String> {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn update_was_taker_in_db(ctx: &MmArc, uuid: Uuid) -> Result<(), String> { Ok(()) }
+fn update_was_taker_in_db(_ctx: &MmArc, _uuid: Uuid) -> Result<(), String> { Ok(()) }
 
 #[cfg(not(target_arch = "wasm32"))]
 fn update_order_status_in_db(ctx: &MmArc, uuid: Uuid, status: String) -> Result<(), String> {
@@ -3886,7 +3885,7 @@ fn update_order_status_in_db(ctx: &MmArc, uuid: Uuid, status: String) -> Result<
 }
 
 #[cfg(target_arch = "wasm32")]
-fn update_order_status_in_db(ctx: &MmArc, uuid: Uuid, status: String) -> Result<(), String> { Ok(()) }
+fn update_order_status_in_db(_ctx: &MmArc, _uuid: Uuid, _status: String) -> Result<(), String> { Ok(()) }
 
 pub fn my_maker_orders_dir(ctx: &MmArc) -> PathBuf { ctx.dbdir().join("ORDERS").join("MY").join("MAKER") }
 

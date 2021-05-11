@@ -55,6 +55,7 @@
 //  marketmaker
 //
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::mm2::database::database_common::PagingOptions;
 use crate::mm2::lp_network::broadcast_p2p_msg;
 use async_std::sync as async_std_sync;
@@ -863,7 +864,7 @@ pub fn all_swaps_uuids_by_filter(_ctx: MmArc, _req: Json) -> HyRes {
 }
 
 // TODO: Should return the result from SQL like in order history. So it can be clear the exact started_at time
-// and the coins if they are not included in the filter request 
+// and the coins if they are not included in the filter request
 /// Returns *all* uuids of swaps, which match the selected filter.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn all_swaps_uuids_by_filter(ctx: MmArc, req: Json) -> HyRes {
@@ -888,6 +889,7 @@ pub fn all_swaps_uuids_by_filter(ctx: MmArc, req: Json) -> HyRes {
     )
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Deserialize)]
 pub struct MyRecentSwapsReq {
     #[serde(flatten)]
