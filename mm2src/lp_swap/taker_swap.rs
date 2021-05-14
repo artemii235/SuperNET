@@ -860,8 +860,8 @@ impl TakerSwap {
             secret_hash: maker_data.secret_hash().to_vec(),
             payment_locktime: self.r().data.taker_payment_lock,
             persistent_pubkey: self.my_persistent_pub.to_vec(),
-            maker_coin_swap_contract: self.maker_coin.swap_contract_address().map_or(vec![], |bytes| bytes.0),
-            taker_coin_swap_contract: self.taker_coin.swap_contract_address().map_or(vec![], |bytes| bytes.0),
+            maker_coin_swap_contract: maker_coin_swap_contract_addr.clone().map_or(vec![], |bytes| bytes.0),
+            taker_coin_swap_contract: taker_coin_swap_contract_addr.clone().map_or(vec![], |bytes| bytes.0),
         }));
         let send_abort_handle = broadcast_swap_message_every(
             self.ctx.clone(),
