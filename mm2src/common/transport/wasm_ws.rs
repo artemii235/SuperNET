@@ -30,26 +30,57 @@ type IncomingShutdownTx = oneshot::Sender<()>;
 type OutgoingShutdownTx = mpsc::Sender<()>;
 type ShutdownRx = oneshot::Receiver<()>;
 
-pub type OnOpenClosure = Closure<dyn FnMut(JsValue)>;
-pub type OnCloseClosure = Closure<dyn FnMut(CloseEvent)>;
-pub type OnErrorClosure = Closure<dyn FnMut(ErrorEvent)>;
-pub type OnMessageClosure = Closure<dyn FnMut(MessageEvent)>;
+type TransportClosure = Closure<dyn FnMut(JsValue)>;
 
 /// This is just an alias of the `Future<Output = ()> + Send + Unpin + 'static` trait.
 /// Unfortunately, the trait type alias is an [unstable feature](https://github.com/rust-lang/rust/issues/41517).
 trait ShutdownFut: Future<Output = ()> + Send + Unpin + 'static {}
 impl<F: Future<Output = ()> + Send + Unpin + 'static> ShutdownFut for F {}
 
-#[derive(Debug)]
+/// The `WsEventReceiver` wrapper that filters and maps the incoming `WebSocketEvent` events into `Result<Json, WebSocketError>`.
 pub struct WsIncomingReceiver {
+    inner: WsEventReceiver,
+    closed: bool,
+}
+
+impl Stream for WsIncomingReceiver {
+    type Item = Result<Json, WebSocketError>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if self.closed {
+            error!("Attempted to poll WsIncomingReceiver after completion");
+            return Poll::Ready(None);
+        }
+        let event = match Stream::poll_next(Pin::new(&mut self.inner), cx) {
+            Poll::Ready(Some((_conn_idx, event))) => event,
+            Poll::Ready(None) => return Poll::Ready(None),
+            Poll::Pending => return Poll::Pending,
+        };
+        match event {
+            WebSocketEvent::Establish => {
+                error!("WsIncomingReceiver is expected to be established already");
+                Poll::Pending
+            },
+            WebSocketEvent::Closing | WebSocketEvent::Closed => {
+                self.closed = true;
+                Poll::Ready(None)
+            },
+            WebSocketEvent::Error(error) => Poll::Ready(Some(Err(error))),
+            WebSocketEvent::Incoming(incoming) => Poll::Ready(Some(Ok(incoming))),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct WsEventReceiver {
     inner: mpsc::Receiver<(ConnIdx, WebSocketEvent)>,
     /// Is used to determine when the receiver is dropped.
     shutdown_tx: IncomingShutdownTx,
 }
 
-impl Unpin for WsIncomingReceiver {}
+impl Unpin for WsEventReceiver {}
 
-impl Stream for WsIncomingReceiver {
+impl Stream for WsEventReceiver {
     type Item = (ConnIdx, WebSocketEvent);
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -78,6 +109,7 @@ pub enum WebSocketEvent {
     /// A WebSocket connection is established.
     Establish,
     /// A WebSocket connection is being closing and it should not be used anymore.
+    /// TODO add a reason
     Closing,
     /// A WebSocket connection has been closed.
     Closed,
@@ -102,7 +134,7 @@ pub enum OutgoingError {
 }
 
 // TODO change the error type
-pub fn spawn_ws_transport(idx: ConnIdx, url: &str) -> Result<(WsOutgoingSender, WsIncomingReceiver), String> {
+pub fn spawn_ws_transport(idx: ConnIdx, url: &str) -> Result<(WsOutgoingSender, WsEventReceiver), String> {
     let (ws, closures, ws_transport_rx) = init_ws(url)?;
     let (incoming_tx, incoming_rx, incoming_shutdown) = incoming_channel(1024);
     let (outgoing_tx, outgoing_rx, outgoing_shutdown) = outgoing_channel(1024);
@@ -128,10 +160,32 @@ pub fn spawn_ws_transport(idx: ConnIdx, url: &str) -> Result<(WsOutgoingSender, 
     Ok((outgoing_tx, incoming_rx))
 }
 
-fn incoming_channel(capacity: usize) -> (WsIncomingSender, WsIncomingReceiver, impl ShutdownFut) {
+pub async fn ws_transport(idx: ConnIdx, url: &str) -> Result<(WsOutgoingSender, WsIncomingReceiver), String> {
+    let (sender, mut receiver) = spawn_ws_transport(idx, url)?;
+    while let Some((_conn_idx, event)) = receiver.next().await {
+        match event {
+            WebSocketEvent::Establish => break,
+            WebSocketEvent::Closed | WebSocketEvent::Closing => return ERR!("Couldn't connect to {}", url),
+            // if the error is an underlying error, the connection will close immediately
+            WebSocketEvent::Error(e) => error!("{:?}", e),
+            WebSocketEvent::Incoming(incoming) => error!(
+                "Unexpected incoming while the connection is not established: {:?}",
+                incoming
+            ),
+        }
+    }
+    // here we have the established connection
+    let receiver = WsIncomingReceiver {
+        inner: receiver,
+        closed: false,
+    };
+    Ok((sender, receiver))
+}
+
+fn incoming_channel(capacity: usize) -> (WsIncomingSender, WsEventReceiver, impl ShutdownFut) {
     let (event_tx, event_rx) = mpsc::channel(capacity);
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
-    let incoming_rx = WsIncomingReceiver {
+    let incoming_rx = WsEventReceiver {
         inner: event_rx,
         shutdown_tx,
     };
@@ -172,10 +226,10 @@ fn into_one_shutdown(left: impl ShutdownFut, right: impl ShutdownFut) -> Shutdow
 
 /// The JS closures that have to be alive until the corresponding WebSocket exists.
 struct WsClosures {
-    onopen_closure: OnOpenClosure,
-    onclose_closure: OnCloseClosure,
-    onerror_closure: OnErrorClosure,
-    onmessage_closure: OnMessageClosure,
+    onopen_closure: TransportClosure,
+    onclose_closure: TransportClosure,
+    onerror_closure: TransportClosure,
+    onmessage_closure: TransportClosure,
 }
 
 /// Although wasm is currently single-threaded, we can implement the `Send` trait for `WsClosures`,
@@ -188,13 +242,11 @@ fn init_ws(url: &str) -> Result<(WebSocket, WsClosures, WsTransportReceiver), St
 
     let (tx, rx) = mpsc::channel(1024);
 
-    let onopen_closure = construct_ws_event_closure(move |_: JsValue| WsTransportEvent::Establish, tx.clone());
-    let onclose_closure: Closure<dyn FnMut(CloseEvent)> =
-        construct_ws_event_closure(WsTransportEvent::from, tx.clone());
-    let onerror_closure: Closure<dyn FnMut(ErrorEvent)> =
-        construct_ws_event_closure(WsTransportEvent::from, tx.clone());
+    let onopen_closure = construct_ws_event_closure(|_: JsValue| WsTransportEvent::Establish, tx.clone());
+    let onclose_closure = construct_ws_event_closure(|close: CloseEvent| WsTransportEvent::from(close), tx.clone());
+    let onerror_closure = construct_ws_event_closure(|error: ErrorEvent| WsTransportEvent::from(error), tx.clone());
     let onmessage_closure = construct_ws_event_closure(
-        move |message: MessageEvent| match decode_incoming(message) {
+        |message: MessageEvent| match decode_incoming(message) {
             Ok(response) => WsTransportEvent::Incoming(response),
             Err(e) => WsTransportEvent::Error(e),
         },
@@ -327,14 +379,11 @@ enum WsTransportEvent {
 }
 
 impl From<CloseEvent> for WsTransportEvent {
-    fn from(_: CloseEvent) -> Self { WsTransportEvent::Close }
+    fn from(_close: CloseEvent) -> Self { WsTransportEvent::Close }
 }
 
 impl From<ErrorEvent> for WsTransportEvent {
-    fn from(error: ErrorEvent) -> Self {
-        // do not use [`ErrorEvent::message()`] because sometimes it panics
-        WsTransportEvent::Error(format!("{:?}", error))
-    }
+    fn from(error: ErrorEvent) -> Self { WsTransportEvent::Error(error.message()) }
 }
 
 struct ConnectingState;
@@ -471,13 +520,23 @@ fn decode_incoming(incoming: MessageEvent) -> Result<Json, String> {
     }
 }
 
-fn construct_ws_event_closure<F, Event>(mut f: F, mut event_tx: WsTransportSender) -> Closure<dyn FnMut(Event)>
+/// Please note the `Event` type can be `JsValue`. It doesn't lead to a runtime error, because [`JsValue::dyn_into<JsValue>()`] returns itself.
+fn construct_ws_event_closure<Event, F>(mut f: F, mut event_tx: WsTransportSender) -> Closure<dyn FnMut(JsValue)>
 where
     F: FnMut(Event) -> WsTransportEvent + 'static,
-    Event: FromWasmAbi + 'static,
+    Event: JsCast + 'static,
 {
-    Closure::new(move |event| {
-        let transport_event = f(event);
+    Closure::new(move |event: JsValue| {
+        let transport_event = match event.dyn_into::<Event>() {
+            Ok(event) => f(event),
+            // the `Err` variant contains untouched source `JsValue`
+            Err(e) => {
+                // consider using another way to obtain the `Event` type name
+                let expected = std::any::type_name::<Event>();
+                let error_desc = format!("Expected {}, found: {:?}", expected, e);
+                WsTransportEvent::Error(error_desc)
+            },
+        };
         if let Err(e) = event_tx.try_send(transport_event) {
             let error = e.to_string();
             let event = e.into_inner();
@@ -494,9 +553,14 @@ mod tests {
     use crate::log::LogLevel;
     use futures::future::{select, Either};
     use futures::SinkExt;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use wasm_bindgen_test::*;
 
     wasm_bindgen_test_configure!(run_in_browser);
+
+    lazy_static! {
+        static ref CONN_IDX: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(0));
+    }
 
     async fn wait_for_event<Rx>(rx: &mut Rx, seconds: f64) -> Option<(ConnIdx, WebSocketEvent)>
     where
@@ -525,14 +589,14 @@ mod tests {
 
     #[wasm_bindgen_test]
     async fn test_websocket() {
-        const CONN_IDX: ConnIdx = 0;
         register_wasm_log(LogLevel::Debug);
+        let conn_idx = CONN_IDX.fetch_add(1, Ordering::Relaxed);
 
         let (mut outgoing_tx, mut incoming_rx) =
-            spawn_ws_transport(CONN_IDX, "wss://electrum1.cipig.net:30017").expect("!spawn_ws_transport");
+            spawn_ws_transport(conn_idx, "wss://electrum1.cipig.net:30017").expect("!spawn_ws_transport");
 
         match wait_for_event(&mut incoming_rx, 5.).await {
-            Some((CONN_IDX, WebSocketEvent::Establish)) => (),
+            Some((_conn_idx, WebSocketEvent::Establish)) => (),
             other => panic!("Expected 'Establish' event, found: {:?}", other),
         }
 
@@ -545,7 +609,7 @@ mod tests {
         outgoing_tx.send(get_version).await.expect("!outgoing_tx.send");
 
         match wait_for_event(&mut incoming_rx, 5.).await {
-            Some((CONN_IDX, WebSocketEvent::Incoming(response))) => {
+            Some((_conn_idx, WebSocketEvent::Incoming(response))) => {
                 debug!("Response: {:?}", response);
                 assert!(response.get("result").is_some());
             },
@@ -565,45 +629,45 @@ mod tests {
         let mut incoming_rx = incoming_rx.inner;
 
         match wait_for_event(&mut incoming_rx, 0.5).await {
-            Some((CONN_IDX, WebSocketEvent::Closing)) => (),
+            Some((_conn_idx, WebSocketEvent::Closing)) => (),
             other => panic!("Expected 'Closing' event, found: {:?}", other),
         }
         match wait_for_event(&mut incoming_rx, 0.5).await {
-            Some((CONN_IDX, WebSocketEvent::Closed)) => (),
+            Some((_conn_idx, WebSocketEvent::Closed)) => (),
             other => panic!("Expected 'Closed' event, found: {:?}", other),
         }
     }
 
     #[wasm_bindgen_test]
     async fn test_websocket_unreachable_url() {
-        const CONN_IDX: ConnIdx = 1;
         register_wasm_log(LogLevel::Debug);
+        let conn_idx = CONN_IDX.fetch_add(1, Ordering::Relaxed);
 
         // TODO check if outgoing messages are ignored non-open states
         let (_outgoing_tx, mut incoming_rx) =
-            spawn_ws_transport(CONN_IDX, "wss://electrum1.cipig.net:10017").expect("!spawn_ws_transport");
+            spawn_ws_transport(conn_idx, "wss://electrum1.cipig.net:10017").expect("!spawn_ws_transport");
 
         match wait_for_event(&mut incoming_rx, 5.).await {
-            Some((CONN_IDX, WebSocketEvent::Error(WebSocketError::UnderlyingError { .. }))) => (),
+            Some((_conn_idx, WebSocketEvent::Error(WebSocketError::UnderlyingError { .. }))) => (),
             other => panic!("Expected 'UnderlyingError', found: {:?}", other),
         }
         match wait_for_event(&mut incoming_rx, 0.5).await {
-            Some((CONN_IDX, WebSocketEvent::Closing)) => (),
+            Some((_conn_idx, WebSocketEvent::Closing)) => (),
             other => panic!("Expected 'Closing' event, found: {:?}", other),
         }
         match wait_for_event(&mut incoming_rx, 0.5).await {
-            Some((CONN_IDX, WebSocketEvent::Closed)) => (),
+            Some((_conn_idx, WebSocketEvent::Closed)) => (),
             other => panic!("Expected 'Closed' event, found: {:?}", other),
         }
     }
 
     #[wasm_bindgen_test]
     async fn test_websocket_invalid_url() {
-        const CONN_IDX: ConnIdx = 2;
         register_wasm_log(LogLevel::Debug);
+        let conn_idx = CONN_IDX.fetch_add(1, Ordering::Relaxed);
 
         let _error =
-            spawn_ws_transport(CONN_IDX, "invalid address").expect_err("!spawn_ws_transport but should be error");
+            spawn_ws_transport(conn_idx, "invalid address").expect_err("!spawn_ws_transport but should be error");
         // TODO print the error when there is a way to extract the error message
         // error!("{}", error)
     }

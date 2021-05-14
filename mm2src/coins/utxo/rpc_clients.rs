@@ -10,11 +10,11 @@ use common::custom_futures::select_ok_sequential;
 use common::executor::{spawn, Timer};
 use common::jsonrpc_client::{JsonRpcClient, JsonRpcError, JsonRpcErrorType, JsonRpcMultiClient, JsonRpcRemoteAddr,
                              JsonRpcRequest, JsonRpcResponse, JsonRpcResponseFut, RpcRes};
-use common::log::warn;
+use common::log::{error, info, warn};
 use common::mm_error::prelude::*;
 use common::mm_number::MmNumber;
 use common::wio::slurp_req;
-use common::{median, OrdRange, StringError};
+use common::{median, now_float, now_ms, OrdRange, StringError};
 use derive_more::Display;
 use futures::channel::oneshot as async_oneshot;
 #[cfg(target_arch = "wasm32")]
@@ -28,7 +28,6 @@ use futures01::future::select_ok;
 use futures01::sync::{mpsc, oneshot};
 use futures01::{Future, Sink, Stream};
 use futures_timer::FutureExt as FutureTimerExt;
-use gstuff::{now_float, now_ms};
 use http::header::AUTHORIZATION;
 use http::Uri;
 use http::{Request, StatusCode};
@@ -48,7 +47,7 @@ use std::num::NonZeroU64;
 use std::ops::Deref;
 #[cfg(target_arch = "wasm32")] use std::os::raw::c_char;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
@@ -154,12 +153,20 @@ impl UtxoRpcClientEnum {
                         if tx_confirmations >= confirmations {
                             return Ok(());
                         } else {
-                            log!({ "Waiting for tx {:?} confirmations, now {}, required {}, requires_notarization {}", tx.hash().reversed(), tx_confirmations, confirmations, requires_notarization });
+                            info!(
+                                "Waiting for tx {:?} confirmations, now {}, required {}, requires_notarization {}",
+                                tx.hash().reversed(),
+                                tx_confirmations,
+                                confirmations,
+                                requires_notarization
+                            )
                         }
                     },
-                    Err(e) => {
-                        log!("Error " [e] " getting the transaction " [tx.hash().reversed()] ", retrying in 10 seconds")
-                    },
+                    Err(e) => error!(
+                        "Error {:?} getting the transaction {:?}, retrying in 10 seconds",
+                        e,
+                        tx.hash().reversed()
+                    ),
                 }
 
                 Timer::sleep(check_every as f64).await;
@@ -797,7 +804,7 @@ impl NativeClientImpl {
                 Ok(smart_fee) => if smart_fee.fee_rate > 0. {
                     Box::new(futures01::future::ok(EstimateFeeMethod::SmartFee))
                 } else {
-                    log!("fee_rate from smart fee should be above zero, but got " [smart_fee] ", trying estimatefee");
+                    info!("fee_rate from smart fee should be above zero, but got {:?}, trying estimatefee", smart_fee);
                     Box::new(estimate_fee_fut.map_err(|e| ERRL!("{}", e)).and_then(|res| if res > 0. {
                         Ok(EstimateFeeMethod::Standard)
                     } else {
@@ -805,7 +812,7 @@ impl NativeClientImpl {
                     }))
                 },
                 Err(e) => {
-                    log!("Error " (e) " on estimate smart fee, trying estimatefee");
+                    error!("Error {} on estimate smart fee, trying estimatefee", e);
                     Box::new(estimate_fee_fut.map_err(|e| ERRL!("{}", e)).and_then(|res| if res > 0. {
                         Ok(EstimateFeeMethod::Standard)
                     } else {
@@ -1014,18 +1021,12 @@ pub fn spawn_electrum(
         ElectrumProtocol::TCP => ElectrumConfig::TCP,
         ElectrumProtocol::SSL => {
             let uri: Uri = try_s!(req.url.parse());
-            let host = try_s!(uri.host().ok_or(ERRL!("Couldn't retrieve host from addr {}", req.url)));
+            let host = uri
+                .host()
+                .ok_or(ERRL!("Couldn't retrieve host from addr {}", req.url))?;
 
-            #[cfg(not(target_arch = "wasm32"))]
-            fn check(host: &str) -> Result<(), String> {
-                DNSNameRef::try_from_ascii_str(host)
-                    .map(|_| ())
-                    .map_err(|e| fomat!([e]))
-            }
-            #[cfg(target_arch = "wasm32")]
-            fn check(_host: &str) -> Result<(), String> { Ok(()) }
-
-            try_s!(check(host));
+            // check the dns name
+            try_s!(DNSNameRef::try_from_ascii_str(host));
 
             ElectrumConfig::SSL {
                 dns_name: host.into(),
@@ -1037,37 +1038,35 @@ pub fn spawn_electrum(
     Ok(electrum_connect(req.url.clone(), config, event_handlers))
 }
 
-#[cfg(target_arch = "wasm32")]
-#[wasm_bindgen(raw_module = "../../../js/defined-in-js.js")]
-extern "C" {
-    fn host_electrum_connect(ptr: *const c_char, len: i32) -> i32;
-    fn host_electrum_is_connected(ri: i32) -> i32;
-    fn host_electrum_request(ri: i32, ptr: *const c_char, len: i32) -> i32;
-    fn host_electrum_reply(ri: i32, id: i32, rbuf: *mut c_char, rcap: i32) -> i32;
-}
-
+/// Attempts to process the request (parse url, etc), build up the config and create new electrum connection
 #[cfg(target_arch = "wasm32")]
 pub fn spawn_electrum(
     req: &ElectrumRpcRequest,
-    _event_handlers: Vec<RpcTransportEventHandlerShared>,
+    event_handlers: Vec<RpcTransportEventHandlerShared>,
 ) -> Result<ElectrumConnection, String> {
-    use std::net::{IpAddr, Ipv4Addr};
+    let mut url = req.url.clone();
+    let uri: Uri = try_s!(req.url.parse());
 
-    let args = json::to_vec(req).unwrap();
-    let rc = host_electrum_connect(args.as_ptr() as *const c_char, args.len() as i32);
-    if rc < 0 {
-        panic!("!host_electrum_connect: {}", rc)
+    if uri.scheme().is_some() {
+        return ERR!(
+            "There has not to be a scheme in the url: {}. \
+            'ws://' scheme is used by default. \
+            Consider using 'protocol: \"SSL\"' in the electrum request to switch to the 'wss://' scheme.",
+            url
+        );
     }
-    let ri = rc; // Random ID assigned by the host to connection.
-
-    let responses = Arc::new(AsyncMutex::new(HashMap::new()));
-    let tx = Arc::new(AsyncMutex::new(None));
 
     let config = match req.protocol {
-        ElectrumProtocol::TCP => ElectrumConfig::TCP,
+        ElectrumProtocol::TCP => {
+            url.insert_str(0, "ws://");
+            ElectrumConfig::TCP
+        },
         ElectrumProtocol::SSL => {
-            let uri: Uri = try_s!(req.url.parse());
-            let host = try_s!(uri.host().ok_or("!host"));
+            let host = uri
+                .host()
+                .ok_or(ERRL!("Couldn't retrieve host from addr {}", req.url))?;
+            url.insert_str(0, "wss://");
+
             ElectrumConfig::SSL {
                 dns_name: host.into(),
                 skip_validation: req.disable_cert_verification,
@@ -1075,15 +1074,7 @@ pub fn spawn_electrum(
         },
     };
 
-    Ok(ElectrumConnection {
-        addr: req.url.clone(),
-        config,
-        tx,
-        shutdown_tx: None,
-        responses,
-        ri,
-        protocol_version: AsyncMutex::new(None),
-    })
+    Ok(electrum_connect(url, config, event_handlers))
 }
 
 #[derive(Debug)]
@@ -1106,22 +1097,7 @@ pub struct ElectrumConnection {
 }
 
 impl ElectrumConnection {
-    #[cfg(not(target_arch = "wasm32"))]
     async fn is_connected(&self) -> bool { self.tx.lock().await.is_some() }
-
-    #[cfg(target_arch = "wasm32")]
-    async fn is_connected(&self) -> bool {
-        let rc = host_electrum_is_connected(self.ri);
-        if rc < 0 {
-            panic!("!host_electrum_is_connected: {}", rc)
-        }
-        //log! ("is_connected] host_electrum_is_connected (" [=self.ri] ") " [=rc]);
-        if rc == 1 {
-            true
-        } else {
-            false
-        }
-    }
 
     async fn set_protocol_version(&self, version: f32) { self.protocol_version.lock().await.replace(version); }
 }
@@ -1130,7 +1106,7 @@ impl Drop for ElectrumConnection {
     fn drop(&mut self) {
         if let Some(shutdown_tx) = self.shutdown_tx.take() {
             if shutdown_tx.send(()).is_err() {
-                log!("electrum_connection_drop] Warning, shutdown_tx already closed");
+                warn!("electrum_connection_drop] Warning, shutdown_tx already closed");
             }
         }
     }
@@ -1206,7 +1182,6 @@ pub struct ElectrumClientImpl {
     list_unspent_concurrent_map: ConcurrentRequestMap<String, Vec<ElectrumUnspent>>,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 async fn electrum_request_multi(
     client: ElectrumClient,
     request: JsonRpcRequest,
@@ -1252,7 +1227,6 @@ async fn electrum_request_multi(
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 async fn electrum_request_to(
     client: ElectrumClient,
     request: JsonRpcRequest,
@@ -1280,94 +1254,6 @@ async fn electrum_request_to(
             .await
     );
     Ok((JsonRpcRemoteAddr(to_addr.to_owned()), response))
-}
-
-#[cfg(target_arch = "wasm32")]
-async fn electrum_request_to(
-    _client: ElectrumClient,
-    _request: JsonRpcRequest,
-    _to_addr: String,
-) -> Result<(JsonRpcRemoteAddr, JsonRpcResponse), String> {
-    ERR!("Not supported")
-}
-
-#[cfg(target_arch = "wasm32")]
-lazy_static! {
-    static ref ELECTRUM_REPLIES: std::sync::Mutex<HashMap<(i32, i32), ShotSender<()>>> =
-        std::sync::Mutex::new(HashMap::new());
-}
-
-#[no_mangle]
-#[cfg(target_arch = "wasm32")]
-pub extern "C" fn electrum_replied(ri: i32, id: i32) {
-    //log! ("electrum_replied] " [=ri] ", " [=id]);
-    let mut electrum_replies = ELECTRUM_REPLIES.lock().unwrap();
-    if let Some(tx) = electrum_replies.remove(&(ri, id)) {
-        let _ = tx.send(());
-    }
-}
-
-/// AG: As of now the pings tend to fail.
-///     I haven't looked into this because we'll probably use a websocket or Java implementation instead.
-#[cfg(target_arch = "wasm32")]
-async fn electrum_request_multi(
-    client: ElectrumClient,
-    request: JsonRpcRequest,
-) -> Result<(JsonRpcRemoteAddr, JsonRpcResponse), String> {
-    use futures::future::{select, Either};
-    use std::mem::MaybeUninit;
-    use std::os::raw::c_char;
-    use std::str::from_utf8;
-
-    let req = try_s!(json::to_string(&request));
-    let id: i32 = try_s!(request.id.parse());
-    let mut jres: Option<JsonRpcResponse> = None;
-    // address of server from which an Rpc response was received
-    let mut remote_address = JsonRpcRemoteAddr::default();
-
-    for connection in client.connections.lock().await.iter() {
-        let (tx, rx) = futures::channel::oneshot::channel();
-        try_s!(ELECTRUM_REPLIES.lock()).insert((connection.ri, id), tx);
-        let rc = host_electrum_request(connection.ri, req.as_ptr() as *const c_char, req.len() as i32);
-        if rc != 0 {
-            return ERR!("!host_electrum_request: {}", rc);
-        }
-
-        // Wait for the host to invoke `fn electrum_replied`.
-        let timeout = Timer::sleep(10.);
-        let rc = select(rx, timeout).await;
-        match rc {
-            Either::Left((_r, _t)) => (),
-            Either::Right((_t, _r)) => {
-                log! ("Electrum " (connection.ri) " timeout");
-                continue;
-            },
-        };
-
-        let mut buf: [u8; 131072] = unsafe { MaybeUninit::uninit().assume_init() };
-        let rc = host_electrum_reply(connection.ri, id, buf.as_mut_ptr() as *mut c_char, buf.len() as i32);
-        if rc <= 0 {
-            log!("!host_electrum_reply: "(rc));
-            continue;
-        } // Skip to the next connection.
-        let res = try_s!(from_utf8(&buf[0..rc as usize]));
-        //log! ("electrum_request_multi] ri " (connection.ri) ", res: " (res));
-        let res: Json = try_s!(json::from_str(res));
-        // TODO: Detect errors and fill the `error` field somehow?
-        jres = Some(JsonRpcResponse {
-            jsonrpc: req.clone(),
-            id: request.id.clone(),
-            result: res,
-            error: Json::Null,
-        });
-        remote_address = JsonRpcRemoteAddr(connection.addr.clone());
-        // server.ping must be sent to all servers to keep all connections alive
-        if request.method != "server.ping" {
-            break;
-        }
-    }
-    let jres = try_s!(jres.ok_or("!jres"));
-    Ok((remote_address, jres))
 }
 
 impl ElectrumClientImpl {
@@ -1707,9 +1593,61 @@ fn rx_to_stream(rx: mpsc::Receiver<Vec<u8>>) -> impl Stream<Item = Vec<u8>, Erro
     rx.map_err(|_| panic!("errors not possible on rx"))
 }
 
+async fn electrum_process_json(
+    raw_json: Json,
+    arc: &Arc<AsyncMutex<HashMap<String, async_oneshot::Sender<JsonRpcResponse>>>>,
+) {
+    // detect if we got standard JSONRPC response or subscription response as JSONRPC request
+    if raw_json["method"].is_null() && raw_json["params"].is_null() {
+        let response: JsonRpcResponse = match json::from_value(raw_json) {
+            Ok(res) => res,
+            Err(e) => {
+                error!("{}", e);
+                return;
+            },
+        };
+        let mut resp = arc.lock().await;
+        // the corresponding sender may not exist, receiver may be dropped
+        // these situations are not considered as errors so we just silently skip them
+        if let Some(tx) = resp.remove(&response.id.to_string()) {
+            tx.send(response).unwrap_or(())
+        }
+        drop(resp);
+    } else {
+        let request: JsonRpcRequest = match json::from_value(raw_json) {
+            Ok(res) => res,
+            Err(e) => {
+                error!("{}", e);
+                return;
+            },
+        };
+        let id = match request.method.as_ref() {
+            BLOCKCHAIN_HEADERS_SUB_ID => BLOCKCHAIN_HEADERS_SUB_ID,
+            _ => {
+                error!("Couldn't get id of request {:?}", request);
+                return;
+            },
+        };
+
+        let response = JsonRpcResponse {
+            id: id.into(),
+            jsonrpc: "2.0".into(),
+            result: request.params[0].clone(),
+            error: Json::Null,
+        };
+        let mut resp = arc.lock().await;
+        // the corresponding sender may not exist, receiver may be dropped
+        // these situations are not considered as errors so we just silently skip them
+        if let Some(tx) = resp.remove(&response.id.to_string()) {
+            tx.send(response).unwrap_or(())
+        }
+        drop(resp);
+    }
+}
+
 async fn electrum_process_chunk(
     chunk: &[u8],
-    arc: Arc<AsyncMutex<HashMap<String, async_oneshot::Sender<JsonRpcResponse>>>>,
+    arc: &Arc<AsyncMutex<HashMap<String, async_oneshot::Sender<JsonRpcResponse>>>>,
 ) {
     // we should split the received chunk because we can get several responses in 1 chunk.
     let split = chunk.split(|item| *item == b'\n');
@@ -1719,57 +1657,11 @@ async fn electrum_process_chunk(
             let raw_json: Json = match json::from_slice(chunk) {
                 Ok(json) => json,
                 Err(e) => {
-                    log!([e]);
+                    error!("{}", e);
                     return;
                 },
             };
-
-            // detect if we got standard JSONRPC response or subscription response as JSONRPC request
-            if raw_json["method"].is_null() && raw_json["params"].is_null() {
-                let response: JsonRpcResponse = match json::from_value(raw_json) {
-                    Ok(res) => res,
-                    Err(e) => {
-                        log!([e]);
-                        return;
-                    },
-                };
-                let mut resp = arc.lock().await;
-                // the corresponding sender may not exist, receiver may be dropped
-                // these situations are not considered as errors so we just silently skip them
-                if let Some(tx) = resp.remove(&response.id.to_string()) {
-                    tx.send(response).unwrap_or(())
-                }
-                drop(resp);
-            } else {
-                let request: JsonRpcRequest = match json::from_value(raw_json) {
-                    Ok(res) => res,
-                    Err(e) => {
-                        log!([e]);
-                        return;
-                    },
-                };
-                let id = match request.method.as_ref() {
-                    BLOCKCHAIN_HEADERS_SUB_ID => BLOCKCHAIN_HEADERS_SUB_ID,
-                    _ => {
-                        log!("Couldn't get id of request "[request]);
-                        return;
-                    },
-                };
-
-                let response = JsonRpcResponse {
-                    id: id.into(),
-                    jsonrpc: "2.0".into(),
-                    result: request.params[0].clone(),
-                    error: Json::Null,
-                };
-                let mut resp = arc.lock().await;
-                // the corresponding sender may not exist, receiver may be dropped
-                // these situations are not considered as errors so we just silently skip them
-                if let Some(tx) = resp.remove(&response.id.to_string()) {
-                    tx.send(response).unwrap_or(())
-                }
-                drop(resp);
-            }
+            electrum_process_json(raw_json, arc).await
         }
     }
 }
@@ -1779,12 +1671,12 @@ macro_rules! try_loop {
         match $e {
             Ok(res) => res,
             Err(e) => {
-                log!([$addr] " error " [e]);
+                error!("{:?} error {:?}", $addr, e);
                 if $delay < 30 {
                     $delay += 5;
                 }
                 continue;
-            }
+            },
         }
     };
 }
@@ -1848,7 +1740,10 @@ async fn electrum_last_chunk_loop(last_chunk: Arc<AtomicU64>) {
         Timer::sleep(ELECTRUM_TIMEOUT as f64).await;
         let last = (last_chunk.load(AtomicOrdering::Relaxed) / 1000) as f64;
         if now_float() - last > ELECTRUM_TIMEOUT as f64 {
-            log!("Didn't receive any data since " (last as i64) ". Shutting down the connection.");
+            warn!(
+                "Didn't receive any data since {}. Shutting down the connection.",
+                last as i64
+            );
             break;
         }
     }
@@ -1900,7 +1795,7 @@ async fn connect_loop(
         try_loop!(stream.as_ref().set_nodelay(true), addr, delay);
         // reset the delay if we've connected successfully
         delay = 0;
-        log!("Electrum client connected to "(addr));
+        info!("Electrum client connected to {}", addr);
         try_loop!(event_handlers.on_connected(addr.clone()), addr, delay);
         let last_chunk = Arc::new(AtomicU64::new(now_ms()));
         let mut last_chunk_f = electrum_last_chunk_loop(last_chunk.clone()).boxed().fuse();
@@ -1923,17 +1818,17 @@ async fn connect_loop(
                     match buf_reader.read_line(&mut buffer).await {
                         Ok(c) => {
                             if c == 0 {
-                                log!("EOF from"(addr));
+                                info!("EOF from {}", addr);
                                 break;
                             }
                         },
                         Err(e) => {
-                            log!("Error on read "(e) " from "(addr));
+                            error!("Error on read {} from {}", e, addr);
                             break;
                         },
                     };
                     last_chunk.store(now_ms(), AtomicOrdering::Relaxed);
-                    electrum_process_chunk(buffer.as_bytes(), responses.clone()).await;
+                    electrum_process_chunk(buffer.as_bytes(), &responses).await;
                     buffer.clear();
                 }
             }
@@ -1946,7 +1841,7 @@ async fn connect_loop(
             async move {
                 while let Some(Ok(bytes)) = rx.next().await {
                     if let Err(e) = write.write_all(&bytes).await {
-                        log!("Write error "(e) " to " (addr));
+                        error!("Write error {} to {}", e, addr);
                     }
                 }
             }
@@ -1954,7 +1849,7 @@ async fn connect_loop(
         let mut send_f = Box::pin(send_f).fuse();
         macro_rules! reset_tx_and_continue {
             () => {
-                log!([addr] " connection dropped");
+                info!("{} connection dropped", addr);
                 *connection_tx.lock().await = None;
                 continue;
             };
@@ -1971,16 +1866,94 @@ async fn connect_loop(
 #[cfg(target_arch = "wasm32")]
 async fn connect_loop(
     _config: ElectrumConfig,
-    _addr: SocketAddr,
-    _responses: Arc<AsyncMutex<HashMap<String, JsonRpcResponse>>>,
-    _connection_tx: Arc<AsyncMutex<Option<mpsc::Sender<Vec<u8>>>>>,
+    addr: String,
+    responses: Arc<AsyncMutex<HashMap<String, async_oneshot::Sender<JsonRpcResponse>>>>,
+    connection_tx: Arc<AsyncMutex<Option<mpsc::Sender<Vec<u8>>>>>,
+    event_handlers: Vec<RpcTransportEventHandlerShared>,
 ) -> Result<(), ()> {
-    unimplemented!()
+    lazy_static! {
+        static ref CONN_IDX: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(0));
+    }
+
+    use common::wasm_ws::ws_transport;
+
+    let mut delay: u64 = 0;
+    loop {
+        if delay > 0 {
+            Timer::sleep(delay as f64).await;
+        }
+
+        let conn_idx = CONN_IDX.fetch_add(1, AtomicOrdering::Relaxed);
+        let (mut transport_tx, mut transport_rx) = try_loop!(ws_transport(conn_idx, &addr).await, addr, delay);
+
+        // reset the delay if we've connected successfully
+        delay = 0;
+        info!("Electrum client connected to {}", addr);
+        try_loop!(event_handlers.on_connected(addr.clone()), addr, delay);
+
+        let last_chunk = Arc::new(AtomicU64::new(now_ms()));
+        let mut last_chunk_fut = electrum_last_chunk_loop(last_chunk.clone()).boxed().fuse();
+
+        let (outgoing_tx, outgoing_rx) = mpsc::channel(0);
+        *connection_tx.lock().await = Some(outgoing_tx);
+        let outgoing_rx = rx_to_stream(outgoing_rx).map(|data| {
+            // measure the length of each sent packet
+            event_handlers.on_outgoing_request(&data);
+            // TODO
+            let raw_json: Json = json::from_slice(&data).expect("TODO");
+            raw_json
+        });
+
+        let incoming_fut = {
+            let addr = addr.clone();
+            let responses = responses.clone();
+            async move {
+                while let Some(incoming_res) = transport_rx.next().await {
+                    last_chunk.store(now_ms(), AtomicOrdering::Relaxed);
+                    match incoming_res {
+                        Ok(incoming_json) => {
+                            electrum_process_json(incoming_json, &responses).await;
+                        },
+                        Err(e) => {
+                            error!("{} error: {:?}", addr, e);
+                        },
+                    }
+                }
+            }
+        };
+        let mut incoming_fut = Box::pin(incoming_fut).fuse();
+
+        let outgoing_fut = {
+            let addr = addr.clone();
+            let mut outgoing_rx = outgoing_rx.compat();
+            async move {
+                while let Some(Ok(raw_json)) = outgoing_rx.next().await {
+                    if let Err(e) = transport_tx.send(raw_json).await {
+                        error!("Error sending to {}: {:?}", addr, e);
+                    }
+                }
+            }
+        };
+        let mut outgoing_fut = Box::pin(outgoing_fut).fuse();
+
+        macro_rules! reset_tx_and_continue {
+            () => {
+                info!("{} connection dropped", addr);
+                *connection_tx.lock().await = None;
+                continue;
+            };
+        }
+
+        select! {
+            last_chunk = last_chunk_fut => { reset_tx_and_continue!(); },
+            incoming = incoming_fut => { reset_tx_and_continue!(); },
+            outgoing = outgoing_fut => { reset_tx_and_continue!(); },
+        }
+    }
 }
 
 /// Builds up the electrum connection, spawns endless loop that attempts to reconnect to the server
 /// in case of connection errors
-#[cfg(not(target_arch = "wasm32"))]
 fn electrum_connect(
     addr: String,
     config: ElectrumConfig,
@@ -2011,15 +1984,6 @@ fn electrum_connect(
     }
 }
 
-#[cfg(target_arch = "wasm32")]
-fn electrum_connect(
-    _addr: SocketAddr,
-    _config: ElectrumConfig,
-    _event_handlers: Vec<RpcTransportEventHandlerShared>,
-) -> ElectrumConnection {
-    unimplemented!()
-}
-
 fn electrum_request(
     request: JsonRpcRequest,
     tx: mpsc::Sender<Vec<u8>>,
@@ -2028,9 +1992,13 @@ fn electrum_request(
 ) -> Box<dyn Future<Item = JsonRpcResponse, Error = String> + Send + 'static> {
     let send_fut = async move {
         let mut json = try_s!(json::to_string(&request));
-        // Electrum request and responses must end with \n
-        // https://electrumx.readthedocs.io/en/latest/protocol-basics.html#message-stream
-        json.push('\n');
+        #[cfg(not(target_arch = "wasm"))]
+        {
+            // Electrum request and responses must end with \n
+            // https://electrumx.readthedocs.io/en/latest/protocol-basics.html#message-stream
+            json.push('\n');
+        }
+
         let request_id = request.get_id().to_string();
         let (req_tx, resp_rx) = async_oneshot::channel();
         responses.lock().await.insert(request_id, req_tx);
@@ -2038,11 +2006,18 @@ fn electrum_request(
         let response = try_s!(resp_rx.await);
         Ok(response)
     };
+    #[cfg(not(target_arch = "wasm32"))]
     let send_fut = send_fut
         .boxed()
         .compat()
         .map_err(StringError)
         .timeout(Duration::from_secs(timeout));
+    #[cfg(target_arch = "wasm32")]
+    let send_fut = send_fut
+        .boxed()
+        .compat()
+        // TODO implement own timeout
+        .map_err(StringError);
 
     Box::new(send_fut.map_err(|e| ERRL!("{}", e.0)))
 }

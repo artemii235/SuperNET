@@ -80,6 +80,7 @@ use super::{BalanceError, BalanceFut, BalanceResult, CoinTransportMetrics, Coins
             WithdrawError, WithdrawFee, WithdrawRequest};
 
 #[cfg(test)] pub mod utxo_tests;
+#[cfg(target_arch = "wasm32")] pub mod utxo_wasm_tests;
 
 const SWAP_TX_SPEND_SIZE: u64 = 305;
 const KILO_BYTE: u64 = 1000;
