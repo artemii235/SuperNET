@@ -6,7 +6,7 @@ use crate::utxo::sat_from_big_decimal;
 use crate::{NumConversError, RpcTransportEventHandler, RpcTransportEventHandlerShared};
 use bigdecimal::BigDecimal;
 use chain::{BlockHeader, OutPoint, Transaction as UtxoTx};
-use common::custom_futures::select_ok_sequential;
+use common::custom_futures::{select_ok_sequential, FutureTimerExt};
 use common::executor::{spawn, Timer};
 use common::jsonrpc_client::{JsonRpcClient, JsonRpcError, JsonRpcErrorType, JsonRpcMultiClient, JsonRpcRemoteAddr,
                              JsonRpcRequest, JsonRpcResponse, JsonRpcResponseFut, RpcRes};
@@ -14,7 +14,7 @@ use common::log::{error, info, warn};
 use common::mm_error::prelude::*;
 use common::mm_number::MmNumber;
 use common::wio::slurp_req;
-use common::{median, now_float, now_ms, OrdRange, StringError};
+use common::{median, now_float, now_ms, OrdRange};
 use derive_more::Display;
 use futures::channel::oneshot as async_oneshot;
 #[cfg(target_arch = "wasm32")]
@@ -27,7 +27,6 @@ use futures::{select, StreamExt};
 use futures01::future::select_ok;
 use futures01::sync::{mpsc, oneshot};
 use futures01::{Future, Sink, Stream};
-use futures_timer::FutureExt as FutureTimerExt;
 use http::header::AUTHORIZATION;
 use http::Uri;
 use http::{Request, StatusCode};
@@ -47,7 +46,7 @@ use std::num::NonZeroU64;
 use std::ops::Deref;
 #[cfg(target_arch = "wasm32")] use std::os::raw::c_char;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
@@ -1871,6 +1870,8 @@ async fn connect_loop(
     connection_tx: Arc<AsyncMutex<Option<mpsc::Sender<Vec<u8>>>>>,
     event_handlers: Vec<RpcTransportEventHandlerShared>,
 ) -> Result<(), ()> {
+    use std::sync::atomic::AtomicUsize;
+
     lazy_static! {
         static ref CONN_IDX: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(0));
     }
@@ -2006,18 +2007,14 @@ fn electrum_request(
         let response = try_s!(resp_rx.await);
         Ok(response)
     };
-    #[cfg(not(target_arch = "wasm32"))]
     let send_fut = send_fut
         .boxed()
+        .timeout(Duration::from_secs(timeout))
         .compat()
-        .map_err(StringError)
-        .timeout(Duration::from_secs(timeout));
-    #[cfg(target_arch = "wasm32")]
-    let send_fut = send_fut
-        .boxed()
-        .compat()
-        // TODO implement own timeout
-        .map_err(StringError);
-
-    Box::new(send_fut.map_err(|e| ERRL!("{}", e.0)))
+        .then(|res| match res {
+            Ok(response) => response,
+            Err(timeout_error) => ERR!("{}", timeout_error),
+        })
+        .map_err(|e| ERRL!("{}", e));
+    Box::new(send_fut)
 }

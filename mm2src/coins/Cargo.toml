@@ -29,7 +29,6 @@ fomat-macros = "0.2"
 futures01 = { version = "0.1", package = "futures" }
 # using select macro requires the crate to be named futures, compilation failed with futures03 name
 futures = { version = "0.3", package = "futures", features = ["compat", "async-await"] }
-futures-timer = "0.1"
 gstuff = { version = "0.6", features = ["nightly"] }
 hex = "0.3.2"
 http = "0.2"

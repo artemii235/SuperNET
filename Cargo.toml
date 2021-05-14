@@ -64,9 +64,6 @@ enum-primitive-derive = "0.1"
 fomat-macros = "0.2"
 futures01 = { version = "0.1", package = "futures" }
 futures-cpupool = "0.1"
-# NB: tokio-timer 2+ is targeted at "Tokio runtime" and heavy load (spawns several timer threads there),
-# whereas futures-timer works with any reactor and spawns one global timer thread (fits out load better).
-futures-timer = "0.1"
 futures = { version = "0.3.1", package = "futures", features = ["compat", "async-await"] }
 gstuff = { version = "0.6", features = ["nightly"] }
 hash256-std-hasher = "0.15.2"

@@ -1376,15 +1376,6 @@ impl<R: Send + 'static> RefreshedExternalResource<R> {
     }
 }
 
-/// From<io::Error> is required to be implemented by futures-timer timeout.
-/// We can't implement it for String directly due to Rust restrictions.
-/// So this solution looks like simplest at least for now. We have to remap errors to get proper type.
-pub struct StringError(pub String);
-
-impl From<std::io::Error> for StringError {
-    fn from(e: std::io::Error) -> StringError { StringError(ERRL!("{}", e)) }
-}
-
 #[derive(Clone, Debug)]
 pub struct P2PMessage {
     pub from: SocketAddr,
