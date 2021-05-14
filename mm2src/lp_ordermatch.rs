@@ -3875,7 +3875,7 @@ pub fn my_maker_orders_dir(ctx: &MmArc) -> PathBuf { ctx.dbdir().join("ORDERS").
 
 fn my_taker_orders_dir(ctx: &MmArc) -> PathBuf { ctx.dbdir().join("ORDERS").join("MY").join("TAKER") }
 
-fn my_orders_history_dir(ctx: &MmArc) -> PathBuf { ctx.dbdir().join("ORDERS").join("MY").join("History") }
+fn my_orders_history_dir(ctx: &MmArc) -> PathBuf { ctx.dbdir().join("ORDERS").join("MY").join("HISTORY") }
 
 pub fn my_maker_order_file_path(ctx: &MmArc, uuid: &Uuid) -> PathBuf {
     my_maker_orders_dir(ctx).join(format!("{}.json", uuid))
