@@ -48,7 +48,7 @@ pub fn insert_maker_order(ctx: &MmArc, uuid: Uuid, order: &MakerOrder) -> SqlRes
         order.price.to_decimal().to_string(),
         order.max_base_vol.to_decimal().to_string(),
         order.created_at.to_string(),
-        order.updated_at.unwrap().to_string(),
+        order.updated_at.unwrap_or(0).to_string(),
         0.to_string(),
         "Created".to_string(),
     ];
@@ -86,7 +86,7 @@ pub fn update_maker_order(ctx: &MmArc, uuid: Uuid, order: &MakerOrder) -> SqlRes
         uuid.to_string(),
         order.price.to_decimal().to_string(),
         order.max_base_vol.to_decimal().to_string(),
-        order.updated_at.unwrap().to_string(),
+        order.updated_at.unwrap_or(0).to_string(),
         "Updated".to_string(),
     ];
     let conn = ctx.sqlite_connection();

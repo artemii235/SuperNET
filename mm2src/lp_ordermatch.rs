@@ -835,7 +835,7 @@ pub enum TakerAction {
     Sell,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[cfg_attr(test, derive(Default))]
 pub struct OrderConfirmationsSettings {
     pub base_confs: u64,
@@ -1267,6 +1267,8 @@ pub struct MakerOrder {
     started_swaps: Vec<Uuid>,
     uuid: Uuid,
     conf_settings: Option<OrderConfirmationsSettings>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    changes_history: Option<Vec<HistoricalOrder>>,
 }
 
 pub struct MakerOrderBuilder<'a> {
@@ -1484,6 +1486,7 @@ impl<'a> MakerOrderBuilder<'a> {
             started_swaps: Vec::new(),
             uuid: new_uuid(),
             conf_settings: self.conf_settings,
+            changes_history: None,
         })
     }
 
@@ -1501,6 +1504,7 @@ impl<'a> MakerOrderBuilder<'a> {
             started_swaps: Vec::new(),
             uuid: new_uuid(),
             conf_settings: self.conf_settings,
+            changes_history: None,
         }
     }
 }
@@ -1606,6 +1610,7 @@ impl Into<MakerOrder> for TakerOrder {
                 started_swaps: Vec::new(),
                 uuid: self.request.uuid,
                 conf_settings: self.request.conf_settings,
+                changes_history: None,
             },
             // The "buy" taker order is recreated with reversed pair as Maker order is always considered as "sell"
             TakerAction::Buy => {
@@ -1623,6 +1628,7 @@ impl Into<MakerOrder> for TakerOrder {
                     started_swaps: Vec::new(),
                     uuid: self.request.uuid,
                     conf_settings: self.request.conf_settings.map(|s| s.reversed()),
+                    changes_history: None,
                 }
             },
         }
@@ -2419,7 +2425,10 @@ pub async fn lp_ordermatch_loop(ctx: MmArc) {
                             delete_my_taker_order(&ctx, &order, TakerOrderCancellationReason::ToMaker);
                             let maker_order: MakerOrder = order.into();
                             my_maker_orders.insert(uuid, maker_order.clone());
-                            save_my_maker_order(&ctx, &maker_order, MakerOrderStatus::WasTaker);
+                            save_my_maker_order(&ctx, &maker_order);
+                            if let Err(e) = update_was_taker_in_db(&ctx, uuid) {
+                                error!("Error {} on order update", e);
+                            }
                             spawn({
                                 let ctx = ctx.clone();
                                 async move {
@@ -2442,11 +2451,7 @@ pub async fn lp_ordermatch_loop(ctx: MmArc) {
                     order_match.last_updated + ORDER_MATCH_TIMEOUT * 1000 > now_ms() || order_match.connected.is_some()
                 });
                 if old_len != order.matches.len() {
-                    if order.matches.is_empty() {
-                        save_my_maker_order(&ctx, order, MakerOrderStatus::UnMatched);
-                    } else {
-                        save_my_maker_order(&ctx, order, MakerOrderStatus::PartiallyMatched);
-                    }
+                    save_my_maker_order(&ctx, order);
                 }
             });
             *my_maker_orders = futures::stream::iter(my_maker_orders.drain())
@@ -2558,7 +2563,7 @@ async fn process_maker_reserved(ctx: MmArc, from_pubkey: H256Json, reserved_msg:
         my_order
             .matches
             .insert(taker_match.reserved.maker_order_uuid, taker_match);
-        save_my_taker_order(&ctx, &my_order, TakerOrderStatus::MakerReserved);
+        save_my_taker_order(&ctx, &my_order);
     }
 }
 
@@ -2656,7 +2661,7 @@ async fn process_taker_request(ctx: MmArc, from_pubkey: H256Json, taker_request:
                     last_updated: now_ms(),
                 };
                 order.matches.insert(maker_match.request.uuid, maker_match);
-                save_my_maker_order(&ctx, &order, MakerOrderStatus::TakerRequest);
+                save_my_maker_order(&ctx, &order);
             }
             return;
         }
@@ -2712,7 +2717,7 @@ async fn process_taker_connect(ctx: MmArc, sender_pubkey: H256Json, connect_msg:
                 .with_new_max_volume(my_order.available_amount().into());
             maker_order_updated_p2p_notify(ctx.clone(), &my_order.base, &my_order.rel, updated_msg).await;
         }
-        save_my_maker_order(&ctx, &my_order, MakerOrderStatus::TakerConnect);
+        save_my_maker_order(&ctx, &my_order);
     }
 }
 
@@ -2923,7 +2928,7 @@ pub async fn lp_auto_buy(
         order_type: order.order_type,
         min_volume: order.min_volume.clone().into(),
     } });
-    save_my_taker_order(ctx, &order, TakerOrderStatus::Created);
+    save_my_new_taker_order(ctx, &order);
     my_taker_orders.insert(order.request.uuid, order);
     Ok(result.to_string())
 }
@@ -3201,6 +3206,8 @@ struct MakerOrderForRpc<'a> {
     started_swaps: &'a [Uuid],
     uuid: Uuid,
     conf_settings: &'a Option<OrderConfirmationsSettings>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    changes_history: &'a Option<Vec<HistoricalOrder>>,
 }
 
 impl<'a> From<&'a MakerOrder> for MakerOrderForRpc<'a> {
@@ -3224,6 +3231,7 @@ impl<'a> From<&'a MakerOrder> for MakerOrderForRpc<'a> {
             started_swaps: &order.started_swaps,
             uuid: order.uuid,
             conf_settings: &order.conf_settings,
+            changes_history: &order.changes_history,
         }
     }
 }
@@ -3362,7 +3370,7 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
     let new_order = try_s!(builder.build());
     let request_orderbook = false;
     try_s!(subscribe_to_orderbook_topic(&ctx, &new_order.base, &new_order.rel, request_orderbook).await);
-    save_my_maker_order(&ctx, &new_order, MakerOrderStatus::Created);
+    save_my_new_maker_order(&ctx, &new_order);
     maker_order_created_p2p_notify(ctx.clone(), &new_order).await;
     let rpc_result = MakerOrderForRpc::from(&new_order);
     let res = try_s!(json::to_vec(&json!({ "result": rpc_result })));
@@ -3498,8 +3506,11 @@ pub async fn update_maker_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8
             if order.matches.len() != matches.len() || !order.matches.keys().all(|k| matches.contains_key(k)) {
                 return ERR!("Order {} is being matched now, can't update", req.uuid);
             }
+            let old_order = order.clone();
             order.apply_updated(&update_msg);
-            save_my_maker_order(&ctx, &order, MakerOrderStatus::Updated);
+            let new_change = HistoricalOrder::build(order, &old_order);
+            order.changes_history.get_or_insert(Vec::new()).push(new_change);
+            save_maker_order_on_update(&ctx, &order);
             update_msg = update_msg.with_new_max_volume((new_volume - reserved_amount).into());
             (MakerOrderForRpc::from(&*order), order.base.as_str(), order.rel.as_str())
         },
@@ -3552,22 +3563,9 @@ pub async fn order_status(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, St
 
     let order_path = my_orders_history_dir(&ctx).join(req.uuid.to_string() + ".json");
 
-    if let Ok(order) = json::from_slice::<MakerOrder>(&slurp(&order_path)) {
-        let res = json!({
-            "type": "Maker",
-            "order": MakerOrderForRpc::from(&order),
-        });
+    if let Ok(order) = json::from_slice::<Order>(&slurp(&order_path)) {
         return Response::builder()
-            .body(json::to_vec(&res).expect("Serialization failed"))
-            .map_err(|e| ERRL!("{}", e));
-    }
-    if let Ok(order) = json::from_slice::<TakerOrder>(&slurp(&order_path)) {
-        let res = json!({
-            "type": "Taker",
-            "order": TakerOrderForRpc::from(&order),
-        });
-        return Response::builder()
-            .body(json::to_vec(&res).expect("Serialization failed"))
+            .body(json::to_vec(&OrderForRpc::from(&order)).expect("Serialization failed"))
             .map_err(|e| ERRL!("{}", e));
     }
 
@@ -3578,23 +3576,6 @@ pub async fn order_status(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, St
         .status(404)
         .body(json::to_vec(&res).expect("Serialization failed"))
         .map_err(|e| ERRL!("{}", e))
-}
-
-// TODO: Need revision on the different order status naming and if they are correctly applied on saving/deleting
-#[derive(PartialEq)]
-enum MakerOrderStatus {
-    Created,
-    Updated,
-    WasTaker,
-    TakerRequest,
-    TakerConnect,
-    PartiallyMatched,
-    UnMatched,
-}
-
-enum TakerOrderStatus {
-    Created,
-    MakerReserved,
 }
 
 enum MakerOrderCancellationReason {
@@ -3627,11 +3608,20 @@ pub struct MyOrdersFilter {
     pub include_details: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
+#[serde(tag = "type", content = "order")]
 enum Order {
     Maker(MakerOrder),
     Taker(TakerOrder),
-    MakerHistory(UpdateMakerOrderHistory),
+}
+
+impl<'a> From<&'a Order> for OrderForRpc<'a> {
+    fn from(order: &'a Order) -> OrderForRpc {
+        match order {
+            Order::Maker(o) => OrderForRpc::Maker(MakerOrderForRpc::from(o)),
+            Order::Taker(o) => OrderForRpc::Taker(TakerOrderForRpc::from(o)),
+        }
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -3657,34 +3647,21 @@ pub async fn orders_history_by_filter(ctx: MmArc, req: Json) -> Result<Response<
         let mut vec = vec![];
         for order in db_result.result.iter() {
             let uuid = &Uuid::parse_str(order.uuid.as_str()).unwrap();
-            if order.order_type == *"Maker" {
-                let maker_order_path = my_orders_history_dir(&ctx).join(order.uuid.clone() + ".json");
-                let content = slurp(&maker_order_path);
-                if let Ok(maker_order) = json::from_slice::<MakerOrder>(&content) {
+            let order_path = my_orders_history_dir(&ctx).join(order.uuid.clone() + ".json");
+            let content = slurp(&order_path);
+            if let Ok(order) = json::from_slice::<Order>(&content) {
+                vec.push(order);
+            } else if order.order_type == *"Maker" {
+                let ordermatch_ctx = try_s!(OrdermatchContext::from_ctx(&ctx));
+                let maker_orders = ordermatch_ctx.my_maker_orders.lock().await;
+                if let Some(maker_order) = maker_orders.get(uuid) {
                     vec.push(Order::Maker(maker_order.to_owned()));
-                } else if let Ok(maker_order) = json::from_slice::<UpdateMakerOrderHistory>(&content) {
-                    vec.push(Order::MakerHistory(maker_order.to_owned()));
-                } else {
-                    // TODO: Orders history even for active orders should be from the files DB
-                    // (Updated MakerOrder History is written in the files only) but the context is used
-                    // here to get them because the files might be written to while the order is still active
-                    let ordermatch_ctx = try_s!(OrdermatchContext::from_ctx(&ctx));
-                    let maker_orders = ordermatch_ctx.my_maker_orders.lock().await;
-                    if let Some(maker_order) = maker_orders.get(uuid) {
-                        vec.push(Order::Maker(maker_order.to_owned()));
-                    }
                 }
             } else {
-                let taker_order_path = my_orders_history_dir(&ctx).join(order.uuid.clone() + ".json");
-                let content = slurp(&taker_order_path);
-                if let Ok(taker_order) = json::from_slice::<TakerOrder>(&content) {
+                let ordermatch_ctx = try_s!(OrdermatchContext::from_ctx(&ctx));
+                let taker_orders = ordermatch_ctx.my_taker_orders.lock().await;
+                if let Some(taker_order) = taker_orders.get(uuid) {
                     vec.push(Order::Taker(taker_order.to_owned()));
-                } else {
-                    let ordermatch_ctx = try_s!(OrdermatchContext::from_ctx(&ctx));
-                    let taker_orders = ordermatch_ctx.my_taker_orders.lock().await;
-                    if let Some(taker_order) = taker_orders.get(uuid) {
-                        vec.push(Order::Taker(taker_order.to_owned()));
-                    }
                 }
             }
         }
@@ -3824,6 +3801,13 @@ impl<'a> From<&'a TakerOrder> for TakerOrderForRpc<'a> {
     }
 }
 
+#[derive(Serialize)]
+#[serde(tag = "type", content = "order")]
+enum OrderForRpc<'a> {
+    Maker(MakerOrderForRpc<'a>),
+    Taker(TakerOrderForRpc<'a>),
+}
+
 pub async fn my_orders(ctx: MmArc) -> Result<Response<Vec<u8>>, String> {
     let ordermatch_ctx = try_s!(OrdermatchContext::from_ctx(&ctx));
     let maker_orders = ordermatch_ctx.my_maker_orders.lock().await;
@@ -3905,102 +3889,88 @@ fn my_order_history_file_path(ctx: &MmArc, uuid: &Uuid) -> PathBuf {
     my_orders_history_dir(ctx).join(format!("{}.json", uuid))
 }
 
-// TODO: history field can be part of the MakerOrder Struct Directly as an option,
-// But have to be sure it doesn't break any backward compatability
-// + it will make any response with updated maker order very long
-#[derive(Clone, Deserialize, Serialize)]
-struct UpdateMakerOrderHistory {
-    order: MakerOrder,
-    history: Vec<MakerOrder>,
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct HistoricalOrder {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_base_vol: Option<MmNumber>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    min_base_vol: Option<MmNumber>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    price: Option<MmNumber>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    updated_at: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    conf_settings: Option<OrderConfirmationsSettings>,
 }
 
-fn save_my_maker_order(ctx: &MmArc, order: &MakerOrder, status: MakerOrderStatus) {
-    let path = my_maker_order_file_path(ctx, &order.uuid);
-    if status == MakerOrderStatus::Updated {
-        if let Ok(mut original_order) = json::from_slice::<UpdateMakerOrderHistory>(&slurp(&path)) {
-            original_order.history.insert(0, original_order.order);
-            original_order.order = order.clone();
-            let content = json::to_vec(&original_order).unwrap();
-            write(&path, &content).unwrap();
-        } else if let Ok(original_order) = json::from_slice::<MakerOrder>(&slurp(&path)) {
-            let updated_order = UpdateMakerOrderHistory {
-                order: order.clone(),
-                history: vec![original_order],
-            };
-            let content = json::to_vec(&updated_order).unwrap();
-            write(&path, &content).unwrap();
+impl HistoricalOrder {
+    fn build(new_order: &MakerOrder, old_order: &MakerOrder) -> HistoricalOrder {
+        HistoricalOrder {
+            max_base_vol: if new_order.max_base_vol == old_order.max_base_vol {
+                None
+            } else {
+                Some(old_order.max_base_vol.clone())
+            },
+            min_base_vol: if new_order.min_base_vol == old_order.min_base_vol {
+                None
+            } else {
+                Some(old_order.min_base_vol.clone())
+            },
+            price: if new_order.price == old_order.price {
+                None
+            } else {
+                Some(old_order.price.clone())
+            },
+            updated_at: old_order.updated_at,
+            conf_settings: if new_order.conf_settings == old_order.conf_settings {
+                None
+            } else {
+                old_order.conf_settings
+            },
         }
-    } else {
-        let content = json::to_vec(order).unwrap();
-        write(&path, &content).unwrap();
-    }
-
-    match status {
-        MakerOrderStatus::Created => {
-            if let Err(e) = insert_maker_order_to_db(&ctx, order.uuid, &order) {
-                error!("Error {} on new order insertion", e);
-            }
-        },
-        MakerOrderStatus::Updated => {
-            if let Err(e) = update_maker_order_in_db(&ctx, order.uuid, &order) {
-                error!("Error {} on order update", e);
-            }
-        },
-        MakerOrderStatus::WasTaker => {
-            if let Err(e) = update_was_taker_in_db(&ctx, order.uuid) {
-                error!("Error {} on order update", e);
-            }
-        },
-        MakerOrderStatus::TakerRequest => {
-            if let Err(e) = update_order_status_in_db(&ctx, order.uuid, "Taker Request".to_string()) {
-                error!("Error {} on order update", e);
-            }
-        },
-        MakerOrderStatus::TakerConnect => {
-            if let Err(e) = update_order_status_in_db(&ctx, order.uuid, "Taker Connect".to_string()) {
-                error!("Error {} on order update", e);
-            }
-        },
-        MakerOrderStatus::PartiallyMatched => {
-            if let Err(e) = update_order_status_in_db(&ctx, order.uuid, "Partially Matched".to_string()) {
-                error!("Error {} on order update", e);
-            }
-        },
-        MakerOrderStatus::UnMatched => {
-            if let Err(e) = update_order_status_in_db(&ctx, order.uuid, "UnMatched".to_string()) {
-                error!("Error {} on order update", e);
-            }
-        },
     }
 }
 
-fn save_my_taker_order(ctx: &MmArc, order: &TakerOrder, status: TakerOrderStatus) {
+fn save_my_maker_order(ctx: &MmArc, order: &MakerOrder) {
+    let path = my_maker_order_file_path(ctx, &order.uuid);
+    let content = json::to_vec(order).unwrap();
+    write(&path, &content).unwrap();
+}
+
+fn save_my_new_maker_order(ctx: &MmArc, order: &MakerOrder) {
+    save_my_maker_order(ctx, order);
+
+    if let Err(e) = insert_maker_order_to_db(&ctx, order.uuid, &order) {
+        error!("Error {} on new order insertion", e);
+    }
+}
+
+fn save_maker_order_on_update(ctx: &MmArc, order: &MakerOrder) {
+    save_my_maker_order(ctx, order);
+
+    if let Err(e) = update_maker_order_in_db(&ctx, order.uuid, &order) {
+        error!("Error {} on order update", e);
+    }
+}
+
+fn save_my_taker_order(ctx: &MmArc, order: &TakerOrder) {
     let path = my_taker_order_file_path(ctx, &order.request.uuid);
     let content = json::to_vec(order).unwrap();
     write(&path, &content).unwrap();
+}
 
-    match status {
-        TakerOrderStatus::Created => {
-            if let Err(e) = insert_taker_order_to_db(&ctx, order.request.uuid, &order) {
-                error!("Error {} on new order insertion", e);
-            }
-        },
-        TakerOrderStatus::MakerReserved => {
-            if let Err(e) = update_order_status_in_db(&ctx, order.request.uuid, "Maker Reserved".to_string()) {
-                error!("Error {} on order update", e);
-            }
-        },
+fn save_my_new_taker_order(ctx: &MmArc, order: &TakerOrder) {
+    save_my_taker_order(ctx, order);
+    if let Err(e) = insert_taker_order_to_db(&ctx, order.request.uuid, &order) {
+        error!("Error {} on new order insertion", e);
     }
 }
 
-fn save_my_maker_order_in_history(ctx: &MmArc, order: &MakerOrder) {
-    let path = my_order_history_file_path(ctx, &order.uuid);
-    let content = json::to_vec(order).unwrap();
-    write(&path, &content).unwrap();
-}
-
-fn save_my_taker_order_in_history(ctx: &MmArc, order: &TakerOrder) {
-    let path = my_order_history_file_path(ctx, &order.request.uuid);
+fn save_my_order_in_history(ctx: &MmArc, order: &Order) {
+    let path = match order {
+        Order::Maker(o) => my_order_history_file_path(ctx, &o.uuid),
+        Order::Taker(o) => my_order_history_file_path(ctx, &o.request.uuid),
+    };
     let content = json::to_vec(order).unwrap();
     write(&path, &content).unwrap();
 }
@@ -4012,7 +3982,7 @@ fn delete_my_maker_order(ctx: &MmArc, order: &MakerOrder, reason: MakerOrderCanc
         Ok(_) => (),
         Err(e) => log::warn!("Could not remove order file {}, error {}", path.display(), e),
     }
-    save_my_maker_order_in_history(ctx, &order);
+    save_my_order_in_history(ctx, &Order::Maker(order.clone()));
 
     match reason {
         MakerOrderCancellationReason::Fulfilled => {
@@ -4042,7 +4012,7 @@ fn delete_my_taker_order(ctx: &MmArc, order: &TakerOrder, reason: TakerOrderCanc
     }
     match reason {
         TakerOrderCancellationReason::ToMaker => (),
-        _ => save_my_taker_order_in_history(ctx, &order),
+        _ => save_my_order_in_history(ctx, &Order::Taker(order.clone())),
     }
 
     match reason {
@@ -4076,10 +4046,6 @@ pub async fn orders_kick_start(ctx: &MmArc) -> Result<HashSet<String>, String> {
             coins.insert(order.base.clone());
             coins.insert(order.rel.clone());
             maker_orders.insert(order.uuid, order);
-        } else if let Ok(order) = json::from_slice::<UpdateMakerOrderHistory>(&slurp(&entry.path())) {
-            coins.insert(order.order.base.clone());
-            coins.insert(order.order.rel.clone());
-            maker_orders.insert(order.order.uuid, order.order);
         }
     });
 

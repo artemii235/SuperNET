@@ -51,6 +51,16 @@ pub struct OrderConfirmationsSettings {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct HistoricalOrder {
+    max_base_vol: Option<MmNumber>,
+    min_base_vol: Option<MmNumber>,
+    price: Option<MmNumber>,
+    updated_at: Option<u64>,
+    conf_settings: Option<OrderConfirmationsSettings>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum TakerAction {
     Buy,
     Sell,
@@ -175,6 +185,7 @@ pub struct MakerOrderRpcResult {
     pub started_swaps: Vec<Uuid>,
     pub uuid: Uuid,
     pub conf_settings: Option<OrderConfirmationsSettings>,
+    changes_history: Option<Vec<HistoricalOrder>>,
     pub cancellable: bool,
     pub available_amount: BigDecimal,
 }
