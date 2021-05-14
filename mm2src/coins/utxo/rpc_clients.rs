@@ -1810,6 +1810,7 @@ async fn connect_loop(
         let recv_f = {
             let addr = addr.clone();
             let responses = responses.clone();
+            let event_handlers = event_handlers.clone();
             async move {
                 let mut buffer = String::with_capacity(1024);
                 let mut buf_reader = BufReader::new(read);
@@ -1826,7 +1827,10 @@ async fn connect_loop(
                             break;
                         },
                     };
+                    // measure the length of each incoming packet
+                    event_handlers.on_incoming_response(buffer.as_bytes());
                     last_chunk.store(now_ms(), AtomicOrdering::Relaxed);
+
                     electrum_process_chunk(buffer.as_bytes(), &responses).await;
                     buffer.clear();
                 }
@@ -1897,22 +1901,20 @@ async fn connect_loop(
 
         let (outgoing_tx, outgoing_rx) = mpsc::channel(0);
         *connection_tx.lock().await = Some(outgoing_tx);
-        let outgoing_rx = rx_to_stream(outgoing_rx).map(|data| {
-            // measure the length of each sent packet
-            event_handlers.on_outgoing_request(&data);
-            // TODO
-            let raw_json: Json = json::from_slice(&data).expect("TODO");
-            raw_json
-        });
 
         let incoming_fut = {
             let addr = addr.clone();
             let responses = responses.clone();
+            let event_handlers = event_handlers.clone();
             async move {
                 while let Some(incoming_res) = transport_rx.next().await {
                     last_chunk.store(now_ms(), AtomicOrdering::Relaxed);
                     match incoming_res {
                         Ok(incoming_json) => {
+                            // measure the length of each incoming packet
+                            let incoming_str = incoming_json.to_string();
+                            event_handlers.on_incoming_response(incoming_str.as_bytes());
+
                             electrum_process_json(incoming_json, &responses).await;
                         },
                         Err(e) => {
@@ -1926,9 +1928,20 @@ async fn connect_loop(
 
         let outgoing_fut = {
             let addr = addr.clone();
-            let mut outgoing_rx = outgoing_rx.compat();
+            let mut outgoing_rx = rx_to_stream(outgoing_rx).compat();
+            let event_handlers = event_handlers.clone();
             async move {
-                while let Some(Ok(raw_json)) = outgoing_rx.next().await {
+                while let Some(Ok(data)) = outgoing_rx.next().await {
+                    let raw_json: Json = match json::from_slice(&data) {
+                        Ok(js) => js,
+                        Err(e) => {
+                            error!("Error {} deserializing the outgoing data: {:?}", e, data);
+                            continue;
+                        },
+                    };
+                    // measure the length of each sent packet
+                    event_handlers.on_outgoing_request(&data);
+
                     if let Err(e) = transport_tx.send(raw_json).await {
                         error!("Error sending to {}: {:?}", addr, e);
                     }
