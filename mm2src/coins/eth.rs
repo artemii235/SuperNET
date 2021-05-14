@@ -56,9 +56,9 @@ use web3::types::{Action as TraceAction, BlockId, BlockNumber, Bytes, CallReques
 use web3::{self, Web3};
 
 use super::{BalanceError, BalanceFut, CoinBalance, CoinProtocol, CoinTransportMetrics, CoinsContext, FeeApproxStage,
-            FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, NumConversError, NumConversResult,
-            RpcClientType, RpcTransportEventHandler, RpcTransportEventHandlerShared, SwapOps, TradeFee,
-            TradePreimageError, TradePreimageFut, TradePreimageValue, Transaction, TransactionDetails,
+            FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, NegotiateSwapContractAddrErr, NumConversError,
+            NumConversResult, RpcClientType, RpcTransportEventHandler, RpcTransportEventHandlerShared, SwapOps,
+            TradeFee, TradePreimageError, TradePreimageFut, TradePreimageValue, Transaction, TransactionDetails,
             TransactionEnum, TransactionFut, ValidateAddressResult, WithdrawError, WithdrawFee, WithdrawFut,
             WithdrawRequest, WithdrawResult};
 pub use ethcore_transaction::SignedTransaction as SignedEthTx;
@@ -235,6 +235,7 @@ pub struct EthCoinImpl {
     key_pair: KeyPair,
     my_address: Address,
     swap_contract_address: Address,
+    fallback_swap_contract: Option<Address>,
     web3: Web3<Web3Transport>,
     /// The separate web3 instances kept to get nonce, will replace the web3 completely soon
     web3_instances: Vec<Web3Instance>,
@@ -997,6 +998,32 @@ impl SwapOps for EthCoin {
                 "Expected secret to be fixed bytes, decoded function data is {:?}",
                 tokens
             ),
+        }
+    }
+
+    fn negotiate_swap_contract_addr(
+        &self,
+        other_side_address: Option<&[u8]>,
+    ) -> Result<Option<BytesJson>, MmError<NegotiateSwapContractAddrErr>> {
+        match other_side_address {
+            Some(bytes) => {
+                if bytes.len() != 20 {
+                    return MmError::err(NegotiateSwapContractAddrErr::InvalidOtherAddrLen(bytes.into()));
+                }
+                let other_addr = Address::from(bytes);
+                if other_addr == self.swap_contract_address {
+                    return Ok(Some(self.swap_contract_address.to_vec().into()));
+                }
+
+                if Some(other_addr) == self.fallback_swap_contract {
+                    return Ok(self.fallback_swap_contract.map(|addr| addr.to_vec().into()));
+                }
+                MmError::err(NegotiateSwapContractAddrErr::UnexpectedOtherAddr(bytes.into()))
+            },
+            None => self
+                .fallback_swap_contract
+                .map(|addr| Some(addr.to_vec().into()))
+                .ok_or_else(|| MmError::new(NegotiateSwapContractAddrErr::NoOtherAddrAndNoFallback)),
         }
     }
 }
@@ -2957,6 +2984,13 @@ pub async fn eth_coin_from_conf_and_request(
         return ERR!("swap_contract_address can't be zero address");
     }
 
+    let fallback_swap_contract: Option<Address> = try_s!(json::from_value(req["fallback_swap_contract"].clone()));
+    if let Some(fallback) = fallback_swap_contract {
+        if fallback == Address::default() {
+            return ERR!("fallback_swap_contract can't be zero address");
+        }
+    }
+
     let key_pair: KeyPair = try_s!(KeyPair::from_secret_slice(priv_key));
     let my_address = key_pair.address();
 
@@ -3024,6 +3058,7 @@ pub async fn eth_coin_from_conf_and_request(
         my_address,
         coin_type,
         swap_contract_address,
+        fallback_swap_contract,
         decimals,
         ticker: ticker.into(),
         gas_station_url: try_s!(json::from_value(req["gas_station_url"].clone())),

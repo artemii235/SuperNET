@@ -1,7 +1,8 @@
 use crate::utxo::rpc_clients::UtxoRpcClientEnum;
 use crate::utxo::utxo_common::payment_script;
 use crate::utxo::{utxo_common::UtxoArcBuilder, UtxoArc, UtxoCoinBuilder};
-use crate::{BalanceFut, CoinBalance, FoundSwapTxSpend, MarketCoinOps, SwapOps, TransactionEnum, TransactionFut};
+use crate::{BalanceFut, CoinBalance, FoundSwapTxSpend, MarketCoinOps, NegotiateSwapContractAddrErr, SwapOps,
+            TransactionEnum, TransactionFut};
 use bitcrypto::dhash160;
 use chain::constants::SEQUENCE_FINAL;
 use chain::Transaction as UtxoTx;
@@ -12,7 +13,7 @@ use futures::compat::Future01CompatExt;
 use futures::{FutureExt, TryFutureExt};
 use futures01::Future;
 use keys::Public;
-use rpc::v1::types::Bytes;
+use rpc::v1::types::Bytes as BytesJson;
 use script::{Builder as ScriptBuilder, Opcode};
 use secp256k1_bindings::SecretKey;
 use serde_json::Value as Json;
@@ -120,7 +121,7 @@ impl MarketCoinOps for ZCoin {
         _transaction: &[u8],
         _wait_until: u64,
         _from_block: u64,
-        _swap_contract_address: &Option<Bytes>,
+        _swap_contract_address: &Option<BytesJson>,
     ) -> TransactionFut {
         todo!()
     }
@@ -147,7 +148,7 @@ impl SwapOps for ZCoin {
         taker_pub: &[u8],
         secret_hash: &[u8],
         amount: BigDecimal,
-        _swap_contract_address: &Option<Bytes>,
+        _swap_contract_address: &Option<BytesJson>,
     ) -> TransactionFut {
         let selfi = self.clone();
         let taker_pub = taker_pub.to_vec();
@@ -165,7 +166,7 @@ impl SwapOps for ZCoin {
         maker_pub: &[u8],
         secret_hash: &[u8],
         amount: BigDecimal,
-        _swap_contract_address: &Option<Bytes>,
+        _swap_contract_address: &Option<BytesJson>,
     ) -> TransactionFut {
         let selfi = self.clone();
         let maker_pub = maker_pub.to_vec();
@@ -183,7 +184,7 @@ impl SwapOps for ZCoin {
         _time_lock: u32,
         _taker_pub: &[u8],
         _secret: &[u8],
-        _swap_contract_address: &Option<Bytes>,
+        _swap_contract_address: &Option<BytesJson>,
     ) -> TransactionFut {
         todo!()
     }
@@ -194,7 +195,7 @@ impl SwapOps for ZCoin {
         time_lock: u32,
         maker_pub: &[u8],
         secret: &[u8],
-        _swap_contract_address: &Option<Bytes>,
+        _swap_contract_address: &Option<BytesJson>,
     ) -> TransactionFut {
         let tx: UtxoTx = deserialize(maker_payment_tx).unwrap();
         let secret_hash = dhash160(secret);
@@ -263,7 +264,7 @@ impl SwapOps for ZCoin {
         _time_lock: u32,
         _maker_pub: &[u8],
         _secret_hash: &[u8],
-        _swap_contract_address: &Option<Bytes>,
+        _swap_contract_address: &Option<BytesJson>,
     ) -> TransactionFut {
         todo!()
     }
@@ -274,7 +275,7 @@ impl SwapOps for ZCoin {
         time_lock: u32,
         taker_pub: &[u8],
         secret_hash: &[u8],
-        _swap_contract_address: &Option<Bytes>,
+        _swap_contract_address: &Option<BytesJson>,
     ) -> TransactionFut {
         let tx: UtxoTx = deserialize(maker_payment_tx).unwrap();
         let redeem_script = payment_script(
@@ -351,7 +352,7 @@ impl SwapOps for ZCoin {
         _maker_pub: &[u8],
         _priv_bn_hash: &[u8],
         _amount: BigDecimal,
-        _swap_contract_address: &Option<Bytes>,
+        _swap_contract_address: &Option<BytesJson>,
     ) -> Box<dyn Future<Item = (), Error = String> + Send> {
         todo!()
     }
@@ -363,7 +364,7 @@ impl SwapOps for ZCoin {
         _taker_pub: &[u8],
         _priv_bn_hash: &[u8],
         _amount: BigDecimal,
-        _swap_contract_address: &Option<Bytes>,
+        _swap_contract_address: &Option<BytesJson>,
     ) -> Box<dyn Future<Item = (), Error = String> + Send> {
         todo!()
     }
@@ -374,7 +375,7 @@ impl SwapOps for ZCoin {
         _other_pub: &[u8],
         _secret_hash: &[u8],
         _search_from_block: u64,
-        _swap_contract_address: &Option<Bytes>,
+        _swap_contract_address: &Option<BytesJson>,
     ) -> Box<dyn Future<Item = Option<TransactionEnum>, Error = String> + Send> {
         todo!()
     }
@@ -386,7 +387,7 @@ impl SwapOps for ZCoin {
         _secret_hash: &[u8],
         _tx: &[u8],
         _search_from_block: u64,
-        _swap_contract_address: &Option<Bytes>,
+        _swap_contract_address: &Option<BytesJson>,
     ) -> Result<Option<FoundSwapTxSpend>, String> {
         todo!()
     }
@@ -398,12 +399,19 @@ impl SwapOps for ZCoin {
         _secret_hash: &[u8],
         _tx: &[u8],
         _search_from_block: u64,
-        _swap_contract_address: &Option<Bytes>,
+        _swap_contract_address: &Option<BytesJson>,
     ) -> Result<Option<FoundSwapTxSpend>, String> {
         todo!()
     }
 
     fn extract_secret(&self, _secret_hash: &[u8], _spend_tx: &[u8]) -> Result<Vec<u8>, String> { todo!() }
+
+    fn negotiate_swap_contract_addr(
+        &self,
+        _other_side_address: Option<&[u8]>,
+    ) -> Result<Option<BytesJson>, MmError<NegotiateSwapContractAddrErr>> {
+        Ok(None)
+    }
 }
 
 #[test]

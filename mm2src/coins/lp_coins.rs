@@ -147,6 +147,15 @@ pub enum CanRefundHtlc {
     HaveToWait(u64),
 }
 
+#[derive(Debug, Display, Eq, PartialEq)]
+pub enum NegotiateSwapContractAddrErr {
+    #[display(fmt = "InvalidOtherAddrLen, addr supplied {:?}", _0)]
+    InvalidOtherAddrLen(BytesJson),
+    #[display(fmt = "UnexpectedOtherAddr, addr supplied {:?}", _0)]
+    UnexpectedOtherAddr(BytesJson),
+    NoOtherAddrAndNoFallback,
+}
+
 /// Swap operations (mostly based on the Hash/Time locked transactions implemented by coin wallets).
 pub trait SwapOps {
     fn send_taker_fee(&self, fee_addr: &[u8], amount: BigDecimal) -> TransactionFut;
@@ -277,6 +286,11 @@ pub trait SwapOps {
         };
         Box::new(futures01::future::ok(result))
     }
+
+    fn negotiate_swap_contract_addr(
+        &self,
+        other_side_address: Option<&[u8]>,
+    ) -> Result<Option<BytesJson>, MmError<NegotiateSwapContractAddrErr>>;
 }
 
 /// Operations that coins have independently from the MarketMaker.

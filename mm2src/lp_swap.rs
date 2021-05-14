@@ -523,12 +523,73 @@ pub fn dex_fee_amount_from_taker_coin(taker_coin: &MmCoinEnum, maker_coin: &str,
     dex_fee_amount(taker_coin.ticker(), maker_coin, trade_amount, &dex_fee_threshold)
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct NegotiationDataMsg {
+#[derive(Clone, Debug, Eq, Deserialize, PartialEq, Serialize)]
+pub struct NegotiationDataV1 {
     started_at: u64,
     payment_locktime: u64,
     secret_hash: [u8; 20],
     persistent_pubkey: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Eq, Deserialize, PartialEq, Serialize)]
+pub struct NegotiationDataV2 {
+    started_at: u64,
+    payment_locktime: u64,
+    secret_hash: Vec<u8>,
+    persistent_pubkey: Vec<u8>,
+    maker_coin_swap_contract: Vec<u8>,
+    taker_coin_swap_contract: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Eq, Deserialize, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum NegotiationDataMsg {
+    V1(NegotiationDataV1),
+    V2(NegotiationDataV2),
+}
+
+impl NegotiationDataMsg {
+    pub fn started_at(&self) -> u64 {
+        match self {
+            NegotiationDataMsg::V1(v1) => v1.started_at,
+            NegotiationDataMsg::V2(v2) => v2.started_at,
+        }
+    }
+
+    pub fn payment_locktime(&self) -> u64 {
+        match self {
+            NegotiationDataMsg::V1(v1) => v1.payment_locktime,
+            NegotiationDataMsg::V2(v2) => v2.payment_locktime,
+        }
+    }
+
+    pub fn secret_hash(&self) -> &[u8] {
+        match self {
+            NegotiationDataMsg::V1(v1) => &v1.secret_hash,
+            NegotiationDataMsg::V2(v2) => &v2.secret_hash,
+        }
+    }
+
+    pub fn persistent_pubkey(&self) -> &[u8] {
+        match self {
+            NegotiationDataMsg::V1(v1) => &v1.persistent_pubkey,
+            NegotiationDataMsg::V2(v2) => &v2.persistent_pubkey,
+        }
+    }
+
+    pub fn maker_coin_swap_contract(&self) -> Option<&[u8]> {
+        match self {
+            NegotiationDataMsg::V1(_) => None,
+            NegotiationDataMsg::V2(v2) => Some(&v2.maker_coin_swap_contract),
+        }
+    }
+
+    pub fn taker_coin_swap_contract(&self) -> Option<&[u8]> {
+        match self {
+            NegotiationDataMsg::V1(_) => None,
+            NegotiationDataMsg::V2(v2) => Some(&v2.taker_coin_swap_contract),
+        }
+    }
 }
 
 /// Data to be exchanged and validated on swap start, the replacement of LP_pubkeys_data, LP_choosei_data, etc.
@@ -1389,5 +1450,68 @@ mod lp_swap_tests {
         let expected = PAYMENT_LOCKTIME * 10;
         let actual = lp_atomic_locktime(maker_coin, taker_coin, AtomicLocktimeVersion::V1);
         assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn check_negotiation_data_serde() {
+        // old message format should be deserialized to NegotiationDataMsg::V1
+        let v1 = NegotiationDataV1 {
+            started_at: 0,
+            payment_locktime: 0,
+            secret_hash: [0; 20],
+            persistent_pubkey: vec![1; 33],
+        };
+
+        let expected = NegotiationDataMsg::V1(NegotiationDataV1 {
+            started_at: 0,
+            payment_locktime: 0,
+            secret_hash: [0; 20],
+            persistent_pubkey: vec![1; 33],
+        });
+
+        let serialized = rmp_serde::to_vec(&v1).unwrap();
+
+        let deserialized: NegotiationDataMsg = rmp_serde::from_read_ref(serialized.as_slice()).unwrap();
+
+        assert_eq!(deserialized, expected);
+
+        // new message format should be deserialized to old
+        let v2 = NegotiationDataMsg::V2(NegotiationDataV2 {
+            started_at: 0,
+            payment_locktime: 0,
+            secret_hash: vec![0; 20],
+            persistent_pubkey: vec![1; 33],
+            maker_coin_swap_contract: vec![1; 20],
+            taker_coin_swap_contract: vec![1; 20],
+        });
+
+        let expected = NegotiationDataV1 {
+            started_at: 0,
+            payment_locktime: 0,
+            secret_hash: [0; 20],
+            persistent_pubkey: vec![1; 33],
+        };
+
+        let serialized = rmp_serde::to_vec(&v2).unwrap();
+
+        let deserialized: NegotiationDataV1 = rmp_serde::from_read_ref(serialized.as_slice()).unwrap();
+
+        assert_eq!(deserialized, expected);
+
+        // new message format should be deserialized to new
+        let v2 = NegotiationDataMsg::V2(NegotiationDataV2 {
+            started_at: 0,
+            payment_locktime: 0,
+            secret_hash: vec![0; 20],
+            persistent_pubkey: vec![1; 33],
+            maker_coin_swap_contract: vec![1; 20],
+            taker_coin_swap_contract: vec![1; 20],
+        });
+
+        let serialized = rmp_serde::to_vec(&v2).unwrap();
+
+        let deserialized: NegotiationDataMsg = rmp_serde::from_read_ref(serialized.as_slice()).unwrap();
+
+        assert_eq!(deserialized, v2);
     }
 }

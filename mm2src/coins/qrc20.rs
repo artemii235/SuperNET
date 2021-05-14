@@ -9,9 +9,9 @@ use crate::utxo::{qtum, sign_tx, ActualTxFee, AdditionalTxData, FeePolicy, Gener
                   RecentlySpentOutPoints, UtxoCoinBuilder, UtxoCoinFields, UtxoCommonOps, UtxoTx,
                   VerboseTransactionFrom, UTXO_LOCK};
 use crate::{BalanceError, BalanceFut, CoinBalance, FeeApproxStage, FoundSwapTxSpend, HistorySyncState, MarketCoinOps,
-            MmCoin, SwapOps, TradeFee, TradePreimageError, TradePreimageFut, TradePreimageResult, TradePreimageValue,
-            TransactionDetails, TransactionEnum, TransactionFut, ValidateAddressResult, WithdrawError, WithdrawFee,
-            WithdrawFut, WithdrawRequest, WithdrawResult};
+            MmCoin, NegotiateSwapContractAddrErr, SwapOps, TradeFee, TradePreimageError, TradePreimageFut,
+            TradePreimageResult, TradePreimageValue, TransactionDetails, TransactionEnum, TransactionFut,
+            ValidateAddressResult, WithdrawError, WithdrawFee, WithdrawFut, WithdrawRequest, WithdrawResult};
 use async_trait::async_trait;
 use bigdecimal::BigDecimal;
 use bitcrypto::{dhash160, sha256};
@@ -104,6 +104,15 @@ impl Qrc20CoinBuilder<'_> {
             None => return ERR!("\"swap_contract_address\" field is expected"),
         }
     }
+
+    fn fallback_swap_contract(&self) -> Result<Option<H160>, String> {
+        match self.req()["fallback_swap_contract"].as_str() {
+            Some(address) => qtum::contract_addr_from_str(address)
+                .map_err(|e| ERRL!("{}", e))
+                .map(Some),
+            None => Ok(None),
+        }
+    }
 }
 
 #[async_trait]
@@ -112,12 +121,14 @@ impl UtxoCoinBuilder for Qrc20CoinBuilder<'_> {
 
     async fn build(self) -> Result<Self::ResultCoin, String> {
         let swap_contract_address = try_s!(self.swap_contract_address());
+        let fallback_swap_contract = try_s!(self.fallback_swap_contract());
         let utxo = try_s!(self.build_utxo_fields().await);
         let inner = Qrc20CoinFields {
             utxo,
             platform: self.platform,
             contract_address: self.contract_address,
             swap_contract_address,
+            fallback_swap_contract,
         };
         Ok(Qrc20Coin(Arc::new(inner)))
     }
@@ -200,6 +211,7 @@ pub struct Qrc20CoinFields {
     pub platform: String,
     pub contract_address: H160,
     pub swap_contract_address: H160,
+    pub fallback_swap_contract: Option<H160>,
 }
 
 #[derive(Clone, Debug)]
@@ -843,6 +855,32 @@ impl SwapOps for Qrc20Coin {
 
     fn extract_secret(&self, secret_hash: &[u8], spend_tx: &[u8]) -> Result<Vec<u8>, String> {
         self.extract_secret_impl(secret_hash, spend_tx)
+    }
+
+    fn negotiate_swap_contract_addr(
+        &self,
+        other_side_address: Option<&[u8]>,
+    ) -> Result<Option<BytesJson>, MmError<NegotiateSwapContractAddrErr>> {
+        match other_side_address {
+            Some(bytes) => {
+                if bytes.len() != 20 {
+                    return MmError::err(NegotiateSwapContractAddrErr::InvalidOtherAddrLen(bytes.into()));
+                }
+                let other_addr = H160::from(bytes);
+                if other_addr == self.swap_contract_address {
+                    return Ok(Some(self.swap_contract_address.to_vec().into()));
+                }
+
+                if Some(other_addr) == self.fallback_swap_contract {
+                    return Ok(self.fallback_swap_contract.map(|addr| addr.to_vec().into()));
+                }
+                MmError::err(NegotiateSwapContractAddrErr::UnexpectedOtherAddr(bytes.into()))
+            },
+            None => self
+                .fallback_swap_contract
+                .map(|addr| Some(addr.to_vec().into()))
+                .ok_or_else(|| MmError::new(NegotiateSwapContractAddrErr::NoOtherAddrAndNoFallback)),
+        }
     }
 }
 

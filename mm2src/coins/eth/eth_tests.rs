@@ -17,7 +17,11 @@ fn check_sum(addr: &str, expected: &str) {
     assert_eq!(expected, actual);
 }
 
-fn eth_coin_for_test(coin_type: EthCoinType, urls: Vec<String>) -> (MmArc, EthCoin) {
+fn eth_coin_for_test(
+    coin_type: EthCoinType,
+    urls: Vec<String>,
+    fallback_swap_contract: Option<Address>,
+) -> (MmArc, EthCoin) {
     let key_pair = KeyPair::from_secret_slice(
         &hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap(),
     )
@@ -44,6 +48,7 @@ fn eth_coin_for_test(coin_type: EthCoinType, urls: Vec<String>) -> (MmArc, EthCo
         my_address: key_pair.address(),
         key_pair,
         swap_contract_address: Address::from("0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94"),
+        fallback_swap_contract,
         ticker,
         web3_instances: vec![Web3Instance {
             web3: web3.clone(),
@@ -203,6 +208,7 @@ fn send_and_refund_erc20_payment() {
         my_address: key_pair.address(),
         key_pair,
         swap_contract_address: Address::from("0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94"),
+        fallback_swap_contract: None,
         web3_instances: vec![Web3Instance {
             web3: web3.clone(),
             is_parity: true,
@@ -261,6 +267,7 @@ fn send_and_refund_eth_payment() {
         my_address: key_pair.address(),
         key_pair,
         swap_contract_address: Address::from("0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94"),
+        fallback_swap_contract: None,
         web3_instances: vec![Web3Instance {
             web3: web3.clone(),
             is_parity: true,
@@ -328,6 +335,7 @@ fn test_nonce_several_urls() {
         my_address: key_pair.address(),
         key_pair,
         swap_contract_address: Address::from("0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94"),
+        fallback_swap_contract: None,
         web3_instances: vec![
             Web3Instance {
                 web3: web3_infura.clone(),
@@ -381,6 +389,7 @@ fn test_wait_for_payment_spend_timeout() {
         my_address: key_pair.address(),
         key_pair,
         swap_contract_address: Address::from("0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94"),
+        fallback_swap_contract: None,
         ticker: "ETH".into(),
         web3_instances: vec![Web3Instance {
             web3: web3.clone(),
@@ -436,6 +445,7 @@ fn test_search_for_swap_tx_spend_was_spent() {
         my_address: key_pair.address(),
         key_pair,
         swap_contract_address,
+        fallback_swap_contract: None,
         ticker: "ETH".into(),
         web3_instances: vec![Web3Instance {
             web3: web3.clone(),
@@ -506,6 +516,7 @@ fn test_search_for_swap_tx_spend_was_refunded() {
         my_address: key_pair.address(),
         key_pair,
         swap_contract_address,
+        fallback_swap_contract: None,
         ticker: "ETH".into(),
         web3_instances: vec![Web3Instance {
             web3: web3.clone(),
@@ -554,7 +565,7 @@ fn test_search_for_swap_tx_spend_was_refunded() {
 
 #[test]
 fn test_withdraw_impl_manual_fee() {
-    let (ctx, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://dummy.dummy".into()]);
+    let (ctx, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://dummy.dummy".into()], None);
 
     EthCoin::my_balance.mock_safe(|_| {
         let balance = wei_from_big_decimal(&1000000000.into(), 18).unwrap();
@@ -595,6 +606,7 @@ fn test_withdraw_impl_fee_details() {
             token_addr: Address::from("0x2b294F029Fde858b2c62184e8390591755521d8E"),
         },
         vec!["http://dummy.dummy".into()],
+        None,
     );
 
     EthCoin::my_balance.mock_safe(|_| {
@@ -636,7 +648,7 @@ fn test_nonce_lock() {
 
     // send several transactions concurrently to check that they are not using same nonce
     // using real ETH dev node
-    let (ctx, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://195.201.0.6:8565".into()]);
+    let (ctx, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://195.201.0.6:8565".into()], None);
     let mut futures = vec![];
     for _ in 0..5 {
         futures.push(sign_and_send_transaction_impl(
@@ -690,7 +702,7 @@ fn get_sender_trade_preimage() {
 
     EthCoinImpl::get_gas_price.mock_safe(|_| MockResult::Return(Box::new(futures01::future::ok(GAS_PRICE.into()))));
 
-    let (_ctx, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://dummy.dummy".into()]);
+    let (_ctx, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://dummy.dummy".into()], None);
 
     let actual = coin
         .get_sender_trade_fee(
@@ -750,6 +762,7 @@ fn get_erc20_sender_trade_preimage() {
             token_addr: Address::default(),
         },
         vec!["http://dummy.dummy".into()],
+        None,
     );
 
     // value is allowed
@@ -803,7 +816,7 @@ fn get_erc20_sender_trade_preimage() {
 fn get_receiver_trade_preimage() {
     EthCoinImpl::get_gas_price.mock_safe(|_| MockResult::Return(Box::new(futures01::future::ok(GAS_PRICE.into()))));
 
-    let (_ctx, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://dummy.dummy".into()]);
+    let (_ctx, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://dummy.dummy".into()], None);
     let amount = u256_to_big_decimal((150_000 * GAS_PRICE).into(), 18).expect("!u256_to_big_decimal");
     let expected_fee = TradeFee {
         coin: "ETH".to_owned(),
@@ -837,7 +850,7 @@ fn test_get_fee_to_send_taker_fee() {
 
     let dex_fee_amount = u256_to_big_decimal(DEX_FEE_AMOUNT.into(), 18).expect("!u256_to_big_decimal");
 
-    let (_ctx, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://dummy.dummy".into()]);
+    let (_ctx, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://dummy.dummy".into()], None);
     let actual = coin
         .get_fee_to_send_taker_fee(dex_fee_amount.clone(), FeeApproxStage::WithoutApprox)
         .wait()
@@ -850,6 +863,7 @@ fn test_get_fee_to_send_taker_fee() {
             token_addr: Address::from("0xaD22f63404f7305e4713CcBd4F296f34770513f4"),
         },
         vec!["http://dummy.dummy".into()],
+        None,
     );
     let actual = coin
         .get_fee_to_send_taker_fee(dex_fee_amount.clone(), FeeApproxStage::WithoutApprox)
@@ -876,6 +890,7 @@ fn test_get_fee_to_send_taker_fee_insufficient_balance() {
             token_addr: Address::from("0xaD22f63404f7305e4713CcBd4F296f34770513f4"),
         },
         vec!["http://eth1.cipig.net:8555".into()],
+        None,
     );
     let dex_fee_amount = u256_to_big_decimal(DEX_FEE_AMOUNT.into(), 18).expect("!u256_to_big_decimal");
 
@@ -892,7 +907,7 @@ fn test_get_fee_to_send_taker_fee_insufficient_balance() {
 
 #[test]
 fn validate_dex_fee_invalid_sender_eth() {
-    let (_ctx, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://eth1.cipig.net:8555".into()]);
+    let (_ctx, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://eth1.cipig.net:8555".into()], None);
     // the real dex fee sent on mainnet
     // https://etherscan.io/tx/0x7e9ca16c85efd04ee5e31f2c1914b48f5606d6f9ce96ecce8c96d47d6857278f
     let tx = coin
@@ -921,6 +936,7 @@ fn validate_dex_fee_invalid_sender_erc() {
             token_addr: "0xa1d6df714f91debf4e0802a542e13067f31b8262".into(),
         },
         vec!["http://eth1.cipig.net:8555".into()],
+        None,
     );
     // the real dex fee sent on mainnet
     // https://etherscan.io/tx/0xd6403b41c79f9c9e9c83c03d920ee1735e7854d85d94cef48d95dfeca95cd600
@@ -950,7 +966,7 @@ fn sender_compressed_pub(tx: &SignedEthTx) -> [u8; 33] {
 
 #[test]
 fn validate_dex_fee_eth_confirmed_before_min_block() {
-    let (_ctx, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://eth1.cipig.net:8555".into()]);
+    let (_ctx, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://eth1.cipig.net:8555".into()], None);
     // the real dex fee sent on mainnet
     // https://etherscan.io/tx/0x7e9ca16c85efd04ee5e31f2c1914b48f5606d6f9ce96ecce8c96d47d6857278f
     let tx = coin
@@ -981,6 +997,7 @@ fn validate_dex_fee_erc_confirmed_before_min_block() {
             token_addr: "0xa1d6df714f91debf4e0802a542e13067f31b8262".into(),
         },
         vec!["http://eth1.cipig.net:8555".into()],
+        None,
     );
     // the real dex fee sent on mainnet
     // https://etherscan.io/tx/0xd6403b41c79f9c9e9c83c03d920ee1735e7854d85d94cef48d95dfeca95cd600
@@ -1003,4 +1020,68 @@ fn validate_dex_fee_erc_confirmed_before_min_block() {
         .wait()
         .unwrap_err();
     assert!(validate_err.contains("confirmed before min_block"));
+}
+
+#[test]
+fn test_negotiate_swap_contract_addr_no_fallback() {
+    let (_, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://eth1.cipig.net:8555".into()], None);
+
+    let input = None;
+    let error = coin.negotiate_swap_contract_addr(input).unwrap_err().into_inner();
+    assert_eq!(NegotiateSwapContractAddrErr::NoOtherAddrAndNoFallback, error);
+
+    let slice: &[u8] = &[1; 1];
+    let error = coin.negotiate_swap_contract_addr(Some(slice)).unwrap_err().into_inner();
+    assert_eq!(
+        NegotiateSwapContractAddrErr::InvalidOtherAddrLen(slice.to_vec().into()),
+        error
+    );
+
+    let slice: &[u8] = &[1; 20];
+    let error = coin.negotiate_swap_contract_addr(Some(slice)).unwrap_err().into_inner();
+    assert_eq!(
+        NegotiateSwapContractAddrErr::UnexpectedOtherAddr(slice.to_vec().into()),
+        error
+    );
+
+    let slice: &[u8] = coin.swap_contract_address.as_ref();
+    let result = coin.negotiate_swap_contract_addr(Some(slice)).unwrap();
+    assert_eq!(Some(slice.to_vec().into()), result);
+}
+
+#[test]
+fn test_negotiate_swap_contract_addr_has_fallback() {
+    let fallback = "0x8500AFc0bc5214728082163326C2FF0C73f4a871".into();
+
+    let (_, coin) = eth_coin_for_test(
+        EthCoinType::Eth,
+        vec!["http://eth1.cipig.net:8555".into()],
+        Some(fallback),
+    );
+
+    let input = None;
+    let result = coin.negotiate_swap_contract_addr(input).unwrap();
+    assert_eq!(Some(fallback.to_vec().into()), result);
+
+    let slice: &[u8] = &[1; 1];
+    let error = coin.negotiate_swap_contract_addr(Some(slice)).unwrap_err().into_inner();
+    assert_eq!(
+        NegotiateSwapContractAddrErr::InvalidOtherAddrLen(slice.to_vec().into()),
+        error
+    );
+
+    let slice: &[u8] = &[1; 20];
+    let error = coin.negotiate_swap_contract_addr(Some(slice)).unwrap_err().into_inner();
+    assert_eq!(
+        NegotiateSwapContractAddrErr::UnexpectedOtherAddr(slice.to_vec().into()),
+        error
+    );
+
+    let slice: &[u8] = coin.swap_contract_address.as_ref();
+    let result = coin.negotiate_swap_contract_addr(Some(slice)).unwrap();
+    assert_eq!(Some(slice.to_vec().into()), result);
+
+    let slice: &[u8] = fallback.as_ref();
+    let result = coin.negotiate_swap_contract_addr(Some(slice)).unwrap();
+    assert_eq!(Some(fallback.to_vec().into()), result);
 }

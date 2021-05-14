@@ -5,9 +5,10 @@ use super::utxo_standard::UtxoStandardCoin;
 use crate::utxo::utxo_common::big_decimal_from_sat_unsigned;
 use crate::utxo::{UtxoCommonOps, UtxoTx};
 use crate::{BalanceFut, CoinBalance, FeeApproxStage, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin,
-            SwapOps, TradeFee, TradePreimageFut, TradePreimageValue, TransactionEnum, TransactionFut,
-            ValidateAddressResult, WithdrawFut, WithdrawRequest};
+            NegotiateSwapContractAddrErr, SwapOps, TradeFee, TradePreimageFut, TradePreimageValue, TransactionEnum,
+            TransactionFut, ValidateAddressResult, WithdrawFut, WithdrawRequest};
 use common::mm_ctx::MmArc;
+use common::mm_error::MmError;
 use common::mm_number::{BigDecimal, MmNumber};
 use futures::compat::Future01CompatExt;
 use futures::{FutureExt, TryFutureExt};
@@ -360,6 +361,13 @@ impl SwapOps for SlpToken {
     }
 
     fn extract_secret(&self, secret_hash: &[u8], spend_tx: &[u8]) -> Result<Vec<u8>, String> { unimplemented!() }
+
+    fn negotiate_swap_contract_addr(
+        &self,
+        other_side_address: Option<&[u8]>,
+    ) -> Result<Option<BytesJson>, MmError<NegotiateSwapContractAddrErr>> {
+        Ok(None)
+    }
 }
 
 impl MmCoin for SlpToken {
