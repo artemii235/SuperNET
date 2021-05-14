@@ -14,7 +14,7 @@ pub async fn electrum_client_for_test(servers: &[&str]) -> ElectrumClient {
         client
             .add_server(&ElectrumRpcRequest {
                 url: server.to_string(),
-                protocol: ElectrumProtocol::SSL,
+                protocol: ElectrumProtocol::WSS,
                 disable_cert_verification: false,
             })
             .await

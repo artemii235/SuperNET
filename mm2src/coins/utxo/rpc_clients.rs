@@ -968,6 +968,20 @@ pub enum ElectrumProtocol {
     TCP,
     /// SSL/TLS
     SSL,
+    /// Insecure WebSocket.
+    WS,
+    /// Secure WebSocket.
+    WSS,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Default for ElectrumProtocol {
+    fn default() -> Self { ElectrumProtocol::TCP }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Default for ElectrumProtocol {
+    fn default() -> Self { ElectrumProtocol::WS }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -988,15 +1002,20 @@ pub struct ElectrumRpcRequest {
     pub disable_cert_verification: bool,
 }
 
-impl Default for ElectrumProtocol {
-    fn default() -> Self { ElectrumProtocol::TCP }
-}
-
 /// Electrum client configuration
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, Serialize)]
 enum ElectrumConfig {
     TCP,
     SSL { dns_name: String, skip_validation: bool },
+}
+
+/// Electrum client configuration
+#[cfg(target_arch = "wasm32")]
+#[derive(Clone, Debug, Serialize)]
+enum ElectrumConfig {
+    WS,
+    WSS,
 }
 
 fn addr_to_socket_addr(input: &str) -> Result<SocketAddr, String> {
@@ -1032,6 +1051,9 @@ pub fn spawn_electrum(
                 skip_validation: req.disable_cert_verification,
             }
         },
+        ElectrumProtocol::WS | ElectrumProtocol::WSS => {
+            return ERR!("'ws' and 'wss' protocols are not supported yet. Consider using 'TCP' or 'SSL'")
+        },
     };
 
     Ok(electrum_connect(req.url.clone(), config, event_handlers))
@@ -1050,26 +1072,22 @@ pub fn spawn_electrum(
         return ERR!(
             "There has not to be a scheme in the url: {}. \
             'ws://' scheme is used by default. \
-            Consider using 'protocol: \"SSL\"' in the electrum request to switch to the 'wss://' scheme.",
+            Consider using 'protocol: \"WSS\"' in the electrum request to switch to the 'wss://' scheme.",
             url
         );
     }
 
     let config = match req.protocol {
-        ElectrumProtocol::TCP => {
+        ElectrumProtocol::WS => {
             url.insert_str(0, "ws://");
-            ElectrumConfig::TCP
+            ElectrumConfig::WS
         },
-        ElectrumProtocol::SSL => {
-            let host = uri
-                .host()
-                .ok_or(ERRL!("Couldn't retrieve host from addr {}", req.url))?;
+        ElectrumProtocol::WSS => {
             url.insert_str(0, "wss://");
-
-            ElectrumConfig::SSL {
-                dns_name: host.into(),
-                skip_validation: req.disable_cert_verification,
-            }
+            ElectrumConfig::WSS
+        },
+        ElectrumProtocol::TCP | ElectrumProtocol::SSL => {
+            return ERR!("'TCP' and 'SSL' are not supported in a browser. Please use 'WS' or 'WSS' protocols");
         },
     };
 
@@ -1089,8 +1107,6 @@ pub struct ElectrumConnection {
     shutdown_tx: Option<oneshot::Sender<()>>,
     /// Responses are stored here
     responses: Arc<AsyncMutex<HashMap<String, async_oneshot::Sender<JsonRpcResponse>>>>,
-    /// [Random] connection ID assigned by the WASM host
-    ri: i32,
     /// Selected protocol version. The value is initialized after the server.version RPC call.
     protocol_version: AsyncMutex<Option<f32>>,
 }
@@ -1993,7 +2009,6 @@ fn electrum_connect(
         tx,
         shutdown_tx: Some(shutdown_tx),
         responses,
-        ri: -1,
         protocol_version: AsyncMutex::new(None),
     }
 }
