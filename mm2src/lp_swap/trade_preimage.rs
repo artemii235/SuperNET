@@ -211,8 +211,8 @@ pub enum TradePreimageRpcError {
     },
     #[display(
         fmt = "The volume {} of the {} coin less than minimum transaction amount {}",
-        coin,
         volume,
+        coin,
         threshold
     )]
     VolumeTooLow {

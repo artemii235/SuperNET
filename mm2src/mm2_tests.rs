@@ -1408,7 +1408,7 @@ fn test_withdraw_and_send() {
     assert!(res.error.contains("Invalid address checksum"));
 
     // must not allow to withdraw too small amount 0.000005 (less than 0.00001 dust)
-    let small_amount = BigDecimal::from(1) / BigDecimal::from(200000);
+    let small_amount = MmNumber::from("0.000005").to_decimal();
     let withdraw = block_on(mm_alice.rpc(json! ({
         "userpass": mm_alice.userpass,
         "mmrpc": "2.0",
@@ -1424,9 +1424,13 @@ fn test_withdraw_and_send() {
 
     assert!(withdraw.0.is_client_error(), "MORTY withdraw: {}", withdraw.1);
     log!("error: "[withdraw.1]);
-    let error: RpcErrorResponse<withdraw_error::AmountIsTooSmall> = json::from_str(&withdraw.1).unwrap();
-    let expected_error = withdraw_error::AmountIsTooSmall { amount: small_amount };
-    assert_eq!(error.error_type, "AmountIsTooSmall");
+    let error: RpcErrorResponse<withdraw_error::AmountTooLow> = json::from_str(&withdraw.1).unwrap();
+    let threshold = MmNumber::from("0.00001").to_decimal();
+    let expected_error = withdraw_error::AmountTooLow {
+        amount: small_amount,
+        threshold,
+    };
+    assert_eq!(error.error_type, "AmountTooLow");
     assert_eq!(error.error_data, Some(expected_error));
 
     block_on(mm_alice.stop()).unwrap();
@@ -4501,40 +4505,6 @@ fn test_qrc20_withdraw_error() {
     ));
     let balance = electrum_json["balance"].as_str().unwrap();
     assert_eq!(balance, "10");
-
-    // try to transfer too low amount
-    let withdraw = block_on(mm.rpc(json! ({
-        "userpass": mm.userpass,
-        "method": "withdraw",
-        "coin": "QRC20",
-        "to": "qHmJ3KA6ZAjR9wGjpFASn4gtUSeFAqdZgs",
-        "amount": 0,
-    })))
-    .unwrap();
-    assert!(
-        withdraw.0.is_server_error(),
-        "withdraw should have failed, but got {:?}",
-        withdraw
-    );
-    log!([withdraw.1]);
-    assert!(withdraw.1.contains("The amount 0 is too small"));
-
-    // try to transfer amount with more than 8 decimals
-    let withdraw = block_on(mm.rpc(json! ({
-        "userpass": mm.userpass,
-        "method": "withdraw",
-        "coin": "QRC20",
-        "to": "qHmJ3KA6ZAjR9wGjpFASn4gtUSeFAqdZgs",
-        "amount": "0.0000000001",
-    })))
-    .unwrap();
-    assert!(
-        withdraw.0.is_server_error(),
-        "withdraw should have failed, but got {:?}",
-        withdraw
-    );
-    log!([withdraw.1]);
-    assert!(withdraw.1.contains("The amount 0.0000000001 is too small"));
 
     // try to transfer more than balance
     let withdraw = block_on(mm.rpc(json! ({

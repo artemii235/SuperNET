@@ -28,6 +28,7 @@ async fn test_send() {
         my_address: key_pair.address(),
         key_pair,
         swap_contract_address: Address::from("0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94"),
+        fallback_swap_contract: None,
         web3_instances: vec![Web3Instance {
             web3: web3.clone(),
             is_parity: true,

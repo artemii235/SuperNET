@@ -216,7 +216,7 @@ pub trait UtxoRpcClientOps: fmt::Debug + Send + Sync + 'static {
 
     fn send_raw_transaction(&self, tx: BytesJson) -> RpcRes<H256Json>;
 
-    fn get_transaction_bytes(&self, txid: H256Json) -> RpcRes<BytesJson>;
+    fn get_transaction_bytes(&self, txid: H256Json) -> UtxoRpcFut<BytesJson>;
 
     fn get_verbose_transaction(&self, txid: H256Json) -> RpcRes<RpcTransaction>;
 
@@ -570,7 +570,9 @@ impl UtxoRpcClientOps for NativeClient {
     /// https://developer.bitcoin.org/reference/rpc/sendrawtransaction
     fn send_raw_transaction(&self, tx: BytesJson) -> RpcRes<H256Json> { rpc_func!(self, "sendrawtransaction", tx) }
 
-    fn get_transaction_bytes(&self, txid: H256Json) -> RpcRes<BytesJson> { self.get_raw_transaction_bytes(txid) }
+    fn get_transaction_bytes(&self, txid: H256Json) -> UtxoRpcFut<BytesJson> {
+        Box::new(self.get_raw_transaction_bytes(txid).map_to_mm_fut(UtxoRpcError::from))
+    }
 
     fn get_verbose_transaction(&self, txid: H256Json) -> RpcRes<RpcTransaction> {
         self.get_raw_transaction_verbose(txid)
@@ -1576,9 +1578,9 @@ impl UtxoRpcClientOps for ElectrumClient {
 
     /// https://electrumx.readthedocs.io/en/latest/protocol-methods.html#blockchain-transaction-get
     /// returns transaction bytes by default
-    fn get_transaction_bytes(&self, txid: H256Json) -> RpcRes<BytesJson> {
+    fn get_transaction_bytes(&self, txid: H256Json) -> UtxoRpcFut<BytesJson> {
         let verbose = false;
-        rpc_func!(self, "blockchain.transaction.get", txid, verbose)
+        Box::new(rpc_func!(self, "blockchain.transaction.get", txid, verbose).map_to_mm_fut(UtxoRpcError::from))
     }
 
     /// https://electrumx.readthedocs.io/en/latest/protocol-methods.html#blockchain-transaction-get

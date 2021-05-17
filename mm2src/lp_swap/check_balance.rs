@@ -201,8 +201,8 @@ pub enum CheckBalanceError {
     },
     #[display(
         fmt = "The volume {} of the {} coin less than minimum transaction amount {}",
-        coin,
         volume,
+        coin,
         threshold
     )]
     VolumeTooLow {

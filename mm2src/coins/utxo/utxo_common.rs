@@ -2426,13 +2426,20 @@ where
     };
     // record secret hash to blockchain too making it impossible to lose
     // lock time may be easily brute forced so it is not mandatory to record it
-    let secret_hash_op_return_script = Builder::default()
-        .push_opcode(Opcode::OP_RETURN)
-        .push_bytes(secret_hash)
-        .into_bytes();
-    let secret_hash_op_return_out = TransactionOutput {
+    let mut op_return_builder = Builder::default().push_opcode(Opcode::OP_RETURN);
+
+    // add the full redeem script to the OP_RETURN for ARRR to simplify the validation for the daemon
+    op_return_builder = if coin.as_ref().conf.ticker == "ARRR" {
+        op_return_builder.push_data(&redeem_script)
+    } else {
+        op_return_builder.push_bytes(secret_hash)
+    };
+
+    let op_return_script = op_return_builder.into_bytes();
+
+    let op_return_out = TransactionOutput {
         value: 0,
-        script_pubkey: secret_hash_op_return_script,
+        script_pubkey: op_return_script,
     };
 
     let payment_address = Address {
@@ -2443,12 +2450,12 @@ where
     };
     let result = SwapPaymentOutputsResult {
         payment_address,
-        outputs: vec![htlc_out, secret_hash_op_return_out],
+        outputs: vec![htlc_out, op_return_out],
     };
     Ok(result)
 }
 
-fn payment_script(time_lock: u32, secret_hash: &[u8], pub_0: &Public, pub_1: &Public) -> Script {
+pub fn payment_script(time_lock: u32, secret_hash: &[u8], pub_0: &Public, pub_1: &Public) -> Script {
     let builder = Builder::default();
     builder
         .push_opcode(Opcode::OP_IF)
@@ -2470,8 +2477,26 @@ fn payment_script(time_lock: u32, secret_hash: &[u8], pub_0: &Public, pub_1: &Pu
         .into_script()
 }
 
+pub fn dex_fee_script(uuid: [u8; 16], time_lock: u32, watcher_pub: &Public, sender_pub: &Public) -> Script {
+    let builder = Builder::default();
+    builder
+        .push_bytes(&uuid)
+        .push_opcode(Opcode::OP_DROP)
+        .push_opcode(Opcode::OP_IF)
+        .push_bytes(&time_lock.to_le_bytes())
+        .push_opcode(Opcode::OP_CHECKLOCKTIMEVERIFY)
+        .push_opcode(Opcode::OP_DROP)
+        .push_bytes(sender_pub)
+        .push_opcode(Opcode::OP_CHECKSIG)
+        .push_opcode(Opcode::OP_ELSE)
+        .push_bytes(watcher_pub)
+        .push_opcode(Opcode::OP_CHECKSIG)
+        .push_opcode(Opcode::OP_ENDIF)
+        .into_script()
+}
+
 /// Creates signed input spending hash time locked p2sh output
-fn p2sh_spend(
+pub fn p2sh_spend(
     signer: &TransactionInputSigner,
     input_index: usize,
     key_pair: &KeyPair,

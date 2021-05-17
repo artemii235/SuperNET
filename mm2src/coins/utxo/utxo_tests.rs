@@ -2,11 +2,12 @@ use super::rpc_clients::{ElectrumProtocol, ListSinceBlockRes, NetworkInfo};
 use super::*;
 use crate::utxo::qtum::{qtum_coin_from_conf_and_request, QtumCoin};
 use crate::utxo::rpc_clients::{GetAddressInfoRes, UtxoRpcClientOps, ValidateAddressRes, VerboseBlock};
-use crate::utxo::utxo_common::{generate_transaction, UtxoArcBuilder};
+use crate::utxo::utxo_common::{dex_fee_script, generate_transaction, p2sh_spending_tx, UtxoArcBuilder};
 use crate::utxo::utxo_standard::{utxo_standard_coin_from_conf_and_request, UtxoStandardCoin};
 #[cfg(not(target_arch = "wasm32"))] use crate::WithdrawFee;
 use crate::{CoinBalance, SwapOps, TradePreimageValue};
 use bigdecimal::BigDecimal;
+use chain::constants::SEQUENCE_FINAL;
 use chain::OutPoint;
 use common::mm_ctx::MmCtxBuilder;
 use common::privkey::key_pair_from_seed;
@@ -15,6 +16,7 @@ use futures::future::join_all;
 use gstuff::now_ms;
 use mocktopus::mocking::*;
 use rpc::v1::types::H256 as H256Json;
+use script::Opcode;
 use serialization::deserialize;
 use std::thread;
 use std::time::Duration;
@@ -2462,9 +2464,13 @@ fn mint_slp_token() {
     println!("{}", balance.spendable);
 
     let output = slp_genesis_output(SlpTokenType::Fungible, "ADEX", "ADEX", "", "", 8, None, 1000_0000_0000);
+    let script_pubkey = output.script.serialize().unwrap().to_vec().into();
+
+    println!("{}", hex::encode(&script_pubkey));
+
     let op_return_output = TransactionOutput {
         value: output.value,
-        script_pubkey: output.script.serialize().unwrap().to_vec().into(),
+        script_pubkey,
     };
     let mint_output = TransactionOutput {
         value: 546,
@@ -2558,4 +2564,106 @@ fn btc_mtp() {
         .wait()
         .unwrap();
     assert_eq!(mtp, 1620019527);
+}
+
+#[test]
+#[ignore]
+fn send_and_refund_dex_fee() {
+    let electrum = electrum_client_for_test(&[
+        "electrum1.cipig.net:10017",
+        "electrum2.cipig.net:10017",
+        "electrum3.cipig.net:10017",
+    ]);
+
+    let keypair = key_pair_from_seed("dex fee script test").unwrap();
+    let coin = utxo_coin_for_test(electrum.into(), Some("dex fee script test"));
+    println!("{}", coin.my_address().unwrap());
+    println!("{:?}", coin.my_balance().wait().unwrap());
+
+    let lock_time = 1619582440;
+    let dex_fee_script = dex_fee_script([0; 16], lock_time, keypair.public(), keypair.public());
+    let output = TransactionOutput {
+        value: 10000,
+        script_pubkey: Builder::build_p2sh(&dhash160(&dex_fee_script)).into(),
+    };
+    let transaction = block_on(send_outputs_from_my_address_impl(coin.clone(), vec![output])).unwrap();
+    println!("tx hash {:?}", transaction.hash().reversed());
+
+    let script_data = Builder::default().push_opcode(Opcode::OP_1).into_script();
+    let output = TransactionOutput {
+        value: 9000,
+        script_pubkey: Builder::build_p2pkh(&keypair.public().address_hash()).into(),
+    };
+    let refund = p2sh_spending_tx(
+        &coin,
+        transaction,
+        dex_fee_script.into(),
+        vec![output],
+        script_data,
+        SEQUENCE_FINAL - 1,
+        lock_time,
+    )
+    .unwrap();
+
+    let tx = serialize(&refund);
+    let tx_hash = coin.send_raw_tx(&hex::encode(tx.take())).wait().unwrap();
+    println!("refund {}", tx_hash);
+}
+
+#[test]
+#[ignore]
+fn send_and_redeem_dex_fee() {
+    let electrum = electrum_client_for_test(&[
+        "electrum1.cipig.net:10017",
+        "electrum2.cipig.net:10017",
+        "electrum3.cipig.net:10017",
+    ]);
+
+    let keypair = key_pair_from_seed("dex fee script test").unwrap();
+    let coin = utxo_coin_for_test(electrum.into(), Some("dex fee script test"));
+    println!("{}", coin.my_address().unwrap());
+    println!("{:?}", coin.my_balance().wait().unwrap());
+
+    let lock_time = 1619582440;
+    let dex_fee_script = dex_fee_script([0; 16], lock_time, keypair.public(), keypair.public());
+    let output = TransactionOutput {
+        value: 10000,
+        script_pubkey: Builder::build_p2sh(&dhash160(&dex_fee_script)).into(),
+    };
+
+    let op_return = Builder::default()
+        .push_opcode(Opcode::OP_RETURN)
+        .push_data(&dex_fee_script)
+        .into_bytes();
+    let op_return_output = TransactionOutput {
+        value: 0,
+        script_pubkey: op_return,
+    };
+
+    let transaction = block_on(send_outputs_from_my_address_impl(coin.clone(), vec![
+        output,
+        op_return_output,
+    ]))
+    .unwrap();
+    println!("tx hash {:?}", transaction.hash().reversed());
+
+    let script_data = Builder::default().push_opcode(Opcode::OP_0).into_script();
+    let output = TransactionOutput {
+        value: 9000,
+        script_pubkey: Builder::build_p2pkh(&keypair.public().address_hash()).into(),
+    };
+    let refund = p2sh_spending_tx(
+        &coin,
+        transaction,
+        dex_fee_script.into(),
+        vec![output],
+        script_data,
+        SEQUENCE_FINAL,
+        lock_time,
+    )
+    .unwrap();
+
+    let tx = serialize(&refund);
+    let tx_hash = coin.send_raw_tx(&hex::encode(tx.take())).wait().unwrap();
+    println!("redeem {}", tx_hash);
 }

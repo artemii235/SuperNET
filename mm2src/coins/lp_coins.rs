@@ -96,6 +96,8 @@ use qrc20::{qrc20_coin_from_conf_and_request, Qrc20Coin, Qrc20FeeDetails};
 pub mod test_coin;
 pub use test_coin::TestCoin;
 
+#[cfg(not(target_arch = "wasm32"))] pub mod z_coin;
+
 pub type BalanceResult<T> = Result<T, MmError<BalanceError>>;
 pub type BalanceFut<T> = Box<dyn Future<Item = T, Error = MmError<BalanceError>> + Send>;
 pub type NumConversResult<T> = Result<T, MmError<NumConversError>>;
@@ -143,6 +145,15 @@ pub enum CanRefundHtlc {
     CanRefundNow,
     // returns the number of seconds to sleep before HTLC becomes refundable
     HaveToWait(u64),
+}
+
+#[derive(Debug, Display, Eq, PartialEq)]
+pub enum NegotiateSwapContractAddrErr {
+    #[display(fmt = "InvalidOtherAddrLen, addr supplied {:?}", _0)]
+    InvalidOtherAddrLen(BytesJson),
+    #[display(fmt = "UnexpectedOtherAddr, addr supplied {:?}", _0)]
+    UnexpectedOtherAddr(BytesJson),
+    NoOtherAddrAndNoFallback,
 }
 
 /// Swap operations (mostly based on the Hash/Time locked transactions implemented by coin wallets).
@@ -275,6 +286,11 @@ pub trait SwapOps {
         };
         Box::new(futures01::future::ok(result))
     }
+
+    fn negotiate_swap_contract_addr(
+        &self,
+        other_side_address: Option<&[u8]>,
+    ) -> Result<Option<BytesJson>, MmError<NegotiateSwapContractAddrErr>>;
 }
 
 /// Operations that coins have independently from the MarketMaker.
@@ -613,8 +629,8 @@ pub enum WithdrawError {
     },
     #[display(fmt = "Balance is zero")]
     ZeroBalanceToWithdrawMax,
-    #[display(fmt = "The amount {} is too small", amount)]
-    AmountIsTooSmall { amount: BigDecimal },
+    #[display(fmt = "The amount {} is too small, required at least {}", amount, threshold)]
+    AmountTooLow { amount: BigDecimal, threshold: BigDecimal },
     #[display(fmt = "Invalid address: {}", _0)]
     InvalidAddress(String),
     #[display(fmt = "Invalid fee policy: {}", _0)]
@@ -632,7 +648,7 @@ impl HttpStatusCode for WithdrawError {
         match self {
             WithdrawError::NotSufficientBalance { .. }
             | WithdrawError::ZeroBalanceToWithdrawMax
-            | WithdrawError::AmountIsTooSmall { .. }
+            | WithdrawError::AmountTooLow { .. }
             | WithdrawError::InvalidAddress(_)
             | WithdrawError::InvalidFeePolicy(_)
             | WithdrawError::NoSuchCoin { .. } => StatusCode::BAD_REQUEST,
@@ -675,9 +691,10 @@ impl WithdrawError {
                 }
             },
             GenerateTxError::EmptyOutputs => WithdrawError::InternalError(gen_tx_err.to_string()),
-            GenerateTxError::OutputValueLessThanDust { value, .. } => {
+            GenerateTxError::OutputValueLessThanDust { value, dust } => {
                 let amount = big_decimal_from_sat_unsigned(value, decimals);
-                WithdrawError::AmountIsTooSmall { amount }
+                let threshold = big_decimal_from_sat_unsigned(dust, decimals);
+                WithdrawError::AmountTooLow { amount, threshold }
             },
             GenerateTxError::DeductFeeFromOutputFailed {
                 output_value, required, ..

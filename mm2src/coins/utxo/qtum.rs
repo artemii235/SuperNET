@@ -1,5 +1,6 @@
 use super::*;
-use crate::{eth, CanRefundHtlc, CoinBalance, SwapOps, TradePreimageValue, ValidateAddressResult, WithdrawFut};
+use crate::{eth, CanRefundHtlc, CoinBalance, NegotiateSwapContractAddrErr, SwapOps, TradePreimageValue,
+            ValidateAddressResult, WithdrawFut};
 use common::mm_metrics::MetricsArc;
 use common::mm_number::MmNumber;
 use ethereum_types::H160;
@@ -430,6 +431,13 @@ impl SwapOps for QtumCoin {
 
     fn can_refund_htlc(&self, locktime: u64) -> Box<dyn Future<Item = CanRefundHtlc, Error = String> + Send + '_> {
         utxo_common::can_refund_htlc(self, locktime)
+    }
+
+    fn negotiate_swap_contract_addr(
+        &self,
+        _other_side_address: Option<&[u8]>,
+    ) -> Result<Option<BytesJson>, MmError<NegotiateSwapContractAddrErr>> {
+        Ok(None)
     }
 }
 

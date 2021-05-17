@@ -4,9 +4,9 @@ use super::pubkey_banning::ban_pubkey_on_failed_swap;
 use super::trade_preimage::{TradePreimageRequest, TradePreimageRpcError, TradePreimageRpcResult};
 use super::{broadcast_my_swap_status, broadcast_swap_message_every, check_other_coin_balance_for_swap,
             dex_fee_amount_from_taker_coin, get_locked_amount, my_swap_file_path, my_swaps_dir, recv_swap_msg,
-            swap_topic, AtomicSwap, LockedAmount, MySwapInfo, NegotiationDataMsg, RecoveredSwap, RecoveredSwapAction,
-            SavedSwap, SavedTradeFee, SwapConfirmationsSettings, SwapError, SwapMsg, SwapsContext,
-            TransactionIdentifier, WAIT_CONFIRM_INTERVAL};
+            swap_topic, AtomicSwap, LockedAmount, MySwapInfo, NegotiationDataMsg, NegotiationDataV2, RecoveredSwap,
+            RecoveredSwapAction, SavedSwap, SavedTradeFee, SwapConfirmationsSettings, SwapError, SwapMsg,
+            SwapsContext, TransactionIdentifier, WAIT_CONFIRM_INTERVAL};
 
 use crate::mm2::lp_network::subscribe_to_topic;
 use crate::mm2::lp_ordermatch::{MakerOrderBuilder, OrderConfirmationsSettings};
@@ -97,6 +97,8 @@ fn save_my_maker_swap_event(ctx: &MmArc, swap: &MakerSwap, event: MakerSavedEven
 pub struct TakerNegotiationData {
     pub taker_payment_locktime: u64,
     pub taker_pubkey: H264Json,
+    pub maker_coin_swap_contract_addr: Option<BytesJson>,
+    pub taker_coin_swap_contract_addr: Option<BytesJson>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
@@ -189,6 +191,13 @@ impl MakerSwap {
                 self.taker_payment_lock
                     .store(data.taker_payment_locktime, Ordering::Relaxed);
                 self.w().other_persistent_pub = data.taker_pubkey.into();
+                if data.maker_coin_swap_contract_addr.is_some() {
+                    self.w().data.maker_coin_swap_contract_address = data.maker_coin_swap_contract_addr;
+                }
+
+                if data.taker_coin_swap_contract_addr.is_some() {
+                    self.w().data.taker_coin_swap_contract_address = data.taker_coin_swap_contract_addr;
+                }
             },
             MakerSwapEvent::NegotiateFailed(err) => self.errors.lock().push(err),
             MakerSwapEvent::TakerFeeValidated(tx) => self.w().taker_fee = Some(tx),
@@ -375,12 +384,14 @@ impl MakerSwap {
     }
 
     async fn negotiate(&self) -> Result<(Option<MakerSwapCommand>, Vec<MakerSwapEvent>), String> {
-        let maker_negotiation_data = SwapMsg::Negotiation(NegotiationDataMsg {
+        let maker_negotiation_data = SwapMsg::Negotiation(NegotiationDataMsg::V2(NegotiationDataV2 {
             started_at: self.r().data.started_at,
             payment_locktime: self.r().data.maker_payment_lock,
-            secret_hash: dhash160(&self.r().data.secret.0).take(),
+            secret_hash: dhash160(&self.r().data.secret.0).take().to_vec(),
             persistent_pubkey: self.my_persistent_pub.to_vec(),
-        });
+            maker_coin_swap_contract: self.maker_coin.swap_contract_address().map_or(vec![], |addr| addr.0),
+            taker_coin_swap_contract: self.taker_coin.swap_contract_address().map_or(vec![], |addr| addr.0),
+        }));
         const NEGOTIATION_TIMEOUT: u64 = 90;
 
         let send_abort_handle = broadcast_swap_message_every(
@@ -404,29 +415,55 @@ impl MakerSwap {
             },
         };
         drop(send_abort_handle);
-        let time_dif = (self.r().data.started_at as i64 - taker_data.started_at as i64).abs();
+        let time_dif = (self.r().data.started_at as i64 - taker_data.started_at() as i64).abs();
         if time_dif > 60 {
             return Ok((Some(MakerSwapCommand::Finish), vec![MakerSwapEvent::NegotiateFailed(
                 ERRL!("Started_at time_dif over 60 {}", time_dif).into(),
             )]));
         }
 
-        let expected_lock_time = taker_data.started_at + self.r().data.lock_duration;
-        if taker_data.payment_locktime != expected_lock_time {
+        let expected_lock_time = taker_data.started_at() + self.r().data.lock_duration;
+        if taker_data.payment_locktime() != expected_lock_time {
             return Ok((Some(MakerSwapCommand::Finish), vec![MakerSwapEvent::NegotiateFailed(
                 ERRL!(
                     "taker_data.payment_locktime {} not equal to expected {}",
-                    taker_data.payment_locktime,
+                    taker_data.payment_locktime(),
                     expected_lock_time
                 )
                 .into(),
             )]));
         }
 
+        let maker_coin_swap_contract_addr = match self
+            .maker_coin
+            .negotiate_swap_contract_addr(taker_data.maker_coin_swap_contract())
+        {
+            Ok(addr) => addr,
+            Err(e) => {
+                return Ok((Some(MakerSwapCommand::Finish), vec![MakerSwapEvent::NegotiateFailed(
+                    ERRL!("!maker_coin.negotiate_swap_contract_addr {}", e).into(),
+                )]))
+            },
+        };
+
+        let taker_coin_swap_contract_addr = match self
+            .taker_coin
+            .negotiate_swap_contract_addr(taker_data.taker_coin_swap_contract())
+        {
+            Ok(addr) => addr,
+            Err(e) => {
+                return Ok((Some(MakerSwapCommand::Finish), vec![MakerSwapEvent::NegotiateFailed(
+                    ERRL!("!taker_coin.negotiate_swap_contract_addr {}", e).into(),
+                )]))
+            },
+        };
+
         Ok((Some(MakerSwapCommand::WaitForTakerFee), vec![
             MakerSwapEvent::Negotiated(TakerNegotiationData {
-                taker_payment_locktime: taker_data.payment_locktime,
-                taker_pubkey: taker_data.persistent_pubkey.as_slice().into(),
+                taker_payment_locktime: taker_data.payment_locktime(),
+                taker_pubkey: taker_data.persistent_pubkey().into(),
+                maker_coin_swap_contract_addr,
+                taker_coin_swap_contract_addr,
             }),
         ]))
     }
