@@ -2039,6 +2039,18 @@ pub fn new_uuid() -> Uuid {
         .build()
 }
 
+/// Get only the first line of the error.
+/// Generally, the `JsValue` error contains the stack trace of an error.
+/// This function cuts off the stack trace.
+#[cfg(target_arch = "wasm32")]
+pub fn stringify_js_error(error: &JsValue) -> String {
+    format!("{:?}", error)
+        .lines()
+        .next()
+        .map(|e| e.to_owned())
+        .unwrap_or_default()
+}
+
 pub fn first_char_to_upper(input: &str) -> String {
     let mut v: Vec<char> = input.chars().collect();
     if let Some(c) = v.first_mut() {
