@@ -3628,6 +3628,12 @@ impl<'a> From<&'a Order> for OrderForRpc<'a> {
     }
 }
 
+#[derive(Serialize)]
+struct UuidParseError {
+    uuid: String,
+    error: String,
+}
+
 #[cfg(target_arch = "wasm32")]
 pub async fn orders_history_by_filter(_ctx: MmArc, _req: Json) -> Result<Response<Vec<u8>>, String> {
     let res = json!({
@@ -3646,13 +3652,25 @@ pub async fn orders_history_by_filter(ctx: MmArc, req: Json) -> Result<Response<
 
     let filter: MyOrdersFilter = try_s!(json::from_value(req));
     let db_result = try_s!(select_orders_by_filter(&ctx.sqlite_connection(), &filter, None));
+    let mut errors = vec![];
 
     let rpc_orders = if filter.include_details {
         let mut vec = Vec::with_capacity(db_result.result.len());
         for order in db_result.result.iter() {
             let uuid = match Uuid::parse_str(order.uuid.as_str()) {
                 Ok(uuid) => uuid,
-                Err(_) => continue,
+                Err(e) => {
+                    let warning = format!(
+                        "Order details for Uuid {} were skipped because uuid could not be parsed",
+                        order.uuid
+                    );
+                    log::warn!("{}, error {}", warning, e);
+                    errors.push(UuidParseError {
+                        uuid: order.uuid.clone(),
+                        error: warning,
+                    });
+                    continue;
+                },
             };
             let order_path = my_orders_history_dir(&ctx).join(order.uuid.clone() + ".json");
             let content = slurp(&order_path);
@@ -3691,6 +3709,7 @@ pub async fn orders_history_by_filter(ctx: MmArc, req: Json) -> Result<Response<
         "orders": db_result.result,
         "details": details,
         "found_records": db_result.total_count,
+        "errors": errors,
     }});
 
     let res = try_s!(json::to_vec(&json));
