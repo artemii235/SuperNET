@@ -3631,7 +3631,7 @@ impl<'a> From<&'a Order> for OrderForRpc<'a> {
 #[derive(Serialize)]
 struct UuidParseError {
     uuid: String,
-    error: String,
+    warning: String,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -3652,7 +3652,7 @@ pub async fn orders_history_by_filter(ctx: MmArc, req: Json) -> Result<Response<
 
     let filter: MyOrdersFilter = try_s!(json::from_value(req));
     let db_result = try_s!(select_orders_by_filter(&ctx.sqlite_connection(), &filter, None));
-    let mut errors = vec![];
+    let mut warnings = vec![];
 
     let rpc_orders = if filter.include_details {
         let mut vec = Vec::with_capacity(db_result.result.len());
@@ -3665,9 +3665,9 @@ pub async fn orders_history_by_filter(ctx: MmArc, req: Json) -> Result<Response<
                         order.uuid
                     );
                     log::warn!("{}, error {}", warning, e);
-                    errors.push(UuidParseError {
+                    warnings.push(UuidParseError {
                         uuid: order.uuid.clone(),
-                        error: warning,
+                        warning,
                     });
                     continue;
                 },
@@ -3698,18 +3698,14 @@ pub async fn orders_history_by_filter(ctx: MmArc, req: Json) -> Result<Response<
         vec![]
     };
 
-    let details = if !rpc_orders.is_empty() {
-        rpc_orders.iter().map(OrderForRpc::from).collect()
-    } else {
-        vec![]
-    };
+    let details: Vec<_> = rpc_orders.iter().map(OrderForRpc::from).collect();
 
     let json = json!({
     "result": {
         "orders": db_result.result,
         "details": details,
         "found_records": db_result.total_count,
-        "errors": errors,
+        "warnings": warnings,
     }});
 
     let res = try_s!(json::to_vec(&json));
