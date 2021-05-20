@@ -81,6 +81,8 @@ pub mod mm_number;
 pub mod privkey;
 pub mod seri;
 #[path = "patterns/state_machine.rs"] pub mod state_machine;
+
+#[cfg(target_arch = "wasm32")] pub mod wasm_indexed_db;
 #[cfg(target_arch = "wasm32")] pub mod wasm_rpc;
 #[cfg(target_arch = "wasm32")]
 #[path = "transport/wasm_ws.rs"]
@@ -2049,6 +2051,84 @@ pub fn stringify_js_error(error: &JsValue) -> String {
         .next()
         .map(|e| e.to_owned())
         .unwrap_or_default()
+}
+
+/// TODO split the trait into `UnwrapExt` and `UnwrapErrExt`. Consider porting it to non-wasm arch.
+#[cfg(target_arch = "wasm32")]
+pub trait WasmUnwrapExt<T, E> {
+    fn unwrap_wasm(self) -> T;
+    fn unwrap_err_wasm(self) -> E;
+    fn expect_wasm(self, description: &str) -> T;
+    fn expect_err_wasm(self, description: &str) -> E;
+}
+
+#[cfg(target_arch = "wasm32")]
+impl<T: fmt::Debug, E: fmt::Debug> WasmUnwrapExt<T, E> for Result<T, E> {
+    #[track_caller]
+    fn unwrap_wasm(self) -> T {
+        match self {
+            Ok(t) => t,
+            Err(e) => {
+                let location = std::panic::Location::caller();
+                let file = gstuff::filename(location.file());
+                let line = location.line();
+                let error = format!(
+                    "{}:{}] 'Result::unwrap_wasm' called on an 'Err' value: {:?}",
+                    file, line, e
+                );
+
+                wasm_bindgen::throw_str(&error)
+            },
+        }
+    }
+
+    #[track_caller]
+    fn unwrap_err_wasm(self) -> E {
+        match self {
+            Ok(t) => {
+                let location = std::panic::Location::caller();
+                let file = gstuff::filename(location.file());
+                let line = location.line();
+                let error = format!(
+                    "{}:{}] 'Result::unwrap_err_wasm' called on an 'Ok' value: {:?}",
+                    file, line, t
+                );
+
+                wasm_bindgen::throw_str(&error)
+            },
+            Err(e) => e,
+        }
+    }
+
+    #[track_caller]
+    fn expect_wasm(self, description: &str) -> T {
+        match self {
+            Ok(t) => t,
+            Err(e) => {
+                let location = std::panic::Location::caller();
+                let file = gstuff::filename(location.file());
+                let line = location.line();
+                let error = format!("{}:{}] {}: {:?}", file, line, description, e);
+
+                wasm_bindgen::throw_str(&error)
+            },
+        }
+    }
+
+    #[track_caller]
+    fn expect_err_wasm(self, description: &str) -> E {
+        match self {
+            Ok(t) => {
+                let location = std::panic::Location::caller();
+                let file = gstuff::filename(location.file());
+                let line = location.line();
+                let error = format!("{}:{}] {}: {:?}", file, line, description, t);
+
+                wasm_bindgen::throw_str(&error)
+            },
+            Err(e) => e,
+        }
+    }
 }
 
 pub fn first_char_to_upper(input: &str) -> String {
