@@ -4,7 +4,10 @@ use crate::{stringify_js_error, WasmUnwrapErrExt, WasmUnwrapExt};
 use derive_more::Display;
 use futures::channel::mpsc;
 use futures::StreamExt;
-use std::collections::HashSet;
+use js_sys::Array;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::Mutex;
 use wasm_bindgen::prelude::*;
@@ -18,10 +21,14 @@ lazy_static! {
 
 pub type OnUpgradeResult<T> = Result<T, MmError<OnUpgradeError>>;
 pub type InitDbResult<T> = Result<T, MmError<InitDbError>>;
-type Tables = Vec<Box<dyn TableSignature>>;
+pub type DbTransactionResult<T> = Result<T, MmError<DbTransactionError>>;
+
+type OnUpgradeNeededCb = Box<dyn FnOnce(&DbUpgrader, u32, u32) -> OnUpgradeResult<()>>;
 
 #[derive(Debug, Display, PartialEq)]
 pub enum InitDbError {
+    #[display(fmt = "Cannot initialize a Database without tables")]
+    EmptyTableList,
     #[display(fmt = "Database {} is open already", db_name)]
     DbIsOpenAlready { db_name: String },
     #[display(fmt = "It seems this browser doesn't support 'IndexedDb': {}", _0)]
@@ -57,26 +64,40 @@ pub enum OnUpgradeError {
     ErrorCreatingIndex { index: String, description: String },
 }
 
-pub struct IndexedDb {
-    db: IdbDatabase,
+#[derive(Debug, Display)]
+pub enum DbTransactionError {
+    ErrorCreatingTransaction(String),
+}
+
+pub struct IndexedDbBuilder {
     db_name: String,
-    tables: Tables,
+    db_version: u32,
+    tables: HashMap<String, OnUpgradeNeededCb>,
 }
 
-impl fmt::Debug for IndexedDb {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let tables: Vec<_> = self.tables.iter().map(|table| table.name()).collect();
-        write!(f, "IndexedDb {{ db_name: {:?}, tables: {:?} }}", self.db_name, tables)
+impl IndexedDbBuilder {
+    pub fn new(db_name: &str) -> IndexedDbBuilder {
+        IndexedDbBuilder {
+            db_name: db_name.to_owned(),
+            db_version: 1,
+            tables: HashMap::new(),
+        }
     }
-}
 
-/// Although wasm is currently single-threaded, we can implement the `Send` trait for `IndexedDb`,
-/// but it won't be safe when wasm becomes multi-threaded.
-unsafe impl Send for IndexedDb {}
+    pub fn with_version(mut self, db_version: u32) -> IndexedDbBuilder {
+        self.db_version = db_version;
+        self
+    }
 
-impl IndexedDb {
-    pub async fn init(db_name: &str, db_version: u32, tables: Tables) -> InitDbResult<Self> {
-        Self::check_if_db_is_not_open(db_name)?;
+    pub fn with_table<Table: TableSignature>(mut self) -> IndexedDbBuilder {
+        let on_upgrade_needed_cb = Box::new(Table::on_upgrade_needed);
+        self.tables.insert(Table::table_name().to_owned(), on_upgrade_needed_cb);
+        self
+    }
+
+    pub async fn init(self) -> InitDbResult<IndexedDb> {
+        Self::check_if_db_is_not_open(&self.db_name)?;
+        let (table_names, on_upgrade_needed_handlers) = Self::tables_into_parts(self.tables)?;
 
         let window = web_sys::window().expect("!window");
         let indexed_db = match window.indexed_db() {
@@ -85,7 +106,7 @@ impl IndexedDb {
             Err(e) => return MmError::err(InitDbError::NotSupported(stringify_js_error(&e))),
         };
 
-        let db_request = match indexed_db.open_with_u32(db_name, db_version) {
+        let db_request = match indexed_db.open_with_u32(&self.db_name, self.db_version) {
             Ok(r) => r,
             Err(e) => return MmError::err(InitDbError::InvalidVersion(stringify_js_error(&e))),
         };
@@ -99,19 +120,21 @@ impl IndexedDb {
         db_request.set_onsuccess(Some(onsuccess_closure.as_ref().unchecked_ref()));
         db_request.set_onupgradeneeded(Some(onupgradeneeded_closure.as_ref().unchecked_ref()));
 
+        let mut on_upgrade_needed_handlers = Some(on_upgrade_needed_handlers);
         while let Some(event) = rx.next().await {
             match event {
                 DbOpenEvent::Failed(e) => return MmError::err(InitDbError::OpeningError(stringify_js_error(&e))),
-                DbOpenEvent::UpgradeNeeded(event) => Self::on_upgrade_needed(event, &db_request, &tables)?,
+                DbOpenEvent::UpgradeNeeded(event) => {
+                    Self::on_upgrade_needed(event, &db_request, &mut on_upgrade_needed_handlers)?
+                },
                 DbOpenEvent::Success(_) => {
                     let db = Self::get_db_from_request(&db_request)?;
-                    let db_name = db_name.to_owned();
-                    Self::cache_open_db(db_name.clone());
+                    Self::cache_open_db(self.db_name.clone());
 
                     return Ok(IndexedDb {
                         db,
-                        db_name: db_name.to_owned(),
-                        tables,
+                        db_name: self.db_name,
+                        tables: table_names,
                     });
                 },
             }
@@ -119,7 +142,20 @@ impl IndexedDb {
         unreachable!("The event channel must not be closed before either 'DbOpenEvent::Success' or 'DbOpenEvent::Failed' is received");
     }
 
-    fn on_upgrade_needed(event: JsValue, db_request: &IdbOpenDbRequest, tables: &Tables) -> InitDbResult<()> {
+    fn on_upgrade_needed(
+        event: JsValue,
+        db_request: &IdbOpenDbRequest,
+        handlers: &mut Option<Vec<OnUpgradeNeededCb>>,
+    ) -> InitDbResult<()> {
+        let handlers = match handlers.take() {
+            Some(handlers) => handlers,
+            None => {
+                return MmError::err(InitDbError::UnexpectedState(
+                    "'IndexedDbBuilder::on_upgraded_needed' was called twice".to_owned(),
+                ))
+            },
+        };
+
         let db = Self::get_db_from_request(&db_request)?;
         let transaction = Self::get_transaction_from_request(&db_request)?;
 
@@ -140,14 +176,12 @@ impl IndexedDb {
             )))? as u32;
 
         let upgrader = DbUpgrader { db, transaction };
-        for table in tables.iter() {
-            table
-                .on_upgrade_needed(&upgrader, old_version, new_version)
-                .mm_err(|error| InitDbError::UpgradingError {
-                    old_version,
-                    new_version,
-                    error,
-                })?;
+        for on_upgrade_needed_cb in handlers {
+            on_upgrade_needed_cb(&upgrader, old_version, new_version).mm_err(|error| InitDbError::UpgradingError {
+                old_version,
+                new_version,
+                error,
+            })?;
         }
         Ok(())
     }
@@ -197,6 +231,59 @@ impl IndexedDb {
             })
         })
     }
+
+    fn tables_into_parts(
+        tables: HashMap<String, OnUpgradeNeededCb>,
+    ) -> InitDbResult<(HashSet<String>, Vec<OnUpgradeNeededCb>)> {
+        if tables.is_empty() {
+            return MmError::err(InitDbError::EmptyTableList);
+        }
+
+        let mut table_names = HashSet::with_capacity(tables.len());
+        let mut on_upgrade_needed_handlers = Vec::with_capacity(tables.len());
+        for (table_name, handler) in tables {
+            table_names.insert(table_name);
+            on_upgrade_needed_handlers.push(handler);
+        }
+        Ok((table_names, on_upgrade_needed_handlers))
+    }
+}
+
+pub struct IndexedDb {
+    db: IdbDatabase,
+    db_name: String,
+    tables: HashSet<String>,
+}
+
+impl fmt::Debug for IndexedDb {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "IndexedDb {{ db_name: {:?}, tables: {:?} }}",
+            self.db_name, self.tables
+        )
+    }
+}
+
+/// Although wasm is currently single-threaded, we can implement the `Send` trait for `IndexedDb`,
+/// but it won't be safe when wasm becomes multi-threaded.
+unsafe impl Send for IndexedDb {}
+
+impl IndexedDb {
+    pub fn transaction(&self) -> DbTransactionResult<DbTransaction> {
+        let store_names = Array::new();
+        for table in self.tables.iter() {
+            store_names.push(&JsValue::from(table));
+        }
+
+        match self
+            .db
+            .transaction_with_str_sequence_and_mode(&store_names, IdbTransactionMode::Readwrite)
+        {
+            Ok(transaction) => Ok(DbTransaction { transaction }),
+            Err(e) => MmError::err(DbTransactionError::ErrorCreatingTransaction(stringify_js_error(&e))),
+        }
+    }
 }
 
 impl Drop for IndexedDb {
@@ -205,6 +292,10 @@ impl Drop for IndexedDb {
         let mut open_databases = OPEN_DATABASES.lock().expect_w("!OPEN_DATABASES.lock()");
         open_databases.remove(&self.db_name);
     }
+}
+
+pub struct DbTransaction {
+    transaction: IdbTransaction,
 }
 
 pub struct DbUpgrader {
@@ -258,17 +349,10 @@ impl TableUpgrader {
     }
 }
 
-pub trait TableSignature: 'static {
-    fn name(&self) -> &'static str;
+pub trait TableSignature: DeserializeOwned + Serialize + 'static {
+    fn table_name() -> &'static str;
 
-    fn on_upgrade_needed(&self, upgrader: &DbUpgrader, old_version: u32, new_version: u32) -> OnUpgradeResult<()>;
-
-    fn into_boxed(self) -> Box<dyn TableSignature>
-    where
-        Self: Sized,
-    {
-        Box::new(self)
-    }
+    fn on_upgrade_needed(upgrader: &DbUpgrader, old_version: u32, new_version: u32) -> OnUpgradeResult<()>;
 }
 
 #[derive(Debug)]
@@ -297,17 +381,17 @@ mod tests {
     use super::*;
     use crate::for_tests::register_wasm_log;
     use crate::log::LogLevel;
-    use std::sync::Arc;
     use wasm_bindgen_test::*;
 
     wasm_bindgen_test_configure!(run_in_browser);
 
+    #[derive(Serialize, Deserialize)]
     struct TxTable;
 
     impl TableSignature for TxTable {
-        fn name(&self) -> &'static str { "tx_table" }
+        fn table_name() -> &'static str { "tx_table" }
 
-        fn on_upgrade_needed(&self, upgrader: &DbUpgrader, old_version: u32, _new_version: u32) -> OnUpgradeResult<()> {
+        fn on_upgrade_needed(upgrader: &DbUpgrader, old_version: u32, _new_version: u32) -> OnUpgradeResult<()> {
             if old_version > 0 {
                 // the table is initialized already
                 return Ok(());
@@ -322,20 +406,18 @@ mod tests {
     async fn test_upgrade_needed() {
         const DB_NAME: &str = "TEST_UPGRADE_NEEDED";
 
-        struct UpgradableTable {
-            old_new_versions: Arc<Mutex<Option<(u32, u32)>>>,
+        lazy_static! {
+            static ref LAST_VERSIONS: Mutex<Option<(u32, u32)>> = Mutex::new(None);
         }
 
-        impl TableSignature for UpgradableTable {
-            fn name(&self) -> &'static str { "upgradable_table" }
+        #[derive(Serialize, Deserialize)]
+        struct UpgradableTable;
 
-            fn on_upgrade_needed(
-                &self,
-                upgrader: &DbUpgrader,
-                old_version: u32,
-                new_version: u32,
-            ) -> OnUpgradeResult<()> {
-                let mut versions = self.old_new_versions.lock().expect_w("!old_new_versions.lock()");
+        impl TableSignature for UpgradableTable {
+            fn table_name() -> &'static str { "upgradable_table" }
+
+            fn on_upgrade_needed(upgrader: &DbUpgrader, old_version: u32, new_version: u32) -> OnUpgradeResult<()> {
+                let mut versions = LAST_VERSIONS.lock().expect_w("!old_new_versions.lock()");
                 *versions = Some((old_version, new_version));
 
                 match old_version {
@@ -354,14 +436,18 @@ mod tests {
         }
 
         async fn init_and_check(version: u32, expected_old_new_versions: Option<(u32, u32)>) -> Result<(), String> {
-            let old_new_versions = Arc::new(Mutex::new(None));
-            let table = UpgradableTable {
-                old_new_versions: old_new_versions.clone(),
-            };
-            let _db = IndexedDb::init(DB_NAME, version, vec![table.into_boxed()])
+            let mut versions = LAST_VERSIONS.lock().expect_w("!LAST_VERSIONS.lock()");
+            *versions = None;
+            drop(versions);
+
+            let _db = IndexedDbBuilder::new(DB_NAME)
+                .with_version(version)
+                .with_table::<UpgradableTable>()
+                .init()
                 .await
-                .map_err(|e| format!("{}", e));
-            let actual_versions = old_new_versions.lock().unwrap_w();
+                .map_err(|e| format!("{}", e))?;
+
+            let actual_versions = LAST_VERSIONS.lock().unwrap_w();
             if *actual_versions == expected_old_new_versions {
                 Ok(())
             } else {
@@ -387,13 +473,17 @@ mod tests {
 
         register_wasm_log(LogLevel::Debug);
 
-        let tables = vec![TxTable.into_boxed()];
-        let _db = IndexedDb::init(DB_NAME, DB_VERSION, tables)
+        let _db = IndexedDbBuilder::new(DB_NAME)
+            .with_version(DB_VERSION)
+            .with_table::<TxTable>()
+            .init()
             .await
             .expect_w("!IndexedDb::init first time");
 
-        let tables = vec![TxTable.into_boxed()];
-        let err = IndexedDb::init(DB_NAME, DB_VERSION + 1, tables)
+        let err = IndexedDbBuilder::new(DB_NAME)
+            .with_version(DB_VERSION + 1)
+            .with_table::<TxTable>()
+            .init()
             .await
             .expect_err_w("!IndexedDb::init should have failed");
         assert_eq!(err.into_inner(), InitDbError::DbIsOpenAlready {
@@ -408,14 +498,18 @@ mod tests {
 
         register_wasm_log(LogLevel::Debug);
 
-        let tables = vec![TxTable.into_boxed()];
-        let db = IndexedDb::init(DB_NAME, DB_VERSION, tables)
+        let db = IndexedDbBuilder::new(DB_NAME)
+            .with_version(DB_VERSION)
+            .with_table::<TxTable>()
+            .init()
             .await
             .expect_w("!IndexedDb::init first time");
         drop(db);
 
-        let tables = vec![TxTable.into_boxed()];
-        let _db = IndexedDb::init(DB_NAME, DB_VERSION, tables)
+        let _db = IndexedDbBuilder::new(DB_NAME)
+            .with_version(DB_VERSION)
+            .with_table::<TxTable>()
+            .init()
             .await
             .expect_w("!IndexedDb::init second time");
     }
