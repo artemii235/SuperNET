@@ -1,5 +1,5 @@
 use super::{LogCallback, LOG_CALLBACK};
-use crate::executor::{spawn, spawn_local};
+use crate::executor::spawn_local;
 use crate::log::format_record;
 use futures::channel::mpsc;
 use futures::stream::StreamExt;

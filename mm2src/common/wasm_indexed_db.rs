@@ -1,18 +1,16 @@
-use crate::log::{debug, error};
+use crate::log::error;
 use crate::mm_error::prelude::*;
-use crate::{stringify_js_error, WasmUnwrapExt};
+use crate::{stringify_js_error, WasmUnwrapErrExt, WasmUnwrapExt};
 use derive_more::Display;
 use futures::channel::mpsc;
-use futures::{FutureExt, StreamExt};
-use serde::de::DeserializeOwned;
-use serde::Serialize;
+use futures::StreamExt;
 use std::collections::HashSet;
 use std::fmt;
 use std::sync::Mutex;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use web_sys::{DomException, IdbDatabase, IdbIndexParameters, IdbObjectStore, IdbObjectStoreParameters,
-              IdbOpenDbRequest, IdbRequest, IdbTransaction, IdbTransactionMode, IdbVersionChangeEvent};
+use web_sys::{IdbDatabase, IdbIndexParameters, IdbObjectStore, IdbObjectStoreParameters, IdbOpenDbRequest, IdbRequest,
+              IdbTransaction, IdbTransactionMode, IdbVersionChangeEvent};
 
 lazy_static! {
     static ref OPEN_DATABASES: Mutex<HashSet<String>> = Mutex::new(HashSet::new());
@@ -20,7 +18,6 @@ lazy_static! {
 
 pub type OnUpgradeResult<T> = Result<T, MmError<OnUpgradeError>>;
 pub type InitDbResult<T> = Result<T, MmError<InitDbError>>;
-type Indexes = HashSet<String>;
 type Tables = Vec<Box<dyn TableSignature>>;
 
 #[derive(Debug, Display, PartialEq)]
@@ -156,12 +153,12 @@ impl IndexedDb {
     }
 
     fn cache_open_db(db_name: String) {
-        let mut open_databases = OPEN_DATABASES.lock().expect_wasm("!OPEN_DATABASES.lock()");
+        let mut open_databases = OPEN_DATABASES.lock().expect_w("!OPEN_DATABASES.lock()");
         open_databases.insert(db_name);
     }
 
     fn check_if_db_is_not_open(db_name: &str) -> InitDbResult<()> {
-        let open_databases = OPEN_DATABASES.lock().expect_wasm("!OPEN_DATABASES.lock()");
+        let open_databases = OPEN_DATABASES.lock().expect_w("!OPEN_DATABASES.lock()");
         if open_databases.contains(db_name) {
             MmError::err(InitDbError::DbIsOpenAlready {
                 db_name: db_name.to_owned(),
@@ -205,7 +202,7 @@ impl IndexedDb {
 impl Drop for IndexedDb {
     fn drop(&mut self) {
         self.db.close();
-        let mut open_databases = OPEN_DATABASES.lock().expect_wasm("!OPEN_DATABASES.lock()");
+        let mut open_databases = OPEN_DATABASES.lock().expect_w("!OPEN_DATABASES.lock()");
         open_databases.remove(&self.db_name);
     }
 }
@@ -338,7 +335,7 @@ mod tests {
                 old_version: u32,
                 new_version: u32,
             ) -> OnUpgradeResult<()> {
-                let mut versions = self.old_new_versions.lock().expect_wasm("!old_new_versions.lock()");
+                let mut versions = self.old_new_versions.lock().expect_w("!old_new_versions.lock()");
                 *versions = Some((old_version, new_version));
 
                 match old_version {
@@ -364,7 +361,7 @@ mod tests {
             let _db = IndexedDb::init(DB_NAME, version, vec![table.into_boxed()])
                 .await
                 .map_err(|e| format!("{}", e));
-            let actual_versions = old_new_versions.lock().unwrap_wasm();
+            let actual_versions = old_new_versions.lock().unwrap_w();
             if *actual_versions == expected_old_new_versions {
                 Ok(())
             } else {
@@ -377,10 +374,10 @@ mod tests {
 
         register_wasm_log(LogLevel::Debug);
 
-        init_and_check(1, Some((0, 1))).await.unwrap_wasm();
-        init_and_check(2, Some((1, 2))).await.unwrap_wasm();
+        init_and_check(1, Some((0, 1))).await.unwrap_w();
+        init_and_check(2, Some((1, 2))).await.unwrap_w();
         // the same 2 version, `on_upgrade_needed` must not be called
-        init_and_check(2, None).await.unwrap_wasm();
+        init_and_check(2, None).await.unwrap_w();
     }
 
     #[wasm_bindgen_test]
@@ -393,12 +390,12 @@ mod tests {
         let tables = vec![TxTable.into_boxed()];
         let _db = IndexedDb::init(DB_NAME, DB_VERSION, tables)
             .await
-            .expect_wasm("!IndexedDb::init first time");
+            .expect_w("!IndexedDb::init first time");
 
         let tables = vec![TxTable.into_boxed()];
         let err = IndexedDb::init(DB_NAME, DB_VERSION + 1, tables)
             .await
-            .expect_err_wasm("!IndexedDb::init should have failed");
+            .expect_err_w("!IndexedDb::init should have failed");
         assert_eq!(err.into_inner(), InitDbError::DbIsOpenAlready {
             db_name: DB_NAME.to_owned()
         });
@@ -414,12 +411,12 @@ mod tests {
         let tables = vec![TxTable.into_boxed()];
         let db = IndexedDb::init(DB_NAME, DB_VERSION, tables)
             .await
-            .expect_wasm("!IndexedDb::init first time");
+            .expect_w("!IndexedDb::init first time");
         drop(db);
 
         let tables = vec![TxTable.into_boxed()];
         let _db = IndexedDb::init(DB_NAME, DB_VERSION, tables)
             .await
-            .expect_wasm("!IndexedDb::init second time");
+            .expect_w("!IndexedDb::init second time");
     }
 }

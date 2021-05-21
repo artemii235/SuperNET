@@ -1,28 +1,31 @@
-use crate::executor::Timer;
 use crate::log::{self, LogState};
-#[cfg(not(target_arch = "wasm32"))]
-use crate::mm_metrics::prometheus;
 use crate::mm_metrics::{MetricsArc, MetricsOps};
-#[cfg(target_arch = "wasm32")]
-use crate::wasm_rpc::WasmRpcSender;
 use crate::{bits256, small_rng};
 use gstuff::Constructible;
-#[cfg(target_arch = "wasm32")] use http::Response;
 use keys::KeyPair;
 use primitives::hash::H160;
 use rand::Rng;
-#[cfg(not(target_arch = "wasm32"))] use rusqlite::Connection;
 use serde_bytes::ByteBuf;
 use serde_json::{self as json, Value as Json};
 use std::any::Any;
 use std::collections::hash_map::{Entry, HashMap};
 use std::collections::HashSet;
 use std::fmt;
-use std::net::IpAddr;
-#[cfg(not(target_arch = "wasm32"))] use std::net::SocketAddr;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard, Weak};
+use std::sync::{Arc, Mutex, Weak};
+
+cfg_wasm32! {
+    use crate::wasm_rpc::WasmRpcSender;
+}
+
+cfg_native! {
+    use crate::executor::Timer;
+    use crate::mm_metrics::prometheus;
+    use rusqlite::Connection;
+    use std::net::{IpAddr, SocketAddr};
+    use std::sync::MutexGuard;
+}
 
 /// Default interval to export and record metrics to log.
 const EXPORT_METRICS_INTERVAL: f64 = 5. * 60.;

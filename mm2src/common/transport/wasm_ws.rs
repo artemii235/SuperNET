@@ -6,17 +6,15 @@ use crate::stringify_js_error;
 use async_trait::async_trait;
 use futures::channel::mpsc::{self, SendError, TrySendError};
 use futures::channel::oneshot;
-use futures::{FutureExt, SinkExt, Stream, StreamExt, TryStreamExt};
+use futures::{FutureExt, SinkExt, Stream, StreamExt};
 use serde_json::{self as json, Value as Json};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use wasm_bindgen::closure::WasmClosure;
-use wasm_bindgen::convert::FromWasmAbi;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use web_sys::{CloseEvent, DomException, ErrorEvent, MessageEvent, WebSocket};
+use web_sys::{CloseEvent, DomException, MessageEvent, WebSocket};
 
 const NORMAL_CLOSURE_CODE: u16 = 1000;
 const ABNORMAL_CLOSURE_CODE: u16 = 1006;
@@ -293,10 +291,7 @@ fn into_one_shutdown(left: impl ShutdownFut, right: impl ShutdownFut) -> Shutdow
 
 /// The JS closures that have to be alive until the corresponding WebSocket exists.
 struct WsClosures {
-    onopen_closure: TransportClosure,
-    onclose_closure: TransportClosure,
-    onerror_closure: TransportClosure,
-    onmessage_closure: TransportClosure,
+    _closures: Vec<TransportClosure>,
 }
 
 /// Although wasm is currently single-threaded, we can implement the `Send` trait for `WsClosures`,
@@ -329,10 +324,7 @@ fn init_ws(url: &str) -> InitWsResult<(WebSocket, WsClosures, WsTransportReceive
 
     // keep the closures in the memory until the `ws` exists
     let closures = WsClosures {
-        onopen_closure,
-        onclose_closure,
-        onerror_closure,
-        onmessage_closure,
+        _closures: vec![onopen_closure, onclose_closure, onerror_closure, onmessage_closure],
     };
 
     Ok((ws, closures, rx))
@@ -627,12 +619,6 @@ impl ClosingState {
             reason: ClosureReason::ClientClosedOnUnderlyingError,
         }
     }
-
-    fn from_status_code(code: u16) -> ClosingState {
-        ClosingState {
-            reason: ClosureReason::from_status_code(code),
-        }
-    }
 }
 
 impl ClosedState {
@@ -689,12 +675,10 @@ where
 
 mod tests {
     use super::*;
-    use crate::block_on;
     use crate::executor::Timer;
     use crate::for_tests::register_wasm_log;
     use crate::log::LogLevel;
     use futures::future::{select, Either};
-    use futures::SinkExt;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use wasm_bindgen_test::*;
 

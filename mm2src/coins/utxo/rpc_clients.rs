@@ -1,4 +1,3 @@
-#![cfg_attr(target_arch = "wasm32", allow(unused_imports))]
 #![cfg_attr(target_arch = "wasm32", allow(unused_macros))]
 #![cfg_attr(target_arch = "wasm32", allow(dead_code))]
 
@@ -17,11 +16,8 @@ use common::wio::slurp_req;
 use common::{median, now_float, now_ms, OrdRange};
 use derive_more::Display;
 use futures::channel::oneshot as async_oneshot;
-#[cfg(target_arch = "wasm32")]
-use futures::channel::oneshot::Sender as ShotSender;
 use futures::compat::{Future01CompatExt, Stream01CompatExt};
-use futures::future::{select as select_func, Either, FutureExt, TryFutureExt};
-use futures::io::Error;
+use futures::future::{select as select_func, FutureExt, TryFutureExt};
 use futures::lock::Mutex as AsyncMutex;
 use futures::{select, StreamExt};
 use futures01::future::select_ok;
@@ -33,7 +29,6 @@ use http::{Request, StatusCode};
 use keys::Address;
 #[cfg(test)] use mocktopus::macros::*;
 use rpc::v1::types::{Bytes as BytesJson, Transaction as RpcTransaction, H256 as H256Json};
-#[cfg(not(target_arch = "wasm32"))] use rustls::{self};
 use script::Builder;
 use serde_json::{self as json, Value as Json};
 use serialization::{deserialize, serialize, CompactInteger, Reader};
@@ -44,21 +39,21 @@ use std::io;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::num::NonZeroU64;
 use std::ops::Deref;
-#[cfg(target_arch = "wasm32")] use std::os::raw::c_char;
-use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::Arc;
-use std::task::{Context, Poll};
 use std::time::Duration;
-#[cfg(not(target_arch = "wasm32"))]
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
-#[cfg(not(target_arch = "wasm32"))] use tokio::net::TcpStream;
-#[cfg(not(target_arch = "wasm32"))]
-use tokio_rustls::webpki::DNSNameRef;
-#[cfg(not(target_arch = "wasm32"))]
-use tokio_rustls::{client::TlsStream, TlsConnector};
-#[cfg(not(target_arch = "wasm32"))]
-use webpki_roots::TLS_SERVER_ROOTS;
+
+cfg_native! {
+    use futures::future::Either;
+    use futures::io::Error;
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
+    use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+    use tokio::net::TcpStream;
+    use tokio_rustls::{client::TlsStream, TlsConnector};
+    use tokio_rustls::webpki::DNSNameRef;
+    use webpki_roots::TLS_SERVER_ROOTS;
+}
 
 pub type AddressesByLabelResult = HashMap<String, AddressPurpose>;
 

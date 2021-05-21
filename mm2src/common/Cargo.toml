@@ -19,6 +19,7 @@ base64 = "0.10.0"
 bigdecimal = { version = "0.1", features = ["serde"] }
 bitcrypto = { git = "https://github.com/artemii235/parity-bitcoin.git" }
 bytes = "0.4"
+cfg-if = "1.0"
 crossbeam = "0.7"
 derive_more = "0.99"
 findshlibs = "0.5"
