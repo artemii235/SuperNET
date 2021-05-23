@@ -1,4 +1,4 @@
-use crate::log::error;
+use crate::log::{debug, error};
 use crate::mm_error::prelude::*;
 use crate::{stringify_js_error, WasmUnwrapErrExt, WasmUnwrapExt};
 use derive_more::Display;
@@ -9,6 +9,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::marker::PhantomData;
 use std::sync::Mutex;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
@@ -66,7 +67,35 @@ pub enum OnUpgradeError {
 
 #[derive(Debug, Display)]
 pub enum DbTransactionError {
+    #[display(fmt = "No such table '{}'", table)]
+    NoSuchTable { table: String },
+    #[display(fmt = "Error creating DbTransaction: {:?}", _0)]
     ErrorCreatingTransaction(String),
+    #[display(fmt = "Error opening the '{}' table: {}", table, description)]
+    ErrorOpeningTable { table: String, description: String },
+    #[display(fmt = "Error serializing an item: {:?}", _0)]
+    ErrorSerializingItem(String),
+    #[display(fmt = "Error deserializing an item: {:?}", _0)]
+    ErrorDeserializingItem(String),
+    #[display(fmt = "Error uploading an item: {:?}", _0)]
+    ErrorUploadingItem(String),
+    #[display(fmt = "No such index '{}'", index)]
+    NoSuchIndex { index: String },
+    #[display(fmt = "Invalid index '{}': {:?}", index, description)]
+    InvalidIndex { index: String, description: String },
+    #[display(
+        fmt = "Record not found with the specified index '{}={}': {:?}",
+        index,
+        index_value,
+        description
+    )]
+    RecordNotFound {
+        index: String,
+        index_value: String,
+        description: String,
+    },
+    #[display(fmt = "Error occurred due to an unexpected state: {:?}", _0)]
+    UnexpectedState(String),
 }
 
 pub struct IndexedDbBuilder {
@@ -112,9 +141,9 @@ impl IndexedDbBuilder {
         };
         let (tx, mut rx) = mpsc::channel(1);
 
-        let onerror_closure = construct_open_event_closure(DbOpenEvent::Failed, tx.clone());
-        let onsuccess_closure = construct_open_event_closure(DbOpenEvent::Success, tx.clone());
-        let onupgradeneeded_closure = construct_open_event_closure(DbOpenEvent::UpgradeNeeded, tx.clone());
+        let onerror_closure = construct_event_closure(DbOpenEvent::Failed, tx.clone());
+        let onsuccess_closure = construct_event_closure(DbOpenEvent::Success, tx.clone());
+        let onupgradeneeded_closure = construct_event_closure(DbOpenEvent::UpgradeNeeded, tx.clone());
 
         db_request.set_onerror(Some(onerror_closure.as_ref().unchecked_ref()));
         db_request.set_onsuccess(Some(onsuccess_closure.as_ref().unchecked_ref()));
@@ -280,7 +309,10 @@ impl IndexedDb {
             .db
             .transaction_with_str_sequence_and_mode(&store_names, IdbTransactionMode::Readwrite)
         {
-            Ok(transaction) => Ok(DbTransaction { transaction }),
+            Ok(transaction) => Ok(DbTransaction {
+                transaction,
+                tables: self.tables.clone(),
+            }),
             Err(e) => MmError::err(DbTransactionError::ErrorCreatingTransaction(stringify_js_error(&e))),
         }
     }
@@ -296,6 +328,110 @@ impl Drop for IndexedDb {
 
 pub struct DbTransaction {
     transaction: IdbTransaction,
+    tables: HashSet<String>,
+}
+
+impl DbTransaction {
+    pub fn open_table<Table: TableSignature>(&self) -> DbTransactionResult<DbTable<Table>> {
+        let table_name = Table::table_name();
+        if !self.tables.contains(table_name) {
+            let table = table_name.to_owned();
+            return MmError::err(DbTransactionError::NoSuchTable { table });
+        }
+
+        match self.transaction.object_store(table_name) {
+            Ok(object_store) => Ok(DbTable {
+                object_store,
+                phantom: PhantomData::default(),
+            }),
+            Err(e) => MmError::err(DbTransactionError::ErrorOpeningTable {
+                table: table_name.to_owned(),
+                description: stringify_js_error(&e),
+            }),
+        }
+    }
+}
+
+pub struct DbTable<'a, T: TableSignature> {
+    object_store: IdbObjectStore,
+    phantom: PhantomData<&'a T>,
+}
+
+impl<'a, T: TableSignature> DbTable<'a, T> {
+    pub async fn add_item(&self, item: &T) -> DbTransactionResult<()> {
+        let js_value = match JsValue::from_serde(item) {
+            Ok(value) => value,
+            Err(e) => return MmError::err(DbTransactionError::ErrorSerializingItem(e.to_string())),
+        };
+        let add_request = match self.object_store.add(&js_value) {
+            Ok(request) => request,
+            Err(e) => return MmError::err(DbTransactionError::ErrorUploadingItem(stringify_js_error(&e))),
+        };
+
+        Self::wait_for_request_complete(&add_request)
+            .await
+            .map(|_| ())
+            .map_to_mm(|e| DbTransactionError::ErrorUploadingItem(stringify_js_error(&e)))
+    }
+
+    pub async fn get_items(&self, index_str: &str, index_value_str: &str) -> DbTransactionResult<Vec<T>> {
+        let index = index_str.to_owned();
+        let index_value = index_value_str.to_owned();
+
+        let index_value_js = JsValue::from(index_value_str);
+
+        let db_index = match self.object_store.index(index_str) {
+            Ok(index) => index,
+            Err(_) => return MmError::err(DbTransactionError::NoSuchIndex { index }),
+        };
+        let get_request = match db_index.get_all_with_key(&index_value_js) {
+            Ok(request) => request,
+            Err(e) => {
+                return MmError::err(DbTransactionError::InvalidIndex {
+                    index,
+                    description: stringify_js_error(&e),
+                })
+            },
+        };
+
+        if let Err(e) = Self::wait_for_request_complete(&get_request).await {
+            return MmError::err(DbTransactionError::RecordNotFound {
+                index,
+                index_value,
+                description: stringify_js_error(&e),
+            });
+        }
+
+        let result_js_value = match get_request.result() {
+            Ok(res) => res,
+            Err(e) => return MmError::err(DbTransactionError::UnexpectedState(stringify_js_error(&e))),
+        };
+
+        if result_js_value.is_null() || result_js_value.is_undefined() {
+            return MmError::err(DbTransactionError::RecordNotFound {
+                index,
+                index_value,
+                description: "Result value is null or undefined".to_owned(),
+            });
+        }
+
+        match result_js_value.into_serde() {
+            Ok(t) => Ok(t),
+            Err(e) => MmError::err(DbTransactionError::ErrorDeserializingItem(e.to_string())),
+        }
+    }
+
+    async fn wait_for_request_complete(request: &IdbRequest) -> Result<JsValue, JsValue> {
+        let (tx, mut rx) = mpsc::channel(2);
+
+        let onsuccess_closure = construct_event_closure(Ok, tx.clone());
+        let onerror_closure = construct_event_closure(Err, tx.clone());
+
+        request.set_onsuccess(Some(onsuccess_closure.as_ref().unchecked_ref()));
+        request.set_onerror(Some(onerror_closure.as_ref().unchecked_ref()));
+
+        rx.next().await.expect_w("The request event channel must not be closed")
+    }
 }
 
 pub struct DbUpgrader {
@@ -305,10 +441,9 @@ pub struct DbUpgrader {
 
 impl DbUpgrader {
     pub fn create_table(&self, table: &str) -> OnUpgradeResult<TableUpgrader> {
-        const PRIMARY_KEY: &str = "__id";
         let mut params = IdbObjectStoreParameters::new();
         // We use the [out-of-line](https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API/Basic_Concepts_Behind_IndexedDB#gloss_outofline_key) primary keys.
-        params.auto_increment(true).key_path(Some(&JsValue::from(PRIMARY_KEY)));
+        params.auto_increment(true);
 
         match self.db.create_object_store_with_optional_parameters(table, &params) {
             Ok(object_store) => Ok(TableUpgrader { object_store }),
@@ -363,16 +498,17 @@ enum DbOpenEvent {
 }
 
 /// Please note the `Event` type can be `JsValue`. It doesn't lead to a runtime error, because [`JsValue::dyn_into<JsValue>()`] returns itself.
-fn construct_open_event_closure<F>(mut f: F, mut event_tx: mpsc::Sender<DbOpenEvent>) -> Closure<dyn FnMut(JsValue)>
+fn construct_event_closure<F, Event>(mut f: F, mut event_tx: mpsc::Sender<Event>) -> Closure<dyn FnMut(JsValue)>
 where
-    F: FnMut(JsValue) -> DbOpenEvent + 'static,
+    F: FnMut(JsValue) -> Event + 'static,
+    Event: fmt::Debug + 'static,
 {
     Closure::new(move |event: JsValue| {
         let open_event = f(event);
         if let Err(e) = event_tx.try_send(open_event) {
             let error = e.to_string();
             let event = e.into_inner();
-            error!("Error sending DbOpenEvent {:?}: {}", event, error);
+            error!("Error sending the '{:?}' event: {}", event, error);
         }
     })
 }
@@ -385,8 +521,13 @@ mod tests {
 
     wasm_bindgen_test_configure!(run_in_browser);
 
-    #[derive(Serialize, Deserialize)]
-    struct TxTable;
+    #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+    #[serde(deny_unknown_fields)]
+    struct TxTable {
+        ticker: String,
+        tx_hash: String,
+        block_height: u64,
+    }
 
     impl TableSignature for TxTable {
         fn table_name() -> &'static str { "tx_table" }
@@ -400,6 +541,85 @@ mod tests {
             table_upgrader.create_index("ticker", false)?;
             table_upgrader.create_index("tx_hash", true)
         }
+    }
+
+    #[wasm_bindgen_test]
+    async fn test_add_get_item() {
+        const DB_NAME: &str = "TEST_ADD_GET_ITEM";
+        const DB_VERSION: u32 = 1;
+
+        let rick_tx_1 = TxTable {
+            ticker: "RICK".to_owned(),
+            tx_hash: "0a0fda88364b960000f445351fe7678317a1e0c80584de0413377ede00ba696f".to_owned(),
+            block_height: 10000,
+        };
+        let rick_tx_2 = TxTable {
+            ticker: "RICK".to_owned(),
+            tx_hash: "ba881ecca15b5d4593f14f25debbcdfe25f101fd2e9cf8d0b5d92d19813d4424".to_owned(),
+            block_height: 10000,
+        };
+        let morty_tx_1 = TxTable {
+            ticker: "MORTY".to_owned(),
+            tx_hash: "1fc789133239260ed16361190a026a88cab2243935f02f1ccd794f1d06a22246".to_owned(),
+            block_height: 20000,
+        };
+        let morty_tx_1_updated = TxTable {
+            ticker: "MORTY".to_owned(),
+            tx_hash: "1fc789133239260ed16361190a026a88cab2243935f02f1ccd794f1d06a22246".to_owned(),
+            block_height: 30000,
+        };
+
+        register_wasm_log(LogLevel::Debug);
+
+        let db = IndexedDbBuilder::new(DB_NAME)
+            .with_version(DB_VERSION)
+            .with_table::<TxTable>()
+            .init()
+            .await
+            .expect_w("!IndexedDb::init");
+        let transaction = db.transaction().expect_w("!IndexedDb::transaction()");
+        let table = transaction
+            .open_table::<TxTable>()
+            .expect_w("!DbTransaction::open_table");
+
+        table
+            .add_item(&rick_tx_1)
+            .await
+            .expect_w("!Couldn't add a 'RICK' transaction");
+        table
+            .add_item(&rick_tx_2)
+            .await
+            .expect_w("!Couldn't add a 'RICK' transaction with the different 'tx_hash'");
+        table
+            .add_item(&morty_tx_1)
+            .await
+            .expect_w("!Couldn't add a 'MORTY' transaction");
+
+        let actual_rick_txs = table
+            .get_items("ticker", "RICK")
+            .await
+            .expect_w("!Couldn't get items by the index 'ticker=RICK'");
+        assert_eq!(actual_rick_txs, vec![rick_tx_1, rick_tx_2.clone()]);
+        let actual_rick_2_tx = table
+            .get_items(
+                "tx_hash",
+                "ba881ecca15b5d4593f14f25debbcdfe25f101fd2e9cf8d0b5d92d19813d4424",
+            )
+            .await
+            .expect_w("!Couldn't get items by the index 'tx_hash'");
+        assert_eq!(actual_rick_2_tx, vec![rick_tx_2]);
+
+        // Try to add the same item. [`TxTable::tx_hash`] is a unique index, so this operation must fail.
+        let err = table
+            .add_item(&morty_tx_1_updated)
+            .await
+            .expect_err_w("!Couldn't add an item with the different 'tx_hash'");
+        match err.into_inner() {
+            DbTransactionError::ErrorUploadingItem(err) => debug!("error: {}", err),
+            e => panic!("Expected 'DbTransactionError::ErrorUploadingItem', found: {:?}", e),
+        }
+
+        // TODO replace morty_tx_1_updated
     }
 
     #[wasm_bindgen_test]
@@ -420,16 +640,21 @@ mod tests {
                 let mut versions = LAST_VERSIONS.lock().expect_w("!old_new_versions.lock()");
                 *versions = Some((old_version, new_version));
 
-                match old_version {
-                    0 => {
+                match (old_version, new_version) {
+                    (0, 1) => {
                         let table = upgrader.create_table("upgradable_table")?;
                         table.create_index("first_index", false)?;
                     },
-                    1 => {
+                    (0, 2) => {
+                        let table = upgrader.create_table("upgradable_table")?;
+                        table.create_index("first_index", false)?;
+                        table.create_index("second_index", false)?;
+                    },
+                    (1, 2) => {
                         let table = upgrader.open_table("upgradable_table")?;
                         table.create_index("second_index", false)?;
                     },
-                    v => panic!("Unexpected old_version: {}", v),
+                    v => panic!("Unexpected old, new versions: {:?}", v),
                 }
                 Ok(())
             }

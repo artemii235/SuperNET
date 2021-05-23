@@ -675,10 +675,10 @@ where
 
 mod tests {
     use super::*;
-    use crate::executor::Timer;
+    use crate::custom_futures::FutureTimerExt;
     use crate::for_tests::register_wasm_log;
     use crate::log::LogLevel;
-    use futures::future::{select, Either};
+    use crate::{WasmUnwrapErrExt, WasmUnwrapExt};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use wasm_bindgen_test::*;
 
@@ -686,31 +686,6 @@ mod tests {
 
     lazy_static! {
         static ref CONN_IDX: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(0));
-    }
-
-    async fn wait_for_event<Rx>(rx: &mut Rx, seconds: f64) -> Option<(ConnIdx, WebSocketEvent)>
-    where
-        Rx: Stream<Item = (ConnIdx, WebSocketEvent)> + Unpin,
-    {
-        let fut = select(rx.next(), Timer::sleep(seconds));
-        match fut.await {
-            Either::Left((event, _timer)) => event,
-            Either::Right(_) => panic!("Timeout expired waiting for a transport event"),
-        }
-    }
-
-    async fn wait_for_nothing<Rx>(rx: &mut Rx, seconds: f64)
-    where
-        Rx: Stream<Item = (ConnIdx, WebSocketEvent)> + Unpin,
-    {
-        let fut = select(rx.next(), Timer::sleep(seconds));
-        match fut.await {
-            Either::Left((event, _timer)) => panic!(
-                "Expected no transport events for {} seconds, found: {:?}",
-                seconds, event
-            ),
-            Either::Right(_) => (),
-        }
     }
 
     #[wasm_bindgen_test]
@@ -721,7 +696,7 @@ mod tests {
         let (mut outgoing_tx, mut incoming_rx) =
             spawn_ws_transport(conn_idx, "wss://electrum1.cipig.net:30017").expect("!spawn_ws_transport");
 
-        match wait_for_event(&mut incoming_rx, 5.).await {
+        match incoming_rx.next().timeout_secs(5.).await.unwrap_w() {
             Some((_conn_idx, WebSocketEvent::Establish)) => (),
             other => panic!("Expected 'Establish' event, found: {:?}", other),
         }
@@ -734,7 +709,7 @@ mod tests {
         });
         outgoing_tx.send(get_version).await.expect("!outgoing_tx.send");
 
-        match wait_for_event(&mut incoming_rx, 5.).await {
+        match incoming_rx.next().timeout_secs(5.).await.unwrap_w() {
             Some((_conn_idx, WebSocketEvent::Incoming(response))) => {
                 debug!("Response: {:?}", response);
                 assert!(response.get("result").is_some());
@@ -744,7 +719,11 @@ mod tests {
 
         drop(outgoing_tx);
         // Even if the `WsOutgoingSender` is closed, the transport must not close.
-        wait_for_nothing(&mut incoming_rx, 1.).await;
+        incoming_rx
+            .next()
+            .timeout_secs(1.)
+            .await
+            .expect_err_w("Expected the future to time out, received an event");
 
         // It's possible for `wasm_ws` submodules ONLY.
         // Generally, the shutdown channel has to close on the `WsIncomingReceiver` instance drop.
@@ -754,14 +733,14 @@ mod tests {
             .expect("shutdown_rx must not be dropped");
         let mut incoming_rx = incoming_rx.inner;
 
-        match wait_for_event(&mut incoming_rx, 0.5).await {
+        match incoming_rx.next().timeout_secs(0.5).await.unwrap_w() {
             Some((_conn_idx, WebSocketEvent::Closing { reason })) if reason == ClosureReason::NormalClosure => (),
             other => panic!(
                 "Expected 'Closing' event with 'ClientClosed' reason, found: {:?}",
                 other
             ),
         }
-        match wait_for_event(&mut incoming_rx, 0.5).await {
+        match incoming_rx.next().timeout_secs(0.5).await.unwrap_w() {
             Some((_conn_idx, WebSocketEvent::Closed { reason })) if reason == ClosureReason::NormalClosure => (),
             other => panic!("Expected 'Closed' event with 'ClientClosed' reason, found: {:?}", other),
         }
@@ -776,7 +755,7 @@ mod tests {
         let (_outgoing_tx, mut incoming_rx) =
             spawn_ws_transport(conn_idx, "ws://electrum1.cipig.net:10017").expect("!spawn_ws_transport");
 
-        match wait_for_event(&mut incoming_rx, 0.5).await {
+        match incoming_rx.next().timeout_secs(0.5).await.unwrap_w() {
             Some((
                 _conn_idx,
                 WebSocketEvent::Closing {
@@ -788,7 +767,7 @@ mod tests {
                 other
             ),
         }
-        match wait_for_event(&mut incoming_rx, 0.5).await {
+        match incoming_rx.next().timeout_secs(0.5).await.unwrap_w() {
             Some((
                 _conn_idx,
                 WebSocketEvent::Closed {
