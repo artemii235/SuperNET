@@ -1187,23 +1187,26 @@ impl MakerSwapEvent {
     }
 
     fn should_ban_taker(&self) -> bool {
-        matches!(self,
-            MakerSwapEvent::TakerFeeValidateFailed(_)
-            | MakerSwapEvent::TakerPaymentValidateFailed(_))
+        matches!(
+            self,
+            MakerSwapEvent::TakerFeeValidateFailed(_) | MakerSwapEvent::TakerPaymentValidateFailed(_)
+        )
     }
 
     fn is_success(&self) -> bool {
-        matches!(self, MakerSwapEvent::Started(_)
-            | MakerSwapEvent::Negotiated(_)
-            | MakerSwapEvent::TakerFeeValidated(_)
-            | MakerSwapEvent::MakerPaymentSent(_)
-            | MakerSwapEvent::TakerPaymentReceived(_)
-            | MakerSwapEvent::TakerPaymentWaitConfirmStarted
-            | MakerSwapEvent::TakerPaymentValidatedAndConfirmed
-            | MakerSwapEvent::TakerPaymentSpent(_)
-            | MakerSwapEvent::TakerPaymentSpendConfirmStarted
-            | MakerSwapEvent::TakerPaymentSpendConfirmed
-            | MakerSwapEvent::Finished
+        matches!(
+            self,
+            MakerSwapEvent::Started(_)
+                | MakerSwapEvent::Negotiated(_)
+                | MakerSwapEvent::TakerFeeValidated(_)
+                | MakerSwapEvent::MakerPaymentSent(_)
+                | MakerSwapEvent::TakerPaymentReceived(_)
+                | MakerSwapEvent::TakerPaymentWaitConfirmStarted
+                | MakerSwapEvent::TakerPaymentValidatedAndConfirmed
+                | MakerSwapEvent::TakerPaymentSpent(_)
+                | MakerSwapEvent::TakerPaymentSpendConfirmStarted
+                | MakerSwapEvent::TakerPaymentSpendConfirmed
+                | MakerSwapEvent::Finished
         )
     }
 

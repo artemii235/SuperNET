@@ -1,4 +1,3 @@
-
 // Below flags apply in the context of BIP 68
 // If this flag set, CTxIn::nSequence is NOT interpreted as a
 // relative lock-time.

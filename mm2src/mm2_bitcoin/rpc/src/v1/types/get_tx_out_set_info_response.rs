@@ -1,3 +1,2 @@
 #[derive(Debug, Serialize, Deserialize)]
-pub struct GetTxOutSetInfoResponse {
-}
+pub struct GetTxOutSetInfoResponse {}

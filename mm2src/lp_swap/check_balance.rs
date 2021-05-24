@@ -229,9 +229,9 @@ impl From<BalanceError> for CheckBalanceError {
 
 impl CheckBalanceError {
     pub fn not_sufficient_balance(&self) -> bool {
-        matches!(self,
-            CheckBalanceError::NotSufficientBalance {..}
-            | CheckBalanceError::NotSufficientBaseCoinBalance {..}
+        matches!(
+            self,
+            CheckBalanceError::NotSufficientBalance { .. } | CheckBalanceError::NotSufficientBaseCoinBalance { .. }
         )
     }
 

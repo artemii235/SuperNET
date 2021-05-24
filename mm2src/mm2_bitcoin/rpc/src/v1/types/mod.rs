@@ -18,8 +18,8 @@ pub use self::get_tx_out_response::GetTxOutResponse;
 pub use self::get_tx_out_set_info_response::GetTxOutSetInfoResponse;
 pub use self::hash::{H160, H256, H264};
 pub use self::script::ScriptType;
-pub use self::transaction::{RawTransaction, Transaction, TransactionInput, TransactionOutput,
-	TransactionOutputWithAddress, TransactionOutputWithScriptData, TransactionInputScript,
-	TransactionOutputScript, SignedTransactionInput, GetRawTransactionResponse,
-	SignedTransactionOutput, TransactionOutputs};
+pub use self::transaction::{GetRawTransactionResponse, RawTransaction, SignedTransactionInput,
+                            SignedTransactionOutput, Transaction, TransactionInput, TransactionInputScript,
+                            TransactionOutput, TransactionOutputScript, TransactionOutputWithAddress,
+                            TransactionOutputWithScriptData, TransactionOutputs};
 pub use self::uint::U256;

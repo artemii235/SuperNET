@@ -1,6 +1,6 @@
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Network {
-	Mainnet,
-	Testnet,
-	Komodo
+    Mainnet,
+    Testnet,
+    Komodo,
 }

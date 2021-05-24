@@ -1,32 +1,32 @@
 //! Bitcoin keys.
 
-extern crate rustc_hex as hex;
-extern crate secp256k1;
 extern crate base58;
 extern crate bitcrypto as crypto;
 extern crate primitives;
+extern crate rustc_hex as hex;
+extern crate secp256k1;
 
 mod address;
 mod cashaddress;
 mod display;
-mod keypair;
 mod error;
+mod keypair;
 mod network;
 mod private;
 mod public;
 mod signature;
 
-pub use primitives::{hash, bytes};
+pub use primitives::{bytes, hash};
 
-pub use address::{Type, Address};
+pub use address::{Address, Type};
 pub use cashaddress::{AddressType as CashAddrType, CashAddress};
 pub use display::DisplayLayout;
-pub use keypair::KeyPair;
 pub use error::Error;
+pub use keypair::KeyPair;
+pub use network::Network;
 pub use private::Private;
 pub use public::Public;
-pub use signature::{Signature, CompactSignature};
-pub use network::Network;
+pub use signature::{CompactSignature, Signature};
 
 use hash::{H160, H256};
 

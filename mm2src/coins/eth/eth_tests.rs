@@ -900,7 +900,7 @@ fn test_get_fee_to_send_taker_fee_insufficient_balance() {
         .unwrap_err();
     log!((error));
     assert!(
-        matches!(error.get_inner(), TradePreimageError::NotSufficientBalance {..}),
+        matches!(error.get_inner(), TradePreimageError::NotSufficientBalance { .. }),
         "Expected TradePreimageError::NotSufficientBalance"
     );
 }

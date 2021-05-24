@@ -1,11 +1,11 @@
-use std::fmt;
-use serde::{Serialize, Serializer, Deserialize, Deserializer};
-use serde::ser::SerializeMap;
-use keys::Address;
-use v1::types;
 use super::bytes::Bytes;
 use super::hash::H256;
 use super::script::ScriptType;
+use keys::Address;
+use serde::ser::SerializeMap;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::fmt;
+use v1::types;
 
 /// Hex-encoded transaction
 pub type RawTransaction = Bytes;
@@ -13,527 +13,563 @@ pub type RawTransaction = Bytes;
 /// Transaction input
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct TransactionInput {
-	/// Previous transaction id
-	pub txid: H256,
-	/// Previous transaction output index
-	pub vout: u32,
-	/// Sequence number
-	pub sequence: Option<u32>,
+    /// Previous transaction id
+    pub txid: H256,
+    /// Previous transaction output index
+    pub vout: u32,
+    /// Sequence number
+    pub sequence: Option<u32>,
 }
 
 /// Transaction output of form "address": amount
 #[derive(Debug, PartialEq)]
 pub struct TransactionOutputWithAddress {
-	/// Receiver' address
-	pub address: Address,
-	/// Amount in BTC
-	pub amount: f64,
+    /// Receiver' address
+    pub address: Address,
+    /// Amount in BTC
+    pub amount: f64,
 }
 
 /// Trasaction output of form "data": serialized(output script data)
 #[derive(Debug, PartialEq)]
 pub struct TransactionOutputWithScriptData {
-	/// Serialized script data
-	pub script_data: Bytes,
+    /// Serialized script data
+    pub script_data: Bytes,
 }
 
 /// Transaction output
 #[derive(Debug, PartialEq)]
 pub enum TransactionOutput {
-	/// Of form address: amount
-	Address(TransactionOutputWithAddress),
-	/// Of form data: script_data_bytes
-	ScriptData(TransactionOutputWithScriptData),
+    /// Of form address: amount
+    Address(TransactionOutputWithAddress),
+    /// Of form data: script_data_bytes
+    ScriptData(TransactionOutputWithScriptData),
 }
 
 /// Transaction outputs, which serializes/deserializes as KV-map
 #[derive(Debug, PartialEq)]
 pub struct TransactionOutputs {
-	/// Transaction outputs
-	pub outputs: Vec<TransactionOutput>,
+    /// Transaction outputs
+    pub outputs: Vec<TransactionOutput>,
 }
 
 /// Transaction input script
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct TransactionInputScript {
-	/// Script code
-	pub asm: String,
-	/// Script hex
-	pub hex: Bytes,
+    /// Script code
+    pub asm: String,
+    /// Script hex
+    pub hex: Bytes,
 }
 
 /// Transaction output script
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct TransactionOutputScript {
-	/// Script code
-	pub asm: String,
-	/// Script hex
-	pub hex: Bytes,
-	/// Number of required signatures
-	#[serde(rename = "reqSigs")]
-	#[serde(default)]
-	pub req_sigs: u32,
-	/// Type of script
-	#[serde(rename = "type")]
-	pub script_type: ScriptType,
-	/// Array of bitcoin addresses
-	#[serde(default)]
-	pub addresses: Vec<String>,
+    /// Script code
+    pub asm: String,
+    /// Script hex
+    pub hex: Bytes,
+    /// Number of required signatures
+    #[serde(rename = "reqSigs")]
+    #[serde(default)]
+    pub req_sigs: u32,
+    /// Type of script
+    #[serde(rename = "type")]
+    pub script_type: ScriptType,
+    /// Array of bitcoin addresses
+    #[serde(default)]
+    pub addresses: Vec<String>,
 }
 
 impl TransactionOutputScript {
-	pub fn is_empty(&self) -> bool {
-		self.asm.is_empty() && self.hex.is_empty()
-	}
+    pub fn is_empty(&self) -> bool { self.asm.is_empty() && self.hex.is_empty() }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
 pub enum TransactionInputEnum {
-	Signed(SignedTransactionInput),
-	Coinbase(CoinbaseTransactionInput),
-	/// FIRO specific
-	Sigma(SigmaInput),
+    Signed(SignedTransactionInput),
+    Coinbase(CoinbaseTransactionInput),
+    /// FIRO specific
+    Sigma(SigmaInput),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SigmaInput {
-	#[serde(rename = "anonymityGroup")]
-	anonymity_group: i64,
-	#[serde(rename = "scriptSig")]
-	pub script_sig: TransactionInputScript,
-	value: f64,
-	#[serde(rename = "valueSat")]
-	value_sat: u64,
-	sequence: u32,
+    #[serde(rename = "anonymityGroup")]
+    anonymity_group: i64,
+    #[serde(rename = "scriptSig")]
+    pub script_sig: TransactionInputScript,
+    value: f64,
+    #[serde(rename = "valueSat")]
+    value_sat: u64,
+    sequence: u32,
 }
 
 impl TransactionInputEnum {
-	pub fn is_coinbase(&self) -> bool {
-		matches!(self, TransactionInputEnum::Coinbase(_))
-	}
+    pub fn is_coinbase(&self) -> bool { matches!(self, TransactionInputEnum::Coinbase(_)) }
 }
 
 /// Signed transaction input
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SignedTransactionInput {
-	/// Previous transaction id
-	pub txid: H256,
-	/// Previous transaction output index
-	pub vout: u32,
-	/// Input script
-	#[serde(rename = "scriptSig")]
-	pub script_sig: TransactionInputScript,
-	/// Sequence number
-	pub sequence: u32,
-	/// Hex-encoded witness data (if any)
-	pub txinwitness: Option<Vec<String>>,
+    /// Previous transaction id
+    pub txid: H256,
+    /// Previous transaction output index
+    pub vout: u32,
+    /// Input script
+    #[serde(rename = "scriptSig")]
+    pub script_sig: TransactionInputScript,
+    /// Sequence number
+    pub sequence: u32,
+    /// Hex-encoded witness data (if any)
+    pub txinwitness: Option<Vec<String>>,
 }
 
 /// Coinbase transaction input
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct CoinbaseTransactionInput {
-	/// coinbase
-	pub coinbase: Bytes,
-	/// Sequence number
-	pub sequence: u32,
+    /// coinbase
+    pub coinbase: Bytes,
+    /// Sequence number
+    pub sequence: u32,
 }
 
 /// Signed transaction output
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SignedTransactionOutput {
-	/// Output value in BTC
-	pub value: f64,
-	/// Output index
-	pub n: u32,
-	/// Output script
-	#[serde(rename = "scriptPubKey")]
-	pub script: TransactionOutputScript,
+    /// Output value in BTC
+    pub value: f64,
+    /// Output index
+    pub n: u32,
+    /// Output script
+    #[serde(rename = "scriptPubKey")]
+    pub script: TransactionOutputScript,
 }
 
 impl SignedTransactionOutput {
-	pub fn is_empty(&self) -> bool {
-		self.value == 0.0 && self.script.is_empty()
-	}
+    pub fn is_empty(&self) -> bool { self.value == 0.0 && self.script.is_empty() }
 }
 
 /// Transaction
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Transaction {
-	/// Raw transaction
-	pub hex: RawTransaction,
-	/// The transaction id (same as provided)
-	pub txid: H256,
-	/// The transaction hash (differs from txid for witness transactions)
-	pub hash: Option<H256>,
-	/// The serialized transaction size
-	pub size: Option<usize>,
-	/// The virtual transaction size (differs from size for witness transactions)
-	pub vsize: Option<usize>,
-	/// The version
-	pub version: i32,
-	/// The lock time
-	pub locktime: i32,
-	/// Transaction inputs
-	pub vin: Vec<TransactionInputEnum>,
-	/// Transaction outputs
-	pub vout: Vec<SignedTransactionOutput>,
-	/// Hash of the block this transaction is included in
-	#[serde(default)]
-	pub blockhash: H256,
-	/// Number of confirmations of this transaction
-	#[serde(default)]
-	pub confirmations: u32,
-	/// Number of rawconfirmations of this transaction, KMD specific
-	#[serde(skip_serializing_if = "Option::is_none")]
-	pub rawconfirmations: Option<u32>,
-	/// The transaction time in seconds since epoch (Jan 1 1970 GMT)
-	#[serde(default)]
-	pub time: u32,
-	/// The block time in seconds since epoch (Jan 1 1970 GMT)
-	#[serde(default)]
-	pub blocktime: u32,
-	/// The block height transaction mined in
-	#[serde(default)]
-	#[serde(skip_serializing_if = "Option::is_none")]
-	pub height: Option<u64>,
+    /// Raw transaction
+    pub hex: RawTransaction,
+    /// The transaction id (same as provided)
+    pub txid: H256,
+    /// The transaction hash (differs from txid for witness transactions)
+    pub hash: Option<H256>,
+    /// The serialized transaction size
+    pub size: Option<usize>,
+    /// The virtual transaction size (differs from size for witness transactions)
+    pub vsize: Option<usize>,
+    /// The version
+    pub version: i32,
+    /// The lock time
+    pub locktime: i32,
+    /// Transaction inputs
+    pub vin: Vec<TransactionInputEnum>,
+    /// Transaction outputs
+    pub vout: Vec<SignedTransactionOutput>,
+    /// Hash of the block this transaction is included in
+    #[serde(default)]
+    pub blockhash: H256,
+    /// Number of confirmations of this transaction
+    #[serde(default)]
+    pub confirmations: u32,
+    /// Number of rawconfirmations of this transaction, KMD specific
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rawconfirmations: Option<u32>,
+    /// The transaction time in seconds since epoch (Jan 1 1970 GMT)
+    #[serde(default)]
+    pub time: u32,
+    /// The block time in seconds since epoch (Jan 1 1970 GMT)
+    #[serde(default)]
+    pub blocktime: u32,
+    /// The block height transaction mined in
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub height: Option<u64>,
 }
 
 impl Transaction {
-	pub fn is_coinbase(&self) -> bool {
-		self.vin.iter().any(|input| input.is_coinbase())
-	}
+    pub fn is_coinbase(&self) -> bool { self.vin.iter().any(|input| input.is_coinbase()) }
 }
 
 /// Return value of `getrawtransaction` method
 #[derive(Debug, PartialEq)]
 pub enum GetRawTransactionResponse {
-	/// Return value when asking for raw transaction
-	Raw(RawTransaction),
-	/// Return value when asking for verbose transaction
-	Verbose(Box<Transaction>),
+    /// Return value when asking for raw transaction
+    Raw(RawTransaction),
+    /// Return value when asking for verbose transaction
+    Verbose(Box<Transaction>),
 }
 
 impl Serialize for GetRawTransactionResponse {
-	fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
-		match *self {
-			GetRawTransactionResponse::Raw(ref raw_transaction) => raw_transaction.serialize(serializer),
-			GetRawTransactionResponse::Verbose(ref verbose_transaction) => verbose_transaction.serialize(serializer),
-		}
-	}
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match *self {
+            GetRawTransactionResponse::Raw(ref raw_transaction) => raw_transaction.serialize(serializer),
+            GetRawTransactionResponse::Verbose(ref verbose_transaction) => verbose_transaction.serialize(serializer),
+        }
+    }
 }
 
 impl TransactionOutputs {
-	pub fn len(&self) -> usize {
-		self.outputs.len()
-	}
+    pub fn len(&self) -> usize { self.outputs.len() }
 
-	pub fn is_empty(&self) -> bool {
-		self.outputs.is_empty()
-	}
+    pub fn is_empty(&self) -> bool { self.outputs.is_empty() }
 }
 
 impl Serialize for TransactionOutputs {
-	fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
-		let mut state = serializer.serialize_map(Some(self.len()))?;
-		for output in &self.outputs {
-			match *output {
-				TransactionOutput::Address(ref address_output) => {
-					state.serialize_entry(&address_output.address.to_string(), &address_output.amount)?;
-				},
-				TransactionOutput::ScriptData(ref script_output) => {
-					state.serialize_entry("data", &script_output.script_data)?;
-				},
-			}
-		}
-		state.end()
-	}
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut state = serializer.serialize_map(Some(self.len()))?;
+        for output in &self.outputs {
+            match *output {
+                TransactionOutput::Address(ref address_output) => {
+                    state.serialize_entry(&address_output.address.to_string(), &address_output.amount)?;
+                },
+                TransactionOutput::ScriptData(ref script_output) => {
+                    state.serialize_entry("data", &script_output.script_data)?;
+                },
+            }
+        }
+        state.end()
+    }
 }
 
 impl<'a> Deserialize<'a> for TransactionOutputs {
-	fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: Deserializer<'a> {
-		use serde::de::{Visitor, MapAccess};
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'a>,
+    {
+        use serde::de::{MapAccess, Visitor};
 
-		struct TransactionOutputsVisitor;
+        struct TransactionOutputsVisitor;
 
-		impl<'b> Visitor<'b> for TransactionOutputsVisitor {
-			type Value = TransactionOutputs;
+        impl<'b> Visitor<'b> for TransactionOutputsVisitor {
+            type Value = TransactionOutputs;
 
-			fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-				formatter.write_str("a transaction output object")
-			}
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a transaction output object")
+            }
 
-			fn visit_map<V>(self, mut visitor: V) -> Result<TransactionOutputs, V::Error> where V: MapAccess<'b> {
-				let mut outputs: Vec<TransactionOutput> = Vec::with_capacity(visitor.size_hint().unwrap_or(0));
+            fn visit_map<V>(self, mut visitor: V) -> Result<TransactionOutputs, V::Error>
+            where
+                V: MapAccess<'b>,
+            {
+                let mut outputs: Vec<TransactionOutput> = Vec::with_capacity(visitor.size_hint().unwrap_or(0));
 
-				while let Some(key) = visitor.next_key::<String>()? {
-					if &key == "data" {
-						let value: Bytes = visitor.next_value()?;
-						outputs.push(TransactionOutput::ScriptData(TransactionOutputWithScriptData {
-							script_data: value,
-						}));
-					} else {
-						let address = types::address::AddressVisitor::default().visit_str(&key)?;
-						let amount: f64 = visitor.next_value()?;
-						outputs.push(TransactionOutput::Address(TransactionOutputWithAddress {
-							address,
-							amount,
-						}));
-					}
-				}
+                while let Some(key) = visitor.next_key::<String>()? {
+                    if &key == "data" {
+                        let value: Bytes = visitor.next_value()?;
+                        outputs.push(TransactionOutput::ScriptData(TransactionOutputWithScriptData {
+                            script_data: value,
+                        }));
+                    } else {
+                        let address = types::address::AddressVisitor::default().visit_str(&key)?;
+                        let amount: f64 = visitor.next_value()?;
+                        outputs.push(TransactionOutput::Address(TransactionOutputWithAddress {
+                            address,
+                            amount,
+                        }));
+                    }
+                }
 
-				Ok(TransactionOutputs {
-					outputs,
-				})
-			}
-		}
+                Ok(TransactionOutputs { outputs })
+            }
+        }
 
-		deserializer.deserialize_identifier(TransactionOutputsVisitor)
-	}
+        deserializer.deserialize_identifier(TransactionOutputsVisitor)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-	use serde_json;
-	use super::super::bytes::Bytes;
-	use super::super::hash::H256;
-	use super::super::script::ScriptType;
-	use super::*;
+    use super::super::bytes::Bytes;
+    use super::super::hash::H256;
+    use super::super::script::ScriptType;
+    use super::*;
+    use serde_json;
 
-	#[test]
-	fn transaction_input_serialize() {
-		let txinput = TransactionInput {
-			txid: H256::from(7),
-			vout: 33,
-			sequence: Some(88),
-		};
-		assert_eq!(serde_json::to_string(&txinput).unwrap(), r#"{"txid":"0700000000000000000000000000000000000000000000000000000000000000","vout":33,"sequence":88}"#);
-	}
+    #[test]
+    fn transaction_input_serialize() {
+        let txinput = TransactionInput {
+            txid: H256::from(7),
+            vout: 33,
+            sequence: Some(88),
+        };
+        assert_eq!(
+            serde_json::to_string(&txinput).unwrap(),
+            r#"{"txid":"0700000000000000000000000000000000000000000000000000000000000000","vout":33,"sequence":88}"#
+        );
+    }
 
-	#[test]
-	fn transaction_input_deserialize() {
-		let txinput = TransactionInput {
-			txid: H256::from(7),
-			vout: 33,
-			sequence: Some(88),
-		};
+    #[test]
+    fn transaction_input_deserialize() {
+        let txinput = TransactionInput {
+            txid: H256::from(7),
+            vout: 33,
+            sequence: Some(88),
+        };
 
-		assert_eq!(
-			serde_json::from_str::<TransactionInput>(r#"{"txid":"0700000000000000000000000000000000000000000000000000000000000000","vout":33,"sequence":88}"#).unwrap(),
-			txinput);
-	}
+        assert_eq!(
+            serde_json::from_str::<TransactionInput>(
+                r#"{"txid":"0700000000000000000000000000000000000000000000000000000000000000","vout":33,"sequence":88}"#
+            )
+            .unwrap(),
+            txinput
+        );
+    }
 
-	#[test]
-	fn transaction_outputs_serialize() {
-		let txout = TransactionOutputs {
-			outputs: vec![
-				TransactionOutput::Address(TransactionOutputWithAddress {
-					address: "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa".into(),
-					amount: 123.45,
-				}),
-				TransactionOutput::Address(TransactionOutputWithAddress {
-					address: "1H5m1XzvHsjWX3wwU781ubctznEpNACrNC".into(),
-					amount: 67.89,
-				}),
-				TransactionOutput::ScriptData(TransactionOutputWithScriptData {
-					script_data: Bytes::new(vec![1, 2, 3, 4]),
-				}),
-				TransactionOutput::ScriptData(TransactionOutputWithScriptData {
-					script_data: Bytes::new(vec![5, 6, 7, 8]),
-				}),
-			]
-		};
-		assert_eq!(serde_json::to_string(&txout).unwrap(), r#"{"1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa":123.45,"1H5m1XzvHsjWX3wwU781ubctznEpNACrNC":67.89,"data":"01020304","data":"05060708"}"#);
-	}
+    #[test]
+    fn transaction_outputs_serialize() {
+        let txout = TransactionOutputs {
+            outputs: vec![
+                TransactionOutput::Address(TransactionOutputWithAddress {
+                    address: "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa".into(),
+                    amount: 123.45,
+                }),
+                TransactionOutput::Address(TransactionOutputWithAddress {
+                    address: "1H5m1XzvHsjWX3wwU781ubctznEpNACrNC".into(),
+                    amount: 67.89,
+                }),
+                TransactionOutput::ScriptData(TransactionOutputWithScriptData {
+                    script_data: Bytes::new(vec![1, 2, 3, 4]),
+                }),
+                TransactionOutput::ScriptData(TransactionOutputWithScriptData {
+                    script_data: Bytes::new(vec![5, 6, 7, 8]),
+                }),
+            ],
+        };
+        assert_eq!(
+            serde_json::to_string(&txout).unwrap(),
+            r#"{"1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa":123.45,"1H5m1XzvHsjWX3wwU781ubctznEpNACrNC":67.89,"data":"01020304","data":"05060708"}"#
+        );
+    }
 
-	#[test]
-	fn transaction_outputs_deserialize() {
-		let txout = TransactionOutputs {
-			outputs: vec![
-				TransactionOutput::Address(TransactionOutputWithAddress {
-					address: "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa".into(),
-					amount: 123.45,
-				}),
-				TransactionOutput::Address(TransactionOutputWithAddress {
-					address: "1H5m1XzvHsjWX3wwU781ubctznEpNACrNC".into(),
-					amount: 67.89,
-				}),
-				TransactionOutput::ScriptData(TransactionOutputWithScriptData {
-					script_data: Bytes::new(vec![1, 2, 3, 4]),
-				}),
-				TransactionOutput::ScriptData(TransactionOutputWithScriptData {
-					script_data: Bytes::new(vec![5, 6, 7, 8]),
-				}),
-			]
-		};
-		assert_eq!(
+    #[test]
+    fn transaction_outputs_deserialize() {
+        let txout = TransactionOutputs {
+            outputs: vec![
+                TransactionOutput::Address(TransactionOutputWithAddress {
+                    address: "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa".into(),
+                    amount: 123.45,
+                }),
+                TransactionOutput::Address(TransactionOutputWithAddress {
+                    address: "1H5m1XzvHsjWX3wwU781ubctznEpNACrNC".into(),
+                    amount: 67.89,
+                }),
+                TransactionOutput::ScriptData(TransactionOutputWithScriptData {
+                    script_data: Bytes::new(vec![1, 2, 3, 4]),
+                }),
+                TransactionOutput::ScriptData(TransactionOutputWithScriptData {
+                    script_data: Bytes::new(vec![5, 6, 7, 8]),
+                }),
+            ],
+        };
+        assert_eq!(
 			serde_json::from_str::<TransactionOutputs>(r#"{"1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa":123.45,"1H5m1XzvHsjWX3wwU781ubctznEpNACrNC":67.89,"data":"01020304","data":"05060708"}"#).unwrap(),
 			txout);
-	}
+    }
 
-	#[test]
-	fn transaction_input_script_serialize() {
-		let txin = TransactionInputScript {
-			asm: "Hello, world!!!".to_owned(),
-			hex: Bytes::new(vec![1, 2, 3, 4]),
-		};
-		assert_eq!(serde_json::to_string(&txin).unwrap(), r#"{"asm":"Hello, world!!!","hex":"01020304"}"#);
-	}
+    #[test]
+    fn transaction_input_script_serialize() {
+        let txin = TransactionInputScript {
+            asm: "Hello, world!!!".to_owned(),
+            hex: Bytes::new(vec![1, 2, 3, 4]),
+        };
+        assert_eq!(
+            serde_json::to_string(&txin).unwrap(),
+            r#"{"asm":"Hello, world!!!","hex":"01020304"}"#
+        );
+    }
 
-	#[test]
-	fn transaction_input_script_deserialize() {
-		let txin = TransactionInputScript {
-			asm: "Hello, world!!!".to_owned(),
-			hex: Bytes::new(vec![1, 2, 3, 4]),
-		};
-		assert_eq!(
-			serde_json::from_str::<TransactionInputScript>(r#"{"asm":"Hello, world!!!","hex":"01020304"}"#).unwrap(),
-			txin);
-	}
+    #[test]
+    fn transaction_input_script_deserialize() {
+        let txin = TransactionInputScript {
+            asm: "Hello, world!!!".to_owned(),
+            hex: Bytes::new(vec![1, 2, 3, 4]),
+        };
+        assert_eq!(
+            serde_json::from_str::<TransactionInputScript>(r#"{"asm":"Hello, world!!!","hex":"01020304"}"#).unwrap(),
+            txin
+        );
+    }
 
-	#[test]
-	fn transaction_output_script_serialize() {
-		let txout = TransactionOutputScript {
-			asm: "Hello, world!!!".to_owned(),
-			hex: Bytes::new(vec![1, 2, 3, 4]),
-			req_sigs: 777,
-			script_type: ScriptType::Multisig,
-			addresses: vec!["1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa".into(), "1H5m1XzvHsjWX3wwU781ubctznEpNACrNC".into()],
-		};
-		assert_eq!(serde_json::to_string(&txout).unwrap(), r#"{"asm":"Hello, world!!!","hex":"01020304","reqSigs":777,"type":"multisig","addresses":["1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa","1H5m1XzvHsjWX3wwU781ubctznEpNACrNC"]}"#);
-	}
+    #[test]
+    fn transaction_output_script_serialize() {
+        let txout = TransactionOutputScript {
+            asm: "Hello, world!!!".to_owned(),
+            hex: Bytes::new(vec![1, 2, 3, 4]),
+            req_sigs: 777,
+            script_type: ScriptType::Multisig,
+            addresses: vec![
+                "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa".into(),
+                "1H5m1XzvHsjWX3wwU781ubctznEpNACrNC".into(),
+            ],
+        };
+        assert_eq!(
+            serde_json::to_string(&txout).unwrap(),
+            r#"{"asm":"Hello, world!!!","hex":"01020304","reqSigs":777,"type":"multisig","addresses":["1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa","1H5m1XzvHsjWX3wwU781ubctznEpNACrNC"]}"#
+        );
+    }
 
-	#[test]
-	fn transaction_output_script_deserialize() {
-		let txout = TransactionOutputScript {
-			asm: "Hello, world!!!".to_owned(),
-			hex: Bytes::new(vec![1, 2, 3, 4]),
-			req_sigs: 777,
-			script_type: ScriptType::Multisig,
-			addresses: vec!["1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa".into(), "1H5m1XzvHsjWX3wwU781ubctznEpNACrNC".into()],
-		};
+    #[test]
+    fn transaction_output_script_deserialize() {
+        let txout = TransactionOutputScript {
+            asm: "Hello, world!!!".to_owned(),
+            hex: Bytes::new(vec![1, 2, 3, 4]),
+            req_sigs: 777,
+            script_type: ScriptType::Multisig,
+            addresses: vec![
+                "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa".into(),
+                "1H5m1XzvHsjWX3wwU781ubctznEpNACrNC".into(),
+            ],
+        };
 
-		assert_eq!(
+        assert_eq!(
 			serde_json::from_str::<TransactionOutputScript>(r#"{"asm":"Hello, world!!!","hex":"01020304","reqSigs":777,"type":"multisig","addresses":["1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa","1H5m1XzvHsjWX3wwU781ubctznEpNACrNC"]}"#).unwrap(),
 			txout);
-	}
+    }
 
-	#[test]
-	fn signed_transaction_input_serialize() {
-		let txin = SignedTransactionInput {
-			txid: H256::from(77),
-			vout: 13,
-			script_sig: TransactionInputScript {
-				asm: "Hello, world!!!".to_owned(),
-				hex: Bytes::new(vec![1, 2, 3, 4]),
-			},
-			sequence: 123,
-			txinwitness: None,
-		};
-		assert_eq!(serde_json::to_string(&txin).unwrap(), r#"{"txid":"4d00000000000000000000000000000000000000000000000000000000000000","vout":13,"scriptSig":{"asm":"Hello, world!!!","hex":"01020304"},"sequence":123,"txinwitness":null}"#);
-	}
+    #[test]
+    fn signed_transaction_input_serialize() {
+        let txin = SignedTransactionInput {
+            txid: H256::from(77),
+            vout: 13,
+            script_sig: TransactionInputScript {
+                asm: "Hello, world!!!".to_owned(),
+                hex: Bytes::new(vec![1, 2, 3, 4]),
+            },
+            sequence: 123,
+            txinwitness: None,
+        };
+        assert_eq!(
+            serde_json::to_string(&txin).unwrap(),
+            r#"{"txid":"4d00000000000000000000000000000000000000000000000000000000000000","vout":13,"scriptSig":{"asm":"Hello, world!!!","hex":"01020304"},"sequence":123,"txinwitness":null}"#
+        );
+    }
 
-	#[test]
-	fn signed_transaction_input_deserialize() {
-		let txin = SignedTransactionInput {
-			txid: H256::from(77),
-			vout: 13,
-			script_sig: TransactionInputScript {
-				asm: "Hello, world!!!".to_owned(),
-				hex: Bytes::new(vec![1, 2, 3, 4]),
-			},
-			sequence: 123,
-			txinwitness: Some(vec![]),
-		};
-		assert_eq!(
+    #[test]
+    fn signed_transaction_input_deserialize() {
+        let txin = SignedTransactionInput {
+            txid: H256::from(77),
+            vout: 13,
+            script_sig: TransactionInputScript {
+                asm: "Hello, world!!!".to_owned(),
+                hex: Bytes::new(vec![1, 2, 3, 4]),
+            },
+            sequence: 123,
+            txinwitness: Some(vec![]),
+        };
+        assert_eq!(
 			serde_json::from_str::<SignedTransactionInput>(r#"{"txid":"4d00000000000000000000000000000000000000000000000000000000000000","vout":13,"scriptSig":{"asm":"Hello, world!!!","hex":"01020304"},"sequence":123,"txinwitness":[]}"#).unwrap(),
 			txin);
-	}
+    }
 
-	#[test]
-	fn signed_transaction_output_serialize() {
-		let txout = SignedTransactionOutput {
-			value: 777.79,
-			n: 12,
-			script: TransactionOutputScript {
-				asm: "Hello, world!!!".to_owned(),
-				hex: Bytes::new(vec![1, 2, 3, 4]),
-				req_sigs: 777,
-				script_type: ScriptType::Multisig,
-				addresses: vec!["1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa".into(), "1H5m1XzvHsjWX3wwU781ubctznEpNACrNC".into()],
-			},
-		};
-		assert_eq!(serde_json::to_string(&txout).unwrap(), r#"{"value":777.79,"n":12,"scriptPubKey":{"asm":"Hello, world!!!","hex":"01020304","reqSigs":777,"type":"multisig","addresses":["1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa","1H5m1XzvHsjWX3wwU781ubctznEpNACrNC"]}}"#);
-	}
+    #[test]
+    fn signed_transaction_output_serialize() {
+        let txout = SignedTransactionOutput {
+            value: 777.79,
+            n: 12,
+            script: TransactionOutputScript {
+                asm: "Hello, world!!!".to_owned(),
+                hex: Bytes::new(vec![1, 2, 3, 4]),
+                req_sigs: 777,
+                script_type: ScriptType::Multisig,
+                addresses: vec![
+                    "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa".into(),
+                    "1H5m1XzvHsjWX3wwU781ubctznEpNACrNC".into(),
+                ],
+            },
+        };
+        assert_eq!(
+            serde_json::to_string(&txout).unwrap(),
+            r#"{"value":777.79,"n":12,"scriptPubKey":{"asm":"Hello, world!!!","hex":"01020304","reqSigs":777,"type":"multisig","addresses":["1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa","1H5m1XzvHsjWX3wwU781ubctznEpNACrNC"]}}"#
+        );
+    }
 
-	#[test]
-	fn signed_transaction_output_deserialize() {
-		let txout = SignedTransactionOutput {
-			value: 777.79,
-			n: 12,
-			script: TransactionOutputScript {
-				asm: "Hello, world!!!".to_owned(),
-				hex: Bytes::new(vec![1, 2, 3, 4]),
-				req_sigs: 777,
-				script_type: ScriptType::Multisig,
-				addresses: vec!["1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa".into(), "1H5m1XzvHsjWX3wwU781ubctznEpNACrNC".into()],
-			},
-		};
-		assert_eq!(
+    #[test]
+    fn signed_transaction_output_deserialize() {
+        let txout = SignedTransactionOutput {
+            value: 777.79,
+            n: 12,
+            script: TransactionOutputScript {
+                asm: "Hello, world!!!".to_owned(),
+                hex: Bytes::new(vec![1, 2, 3, 4]),
+                req_sigs: 777,
+                script_type: ScriptType::Multisig,
+                addresses: vec![
+                    "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa".into(),
+                    "1H5m1XzvHsjWX3wwU781ubctznEpNACrNC".into(),
+                ],
+            },
+        };
+        assert_eq!(
 			serde_json::from_str::<SignedTransactionOutput>(r#"{"value":777.79,"n":12,"scriptPubKey":{"asm":"Hello, world!!!","hex":"01020304","reqSigs":777,"type":"multisig","addresses":["1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa","1H5m1XzvHsjWX3wwU781ubctznEpNACrNC"]}}"#).unwrap(),
 			txout);
-	}
+    }
 
-	#[test]
-	fn transaction_serialize() {
-		let tx = Transaction {
-			hex: "DEADBEEF".into(),
-			txid: H256::from(4),
-			hash: Some(H256::from(5)),
-			size: Some(33),
-			vsize: Some(44),
-			version: 55,
-			locktime: 66,
-			vin: vec![],
-			vout: vec![],
-			blockhash: H256::from(6),
-			confirmations: 77,
-			rawconfirmations: None,
-			time: 88,
-			blocktime: 99,
-			height: Some(0),
-		};
-		assert_eq!(serde_json::to_string(&tx).unwrap(), r#"{"hex":"deadbeef","txid":"0400000000000000000000000000000000000000000000000000000000000000","hash":"0500000000000000000000000000000000000000000000000000000000000000","size":33,"vsize":44,"version":55,"locktime":66,"vin":[],"vout":[],"blockhash":"0600000000000000000000000000000000000000000000000000000000000000","confirmations":77,"time":88,"blocktime":99,"height":0}"#);
-	}
+    #[test]
+    fn transaction_serialize() {
+        let tx = Transaction {
+            hex: "DEADBEEF".into(),
+            txid: H256::from(4),
+            hash: Some(H256::from(5)),
+            size: Some(33),
+            vsize: Some(44),
+            version: 55,
+            locktime: 66,
+            vin: vec![],
+            vout: vec![],
+            blockhash: H256::from(6),
+            confirmations: 77,
+            rawconfirmations: None,
+            time: 88,
+            blocktime: 99,
+            height: Some(0),
+        };
+        assert_eq!(
+            serde_json::to_string(&tx).unwrap(),
+            r#"{"hex":"deadbeef","txid":"0400000000000000000000000000000000000000000000000000000000000000","hash":"0500000000000000000000000000000000000000000000000000000000000000","size":33,"vsize":44,"version":55,"locktime":66,"vin":[],"vout":[],"blockhash":"0600000000000000000000000000000000000000000000000000000000000000","confirmations":77,"time":88,"blocktime":99,"height":0}"#
+        );
+    }
 
-	#[test]
-	fn transaction_deserialize() {
-		let tx = Transaction {
-			hex: "DEADBEEF".into(),
-			txid: H256::from(4),
-			hash: Some(H256::from(5)),
-			size: Some(33),
-			vsize: Some(44),
-			version: 55,
-			locktime: 66,
-			vin: vec![],
-			vout: vec![],
-			blockhash: H256::from(6),
-			confirmations: 77,
-			rawconfirmations: None,
-			time: 88,
-			blocktime: 99,
-			height: None,
-		};
-		assert_eq!(
+    #[test]
+    fn transaction_deserialize() {
+        let tx = Transaction {
+            hex: "DEADBEEF".into(),
+            txid: H256::from(4),
+            hash: Some(H256::from(5)),
+            size: Some(33),
+            vsize: Some(44),
+            version: 55,
+            locktime: 66,
+            vin: vec![],
+            vout: vec![],
+            blockhash: H256::from(6),
+            confirmations: 77,
+            rawconfirmations: None,
+            time: 88,
+            blocktime: 99,
+            height: None,
+        };
+        assert_eq!(
 			serde_json::from_str::<Transaction>(r#"{"hex":"deadbeef","txid":"0400000000000000000000000000000000000000000000000000000000000000","hash":"0500000000000000000000000000000000000000000000000000000000000000","size":33,"vsize":44,"version":55,"locktime":66,"vin":[],"vout":[],"blockhash":"0600000000000000000000000000000000000000000000000000000000000000","confirmations":77,"time":88,"blocktime":99}"#).unwrap(),
 			tx);
-	}
+    }
 
-	#[test]
-	// https://kmdexplorer.io/tx/88893f05764f5a781f2e555a5b492c064f2269a4a44c51afdbe98fab54361bb5
-	fn test_kmd_json_transaction_parse_fail() {
-		let tx_str = r#"{
+    #[test]
+    // https://kmdexplorer.io/tx/88893f05764f5a781f2e555a5b492c064f2269a4a44c51afdbe98fab54361bb5
+    fn test_kmd_json_transaction_parse_fail() {
+        let tx_str = r#"{
 			"hex":"0100000001ebca38fa14b1ec029c3e08a2e87940c1f796b1588674b4c386f09626ee702576010000006a4730440220070963b9460d9bafe7865563574594fc3f823e5cdf7c49a5642dade76502547f022023fd90d41e34e514237f4b5967f83c9af27673d6de2eae3d88079a988fa5be3e012103668e3368c9fb67d8fc808a5fe74d5a8d21b6eed726838122d5f7716fb3328998ffffffff03e87006060000000017a914fef59ae800bb89050d25f67be432b231097e1849878758c100000000001976a91473122bcec852f394e51496e39fca5111c3d7ae5688ac00000000000000000a6a08303764643135633400000000",
 			"txid":"88893f05764f5a781f2e555a5b492c064f2269a4a44c51afdbe98fab54361bb5",
 			"overwintered":false,
@@ -605,12 +641,12 @@ mod tests {
 			"blocktime":1528215344
 		}"#;
 
-		let _tx: Transaction = serde_json::from_str(tx_str).unwrap();
-	}
+        let _tx: Transaction = serde_json::from_str(tx_str).unwrap();
+    }
 
-	#[test]
-	fn test_kmd_coinbase_transaction_parse() {
-		let tx_str = r#"{
+    #[test]
+    fn test_kmd_coinbase_transaction_parse() {
+        let tx_str = r#"{
 			"hex": "0400008085202f89010000000000000000000000000000000000000000000000000000000000000000ffffffff06030a4b020101ffffffff0178e600000000000023210388392e0885e449ea9745ce7ad2631fdca5288f9d790cee1b696e67c75ad54a2dac1ad92f5d000000000000000000000000000000",
 			"txid": "6f173d96987e765b0fd8a47fdb976e8edc767207f3c0028e17a224380d9a14a3",
 			"overwintered": true,
@@ -655,13 +691,13 @@ mod tests {
 			"blocktime": 1563416858
 		}"#;
 
-		let _tx: Transaction = serde_json::from_str(tx_str).unwrap();
-	}
+        let _tx: Transaction = serde_json::from_str(tx_str).unwrap();
+    }
 
-	// https://live.blockcypher.com/btc/tx/4ab5828480046524afa3fac5eb7f93f768c3eeeaeb5d4d6b6ff22801d3dc521e/
-	#[test]
-	fn test_btc_4ab5828480046524afa3fac5eb7f93f768c3eeeaeb5d4d6b6ff22801d3dc521e() {
-		let tx_str = r#"{
+    // https://live.blockcypher.com/btc/tx/4ab5828480046524afa3fac5eb7f93f768c3eeeaeb5d4d6b6ff22801d3dc521e/
+    #[test]
+    fn test_btc_4ab5828480046524afa3fac5eb7f93f768c3eeeaeb5d4d6b6ff22801d3dc521e() {
+        let tx_str = r#"{
 			"txid":"4ab5828480046524afa3fac5eb7f93f768c3eeeaeb5d4d6b6ff22801d3dc521e",
 			"hash":"89f9ae508f67ce79181f43cd4823e9899ef3116d658457c992b8411674f80c5c",
 			"version":2,
@@ -1743,12 +1779,12 @@ mod tests {
 			"blocktime":1561311885
 		}"#;
 
-		let _tx: Transaction = serde_json::from_str(tx_str).unwrap();
-	}
-	
-	#[allow(dead_code)]
-	fn test_kmd_raw_confirmations() {
-		let json_str = r#"{
+        let _tx: Transaction = serde_json::from_str(tx_str).unwrap();
+    }
+
+    #[allow(dead_code)]
+    fn test_kmd_raw_confirmations() {
+        let json_str = r#"{
 			"hex":"0400008085202f89010000000000000000000000000000000000000000000000000000000000000000ffffffff0603aed11a0101ffffffff0188b6e11100000000232103fff24efd5648870a23badf46e26510e96d9e79ce281b27cfe963993039dd1351ac3b5e4e5e000000000000000000000000000000",
 			"txid":"1b1a413c7205dc07f23ef60ca04d29ca33d72e9f6c473ddd8b02aaac53fb8e7a",
 			"overwintered":true,
@@ -1798,13 +1834,13 @@ mod tests {
 			"blocktime":1582194235
 		}"#;
 
-		let tx: Transaction = serde_json::from_str(json_str).unwrap();
-		assert_eq!(tx.rawconfirmations, Some(8));
-	}
+        let tx: Transaction = serde_json::from_str(json_str).unwrap();
+        assert_eq!(tx.rawconfirmations, Some(8));
+    }
 
-	#[test]
-	fn test_qtum_call_script_pubkey() {
-		let json_str = r#"{
+    #[test]
+    fn test_qtum_call_script_pubkey() {
+        let json_str = r#"{
 			"blockhash":"b81f26a919bc9d792aeb056d6eea5340b7e334aa3f21144cd0f3c663286ff870",
 			"blocktime":1589537936,
 			"confirmations":2457,
@@ -1872,14 +1908,14 @@ mod tests {
 			"weight":2376
 		}"#;
 
-		let tx: Transaction = serde_json::from_str(json_str).unwrap();
-		assert_eq!(tx.vout[0].script.script_type, ScriptType::Call);
-	}
+        let tx: Transaction = serde_json::from_str(json_str).unwrap();
+        assert_eq!(tx.vout[0].script.script_type, ScriptType::Call);
+    }
 
-	#[test]
-	fn test_firo_sigmaspend_input() {
-		// https://explorer.firo.org/tx/d4b9f5a01a43b1d592999f9fd6fe64aa8f63ac42abab43090938321064c1ec1f
-		let json_str = r#"{
+    #[test]
+    fn test_firo_sigmaspend_input() {
+        // https://explorer.firo.org/tx/d4b9f5a01a43b1d592999f9fd6fe64aa8f63ac42abab43090938321064c1ec1f
+        let json_str = r#"{
 		  "hex":"0100000006000000000000000000000000000000000000000000000000000000000000000001000000fd2805c4aed78fbc5b719b0887d2c96005214b5e6d82852e4cc189bcd5fa1860caee2b700100dc1b2cd57ba6a72246fd3935c2930e8b8465860b8fbb6ee55957433a31ba705f00005586b9add2ab0301cb65dfa154ddea1ae2cfd352a4a9959f8f0956050b167e7a00007c294578d92c7ab5dccd2379461618124af985b5c3c1890a762d3b9bdf562cc2000015bea1119f1177726d155ebb2f2f4fa7e1bbc42e7e063e6d8780f4fba17bf74aaa907e1e669bf60fb97f87fc45f6d432a39a01119717bd35f9c64d0430e8a5544026656243aff1f1fdbc491c0ce01d63969e488265bc938c60efd0214b8e40b231ae85d87a3e7ca99080b850ff5c0c2e8171534132a0ad32fe8892347cb920a7768f58a963e3604b6ddd02c282c20bdea658b7dea637494af9b3619ed2e11c2ad28cd870fc1bf9a9fecdee794fdc9001a6e06330ff834f87d5de64ef5c9aae0e26916946fcd6668f6c12ac7c705c38470ad572ea71fb596b5149e982bffd0c238865a693aab5c8dd0f91143eb3b314f283379e3c7a708ea4faf4430137fe71453995ecc3cad8a3816b28bda1c866821cc389748a62a8edb4f2a3493dcc5b166c37a0cd8390fb41f21e9464dedafe54d2b3b4a3bf5881584c96ed537f00cf5c6dee475c6b8a252c07fb5f6c822547c4299db862653e3ed20c867eef508043f5580b404bc111f14d5839789c774d71a5adb14efe8b97b6124f084f22fde1728d483ffa60365e517187e9891404cdcb41f3823e3c8fec84112d54ab9537db9d0c66ce681ed18a3025b0982d06ce00c1a0db670936ef7aa4ec3059296f7a56e5618da52e155ef91cf3ce952431c00a3c5fbc422133f09ee5a76d7df34081fee9e0e574bee1cdfe83e964341813fcb7b219024f2a2606b7306ea9c61330752915c459bb5d9b1969f64be1878814ad39b41eff50c60e495472ee628929d22d468343c162a7f033e1fa0ebf039c529739a5f071d86f1bda27fe9b4dee8ed7faf8e6e9ff1d78a6f74498ea3326c05cf3d3850e807269cb073776bb8dd34f6fce30307e8330265ec89112bf48861a122df7bdd203af1cf776ae4353ae09e176eeaaeaad98f82eb2a9277fa9795954590d29c8c0ba84aca16850800ba1950b16430af7cfa81add4b225de680e9c5690418f70851295161bd3c2c91ae366531c62991a73fcd9c3b31fa8261fe29761538de5ddf38f6163c9eb57609888bd6d177f395ea12593807acd32a8d9247ab5aa8db8af62d0a28c376c7d096c02ff9799d4e5818abda986a00002548ea29cc77d2aa5cb91850528fd7f1e209686a3cab3c8f8965818d0063e4f600003e12c6dd83593e2303cca9b712b69d121b2feeb19a6d070cb06e465cce92653b0000ab18e8decb34fb0cecd0600ca124786f133401ac197d9615e4dc646ae750b2db0100c40a4788e12bac6c26e3ca1d72925f7764f72dbde8d487d657707e880849b7bf0100ed6189ae534e3d8de39f2e4046a43486f348065a85d12860c39cb85fefa6fb4c01001049602903683e070a3fcbfe160bfcf5c21094185cb9fdba4262020860b12b2800004cd9d1ed019992afdb63ba2644017ac9938ff11f665ff57279d507fe90de5be6f56d5554349f7d637ce0d0365a0cc056de61cb9a6fb10cfdfbb83d927911018b1f00000000e40b540200000080590526dd52f8c321fa49589ca1611724fc9572336b3983c8fb4e83e55863dd2103a2e831904e261074139899446af2298307f7c5a59c2ff9f7d691b66c5f78a3e840c2e23decf2e8f845e8a8e9d18cd81d9eb4a5d0e7d53624d34c0f1cbdbb2e05697b427bd7004c14ba20370d2384a5967a8bd5921202dfa382e99c1c49db9d3182ffffffff000000000000000000000000000000000000000000000000000000000000000001000000fd2805c42c0bb28d0e52f8f3d0a139446fe7e4da31cd195f7c3058d8e6cffea3b155dc32000092f7d2a8a1a4892c983da5a20fdd657957fcdc0ebd86485e7ac1c7aa62a92dfe010023353a1603f1d14720d48a80ad139a400862ecba29637b38f9f1162e0d556ee3010095defe584076981c1c6fc020d842a87711fec85b01aecf288282a564dcde2c2c01001597a0147c89ed6f0961dfa572909bccc58eeadaf646ce7ac29a6e0fffba2201e2450eb859d4560a7c1aaa18971cf9610f5b361c97207c97d947b808f08f8767f950b817d1e653b582638fc69da3725d78a0c0d41262288ef5c9e06a2c6412165b0818786e2d5d821f707a59226a2fa2cdd009a60b91742956d315601b8390537c636f5a0f523546f283f0860ee7c495020e2cce56c8b9814e3997a0d0ae224b17e8b464565f91a16fa722546ea707eb73f16613cd1a204491c6590652f2df7876253d3f4c315f6a2481bb70f42095dc54237e9d1cffb49072762af07ee6cdaa82daf8f85039756da027621e3b4dc67596450aeb638894c0cca4ab69a0bdd1fff7a2fb4abacf33351dd0046d0a29608be1fe6fc91f3a349b0b6940f33e1232af2099ad97a2e05442261c3f25c2e5d241203eb7f983df4714f016692748d1aea107b3a71013092143cb4f4085bbf4f23064af7250151b6f7fea5c08933fae00353dfe11966731377d839e89aef9dda76c46a2238af18a7932c247ee78bcf0400938428e1c6c368b9af88891b40f07b836a7abaa6c638a9fa6ad2f7add6f2ded013a3a838dbe5c81f4dad69c98df205dc507004471b9f7ed6ce5eefd20a58db720e2479f198654e385254e32dfbd0161f63b8a3d3c8e81b9660d78626190acdc6a43b70bcc32c8b7cf3420323c43cf415ca852eb529f931c428c8f3e7e42a70474d0690c6c24d4f5840672804b4208a1ad756772dd80e9e90379b7da72c8ec8729f75c152b1fa5705fb894f187b6d3d2c855ee9538e4c58f6d15cc39698a7075164de691658d865797faf88703cd59b51cea8b96a6027546ebfe3007a0356d14b8480f30481ac74fa635199cd87c2f597245de45b412d32e57a9d0c67f10e384da8e1b6f125ab62691788151432a7701dd31ba4b4c6d7276217f1ddcd26b42d2320d8e8b81c8c845d6333b009b29633ad2afccf37f4259ef5eef236a6b399134aee916327c44f591866e7392110597e63490fd43f743f2f227b7284d991a484a3bb307db65821fa9747af6cc277b465c5f524a650188d8421681c3a631c0e964cf9ac500004cdadf027a224a6746819329ac51c4c7a295ed9d4e75f081e8c590718e0a762c0100c448a2bba9efe5a4e1473a1ad9217bc28f7a628f64920d400b7b37097f7e7b1f00002304ea4f401f1c08e6d2dfad3e53de99062563c5232cbfb7cd97660177798df90000d315be7ae3d127a96f680db963d23c0f8759ebf0d7e1b5db573851ea7974d3d000009faa7df3c9c87ea2be077274952505173477e7c927fa5433e5a508ba2b8851a800004737d94352d548efc6479596ea413b523384f839715479295fba94928334dfdc000001bb5aa89712cb71b90006fd545ad4295ef4e0e8f0d9362f73fb53e32d1806d8102e4c4cbfdcce690e04dcad8f8354c90d6a65ac2cff03c5dd76c6f06f770ab01f00000000e40b540200000080590526dd52f8c321fa49589ca1611724fc9572336b3983c8fb4e83e55863dd2102d9cd799a2267321b8109204c87e638e5e040bb9a2101a0ea12e43af4ed7586754046a5fca18239564d3bed40328a7b1472e1d0941337b68b6a7d82d62d5023278b7f6e3573a22627c0a30269ddee7059968b0aa957dbd041e6d762af2fed06de3bffffffff000000000000000000000000000000000000000000000000000000000000000001000000fd2805c4e9fcfb78b81f1cdfb53c62417cc1b362f52532ccdf055190787c826a84de3e9b0100779985d4b1b1c5e701a008666aec2c65400a1d0fd684cebfc8e77439d5362c16000097bfb9c79218528bf2515a6c3edb70428999afd348fb1ae6d4a053cf85b3e28c0100cd6eaeec888a2f971fceddbff518a2cad03f66d28cdd084b7f406d5fef84eb150000151ca45f20ef7e7b95cae35c6b08af8c95965b156dac5eb748dbe9db067c63ebfed427fb0a30e422bfee913ac7106877ab2838db36e992e7ac9b6cfc746e3954d172708b64a6ed0c94a460dbba986ecf0592d0a289baa3369fa7d9d8181973d92a5a6f1615a5c4a27377739fc172af3ca83c8d2bfe1f4c4163851c0cf7776773f29a4fcad864e11eb7572e13fb02dfda4613035a2df00ae21aca80c6c5e345deac538a4b4a8c5c9998f35176a68de0ef38eb25b036810d440976d556e4e6acee2772bc0c8961dd140b857ecb53a029930600267aec1f7c2358b9a874ebb15fa3a2f14afa1645921409f50a6b3d9f38e841e580b460f90c3c77cf764a77a6b65c657af753c54e27ed849a03a2394c99548a46d9719dc563a2f6e19bf909845b38c028f70ca802d96ff47eb3540ded69554df3c0e75da124c737c97d36590762f6264f2b131301e997a05b6871f3797ea7e0e59db4cdea0688681e8df62341cee745d8ad9defcfafa8338ff0b7d477ddd93b9b7b1d805decb3329334f4a7990d1766887c346a10677a54ddaf57f7f81e004a972af7281173f521d6970b145294fb9a0d83281ded291a6aa00caefc2ffe6a66d7c77d5701037ed012192bb4423c4631fc08d89f4f8d25ce3be9b88dfe051e6653a18b7af859d83bc222bf413a4a024a8023040e11485b4a70e2d0e7763d601c9532d27e02483f640c0a5c3179a12d53d8200d00cb0fe4c1cbe2edc06f36c278af77a095eb8a11c9aa7f0f53d88832464262876af5a2b3f1b4ca357e8f7a8cddd9b4d3d6a698590560eb5dfe1209056fa8758145f419175aefe73b36296c2e3d762ca03337f180a879d7edadec45682f02f36dd464a6e049d05c05f6ead47a0da6fc62673891d3d01e08adc0c88a5fc029ef342384e051e69c451202340f8e3e72f78060c645413c8653c07c0d08ed3a337f02eb92677960181d43b58e0808136a846400bef3bc34e18e5e09c3fb2b0073bca169884bed4592740c61b3d5ffb49fee0df0bca7b52024df3dcaa00f4d28077364db9b252cc06aa85f66f996d19569dd8f961fc4289ff32088ace04d75c18b00001030f2a9882d3aca1cf5a84bda8ac7c92c5bdcaf492295e8cf6080104063ca180000925eda046bbc24b27d4651dd2809de2747885f63d9ebdac1143e574462d4b69801001d7422d3ebaa9401f97c489a85086a3b48d09c7a69208ee7d7e6a7f0cb8e32cc0000d2cfb0d15de941e0025f65f0161d55685f05e4ce8cabe6f5b660800a4efb15950000490929b68bf5e1bd01adcc522b71aa949f6e1393703b25124b82d5f568a2aeea00003d2af0ca26d08f44ed80c43281aed6dab6d491fa6b2b4739c06c86855e5cb8ea010015cd819b456a851192b8caf923e76daee4db3cb38b3cc488796a151d0ff5d9a1630423e3e068c1ad988794671918f63ffda1ed627801c22a72ca7be0085d7e9f1f00000000e40b540200000080590526dd52f8c321fa49589ca1611724fc9572336b3983c8fb4e83e55863dd210305a48450bcb57d448832a95486c294d89834523760e74f90e682500b67c9064640fed06a1a2b65d15bdb4ef65c33c804d480b0217c505d59c71b7efdc9b189f4ac2e6ce945df1c37f2241a972e8da09ff119c14e27629d6a026f2316d427860831ffffffff000000000000000000000000000000000000000000000000000000000000000001000000fd2805c477c1f4013508aadcb047c5d4d073df0533956739522240935e1aed3339c761a1000071c754b9b34da3ee5b83ca6a0c3b834569ba5bdd3af42207cf2348e02b6f50860000812fc9b026abfc1975a96f0b09b4f16c2a07aea16563e0b2f80d4c3bf1403df50100293dc3b5bf1168aa661bf2e94e9a56862e1225f592c38c5c11042be03e92f83601001517ad2d049e8812e5d3dfae275ca406b224b6c71ee7746f69e2ebba478c0ebbf78f1a93d9ac05744c1c250b5163939c528e8cedb57371f12527caf67a184c99cb32b67f380ed6e91da76cdba1091e912250e3a2a7d6c3adc1066bb037ade7e3b3f61a6a2ba0330a9e4dee6dde7755be5a7474cc951949ac8a21090bc77f7289d0b1fc3e9c059732fe96083a1a73081d9557a17c4e1a6ddfdc72efe694680131bd3ca8ee9360b0fbfd45f3d60f516aaa22da398d1e4368f1928fdc366120ff01ff9d50257cab74a2ca473914827b2237b20eb07fd13afd0fbdcdef467e92558f93b202860d019976ab8d226ee1bd4e92a029e60c72f952b791d8addcfb11f2b66b06219cecb229d0d74d07e57e3dd9caacc0f0e57478e313e84149f4aaef47c8bc5d1a6efc51546696a5eb34b4b8f46f140dd84764b53d273286f5f49cb85988695526de83b387fafdab97ccad5377009fa94f11c5690f7a7750785ad0cc5125f7755e7569aa9d66e92b6f902fbfea559b79a666f2c8486a4b60a69ba497fe3f45976e2f6f62b496e7bc22615d43a201485e52b7647887fbc13522192aa6089a9673ce11dde3873b0dc4fe44536d7530e5324a3eac95f3eb05b27eaa5ef72e808aa6808c5e972b7cea71ab5cdaf281d7ddf7ce9053ba62c60d10c7f61aad56ad36728a2056da78183cc19ee9d8974b4c6a7421e6c18fca89bd5608aa1744be2710fe5224ce3a1f451884c74ce3146917ec81c8a798cabd890981f74c631d25dacb79190a283fdb5cc6373c828893411b3b547ac764702bb3b4244ed4c37f470de98ca67fff063060c302d65cce3ba3b7898766959d893017963adfa8c8381a3235e3a8fd00ec4ca603dcbae1eb8041eb3f8d0819cfcc746459331e62cb512ca7a4439ebf7af619febd05170947b176ed12391a0b5f8fa4b913e8782dbd31073450558c5be1a289fc636d6522953c0ea8a6e8c1f62ce1f1f80626154c7a4ddbfb3d4a5f71b20a3da47b350d275c5c6c5a67b6e78a5bc1169a67d5caec220b13e1ec076f60364dbef9636d1643cc02b6a758e77b58bfc1f435f33df5d22d57feb31125000009374f988af7ba8879cadb00e7c35a34acb87c2d59bb2fae4d4b5387bf27fb890100defc344c95c73ed397d059bcf49c8cea57055f4b7651f656658a7d3ef1f4f8b90000570b35d424e33c4d77784b2db0c056bc6e66fa3c60dc2e2398049efb8a41165d00003e3e88eed2cdc564914637bc2c37f4f53faf2ed1023003b947cad66b2fdc151901002dbe998be1456b6bedbf57cf1107dcc67fa3efd21def15c453ac8d08526b04fa000099b04830e653d1dc6b65011a5bcb50adee726c424f4e44d54bf1fd79b83315270100412f9b1ff15bdbaa0100586183f67ce6e0e89ae3404e212da84978e8341d8d789c0bb429717bfb484b50743743d9276cbec48c32fe82d14994257af48d85f5ec1f00000000e40b540200000080590526dd52f8c321fa49589ca1611724fc9572336b3983c8fb4e83e55863dd210310931a8798da56262c681a28d09329bbc7862a91a3688fd90a90956c188bc9ad40fdfd16a2b5cbc85335acc017bad488f829e321e7ba27f33e51ce1118cd835086542751f4b85da667bb365b3f53fa5c84827482c077c550d32079cad2965d9a5effffffff000000000000000000000000000000000000000000000000000000000000000001000000fd2805c47252d557c36f45288f287d81c1f31f5d51b778f905b41b79b9ab15554a0e3b5f010036ea61b6cc59ffd61c2b7a6599c344a7e259e0f67b2a42940fef260fac7619df0000731f2649a28ec62446524273557bbd5a9377684d50288a244c1738a8587148ea00007cd2836bf9359994dc2cd9267ebc42414d8d807852c62ce2523551fb4f2f30b900001548c989ab140a3ace02c4cc4560cb7770593c3a1576262d7b3e6700098fbc5420748d3ce99f1ce057b928b280f85a93a0b08b5aa7eff9922bf79c5447d8ee6af172c99743ffdb4b5d21daf1014150c3f9014c242b3f6707d272089bfdce87c51b34e6d46bfb5d4452a7a9d16deaf15c11f44e112a885fe07770df9c959cc77ca53a6b7ca2a883fb1fb040e423a06e79bc534e21f243f92a25d59094b195f1a02bf3348105e720edd1bfbad05ed97845c9f346340c1aa06d4983d14d5a5b08f19be2dea8ac9425d0d2a69ee9918ba5eb0273287b83f97360833180805987703ab123ebc6e5f099e2a4857f34913f06cd609fa717b2d3047a148189046484b88460ae7f572a3f213f375a3d7d2177e231f0a3c0145dfa60be0cc761785d290e69d154407019e2429d69729374638c5ae06147e7499dbae31fe3a1684c901ee12b27398201a7916397b6cacb6b6972db15117288122ba01ec9c68d78bfe0e8515525f2534d8401a92faffbe44f886406f2e2ae077c779803d197de1bca5a94abdfe85862f685c7158e1fb1cdc1ce6abd7384c1443b93e9984779c8d0d7167d350fd4c1b9abe1be6ae136612ff23a4c7830df1e034f544fcbeb54c7a1d0885ebb53d0123ac0e30b93ee4f3533da7ba808b848c677bda4c86542c360dad96fb6829e2197a07c108ee339436ef26f352703d6353c803522e57beeecd79abebd7d6bab9c4e8c4d6cc92421a93f977cc353e23fca5eb91dc87958e14e69b52afb8dae1f70972456c8be70ae86c28ca1798cb09d93732559a259e858fa157b39fc022215d829aca9841f07a99f4f40f66b55d0b96f7f1cb87467ae6003c8b258cbe9af7b2d2765bd420b905f9b0e5096b750bf156526174532aa43f6e7304521d44e330488f99fb124280cf863020332bc8cea92cc71eca67855d42da5d6ce58875139d23d1317dd04085bd331a383542993fb8cd83f9e73c9becebb7c7b840f097461b0386459992d4077bfe3118f8be2e47c1539f088a97457b7013ba7d7e68f398eb55c075997c8c67d9087aa8d9c9f44c42eff98f67c4f45f9c4d7d13315aebc67fd0ebc00003363076abf579ecf927734e9bcb843037f684278c659e183c0f6235d22dab8180000d36084ae243828756d54f3b6908891e5fdd8deb6368e9d4941407dcaf019ff0e000092c21af2d0bb0c506454fb6f6cfd789649facef1238c8e6a137fe9570cd2562701007ea89f8a2c2d587a3cd445de70303e65444e4924031726690c4a8f8bba3683c400002596a772df3afc96d64955a1cbdc1e8c4b67c85d9ac010b83c2f8141f6ba63410000103b07d9089f0aee1d25631385a0d00b30f10ac7ecc991e5910afee6bc6c7fbc000082c08c24863ec43bef2fabe1ff8aa5b6acd37dc2bacfaf2e819078820b78e80fc03a7226372e5074f2b83ccf4aaa92e89225888f4e35bd79760881376f34e4a21f00000000f9029500000000e244028be6278500ede0782231c1664f6a40f5b01d82c83b21bd50248a717a0c21034bc9bc3f623ba555a6abceb0d5a491abb9d067ad76993f6b3544a21b34a2237a40e4e3733e1191bb6731897c6b691a00dbf86c94a163047b61bd4b24e6250c3f1c6828ab5a1d6266f09323e2838e304fdfb636eaee1ec3e90a535debde88e31ba1ffffffff000000000000000000000000000000000000000000000000000000000000000001000000fd2805c451f9b4d6931827686e1c5ed60d09fbd7050c093e7424aaab9c84e3d11ec3349d00005a582a32d0fedb32b3f7fa0ef118bf7325a95fd46ef846a89c155fc6ac4271130000c6b4a8a988c610dda27c92102db5575f4b6f42d8f32d8ec253b25427f784a2490100f5e5e8e590818e013b67f5c52b5cebf59cf73b2a03912bcd0f94d3c4380be27d000015e48f758a84da02e0a57fdae68e0341bfda81dc42461ed7789cc05c2a47f2c1750b980e17e873bc8ef4b9b07e05118f4d9fdfff6577e65540b9a2a1bd687e6e8ff0364281cbfc246f7700f7ee22eefc3525ccb2e77f64d63a92273649ffb0072430b4cfdd301aa900271f3da4375165fcd6a86445a20b93846fc0642bc6c268e8f9b3bd40d6768cdf11aa6cfe07c6c1c5cdc01edffa97f36b0130b4d359f33572cfaedbd7fd310d30bab86e429e8aecf8d196fc2715c12548962c8ed14ef097d5c92092d6727a0a5c12d64bc60c65764cd7463c7c5e40f35cbcfd8848e33b4e23c2c9dbf8378954a54361e8ad3c133ca4cdf8ecc519d6c45e4a0bd7bf9b99303478f9ae9c66de8a412f06011d34f536687940e9c547c89be9adce8985c395f4c72b1141d2ae124f1413ad0d067e572a3d711ab7eead482154ce01eb36cf9d8f62b60c75920df93b8921b14fe5b870a06829976e246b2db5fcd104574261dae094b86830b697ced626000abcb58ae6d4bd3dea0717fe6dd7cddec1c67ae4c0e246cf150d4ad5922f91d40f5b02b27376d46e8b9380f0d0b58d7b7eeea1a21e722bfd3295ca469e1f256eb97e9716a0371a4dd4cf0dd0e2ec38692a228b4378fc9a41b449a2b9d6c32cd47918bd47fc24be8566e43227f7ed1f870110bef20443ccb434e46cc3b6d8feee8e31b8da2cdccdcd74bd656cd94d59c26fabed0b85e6f15cacd09ae91b64fb8fc061e0ebe4dc4d270962120caa24e5c84290d994fe2410840149b4921d41b76f837d1a29da04ecaeb01a695df8e633f91105af7f6fe5a26a05fee03a19c5033453c11a710cfc84ce413457be9775c1957533fdfd817f2a99590d10ddceec7fded39a09ef9e9ef08d8f38d15dccee88f219e15301fa6eac574f9ddbc812f5a0a3a629750e48a3e868a90f39e63755e1b46c4eb5c94f4059572f0c05fae3e9d0e3271f0989f013fc5184c236f8c9b9ab05146683156c9a2b11bb0f7a0da3627c0bac58c194498a673801870a3958d3a0582a5ccbeb9ca554071ea446325603e67d876eeb1a05e1342649309ff58f618ea0a21f0cb02a766e3c01003eb745c4933d0f52ee02aaef2a16cb6c52bd164928673edb0f51c7214fa7bf2b010064c7d3b6a7aa59a310eda829e7ac9075ff1e96e01ea1719ee7fc4a5bdb0e9b9b01002763566e427b69e5646cf25048eda2e5806dcc6b7a5e5cdb59702d556840bf7201003c2ee321c25bfdea2ec3df0886c8b165dbf5b6902de7c39682e872ec9cd7b2a500001b3c159cef5dae965c86db605792ace3d987c9559a1be5388acaecb2c753da8f010075cf5f030c222e7dbd81b07096a20a1dc1958211f5327d60e7a499ae7c549188010014de0bbc9bf0798fbbf3255270b7b93ab1e70d76761fb74226653c47b3fd5e6c9f2d757029c6f2a8aa2e73bbebe51287c5a34d6f129a69e0ef7bbd2c13f477e51f00000000f9029500000000e244028be6278500ede0782231c1664f6a40f5b01d82c83b21bd50248a717a0c2102eb2aa581203121be475e55e67299a1aa8715a7602c538421240a2b91b5475e624018b406db4445bf718f2ddb175f83c73f6a1a17dbeefcfaf281fac6750a090a0e7a5ee40dd360279af0f85056341de416b426b79b48bea5bad6b06a2be6277703ffffffff01a8ff327a0a0000001976a914d8ad1e3e2a57c3fe88d241337b0cbabed117bd6d88acd7000500",
 		  "txid":"d4b9f5a01a43b1d592999f9fd6fe64aa8f63ac42abab43090938321064c1ec1f",
 		  "hash":"d4b9f5a01a43b1d592999f9fd6fe64aa8f63ac42abab43090938321064c1ec1f",
@@ -1975,6 +2011,6 @@ mod tests {
 		  "blocktime":1607820997
 		}"#;
 
-		let _tx: Transaction = serde_json::from_str(json_str).unwrap();
-	}
+        let _tx: Transaction = serde_json::from_str(json_str).unwrap();
+    }
 }

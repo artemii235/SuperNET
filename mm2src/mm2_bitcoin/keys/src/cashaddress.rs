@@ -1,12 +1,12 @@
-use std::str::FromStr;
 use std::fmt;
+use std::str::FromStr;
 
 const DEFAULT_PREFIX: NetworkPrefix = NetworkPrefix::BitcoinCash;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AddressType {
     /// Pay to PubKey Hash
-	/// https://bitcoin.org/en/glossary/p2pkh-address
+    /// https://bitcoin.org/en/glossary/p2pkh-address
     P2PKH,
     /// Pay to Script Hash
     /// https://bitcoin.org/en/glossary/p2sh-address
@@ -47,9 +47,7 @@ impl FromStr for NetworkPrefix {
 }
 
 impl From<&'static str> for NetworkPrefix {
-    fn from(s: &str) -> Self {
-        s.parse().unwrap()
-    }
+    fn from(s: &str) -> Self { s.parse().unwrap() }
 }
 
 impl NetworkPrefix {
@@ -58,7 +56,7 @@ impl NetworkPrefix {
     /// Result additionally includes a null termination byte.
     fn encode_to_ckecksum(&self) -> Vec<u8> {
         // Grab the right most 5 bits of each char.
-        let mut prefix: Vec<u8> = self.to_string().as_bytes().iter().map(|x| { x & 0b11111 }).collect();
+        let mut prefix: Vec<u8> = self.to_string().as_bytes().iter().map(|x| x & 0b11111).collect();
         prefix.push(0);
         prefix
     }
@@ -113,7 +111,11 @@ impl CashAddress {
         let hash_len = hash_size_from_version(version);
 
         if payload.len() != hash_len {
-            return Err(format!("Incorrect address hash len: expected={}, actual={}", hash_len, payload.len()));
+            return Err(format!(
+                "Incorrect address hash len: expected={}, actual={}",
+                hash_len,
+                payload.len()
+            ));
         }
 
         Ok(CashAddress {
@@ -160,7 +162,7 @@ impl CashAddress {
         })
     }
 
-    /// Get version byte from 
+    /// Get version byte from
     fn version_byte(&self) -> Result<u8, String> {
         let en_address_type: u8 = match self.address_type {
             AddressType::P2PKH => 0,
@@ -190,15 +192,11 @@ impl CashAddress {
 impl FromStr for CashAddress {
     type Err = String;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        CashAddress::decode(s)
-    }
+    fn from_str(s: &str) -> Result<Self, Self::Err> { CashAddress::decode(s) }
 }
 
 impl From<&'static str> for CashAddress {
-    fn from(s: &'static str) -> Self {
-        s.parse().unwrap()
-    }
+    fn from(s: &'static str) -> Self { s.parse().unwrap() }
 }
 
 fn split_address(addr: &str) -> Result<(NetworkPrefix, &str), String> {
@@ -262,11 +260,21 @@ fn poly_mod(raw_data: &[u8]) -> u64 {
         let c0 = c >> 35;
         c = ((c & 0x07ffffffff) << 5) ^ (*d as u64);
 
-        if c0 & 0x01 != 0 { c ^= 0x98f2bc8e61; }
-        if c0 & 0x02 != 0 { c ^= 0x79b76d99e2; }
-        if c0 & 0x04 != 0 { c ^= 0xf33e5fb3c4; }
-        if c0 & 0x08 != 0 { c ^= 0xae2eabe2a8; }
-        if c0 & 0x10 != 0 { c ^= 0x1e4f43e470; }
+        if c0 & 0x01 != 0 {
+            c ^= 0x98f2bc8e61;
+        }
+        if c0 & 0x02 != 0 {
+            c ^= 0x79b76d99e2;
+        }
+        if c0 & 0x04 != 0 {
+            c ^= 0xf33e5fb3c4;
+        }
+        if c0 & 0x08 != 0 {
+            c ^= 0xae2eabe2a8;
+        }
+        if c0 & 0x10 != 0 {
+            c ^= 0x1e4f43e470;
+        }
     }
 
     c ^ 1
@@ -322,30 +330,24 @@ fn is_mixedcase(s: &str) -> bool {
     };
 
     let is_lowercase = first_char.is_lowercase();
-    !s.chars().all(|c|
-        c.is_numeric() || c.is_lowercase() == is_lowercase
-    )
+    !s.chars().all(|c| c.is_numeric() || c.is_lowercase() == is_lowercase)
 }
 
 /// Bitcoin Cash base32 specific format.
 mod base32 {
     /// Charset for converting from base32.
     const CHARSET_REV: [i8; 128] = [
-        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 15, -1, 10, 17, 21, 20, 26, 30, 7,
-        5, -1, -1, -1, -1, -1, -1, -1, 29, -1, 24, 13, 25, 9, 8, 23, -1, 18, 22,
-        31, 27, 19, -1, 1, 0, 3, 16, 11, 28, 12, 14, 6, 4, 2, -1, -1, -1, -1,
-        -1, -1, 29, -1, 24, 13, 25, 9, 8, 23, -1, 18, 22, 31, 27, 19, -1, 1, 0,
-        3, 16, 11, 28, 12, 14, 6, 4, 2, -1, -1, -1, -1, -1,
+        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 15, -1, 10, 17, 21, 20, 26, 30,
+        7, 5, -1, -1, -1, -1, -1, -1, -1, 29, -1, 24, 13, 25, 9, 8, 23, -1, 18, 22, 31, 27, 19, -1, 1, 0, 3, 16, 11,
+        28, 12, 14, 6, 4, 2, -1, -1, -1, -1, -1, -1, 29, -1, 24, 13, 25, 9, 8, 23, -1, 18, 22, 31, 27, 19, -1, 1, 0, 3,
+        16, 11, 28, 12, 14, 6, 4, 2, -1, -1, -1, -1, -1,
     ];
 
     /// Charset for converting to base32.
     const CHARSET: [char; 32] = [
-        'q', 'p', 'z', 'r', 'y', '9', 'x', '8', 'g', 'f',
-        '2', 't', 'v', 'd', 'w', '0', 's', '3', 'j', 'n',
-        '5', '4', 'k', 'h', 'c', 'e', '6', 'm', 'u', 'a',
-        '7', 'l',
+        'q', 'p', 'z', 'r', 'y', '9', 'x', '8', 'g', 'f', '2', 't', 'v', 'd', 'w', '0', 's', '3', 'j', 'n', '5', '4',
+        'k', 'h', 'c', 'e', '6', 'm', 'u', 'a', '7', 'l',
     ];
 
     /// `encode` converts an input byte array into a base32 string.
@@ -385,7 +387,6 @@ mod base32 {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -404,9 +405,18 @@ mod tests {
     fn test_base32() {
         // the raw arrays are 5-bit packed - the condition is required by base32 encode and decode functions
         let raw = vec![
-            vec![24, 14, 9, 25, 19, 30, 22, 1, 28, 0, 30, 28, 22, 7, 1, 11, 18, 7, 1, 7, 19, 23, 21, 30, 24, 25, 20, 27, 3, 27, 29, 10],
-            vec![8, 8, 15, 8, 28, 29, 16, 2, 1, 17, 25, 5, 17, 4, 2, 8, 17, 21, 15, 20, 11, 24, 29, 16, 6, 20, 11, 2, 22, 18, 22, 5],
-            vec![12, 2, 21, 24, 0, 0, 5, 14, 7, 6, 22, 25, 22, 31, 20, 9, 18, 12, 10, 6, 11, 28, 7, 14, 19, 9, 15, 29, 15, 22, 11, 27]
+            vec![
+                24, 14, 9, 25, 19, 30, 22, 1, 28, 0, 30, 28, 22, 7, 1, 11, 18, 7, 1, 7, 19, 23, 21, 30, 24, 25, 20, 27,
+                3, 27, 29, 10,
+            ],
+            vec![
+                8, 8, 15, 8, 28, 29, 16, 2, 1, 17, 25, 5, 17, 4, 2, 8, 17, 21, 15, 20, 11, 24, 29, 16, 6, 20, 11, 2,
+                22, 18, 22, 5,
+            ],
+            vec![
+                12, 2, 21, 24, 0, 0, 5, 14, 7, 6, 22, 25, 22, 31, 20, 9, 18, 12, 10, 6, 11, 28, 7, 14, 19, 9, 15, 29,
+                15, 22, 11, 27,
+            ],
         ];
         let encoded = vec![
             "cwfen7kpuq7uk8ptj8p8nh47ce5mrma2",
@@ -436,29 +446,40 @@ mod tests {
         let expected_addresses = vec![
             CashAddress {
                 prefix: "bitcoincash".into(),
-                hash: vec![42, 15, 196, 55, 215, 162, 115, 113, 138, 193, 48, 222, 50, 193, 229, 70, 215, 1, 25, 160],
+                hash: vec![
+                    42, 15, 196, 55, 215, 162, 115, 113, 138, 193, 48, 222, 50, 193, 229, 70, 215, 1, 25, 160,
+                ],
                 address_type: AddressType::P2SH,
             },
             CashAddress {
                 prefix: "bitcoincash".into(),
-                hash: vec![195, 247, 16, 222, 183, 50, 11, 14, 250, 110, 219, 20, 227, 235, 238, 185, 21, 95, 169, 13],
+                hash: vec![
+                    195, 247, 16, 222, 183, 50, 11, 14, 250, 110, 219, 20, 227, 235, 238, 185, 21, 95, 169, 13,
+                ],
                 address_type: AddressType::P2PKH,
             },
             CashAddress {
                 prefix: "bitcoincash".into(),
-                hash: vec![195, 247, 16, 222, 183, 50, 11, 14, 250, 110, 219, 20, 227, 235, 238, 185, 21, 95, 169, 13],
+                hash: vec![
+                    195, 247, 16, 222, 183, 50, 11, 14, 250, 110, 219, 20, 227, 235, 238, 185, 21, 95, 169, 13,
+                ],
                 address_type: AddressType::P2PKH,
             },
             CashAddress {
                 prefix: "bchtest".into(),
-                hash: vec![36, 63, 19, 148, 244, 69, 84, 244, 206, 63, 214, 134, 73, 193, 154, 220, 72, 60, 233, 36],
+                hash: vec![
+                    36, 63, 19, 148, 244, 69, 84, 244, 206, 63, 214, 134, 73, 193, 154, 220, 72, 60, 233, 36,
+                ],
                 address_type: AddressType::P2PKH,
             },
             CashAddress {
                 prefix: "bchtest".into(),
-                hash: vec![192, 113, 56, 50, 62, 0, 250, 79, 193, 34, 211, 184, 91, 150, 40, 234, 129, 11, 63, 56, 23, 6, 56, 94, 40, 155, 11, 37, 99, 17, 151, 209, 148, 181, 194, 56, 190, 177, 54, 251],
+                hash: vec![
+                    192, 113, 56, 50, 62, 0, 250, 79, 193, 34, 211, 184, 91, 150, 40, 234, 129, 11, 63, 56, 23, 6, 56,
+                    94, 40, 155, 11, 37, 99, 17, 151, 209, 148, 181, 194, 56, 190, 177, 54, 251,
+                ],
                 address_type: AddressType::P2SH,
-            }
+            },
         ];
 
         for i in 0..4 {
