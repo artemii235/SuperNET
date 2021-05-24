@@ -10,7 +10,8 @@ use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::marker::PhantomData;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{IdbDatabase, IdbIndexParameters, IdbObjectStore, IdbObjectStoreParameters, IdbOpenDbRequest, IdbRequest,
@@ -94,8 +95,8 @@ pub enum DbTransactionError {
     },
     #[display(fmt = "Error occurred due to an unexpected state: {:?}", _0)]
     UnexpectedState(String),
-    #[display(fmt = "Transaction was aborted: {:?}", _0)]
-    TransactionAborted(String),
+    #[display(fmt = "Transaction was aborted")]
+    TransactionAborted,
 }
 
 pub struct IndexedDbBuilder {
@@ -312,6 +313,7 @@ impl IndexedDb {
             Ok(transaction) => Ok(DbTransaction {
                 transaction,
                 tables: self.tables.clone(),
+                aborted: Arc::new(AtomicBool::new(false)),
             }),
             Err(e) => MmError::err(DbTransactionError::ErrorCreatingTransaction(stringify_js_error(&e))),
         }
@@ -329,10 +331,17 @@ impl Drop for IndexedDb {
 pub struct DbTransaction {
     transaction: IdbTransaction,
     tables: HashSet<String>,
+    aborted: Arc<AtomicBool>,
 }
 
 impl DbTransaction {
+    pub fn aborted(&self) -> bool { self.aborted.load(Ordering::Relaxed) }
+
     pub fn open_table<Table: TableSignature>(&self) -> DbTransactionResult<DbTable<Table>> {
+        if self.aborted.load(Ordering::Relaxed) {
+            return MmError::err(DbTransactionError::TransactionAborted);
+        }
+
         let table_name = Table::table_name();
         if !self.tables.contains(table_name) {
             let table = table_name.to_owned();
@@ -342,6 +351,7 @@ impl DbTransaction {
         match self.transaction.object_store(table_name) {
             Ok(object_store) => Ok(DbTable {
                 object_store,
+                aborted: self.aborted.clone(),
                 phantom: PhantomData::default(),
             }),
             Err(e) => MmError::err(DbTransactionError::ErrorOpeningTable {
@@ -354,11 +364,18 @@ impl DbTransaction {
 
 pub struct DbTable<'a, T: TableSignature> {
     object_store: IdbObjectStore,
+    aborted: Arc<AtomicBool>,
     phantom: PhantomData<&'a T>,
 }
 
 impl<'a, T: TableSignature> DbTable<'a, T> {
+    pub fn aborted(&self) -> bool { self.aborted.load(Ordering::Relaxed) }
+
     pub async fn add_item(&self, item: &T) -> DbTransactionResult<ItemId> {
+        if self.aborted.load(Ordering::Relaxed) {
+            return MmError::err(DbTransactionError::TransactionAborted);
+        }
+
         // The [`InternalItem::item`] is a flatten field, so if we add the item without the [`InternalItem::_item_id`] id,
         // it will be calculated automatically.
         let js_value = match JsValue::from_serde(item) {
@@ -371,6 +388,7 @@ impl<'a, T: TableSignature> DbTable<'a, T> {
         };
 
         if let Err(_error_event) = Self::wait_for_request_complete(&add_request).await {
+            self.aborted.store(true, Ordering::Relaxed);
             let error = Self::error_from_failed_request(&add_request);
             return MmError::err(DbTransactionError::ErrorUploadingItem(error));
         }
@@ -379,6 +397,10 @@ impl<'a, T: TableSignature> DbTable<'a, T> {
     }
 
     pub async fn get_items(&self, index_str: &str, index_value_str: &str) -> DbTransactionResult<Vec<(ItemId, T)>> {
+        if self.aborted.load(Ordering::Relaxed) {
+            return MmError::err(DbTransactionError::TransactionAborted);
+        }
+
         let index = index_str.to_owned();
         let index_value = index_value_str.to_owned();
 
@@ -400,6 +422,7 @@ impl<'a, T: TableSignature> DbTable<'a, T> {
         };
 
         if let Err(_error_event) = Self::wait_for_request_complete(&get_request).await {
+            self.aborted.store(true, Ordering::Relaxed);
             let error = Self::error_from_failed_request(&get_request);
             return MmError::err(DbTransactionError::ErrorGettingItems(error));
         }
@@ -408,12 +431,17 @@ impl<'a, T: TableSignature> DbTable<'a, T> {
     }
 
     pub async fn get_all_items(&self) -> DbTransactionResult<Vec<(ItemId, T)>> {
+        if self.aborted.load(Ordering::Relaxed) {
+            return MmError::err(DbTransactionError::TransactionAborted);
+        }
+
         let get_request = match self.object_store.get_all() {
             Ok(request) => request,
             Err(e) => return MmError::err(DbTransactionError::UnexpectedState(stringify_js_error(&e))),
         };
 
         if let Err(_error_event) = Self::wait_for_request_complete(&get_request).await {
+            self.aborted.store(true, Ordering::Relaxed);
             let error = Self::error_from_failed_request(&get_request);
             return MmError::err(DbTransactionError::ErrorGettingItems(error));
         }
@@ -422,6 +450,10 @@ impl<'a, T: TableSignature> DbTable<'a, T> {
     }
 
     pub async fn replace_item(&self, _item_id: ItemId, item: T) -> DbTransactionResult<ItemId> {
+        if self.aborted.load(Ordering::Relaxed) {
+            return MmError::err(DbTransactionError::TransactionAborted);
+        }
+
         let item_with_key = InternalItem { _item_id, item };
         let js_value = match JsValue::from_serde(&item_with_key) {
             Ok(value) => value,
@@ -433,6 +465,7 @@ impl<'a, T: TableSignature> DbTable<'a, T> {
         };
 
         if let Err(_error_event) = Self::wait_for_request_complete(&replace_request).await {
+            self.aborted.store(true, Ordering::Relaxed);
             let error = Self::error_from_failed_request(&replace_request);
             return MmError::err(DbTransactionError::ErrorUploadingItem(error));
         }
@@ -687,12 +720,10 @@ mod tests {
             DbTransactionError::ErrorUploadingItem(err) => debug!("error: {}", err),
             e => panic!("Expected 'DbTransactionError::ErrorUploadingItem', found: {:?}", e),
         }
+        assert!(transaction.aborted() && table.aborted());
 
         // But we should be able to replace the updated item.
         // Since the last operation failed, we have to reopen the transaction.
-        // TODO check the aborted flag
-        drop(table);
-        drop(transaction);
         let transaction = db.transaction().expect_w("!IndexedDb::transaction()");
         let table = transaction
             .open_table::<TxTable>()
