@@ -32,7 +32,7 @@ pub mod vec {
 	use keys::Address;
 	use super::AddressVisitor;
 
-	pub fn serialize<S>(addresses: &Vec<Address>, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
+	pub fn serialize<S>(addresses: &[Address], serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
 		addresses.iter().map(|address| address.to_string()).collect::<Vec<_>>().serialize(serializer)
 	}
 

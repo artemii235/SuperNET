@@ -24,8 +24,8 @@ impl<R> ReadAndHash for Reader<R> where R: io::Read {
 
 		let result = HashedData {
 			hash: dhash256(&input),
-			data: data,
-			size: size,
+			data,
+			size,
 		};
 
 		Ok(result)

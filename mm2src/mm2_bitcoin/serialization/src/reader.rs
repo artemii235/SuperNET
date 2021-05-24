@@ -48,7 +48,7 @@ impl<'a> Reader<&'a [u8]> {
 	/// Convenient way of creating for slice of bytes
 	pub fn new(buffer: &'a [u8]) -> Self {
 		Reader {
-			buffer: buffer,
+			buffer,
 			peeked: None,
 		}
 	}
@@ -120,7 +120,7 @@ impl<R> Reader<R> where R: io::Read {
 		Ok(result)
 	}
 
-	#[cfg_attr(feature="cargo-clippy", allow(wrong_self_convention))]
+	#[cfg_attr(feature="cargo-clippy", allow(clippy::wrong_self_convention))]
 	pub fn is_finished(&mut self) -> bool {
 		if self.peeked.is_some() {
 			return false;
@@ -163,8 +163,8 @@ struct Proxy<F, T> {
 impl<F, T> Proxy<F, T> {
 	fn new(from: F, to: T) -> Self {
 		Proxy {
-			from: from,
-			to: to,
+			from,
+			to,
 		}
 	}
 }

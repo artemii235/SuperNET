@@ -110,10 +110,7 @@ pub struct SigmaInput {
 
 impl TransactionInputEnum {
 	pub fn is_coinbase(&self) -> bool {
-		match self {
-			TransactionInputEnum::Coinbase(_) => true,
-			_ => false,
-		}
+		matches!(self, TransactionInputEnum::Coinbase(_))
 	}
 }
 
@@ -204,7 +201,7 @@ pub struct Transaction {
 
 impl Transaction {
 	pub fn is_coinbase(&self) -> bool {
-		self.vin.iter().find(|input| input.is_coinbase()).is_some()
+		self.vin.iter().any(|input| input.is_coinbase())
 	}
 }
 
@@ -214,7 +211,7 @@ pub enum GetRawTransactionResponse {
 	/// Return value when asking for raw transaction
 	Raw(RawTransaction),
 	/// Return value when asking for verbose transaction
-	Verbose(Transaction),
+	Verbose(Box<Transaction>),
 }
 
 impl Serialize for GetRawTransactionResponse {
@@ -230,17 +227,21 @@ impl TransactionOutputs {
 	pub fn len(&self) -> usize {
 		self.outputs.len()
 	}
+
+	pub fn is_empty(&self) -> bool {
+		self.outputs.is_empty()
+	}
 }
 
 impl Serialize for TransactionOutputs {
 	fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
 		let mut state = serializer.serialize_map(Some(self.len()))?;
 		for output in &self.outputs {
-			match output {
-				&TransactionOutput::Address(ref address_output) => {
+			match *output {
+				TransactionOutput::Address(ref address_output) => {
 					state.serialize_entry(&address_output.address.to_string(), &address_output.amount)?;
 				},
-				&TransactionOutput::ScriptData(ref script_output) => {
+				TransactionOutput::ScriptData(ref script_output) => {
 					state.serialize_entry("data", &script_output.script_data)?;
 				},
 			}
@@ -275,14 +276,14 @@ impl<'a> Deserialize<'a> for TransactionOutputs {
 						let address = types::address::AddressVisitor::default().visit_str(&key)?;
 						let amount: f64 = visitor.next_value()?;
 						outputs.push(TransactionOutput::Address(TransactionOutputWithAddress {
-							address: address,
-							amount: amount,
+							address,
+							amount,
 						}));
 					}
 				}
 
 				Ok(TransactionOutputs {
-					outputs: outputs,
+					outputs,
 				})
 			}
 		}
@@ -1744,7 +1745,8 @@ mod tests {
 
 		let _tx: Transaction = serde_json::from_str(tx_str).unwrap();
 	}
-
+	
+	#[allow(dead_code)]
 	fn test_kmd_raw_confirmations() {
 		let json_str = r#"{
 			"hex":"0400008085202f89010000000000000000000000000000000000000000000000000000000000000000ffffffff0603aed11a0101ffffffff0188b6e11100000000232103fff24efd5648870a23badf46e26510e96d9e79ce281b27cfe963993039dd1351ac3b5e4e5e000000000000000000000000000000",

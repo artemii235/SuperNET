@@ -38,7 +38,7 @@ impl From<SighashBase> for u32 {
 	}
 }
 
-#[cfg_attr(feature="cargo-clippy", allow(doc_markdown))]
+#[cfg_attr(feature="cargo-clippy", allow(clippy::doc_markdown))]
 /// Signature hash type. [Documentation](https://en.bitcoin.it/wiki/OP_CHECKSIG#Procedure_for_Hashtype_SIGHASH_SINGLE)
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub struct Sighash {
@@ -82,10 +82,7 @@ impl Sighash {
 		};
 
 		// Only exact All | None | Single values are passing this check
-		match u {
-			1 | 2 | 3 => true,
-			_ => false,
-		}
+		matches!(u, 1 | 2 | 3)
 	}
 
 	/// Creates Sighash from any u, even if is_defined() == false
@@ -95,7 +92,7 @@ impl Sighash {
 		let base = match u & 0x1f {
 			2 => SighashBase::None,
 			3 => SighashBase::Single,
-			1 | _ => SighashBase::All,
+			_ => SighashBase::All,
 		};
 
 		Sighash::new(base, anyone_can_pay, fork_id)
@@ -428,7 +425,7 @@ impl TransactionInputSigner {
 
 		sig_hash_stream.append(&blake_2b_256_personal(&outputs_stream.out(), ZCASH_OUTPUTS_HASH_PERSONALIZATION));
 
-		if self.join_splits.len() > 0 {
+		if !self.join_splits.is_empty() {
 			let mut join_splits_stream = Stream::new();
 			for split in self.join_splits.iter() {
 				join_splits_stream.append(split);
@@ -438,7 +435,7 @@ impl TransactionInputSigner {
 			sig_hash_stream.append(&H256::default());
 		}
 
-		if self.shielded_spends.len() > 0 {
+		if !self.shielded_spends.is_empty() {
 			let mut s_spends_stream = Stream::new();
 			for spend in self.shielded_spends.iter() {
 				s_spends_stream.append(&spend.cv)
@@ -452,7 +449,7 @@ impl TransactionInputSigner {
 			sig_hash_stream.append(&H256::default());
 		}
 
-		if self.shielded_outputs.len() > 0 {
+		if !self.shielded_outputs.is_empty() {
 			let mut s_outputs_stream = Stream::new();
 			for output in self.shielded_outputs.iter() {
 				s_outputs_stream.append(output);
@@ -548,7 +545,7 @@ mod tests {
 	// https://blockchain.info/rawtx/3f285f083de7c0acabd9f106a43ec42687ab0bebe2e6f0d529db696794540fea
 	#[test]
 	fn test_signature_hash_simple() {
-		let private: Private = "5HusYj2b2x4nroApgfvaSfKYZhRbKFH41bVyPooymbC6KfgSXdD".into();
+		let _private: Private = "5HusYj2b2x4nroApgfvaSfKYZhRbKFH41bVyPooymbC6KfgSXdD".into();
 		let previous_tx_hash = H256::from_reversed_str("81b4c832d70cb56ff957589752eb4125a4cab78a25a8fc52d6a09e5bd4404d48");
 		let previous_output_index = 0;
 		let to: Address = "1KKKK6N21XKo48zWKuQKXdvSsCf95ibHFa".into();
@@ -596,7 +593,8 @@ mod tests {
 		let hash = input_signer.signature_hash(0, 0, &previous_output, SignatureVersion::Base, SighashBase::All.into());
 		assert_eq!(hash, expected_signature_hash);
 	}
-
+	
+	#[allow(dead_code)]
 	fn run_test_sighash(
 		tx: &'static str,
 		script: &'static str,
@@ -632,7 +630,7 @@ mod tests {
 
 	#[test]
 	fn test_blake_2b_personal() {
-		let mut hash = blake_2b_256_personal(b"", b"ZcashPrevoutHash");
+		let hash = blake_2b_256_personal(b"", b"ZcashPrevoutHash");
 		assert_eq!(H256::from("d53a633bbecf82fe9e9484d8a0e727c73bb9e68c96e72dec30144f6a84afa136"), hash);
 	}
 

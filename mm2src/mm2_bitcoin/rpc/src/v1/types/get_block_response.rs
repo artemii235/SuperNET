@@ -9,7 +9,7 @@ pub enum GetBlockResponse {
 	/// When asking for short response
 	Raw(RawBlock),
 	/// When asking for verbose response
-	Verbose(VerboseBlock),
+	Verbose(Box<VerboseBlock>),
 }
 
 /// Verbose block information
@@ -185,7 +185,7 @@ mod tests {
 	#[test]
 	fn get_block_response_verbose_serialize() {
 		let block = VerboseBlock::default();
-		let verbose_response = GetBlockResponse::Verbose(block);
+		let verbose_response = GetBlockResponse::Verbose(Box::new(block));
 		assert_eq!(serde_json::to_string(&verbose_response).unwrap(), r#"{"hash":"0000000000000000000000000000000000000000000000000000000000000000","confirmations":0,"size":0,"strippedsize":0,"weight":0,"height":null,"version":0,"versionHex":"","merkleroot":"0000000000000000000000000000000000000000000000000000000000000000","tx":[],"time":0,"mediantime":null,"nonce":0,"bits":0,"difficulty":0.0,"chainwork":"0","previousblockhash":null,"nextblockhash":null}"#);
 	}
 }

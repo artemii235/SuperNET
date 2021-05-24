@@ -242,6 +242,7 @@ fn cast_to_bool(data: &[u8]) -> bool {
 }
 
 /// Verifies script signature and pubkey
+#[allow(clippy::ptr_arg)]
 pub fn verify_script(
 	script_sig: &Script,
 	script_pubkey: &Script,
@@ -346,6 +347,7 @@ pub fn verify_script(
 	Ok(())
 }
 
+#[allow(clippy::ptr_arg)]
 fn verify_witness_program(
 	witness: &ScriptWitness,
 	witness_version: u8,
@@ -377,7 +379,7 @@ fn verify_witness_program(
 				return Err(Error::WitnessProgramMismatch);
 			}
 
-			(stack.iter().cloned().collect::<Vec<_>>().into(), Script::new(script_pubkey.clone()))
+			(stack.to_vec().into(), Script::new(script_pubkey.clone()))
 		},
 		20 => {
 			if witness_stack_len != 2 {
@@ -414,7 +416,7 @@ fn verify_witness_program(
 }
 
 /// Evaluautes the script
-#[cfg_attr(feature="cargo-clippy", allow(match_same_arms))]
+#[cfg_attr(feature="cargo-clippy", allow(clippy::match_same_arms))]
 pub fn eval_script(
 	stack: &mut Stack<Bytes>,
 	script: &Script,
@@ -606,7 +608,7 @@ pub fn eval_script(
 					return Err(Error::InvalidBitwiseOperation);
 				}
 				for (byte_to_update, byte_mask) in (*value_to_update).iter_mut().zip(mask.iter()) {
-					*byte_to_update = *byte_to_update & byte_mask;
+					*byte_to_update &= byte_mask;
 				}
 			},
 			Opcode::OP_OR if flags.verify_or => {
@@ -617,7 +619,7 @@ pub fn eval_script(
 					return Err(Error::InvalidBitwiseOperation);
 				}
 				for (byte_to_update, byte_mask) in (*value_to_update).iter_mut().zip(mask.iter()) {
-					*byte_to_update = *byte_to_update | byte_mask;
+					*byte_to_update |= byte_mask;
 				}
 			},
 			Opcode::OP_XOR if flags.verify_xor => {
@@ -628,7 +630,7 @@ pub fn eval_script(
 					return Err(Error::InvalidBitwiseOperation);
 				}
 				for (byte_to_update, byte_mask) in (*value_to_update).iter_mut().zip(mask.iter()) {
-					*byte_to_update = *byte_to_update ^ byte_mask;
+					*byte_to_update ^= byte_mask;
 				}
 			},
 			Opcode::OP_DIV if flags.verify_div => {
@@ -673,7 +675,7 @@ pub fn eval_script(
 				if num.len() < bin_size {
 					let sign_byte = num.last_mut().map(|last_byte| {
 						let sign_byte = *last_byte & 0x80;
-						*last_byte = *last_byte & 0x7f;
+						*last_byte &= 0x7f;
 						sign_byte
 					}).unwrap_or(0x00);
 

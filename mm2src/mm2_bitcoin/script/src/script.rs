@@ -49,7 +49,7 @@ impl ScriptAddress {
 	pub fn new_p2pkh(hash: AddressHash) -> Self {
 		ScriptAddress {
 			kind: keys::Type::P2PKH,
-			hash: hash,
+			hash,
 		}
 	}
 
@@ -57,7 +57,7 @@ impl ScriptAddress {
 	pub fn new_p2sh(hash: AddressHash) -> Self {
 		ScriptAddress {
 			kind: keys::Type::P2SH,
-			hash: hash,
+			hash,
 		}
 	}
 }
@@ -96,7 +96,7 @@ impl Script {
 	/// Script constructor.
 	pub fn new(data: Bytes) -> Self {
 		Script {
-			data: data,
+			data,
 		}
 	}
 
@@ -280,7 +280,7 @@ impl Script {
 				let n = read_usize(slice, len)?;
 				let bytes = self.take(position + 1 + len, n)?;
 				Instruction {
-					opcode: opcode,
+					opcode,
 					step: len + n + 1,
 					data: Some(bytes),
 				}
@@ -294,7 +294,7 @@ impl Script {
 				}
 			},
 			_ => Instruction {
-				opcode: opcode,
+				opcode,
 				step: 1,
 				data: None,
 			}
@@ -420,7 +420,7 @@ impl Script {
 				x => x - (Opcode::OP_1 as u8) + 1,
 			};
 		}
-		return 1;
+		1
 	}
 
 	pub fn extract_destinations(&self) -> Result<Vec<ScriptAddress>, keys::Error> {

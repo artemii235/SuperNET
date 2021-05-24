@@ -67,10 +67,7 @@ impl SignatureChecker for TransactionSignatureChecker {
 		// unless the type of nLockTime being tested is the same as
 		// the nLockTime in the transaction.
 		let lock_time_u32: u32 = lock_time.into();
-		if !(
-			(self.signer.lock_time < LOCKTIME_THRESHOLD && lock_time_u32 < LOCKTIME_THRESHOLD) ||
-			(self.signer.lock_time >= LOCKTIME_THRESHOLD && lock_time_u32 >= LOCKTIME_THRESHOLD)
-		) {
+		if self.signer.lock_time >= LOCKTIME_THRESHOLD && lock_time_u32 < LOCKTIME_THRESHOLD || self.signer.lock_time < LOCKTIME_THRESHOLD && lock_time_u32 >= LOCKTIME_THRESHOLD {
 			return false;
 		}
 
@@ -125,10 +122,7 @@ impl SignatureChecker for TransactionSignatureChecker {
 		// We want to compare apples to apples, so fail the script
 		// unless the type of nSequenceMasked being tested is the same as
 		// the nSequenceMasked in the transaction.
-		if !(
-			(to_sequence_masked < SEQUENCE_LOCKTIME_TYPE_FLAG as i64 && sequence_masked < SEQUENCE_LOCKTIME_TYPE_FLAG as i64) ||
-			(to_sequence_masked >= SEQUENCE_LOCKTIME_TYPE_FLAG as i64 && sequence_masked >= SEQUENCE_LOCKTIME_TYPE_FLAG as i64)
-		) {
+		if to_sequence_masked >= SEQUENCE_LOCKTIME_TYPE_FLAG as i64 && sequence_masked < SEQUENCE_LOCKTIME_TYPE_FLAG as i64 || to_sequence_masked < SEQUENCE_LOCKTIME_TYPE_FLAG as i64 && sequence_masked >= SEQUENCE_LOCKTIME_TYPE_FLAG as i64 {
 			return false;
 		}
 

@@ -34,8 +34,8 @@ impl cmp::PartialEq for IndexedBlock {
 impl IndexedBlock {
 	pub fn new(header: IndexedBlockHeader, transactions: Vec<IndexedTransaction>) -> Self {
 		IndexedBlock {
-			header: header,
-			transactions: transactions,
+			header,
+			transactions,
 		}
 	}
 
@@ -43,7 +43,7 @@ impl IndexedBlock {
 		&self.header.hash
 	}
 
-	pub fn to_raw_block(self) -> Block {
+	pub fn into_raw_block(self) -> Block {
 		Block::new(self.header.raw, self.transactions.into_iter().map(|tx| tx.raw).collect())
 	}
 

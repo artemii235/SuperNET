@@ -67,7 +67,7 @@ impl Stream {
 
 	/// Create stream with given flags,
 	pub fn with_flags(flags: u32) -> Self {
-		Stream { buffer: Vec::new(), flags: flags }
+		Stream { buffer: Vec::new(), flags }
 	}
 
 	/// Are transactions written to this stream with witness data?
@@ -84,7 +84,7 @@ impl Stream {
 	/// Appends raw bytes to the end of the stream.
 	pub fn append_slice(&mut self, bytes: &[u8]) -> &mut Self {
 		// discard error for now, since we write to simple vector
-		self.buffer.write(bytes).unwrap();
+		self.buffer.write_all(bytes).unwrap();
 		self
 	}
 

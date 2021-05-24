@@ -31,7 +31,7 @@ impl From<BlockHeader> for IndexedBlockHeader {
 impl IndexedBlockHeader {
 	pub fn new(hash: H256, header: BlockHeader) -> Self {
 		IndexedBlockHeader {
-			hash: hash,
+			hash,
 			raw: header,
 		}
 	}

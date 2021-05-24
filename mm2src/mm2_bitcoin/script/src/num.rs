@@ -107,7 +107,7 @@ impl Num {
 				let mut data: Vec<u8> = data[0..(data.len()-1)].iter().cloned().rev().skip_while(|x| *x == 0x00).collect();
 				data.reverse();
 
-				if data.len() == 0 {
+				if data.is_empty() {
 					// At this point, last is either equal to 0x00 or 0x80. The result is empty.
 					return Num::from_slice(&[], true, max_size);
 				}
@@ -173,7 +173,7 @@ impl Num {
 		};
 
 		while absvalue > 0 {
-			result.push(absvalue as u8 & 0xff);
+			result.push(absvalue as u8);
 			absvalue >>= 8;
 		}
 

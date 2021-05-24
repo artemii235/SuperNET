@@ -341,25 +341,22 @@ impl Serializable for Transaction {
 				if self.zcash {
 					if self.version == 2 || self.overwintered {
 						stream.append_list(&self.join_splits);
-						if self.join_splits.len() > 0 {
+						if !self.join_splits.is_empty() {
 							stream.append(&self.join_split_pubkey)
 								.append(&self.join_split_sig);
 						}
 					}
 
 					if self.version >= 4 && self.overwintered &&
-						!(self.shielded_outputs.len() == 0 && self.shielded_spends.len() == 0)
+						!(self.shielded_outputs.is_empty() && self.shielded_spends.is_empty())
 					{
 						stream.append(&self.binding_sig);
 					}
 				}
-                match self.str_d_zeel {
-                    Some(ref string) => {
-                        let len: CompactInteger = string.len().into();
-                        stream.append(&len);
-                        stream.append_slice(string.as_bytes());
-                    },
-                    None => (),
+                if let Some(ref string) = self.str_d_zeel {
+					let len: CompactInteger = string.len().into();
+					stream.append(&len);
+					stream.append_slice(string.as_bytes());
                 }
             },
 			true => {
@@ -457,7 +454,7 @@ pub fn deserialize_tx<T>(reader: &mut Reader<T>, tx_type: TxType) -> Result<Tran
             }
 		}
 
-		if overwintered && version >= 4 && !(shielded_spends.len() == 0 && shielded_outputs.len() == 0) {
+		if overwintered && version >= 4 && !(shielded_spends.is_empty() && shielded_outputs.is_empty()) {
 			binding_sig = reader.read()?;
 		}
 	};

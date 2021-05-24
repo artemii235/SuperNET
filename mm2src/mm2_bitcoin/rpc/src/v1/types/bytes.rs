@@ -16,7 +16,7 @@ impl Bytes {
 	}
 
 	/// Convert back to vector
-	pub fn to_vec(self) -> Vec<u8> {
+	pub fn into_vec(self) -> Vec<u8> {
 		self.0
 	}
 }
@@ -59,7 +59,7 @@ impl<'a> Visitor<'a> for BytesVisitor {
 	}
 
 	fn visit_str<E>(self, value: &str) -> Result<Self::Value, E> where E: Error {
-		if value.len() == 0 {
+		if value.is_empty() {
 			Ok(Bytes::new(vec![]))
 		} else if value.len() & 1 == 0 {
 			Ok(Bytes::new(FromHex::from_hex(&value).map_err(|_| Error::custom("invalid hex"))?))

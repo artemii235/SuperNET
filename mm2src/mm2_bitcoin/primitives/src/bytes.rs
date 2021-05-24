@@ -24,6 +24,11 @@ impl Bytes {
 		self.0.len()
 	}
 
+	pub fn is_empty(&self) -> bool {
+		self.0.is_empty()
+	}
+
+
 	pub fn append(&mut self, other: &mut Bytes) {
 		self.0.append(&mut other.0);
 	}
@@ -117,7 +122,7 @@ pub struct TaggedBytes<T> {
 impl<T> TaggedBytes<T> {
 	pub fn new(bytes: Bytes) -> Self {
 		TaggedBytes {
-			bytes: bytes,
+			bytes,
 			label: marker::PhantomData,
 		}
 	}

@@ -32,7 +32,7 @@ impl<T> From<T> for IndexedTransaction where Transaction: From<T> {
 impl IndexedTransaction {
 	pub fn new(hash: H256, transaction: Transaction) -> Self {
 		IndexedTransaction {
-			hash: hash,
+			hash,
 			raw: transaction,
 		}
 	}

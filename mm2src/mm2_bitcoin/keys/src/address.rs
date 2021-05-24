@@ -114,7 +114,7 @@ impl DisplayLayout for Address {
 
 				Ok(address)
 			},
-			_ => return Err(Error::InvalidAddress),
+			_ => Err(Error::InvalidAddress)
 		}
 	}
 }
@@ -176,7 +176,7 @@ impl Address {
 			return Err(format!("Unknown address prefix {}. Expect: {}, {}", self.prefix, p2pkh_prefix, p2sh_prefix));
 		};
 
-		CashAddress::new(network_prefix, Vec::from(self.hash.clone().take().to_vec()), address_type)
+		CashAddress::new(network_prefix, self.hash.clone().take().to_vec(), address_type)
 	}
 }
 

@@ -23,7 +23,7 @@ impl RepresentH256 for Block {
 
 impl Block {
 	pub fn new(header: BlockHeader, transactions: Vec<Transaction>) -> Self {
-		Block { block_header: header, transactions: transactions }
+		Block { block_header: header, transactions }
 	}
 
 	/// Returns block's merkle root.

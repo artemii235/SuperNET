@@ -248,7 +248,7 @@ fn addr_type_from_version(version: u8) -> Result<AddressType, String> {
 
 // CalculateChecksum calculates a BCH checksum for a nibble-packed cashaddress
 // that properly includes the network prefix.
-fn calculate_checksum(prefix: &NetworkPrefix, payload: &Vec<u8>) -> u64 {
+fn calculate_checksum(prefix: &NetworkPrefix, payload: &[u8]) -> u64 {
     let mut raw_data = prefix.encode_to_ckecksum();
     raw_data.extend(payload);
     poly_mod(&raw_data)
@@ -256,7 +256,7 @@ fn calculate_checksum(prefix: &NetworkPrefix, payload: &Vec<u8>) -> u64 {
 
 /// The poly_mod is a BCH-encoding checksum function per the CashAddr specification.
 /// See https://github.com/bitcoincashorg/bitcoincash.org/blob/master/spec/cashaddr.md#checksum
-fn poly_mod(raw_data: &Vec<u8>) -> u64 {
+fn poly_mod(raw_data: &[u8]) -> u64 {
     let mut c = 1u64;
     for d in raw_data {
         let c0 = c >> 35;
@@ -350,7 +350,7 @@ mod base32 {
 
     /// `encode` converts an input byte array into a base32 string.
     /// It expects the byte array to be 5-bit packed.
-    pub fn encode(input: &Vec<u8>) -> Result<String, String> {
+    pub fn encode(input: &[u8]) -> Result<String, String> {
         let mut output = String::new();
 
         for i in input {
