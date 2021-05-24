@@ -1,0 +1,34 @@
+[package]
+name = "sync"
+version = "0.1.0"
+authors = ["Ethcore <admin@ethcore.io>"]
+
+[dependencies]
+parking_lot = "0.4"
+log = "0.4"
+time = "0.1"
+futures = "0.1"
+linked-hash-map = "0.3"
+bit-vec = "0.4.3"
+murmur3 = "0.4"
+rand = "0.4"
+byteorder = "1.0"
+
+chain = { path = "../chain" }
+bitcrypto = { path = "../crypto" }
+storage = { path = "../storage" }
+db = { path = "../db" }
+message = { path = "../message" }
+miner = { path = "../miner" }
+p2p = { path = "../p2p" }
+primitives = { path = "../primitives" }
+script = { path = "../script" }
+serialization = { path = "../serialization" }
+verification = { path = "../verification" }
+network = { path = "../network" }
+
+[dev-dependencies]
+test-data = { path = "../test-data" }
+
+[features]
+dev = []

@@ -1,0 +1,9 @@
+[package]
+name = "network"
+version = "0.1.0"
+authors = ["debris <marek.kotewicz@gmail.com>"]
+
+[dependencies]
+lazy_static = "0.2"
+chain = { path = "../chain" }
+primitives = { path = "../primitives" }

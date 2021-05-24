@@ -1,0 +1,46 @@
+[package]
+name = "pbtc"
+version = "0.1.0"
+license = "GPL-3.0"
+authors = ["Parity Technologies <admin@parity.io>"]
+description = "Parity bitcoin client."
+
+[dependencies]
+log = "0.4"
+env_logger = "0.5"
+app_dirs = "^1.1.1"
+libc = "0.2"
+clap = { version = "2", features = ["yaml"] }
+chain = { path = "chain" }
+keys = { path = "keys" }
+message = { path = "message" }
+network = { path = "network" }
+miner = { path = "miner" }
+p2p = { path = "p2p" }
+script = { path = "script" }
+storage = { path = "storage" }
+db = { path = "db" }
+verification = { path = "verification" }
+sync = { path = "sync" }
+import = { path = "import" }
+logs = { path = "logs" }
+rpc = { path = "rpc" }
+primitives = { path = "primitives" }
+
+[profile.dev]
+debug = true
+panic = 'abort'
+
+[profile.release]
+debug = true
+panic = 'abort'
+
+[profile.test]
+debug = true
+
+[profile.doc]
+debug = true
+
+[[bin]]
+path = "pbtc/main.rs"
+name = "pbtc"

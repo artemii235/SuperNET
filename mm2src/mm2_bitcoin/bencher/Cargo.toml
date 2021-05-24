@@ -1,0 +1,21 @@
+[package]
+name = "bencher"
+version = "0.1.0"
+license = "GPL-3.0"
+authors = ["Ethcore <admin@ethcore.io>"]
+description = "Parity bitcoin client."
+
+[dependencies]
+storage = { path = "../storage" }
+db = { path = "../db" }
+verification = { path = "../verification" }
+network = { path = "../network" }
+chain = { path = "../chain" }
+primitives = { path = "../primitives" }
+test-data = { path = "../test-data" }
+time = "*"
+byteorder = "1.0"
+
+[[bin]]
+path = "src/main.rs"
+name = "bencher"
