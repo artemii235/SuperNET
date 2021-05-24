@@ -20,6 +20,9 @@ lazy_static! {
     static ref OPEN_DATABASES: Mutex<HashSet<String>> = Mutex::new(HashSet::new());
 }
 
+const ITEM_KEY_PATH: &str = "_item_id";
+
+pub type ItemId = u32;
 pub type OnUpgradeResult<T> = Result<T, MmError<OnUpgradeError>>;
 pub type InitDbResult<T> = Result<T, MmError<InitDbError>>;
 pub type DbTransactionResult<T> = Result<T, MmError<DbTransactionError>>;
@@ -79,23 +82,20 @@ pub enum DbTransactionError {
     ErrorDeserializingItem(String),
     #[display(fmt = "Error uploading an item: {:?}", _0)]
     ErrorUploadingItem(String),
+    #[display(fmt = "Error getting items: {:?}", _0)]
+    ErrorGettingItems(String),
     #[display(fmt = "No such index '{}'", index)]
     NoSuchIndex { index: String },
-    #[display(fmt = "Invalid index '{}': {:?}", index, description)]
-    InvalidIndex { index: String, description: String },
-    #[display(
-        fmt = "Record not found with the specified index '{}={}': {:?}",
-        index,
-        index_value,
-        description
-    )]
-    RecordNotFound {
+    #[display(fmt = "Invalid index '{}:{}': {:?}", index, index_value, description)]
+    InvalidIndex {
         index: String,
         index_value: String,
         description: String,
     },
     #[display(fmt = "Error occurred due to an unexpected state: {:?}", _0)]
     UnexpectedState(String),
+    #[display(fmt = "Transaction was aborted: {:?}", _0)]
+    TransactionAborted(String),
 }
 
 pub struct IndexedDbBuilder {
@@ -128,7 +128,7 @@ impl IndexedDbBuilder {
         Self::check_if_db_is_not_open(&self.db_name)?;
         let (table_names, on_upgrade_needed_handlers) = Self::tables_into_parts(self.tables)?;
 
-        let window = web_sys::window().expect("!window");
+        let window = web_sys::window().expect_w("!window");
         let indexed_db = match window.indexed_db() {
             Ok(Some(db)) => db,
             Ok(None) => return MmError::err(InitDbError::NotSupported("Unknown error".to_owned())),
@@ -358,7 +358,9 @@ pub struct DbTable<'a, T: TableSignature> {
 }
 
 impl<'a, T: TableSignature> DbTable<'a, T> {
-    pub async fn add_item(&self, item: &T) -> DbTransactionResult<()> {
+    pub async fn add_item(&self, item: &T) -> DbTransactionResult<ItemId> {
+        // The [`InternalItem::item`] is a flatten field, so if we add the item without the [`InternalItem::_item_id`] id,
+        // it will be calculated automatically.
         let js_value = match JsValue::from_serde(item) {
             Ok(value) => value,
             Err(e) => return MmError::err(DbTransactionError::ErrorSerializingItem(e.to_string())),
@@ -368,13 +370,15 @@ impl<'a, T: TableSignature> DbTable<'a, T> {
             Err(e) => return MmError::err(DbTransactionError::ErrorUploadingItem(stringify_js_error(&e))),
         };
 
-        Self::wait_for_request_complete(&add_request)
-            .await
-            .map(|_| ())
-            .map_to_mm(|e| DbTransactionError::ErrorUploadingItem(stringify_js_error(&e)))
+        if let Err(_error_event) = Self::wait_for_request_complete(&add_request).await {
+            let error = Self::error_from_failed_request(&add_request);
+            return MmError::err(DbTransactionError::ErrorUploadingItem(error));
+        }
+
+        Self::item_id_from_completed_request(&add_request)
     }
 
-    pub async fn get_items(&self, index_str: &str, index_value_str: &str) -> DbTransactionResult<Vec<T>> {
+    pub async fn get_items(&self, index_str: &str, index_value_str: &str) -> DbTransactionResult<Vec<(ItemId, T)>> {
         let index = index_str.to_owned();
         let index_value = index_value_str.to_owned();
 
@@ -389,36 +393,51 @@ impl<'a, T: TableSignature> DbTable<'a, T> {
             Err(e) => {
                 return MmError::err(DbTransactionError::InvalidIndex {
                     index,
+                    index_value,
                     description: stringify_js_error(&e),
                 })
             },
         };
 
-        if let Err(e) = Self::wait_for_request_complete(&get_request).await {
-            return MmError::err(DbTransactionError::RecordNotFound {
-                index,
-                index_value,
-                description: stringify_js_error(&e),
-            });
+        if let Err(_error_event) = Self::wait_for_request_complete(&get_request).await {
+            let error = Self::error_from_failed_request(&get_request);
+            return MmError::err(DbTransactionError::ErrorGettingItems(error));
         }
 
-        let result_js_value = match get_request.result() {
-            Ok(res) => res,
+        Self::items_from_completed_request(&get_request)
+    }
+
+    pub async fn get_all_items(&self) -> DbTransactionResult<Vec<(ItemId, T)>> {
+        let get_request = match self.object_store.get_all() {
+            Ok(request) => request,
             Err(e) => return MmError::err(DbTransactionError::UnexpectedState(stringify_js_error(&e))),
         };
 
-        if result_js_value.is_null() || result_js_value.is_undefined() {
-            return MmError::err(DbTransactionError::RecordNotFound {
-                index,
-                index_value,
-                description: "Result value is null or undefined".to_owned(),
-            });
+        if let Err(_error_event) = Self::wait_for_request_complete(&get_request).await {
+            let error = Self::error_from_failed_request(&get_request);
+            return MmError::err(DbTransactionError::ErrorGettingItems(error));
         }
 
-        match result_js_value.into_serde() {
-            Ok(t) => Ok(t),
-            Err(e) => MmError::err(DbTransactionError::ErrorDeserializingItem(e.to_string())),
+        Self::items_from_completed_request(&get_request)
+    }
+
+    pub async fn replace_item(&self, _item_id: ItemId, item: T) -> DbTransactionResult<ItemId> {
+        let item_with_key = InternalItem { _item_id, item };
+        let js_value = match JsValue::from_serde(&item_with_key) {
+            Ok(value) => value,
+            Err(e) => return MmError::err(DbTransactionError::ErrorSerializingItem(e.to_string())),
+        };
+        let replace_request = match self.object_store.put(&js_value) {
+            Ok(request) => request,
+            Err(e) => return MmError::err(DbTransactionError::ErrorUploadingItem(stringify_js_error(&e))),
+        };
+
+        if let Err(_error_event) = Self::wait_for_request_complete(&replace_request).await {
+            let error = Self::error_from_failed_request(&replace_request);
+            return MmError::err(DbTransactionError::ErrorUploadingItem(error));
         }
+
+        Self::item_id_from_completed_request(&replace_request)
     }
 
     async fn wait_for_request_complete(request: &IdbRequest) -> Result<JsValue, JsValue> {
@@ -432,6 +451,42 @@ impl<'a, T: TableSignature> DbTable<'a, T> {
 
         rx.next().await.expect_w("The request event channel must not be closed")
     }
+
+    fn item_id_from_completed_request(request: &IdbRequest) -> DbTransactionResult<ItemId> {
+        let result_js_value = match request.result() {
+            Ok(res) => res,
+            Err(e) => return MmError::err(DbTransactionError::UnexpectedState(stringify_js_error(&e))),
+        };
+
+        result_js_value
+            .into_serde()
+            .map_to_mm(|e| DbTransactionError::ErrorDeserializingItem(e.to_string()))
+    }
+
+    fn items_from_completed_request(request: &IdbRequest) -> DbTransactionResult<Vec<(ItemId, T)>> {
+        let result_js_value = match request.result() {
+            Ok(res) => res,
+            Err(e) => return MmError::err(DbTransactionError::UnexpectedState(stringify_js_error(&e))),
+        };
+
+        if result_js_value.is_null() || result_js_value.is_undefined() {
+            return Ok(Vec::new());
+        }
+
+        let items: Vec<InternalItem<T>> = match result_js_value.into_serde() {
+            Ok(items) => items,
+            Err(e) => return MmError::err(DbTransactionError::ErrorDeserializingItem(e.to_string())),
+        };
+
+        Ok(items.into_iter().map(|item| (item._item_id, item.item)).collect())
+    }
+
+    fn error_from_failed_request(request: &IdbRequest) -> String {
+        match request.error() {
+            Ok(Some(exception)) => format!("{:?}", exception),
+            _ => "Unknown".to_owned(),
+        }
+    }
 }
 
 pub struct DbUpgrader {
@@ -441,8 +496,11 @@ pub struct DbUpgrader {
 
 impl DbUpgrader {
     pub fn create_table(&self, table: &str) -> OnUpgradeResult<TableUpgrader> {
+        // We use the [in-line](https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API/Basic_Concepts_Behind_IndexedDB#gloss_inline_key) primary keys.
+        let key_path = JsValue::from(ITEM_KEY_PATH);
+
         let mut params = IdbObjectStoreParameters::new();
-        // We use the [out-of-line](https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API/Basic_Concepts_Behind_IndexedDB#gloss_outofline_key) primary keys.
+        params.key_path(Some(&key_path));
         params.auto_increment(true);
 
         match self.db.create_object_store_with_optional_parameters(table, &params) {
@@ -488,6 +546,13 @@ pub trait TableSignature: DeserializeOwned + Serialize + 'static {
     fn table_name() -> &'static str;
 
     fn on_upgrade_needed(upgrader: &DbUpgrader, old_version: u32, new_version: u32) -> OnUpgradeResult<()>;
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct InternalItem<T> {
+    _item_id: ItemId,
+    #[serde(flatten)]
+    item: T,
 }
 
 #[derive(Debug)]
@@ -582,24 +647,26 @@ mod tests {
             .open_table::<TxTable>()
             .expect_w("!DbTransaction::open_table");
 
-        table
+        let rick_tx_1_id = table
             .add_item(&rick_tx_1)
             .await
             .expect_w("!Couldn't add a 'RICK' transaction");
-        table
+        let rick_tx_2_id = table
             .add_item(&rick_tx_2)
             .await
             .expect_w("!Couldn't add a 'RICK' transaction with the different 'tx_hash'");
-        table
+        let morty_tx_1_id = table
             .add_item(&morty_tx_1)
             .await
             .expect_w("!Couldn't add a 'MORTY' transaction");
+        assert!(rick_tx_1_id != rick_tx_2_id && rick_tx_2_id != morty_tx_1_id);
 
         let actual_rick_txs = table
             .get_items("ticker", "RICK")
             .await
             .expect_w("!Couldn't get items by the index 'ticker=RICK'");
-        assert_eq!(actual_rick_txs, vec![rick_tx_1, rick_tx_2.clone()]);
+        let expected_rick_txs = vec![(rick_tx_1_id, rick_tx_1), (rick_tx_2_id, rick_tx_2.clone())];
+        assert_eq!(actual_rick_txs, expected_rick_txs);
         let actual_rick_2_tx = table
             .get_items(
                 "tx_hash",
@@ -607,9 +674,11 @@ mod tests {
             )
             .await
             .expect_w("!Couldn't get items by the index 'tx_hash'");
-        assert_eq!(actual_rick_2_tx, vec![rick_tx_2]);
+        let expected_rick_txs = vec![(rick_tx_2_id, rick_tx_2)];
+        assert_eq!(actual_rick_2_tx, expected_rick_txs);
 
-        // Try to add the same item. [`TxTable::tx_hash`] is a unique index, so this operation must fail.
+        // Try to add the updated MORTY tx item with the same [`TxTable::tx_hash`].
+        // [`TxTable::tx_hash`] is a unique index, so this operation must fail.
         let err = table
             .add_item(&morty_tx_1_updated)
             .await
@@ -619,7 +688,27 @@ mod tests {
             e => panic!("Expected 'DbTransactionError::ErrorUploadingItem', found: {:?}", e),
         }
 
-        // TODO replace morty_tx_1_updated
+        // But we should be able to replace the updated item.
+        // Since the last operation failed, we have to reopen the transaction.
+        // TODO check the aborted flag
+        drop(table);
+        drop(transaction);
+        let transaction = db.transaction().expect_w("!IndexedDb::transaction()");
+        let table = transaction
+            .open_table::<TxTable>()
+            .expect_w("!DbTransaction::open_table");
+
+        let morty_tx_1_updated_id = table
+            .replace_item(morty_tx_1_id, morty_tx_1_updated.clone())
+            .await
+            .expect_w("!Couldn't replace an item");
+        assert_eq!(morty_tx_1_updated_id, morty_tx_1_id);
+
+        let actual_morty_txs = table
+            .get_items("ticker", "MORTY")
+            .await
+            .expect_w("Couldn't get items by the index 'ticker=MORTY'");
+        assert_eq!(actual_morty_txs, vec![(morty_tx_1_id, morty_tx_1_updated.clone())]);
     }
 
     #[wasm_bindgen_test]

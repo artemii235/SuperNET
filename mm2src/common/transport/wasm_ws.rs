@@ -755,7 +755,7 @@ mod tests {
         let (_outgoing_tx, mut incoming_rx) =
             spawn_ws_transport(conn_idx, "ws://electrum1.cipig.net:10017").expect("!spawn_ws_transport");
 
-        match incoming_rx.next().timeout_secs(0.5).await.unwrap_w() {
+        match incoming_rx.next().timeout_secs(5.).await.unwrap_w() {
             Some((
                 _conn_idx,
                 WebSocketEvent::Closing {
