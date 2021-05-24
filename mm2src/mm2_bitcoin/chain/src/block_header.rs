@@ -1,9 +1,9 @@
 use hex::FromHex;
 use compact::Compact;
 use crypto::dhash256;
-use hash::{EquihashSolution, H128, H256};
+use hash::{EquihashSolution, H256};
 use ser::{deserialize, serialize, CompactInteger, Deserializable, Reader, Serializable, Stream};
-use std::{fmt, io};
+use std::io;
 use Transaction;
 use transaction::{deserialize_tx, TxType};
 

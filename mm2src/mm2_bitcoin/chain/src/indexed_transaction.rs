@@ -3,7 +3,6 @@ use hash::H256;
 use ser::{Deserializable, Reader, Error as ReaderError};
 use transaction::Transaction;
 use read_and_hash::ReadAndHash;
-use TxHashAlgo;
 
 #[derive(Default, Clone)]
 pub struct IndexedTransaction {
@@ -47,7 +46,7 @@ impl cmp::PartialEq for IndexedTransaction {
 
 impl Deserializable for IndexedTransaction {
 	fn deserialize<T>(reader: &mut Reader<T>) -> Result<Self, ReaderError> where T: io::Read {
-		let data = try!(reader.read_and_hash::<Transaction>());
+		let data = reader.read_and_hash::<Transaction>()?;
 		// TODO: use len
 		let tx = IndexedTransaction {
 			raw: data.data,

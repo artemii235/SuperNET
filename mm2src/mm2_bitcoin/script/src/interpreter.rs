@@ -590,7 +590,7 @@ pub fn eval_script(
 				}
 				let n: usize = n.into();
 				let splitted_value = {
-					let mut value_to_split = stack.last_mut()?;
+					let value_to_split = stack.last_mut()?;
 					if n > value_to_split.len() {
 						return Err(Error::InvalidSplitRange);
 					}

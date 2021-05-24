@@ -463,7 +463,6 @@ pub fn deserialize_tx<T>(reader: &mut Reader<T>, tx_type: TxType) -> Result<Tran
 	};
 
     let str_d_zeel = if tx_type == TxType::PosWithNTime && !reader.is_finished() {
-        use hex::ToHex;
         let len: CompactInteger = reader.read()?;
         let mut buf = vec![0; len.into()];
         reader.read_slice(&mut buf)?;

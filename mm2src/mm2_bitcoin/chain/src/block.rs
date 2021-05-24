@@ -4,7 +4,6 @@ use ser::{deserialize};
 use merkle_root::merkle_root;
 use {BlockHeader, Transaction};
 use super::RepresentH256;
-use TxHashAlgo;
 
 #[derive(Debug, PartialEq, Clone, Serializable, Deserializable)]
 pub struct Block {

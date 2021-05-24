@@ -387,7 +387,7 @@ impl TransactionInputSigner {
 		input_index: usize,
 		script_pubkey: &Script,
 		sighashtype: u32,
-		sighash: Sighash
+		_sighash: Sighash
 	) -> Result<H256, String> {
 		let mut sig_hash_stream = Stream::new();
 
@@ -414,14 +414,14 @@ impl TransactionInputSigner {
 		}
 		sig_hash_stream.append(&blake_2b_256_personal(&prev_out_stream.out(), ZCASH_PREVOUTS_HASH_PERSONALIZATION));
 
-		let mut sequence_stream = Stream::new();;
+		let mut sequence_stream = Stream::new();
 		for input in self.inputs.iter() {
 			sequence_stream.append(&input.sequence);
 		}
 
 		sig_hash_stream.append(&blake_2b_256_personal(&sequence_stream.out(), ZCASH_SEQUENCE_HASH_PERSONALIZATION));
 
-		let mut outputs_stream = Stream::new();;
+		let mut outputs_stream = Stream::new();
 		for output in self.outputs.iter() {
 			outputs_stream.append(output);
 		}
@@ -439,7 +439,7 @@ impl TransactionInputSigner {
 		}
 
 		if self.shielded_spends.len() > 0 {
-			let mut s_spends_stream = Stream::new();;
+			let mut s_spends_stream = Stream::new();
 			for spend in self.shielded_spends.iter() {
 				s_spends_stream.append(&spend.cv)
 					.append(&spend.anchor)

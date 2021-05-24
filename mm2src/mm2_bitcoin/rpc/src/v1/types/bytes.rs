@@ -62,7 +62,7 @@ impl<'a> Visitor<'a> for BytesVisitor {
 		if value.len() == 0 {
 			Ok(Bytes::new(vec![]))
 		} else if value.len() & 1 == 0 {
-			Ok(Bytes::new(try!(FromHex::from_hex(&value).map_err(|_| Error::custom("invalid hex")))))
+			Ok(Bytes::new(FromHex::from_hex(&value).map_err(|_| Error::custom("invalid hex"))?))
 		} else {
 			Err(Error::custom("invalid format"))
 		}
