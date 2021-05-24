@@ -430,6 +430,40 @@ impl<'a, T: TableSignature> DbTable<'a, T> {
         Self::items_from_completed_request(&get_request)
     }
 
+    pub async fn get_item_ids(&self, index_str: &str, index_value_str: &str) -> DbTransactionResult<Vec<ItemId>> {
+        if self.aborted.load(Ordering::Relaxed) {
+            return MmError::err(DbTransactionError::TransactionAborted);
+        }
+
+        let index = index_str.to_owned();
+        let index_value = index_value_str.to_owned();
+
+        let index_value_js = JsValue::from(index_value_str);
+
+        let db_index = match self.object_store.index(index_str) {
+            Ok(index) => index,
+            Err(_) => return MmError::err(DbTransactionError::NoSuchIndex { index }),
+        };
+        let get_request = match db_index.get_all_keys_with_key(&index_value_js) {
+            Ok(request) => request,
+            Err(e) => {
+                return MmError::err(DbTransactionError::InvalidIndex {
+                    index,
+                    index_value,
+                    description: stringify_js_error(&e),
+                })
+            },
+        };
+
+        if let Err(_error_event) = Self::wait_for_request_complete(&get_request).await {
+            self.aborted.store(true, Ordering::Relaxed);
+            let error = Self::error_from_failed_request(&get_request);
+            return MmError::err(DbTransactionError::ErrorGettingItems(error));
+        }
+
+        Self::item_ids_from_completed_request(&get_request)
+    }
+
     pub async fn get_all_items(&self) -> DbTransactionResult<Vec<(ItemId, T)>> {
         if self.aborted.load(Ordering::Relaxed) {
             return MmError::err(DbTransactionError::TransactionAborted);
@@ -512,6 +546,21 @@ impl<'a, T: TableSignature> DbTable<'a, T> {
         };
 
         Ok(items.into_iter().map(|item| (item._item_id, item.item)).collect())
+    }
+
+    fn item_ids_from_completed_request(request: &IdbRequest) -> DbTransactionResult<Vec<ItemId>> {
+        let result_js_value = match request.result() {
+            Ok(res) => res,
+            Err(e) => return MmError::err(DbTransactionError::UnexpectedState(stringify_js_error(&e))),
+        };
+
+        if result_js_value.is_null() || result_js_value.is_undefined() {
+            return Ok(Vec::new());
+        }
+
+        result_js_value
+            .into_serde()
+            .map_to_mm(|e| DbTransactionError::ErrorDeserializingItem(e.to_string()))
     }
 
     fn error_from_failed_request(request: &IdbRequest) -> String {
@@ -700,6 +749,14 @@ mod tests {
             .expect_w("!Couldn't get items by the index 'ticker=RICK'");
         let expected_rick_txs = vec![(rick_tx_1_id, rick_tx_1), (rick_tx_2_id, rick_tx_2.clone())];
         assert_eq!(actual_rick_txs, expected_rick_txs);
+
+        let actual_rick_tx_ids = table
+            .get_item_ids("ticker", "RICK")
+            .await
+            .expect_w("Couldn't get item ids by the index 'ticker=RICK'");
+        let expected_rick_tx_ids = vec![rick_tx_1_id, rick_tx_2_id];
+        assert_eq!(actual_rick_tx_ids, expected_rick_tx_ids);
+
         let actual_rick_2_tx = table
             .get_items(
                 "tx_hash",
