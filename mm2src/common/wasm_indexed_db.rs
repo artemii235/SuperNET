@@ -2,7 +2,7 @@ use crate::log::{debug, error};
 use crate::mm_error::prelude::*;
 use crate::{panic_w, stringify_js_error, WasmUnwrapErrExt, WasmUnwrapExt};
 use derive_more::Display;
-use futures::channel::mpsc;
+use futures::channel::{mpsc, oneshot};
 use futures::StreamExt;
 use js_sys::Array;
 use serde::de::DeserializeOwned;
@@ -310,11 +310,7 @@ impl IndexedDb {
             .db
             .transaction_with_str_sequence_and_mode(&store_names, IdbTransactionMode::Readwrite)
         {
-            Ok(transaction) => Ok(DbTransaction {
-                transaction,
-                tables: self.tables.clone(),
-                aborted: Arc::new(AtomicBool::new(false)),
-            }),
+            Ok(transaction) => Ok(DbTransaction::init(transaction, self.tables.clone())),
             Err(e) => MmError::err(DbTransactionError::ErrorCreatingTransaction(stringify_js_error(&e))),
         }
     }
@@ -332,6 +328,7 @@ pub struct DbTransaction {
     transaction: IdbTransaction,
     tables: HashSet<String>,
     aborted: Arc<AtomicBool>,
+    complete_rx: oneshot::Receiver<Result<JsValue, JsValue>>,
 }
 
 impl !Send for DbTransaction {}
@@ -360,6 +357,52 @@ impl DbTransaction {
                 table: table_name.to_owned(),
                 description: stringify_js_error(&e),
             }),
+        }
+    }
+
+    pub async fn wait_for_complete(self) -> DbTransactionResult<()> {
+        if self.aborted.load(Ordering::Relaxed) {
+            return MmError::err(DbTransactionError::TransactionAborted);
+        }
+
+        let result = self
+            .complete_rx
+            .await
+            .expect_w("The complete channel must not be closed");
+        match result {
+            Ok(_event) => Ok(()),
+            Err(_error_event) => return MmError::err(DbTransactionError::TransactionAborted),
+        }
+    }
+
+    fn init(transaction: IdbTransaction, tables: HashSet<String>) -> DbTransaction {
+        let (complete_tx, complete_rx) = oneshot::channel();
+        let (event_tx, mut event_rx) = mpsc::channel(2);
+
+        let oncomplete_closure = construct_event_closure(Ok, event_tx.clone());
+        let onabort_closure = construct_event_closure(Err, event_tx.clone());
+
+        transaction.set_oncomplete(Some(oncomplete_closure.as_ref().unchecked_ref()));
+        // Don't set the `onerror` closure, because the `onabort` is called immediately after the error.
+        transaction.set_onabort(Some(onabort_closure.as_ref().unchecked_ref()));
+
+        // move the closures into this async block to keep it alive until either `oncomplete` or `onabort` handler is called
+        let fut = async move {
+            let complete_or_abort = event_rx.next().await.expect_w("The event channel must not be closed");
+            // ignore if the receiver is closed
+            let _res = complete_tx.send(complete_or_abort);
+
+            // do any action to move the closures into this async block to keep it alive until the `state_machine` finishes
+            drop(oncomplete_closure);
+            drop(onabort_closure);
+        };
+
+        wasm_bindgen_futures::spawn_local(fut);
+        DbTransaction {
+            transaction,
+            tables,
+            aborted: Arc::new(AtomicBool::new(false)),
+            complete_rx,
         }
     }
 }
@@ -509,6 +552,27 @@ impl<'a, T: TableSignature> DbTable<'a, T> {
         }
 
         Self::item_id_from_completed_request(&replace_request)
+    }
+
+    pub async fn delete_item(&self, item_id: ItemId) -> DbTransactionResult<()> {
+        if self.aborted.load(Ordering::Relaxed) {
+            return MmError::err(DbTransactionError::TransactionAborted);
+        }
+
+        let item_id = JsValue::from(item_id);
+
+        let delete_request = match self.object_store.delete(&item_id) {
+            Ok(request) => request,
+            Err(e) => return MmError::err(DbTransactionError::ErrorDeletingItems(stringify_js_error(&e))),
+        };
+
+        if let Err(_error_event) = Self::wait_for_request_complete(&delete_request).await {
+            self.aborted.store(true, Ordering::Relaxed);
+            let error = Self::error_from_failed_request(&delete_request);
+            return MmError::err(DbTransactionError::ErrorDeletingItems(error));
+        }
+
+        Ok(())
     }
 
     pub async fn clear(&self) -> DbTransactionResult<()> {
@@ -733,11 +797,6 @@ mod tests {
             tx_hash: "1fc789133239260ed16361190a026a88cab2243935f02f1ccd794f1d06a22246".to_owned(),
             block_height: 20000,
         };
-        let morty_tx_1_updated = TxTable {
-            ticker: "MORTY".to_owned(),
-            tx_hash: "1fc789133239260ed16361190a026a88cab2243935f02f1ccd794f1d06a22246".to_owned(),
-            block_height: 30000,
-        };
 
         register_wasm_log(LogLevel::Debug);
 
@@ -789,13 +848,63 @@ mod tests {
             .expect_w("!Couldn't get items by the index 'tx_hash'");
         let expected_rick_txs = vec![(rick_tx_2_id, rick_tx_2)];
         assert_eq!(actual_rick_2_tx, expected_rick_txs);
+    }
 
-        // Try to add the updated MORTY tx item with the same [`TxTable::tx_hash`].
+    #[wasm_bindgen_test]
+    async fn test_replace_item() {
+        const DB_NAME: &str = "TEST_REPLACE_ITEM";
+        const DB_VERSION: u32 = 1;
+
+        let rick_tx_1 = TxTable {
+            ticker: "RICK".to_owned(),
+            tx_hash: "0a0fda88364b960000f445351fe7678317a1e0c80584de0413377ede00ba696f".to_owned(),
+            block_height: 10000,
+        };
+        let rick_tx_2 = TxTable {
+            ticker: "RICK".to_owned(),
+            tx_hash: "ba881ecca15b5d4593f14f25debbcdfe25f101fd2e9cf8d0b5d92d19813d4424".to_owned(),
+            block_height: 10000,
+        };
+        let rick_tx_1_updated = TxTable {
+            ticker: "RICK".to_owned(),
+            tx_hash: "0a0fda88364b960000f445351fe7678317a1e0c80584de0413377ede00ba696f".to_owned(),
+            block_height: 20000,
+        };
+
+        register_wasm_log(LogLevel::Debug);
+
+        let db = IndexedDbBuilder::new(DB_NAME)
+            .with_version(DB_VERSION)
+            .with_table::<TxTable>()
+            .init()
+            .await
+            .expect_w("!IndexedDb::init");
+        let transaction = db.transaction().expect_w("!IndexedDb::transaction()");
+        let table = transaction
+            .open_table::<TxTable>()
+            .expect_w("!DbTransaction::open_table");
+
+        let rick_tx_1_id = table.add_item(&rick_tx_1).await.expect_w("Couldn't add an item");
+        let rick_tx_2_id = table.add_item(&rick_tx_2).await.expect_w("Couldn't add an item");
+
+        // Wait for the transaction to complete to save the changes to the database.
+        transaction
+            .wait_for_complete()
+            .await
+            .expect_w("Error waiting for the transaction to complete");
+
+        // Open new transaction.
+        let transaction = db.transaction().expect_w("!IndexedDb::transaction()");
+        let table = transaction
+            .open_table::<TxTable>()
+            .expect_w("!DbTransaction::open_table");
+
+        // Try to add the updated RICK tx item with the same [`TxTable::tx_hash`].
         // [`TxTable::tx_hash`] is a unique index, so this operation must fail.
         let err = table
-            .add_item(&morty_tx_1_updated)
+            .add_item(&rick_tx_1_updated)
             .await
-            .expect_err_w("!Couldn't add an item with the different 'tx_hash'");
+            .expect_err_w("'DbTable::add_item' should have failed");
         match err.into_inner() {
             DbTransactionError::ErrorUploadingItem(err) => debug!("error: {}", err),
             e => panic_w(&format!(
@@ -812,21 +921,105 @@ mod tests {
             .open_table::<TxTable>()
             .expect_w("!DbTransaction::open_table");
 
-        let morty_tx_1_updated_id = table
-            .replace_item(morty_tx_1_id, morty_tx_1_updated.clone())
+        let rick_tx_1_updated_id = table
+            .replace_item(rick_tx_1_id, rick_tx_1_updated.clone())
             .await
             .expect_w("!Couldn't replace an item");
-        assert_eq!(morty_tx_1_updated_id, morty_tx_1_id);
+        assert_eq!(rick_tx_1_updated_id, rick_tx_1_id);
 
-        let actual_morty_txs = table
-            .get_items("ticker", "MORTY")
+        let actual_rick_txs = table
+            .get_items("ticker", "RICK")
             .await
-            .expect_w("Couldn't get items by the index 'ticker=MORTY'");
-        assert_eq!(actual_morty_txs, vec![(morty_tx_1_id, morty_tx_1_updated.clone())]);
+            .expect_w("Couldn't get items by the index 'ticker=RICK'");
+        assert_eq!(actual_rick_txs, vec![
+            (rick_tx_1_id, rick_tx_1_updated),
+            (rick_tx_2_id, rick_tx_2)
+        ]);
+    }
 
-        table.clear().await.expect_w("Couldn't clear the table");
-        let actual_items = table.get_all_items().await.expect_w("Couldn't get all items");
-        assert!(actual_items.is_empty(), "Table must be empty after the clearing");
+    #[wasm_bindgen_test]
+    async fn test_delete_item() {
+        const DB_NAME: &str = "TEST_DELETE_ITEM";
+        const DB_VERSION: u32 = 1;
+
+        let rick_tx_1 = TxTable {
+            ticker: "RICK".to_owned(),
+            tx_hash: "0a0fda88364b960000f445351fe7678317a1e0c80584de0413377ede00ba696f".to_owned(),
+            block_height: 10000,
+        };
+        let rick_tx_2 = TxTable {
+            ticker: "RICK".to_owned(),
+            tx_hash: "ba881ecca15b5d4593f14f25debbcdfe25f101fd2e9cf8d0b5d92d19813d4424".to_owned(),
+            block_height: 10000,
+        };
+
+        register_wasm_log(LogLevel::Debug);
+
+        let db = IndexedDbBuilder::new(DB_NAME)
+            .with_version(DB_VERSION)
+            .with_table::<TxTable>()
+            .init()
+            .await
+            .expect_w("!IndexedDb::init");
+        let transaction = db.transaction().expect_w("!IndexedDb::transaction()");
+        let table = transaction
+            .open_table::<TxTable>()
+            .expect_w("!DbTransaction::open_table");
+
+        let rick_tx_1_id = table.add_item(&rick_tx_1).await.expect_w("Couldn't add an item");
+        let rick_tx_2_id = table.add_item(&rick_tx_2).await.expect_w("Couldn't add an item");
+
+        table
+            .delete_item(rick_tx_1_id)
+            .await
+            .expect_w("Couldn't delete an item");
+
+        let actual_rick_txs = table
+            .get_items("ticker", "RICK")
+            .await
+            .expect_w("Couldn't get items by the index 'ticker=RICK'");
+        assert_eq!(actual_rick_txs, vec![(rick_tx_2_id, rick_tx_2)]);
+    }
+
+    #[wasm_bindgen_test]
+    async fn test_clear() {
+        const DB_NAME: &str = "TEST_CLEAR";
+        const DB_VERSION: u32 = 1;
+
+        let rick_tx_1 = TxTable {
+            ticker: "RICK".to_owned(),
+            tx_hash: "0a0fda88364b960000f445351fe7678317a1e0c80584de0413377ede00ba696f".to_owned(),
+            block_height: 10000,
+        };
+        let rick_tx_2 = TxTable {
+            ticker: "RICK".to_owned(),
+            tx_hash: "ba881ecca15b5d4593f14f25debbcdfe25f101fd2e9cf8d0b5d92d19813d4424".to_owned(),
+            block_height: 10000,
+        };
+
+        register_wasm_log(LogLevel::Debug);
+
+        let db = IndexedDbBuilder::new(DB_NAME)
+            .with_version(DB_VERSION)
+            .with_table::<TxTable>()
+            .init()
+            .await
+            .expect_w("!IndexedDb::init");
+        let transaction = db.transaction().expect_w("!IndexedDb::transaction()");
+        let table = transaction
+            .open_table::<TxTable>()
+            .expect_w("!DbTransaction::open_table");
+
+        let _rick_tx_1_id = table.add_item(&rick_tx_1).await.expect_w("Couldn't add an item");
+        let _rick_tx_2_id = table.add_item(&rick_tx_2).await.expect_w("Couldn't add an item");
+
+        table.clear().await.expect_w("Couldn't clear the database");
+
+        let actual_rick_txs = table
+            .get_items("ticker", "RICK")
+            .await
+            .expect_w("Couldn't get items by the index 'ticker=RICK'");
+        assert!(actual_rick_txs.is_empty());
     }
 
     #[wasm_bindgen_test]

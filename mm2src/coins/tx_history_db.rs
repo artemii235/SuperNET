@@ -170,6 +170,7 @@ mod wasm_db {
             result_tx: oneshot::Sender<SaveHistoryResult>,
         },
         Clear {
+            ticker: String,
             result_tx: oneshot::Sender<ClearHistoryResult>,
         },
     }
@@ -221,10 +222,12 @@ mod wasm_db {
             result_rx.await.expect_w("The result channel must not be closed")
         }
 
-        /// TODO use the ticker argument
-        async fn clear(&mut self, _ticker: &str, _wallet_address: &str) -> TxHistoryResult<()> {
+        async fn clear(&mut self, ticker: &str, _wallet_address: &str) -> TxHistoryResult<()> {
             let (result_tx, result_rx) = oneshot::channel();
-            let clear_event = TxHistoryEvent::Clear { result_tx };
+            let clear_event = TxHistoryEvent::Clear {
+                ticker: ticker.to_owned(),
+                result_tx,
+            };
             if let Err(e) = self.event_tx.try_send(clear_event) {
                 let error = format!("Couldn't send the 'TxHistoryEvent::Clear' event: {}", e);
                 return MmError::err(TxHistoryError::InternalError(error));
@@ -271,8 +274,8 @@ mod wasm_db {
                         // ignore if the receiver is closed
                         let _res = result_tx.send(result);
                     },
-                    TxHistoryEvent::Clear { result_tx } => {
-                        let result = Self::clear_history(&db).await;
+                    TxHistoryEvent::Clear { ticker, result_tx } => {
+                        let result = Self::clear_history(&db, ticker).await;
                         // ignore if the receiver is closed
                         let _res = result_tx.send(result);
                     },
@@ -322,13 +325,31 @@ mod wasm_db {
                     return MmError::err(TxHistoryError::InternalError(error));
                 },
             }
+
+            transaction.wait_for_complete().await?;
             Ok(())
         }
 
-        async fn clear_history(db: &IndexedDb) -> ClearHistoryResult {
+        async fn clear_history(db: &IndexedDb, ticker: String) -> ClearHistoryResult {
             let transaction = db.transaction()?;
             let table = transaction.open_table::<TxHistoryTable>()?;
-            table.clear().await?;
+
+            // First, check if the coin's tx history exists.
+            let ids = table.get_item_ids("ticker", &ticker).await?;
+            match ids.len() {
+                // The history doesn't exist, we don't need to do anything.
+                0 => (),
+                1 => {
+                    let item_id = ids[0];
+                    table.delete_item(item_id).await?;
+                },
+                unexpected_len => {
+                    let error = format!("Expected only one item by the 'ticker' index, found {}", unexpected_len);
+                    return MmError::err(TxHistoryError::InternalError(error));
+                },
+            }
+
+            transaction.wait_for_complete().await?;
             Ok(())
         }
     }
