@@ -2166,6 +2166,17 @@ impl<T: fmt::Debug, E> WasmUnwrapErrExt<E> for Result<T, E> {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+#[track_caller]
+pub fn panic_w(description: &str) {
+    let (file, line) = caller_file_line();
+    let error = format!(
+        "{}:{}] 'panic_w' called: {:?}",
+        file, line, description
+    );
+    wasm_bindgen::throw_str(&error)
+}
+
 pub fn first_char_to_upper(input: &str) -> String {
     let mut v: Vec<char> = input.chars().collect();
     if let Some(c) = v.first_mut() {

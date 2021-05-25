@@ -96,6 +96,8 @@ use qrc20::{qrc20_coin_from_conf_and_request, Qrc20Coin, Qrc20FeeDetails};
 pub mod test_coin;
 pub use test_coin::TestCoin;
 
+pub mod tx_history_db;
+
 #[cfg(not(target_arch = "wasm32"))] pub mod z_coin;
 
 pub type BalanceResult<T> = Result<T, MmError<BalanceError>>;

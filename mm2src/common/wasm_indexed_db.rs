@@ -1,6 +1,6 @@
 use crate::log::{debug, error};
 use crate::mm_error::prelude::*;
-use crate::{stringify_js_error, WasmUnwrapErrExt, WasmUnwrapExt};
+use crate::{panic_w, stringify_js_error, WasmUnwrapErrExt, WasmUnwrapExt};
 use derive_more::Display;
 use futures::channel::mpsc;
 use futures::StreamExt;
@@ -28,7 +28,7 @@ pub type OnUpgradeResult<T> = Result<T, MmError<OnUpgradeError>>;
 pub type InitDbResult<T> = Result<T, MmError<InitDbError>>;
 pub type DbTransactionResult<T> = Result<T, MmError<DbTransactionError>>;
 
-type OnUpgradeNeededCb = Box<dyn FnOnce(&DbUpgrader, u32, u32) -> OnUpgradeResult<()>>;
+type OnUpgradeNeededCb = Box<dyn FnOnce(&DbUpgrader, u32, u32) -> OnUpgradeResult<()> + Send>;
 
 #[derive(Debug, Display, PartialEq)]
 pub enum InitDbError {
@@ -85,6 +85,8 @@ pub enum DbTransactionError {
     ErrorUploadingItem(String),
     #[display(fmt = "Error getting items: {:?}", _0)]
     ErrorGettingItems(String),
+    #[display(fmt = "Error deleting items: {:?}", _0)]
+    ErrorDeletingItems(String),
     #[display(fmt = "No such index '{}'", index)]
     NoSuchIndex { index: String },
     #[display(fmt = "Invalid index '{}:{}': {:?}", index, index_value, description)]
@@ -285,6 +287,8 @@ pub struct IndexedDb {
     tables: HashSet<String>,
 }
 
+impl !Send for IndexedDb {}
+
 impl fmt::Debug for IndexedDb {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -294,10 +298,6 @@ impl fmt::Debug for IndexedDb {
         )
     }
 }
-
-/// Although wasm is currently single-threaded, we can implement the `Send` trait for `IndexedDb`,
-/// but it won't be safe when wasm becomes multi-threaded.
-unsafe impl Send for IndexedDb {}
 
 impl IndexedDb {
     pub fn transaction(&self) -> DbTransactionResult<DbTransaction> {
@@ -334,6 +334,8 @@ pub struct DbTransaction {
     aborted: Arc<AtomicBool>,
 }
 
+impl !Send for DbTransaction {}
+
 impl DbTransaction {
     pub fn aborted(&self) -> bool { self.aborted.load(Ordering::Relaxed) }
 
@@ -367,6 +369,8 @@ pub struct DbTable<'a, T: TableSignature> {
     aborted: Arc<AtomicBool>,
     phantom: PhantomData<&'a T>,
 }
+
+impl<'a, T: TableSignature> !Send for DbTable<'a, T> {}
 
 impl<'a, T: TableSignature> DbTable<'a, T> {
     pub fn aborted(&self) -> bool { self.aborted.load(Ordering::Relaxed) }
@@ -505,6 +509,25 @@ impl<'a, T: TableSignature> DbTable<'a, T> {
         }
 
         Self::item_id_from_completed_request(&replace_request)
+    }
+
+    pub async fn clear(&self) -> DbTransactionResult<()> {
+        if self.aborted.load(Ordering::Relaxed) {
+            return MmError::err(DbTransactionError::TransactionAborted);
+        }
+
+        let clear_request = match self.object_store.clear() {
+            Ok(request) => request,
+            Err(e) => return MmError::err(DbTransactionError::ErrorDeletingItems(stringify_js_error(&e))),
+        };
+
+        if let Err(_error_event) = Self::wait_for_request_complete(&clear_request).await {
+            self.aborted.store(true, Ordering::Relaxed);
+            let error = Self::error_from_failed_request(&clear_request);
+            return MmError::err(DbTransactionError::ErrorDeletingItems(error));
+        }
+
+        Ok(())
     }
 
     async fn wait_for_request_complete(request: &IdbRequest) -> Result<JsValue, JsValue> {
@@ -775,7 +798,10 @@ mod tests {
             .expect_err_w("!Couldn't add an item with the different 'tx_hash'");
         match err.into_inner() {
             DbTransactionError::ErrorUploadingItem(err) => debug!("error: {}", err),
-            e => panic!("Expected 'DbTransactionError::ErrorUploadingItem', found: {:?}", e),
+            e => panic_w(&format!(
+                "Expected 'DbTransactionError::ErrorUploadingItem', found: {:?}",
+                e
+            )),
         }
         assert!(transaction.aborted() && table.aborted());
 
@@ -797,6 +823,10 @@ mod tests {
             .await
             .expect_w("Couldn't get items by the index 'ticker=MORTY'");
         assert_eq!(actual_morty_txs, vec![(morty_tx_1_id, morty_tx_1_updated.clone())]);
+
+        table.clear().await.expect_w("Couldn't clear the table");
+        let actual_items = table.get_all_items().await.expect_w("Couldn't get all items");
+        assert!(actual_items.is_empty(), "Table must be empty after the clearing");
     }
 
     #[wasm_bindgen_test]
@@ -831,7 +861,7 @@ mod tests {
                         let table = upgrader.open_table("upgradable_table")?;
                         table.create_index("second_index", false)?;
                     },
-                    v => panic!("Unexpected old, new versions: {:?}", v),
+                    v => panic_w(&format!("Unexpected old, new versions: {:?}", v)),
                 }
                 Ok(())
             }
