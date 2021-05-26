@@ -40,6 +40,8 @@ pub trait TxHistoryOps {
 mod native_db {
     use super::*;
     use serde_json as json;
+    use tokio::fs;
+    use tokio::io::{self, AsyncWriteExt};
 
     pub struct TxHistoryDb {
         tx_history_path: PathBuf,
@@ -58,10 +60,17 @@ mod native_db {
             ticker: &str,
             wallet_address: &str,
         ) -> TxHistoryResult<Vec<TransactionDetails>> {
-            let content = gstuff::slurp(&self.ticker_history_path(ticker, wallet_address));
-            if content.is_empty() {
-                return Ok(Vec::new());
-            }
+            let path = self.ticker_history_path(ticker, wallet_address);
+            let content = match fs::read(&path).await {
+                Ok(content) => content,
+                Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                    return Ok(Vec::new());
+                },
+                Err(err) => {
+                    let error = format!("Error '{}' reading from the history file {}", err, path.display());
+                    return MmError::err(TxHistoryError::ErrorLoading(error));
+                },
+            };
             json::from_slice(&content).map_to_mm(|e| TxHistoryError::ErrorDeserializing(e.to_string()))
         }
 
@@ -75,20 +84,24 @@ mod native_db {
             let path = self.ticker_history_path(ticker, wallet_address);
 
             let tmp_file = format!("{}.tmp", path.display());
-            // TODO consider using an async function
-            if let Err(e) = std::fs::write(&tmp_file, content) {
-                let error = format!("Error {} writing history to the tmp file {}", e, tmp_file);
-                return MmError::err(TxHistoryError::ErrorSaving(error));
-            }
-            if let Err(e) = std::fs::rename(&tmp_file, &path) {
-                let error = format!("Error {} renaming file {} to {}", e, tmp_file, path.display());
+            let fut = async {
+                let mut file = fs::File::create(&tmp_file).await?;
+                file.write_all(&content).await?;
+                file.flush().await?;
+                fs::rename(&tmp_file, &path).await?;
+                Ok(())
+            };
+            let res: io::Result<_> = fut.await;
+            if let Err(e) = res {
+                let error = format!("Error '{}' creating/writing/renaming the tmp file {}", e, tmp_file);
                 return MmError::err(TxHistoryError::ErrorSaving(error));
             }
             Ok(())
         }
 
         async fn clear(&mut self, ticker: &str, wallet_address: &str) -> TxHistoryResult<()> {
-            std::fs::remove_file(&self.ticker_history_path(ticker, wallet_address))
+            fs::remove_file(&self.ticker_history_path(ticker, wallet_address))
+                .await
                 .map_to_mm(|e| TxHistoryError::ErrorClearing(e.to_string()))
         }
     }
