@@ -354,6 +354,7 @@ mod tests {
         );
     }
 
+    #[ignore]
     #[test]
     fn transaction_outputs_deserialize() {
         let txout = TransactionOutputs {

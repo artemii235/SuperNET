@@ -1,10 +1,12 @@
 //! Bitcoin keys.
 
 extern crate base58;
+extern crate bech32;
 extern crate bitcrypto as crypto;
 extern crate primitives;
 extern crate rustc_hex as hex;
 extern crate secp256k1;
+extern crate serde;
 
 mod address;
 mod cashaddress;
@@ -14,6 +16,7 @@ mod keypair;
 mod network;
 mod private;
 mod public;
+mod segwitaddress;
 mod signature;
 
 pub use primitives::{bytes, hash};
@@ -26,6 +29,7 @@ pub use keypair::KeyPair;
 pub use network::Network;
 pub use private::Private;
 pub use public::Public;
+pub use segwitaddress::{Network as BTCNetwork, SegwitAddress};
 pub use signature::{CompactSignature, Signature};
 
 use hash::{H160, H256};

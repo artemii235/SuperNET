@@ -31,6 +31,14 @@ impl Builder {
             .into_script()
     }
 
+    /// Builds p2wpkh script pubkey
+    pub fn build_p2wpkh(address: &AddressHash) -> Script {
+        Builder::default()
+            .push_opcode(Opcode::OP_0)
+            .push_bytes(&**address)
+            .into_script()
+    }
+
     /// Builds op_return script
     pub fn build_nulldata(bytes: &[u8]) -> Script {
         Builder::default()

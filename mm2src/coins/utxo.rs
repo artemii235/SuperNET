@@ -47,7 +47,7 @@ use futures::lock::{Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard};
 use futures::stream::StreamExt;
 use futures01::Future;
 use keys::bytes::Bytes;
-pub use keys::{Address, KeyPair, Private, Public, Secret};
+pub use keys::{Address, BTCNetwork, KeyPair, Private, Public, Secret};
 #[cfg(test)] use mocktopus::macros::*;
 use num_traits::ToPrimitive;
 use primitives::hash::{H256, H264, H512};
@@ -216,6 +216,10 @@ pub enum UtxoAddressFormat {
     /// In Bitcoin Cash context the standard format also known as 'legacy'.
     #[serde(rename = "standard")]
     Standard,
+    /// Segwit Address
+    /// https://github.com/bitcoin/bips/blob/master/bip-0173.mediawiki
+    #[serde(rename = "segwit")]
+    Segwit(BTCNetwork),
     /// Bitcoin Cash specific address format.
     /// https://github.com/bitcoincashorg/bitcoincash.org/blob/master/spec/cashaddr.md
     #[serde(rename = "cashaddress")]
@@ -387,6 +391,9 @@ pub struct UtxoCoinConf {
     /// will be the Segwit (starting from 3 for BTC case) instead of legacy
     /// https://en.bitcoin.it/wiki/Segregated_Witness
     pub segwit: bool,
+    /// If true - allows generation and withdrawal to P2WPKH and P2WSH addresses (starting with bc1 for bitcoin and tb1 for testnet).
+    /// https://github.com/bitcoin/bips/blob/master/bip-0173.mediawiki#Examples
+    pub full_segwit: bool,
     /// Does coin require transactions to be notarized to be considered as confirmed?
     /// https://komodoplatform.com/security-delayed-proof-of-work-dpow/
     pub requires_notarization: AtomicBool,
@@ -849,6 +856,7 @@ impl<'a> UtxoConfBuilder<'a> {
 
         let is_pos = self.is_pos();
         let segwit = self.segwit();
+        let full_segwit = self.full_segwit();
         let force_min_relay_fee = self.conf["force_min_relay_fee"].as_bool().unwrap_or(false);
         let mtp_block_count = self.mtp_block_count();
         let estimate_fee_mode = self.estimate_fee_mode();
@@ -864,6 +872,7 @@ impl<'a> UtxoConfBuilder<'a> {
             pub_t_addr_prefix,
             p2sh_t_addr_prefix,
             segwit,
+            full_segwit,
             wif_prefix,
             tx_version,
             address_format,
@@ -918,7 +927,7 @@ impl<'a> UtxoConfBuilder<'a> {
 
     fn address_format(&self) -> Result<UtxoAddressFormat, String> {
         let conf = self.conf;
-        if conf["address_format"].is_null() {
+        if (conf["address_format"].is_null() || conf["address_format"]["format"] == "segwit") && !self.full_segwit() {
             Ok(UtxoAddressFormat::Standard)
         } else {
             json::from_value(self.conf["address_format"].clone()).map_err(|e| ERRL!("{}", e))
@@ -1020,6 +1029,8 @@ impl<'a> UtxoConfBuilder<'a> {
     fn is_pos(&self) -> bool { self.conf["isPoS"].as_u64() == Some(1) }
 
     fn segwit(&self) -> bool { self.conf["segwit"].as_bool().unwrap_or(false) }
+
+    fn full_segwit(&self) -> bool { self.req["full_segwit"].as_bool().unwrap_or(false) }
 
     fn mtp_block_count(&self) -> NonZeroU64 {
         json::from_value(self.conf["mtp_block_count"].clone()).unwrap_or(KMD_MTP_BLOCK_COUNT)

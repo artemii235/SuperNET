@@ -32,8 +32,14 @@ use structs::*;
 // "Tests in your src files should be unit tests, and tests in tests/ should be integration-style tests."
 // - https://doc.rust-lang.org/cargo/guide/tests.html
 
-async fn enable_electrum(mm: &MarketMakerIt, coin: &str, tx_history: bool, urls: &[&str]) -> EnableElectrumResponse {
-    let value = enable_electrum_impl(mm, coin, tx_history, urls).await;
+async fn enable_electrum(
+    mm: &MarketMakerIt,
+    coin: &str,
+    tx_history: bool,
+    full_segwit: bool,
+    urls: &[&str],
+) -> EnableElectrumResponse {
+    let value = enable_electrum_impl(mm, coin, tx_history, full_segwit, urls).await;
     json::from_value(value).unwrap()
 }
 
@@ -49,7 +55,7 @@ async fn enable_coins_eth_electrum(
     let mut replies = HashMap::new();
     replies.insert(
         "RICK",
-        enable_electrum(mm, "RICK", false, &[
+        enable_electrum(mm, "RICK", false, false, &[
             "electrum1.cipig.net:10017",
             "electrum2.cipig.net:10017",
             "electrum3.cipig.net:10017",
@@ -58,7 +64,7 @@ async fn enable_coins_eth_electrum(
     );
     replies.insert(
         "MORTY",
-        enable_electrum(mm, "MORTY", false, &[
+        enable_electrum(mm, "MORTY", false, false, &[
             "electrum1.cipig.net:10018",
             "electrum2.cipig.net:10018",
             "electrum3.cipig.net:10018",
@@ -568,7 +574,7 @@ fn test_my_balance() {
     let (_dump_log, _dump_dashboard) = mm.mm_dump();
     log!({"log path: {}", mm.log_path.display()});
     // Enable RICK.
-    let json = block_on(enable_electrum(&mm, "RICK", false, &[
+    let json = block_on(enable_electrum(&mm, "RICK", false, false, &[
         "electrum1.cipig.net:10017",
         "electrum2.cipig.net:10017",
         "electrum3.cipig.net:10017",
@@ -594,6 +600,74 @@ fn test_my_balance() {
     assert_eq!(my_unspendable_balance, "0");
     let my_address = json["address"].as_str().unwrap();
     assert_eq!(my_address, "RRnMcSeKiLrNdbp91qNVQwwXx5azD4S4CD");
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn test_p2wpkh_my_balance() {
+    let seed = "valley embody about obey never adapt gesture trust screen tube glide bread";
+
+    let coins = json! ([
+        {
+            "coin": "tBTC",
+            "name": "tbitcoin",
+            "fname": "tBitcoin",
+            "rpcport": 18332,
+            "pubtype": 111,
+            "p2shtype": 196,
+            "wiftype": 239,
+            "segwit": true,
+            "txfee": 0,
+            "estimate_fee_mode": "ECONOMICAL",
+            "address_format": {
+                "format": "segwit",
+                "network": "testnet"
+            },
+            "mm2": 1,
+            "required_confirmations": 0,
+            "protocol": {
+                "type": "UTXO"
+            }
+        }
+    ]);
+
+    let mm = MarketMakerIt::start(
+        json! ({
+            "gui": "nogui",
+            "netid": 9998,
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "passphrase": seed.to_string(),
+            "coins": coins,
+            "i_am_seed": true,
+            "rpc_password": "pass",
+        }),
+        "pass".into(),
+        local_start!("bob"),
+    )
+    .unwrap();
+    let (_dump_log, _dump_dashboard) = mm.mm_dump();
+    log!({ "log path: {}", mm.log_path.display() });
+
+    let _electrum = block_on(enable_electrum(&mm, "tBTC", false, true, &[
+        "electrum3.cipig.net:10068",
+        "electrum2.cipig.net:10068",
+        "electrum1.cipig.net:10068",
+    ]));
+
+    let my_balance = block_on(mm.rpc(json! ({
+        "userpass": mm.userpass,
+        "method": "my_balance",
+        "coin": "tBTC",
+    })))
+    .unwrap();
+    let json: Json = json::from_str(&my_balance.1).unwrap();
+    let my_balance = json["balance"].as_str().unwrap();
+    assert_eq!(my_balance, "0.002");
+    let my_unspendable_balance = json["unspendable_balance"].as_str().unwrap();
+    assert_eq!(my_unspendable_balance, "0");
+    let my_address = json["address"].as_str().unwrap();
+    assert_eq!(my_address, "tb1qssfmay8nnghx7ynlznejnjxn6m4pemz9v7fsxy");
 }
 
 fn check_set_price_fails(mm: &MarketMakerIt, base: &str, rel: &str) {
@@ -847,7 +921,7 @@ fn test_mmrpc_v2() {
     let (_dump_log, _dump_dashboard) = mm.mm_dump();
     log!({"Log path: {}", mm.log_path.display()});
 
-    let _electrum = block_on(enable_electrum(&mm, "RICK", false, &[
+    let _electrum = block_on(enable_electrum(&mm, "RICK", false, false, &[
         "electrum3.cipig.net:10017",
         "electrum2.cipig.net:10017",
         "electrum1.cipig.net:10017",
@@ -1322,7 +1396,7 @@ fn test_withdraw_and_send() {
     let mut enable_res = block_on(enable_coins_eth_electrum(&mm_alice, &["http://195.201.0.6:8565"]));
     enable_res.insert(
         "MORTY_SEGWIT",
-        block_on(enable_electrum(&mm_alice, "MORTY_SEGWIT", false, &[
+        block_on(enable_electrum(&mm_alice, "MORTY_SEGWIT", false, false, &[
             "electrum1.cipig.net:10018",
             "electrum2.cipig.net:10018",
             "electrum3.cipig.net:10018",
@@ -1482,7 +1556,7 @@ fn test_withdraw_legacy() {
     let mut enable_res = block_on(enable_coins_eth_electrum(&mm_alice, &["http://195.201.0.6:8565"]));
     enable_res.insert(
         "MORTY_SEGWIT",
-        block_on(enable_electrum(&mm_alice, "MORTY_SEGWIT", false, &[
+        block_on(enable_electrum(&mm_alice, "MORTY_SEGWIT", false, false, &[
             "electrum1.cipig.net:10018",
             "electrum2.cipig.net:10018",
             "electrum3.cipig.net:10018",
@@ -1614,7 +1688,7 @@ fn test_order_errors_when_base_equal_rel() {
     .unwrap();
     let (_dump_log, _dump_dashboard) = mm.mm_dump();
     log!({"Log path: {}", mm.log_path.display()});
-    block_on(enable_electrum(&mm, "RICK", false, &[
+    block_on(enable_electrum(&mm, "RICK", false, false, &[
         "electrum3.cipig.net:10017",
         "electrum2.cipig.net:10017",
         "electrum1.cipig.net:10017",
@@ -1682,7 +1756,9 @@ fn startup_passphrase(passphrase: &str, expected_address: &str) {
     {
         log!({"Log path: {}", mm.log_path.display()})
     }
-    let enable = block_on(enable_electrum(&mm, "KMD", false, &["electrum1.cipig.net:10001"]));
+    let enable = block_on(enable_electrum(&mm, "KMD", false, false, &[
+        "electrum1.cipig.net:10001",
+    ]));
     assert_eq!(expected_address, enable.address);
     block_on(mm.stop()).unwrap();
 }
@@ -2045,7 +2121,7 @@ fn test_electrum_enable_conn_errors() {
     let (_bob_dump_log, _bob_dump_dashboard) = mm_bob.mm_dump();
     log!({"Bob log path: {}", mm_bob.log_path.display()});
     // Using working servers and few else with random ports to trigger "connection refused"
-    block_on(enable_electrum(&mm_bob, "RICK", false, &[
+    block_on(enable_electrum(&mm_bob, "RICK", false, false, &[
         "electrum3.cipig.net:10017",
         "electrum2.cipig.net:10017",
         "electrum1.cipig.net:10017",
@@ -2053,7 +2129,7 @@ fn test_electrum_enable_conn_errors() {
         "electrum1.cipig.net:60018",
     ]));
     // use random domain name to trigger name is not resolved
-    block_on(enable_electrum(&mm_bob, "MORTY", false, &[
+    block_on(enable_electrum(&mm_bob, "MORTY", false, false, &[
         "electrum3.cipig.net:10018",
         "electrum2.cipig.net:10018",
         "electrum1.cipig.net:10018",
@@ -2095,7 +2171,7 @@ fn test_order_should_not_be_displayed_when_node_is_down() {
     log!({"Bob log path: {}", mm_bob.log_path.display()});
 
     log!(
-        "Bob enable RICK "[block_on(enable_electrum(&mm_bob, "RICK", false, &[
+        "Bob enable RICK "[block_on(enable_electrum(&mm_bob, "RICK", false, false, &[
             "electrum3.cipig.net:10017",
             "electrum2.cipig.net:10017",
             "electrum1.cipig.net:10017",
@@ -2103,7 +2179,7 @@ fn test_order_should_not_be_displayed_when_node_is_down() {
     );
 
     log!(
-        "Bob enable MORTY "[block_on(enable_electrum(&mm_bob, "MORTY", false, &[
+        "Bob enable MORTY "[block_on(enable_electrum(&mm_bob, "MORTY", false, false, &[
             "electrum3.cipig.net:10018",
             "electrum2.cipig.net:10018",
             "electrum1.cipig.net:10018",
@@ -2134,7 +2210,7 @@ fn test_order_should_not_be_displayed_when_node_is_down() {
     log!({"Alice log path: {}", mm_alice.log_path.display()});
 
     log!(
-        "Alice enable RICK "[block_on(enable_electrum(&mm_alice, "RICK", false, &[
+        "Alice enable RICK "[block_on(enable_electrum(&mm_alice, "RICK", false, false, &[
             "electrum3.cipig.net:10017",
             "electrum2.cipig.net:10017",
             "electrum1.cipig.net:10017",
@@ -2142,7 +2218,7 @@ fn test_order_should_not_be_displayed_when_node_is_down() {
     );
 
     log!(
-        "Alice enable MORTY "[block_on(enable_electrum(&mm_alice, "MORTY", false, &[
+        "Alice enable MORTY "[block_on(enable_electrum(&mm_alice, "MORTY", false, false, &[
             "electrum3.cipig.net:10018",
             "electrum2.cipig.net:10018",
             "electrum1.cipig.net:10018",
@@ -2233,7 +2309,7 @@ fn test_own_orders_should_not_be_removed_from_orderbook() {
     log!({"Bob log path: {}", mm_bob.log_path.display()});
 
     log!(
-        "Bob enable RICK "[block_on(enable_electrum(&mm_bob, "RICK", false, &[
+        "Bob enable RICK "[block_on(enable_electrum(&mm_bob, "RICK", false, false, &[
             "electrum3.cipig.net:10017",
             "electrum2.cipig.net:10017",
             "electrum1.cipig.net:10017",
@@ -2241,7 +2317,7 @@ fn test_own_orders_should_not_be_removed_from_orderbook() {
     );
 
     log!(
-        "Bob enable MORTY "[block_on(enable_electrum(&mm_bob, "MORTY", false, &[
+        "Bob enable MORTY "[block_on(enable_electrum(&mm_bob, "MORTY", false, false, &[
             "electrum3.cipig.net:10018",
             "electrum2.cipig.net:10018",
             "electrum1.cipig.net:10018",
@@ -2310,12 +2386,12 @@ fn test_all_orders_per_pair_per_node_must_be_displayed_in_orderbook() {
     .unwrap();
     let (_dump_log, _dump_dashboard) = mm.mm_dump();
     log!({"Log path: {}", mm.log_path.display()});
-    block_on(enable_electrum(&mm, "RICK", false, &[
+    block_on(enable_electrum(&mm, "RICK", false, false, &[
         "electrum3.cipig.net:10017",
         "electrum2.cipig.net:10017",
         "electrum1.cipig.net:10017",
     ]));
-    block_on(enable_electrum(&mm, "MORTY", false, &[
+    block_on(enable_electrum(&mm, "MORTY", false, false, &[
         "electrum3.cipig.net:10018",
         "electrum2.cipig.net:10018",
         "electrum1.cipig.net:10018",
@@ -2394,12 +2470,12 @@ fn orderbook_extended_data() {
     .unwrap();
     let (_dump_log, _dump_dashboard) = &mm.mm_dump();
     log!({"Log path: {}", mm.log_path.display()});
-    block_on(enable_electrum(&mm, "RICK", false, &[
+    block_on(enable_electrum(&mm, "RICK", false, false, &[
         "electrum3.cipig.net:10017",
         "electrum2.cipig.net:10017",
         "electrum1.cipig.net:10017",
     ]));
-    block_on(enable_electrum(&mm, "MORTY", false, &[
+    block_on(enable_electrum(&mm, "MORTY", false, false, &[
         "electrum3.cipig.net:10018",
         "electrum2.cipig.net:10018",
         "electrum1.cipig.net:10018",
@@ -2506,12 +2582,12 @@ fn orderbook_should_display_base_rel_volumes() {
     .unwrap();
     let (_dump_log, _dump_dashboard) = &mm.mm_dump();
     log!({"Log path: {}", mm.log_path.display()});
-    block_on(enable_electrum(&mm, "RICK", false, &[
+    block_on(enable_electrum(&mm, "RICK", false, false, &[
         "electrum3.cipig.net:10017",
         "electrum2.cipig.net:10017",
         "electrum1.cipig.net:10017",
     ]));
-    block_on(enable_electrum(&mm, "MORTY", false, &[
+    block_on(enable_electrum(&mm, "MORTY", false, false, &[
         "electrum3.cipig.net:10018",
         "electrum2.cipig.net:10018",
         "electrum1.cipig.net:10018",
@@ -3535,7 +3611,7 @@ fn test_metrics_method() {
     let (_dump_log, _dump_dashboard) = mm.mm_dump();
     log!({ "log path: {}", mm.log_path.display() });
 
-    let _electrum = block_on(enable_electrum(&mm, "RICK", false, &[
+    let _electrum = block_on(enable_electrum(&mm, "RICK", false, false, &[
         "electrum1.cipig.net:10017",
         "electrum2.cipig.net:10017",
         "electrum3.cipig.net:10017",
@@ -3592,7 +3668,7 @@ fn test_electrum_tx_history() {
     log!({ "log path: {}", mm.log_path.display() });
 
     // Enable RICK electrum client with tx_history loop.
-    let electrum = block_on(enable_electrum(&mm, "RICK", true, &[
+    let electrum = block_on(enable_electrum(&mm, "RICK", true, false, &[
         "electrum1.cipig.net:10017",
         "electrum2.cipig.net:10017",
         "electrum3.cipig.net:10017",
@@ -3857,7 +3933,7 @@ fn test_convert_utxo_address() {
     let (_dump_log, _dump_dashboard) = mm.mm_dump();
     log!({ "log path: {}", mm.log_path.display() });
 
-    let _electrum = block_on(enable_electrum(&mm, "BCH", false, &[
+    let _electrum = block_on(enable_electrum(&mm, "BCH", false, false, &[
         "electrum1.cipig.net:10017",
         "electrum2.cipig.net:10017",
         "electrum3.cipig.net:10017",

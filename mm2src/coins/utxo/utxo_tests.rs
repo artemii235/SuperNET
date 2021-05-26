@@ -81,6 +81,7 @@ fn utxo_coin_fields_for_test(rpc_client: UtxoRpcClientEnum, force_seed: Option<&
             requires_notarization: false.into(),
             overwintered: true,
             segwit: false,
+            full_segwit: false,
             tx_version: 4,
             address_format: UtxoAddressFormat::Standard,
             asset_chain: true,

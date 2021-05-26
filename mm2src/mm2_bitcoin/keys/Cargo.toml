@@ -6,6 +6,8 @@ authors = ["debris <marek.kotewicz@gmail.com>"]
 [dependencies]
 rustc-hex = "2"
 base58 = "0.1"
+bech32 = "0.7.2"
 libsecp256k1 = "0.2.2"
 bitcrypto = { path = "../crypto" }
 primitives = { path = "../primitives" }
+serde = "1.0"
