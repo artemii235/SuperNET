@@ -2170,10 +2170,7 @@ impl<T: fmt::Debug, E> WasmUnwrapErrExt<E> for Result<T, E> {
 #[track_caller]
 pub fn panic_w(description: &str) {
     let (file, line) = caller_file_line();
-    let error = format!(
-        "{}:{}] 'panic_w' called: {:?}",
-        file, line, description
-    );
+    let error = format!("{}:{}] 'panic_w' called: {:?}", file, line, description);
     wasm_bindgen::throw_str(&error)
 }
 
