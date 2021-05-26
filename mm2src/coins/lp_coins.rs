@@ -41,9 +41,9 @@ use common::mm_number::MmNumber;
 use common::{block_on, calc_total_pages, now_ms, rpc_err_response, rpc_response, HttpStatusCode, HyRes};
 use derive_more::Display;
 use futures::compat::Future01CompatExt;
-use futures::lock::Mutex as AsyncMutex;
+use futures::lock::{Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard};
 use futures01::Future;
-use gstuff::slurp;
+use gstuff::{slurp, Constructible};
 use http::{Response, StatusCode};
 use rpc::v1::types::Bytes as BytesJson;
 use serde::{Deserialize, Deserializer};
@@ -97,6 +97,9 @@ pub mod test_coin;
 pub use test_coin::TestCoin;
 
 pub mod tx_history_db;
+use crate::tx_history_db::{TxHistoryError, TxHistoryResult};
+use futures::{FutureExt, TryFutureExt};
+use tx_history_db::{TxHistoryDb, TxHistoryOps};
 
 #[cfg(not(target_arch = "wasm32"))] pub mod z_coin;
 
@@ -108,6 +111,7 @@ pub type WithdrawFut = Box<dyn Future<Item = TransactionDetails, Error = MmError
 pub type TradePreimageResult<T> = Result<T, MmError<TradePreimageError>>;
 pub type TradePreimageFut<T> = Box<dyn Future<Item = T, Error = MmError<TradePreimageError>> + Send>;
 pub type CoinFindResult<T> = Result<T, MmError<CoinFindError>>;
+pub type TxHistoryFut<T> = Box<dyn Future<Item = T, Error = MmError<TxHistoryError>> + Send>;
 
 pub trait Transaction: fmt::Debug + 'static {
     /// Raw transaction bytes of the transaction
@@ -766,35 +770,44 @@ pub trait MmCoin: SwapOps + MarketCoinOps + fmt::Debug + Send + Sync + 'static {
 
     /// Loads existing tx history from file, returns empty vector if file is not found
     /// Cleans the existing file if deserialization fails
-    fn load_history_from_file(&self, ctx: &MmArc) -> Vec<TransactionDetails> {
-        let content = slurp(&self.tx_history_path(&ctx));
-        let history: Vec<TransactionDetails> = if content.is_empty() {
-            vec![]
-        } else {
-            match json::from_slice(&content) {
-                Ok(c) => c,
-                Err(e) => {
-                    ctx.log.log(
-                        "🌋",
-                        &[&"tx_history", &self.ticker().to_string()],
-                        &ERRL!("Error {} on history deserialization, resetting the cache.", e),
-                    );
-                    std::fs::remove_file(&self.tx_history_path(&ctx)).unwrap();
-                    vec![]
-                },
+    fn load_history_from_file(&self, ctx: &MmArc) -> TxHistoryFut<Vec<TransactionDetails>> {
+        let ctx = ctx.clone();
+        let coins_ctx = CoinsContext::from_ctx(&ctx).unwrap();
+        let ticker = self.ticker().to_owned();
+        let my_address = self.my_address().unwrap_or_default();
+
+        let fut = async move {
+            let mut db = coins_ctx.tx_history_db().await?;
+            let err = match db.load_history(&ticker, &my_address).await {
+                Ok(history) => return Ok(history),
+                Err(e) => e,
+            };
+
+            if let TxHistoryError::ErrorDeserializing(e) = err.get_inner() {
+                ctx.log.log(
+                    "🌋",
+                    &[&"tx_history", &ticker.to_owned()],
+                    &ERRL!("Error {} on history deserialization, resetting the cache.", e),
+                );
+                db.clear(&ticker, &my_address).await?;
+                return Ok(Vec::new());
             }
+
+            Err(err)
         };
-        history
+        Box::new(fut.boxed().compat())
     }
 
-    fn save_history_to_file(&self, content: &[u8], ctx: &MmArc) {
-        let tmp_file = format!("{}.tmp", self.tx_history_path(&ctx).display());
-        if let Err(e) = std::fs::write(&tmp_file, content) {
-            log!("Error " (e) " writing history to the tmp file " (tmp_file));
-        }
-        if let Err(e) = std::fs::rename(&tmp_file, self.tx_history_path(&ctx)) {
-            log!("Error " (e) " renaming file " (tmp_file) " to " [self.tx_history_path(&ctx)]);
-        }
+    fn save_history_to_file(&self, ctx: &MmArc, history: Vec<TransactionDetails>) -> TxHistoryFut<()> {
+        let coins_ctx = CoinsContext::from_ctx(&ctx).unwrap();
+        let ticker = self.ticker().to_owned();
+        let my_address = self.my_address().unwrap_or_default();
+
+        let fut = async move {
+            let mut db = coins_ctx.tx_history_db().await?;
+            db.save_history(&ticker, &my_address, history).await
+        };
+        Box::new(fut.boxed().compat())
     }
 
     /// Transaction history background sync status
@@ -888,16 +901,36 @@ struct CoinsContext {
     /// Similar to `LP_coins`.
     coins: AsyncMutex<HashMap<String, MmCoinEnum>>,
     balance_update_handlers: AsyncMutex<Vec<Box<dyn BalanceTradeFeeUpdatedHandler + Send + Sync>>>,
+    tx_history_path: PathBuf,
+    tx_history_db: Constructible<AsyncMutex<TxHistoryDb>>,
 }
 impl CoinsContext {
     /// Obtains a reference to this crate context, creating it if necessary.
     fn from_ctx(ctx: &MmArc) -> Result<Arc<CoinsContext>, String> {
+        let tx_history_path = ctx.dbdir().join("TRANSACTIONS");
         Ok(try_s!(from_ctx(&ctx.coins_ctx, move || {
             Ok(CoinsContext {
                 coins: AsyncMutex::new(HashMap::new()),
                 balance_update_handlers: AsyncMutex::new(vec![]),
+                tx_history_path,
+                tx_history_db: Constructible::default(),
             })
         })))
+    }
+
+    async fn tx_history_db(&self) -> TxHistoryResult<AsyncMutexGuard<'_, TxHistoryDb>> {
+        if let Some(db) = self.tx_history_db.as_option() {
+            return Ok(db.lock().await);
+        }
+
+        let db = TxHistoryDb::init_with_fs_path(self.tx_history_path.clone()).await?;
+        match self.tx_history_db.pin(AsyncMutex::new(db)) {
+            Ok(db) => Ok(db.lock().await),
+            Err(e) => {
+                let error = format!("Couldn't initialize 'CoinsContext::tx_history_path': {}", e);
+                MmError::err(TxHistoryError::InternalError(error))
+            },
+        }
     }
 }
 

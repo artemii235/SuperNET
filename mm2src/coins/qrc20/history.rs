@@ -1,4 +1,5 @@
 use super::*;
+use crate::tx_history_db::TxHistoryResult;
 use crate::utxo::{RequestTxHistoryResult, UtxoFeeDetails};
 use crate::CoinsContext;
 use crate::TxFeeDetails;
@@ -80,9 +81,19 @@ enum ProcessCachedTransferMapResult {
 
 impl Qrc20Coin {
     pub fn history_loop(&self, ctx: MmArc) {
-        let mut my_balance: Option<CoinBalance> = None;
-        let mut history_map = self.try_load_history_from_file(&ctx);
+        let mut history_map = match block_on(self.try_load_history_from_file(&ctx)) {
+            Ok(history) => history,
+            Err(e) => {
+                ctx.log.log(
+                    "😟",
+                    &[&"tx_history", &self.utxo.conf.ticker],
+                    &ERRL!("Error {} on load history from file, stop the history loop", e),
+                );
+                return;
+            },
+        };
 
+        let mut my_balance: Option<CoinBalance> = None;
         let mut success_iteration = 0i32;
         loop {
             if ctx.is_stopping() {
@@ -167,11 +178,11 @@ impl Qrc20Coin {
             }
 
             // `history_map` has been updated.
-            let mut to_write: Vec<&TransactionDetails> = history_map
+            let mut to_write: Vec<TransactionDetails> = history_map
                 .iter()
                 .map(|(_, value)| value)
                 .flatten()
-                .map(|(_tx_id, tx)| tx)
+                .map(|(_tx_id, tx)| tx.clone())
                 .collect();
             to_write.sort_unstable_by(|a, b| {
                 match sort_newest_to_oldest(a.block_height, b.block_height) {
@@ -180,7 +191,14 @@ impl Qrc20Coin {
                     ord => ord,
                 }
             });
-            self.save_history_to_file(&json::to_vec(&to_write).unwrap(), &ctx);
+            if let Err(e) = self.save_history_to_file(&ctx, to_write).wait() {
+                ctx.log.log(
+                    "",
+                    &[&"tx_history", &self.as_ref().conf.ticker],
+                    &ERRL!("Error {} on 'save_history_to_file', stop the history loop", e),
+                );
+                break;
+            }
         }
     }
 
@@ -503,8 +521,8 @@ impl Qrc20Coin {
         updated
     }
 
-    fn try_load_history_from_file(&self, ctx: &MmArc) -> HistoryMapByHash {
-        let history = self.load_history_from_file(&ctx);
+    async fn try_load_history_from_file(&self, ctx: &MmArc) -> TxHistoryResult<HistoryMapByHash> {
+        let history = self.load_history_from_file(&ctx).compat().await?;
         let mut history_map: HistoryMapByHash = HashMap::default();
 
         for tx in history {
@@ -516,7 +534,7 @@ impl Qrc20Coin {
                         &[&"tx_history", &self.utxo.conf.ticker],
                         &ERRL!("Error {:?} on load history from file", e),
                     );
-                    return HistoryMapByHash::default();
+                    return Ok(HistoryMapByHash::default());
                 },
             };
             let tx_hash_history = history_map.entry(id.tx_hash.clone()).or_insert_with(HashMap::default);
@@ -526,11 +544,11 @@ impl Qrc20Coin {
                     &[&"tx_history", &self.utxo.conf.ticker],
                     &ERRL!("History file contains entries with the same 'internal_id'"),
                 );
-                return HistoryMapByHash::default();
+                return Ok(HistoryMapByHash::default());
             }
         }
 
-        history_map
+        Ok(history_map)
     }
 }
 

@@ -1475,7 +1475,17 @@ where
     T: AsRef<UtxoCoinFields> + UtxoStandardOps + UtxoCommonOps + MmCoin + MarketCoinOps,
 {
     let mut my_balance: Option<CoinBalance> = None;
-    let history = coin.load_history_from_file(&ctx);
+    let history = match coin.load_history_from_file(&ctx).wait() {
+        Ok(history) => history,
+        Err(e) => {
+            ctx.log.log(
+                "",
+                &[&"tx_history", &coin.as_ref().conf.ticker],
+                &ERRL!("Error {} on 'load_history_from_file', stop the history loop", e),
+            );
+            return;
+        },
+    };
     let mut history_map: HashMap<H256Json, TransactionDetails> = history
         .into_iter()
         .map(|tx| (H256Json::from(tx.tx_hash.as_slice()), tx))
@@ -1612,7 +1622,8 @@ where
                 },
             }
             if updated {
-                let mut to_write: Vec<&TransactionDetails> = history_map.iter().map(|(_, value)| value).collect();
+                let mut to_write: Vec<TransactionDetails> =
+                    history_map.iter().map(|(_, value)| value.clone()).collect();
                 // the transactions with block_height == 0 are the most recent so we need to separately handle them while sorting
                 to_write.sort_unstable_by(|a, b| {
                     if a.block_height == 0 {
@@ -1623,7 +1634,14 @@ where
                         b.block_height.cmp(&a.block_height)
                     }
                 });
-                coin.save_history_to_file(&json::to_vec(&to_write).unwrap(), &ctx);
+                if let Err(e) = coin.save_history_to_file(&ctx, to_write).wait() {
+                    ctx.log.log(
+                        "",
+                        &[&"tx_history", &coin.as_ref().conf.ticker],
+                        &ERRL!("Error {} on 'save_history_to_file', stop the history loop", e),
+                    );
+                    return;
+                };
             }
         }
         *coin.as_ref().history_sync_state.lock().unwrap() = HistorySyncState::Finished;

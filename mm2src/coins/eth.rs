@@ -2051,7 +2051,17 @@ impl EthCoin {
             all_events.sort_by(|a, b| b.block_number.unwrap().cmp(&a.block_number.unwrap()));
 
             for event in all_events {
-                let mut existing_history = self.load_history_from_file(ctx);
+                let mut existing_history = match self.load_history_from_file(ctx).wait() {
+                    Ok(history) => history,
+                    Err(e) => {
+                        ctx.log.log(
+                            "",
+                            &[&"tx_history", &self.ticker],
+                            &ERRL!("Error {} on 'load_history_from_file', stop the history loop", e),
+                        );
+                        return;
+                    },
+                };
                 let internal_id = BytesJson::from(sha256(&json::to_vec(&event).unwrap()).to_vec());
                 if existing_history.iter().any(|item| item.internal_id == internal_id) {
                     // the transaction already imported
@@ -2197,7 +2207,14 @@ impl EthCoin {
                         b.block_height.cmp(&a.block_height)
                     }
                 });
-                self.save_history_to_file(&json::to_vec(&existing_history).unwrap(), &ctx);
+                if let Err(e) = self.save_history_to_file(&ctx, existing_history).wait() {
+                    ctx.log.log(
+                        "",
+                        &[&"tx_history", &self.ticker],
+                        &ERRL!("Error {} on 'save_history_to_file', stop the history loop", e),
+                    );
+                    return;
+                }
             }
             if saved_events.earliest_block == 0.into() {
                 if success_iteration == 0 {
@@ -2265,7 +2282,18 @@ impl EthCoin {
             *self.history_sync_state.lock().unwrap() = HistorySyncState::InProgress(json!({
                 "blocks_left": u64::from(saved_traces.earliest_block),
             }));
-            let mut existing_history = self.load_history_from_file(ctx);
+
+            let mut existing_history = match self.load_history_from_file(ctx).wait() {
+                Ok(history) => history,
+                Err(e) => {
+                    ctx.log.log(
+                        "",
+                        &[&"tx_history", &self.ticker],
+                        &ERRL!("Error {} on 'load_history_from_file', stop the history loop", e),
+                    );
+                    return;
+                },
+            };
 
             // AP: AFAIK ETH RPC doesn't support conditional filters like `get this OR this` so we have
             // to run several queries to get trace events including our address as sender `or` receiver
@@ -2539,7 +2567,15 @@ impl EthCoin {
                         b.block_height.cmp(&a.block_height)
                     }
                 });
-                self.save_history_to_file(&json::to_vec(&existing_history).unwrap(), &ctx);
+
+                if let Err(e) = self.save_history_to_file(&ctx, existing_history.clone()).wait() {
+                    ctx.log.log(
+                        "",
+                        &[&"tx_history", &self.ticker],
+                        &ERRL!("Error {} on 'save_history_to_file', stop the history loop", e),
+                    );
+                    return;
+                }
             }
             if saved_traces.earliest_block == 0.into() {
                 if success_iteration == 0 {

@@ -1,6 +1,7 @@
 use crate::TransactionDetails;
 use async_trait::async_trait;
 use common::mm_error::prelude::*;
+use derive_more::Display;
 use std::path::PathBuf;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -9,7 +10,7 @@ pub use native_db::TxHistoryDb;
 
 pub type TxHistoryResult<T> = Result<T, MmError<TxHistoryError>>;
 
-#[derive(Debug)]
+#[derive(Debug, Display)]
 pub enum TxHistoryError {
     ErrorSerializing(String),
     ErrorDeserializing(String),
