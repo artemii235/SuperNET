@@ -94,10 +94,12 @@ use qrc20::{qrc20_coin_from_conf_and_request, Qrc20Coin, Qrc20FeeDetails};
 #[doc(hidden)]
 #[allow(unused_variables)]
 pub mod test_coin;
-use crate::z_coin::{z_coin_from_conf_and_request, ZCoin};
 pub use test_coin::TestCoin;
 
-#[cfg(not(target_arch = "wasm32"))] pub mod z_coin;
+#[cfg(all(not(target_arch = "wasm32"), feature = "zhtlc"))]
+pub mod z_coin;
+#[cfg(all(not(target_arch = "wasm32"), feature = "zhtlc"))]
+use z_coin::{z_coin_from_conf_and_request, ZCoin};
 
 pub type BalanceResult<T> = Result<T, MmError<BalanceError>>;
 pub type BalanceFut<T> = Box<dyn Future<Item = T, Error = MmError<BalanceError>> + Send>;
@@ -821,6 +823,7 @@ pub enum MmCoinEnum {
     QtumCoin(QtumCoin),
     Qrc20Coin(Qrc20Coin),
     EthCoin(EthCoin),
+    #[cfg(all(not(target_arch = "wasm32"), feature = "zhtlc"))]
     ZCoin(ZCoin),
     Test(TestCoin),
 }
@@ -845,6 +848,7 @@ impl From<Qrc20Coin> for MmCoinEnum {
     fn from(c: Qrc20Coin) -> MmCoinEnum { MmCoinEnum::Qrc20Coin(c) }
 }
 
+#[cfg(all(not(target_arch = "wasm32"), feature = "zhtlc"))]
 impl From<ZCoin> for MmCoinEnum {
     fn from(c: ZCoin) -> MmCoinEnum { MmCoinEnum::ZCoin(c) }
 }
@@ -858,6 +862,7 @@ impl Deref for MmCoinEnum {
             MmCoinEnum::QtumCoin(ref c) => c,
             MmCoinEnum::Qrc20Coin(ref c) => c,
             MmCoinEnum::EthCoin(ref c) => c,
+            #[cfg(all(not(target_arch = "wasm32"), feature = "zhtlc"))]
             MmCoinEnum::ZCoin(ref c) => c,
             MmCoinEnum::Test(ref c) => c,
         }
@@ -892,9 +897,16 @@ impl CoinsContext {
 pub enum CoinProtocol {
     UTXO,
     QTUM,
-    QRC20 { platform: String, contract_address: String },
+    QRC20 {
+        platform: String,
+        contract_address: String,
+    },
     ETH,
-    ERC20 { platform: String, contract_address: String },
+    ERC20 {
+        platform: String,
+        contract_address: String,
+    },
+    #[cfg(all(not(target_arch = "wasm32"), feature = "zhtlc"))]
     ZHTLC,
 }
 
@@ -1101,6 +1113,7 @@ pub async fn lp_coininit(ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoin
             )
             .into()
         },
+        #[cfg(all(not(target_arch = "wasm32"), feature = "zhtlc"))]
         CoinProtocol::ZHTLC => try_s!(z_coin_from_conf_and_request(ctx, ticker, &coins_en, req, secret).await).into(),
     };
 
@@ -1561,8 +1574,10 @@ pub fn address_by_coin_conf_and_pubkey_str(coin: &str, conf: &Json, pubkey: &str
     let protocol: CoinProtocol = try_s!(json::from_value(conf["protocol"].clone()));
     match protocol {
         CoinProtocol::ERC20 { .. } | CoinProtocol::ETH => eth::addr_from_pubkey_str(pubkey),
-        CoinProtocol::UTXO | CoinProtocol::QTUM | CoinProtocol::QRC20 { .. } | CoinProtocol::ZHTLC => {
+        CoinProtocol::UTXO | CoinProtocol::QTUM | CoinProtocol::QRC20 { .. } => {
             utxo::address_by_conf_and_pubkey_str(coin, conf, pubkey)
         },
+        #[cfg(all(not(target_arch = "wasm32"), feature = "zhtlc"))]
+        CoinProtocol::ZHTLC => utxo::address_by_conf_and_pubkey_str(coin, conf, pubkey),
     }
 }

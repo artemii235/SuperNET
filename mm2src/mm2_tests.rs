@@ -67,35 +67,7 @@ async fn enable_coins_eth_electrum(
     );
     replies.insert("ETH", enable_native(mm, "ETH", eth_urls).await);
     replies.insert("JST", enable_native(mm, "JST", eth_urls).await);
-    replies
-}
-
-// temporary fn for ZOMBIE z swaps tests
-async fn enable_coins_eth_electrum_zombie(
-    mm: &MarketMakerIt,
-    eth_urls: &[&str],
-) -> HashMap<&'static str, EnableElectrumResponse> {
-    let mut replies = HashMap::new();
-    replies.insert(
-        "RICK",
-        enable_electrum(mm, "RICK", false, &[
-            "electrum1.cipig.net:10017",
-            "electrum2.cipig.net:10017",
-            "electrum3.cipig.net:10017",
-        ])
-        .await,
-    );
-    replies.insert(
-        "MORTY",
-        enable_electrum(mm, "MORTY", false, &[
-            "electrum1.cipig.net:10018",
-            "electrum2.cipig.net:10018",
-            "electrum3.cipig.net:10018",
-        ])
-        .await,
-    );
-    replies.insert("ETH", enable_native(mm, "ETH", eth_urls).await);
-    replies.insert("JST", enable_native(mm, "JST", eth_urls).await);
+    #[cfg(feature = "zhtlc")]
     replies.insert("ZOMBIE", enable_native(mm, "ZOMBIE", eth_urls).await);
     replies
 }
@@ -1003,7 +975,7 @@ fn test_rpc_password_from_json_no_userpass() {
 
 /// Trading test using coins with remote RPC (Electrum, ETH nodes), it needs only ENV variables to be set, coins daemons are not required.
 /// Trades few pairs concurrently to speed up the process and also act like "load" test
-async fn trade_base_rel_electrum(pairs: Vec<(&'static str, &'static str)>) {
+async fn trade_base_rel_electrum(pairs: &[(&'static str, &'static str)]) {
     let bob_passphrase = get_passphrase(&".env.seed", "BOB_PASSPHRASE").unwrap();
     let alice_passphrase = get_passphrase(&".env.client", "ALICE_PASSPHRASE").unwrap();
 
@@ -1080,10 +1052,10 @@ async fn trade_base_rel_electrum(pairs: Vec<(&'static str, &'static str)>) {
     wait_log_re!(mm_alice, 22., ">>>>>>>>> DEX stats ");
 
     // Enable coins on Bob side. Print the replies in case we need the address.
-    let rc = enable_coins_eth_electrum_zombie(&mm_bob, &["http://195.201.0.6:8565"]).await;
+    let rc = enable_coins_eth_electrum(&mm_bob, &["http://195.201.0.6:8565"]).await;
     log! ({"enable_coins (bob): {:?}", rc});
     // Enable coins on Alice side. Print the replies in case we need the address.
-    let rc = enable_coins_eth_electrum_zombie(&mm_alice, &["http://195.201.0.6:8565"]).await;
+    let rc = enable_coins_eth_electrum(&mm_alice, &["http://195.201.0.6:8565"]).await;
     log! ({"enable_coins (alice): {:?}", rc});
 
     // unwrap! (mm_alice.wait_for_log (999., &|log| log.contains ("set pubkey for ")));
@@ -1248,7 +1220,14 @@ async fn trade_base_rel_electrum(pairs: Vec<(&'static str, &'static str)>) {
 
 #[test]
 #[cfg(not(target_arch = "wasm32"))]
-fn trade_test_electrum_and_eth_coins() { block_on(trade_base_rel_electrum(vec![("ETH", "JST"), ("RICK", "ZOMBIE")])); }
+fn trade_test_electrum_and_eth_coins() {
+    let pairs: &[_] = if cfg!(feature = "zhtlc") {
+        &[("ETH", "JST"), ("RICK", "ZOMBIE")]
+    } else {
+        &[("ETH", "JST")]
+    };
+    block_on(trade_base_rel_electrum(pairs));
+}
 
 #[cfg(target_arch = "wasm32")]
 #[no_mangle]
