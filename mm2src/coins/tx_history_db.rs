@@ -39,9 +39,10 @@ pub trait TxHistoryOps {
 #[cfg(not(target_arch = "wasm32"))]
 mod native_db {
     use super::*;
+    use async_std::fs;
+    use futures::AsyncWriteExt;
     use serde_json as json;
-    use tokio::fs;
-    use tokio::io::{self, AsyncWriteExt};
+    use std::io;
 
     pub struct TxHistoryDb {
         tx_history_path: PathBuf,
@@ -174,16 +175,16 @@ mod wasm_db {
     #[derive(Debug)]
     enum TxHistoryEvent {
         LoadHistory {
-            ticker: String,
+            history_id: HistoryId,
             result_tx: oneshot::Sender<LoadHistoryResult>,
         },
         SaveHistory {
-            ticker: String,
+            history_id: HistoryId,
             txs: Vec<TransactionDetails>,
             result_tx: oneshot::Sender<SaveHistoryResult>,
         },
         Clear {
-            ticker: String,
+            history_id: HistoryId,
             result_tx: oneshot::Sender<ClearHistoryResult>,
         },
     }
@@ -203,10 +204,10 @@ mod wasm_db {
             Ok(TxHistoryDb { event_tx })
         }
 
-        async fn load_history(&mut self, ticker: &str, _wallet_address: &str) -> LoadHistoryResult {
+        async fn load_history(&mut self, ticker: &str, wallet_address: &str) -> LoadHistoryResult {
             let (result_tx, result_rx) = oneshot::channel();
             let load_event = TxHistoryEvent::LoadHistory {
-                ticker: ticker.to_owned(),
+                history_id: HistoryId::new(ticker, wallet_address),
                 result_tx,
             };
             if let Err(e) = self.event_tx.try_send(load_event) {
@@ -219,12 +220,12 @@ mod wasm_db {
         async fn save_history(
             &mut self,
             ticker: &str,
-            _wallet_address: &str,
+            wallet_address: &str,
             txs: Vec<TransactionDetails>,
         ) -> SaveHistoryResult {
             let (result_tx, result_rx) = oneshot::channel();
             let save_event = TxHistoryEvent::SaveHistory {
-                ticker: ticker.to_owned(),
+                history_id: HistoryId::new(ticker, wallet_address),
                 txs,
                 result_tx,
             };
@@ -235,10 +236,10 @@ mod wasm_db {
             result_rx.await.expect_w("The result channel must not be closed")
         }
 
-        async fn clear(&mut self, ticker: &str, _wallet_address: &str) -> TxHistoryResult<()> {
+        async fn clear(&mut self, ticker: &str, wallet_address: &str) -> TxHistoryResult<()> {
             let (result_tx, result_rx) = oneshot::channel();
             let clear_event = TxHistoryEvent::Clear {
-                ticker: ticker.to_owned(),
+                history_id: HistoryId::new(ticker, wallet_address),
                 result_tx,
             };
             if let Err(e) = self.event_tx.try_send(clear_event) {
@@ -277,18 +278,22 @@ mod wasm_db {
         async fn event_loop(mut rx: mpsc::Receiver<TxHistoryEvent>, db: IndexedDb) {
             while let Some(event) = rx.next().await {
                 match event {
-                    TxHistoryEvent::LoadHistory { ticker, result_tx } => {
-                        let result = Self::load_history(&db, ticker).await;
+                    TxHistoryEvent::LoadHistory { history_id, result_tx } => {
+                        let result = Self::load_history(&db, history_id).await;
                         // ignore if the receiver is closed
                         let _res = result_tx.send(result);
                     },
-                    TxHistoryEvent::SaveHistory { ticker, txs, result_tx } => {
-                        let result = Self::save_history(&db, ticker, txs).await;
+                    TxHistoryEvent::SaveHistory {
+                        history_id,
+                        txs,
+                        result_tx,
+                    } => {
+                        let result = Self::save_history(&db, history_id, txs).await;
                         // ignore if the receiver is closed
                         let _res = result_tx.send(result);
                     },
-                    TxHistoryEvent::Clear { ticker, result_tx } => {
-                        let result = Self::clear_history(&db, ticker).await;
+                    TxHistoryEvent::Clear { history_id, result_tx } => {
+                        let result = Self::clear_history(&db, history_id).await;
                         // ignore if the receiver is closed
                         let _res = result_tx.send(result);
                     },
@@ -296,12 +301,15 @@ mod wasm_db {
             }
         }
 
-        async fn load_history(db: &IndexedDb, ticker: String) -> LoadHistoryResult {
+        async fn load_history(db: &IndexedDb, history_id: HistoryId) -> LoadHistoryResult {
             let transaction = db.transaction()?;
             let table = transaction.open_table::<TxHistoryTable>()?;
-            let items = table.get_items("ticker", &ticker).await?;
+            let items = table.get_items("history_id", &history_id.0).await?;
             if items.len() > 1 {
-                let error = format!("Expected only one item by the 'ticker' index, found {}", items.len());
+                let error = format!(
+                    "Expected only one item by the 'history_id' index, found {}",
+                    items.len()
+                );
                 return MmError::err(TxHistoryError::InternalError(error));
             }
 
@@ -312,17 +320,19 @@ mod wasm_db {
             }
         }
 
-        async fn save_history(db: &IndexedDb, ticker: String, txs: Vec<TransactionDetails>) -> SaveHistoryResult {
-            let tx_history_item = TxHistoryTable {
-                ticker: ticker.to_owned(),
-                txs,
-            };
+        async fn save_history(
+            db: &IndexedDb,
+            history_id: HistoryId,
+            txs: Vec<TransactionDetails>,
+        ) -> SaveHistoryResult {
+            let history_id_value = history_id.0.clone();
+            let tx_history_item = TxHistoryTable { history_id, txs };
 
             let transaction = db.transaction()?;
             let table = transaction.open_table::<TxHistoryTable>()?;
 
             // First, check if the coin's tx history exists already.
-            let ids = table.get_item_ids("ticker", &ticker).await?;
+            let ids = table.get_item_ids("history_id", &history_id_value).await?;
             match ids.len() {
                 // The history doesn't exist, add the new `tx_history_item`.
                 0 => {
@@ -334,7 +344,10 @@ mod wasm_db {
                     table.replace_item(item_id, tx_history_item).await?;
                 },
                 unexpected_len => {
-                    let error = format!("Expected only one item by the 'ticker' index, found {}", unexpected_len);
+                    let error = format!(
+                        "Expected only one item by the 'history_id' index, found {}",
+                        unexpected_len
+                    );
                     return MmError::err(TxHistoryError::InternalError(error));
                 },
             }
@@ -343,12 +356,12 @@ mod wasm_db {
             Ok(())
         }
 
-        async fn clear_history(db: &IndexedDb, ticker: String) -> ClearHistoryResult {
+        async fn clear_history(db: &IndexedDb, history_id: HistoryId) -> ClearHistoryResult {
             let transaction = db.transaction()?;
             let table = transaction.open_table::<TxHistoryTable>()?;
 
             // First, check if the coin's tx history exists.
-            let ids = table.get_item_ids("ticker", &ticker).await?;
+            let ids = table.get_item_ids("history_id", &history_id.0).await?;
             match ids.len() {
                 // The history doesn't exist, we don't need to do anything.
                 0 => (),
@@ -357,7 +370,10 @@ mod wasm_db {
                     table.delete_item(item_id).await?;
                 },
                 unexpected_len => {
-                    let error = format!("Expected only one item by the 'ticker' index, found {}", unexpected_len);
+                    let error = format!(
+                        "Expected only one item by the 'history_id' index, found {}",
+                        unexpected_len
+                    );
                     return MmError::err(TxHistoryError::InternalError(error));
                 },
             }
@@ -368,8 +384,15 @@ mod wasm_db {
     }
 
     #[derive(Debug, Deserialize, Serialize)]
+    struct HistoryId(String);
+
+    impl HistoryId {
+        fn new(ticker: &str, wallet_address: &str) -> HistoryId { HistoryId(format!("{}_{}", ticker, wallet_address)) }
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
     struct TxHistoryTable {
-        ticker: String,
+        history_id: HistoryId,
         txs: Vec<TransactionDetails>,
     }
 
@@ -380,7 +403,7 @@ mod wasm_db {
             match (old_version, new_version) {
                 (0, 1) => {
                     let table = upgrader.create_table(Self::table_name())?;
-                    table.create_index("ticker", true)?;
+                    table.create_index("history_id", true)?;
                 },
                 (1, 1) => (),
                 v => panic_w(&format!("Unexpected (old, new) versions: {:?}", v)),
