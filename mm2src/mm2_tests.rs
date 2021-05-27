@@ -621,7 +621,7 @@ fn test_p2wpkh_my_balance() {
             "estimate_fee_mode": "ECONOMICAL",
             "address_format": {
                 "format": "segwit",
-                "network": "testnet"
+                "hrp": "tb"
             },
             "mm2": 1,
             "required_confirmations": 0,

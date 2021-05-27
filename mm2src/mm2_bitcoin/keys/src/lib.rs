@@ -29,7 +29,7 @@ pub use keypair::KeyPair;
 pub use network::Network;
 pub use private::Private;
 pub use public::Public;
-pub use segwitaddress::{Network as BTCNetwork, SegwitAddress};
+pub use segwitaddress::SegwitAddress;
 pub use signature::{CompactSignature, Signature};
 
 use hash::{H160, H256};

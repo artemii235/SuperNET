@@ -1,4 +1,3 @@
-use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
 
@@ -59,28 +58,11 @@ pub enum AddressType {
     P2wsh,
 }
 
-#[derive(Copy, PartialEq, Eq, PartialOrd, Ord, Clone, Hash, Debug, Deserialize, Serialize)]
-#[serde(tag = "network")]
-pub enum Network {
-    /// Classic Bitcoin
-    #[serde(rename = "bitcoin")]
-    Bitcoin,
-    /// Bitcoin's testnet
-    #[serde(rename = "testnet")]
-    Testnet,
-    /// Bitcoin's signet
-    #[serde(rename = "signet")]
-    Signet,
-    /// Bitcoin's regtest
-    #[serde(rename = "regtest")]
-    Regtest,
-}
-
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 /// A Bitcoin segwit address
 pub struct SegwitAddress {
-    /// The network on which this address is usable
-    pub network: Network,
+    /// The human-readable part
+    pub hrp: String,
     /// The witness program version
     version: bech32::u5,
     /// The witness program
@@ -88,9 +70,9 @@ pub struct SegwitAddress {
 }
 
 impl SegwitAddress {
-    pub fn new(hash: &AddressHash, network: Network) -> SegwitAddress {
+    pub fn new(hash: &AddressHash, hrp: String) -> SegwitAddress {
         SegwitAddress {
-            network,
+            hrp,
             version: bech32::u5::try_from_u8(0).expect("0<32"),
             program: hash.to_vec(),
         }
@@ -126,11 +108,6 @@ impl<W: fmt::Write> fmt::Write for UpperWriter<W> {
 // be used in QR codes, see [Address::to_qr_uri]
 impl fmt::Display for SegwitAddress {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        let hrp = match self.network {
-            Network::Bitcoin => "bc",
-            Network::Testnet | Network::Signet => "tb",
-            Network::Regtest => "bcrt",
-        };
         let mut upper_writer;
         let writer = if fmt.alternate() {
             upper_writer = UpperWriter(fmt);
@@ -138,7 +115,7 @@ impl fmt::Display for SegwitAddress {
         } else {
             fmt as &mut dyn fmt::Write
         };
-        let mut bech32_writer = bech32::Bech32Writer::new(hrp, bech32::Variant::Bech32, writer)?;
+        let mut bech32_writer = bech32::Bech32Writer::new(self.hrp.as_str(), bech32::Variant::Bech32, writer)?;
         bech32::WriteBase32::write_u5(&mut bech32_writer, self.version)?;
         bech32::ToBase32::write_base32(&self.program, &mut bech32_writer)
     }
@@ -159,12 +136,10 @@ impl FromStr for SegwitAddress {
 
     fn from_str(s: &str) -> Result<SegwitAddress, Error> {
         // try bech32
-        let network = match find_bech32_prefix(s) {
-            // note that upper or lowercase is allowed but NOT mixed case
-            Some("bc") | Some("BC") => Network::Bitcoin,
-            Some("tb") | Some("TB") => Network::Testnet, // this may also be signet
-            Some("bcrt") | Some("BCRT") => Network::Regtest,
-            _ => return Err(Error::InvalidSegwitAddressFormat),
+        let hrp = match find_bech32_prefix(s) {
+            // Todo: upper or lowercase is allowed but NOT mixed case
+            Some(hrp) => hrp.to_string(),
+            None => return Err(Error::InvalidSegwitAddressFormat),
         };
         // decode as bech32, should use Variant if Bech32m is used alongside Bech32
         // The improved Bech32m variant described in [BIP-0350](https://github.com/bitcoin/bips/blob/master/bip-0350.mediawiki)
@@ -192,11 +167,7 @@ impl FromStr for SegwitAddress {
             return Err(Error::InvalidSegwitV0ProgramLength(program.len()));
         }
 
-        Ok(SegwitAddress {
-            network,
-            version,
-            program,
-        })
+        Ok(SegwitAddress { hrp, version, program })
     }
 }
 
@@ -223,7 +194,8 @@ mod tests {
         let bytes = hex_to_bytes(pk).unwrap();
         let public_key = Public::from_slice(&bytes).unwrap();
         let hash = public_key.address_hash();
-        let addr = SegwitAddress::new(&hash, Network::Bitcoin);
+        let hrp = "bc";
+        let addr = SegwitAddress::new(&hash, hrp.to_string());
         assert_eq!(&addr.to_string(), "bc1qvzvkjn4q3nszqxrv3nraga2r822xjty3ykvkuw");
         assert_eq!(addr.address_type(), Some(AddressType::P2wpkh));
     }

@@ -47,7 +47,7 @@ use futures::lock::{Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard};
 use futures::stream::StreamExt;
 use futures01::Future;
 use keys::bytes::Bytes;
-pub use keys::{Address, BTCNetwork, KeyPair, Private, Public, Secret};
+pub use keys::{Address, KeyPair, Private, Public, Secret};
 #[cfg(test)] use mocktopus::macros::*;
 use num_traits::ToPrimitive;
 use primitives::hash::{H256, H264, H512};
@@ -219,7 +219,7 @@ pub enum UtxoAddressFormat {
     /// Segwit Address
     /// https://github.com/bitcoin/bips/blob/master/bip-0173.mediawiki
     #[serde(rename = "segwit")]
-    Segwit(BTCNetwork),
+    Segwit { hrp: String },
     /// Bitcoin Cash specific address format.
     /// https://github.com/bitcoincashorg/bitcoincash.org/blob/master/spec/cashaddr.md
     #[serde(rename = "cashaddress")]

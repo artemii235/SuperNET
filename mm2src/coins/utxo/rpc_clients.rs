@@ -1506,7 +1506,7 @@ impl UtxoRpcClientOps for ElectrumClient {
         decimals: u8,
     ) -> RpcRes<BigDecimal> {
         let hash = match address_format {
-            UtxoAddressFormat::Segwit(_) => electrum_script_hash(&Builder::build_p2wpkh(&address.hash)),
+            UtxoAddressFormat::Segwit { .. } => electrum_script_hash(&Builder::build_p2wpkh(&address.hash)),
             _ => electrum_script_hash(&Builder::build_p2pkh(&address.hash)),
         };
         let hash_str = hex::encode(hash);
