@@ -1235,8 +1235,8 @@ pub extern "C" fn trade_test_electrum_and_eth_coins(cb_id: i32) {
     use std::ptr::null;
 
     common::executor::spawn(async move {
-        let pairs = vec![("ETH", "JST")];
-        trade_base_rel_electrum(pairs).await;
+        let pairs = [("ETH", "JST")];
+        trade_base_rel_electrum(&pairs).await;
         call_back(cb_id, null(), 0)
     })
 }
