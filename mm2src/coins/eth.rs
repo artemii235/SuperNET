@@ -402,11 +402,13 @@ impl EthCoinImpl {
         &self,
         swap_contract_address: Address,
         from_block: u64,
+        to_block: u64,
     ) -> Box<dyn Future<Item = Vec<Log>, Error = String> + Send> {
         let contract_event = try_fus!(SWAP_CONTRACT.event("ReceiverSpent"));
         let filter = FilterBuilder::default()
             .topics(Some(vec![contract_event.signature()]), None, None, None)
             .from_block(BlockNumber::Number(from_block))
+            .to_block(BlockNumber::Number(to_block))
             .address(vec![swap_contract_address])
             .build();
 
@@ -418,77 +420,17 @@ impl EthCoinImpl {
         &self,
         swap_contract_address: Address,
         from_block: u64,
+        to_block: u64,
     ) -> Box<dyn Future<Item = Vec<Log>, Error = String>> {
         let contract_event = try_fus!(SWAP_CONTRACT.event("SenderRefunded"));
         let filter = FilterBuilder::default()
             .topics(Some(vec![contract_event.signature()]), None, None, None)
             .from_block(BlockNumber::Number(from_block))
+            .to_block(BlockNumber::Number(to_block))
             .address(vec![swap_contract_address])
             .build();
 
         Box::new(self.web3.eth().logs(filter).map_err(|e| ERRL!("{}", e)))
-    }
-
-    fn search_for_swap_tx_spend(
-        &self,
-        tx: &[u8],
-        swap_contract_address: Address,
-        search_from_block: u64,
-    ) -> Result<Option<FoundSwapTxSpend>, String> {
-        let unverified: UnverifiedTransaction = try_s!(rlp::decode(tx));
-        let tx = try_s!(SignedEthTx::new(unverified));
-
-        let func_name = match self.coin_type {
-            EthCoinType::Eth => "ethPayment",
-            EthCoinType::Erc20 { .. } => "erc20Payment",
-        };
-
-        let payment_func = try_s!(SWAP_CONTRACT.function(func_name));
-        let decoded = try_s!(payment_func.decode_input(&tx.data));
-        let id = match &decoded[0] {
-            Token::FixedBytes(bytes) => bytes.clone(),
-            _ => panic!(),
-        };
-
-        let spend_events = try_s!(self.spend_events(swap_contract_address, search_from_block).wait());
-        let found = spend_events.iter().find(|event| &event.data.0[..32] == id.as_slice());
-
-        if let Some(event) = found {
-            match event.transaction_hash {
-                Some(tx_hash) => {
-                    let transaction = match try_s!(self.web3.eth().transaction(TransactionId::Hash(tx_hash)).wait()) {
-                        Some(t) => t,
-                        None => return ERR!("Found ReceiverSpent event, but transaction {:02x} is missing", tx_hash),
-                    };
-
-                    return Ok(Some(FoundSwapTxSpend::Spent(TransactionEnum::from(try_s!(
-                        signed_tx_from_web3_tx(transaction)
-                    )))));
-                },
-                None => return ERR!("Found ReceiverSpent event, but it doesn't have tx_hash"),
-            }
-        }
-
-        let refund_events = try_s!(self.refund_events(swap_contract_address, search_from_block).wait());
-        let found = refund_events.iter().find(|event| &event.data.0[..32] == id.as_slice());
-
-        if let Some(event) = found {
-            match event.transaction_hash {
-                Some(tx_hash) => {
-                    let transaction = match try_s!(self.web3.eth().transaction(TransactionId::Hash(tx_hash)).wait()) {
-                        Some(t) => t,
-                        None => return ERR!("Found SenderRefunded event, but transaction {:02x} is missing", tx_hash),
-                    };
-
-                    return Ok(Some(FoundSwapTxSpend::Refunded(TransactionEnum::from(try_s!(
-                        signed_tx_from_web3_tx(transaction)
-                    )))));
-                },
-                None => return ERR!("Found SenderRefunded event, but it doesn't have tx_hash"),
-            }
-        }
-
-        Ok(None)
     }
 
     /// Try to parse address from string.
@@ -1029,6 +971,7 @@ impl SwapOps for EthCoin {
     }
 }
 
+#[cfg_attr(test, mockable)]
 impl MarketCoinOps for EthCoin {
     fn ticker(&self) -> &str { &self.ticker[..] }
 
@@ -1162,7 +1105,20 @@ impl MarketCoinOps for EthCoin {
 
         let fut = async move {
             loop {
-                let events = match selfi.spend_events(swap_contract_address, from_block).compat().await {
+                let current_block = match selfi.current_block().compat().await {
+                    Ok(b) => b,
+                    Err(e) => {
+                        log!("Error " (e) " getting block number");
+                        Timer::sleep(5.).await;
+                        continue;
+                    },
+                };
+
+                let events = match selfi
+                    .spend_events(swap_contract_address, from_block, current_block)
+                    .compat()
+                    .await
+                {
                     Ok(ev) => ev,
                     Err(e) => {
                         log!("Error " (e) " getting spend events");
@@ -2558,6 +2514,90 @@ impl EthCoin {
                 thread::sleep(Duration::from_secs(2));
             }
         }
+    }
+
+    fn search_for_swap_tx_spend(
+        &self,
+        tx: &[u8],
+        swap_contract_address: Address,
+        search_from_block: u64,
+    ) -> Result<Option<FoundSwapTxSpend>, String> {
+        let unverified: UnverifiedTransaction = try_s!(rlp::decode(tx));
+        let tx = try_s!(SignedEthTx::new(unverified));
+
+        let func_name = match self.coin_type {
+            EthCoinType::Eth => "ethPayment",
+            EthCoinType::Erc20 { .. } => "erc20Payment",
+        };
+
+        let payment_func = try_s!(SWAP_CONTRACT.function(func_name));
+        let decoded = try_s!(payment_func.decode_input(&tx.data));
+        let id = match &decoded[0] {
+            Token::FixedBytes(bytes) => bytes.clone(),
+            _ => panic!(),
+        };
+
+        let mut current_block = try_s!(self.current_block().wait());
+        if current_block < search_from_block {
+            current_block = search_from_block;
+        }
+
+        let mut from_block = search_from_block;
+
+        loop {
+            let to_block = current_block.max(from_block + 1000);
+
+            let spend_events = try_s!(self.spend_events(swap_contract_address, from_block, to_block).wait());
+            let found = spend_events.iter().find(|event| &event.data.0[..32] == id.as_slice());
+
+            if let Some(event) = found {
+                match event.transaction_hash {
+                    Some(tx_hash) => {
+                        let transaction = match try_s!(self.web3.eth().transaction(TransactionId::Hash(tx_hash)).wait())
+                        {
+                            Some(t) => t,
+                            None => {
+                                return ERR!("Found ReceiverSpent event, but transaction {:02x} is missing", tx_hash)
+                            },
+                        };
+
+                        return Ok(Some(FoundSwapTxSpend::Spent(TransactionEnum::from(try_s!(
+                            signed_tx_from_web3_tx(transaction)
+                        )))));
+                    },
+                    None => return ERR!("Found ReceiverSpent event, but it doesn't have tx_hash"),
+                }
+            }
+
+            let refund_events = try_s!(self.refund_events(swap_contract_address, from_block, to_block).wait());
+            let found = refund_events.iter().find(|event| &event.data.0[..32] == id.as_slice());
+
+            if let Some(event) = found {
+                match event.transaction_hash {
+                    Some(tx_hash) => {
+                        let transaction = match try_s!(self.web3.eth().transaction(TransactionId::Hash(tx_hash)).wait())
+                        {
+                            Some(t) => t,
+                            None => {
+                                return ERR!("Found SenderRefunded event, but transaction {:02x} is missing", tx_hash)
+                            },
+                        };
+
+                        return Ok(Some(FoundSwapTxSpend::Refunded(TransactionEnum::from(try_s!(
+                            signed_tx_from_web3_tx(transaction)
+                        )))));
+                    },
+                    None => return ERR!("Found SenderRefunded event, but it doesn't have tx_hash"),
+                }
+            }
+
+            if to_block >= current_block {
+                break;
+            }
+            from_block = to_block;
+        }
+
+        Ok(None)
     }
 }
 

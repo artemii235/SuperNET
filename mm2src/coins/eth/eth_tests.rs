@@ -57,6 +57,7 @@ fn eth_coin_for_test(
         web3,
         ctx: ctx.weak(),
         required_confirmations: 1.into(),
+        chain_id: None,
     }));
     (ctx, eth_coin)
 }
@@ -219,6 +220,7 @@ fn send_and_refund_erc20_payment() {
         history_sync_state: Mutex::new(HistorySyncState::NotStarted),
         ctx: ctx.weak(),
         required_confirmations: 1.into(),
+        chain_id: None,
     }));
 
     let payment = coin
@@ -278,6 +280,7 @@ fn send_and_refund_eth_payment() {
         history_sync_state: Mutex::new(HistorySyncState::NotStarted),
         ctx: ctx.weak(),
         required_confirmations: 1.into(),
+        chain_id: None,
     }));
 
     let payment = coin
@@ -356,6 +359,7 @@ fn test_nonce_several_urls() {
         history_sync_state: Mutex::new(HistorySyncState::NotStarted),
         ctx: ctx.weak(),
         required_confirmations: 1.into(),
+        chain_id: None,
     }));
 
     log!("My address "[coin.my_address]);
@@ -371,7 +375,8 @@ fn test_nonce_several_urls() {
 
 #[test]
 fn test_wait_for_payment_spend_timeout() {
-    EthCoinImpl::spend_events.mock_safe(|_, _, _| MockResult::Return(Box::new(futures01::future::ok(vec![]))));
+    EthCoinImpl::spend_events.mock_safe(|_, _, _, _| MockResult::Return(Box::new(futures01::future::ok(vec![]))));
+    EthCoin::current_block.mock_safe(|_| MockResult::Return(Box::new(futures01::future::ok(900))));
 
     let key_pair = KeyPair::from_secret_slice(
         &hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap(),
@@ -398,6 +403,7 @@ fn test_wait_for_payment_spend_timeout() {
         web3,
         ctx: ctx.weak(),
         required_confirmations: 1.into(),
+        chain_id: None,
     };
 
     let coin = EthCoin(Arc::new(coin));
@@ -454,6 +460,7 @@ fn test_search_for_swap_tx_spend_was_spent() {
         web3,
         ctx: ctx.weak(),
         required_confirmations: 1.into(),
+        chain_id: None,
     }));
 
     // raw transaction bytes of https://ropsten.etherscan.io/tx/0xb1c987e2ac79581bb8718267b5cb49a18274890494299239d1d0dfdb58d6d76a
@@ -525,6 +532,7 @@ fn test_search_for_swap_tx_spend_was_refunded() {
         web3,
         ctx: ctx.weak(),
         required_confirmations: 1.into(),
+        chain_id: None,
     }));
 
     // raw transaction bytes of https://ropsten.etherscan.io/tx/0xe18bbca69dea9a4624e1f5b0b2021d5fe4c8daa03f36084a8ba011b08e5cd938
