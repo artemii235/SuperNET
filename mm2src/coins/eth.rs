@@ -246,6 +246,7 @@ pub struct EthCoinImpl {
     /// Coin needs access to the context in order to reuse the logging and shutdown facilities.
     /// Using a weak reference by default in order to avoid circular references and leaks.
     ctx: MmWeak,
+    chain_id: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -595,7 +596,7 @@ async fn withdraw_impl(ctx: MmArc, coin: EthCoin, req: WithdrawRequest) -> Withd
         gas_price,
     };
 
-    let signed = tx.sign(coin.key_pair.secret(), None);
+    let signed = tx.sign(coin.key_pair.secret(), coin.chain_id);
     let bytes = rlp::encode(&signed);
     let amount_decimal = u256_to_big_decimal(wei_amount, coin.decimals)?;
     let mut spent_by_me = amount_decimal.clone();
@@ -1295,7 +1296,7 @@ async fn sign_and_send_transaction_impl(
         gas,
         gas_price,
     };
-    let signed = tx.sign(coin.key_pair.secret(), None);
+    let signed = tx.sign(coin.key_pair.secret(), coin.chain_id);
     let bytes = web3::types::Bytes(rlp::encode(&signed).to_vec());
     status.status(tags!(), "send_raw_transaction…");
     try_s!(
@@ -3067,6 +3068,7 @@ pub async fn eth_coin_from_conf_and_request(
         history_sync_state: Mutex::new(initial_history_state),
         ctx: ctx.weak(),
         required_confirmations,
+        chain_id: conf["chain_id"].as_u64(),
     };
     Ok(EthCoin(Arc::new(coin)))
 }
