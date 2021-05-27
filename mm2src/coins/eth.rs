@@ -1872,6 +1872,7 @@ impl EthCoin {
 
     /// Downloads and saves ERC20 transaction history of my_address
     #[allow(clippy::cognitive_complexity)]
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     async fn process_erc20_history(&self, token_addr: H160, ctx: &MmArc) {
         let delta = U256::from(10000);
 
@@ -2248,6 +2249,7 @@ impl EthCoin {
     /// https://wiki.parity.io/JSONRPC-trace-module#trace_filter, this requires tracing to be enabled
     /// in node config. Other ETH clients (Geth, etc.) are `not` supported (yet).
     #[allow(clippy::cognitive_complexity)]
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     async fn process_eth_history(&self, ctx: &MmArc) {
         // Artem Pikulin: by playing a bit with Parity mainnet node I've discovered that trace_filter API responds after reasonable time for 1000 blocks.
         // I've tried to increase the amount to 10000, but request times out somewhere near 2500000 block.
@@ -2672,15 +2674,25 @@ impl MmCoin for EthCoin {
     }
 
     fn process_history_loop(&self, ctx: MmArc) -> Box<dyn Future<Item = (), Error = ()> + Send> {
-        let coin = self.clone();
-        let fut = async move {
-            match coin.coin_type {
-                EthCoinType::Eth => coin.process_eth_history(&ctx).await,
-                EthCoinType::Erc20 { ref token_addr, .. } => coin.process_erc20_history(*token_addr, &ctx).await,
-            }
-            Ok(())
-        };
-        Box::new(fut.boxed().compat())
+        cfg_wasm32! {
+            ctx.log.log(
+                "🤔",
+                &[&"tx_history", &self.ticker],
+                &ERRL!("Transaction history is not supported for ETH/ERC20 coins"),
+            );
+            return Box::new(futures01::future::ok(()));
+        }
+        cfg_native! {
+            let coin = self.clone();
+            let fut = async move {
+                match coin.coin_type {
+                    EthCoinType::Eth => coin.process_eth_history(&ctx).await,
+                    EthCoinType::Erc20 { ref token_addr, .. } => coin.process_erc20_history(*token_addr, &ctx).await,
+                }
+                Ok(())
+            };
+            Box::new(fut.boxed().compat())
+        }
     }
 
     fn history_sync_status(&self) -> HistorySyncState { self.history_sync_state.lock().unwrap().clone() }

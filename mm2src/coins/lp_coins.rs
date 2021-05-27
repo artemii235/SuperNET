@@ -41,10 +41,10 @@ use common::mm_number::MmNumber;
 use common::{block_on, calc_total_pages, now_ms, rpc_err_response, rpc_response, HttpStatusCode, HyRes};
 use derive_more::Display;
 use futures::compat::Future01CompatExt;
-use futures::lock::{Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard};
+use futures::lock::{MappedMutexGuard as AsyncMappedMutexGuard, Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard};
 use futures::{FutureExt, TryFutureExt};
 use futures01::Future;
-use gstuff::{slurp, Constructible};
+use gstuff::slurp;
 use http::{Response, StatusCode};
 use rpc::v1::types::Bytes as BytesJson;
 use serde::{Deserialize, Deserializer};
@@ -55,7 +55,6 @@ use std::num::NonZeroUsize;
 use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::thread;
 
 // using custom copy of try_fus as futures crate was renamed to futures01
 macro_rules! try_fus {
@@ -111,6 +110,7 @@ pub type TradePreimageResult<T> = Result<T, MmError<TradePreimageError>>;
 pub type TradePreimageFut<T> = Box<dyn Future<Item = T, Error = MmError<TradePreimageError>> + Send>;
 pub type CoinFindResult<T> = Result<T, MmError<CoinFindError>>;
 pub type TxHistoryFut<T> = Box<dyn Future<Item = T, Error = MmError<TxHistoryError>> + Send>;
+pub type TxHistoryDbLocked<'a> = AsyncMappedMutexGuard<'a, Option<TxHistoryDb>, TxHistoryDb>;
 
 pub trait Transaction: fmt::Debug + 'static {
     /// Raw transaction bytes of the transaction
@@ -901,7 +901,9 @@ struct CoinsContext {
     coins: AsyncMutex<HashMap<String, MmCoinEnum>>,
     balance_update_handlers: AsyncMutex<Vec<Box<dyn BalanceTradeFeeUpdatedHandler + Send + Sync>>>,
     tx_history_path: PathBuf,
-    tx_history_db: Constructible<AsyncMutex<TxHistoryDb>>,
+    /// The database has to be initialized only once!
+    /// It's better to use something like [`Constructible`], but it doesn't provide a method to get the inner value by the mutable reference.
+    tx_history_db: AsyncMutex<Option<TxHistoryDb>>,
 }
 impl CoinsContext {
     /// Obtains a reference to this crate context, creating it if necessary.
@@ -912,24 +914,31 @@ impl CoinsContext {
                 coins: AsyncMutex::new(HashMap::new()),
                 balance_update_handlers: AsyncMutex::new(vec![]),
                 tx_history_path,
-                tx_history_db: Constructible::default(),
+                tx_history_db: AsyncMutex::new(None),
             })
         })))
     }
 
-    async fn tx_history_db(&self) -> TxHistoryResult<AsyncMutexGuard<'_, TxHistoryDb>> {
-        if let Some(db) = self.tx_history_db.as_option() {
-            return Ok(db.lock().await);
+    async fn tx_history_db(&self) -> TxHistoryResult<TxHistoryDbLocked<'_>> {
+        /// # Safe
+        ///
+        /// Make sure the inner value of the `guard` is `Some`, i.e. `guard.is_some()`.
+        unsafe fn unwrap_tx_history_db(guard: AsyncMutexGuard<'_, Option<TxHistoryDb>>) -> TxHistoryDbLocked<'_> {
+            AsyncMutexGuard::map(guard, |wrapped_db| {
+                wrapped_db
+                    .as_mut()
+                    .expect("'CoinsContext::tx_history_db' must contain a value")
+            })
+        }
+
+        let mut tx_history_db = self.tx_history_db.lock().await;
+        if tx_history_db.is_some() {
+            return unsafe { Ok(unwrap_tx_history_db(tx_history_db)) };
         }
 
         let db = TxHistoryDb::init_with_fs_path(self.tx_history_path.clone()).await?;
-        match self.tx_history_db.pin(AsyncMutex::new(db)) {
-            Ok(db) => Ok(db.lock().await),
-            Err(e) => {
-                let error = format!("Couldn't initialize 'CoinsContext::tx_history_path': {}", e);
-                MmError::err(TxHistoryError::InternalError(error))
-            },
-        }
+        *tx_history_db = Some(db);
+        unsafe { Ok(unwrap_tx_history_db(tx_history_db)) }
     }
 }
 
@@ -1161,28 +1170,30 @@ pub async fn lp_coininit(ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoin
         RawEntryMut::Vacant(ve) => ve.insert(ticker.to_string(), coin.clone()),
     };
     let history = req["tx_history"].as_bool().unwrap_or(false);
-    #[cfg(target_arch = "wasm32")]
-    let history = {
-        if history {
-            ctx.log.log(
-                "🍼",
-                &[&("tx_history" as &str), &ticker],
-                "Note that the WASM port does not include the history loading thread at the moment.",
-            )
-        }
-        false
-    };
     if history {
-        try_s!(thread::Builder::new().name(format!("tx_history_{}", ticker)).spawn({
-            let coin = coin.clone();
-            let ctx = ctx.clone();
-            move || coin.process_history_loop(ctx).wait()
-        }));
+        try_s!(lp_spawn_tx_history(ctx.clone(), coin.clone()));
     }
     let ctxʹ = ctx.clone();
     let ticker = ticker.to_owned();
     spawn(async move { check_balance_update_loop(ctxʹ, ticker).await });
     Ok(coin)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn lp_spawn_tx_history(ctx: MmArc, coin: MmCoinEnum) -> Result<(), String> {
+    try_s!(std::thread::Builder::new()
+        .name(format!("tx_history_{}", coin.ticker()))
+        .spawn(move || coin.process_history_loop(ctx).wait()));
+    Ok(())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn lp_spawn_tx_history(ctx: MmArc, coin: MmCoinEnum) -> Result<(), String> {
+    let fut = async move {
+        let _res = coin.process_history_loop(ctx).compat().await;
+    };
+    common::executor::spawn_local(fut);
+    Ok(())
 }
 
 /// NB: Returns only the enabled (aka active) coins.
