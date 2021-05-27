@@ -224,7 +224,7 @@ dependencies = [
  "futures-channel",
  "futures-core",
  "futures-io",
- "futures-timer 3.0.2",
+ "futures-timer",
  "kv-log-macro",
  "log 0.4.11",
  "memchr",
@@ -877,6 +877,7 @@ dependencies = [
 name = "coins"
 version = "0.1.0"
 dependencies = [
+ "async-std",
  "async-trait",
  "base64 0.10.1",
  "bigdecimal",
@@ -884,6 +885,7 @@ dependencies = [
  "bitcrypto",
  "byteorder 1.3.4",
  "bytes 0.4.12",
+ "cfg-if 1.0.0",
  "chain",
  "common",
  "derive_more",
@@ -895,7 +897,6 @@ dependencies = [
  "fomat-macros 0.2.1",
  "futures 0.1.29",
  "futures 0.3.5",
- "futures-timer 0.1.1",
  "gstuff",
  "hex 0.3.2",
  "http 0.2.1",
@@ -954,6 +955,7 @@ dependencies = [
  "bitcrypto",
  "bytes 0.4.12",
  "cc",
+ "cfg-if 1.0.0",
  "chrono",
  "crossbeam",
  "derive_more",
@@ -1866,15 +1868,6 @@ dependencies = [
 
 [[package]]
 name = "futures-timer"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5cedfe9b6dc756220782cc1ba5bcb1fa091cdcba155e40d3556159c3db58043"
-dependencies = [
- "futures 0.1.29",
-]
-
-[[package]]
-name = "futures-timer"
 version = "3.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e64b03909df88034c26dc1547e8970b91f98bdb65165d6a4e9110d94263dbb2c"
@@ -2621,7 +2614,7 @@ dependencies = [
  "either",
  "fnv",
  "futures 0.3.5",
- "futures-timer 3.0.2",
+ "futures-timer",
  "lazy_static",
  "libsecp256k1 0.3.5",
  "log 0.4.11",
@@ -2799,7 +2792,7 @@ version = "0.22.0"
 source = "git+https://github.com/KomodoPlatform/rust-libp2p.git#6a5600ffd782bc86aa3a637f3ac6d6b9194628f9"
 dependencies = [
  "futures 0.3.5",
- "futures-timer 3.0.2",
+ "futures-timer",
  "get_if_addrs",
  "ipnet",
  "libp2p-core",
@@ -3248,7 +3241,6 @@ dependencies = [
  "futures 0.1.29",
  "futures 0.3.5",
  "futures-cpupool",
- "futures-timer 0.1.1",
  "gstuff",
  "hash-db",
  "hash256-std-hasher",

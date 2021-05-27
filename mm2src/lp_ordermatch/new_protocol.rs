@@ -140,10 +140,10 @@ pub struct MakerOrderCancelled {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct MakerOrderUpdated {
     uuid: CompactUuid,
-    new_price: Option<BigRational>,
-    new_max_volume: Option<BigRational>,
-    new_min_volume: Option<BigRational>,
-    conf_settings: Option<OrderConfirmationsSettings>,
+    pub new_price: Option<BigRational>,
+    pub new_max_volume: Option<BigRational>,
+    pub new_min_volume: Option<BigRational>,
+    pub conf_settings: Option<OrderConfirmationsSettings>,
     timestamp: u64,
     pair_trie_root: H64,
 }

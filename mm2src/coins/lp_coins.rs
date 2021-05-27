@@ -150,6 +150,15 @@ pub enum CanRefundHtlc {
     HaveToWait(u64),
 }
 
+#[derive(Debug, Display, Eq, PartialEq)]
+pub enum NegotiateSwapContractAddrErr {
+    #[display(fmt = "InvalidOtherAddrLen, addr supplied {:?}", _0)]
+    InvalidOtherAddrLen(BytesJson),
+    #[display(fmt = "UnexpectedOtherAddr, addr supplied {:?}", _0)]
+    UnexpectedOtherAddr(BytesJson),
+    NoOtherAddrAndNoFallback,
+}
+
 /// Swap operations (mostly based on the Hash/Time locked transactions implemented by coin wallets).
 pub trait SwapOps {
     fn send_taker_fee(&self, fee_addr: &[u8], amount: BigDecimal) -> TransactionFut;
@@ -280,6 +289,11 @@ pub trait SwapOps {
         };
         Box::new(futures01::future::ok(result))
     }
+
+    fn negotiate_swap_contract_addr(
+        &self,
+        other_side_address: Option<&[u8]>,
+    ) -> Result<Option<BytesJson>, MmError<NegotiateSwapContractAddrErr>>;
 }
 
 /// Operations that coins have independently from the MarketMaker.
@@ -504,10 +518,8 @@ pub enum TradePreimageError {
         available: BigDecimal,
         required: BigDecimal,
     },
-    #[display(fmt = "The amount {} is too small", amount)]
-    AmountIsTooSmall { amount: BigDecimal },
-    #[display(fmt = "The max available amount {} is too small", amount)]
-    UpperBoundAmountIsTooSmall { amount: BigDecimal },
+    #[display(fmt = "The amount {} less than minimum transaction amount {}", amount, threshold)]
+    AmountIsTooSmall { amount: BigDecimal, threshold: BigDecimal },
     #[display(fmt = "Transport error: {}", _0)]
     Transport(String),
     #[display(fmt = "Internal error: {}", _0)]
@@ -536,12 +548,18 @@ impl TradePreimageError {
                 }
             },
             GenerateTxError::EmptyOutputs => TradePreimageError::InternalError(gen_tx_err.to_string()),
-            GenerateTxError::OutputValueLessThanDust { value, .. } => {
-                let amount = big_decimal_from_sat_unsigned(value, decimals);
+            GenerateTxError::OutputValueLessThanDust { value, dust } => {
                 if is_upper_bound {
-                    TradePreimageError::UpperBoundAmountIsTooSmall { amount }
+                    // If the preimage value is [`TradePreimageValue::UpperBound`], then we had to pass the account balance as the output value.
+                    let error = format!(
+                        "Output value {} (equal to the account balance) less than dust {}. Probably, dust is not set or outdated",
+                        value, dust
+                    );
+                    TradePreimageError::InternalError(error)
                 } else {
-                    TradePreimageError::AmountIsTooSmall { amount }
+                    let amount = big_decimal_from_sat_unsigned(value, decimals);
+                    let threshold = big_decimal_from_sat_unsigned(dust, decimals);
+                    TradePreimageError::AmountIsTooSmall { amount, threshold }
                 }
             },
             GenerateTxError::DeductFeeFromOutputFailed {
@@ -614,8 +632,8 @@ pub enum WithdrawError {
     },
     #[display(fmt = "Balance is zero")]
     ZeroBalanceToWithdrawMax,
-    #[display(fmt = "The amount {} is too small", amount)]
-    AmountIsTooSmall { amount: BigDecimal },
+    #[display(fmt = "The amount {} is too small, required at least {}", amount, threshold)]
+    AmountTooLow { amount: BigDecimal, threshold: BigDecimal },
     #[display(fmt = "Invalid address: {}", _0)]
     InvalidAddress(String),
     #[display(fmt = "Invalid fee policy: {}", _0)]
@@ -633,7 +651,7 @@ impl HttpStatusCode for WithdrawError {
         match self {
             WithdrawError::NotSufficientBalance { .. }
             | WithdrawError::ZeroBalanceToWithdrawMax
-            | WithdrawError::AmountIsTooSmall { .. }
+            | WithdrawError::AmountTooLow { .. }
             | WithdrawError::InvalidAddress(_)
             | WithdrawError::InvalidFeePolicy(_)
             | WithdrawError::NoSuchCoin { .. } => StatusCode::BAD_REQUEST,
@@ -676,9 +694,10 @@ impl WithdrawError {
                 }
             },
             GenerateTxError::EmptyOutputs => WithdrawError::InternalError(gen_tx_err.to_string()),
-            GenerateTxError::OutputValueLessThanDust { value, .. } => {
+            GenerateTxError::OutputValueLessThanDust { value, dust } => {
                 let amount = big_decimal_from_sat_unsigned(value, decimals);
-                WithdrawError::AmountIsTooSmall { amount }
+                let threshold = big_decimal_from_sat_unsigned(dust, decimals);
+                WithdrawError::AmountTooLow { amount, threshold }
             },
             GenerateTxError::DeductFeeFromOutputFailed {
                 output_value, required, ..
