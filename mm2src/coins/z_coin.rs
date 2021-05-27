@@ -4,8 +4,8 @@ use crate::utxo::{utxo_common, ActualTxFee, AdditionalTxData, Address, FeePolicy
                   RecentlySpentOutPoints, UtxoArc, UtxoCoinBuilder, UtxoCoinFields, UtxoCommonOps,
                   VerboseTransactionFrom};
 use crate::{BalanceFut, CoinBalance, FeeApproxStage, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin,
-            SwapOps, TradeFee, TradePreimageFut, TradePreimageResult, TradePreimageValue, TransactionEnum,
-            TransactionFut, ValidateAddressResult, WithdrawFut, WithdrawRequest};
+            NegotiateSwapContractAddrErr, SwapOps, TradeFee, TradePreimageFut, TradePreimageResult,
+            TradePreimageValue, TransactionEnum, TransactionFut, ValidateAddressResult, WithdrawFut, WithdrawRequest};
 use async_trait::async_trait;
 use bitcrypto::dhash160;
 use chain::constants::SEQUENCE_FINAL;
@@ -441,6 +441,13 @@ impl SwapOps for ZCoin {
 
     fn extract_secret(&self, secret_hash: &[u8], spend_tx: &[u8]) -> Result<Vec<u8>, String> {
         utxo_common::extract_secret(secret_hash, spend_tx)
+    }
+
+    fn negotiate_swap_contract_addr(
+        &self,
+        _other_side_address: Option<&[u8]>,
+    ) -> Result<Option<BytesJson>, MmError<NegotiateSwapContractAddrErr>> {
+        Ok(None)
     }
 }
 
