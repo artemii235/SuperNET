@@ -234,7 +234,7 @@ fn send_and_refund_erc20_payment() {
 
     log!([payment]);
 
-    thread::sleep(Duration::from_secs(60));
+    block_on(Timer::sleep(60.));
 
     let refund = coin
         .send_maker_refunds_payment(
@@ -293,7 +293,7 @@ fn send_and_refund_eth_payment() {
 
     log!([payment]);
 
-    thread::sleep(Duration::from_secs(60));
+    block_on(Timer::sleep(60.));
 
     let refund = coin
         .send_maker_refunds_payment(

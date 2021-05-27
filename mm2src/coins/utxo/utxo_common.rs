@@ -27,8 +27,6 @@ use std::cmp::Ordering;
 use std::collections::hash_map::{Entry, HashMap};
 use std::str::FromStr;
 use std::sync::atomic::Ordering as AtomicOrderding;
-use std::thread;
-use std::time::Duration;
 
 pub use chain::Transaction as UtxoTx;
 
@@ -1470,12 +1468,12 @@ where
 }
 
 #[allow(clippy::cognitive_complexity)]
-pub fn process_history_loop<T>(coin: &T, ctx: MmArc)
+pub async fn process_history_loop<T>(coin: T, ctx: MmArc)
 where
     T: AsRef<UtxoCoinFields> + UtxoStandardOps + UtxoCommonOps + MmCoin + MarketCoinOps,
 {
     let mut my_balance: Option<CoinBalance> = None;
-    let history = match coin.load_history_from_file(&ctx).wait() {
+    let history = match coin.load_history_from_file(&ctx).compat().await {
         Ok(history) => history,
         Err(e) => {
             ctx.log.log(
@@ -1498,7 +1496,7 @@ where
         };
         {
             let coins_ctx = CoinsContext::from_ctx(&ctx).unwrap();
-            let coins = block_on(coins_ctx.coins.lock());
+            let coins = coins_ctx.coins.lock().await;
             if !coins.contains_key(&coin.as_ref().conf.ticker) {
                 ctx.log
                     .log("", &[&"tx_history", &coin.as_ref().conf.ticker], "Loop stopped");
@@ -1506,7 +1504,7 @@ where
             };
         }
 
-        let actual_balance = match coin.my_balance().wait() {
+        let actual_balance = match coin.my_balance().compat().await {
             Ok(actual_balance) => Some(actual_balance),
             Err(err) => {
                 ctx.log.log(
@@ -1524,13 +1522,14 @@ where
         match (&my_balance, &actual_balance) {
             (Some(prev_balance), Some(actual_balance)) if prev_balance == actual_balance && !need_update => {
                 // my balance hasn't been changed, there is no need to reload tx_history
-                thread::sleep(Duration::from_secs(30));
+                Timer::sleep(30.).await;
                 continue;
             },
             _ => (),
         }
 
-        let tx_ids = match block_on(coin.request_tx_history(ctx.metrics.clone())) {
+        let metrics = ctx.metrics.clone();
+        let tx_ids = match coin.request_tx_history(metrics).await {
             RequestTxHistoryResult::Ok(tx_ids) => tx_ids,
             RequestTxHistoryResult::Retry { error } => {
                 ctx.log.log(
@@ -1538,7 +1537,7 @@ where
                     &[&"tx_history", &coin.as_ref().conf.ticker],
                     &ERRL!("{}, retrying", error),
                 );
-                thread::sleep(Duration::from_secs(10));
+                Timer::sleep(10.).await;
                 continue;
             },
             RequestTxHistoryResult::HistoryTooLarge => {
@@ -1580,7 +1579,7 @@ where
                 Entry::Vacant(e) => {
                     mm_counter!(ctx.metrics, "tx.history.request.count", 1, "coin" => coin.as_ref().conf.ticker.clone(), "method" => "tx_detail_by_hash");
 
-                    match block_on(coin.tx_details_by_hash(&txid.0)) {
+                    match coin.tx_details_by_hash(&txid.0).await {
                         Ok(mut tx_details) => {
                             mm_counter!(ctx.metrics, "tx.history.response.count", 1, "coin" => coin.as_ref().conf.ticker.clone(), "method" => "tx_detail_by_hash");
 
@@ -1612,7 +1611,7 @@ where
                     if e.get().should_update_timestamp() {
                         mm_counter!(ctx.metrics, "tx.history.request.count", 1, "coin" => coin.as_ref().conf.ticker.clone(), "method" => "tx_detail_by_hash");
 
-                        if let Ok(tx_details) = block_on(coin.tx_details_by_hash(&txid.0)) {
+                        if let Ok(tx_details) = coin.tx_details_by_hash(&txid.0).await {
                             mm_counter!(ctx.metrics, "tx.history.response.count", 1, "coin" => coin.as_ref().conf.ticker.clone(), "method" => "tx_detail_by_hash");
 
                             e.get_mut().timestamp = tx_details.timestamp;
@@ -1634,7 +1633,7 @@ where
                         b.block_height.cmp(&a.block_height)
                     }
                 });
-                if let Err(e) = coin.save_history_to_file(&ctx, to_write).wait() {
+                if let Err(e) = coin.save_history_to_file(&ctx, to_write).compat().await {
                     ctx.log.log(
                         "",
                         &[&"tx_history", &coin.as_ref().conf.ticker],
@@ -1656,7 +1655,7 @@ where
 
         my_balance = actual_balance;
         success_iteration += 1;
-        thread::sleep(Duration::from_secs(30));
+        Timer::sleep(30.).await;
     }
 }
 

@@ -24,7 +24,7 @@ use common::custom_futures::TimedAsyncMutex;
 use common::executor::Timer;
 use common::mm_ctx::{MmArc, MmWeak};
 use common::mm_error::prelude::*;
-use common::{block_on, now_ms, slurp_url, small_rng, DEX_FEE_ADDR_RAW_PUBKEY};
+use common::{now_ms, slurp_url, small_rng, DEX_FEE_ADDR_RAW_PUBKEY};
 use derive_more::Display;
 use ethabi::{Contract, Token};
 use ethcore_transaction::{Action, Transaction as UnSignedEthTx, UnverifiedTransaction};
@@ -49,8 +49,6 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrderding};
 use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::Duration;
 use web3::types::{Action as TraceAction, BlockId, BlockNumber, Bytes, CallRequest, FilterBuilder, Log, Trace,
                   TraceFilterBuilder, Transaction as Web3Transaction, TransactionId};
 use web3::{self, Web3};
@@ -277,7 +275,7 @@ impl EthCoinImpl {
         from_block: BlockNumber,
         to_block: BlockNumber,
         limit: Option<usize>,
-    ) -> Box<dyn Future<Item = Vec<Log>, Error = String>> {
+    ) -> Box<dyn Future<Item = Vec<Log>, Error = String> + Send> {
         let contract_event = try_fus!(ERC20_CONTRACT.event("Transfer"));
         let topic0 = Some(vec![contract_event.signature()]);
         let topic1 = from_addr.map(|addr| vec![addr.into()]);
@@ -303,7 +301,7 @@ impl EthCoinImpl {
         from_block: BlockNumber,
         to_block: BlockNumber,
         limit: Option<usize>,
-    ) -> Box<dyn Future<Item = Vec<Trace>, Error = String>> {
+    ) -> Box<dyn Future<Item = Vec<Trace>, Error = String> + Send> {
         let mut filter = TraceFilterBuilder::default()
             .from_address(from_addr)
             .to_address(to_addr)
@@ -337,6 +335,7 @@ impl EthCoinImpl {
     }
 
     /// Store ETH traces to local DB
+    /// todo
     fn store_eth_traces(&self, ctx: &MmArc, traces: &SavedTraces) {
         let content = json::to_vec(traces).unwrap();
         let tmp_file = format!("{}.tmp", self.eth_traces_path(&ctx).display());
@@ -359,6 +358,7 @@ impl EthCoinImpl {
     }
 
     /// Load saved ERC20 events from local DB
+    /// todo
     fn load_saved_erc20_events(&self, ctx: &MmArc) -> Option<SavedErc20Events> {
         let content = slurp(&self.erc20_events_path(ctx));
         if content.is_empty() {
@@ -1872,7 +1872,7 @@ impl EthCoin {
 
     /// Downloads and saves ERC20 transaction history of my_address
     #[allow(clippy::cognitive_complexity)]
-    fn process_erc20_history(&self, token_addr: H160, ctx: &MmArc) {
+    async fn process_erc20_history(&self, token_addr: H160, ctx: &MmArc) {
         let delta = U256::from(10000);
 
         let mut success_iteration = 0i32;
@@ -1882,14 +1882,14 @@ impl EthCoin {
             };
             {
                 let coins_ctx = CoinsContext::from_ctx(&ctx).unwrap();
-                let coins = block_on(coins_ctx.coins.lock());
+                let coins = coins_ctx.coins.lock().await;
                 if !coins.contains_key(&self.ticker) {
                     ctx.log.log("", &[&"tx_history", &self.ticker], "Loop stopped");
                     break;
                 };
             }
 
-            let current_block = match self.web3.eth().block_number().wait() {
+            let current_block = match self.web3.eth().block_number().compat().await {
                 Ok(block) => block,
                 Err(e) => {
                     ctx.log.log(
@@ -1897,11 +1897,12 @@ impl EthCoin {
                         &[&"tx_history", &self.ticker],
                         &ERRL!("Error {} on eth_block_number, retrying", e),
                     );
-                    thread::sleep(Duration::from_secs(10));
+                    Timer::sleep(10.).await;
                     continue;
                 },
             };
 
+            //todo
             let mut saved_events = match self.load_saved_erc20_events(&ctx) {
                 Some(events) => events,
                 None => SavedErc20Events {
@@ -1933,7 +1934,8 @@ impl EthCoin {
                         BlockNumber::Number((saved_events.earliest_block - 1).into()),
                         None,
                     )
-                    .wait()
+                    .compat()
+                    .await
                 {
                     Ok(events) => events,
                     Err(e) => {
@@ -1942,7 +1944,7 @@ impl EthCoin {
                             &[&"tx_history", &self.ticker],
                             &ERRL!("Error {} on erc20_transfer_events, retrying", e),
                         );
-                        thread::sleep(Duration::from_secs(10));
+                        Timer::sleep(10.).await;
                         continue;
                     },
                 };
@@ -1956,7 +1958,8 @@ impl EthCoin {
                         BlockNumber::Number((saved_events.earliest_block - 1).into()),
                         None,
                     )
-                    .wait()
+                    .compat()
+                    .await
                 {
                     Ok(events) => events,
                     Err(e) => {
@@ -1965,7 +1968,7 @@ impl EthCoin {
                             &[&"tx_history", &self.ticker],
                             &ERRL!("Error {} on erc20_transfer_events, retrying", e),
                         );
-                        thread::sleep(Duration::from_secs(10));
+                        Timer::sleep(10.).await;
                         continue;
                     },
                 };
@@ -1981,6 +1984,7 @@ impl EthCoin {
                 } else {
                     0.into()
                 };
+                //todo
                 self.store_erc20_events(&ctx, &saved_events);
             }
 
@@ -1994,7 +1998,8 @@ impl EthCoin {
                         BlockNumber::Number(current_block.into()),
                         None,
                     )
-                    .wait()
+                    .compat()
+                    .await
                 {
                     Ok(events) => events,
                     Err(e) => {
@@ -2003,7 +2008,7 @@ impl EthCoin {
                             &[&"tx_history", &self.ticker],
                             &ERRL!("Error {} on erc20_transfer_events, retrying", e),
                         );
-                        thread::sleep(Duration::from_secs(10));
+                        Timer::sleep(10.).await;
                         continue;
                     },
                 };
@@ -2017,7 +2022,8 @@ impl EthCoin {
                         BlockNumber::Number(current_block.into()),
                         None,
                     )
-                    .wait()
+                    .compat()
+                    .await
                 {
                     Ok(events) => events,
                     Err(e) => {
@@ -2026,7 +2032,7 @@ impl EthCoin {
                             &[&"tx_history", &self.ticker],
                             &ERRL!("Error {} on erc20_transfer_events, retrying", e),
                         );
-                        thread::sleep(Duration::from_secs(10));
+                        Timer::sleep(10.).await;
                         continue;
                     },
                 };
@@ -2038,6 +2044,7 @@ impl EthCoin {
                 saved_events.events.extend(from_events_after_latest);
                 saved_events.events.extend(to_events_after_latest);
                 saved_events.latest_block = current_block;
+                //todo
                 self.store_erc20_events(&ctx, &saved_events);
             }
 
@@ -2051,7 +2058,7 @@ impl EthCoin {
             all_events.sort_by(|a, b| b.block_number.unwrap().cmp(&a.block_number.unwrap()));
 
             for event in all_events {
-                let mut existing_history = match self.load_history_from_file(ctx).wait() {
+                let mut existing_history = match self.load_history_from_file(ctx).compat().await {
                     Ok(history) => history,
                     Err(e) => {
                         ctx.log.log(
@@ -2091,7 +2098,8 @@ impl EthCoin {
                     .web3
                     .eth()
                     .transaction(TransactionId::Hash(event.transaction_hash.unwrap()))
-                    .wait()
+                    .compat()
+                    .await
                 {
                     Ok(tx) => tx,
                     Err(e) => {
@@ -2127,7 +2135,8 @@ impl EthCoin {
                     .web3
                     .eth()
                     .transaction_receipt(event.transaction_hash.unwrap())
-                    .wait()
+                    .compat()
+                    .await
                 {
                     Ok(r) => r,
                     Err(e) => {
@@ -2159,7 +2168,8 @@ impl EthCoin {
                     .web3
                     .eth()
                     .block(BlockId::Number(BlockNumber::Number(block_number.into())))
-                    .wait()
+                    .compat()
+                    .await
                 {
                     Ok(Some(b)) => b,
                     Ok(None) => {
@@ -2207,7 +2217,7 @@ impl EthCoin {
                         b.block_height.cmp(&a.block_height)
                     }
                 });
-                if let Err(e) = self.save_history_to_file(&ctx, existing_history).wait() {
+                if let Err(e) = self.save_history_to_file(&ctx, existing_history).compat().await {
                     ctx.log.log(
                         "",
                         &[&"tx_history", &self.ticker],
@@ -2227,9 +2237,9 @@ impl EthCoin {
 
                 success_iteration += 1;
                 *self.history_sync_state.lock().unwrap() = HistorySyncState::Finished;
-                thread::sleep(Duration::from_secs(15));
+                Timer::sleep(15.).await;
             } else {
-                thread::sleep(Duration::from_secs(2));
+                Timer::sleep(2.).await;
             }
         }
     }
@@ -2238,7 +2248,7 @@ impl EthCoin {
     /// https://wiki.parity.io/JSONRPC-trace-module#trace_filter, this requires tracing to be enabled
     /// in node config. Other ETH clients (Geth, etc.) are `not` supported (yet).
     #[allow(clippy::cognitive_complexity)]
-    fn process_eth_history(&self, ctx: &MmArc) {
+    async fn process_eth_history(&self, ctx: &MmArc) {
         // Artem Pikulin: by playing a bit with Parity mainnet node I've discovered that trace_filter API responds after reasonable time for 1000 blocks.
         // I've tried to increase the amount to 10000, but request times out somewhere near 2500000 block.
         // Also the Parity RPC server seem to get stuck while request in running (other requests performance is also lowered).
@@ -2251,14 +2261,14 @@ impl EthCoin {
             };
             {
                 let coins_ctx = CoinsContext::from_ctx(&ctx).unwrap();
-                let coins = block_on(coins_ctx.coins.lock());
+                let coins = coins_ctx.coins.lock().await;
                 if !coins.contains_key(&self.ticker) {
                     ctx.log.log("", &[&"tx_history", &self.ticker], "Loop stopped");
                     break;
                 };
             }
 
-            let current_block = match self.web3.eth().block_number().wait() {
+            let current_block = match self.web3.eth().block_number().compat().await {
                 Ok(block) => block,
                 Err(e) => {
                     ctx.log.log(
@@ -2266,11 +2276,12 @@ impl EthCoin {
                         &[&"tx_history", &self.ticker],
                         &ERRL!("Error {} on eth_block_number, retrying", e),
                     );
-                    thread::sleep(Duration::from_secs(10));
+                    Timer::sleep(10.).await;
                     continue;
                 },
             };
 
+            //todo
             let mut saved_traces = match self.load_saved_traces(&ctx) {
                 Some(traces) => traces,
                 None => SavedTraces {
@@ -2283,7 +2294,7 @@ impl EthCoin {
                 "blocks_left": u64::from(saved_traces.earliest_block),
             }));
 
-            let mut existing_history = match self.load_history_from_file(ctx).wait() {
+            let mut existing_history = match self.load_history_from_file(ctx).compat().await {
                 Ok(history) => history,
                 Err(e) => {
                     ctx.log.log(
@@ -2313,7 +2324,8 @@ impl EthCoin {
                         BlockNumber::Number((saved_traces.earliest_block).into()),
                         None,
                     )
-                    .wait()
+                    .compat()
+                    .await
                 {
                     Ok(traces) => traces,
                     Err(e) => {
@@ -2322,7 +2334,7 @@ impl EthCoin {
                             &[&"tx_history", &self.ticker],
                             &ERRL!("Error {} on eth_traces, retrying", e),
                         );
-                        thread::sleep(Duration::from_secs(10));
+                        Timer::sleep(10.).await;
                         continue;
                     },
                 };
@@ -2335,7 +2347,8 @@ impl EthCoin {
                         BlockNumber::Number((saved_traces.earliest_block).into()),
                         None,
                     )
-                    .wait()
+                    .compat()
+                    .await
                 {
                     Ok(traces) => traces,
                     Err(e) => {
@@ -2344,7 +2357,7 @@ impl EthCoin {
                             &[&"tx_history", &self.ticker],
                             &ERRL!("Error {} on eth_traces, retrying", e),
                         );
-                        thread::sleep(Duration::from_secs(10));
+                        Timer::sleep(10.).await;
                         continue;
                     },
                 };
@@ -2361,6 +2374,7 @@ impl EthCoin {
                 } else {
                     0.into()
                 };
+                //todo
                 self.store_eth_traces(&ctx, &saved_traces);
             }
 
@@ -2373,7 +2387,8 @@ impl EthCoin {
                         BlockNumber::Number(current_block.into()),
                         None,
                     )
-                    .wait()
+                    .compat()
+                    .await
                 {
                     Ok(traces) => traces,
                     Err(e) => {
@@ -2382,7 +2397,7 @@ impl EthCoin {
                             &[&"tx_history", &self.ticker],
                             &ERRL!("Error {} on eth_traces, retrying", e),
                         );
-                        thread::sleep(Duration::from_secs(10));
+                        Timer::sleep(10.).await;
                         continue;
                     },
                 };
@@ -2395,7 +2410,8 @@ impl EthCoin {
                         BlockNumber::Number(current_block.into()),
                         None,
                     )
-                    .wait()
+                    .compat()
+                    .await
                 {
                     Ok(traces) => traces,
                     Err(e) => {
@@ -2404,7 +2420,7 @@ impl EthCoin {
                             &[&"tx_history", &self.ticker],
                             &ERRL!("Error {} on eth_traces, retrying", e),
                         );
-                        thread::sleep(Duration::from_secs(10));
+                        Timer::sleep(10.).await;
                         continue;
                     },
                 };
@@ -2417,6 +2433,7 @@ impl EthCoin {
                 saved_traces.traces.extend(to_traces_after_latest);
                 saved_traces.latest_block = current_block;
 
+                //todo
                 self.store_eth_traces(&ctx, &saved_traces);
             }
             saved_traces.traces.sort_by(|a, b| b.block_number.cmp(&a.block_number));
@@ -2440,7 +2457,8 @@ impl EthCoin {
                     .web3
                     .eth()
                     .transaction(TransactionId::Hash(trace.transaction_hash.unwrap()))
-                    .wait()
+                    .compat()
+                    .await
                 {
                     Ok(tx) => tx,
                     Err(e) => {
@@ -2474,7 +2492,8 @@ impl EthCoin {
                     .web3
                     .eth()
                     .transaction_receipt(trace.transaction_hash.unwrap())
-                    .wait()
+                    .compat()
+                    .await
                 {
                     Ok(r) => r,
                     Err(e) => {
@@ -2528,7 +2547,8 @@ impl EthCoin {
                     .web3
                     .eth()
                     .block(BlockId::Number(BlockNumber::Number(trace.block_number)))
-                    .wait()
+                    .compat()
+                    .await
                 {
                     Ok(b) => b.unwrap(),
                     Err(e) => {
@@ -2568,7 +2588,7 @@ impl EthCoin {
                     }
                 });
 
-                if let Err(e) = self.save_history_to_file(&ctx, existing_history.clone()).wait() {
+                if let Err(e) = self.save_history_to_file(&ctx, existing_history.clone()).compat().await {
                     ctx.log.log(
                         "",
                         &[&"tx_history", &self.ticker],
@@ -2588,9 +2608,9 @@ impl EthCoin {
 
                 success_iteration += 1;
                 *self.history_sync_state.lock().unwrap() = HistorySyncState::Finished;
-                thread::sleep(Duration::from_secs(15));
+                Timer::sleep(15.).await;
             } else {
-                thread::sleep(Duration::from_secs(2));
+                Timer::sleep(2.).await;
             }
         }
     }
@@ -2651,14 +2671,16 @@ impl MmCoin for EthCoin {
         }
     }
 
-    fn process_history_loop(&self, ctx: MmArc) {
-        match &self.coin_type {
-            EthCoinType::Eth => self.process_eth_history(&ctx),
-            EthCoinType::Erc20 {
-                platform: _,
-                token_addr,
-            } => self.process_erc20_history(*token_addr, &ctx),
-        }
+    fn process_history_loop(&self, ctx: MmArc) -> Box<dyn Future<Item = (), Error = ()> + Send> {
+        let coin = self.clone();
+        let fut = async move {
+            match coin.coin_type {
+                EthCoinType::Eth => coin.process_eth_history(&ctx).await,
+                EthCoinType::Erc20 { ref token_addr, .. } => coin.process_erc20_history(*token_addr, &ctx).await,
+            }
+            Ok(())
+        };
+        Box::new(fut.boxed().compat())
     }
 
     fn history_sync_status(&self) -> HistorySyncState { self.history_sync_state.lock().unwrap().clone() }

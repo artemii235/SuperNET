@@ -755,7 +755,7 @@ pub trait MmCoin: SwapOps + MarketCoinOps + fmt::Debug + Send + Sync + 'static {
     fn validate_address(&self, address: &str) -> ValidateAddressResult;
 
     /// Loop collecting coin transaction history and saving it to local DB
-    fn process_history_loop(&self, ctx: MmArc);
+    fn process_history_loop(&self, ctx: MmArc) -> Box<dyn Future<Item = (), Error = ()> + Send>;
 
     /// Path to tx history file
     fn tx_history_path(&self, ctx: &MmArc) -> PathBuf {
@@ -1177,7 +1177,7 @@ pub async fn lp_coininit(ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoin
         try_s!(thread::Builder::new().name(format!("tx_history_{}", ticker)).spawn({
             let coin = coin.clone();
             let ctx = ctx.clone();
-            move || coin.process_history_loop(ctx)
+            move || coin.process_history_loop(ctx).wait()
         }));
     }
     let ctxʹ = ctx.clone();

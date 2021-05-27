@@ -381,7 +381,7 @@ impl MmCoin for SlpToken {
 
     fn validate_address(&self, address: &str) -> ValidateAddressResult { unimplemented!() }
 
-    fn process_history_loop(&self, ctx: MmArc) { unimplemented!() }
+    fn process_history_loop(&self, ctx: MmArc) -> Box<dyn Future<Item = (), Error = ()> + Send> { unimplemented!() }
 
     fn history_sync_status(&self) -> HistorySyncState { unimplemented!() }
 

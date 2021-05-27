@@ -1000,7 +1000,9 @@ impl MmCoin for Qrc20Coin {
 
     fn validate_address(&self, address: &str) -> ValidateAddressResult { utxo_common::validate_address(self, address) }
 
-    fn process_history_loop(&self, ctx: MmArc) { self.history_loop(ctx) }
+    fn process_history_loop(&self, ctx: MmArc) -> Box<dyn Future<Item = (), Error = ()> + Send> {
+        Box::new(self.clone().history_loop(ctx).map(|_| Ok(())).boxed().compat())
+    }
 
     fn history_sync_status(&self) -> HistorySyncState { utxo_common::history_sync_status(&self.utxo) }
 

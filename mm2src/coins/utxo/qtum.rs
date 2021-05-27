@@ -521,7 +521,14 @@ impl MmCoin for QtumCoin {
 
     fn validate_address(&self, address: &str) -> ValidateAddressResult { utxo_common::validate_address(self, address) }
 
-    fn process_history_loop(&self, ctx: MmArc) { utxo_common::process_history_loop(self, ctx) }
+    fn process_history_loop(&self, ctx: MmArc) -> Box<dyn Future<Item = (), Error = ()> + Send> {
+        Box::new(
+            utxo_common::process_history_loop(self.clone(), ctx)
+                .map(|_| Ok(()))
+                .boxed()
+                .compat(),
+        )
+    }
 
     fn history_sync_status(&self) -> HistorySyncState { utxo_common::history_sync_status(&self.utxo_arc) }
 
