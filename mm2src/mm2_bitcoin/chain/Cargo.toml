@@ -9,6 +9,3 @@ bitcrypto = { path = "../crypto" }
 primitives = { path = "../primitives" }
 serialization = { path = "../serialization" }
 serialization_derive = { path = "../serialization_derive" }
-
-[dev-dependencies]
-unwrap = "1.2.1"

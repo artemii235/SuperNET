@@ -5,17 +5,8 @@ use keys::{self, AddressHash, Public};
 use std::{fmt, ops};
 use {Error, Opcode};
 
-/// Maximum number of bytes pushable to the stack
-pub const MAX_SCRIPT_ELEMENT_SIZE: usize = 520;
-
-/// Maximum number of non-push operations per script
-pub const MAX_OPS_PER_SCRIPT: u32 = 201;
-
 /// Maximum number of public keys per multisig
 pub const MAX_PUBKEYS_PER_MULTISIG: usize = 20;
-
-/// Maximum script length in bytes
-pub const MAX_SCRIPT_SIZE: usize = 10000;
 
 /// Classified script type
 #[derive(PartialEq, Debug)]

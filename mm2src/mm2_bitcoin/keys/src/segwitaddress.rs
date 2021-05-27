@@ -138,7 +138,7 @@ impl fmt::Display for SegwitAddress {
         } else {
             fmt as &mut dyn fmt::Write
         };
-        let mut bech32_writer = bech32::Bech32Writer::new(hrp, writer)?;
+        let mut bech32_writer = bech32::Bech32Writer::new(hrp, bech32::Variant::Bech32, writer)?;
         bech32::WriteBase32::write_u5(&mut bech32_writer, self.version)?;
         bech32::ToBase32::write_base32(&self.program, &mut bech32_writer)
     }
@@ -146,11 +146,11 @@ impl fmt::Display for SegwitAddress {
 
 /// Extract the bech32 prefix.
 /// Returns the same slice when no prefix is found.
-fn find_bech32_prefix(bech32: &str) -> &str {
+fn find_bech32_prefix(bech32: &str) -> Option<&str> {
     // Split at the last occurrence of the separator character '1'.
     match bech32.rfind('1') {
-        None => bech32,
-        Some(sep) => bech32.split_at(sep).0,
+        None => None,
+        Some(sep) => Some(bech32.split_at(sep).0),
     }
 }
 
@@ -161,13 +161,14 @@ impl FromStr for SegwitAddress {
         // try bech32
         let network = match find_bech32_prefix(s) {
             // note that upper or lowercase is allowed but NOT mixed case
-            "bc" | "BC" => Network::Bitcoin,
-            "tb" | "TB" => Network::Testnet, // this may also be signet
-            "bcrt" | "BCRT" => Network::Regtest,
+            Some("bc") | Some("BC") => Network::Bitcoin,
+            Some("tb") | Some("TB") => Network::Testnet, // this may also be signet
+            Some("bcrt") | Some("BCRT") => Network::Regtest,
             _ => return Err(Error::InvalidSegwitAddressFormat),
         };
-        // decode as bech32
-        let (_, payload) = bech32::decode(s)?;
+        // decode as bech32, should use Variant if Bech32m is used alongside Bech32
+        // The improved Bech32m variant described in [BIP-0350](https://github.com/bitcoin/bips/blob/master/bip-0350.mediawiki)
+        let (_, payload, _) = bech32::decode(s)?;
         if payload.is_empty() {
             return Err(Error::EmptyBech32Payload);
         }

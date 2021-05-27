@@ -388,12 +388,6 @@ checksum = "904dfeac50f3cdaba28fc6f57fdcddb75f49ed61346676a78c4ffe55877802fd"
 
 [[package]]
 name = "bech32"
-version = "0.7.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2dabbe35f96fb9507f7330793dc490461b2962659ac5d427181e451a623751d1"
-
-[[package]]
-name = "bech32"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c7f7096bc256f5e5cb960f60dfc4f4ef979ca65abe7fb9d5a4f77150d3783d4"
@@ -835,7 +829,6 @@ dependencies = [
  "rustc-hex 2.1.0",
  "serialization",
  "serialization_derive",
- "unwrap",
 ]
 
 [[package]]
@@ -2535,7 +2528,7 @@ name = "keys"
 version = "0.1.0"
 dependencies = [
  "base58",
- "bech32 0.7.3",
+ "bech32",
  "bitcrypto",
  "libsecp256k1 0.2.2",
  "primitives",
@@ -6005,12 +5998,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a156c684c91ea7d62626509bce3cb4e1d9ed5c4d978f7b4352658f96a4c26b4a"
 
 [[package]]
-name = "unwrap"
-version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e33648dd74328e622c7be51f3b40a303c63f93e6fa5f08778b6203a4c25c20f"
-
-[[package]]
 name = "url"
 version = "1.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6468,7 +6455,7 @@ version = "0.5.0"
 source = "git+https://github.com/KomodoPlatform/librustzcash.git#7da40e902463a78c93390686ee34e0379c121b40"
 dependencies = [
  "base64 0.13.0",
- "bech32 0.8.0",
+ "bech32",
  "bls12_381",
  "bs58 0.4.0",
  "ff",
