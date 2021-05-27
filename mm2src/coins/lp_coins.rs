@@ -42,6 +42,7 @@ use common::{block_on, calc_total_pages, now_ms, rpc_err_response, rpc_response,
 use derive_more::Display;
 use futures::compat::Future01CompatExt;
 use futures::lock::{Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard};
+use futures::{FutureExt, TryFutureExt};
 use futures01::Future;
 use gstuff::{slurp, Constructible};
 use http::{Response, StatusCode};
@@ -97,9 +98,7 @@ pub mod test_coin;
 pub use test_coin::TestCoin;
 
 pub mod tx_history_db;
-use crate::tx_history_db::{TxHistoryError, TxHistoryResult};
-use futures::{FutureExt, TryFutureExt};
-use tx_history_db::{TxHistoryDb, TxHistoryOps};
+use tx_history_db::{TxHistoryDb, TxHistoryError, TxHistoryOps, TxHistoryResult};
 
 #[cfg(not(target_arch = "wasm32"))] pub mod z_coin;
 
