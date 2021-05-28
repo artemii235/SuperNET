@@ -577,9 +577,12 @@ pub fn is_witness_commitment_script(script: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{Script, ScriptAddress, ScriptType, MAX_SCRIPT_ELEMENT_SIZE};
+    use super::{Script, ScriptAddress, ScriptType};
     use keys::{Address, Public};
     use {Builder, Error, Opcode};
+
+    /// Maximum number of bytes pushable to the stack
+    const MAX_SCRIPT_ELEMENT_SIZE: usize = 52;
 
     #[test]
     fn test_is_pay_to_script_hash() {
