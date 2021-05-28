@@ -2398,7 +2398,7 @@ mod docker_tests {
 
         log!([block_on(enable_native(&mm_alice, "MYCOIN1", &[]))]);
         log!([block_on(enable_native(&mm_alice, "MYCOIN", &[]))]);
-        log!([block_on(enable_electrum(&mm_alice, "KMD", false, false, &[
+        log!([block_on(enable_electrum(&mm_alice, "KMD", false, &[
             "electrum1.cipig.net:10001",
             "electrum2.cipig.net:10001",
             "electrum3.cipig.net:10001"

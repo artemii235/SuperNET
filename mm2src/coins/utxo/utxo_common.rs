@@ -217,7 +217,13 @@ where
 pub fn display_address(conf: &UtxoCoinConf, address: &Address) -> Result<String, String> {
     match &conf.address_format {
         UtxoAddressFormat::Standard => Ok(address.to_string()),
-        UtxoAddressFormat::Segwit { hrp } => Ok(SegwitAddress::new(&address.hash, hrp.to_string()).to_string()),
+        UtxoAddressFormat::Segwit => {
+            let bech32_hrp = &conf.bech32_hrp;
+            match bech32_hrp {
+                Some(hrp) => Ok(SegwitAddress::new(&address.hash, hrp.clone()).to_string()),
+                None => ERR!("Cannot display segwit address for a coin with no bech32_hrp in config"),
+            }
+        },
 
         UtxoAddressFormat::CashAddress { network } => address
             .to_cashaddress(&network, conf.pub_addr_prefix, conf.p2sh_addr_prefix)
@@ -236,7 +242,7 @@ pub fn address_from_str(conf: &UtxoCoinConf, address: &str) -> Result<Address, S
                 Ok(_) => ERR!("Legacy address format activated for {}, but cashaddress format used instead. Try to call 'convertaddress'", conf.ticker),
                 Err(_) => ERR!("{}", e),
             }),
-        UtxoAddressFormat::Segwit { .. } => ERR!("Segwit address format is not supported in this function. Try SegwitAddress::from_str"),
+        UtxoAddressFormat::Segwit => ERR!("Segwit address format is not supported in this function. Try SegwitAddress::from_str"),
         UtxoAddressFormat::CashAddress { .. } => Address::from_cashaddress(
             &address,
             conf.checksum_type,
@@ -1428,7 +1434,13 @@ where
     let from_address = try_s!(address_from_any_format(&coin.as_ref().conf, from));
     match to_address_format {
         UtxoAddressFormat::Standard => Ok(from_address.to_string()),
-        UtxoAddressFormat::Segwit { hrp } => Ok(SegwitAddress::new(&from_address.hash, hrp).to_string()),
+        UtxoAddressFormat::Segwit => {
+            let bech32_hrp = &coin.as_ref().conf.bech32_hrp;
+            match bech32_hrp {
+                Some(hrp) => Ok(SegwitAddress::new(&from_address.hash, hrp.clone()).to_string()),
+                None => ERR!("Cannot convert to a segwit address for a coin with no bech32_hrp in config"),
+            }
+        },
         UtxoAddressFormat::CashAddress { network } => Ok(try_s!(from_address
             .to_cashaddress(
                 &network,

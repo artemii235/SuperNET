@@ -679,13 +679,7 @@ pub fn register_wasm_log(level: LogLevel) {
 
 /// Asks MM to enable the given currency in electrum mode
 /// fresh list of servers at https://github.com/jl777/coins/blob/master/electrums/.
-pub async fn enable_electrum(
-    mm: &MarketMakerIt,
-    coin: &str,
-    tx_history: bool,
-    full_segwit: bool,
-    urls: &[&str],
-) -> Json {
+pub async fn enable_electrum(mm: &MarketMakerIt, coin: &str, tx_history: bool, urls: &[&str]) -> Json {
     let servers: Vec<_> = urls.iter().map(|url| json!({ "url": url })).collect();
     let electrum = mm
         .rpc(json! ({
@@ -695,7 +689,6 @@ pub async fn enable_electrum(
             "servers": servers,
             "mm2": 1,
             "tx_history": tx_history,
-            "full_segwit": full_segwit,
         }))
         .await
         .unwrap();
