@@ -45,7 +45,7 @@ fn deserialize_field(index: usize, field: &syn::Field) -> quote::Tokens {
         None => index.to_string(),
     };
 
-    let id = syn::Ident::new(ident.to_string());
+    let id = syn::Ident::new(ident);
 
     match field.ty {
         syn::Ty::Path(_, ref path) => {
