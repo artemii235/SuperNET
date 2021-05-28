@@ -920,10 +920,10 @@ impl CoinsContext {
     }
 
     async fn tx_history_db(&self) -> TxHistoryResult<TxHistoryDbLocked<'_>> {
-        /// # Safe
+        /// # Panics
         ///
-        /// Make sure the inner value of the `guard` is `Some`, i.e. `guard.is_some()`.
-        unsafe fn unwrap_tx_history_db(guard: AsyncMutexGuard<'_, Option<TxHistoryDb>>) -> TxHistoryDbLocked<'_> {
+        /// This function will `panic!()` if the inner value of the `guard` is `None`.
+        fn unwrap_tx_history_db(guard: AsyncMutexGuard<'_, Option<TxHistoryDb>>) -> TxHistoryDbLocked<'_> {
             AsyncMutexGuard::map(guard, |wrapped_db| {
                 wrapped_db
                     .as_mut()
@@ -933,12 +933,12 @@ impl CoinsContext {
 
         let mut tx_history_db = self.tx_history_db.lock().await;
         if tx_history_db.is_some() {
-            return unsafe { Ok(unwrap_tx_history_db(tx_history_db)) };
+            return Ok(unwrap_tx_history_db(tx_history_db));
         }
 
         let db = TxHistoryDb::init_with_fs_path(self.tx_history_path.clone()).await?;
         *tx_history_db = Some(db);
-        unsafe { Ok(unwrap_tx_history_db(tx_history_db)) }
+        Ok(unwrap_tx_history_db(tx_history_db))
     }
 }
 
