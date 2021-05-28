@@ -67,6 +67,8 @@ async fn enable_coins_eth_electrum(
     );
     replies.insert("ETH", enable_native(mm, "ETH", eth_urls).await);
     replies.insert("JST", enable_native(mm, "JST", eth_urls).await);
+    #[cfg(feature = "zhtlc")]
+    replies.insert("ZOMBIE", enable_native(mm, "ZOMBIE", eth_urls).await);
     replies
 }
 
@@ -973,7 +975,7 @@ fn test_rpc_password_from_json_no_userpass() {
 
 /// Trading test using coins with remote RPC (Electrum, ETH nodes), it needs only ENV variables to be set, coins daemons are not required.
 /// Trades few pairs concurrently to speed up the process and also act like "load" test
-async fn trade_base_rel_electrum(pairs: Vec<(&'static str, &'static str)>) {
+async fn trade_base_rel_electrum(pairs: &[(&'static str, &'static str)]) {
     let bob_passphrase = get_passphrase(&".env.seed", "BOB_PASSPHRASE").unwrap();
     let alice_passphrase = get_passphrase(&".env.client", "ALICE_PASSPHRASE").unwrap();
 
@@ -981,6 +983,7 @@ async fn trade_base_rel_electrum(pairs: Vec<(&'static str, &'static str)>) {
         {"coin":"RICK","asset":"RICK","required_confirmations":0,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
         {"coin":"MORTY","asset":"MORTY","required_confirmations":0,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
         {"coin":"ETH","name":"ethereum","protocol":{"type":"ETH"}},
+        {"coin":"ZOMBIE","asset":"ZOMBIE","fname":"ZOMBIE (TESTCOIN)","txversion":4,"overwintered":1,"mm2":1,"protocol":{"type":"ZHTLC"}},
         {"coin":"JST","name":"jst","protocol":{"type":"ERC20","protocol_data":{"platform":"ETH","contract_address":"0x2b294F029Fde858b2c62184e8390591755521d8E"}}}
     ]);
 
@@ -1139,12 +1142,12 @@ async fn trade_base_rel_electrum(pairs: Vec<(&'static str, &'static str)>) {
 
     for uuid in uuids.iter() {
         mm_bob
-            .wait_for_log(600., |log| log.contains(&format!("[swap uuid={}] Finished", uuid)))
+            .wait_for_log(300., |log| log.contains(&format!("[swap uuid={}] Finished", uuid)))
             .await
             .unwrap();
 
         mm_alice
-            .wait_for_log(600., |log| log.contains(&format!("[swap uuid={}] Finished", uuid)))
+            .wait_for_log(300., |log| log.contains(&format!("[swap uuid={}] Finished", uuid)))
             .await
             .unwrap();
 
@@ -1217,7 +1220,14 @@ async fn trade_base_rel_electrum(pairs: Vec<(&'static str, &'static str)>) {
 
 #[test]
 #[cfg(not(target_arch = "wasm32"))]
-fn trade_test_electrum_and_eth_coins() { block_on(trade_base_rel_electrum(vec![("ETH", "JST")])); }
+fn trade_test_electrum_and_eth_coins() {
+    let pairs: &[_] = if cfg!(feature = "zhtlc") {
+        &[("ETH", "JST"), ("RICK", "ZOMBIE")]
+    } else {
+        &[("ETH", "JST")]
+    };
+    block_on(trade_base_rel_electrum(pairs));
+}
 
 #[cfg(target_arch = "wasm32")]
 #[no_mangle]
@@ -1225,8 +1235,8 @@ pub extern "C" fn trade_test_electrum_and_eth_coins(cb_id: i32) {
     use std::ptr::null;
 
     common::executor::spawn(async move {
-        let pairs = vec![("ETH", "JST")];
-        trade_base_rel_electrum(pairs).await;
+        let pairs = [("ETH", "JST")];
+        trade_base_rel_electrum(&pairs).await;
         call_back(cb_id, null(), 0)
     })
 }

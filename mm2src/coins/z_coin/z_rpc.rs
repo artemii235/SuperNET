@@ -29,17 +29,23 @@ pub struct ZOperationHex {
 #[serde(tag = "status")]
 #[serde(rename_all = "lowercase")]
 pub enum ZOperationStatus<T> {
-    Success {
+    Queued {
         id: String,
         creation_time: u64,
-        result: T,
-        execution_secs: f64,
         method: String,
         params: Json,
     },
     Executing {
         id: String,
         creation_time: u64,
+        method: String,
+        params: Json,
+    },
+    Success {
+        id: String,
+        creation_time: u64,
+        result: T,
+        execution_secs: f64,
         method: String,
         params: Json,
     },

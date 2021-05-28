@@ -215,13 +215,13 @@ pub trait UtxoRpcClientOps: fmt::Debug + Send + Sync + 'static {
 
     fn send_transaction(&self, tx: &UtxoTx) -> Box<dyn Future<Item = H256Json, Error = String> + Send + 'static>;
 
-    fn send_raw_transaction(&self, tx: BytesJson) -> RpcRes<H256Json>;
+    fn send_raw_transaction(&self, tx: BytesJson) -> UtxoRpcFut<H256Json>;
 
     fn get_transaction_bytes(&self, txid: H256Json) -> UtxoRpcFut<BytesJson>;
 
     fn get_verbose_transaction(&self, txid: H256Json) -> RpcRes<RpcTransaction>;
 
-    fn get_block_count(&self) -> RpcRes<u64>;
+    fn get_block_count(&self) -> UtxoRpcFut<u64>;
 
     fn display_balance(&self, address: Address, decimals: u8) -> RpcRes<BigDecimal>;
 
@@ -569,7 +569,9 @@ impl UtxoRpcClientOps for NativeClient {
     }
 
     /// https://developer.bitcoin.org/reference/rpc/sendrawtransaction
-    fn send_raw_transaction(&self, tx: BytesJson) -> RpcRes<H256Json> { rpc_func!(self, "sendrawtransaction", tx) }
+    fn send_raw_transaction(&self, tx: BytesJson) -> UtxoRpcFut<H256Json> {
+        Box::new(rpc_func!(self, "sendrawtransaction", tx).map_to_mm_fut(UtxoRpcError::from))
+    }
 
     fn get_transaction_bytes(&self, txid: H256Json) -> UtxoRpcFut<BytesJson> {
         Box::new(self.get_raw_transaction_bytes(txid).map_to_mm_fut(UtxoRpcError::from))
@@ -579,7 +581,9 @@ impl UtxoRpcClientOps for NativeClient {
         self.get_raw_transaction_verbose(txid)
     }
 
-    fn get_block_count(&self) -> RpcRes<u64> { self.0.get_block_count() }
+    fn get_block_count(&self) -> UtxoRpcFut<u64> {
+        Box::new(self.0.get_block_count().map_to_mm_fut(UtxoRpcError::from))
+    }
 
     fn display_balance(&self, address: Address, _decimals: u8) -> RpcRes<BigDecimal> {
         Box::new(
@@ -1470,7 +1474,12 @@ impl UtxoRpcClientOps for ElectrumClient {
         Box::new(self.blockchain_transaction_broadcast(bytes).map_err(|e| ERRL!("{}", e)))
     }
 
-    fn send_raw_transaction(&self, tx: BytesJson) -> RpcRes<H256Json> { self.blockchain_transaction_broadcast(tx) }
+    fn send_raw_transaction(&self, tx: BytesJson) -> UtxoRpcFut<H256Json> {
+        Box::new(
+            self.blockchain_transaction_broadcast(tx)
+                .map_to_mm_fut(UtxoRpcError::from),
+        )
+    }
 
     /// https://electrumx.readthedocs.io/en/latest/protocol-methods.html#blockchain-transaction-get
     /// returns transaction bytes by default
@@ -1486,7 +1495,13 @@ impl UtxoRpcClientOps for ElectrumClient {
         rpc_func!(self, "blockchain.transaction.get", txid, verbose)
     }
 
-    fn get_block_count(&self) -> RpcRes<u64> { Box::new(self.blockchain_headers_subscribe().map(|r| r.block_height())) }
+    fn get_block_count(&self) -> UtxoRpcFut<u64> {
+        Box::new(
+            self.blockchain_headers_subscribe()
+                .map(|r| r.block_height())
+                .map_to_mm_fut(UtxoRpcError::from),
+        )
+    }
 
     fn display_balance(&self, address: Address, decimals: u8) -> RpcRes<BigDecimal> {
         let hash = electrum_script_hash(&Builder::build_p2pkh(&address.hash));
