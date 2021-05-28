@@ -38,13 +38,12 @@ use common::mm_ctx::{from_ctx, MmArc};
 use common::mm_error::prelude::*;
 use common::mm_metrics::MetricsWeak;
 use common::mm_number::MmNumber;
-use common::{block_on, calc_total_pages, now_ms, rpc_err_response, rpc_response, HttpStatusCode, HyRes};
+use common::{calc_total_pages, now_ms, HttpStatusCode};
 use derive_more::Display;
 use futures::compat::Future01CompatExt;
 use futures::lock::{MappedMutexGuard as AsyncMappedMutexGuard, Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard};
 use futures::{FutureExt, TryFutureExt};
 use futures01::Future;
-use gstuff::slurp;
 use http::{Response, StatusCode};
 use rpc::v1::types::Bytes as BytesJson;
 use serde::{Deserialize, Deserializer};
@@ -756,17 +755,6 @@ pub trait MmCoin: SwapOps + MarketCoinOps + fmt::Debug + Send + Sync + 'static {
     /// Loop collecting coin transaction history and saving it to local DB
     fn process_history_loop(&self, ctx: MmArc) -> Box<dyn Future<Item = (), Error = ()> + Send>;
 
-    /// Path to tx history file
-    fn tx_history_path(&self, ctx: &MmArc) -> PathBuf {
-        let my_address = self.my_address().unwrap_or_default();
-        // BCH cash address format has colon after prefix, e.g. bitcoincash:
-        // Colon can't be used in file names on Windows so it should be escaped
-        let my_address = my_address.replace(":", "_");
-        ctx.dbdir()
-            .join("TRANSACTIONS")
-            .join(format!("{}_{}.json", self.ticker(), my_address))
-    }
-
     /// Loads existing tx history from file, returns empty vector if file is not found
     /// Cleans the existing file if deserialization fails
     fn load_history_from_file(&self, ctx: &MmArc) -> TxHistoryFut<Vec<TransactionDetails>> {
@@ -1328,75 +1316,64 @@ struct MyTxHistoryRequest {
 /// Returns the transaction history of selected coin. Returns no more than `limit` records (default: 10).
 /// Skips the first records up to from_id (skipping the from_id too).
 /// Transactions are sorted by number of confirmations in ascending order.
-pub fn my_tx_history(ctx: MmArc, req: Json) -> HyRes {
-    let request: MyTxHistoryRequest = try_h!(json::from_value(req));
-    // Should remove `block_on` when my_tx_history is async.
-    let coin = match block_on(lp_coinfind(&ctx, &request.coin)) {
+pub async fn my_tx_history(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
+    let request: MyTxHistoryRequest = try_s!(json::from_value(req));
+    let coin = match lp_coinfind(&ctx, &request.coin).await {
         Ok(Some(t)) => t,
-        Ok(None) => return rpc_err_response(500, &format!("No such coin: {}", request.coin)),
-        Err(err) => return rpc_err_response(500, &format!("!lp_coinfind({}): {}", request.coin, err)),
+        Ok(None) => return ERR!("No such coin: {}", request.coin),
+        Err(err) => return ERR!("!lp_coinfind({}): {}", request.coin, err),
     };
-    let file_path = coin.tx_history_path(&ctx);
-    let content = slurp(&file_path);
-    let history: Vec<TransactionDetails> = match json::from_slice(&content) {
-        Ok(h) => h,
-        Err(e) => {
-            if !content.is_empty() {
-                log!("Error " (e) " on attempt to deserialize file " (file_path.display()) " content as Vec<TransactionDetails>");
-            }
-            vec![]
-        },
-    };
+
+    let history = try_s!(coin.load_history_from_file(&ctx).compat().await);
     let total_records = history.len();
     let limit = if request.max { total_records } else { request.limit };
 
-    Box::new(coin.current_block().and_then(move |block_number| {
-        let skip = match &request.from_id {
-            Some(id) => {
-                try_h!(history
-                    .iter()
-                    .position(|item| item.internal_id == *id)
-                    .ok_or(format!("from_id {:02x} is not found", id)))
-                    + 1
-            },
-            None => match request.page_number {
-                Some(page_n) => (page_n.get() - 1) * request.limit,
-                None => 0,
-            },
-        };
-        let history = history.into_iter().skip(skip).take(limit);
-        let history: Vec<Json> = history
-            .map(|item| {
-                let tx_block = item.block_height;
-                let mut json = json::to_value(item).unwrap();
-                json["confirmations"] = if tx_block == 0 {
-                    Json::from(0)
-                } else if block_number >= tx_block {
-                    Json::from((block_number - tx_block) + 1)
-                } else {
-                    Json::from(0)
-                };
-                json
-            })
-            .collect();
-        rpc_response(
-            200,
-            json!({
-                "result": {
-                    "transactions": history,
-                    "limit": limit,
-                    "skipped": skip,
-                    "from_id": request.from_id,
-                    "total": total_records,
-                    "current_block": block_number,
-                    "sync_status": coin.history_sync_status(),
-                    "page_number": request.page_number,
-                    "total_pages": calc_total_pages(total_records, request.limit),
-                }
-            })
-            .to_string(),
-        )
-    }))
+    let block_number = try_s!(coin.current_block().compat().await);
+    let skip = match &request.from_id {
+        Some(id) => {
+            try_s!(history
+                .iter()
+                .position(|item| item.internal_id == *id)
+                .ok_or(format!("from_id {:02x} is not found", id)))
+                + 1
+        },
+        None => match request.page_number {
+            Some(page_n) => (page_n.get() - 1) * request.limit,
+            None => 0,
+        },
+    };
+
+    let history = history.into_iter().skip(skip).take(limit);
+    let history: Vec<Json> = history
+        .map(|item| {
+            let tx_block = item.block_height;
+            let mut json = json::to_value(item).unwrap();
+            json["confirmations"] = if tx_block == 0 {
+                Json::from(0)
+            } else if block_number >= tx_block {
+                Json::from((block_number - tx_block) + 1)
+            } else {
+                Json::from(0)
+            };
+            json
+        })
+        .collect();
+
+    let response = json!({
+        "result": {
+            "transactions": history,
+            "limit": limit,
+            "skipped": skip,
+            "from_id": request.from_id,
+            "total": total_records,
+            "current_block": block_number,
+            "sync_status": coin.history_sync_status(),
+            "page_number": request.page_number,
+            "total_pages": calc_total_pages(total_records, request.limit),
+        }
+    });
+    let body = try_s!(json::to_vec(&response));
+    Ok(try_s!(Response::builder().body(body)))
 }
 
 pub async fn get_trade_fee(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {

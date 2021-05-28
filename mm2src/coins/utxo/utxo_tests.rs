@@ -1503,19 +1503,6 @@ fn test_qtum_my_balance() {
     assert_eq!(unspendable, expected_unspendable);
 }
 
-#[test]
-#[cfg(not(target_arch = "wasm32"))]
-fn test_tx_history_path_colon_should_be_escaped_for_cash_address() {
-    let mut coin = utxo_coin_fields_for_test(native_client_for_test().into(), None);
-    coin.conf.address_format = UtxoAddressFormat::CashAddress {
-        network: "bitcoincash".into(),
-    };
-    let coin = utxo_coin_from_fields(coin);
-    let ctx = MmCtxBuilder::new().into_mm_arc();
-    let path = coin.tx_history_path(&ctx);
-    assert!(!path.display().to_string().contains(":"));
-}
-
 fn test_ordered_mature_unspents_from_cache_impl(
     unspent_height: Option<u64>,
     cached_height: Option<u64>,

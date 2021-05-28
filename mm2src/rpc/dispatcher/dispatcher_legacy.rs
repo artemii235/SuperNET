@@ -102,7 +102,7 @@ pub fn dispatcher(req: Json, ctx: MmArc) -> DispatcherRes {
         "my_orders" => hyres(my_orders(ctx)),
         "my_recent_swaps" => my_recent_swaps(ctx, req),
         "my_swap_status" => my_swap_status(ctx, req),
-        "my_tx_history" => my_tx_history(ctx, req),
+        "my_tx_history" => hyres(my_tx_history(ctx, req)),
         "orders_history_by_filter" => hyres(orders_history_by_filter(ctx, req)),
         "order_status" => hyres(order_status(ctx, req)),
         "orderbook" => hyres(orderbook_rpc(ctx, req)),
