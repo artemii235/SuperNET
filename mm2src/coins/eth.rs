@@ -34,7 +34,6 @@ use futures::compat::Future01CompatExt;
 use futures::future::{join_all, select, Either, FutureExt, TryFutureExt};
 use futures01::future::Either as Either01;
 use futures01::Future;
-use gstuff::slurp;
 use http::StatusCode;
 #[cfg(test)] use mocktopus::macros::*;
 use rand::seq::SliceRandom;
@@ -315,6 +314,7 @@ impl EthCoinImpl {
         Box::new(self.web3.trace().filter(filter.build()).map_err(|e| ERRL!("{}", e)))
     }
 
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     fn eth_traces_path(&self, ctx: &MmArc) -> PathBuf {
         ctx.dbdir()
             .join("TRANSACTIONS")
@@ -322,8 +322,9 @@ impl EthCoinImpl {
     }
 
     /// Load saved ETH traces from local DB
+    #[cfg(not(target_arch = "wasm32"))]
     fn load_saved_traces(&self, ctx: &MmArc) -> Option<SavedTraces> {
-        let content = slurp(&self.eth_traces_path(ctx));
+        let content = gstuff::slurp(&self.eth_traces_path(ctx));
         if content.is_empty() {
             None
         } else {
@@ -334,8 +335,15 @@ impl EthCoinImpl {
         }
     }
 
+    /// Load saved ETH traces from local DB
+    #[cfg(target_arch = "wasm32")]
+    fn load_saved_traces(&self, _ctx: &MmArc) -> Option<SavedTraces> {
+        common::panic_w("'load_saved_traces' is not implemented in WASM");
+        unreachable!()
+    }
+
     /// Store ETH traces to local DB
-    /// todo
+    #[cfg(not(target_arch = "wasm32"))]
     fn store_eth_traces(&self, ctx: &MmArc, traces: &SavedTraces) {
         let content = json::to_vec(traces).unwrap();
         let tmp_file = format!("{}.tmp", self.eth_traces_path(&ctx).display());
@@ -343,6 +351,14 @@ impl EthCoinImpl {
         std::fs::rename(tmp_file, self.eth_traces_path(&ctx)).unwrap();
     }
 
+    /// Store ETH traces to local DB
+    #[cfg(target_arch = "wasm32")]
+    fn store_eth_traces(&self, _ctx: &MmArc, _traces: &SavedTraces) {
+        common::panic_w("'store_eth_traces' is not implemented in WASM");
+        unreachable!()
+    }
+
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     fn erc20_events_path(&self, ctx: &MmArc) -> PathBuf {
         ctx.dbdir()
             .join("TRANSACTIONS")
@@ -350,6 +366,7 @@ impl EthCoinImpl {
     }
 
     /// Store ERC20 events to local DB
+    #[cfg(not(target_arch = "wasm32"))]
     fn store_erc20_events(&self, ctx: &MmArc, events: &SavedErc20Events) {
         let content = json::to_vec(events).unwrap();
         let tmp_file = format!("{}.tmp", self.erc20_events_path(&ctx).display());
@@ -357,10 +374,17 @@ impl EthCoinImpl {
         std::fs::rename(tmp_file, self.erc20_events_path(&ctx)).unwrap();
     }
 
+    /// Store ERC20 events to local DB
+    #[cfg(target_arch = "wasm32")]
+    fn store_erc20_events(&self, _ctx: &MmArc, _events: &SavedErc20Events) {
+        common::panic_w("'store_erc20_events' is not implemented in WASM");
+        unreachable!()
+    }
+
     /// Load saved ERC20 events from local DB
-    /// todo
+    #[cfg(not(target_arch = "wasm32"))]
     fn load_saved_erc20_events(&self, ctx: &MmArc) -> Option<SavedErc20Events> {
-        let content = slurp(&self.erc20_events_path(ctx));
+        let content = gstuff::slurp(&self.erc20_events_path(ctx));
         if content.is_empty() {
             None
         } else {
@@ -369,6 +393,13 @@ impl EthCoinImpl {
                 Err(_) => None,
             }
         }
+    }
+
+    /// Load saved ERC20 events from local DB
+    #[cfg(target_arch = "wasm32")]
+    fn load_saved_erc20_events(&self, _ctx: &MmArc) -> Option<SavedErc20Events> {
+        common::panic_w("'load_saved_erc20_events' is not implemented in WASM");
+        unreachable!()
     }
 
     /// The id used to differentiate payments on Etomic swap smart contract
@@ -1903,7 +1934,6 @@ impl EthCoin {
                 },
             };
 
-            //todo
             let mut saved_events = match self.load_saved_erc20_events(&ctx) {
                 Some(events) => events,
                 None => SavedErc20Events {
@@ -1985,7 +2015,6 @@ impl EthCoin {
                 } else {
                     0.into()
                 };
-                //todo
                 self.store_erc20_events(&ctx, &saved_events);
             }
 
@@ -2045,7 +2074,6 @@ impl EthCoin {
                 saved_events.events.extend(from_events_after_latest);
                 saved_events.events.extend(to_events_after_latest);
                 saved_events.latest_block = current_block;
-                //todo
                 self.store_erc20_events(&ctx, &saved_events);
             }
 
@@ -2283,7 +2311,6 @@ impl EthCoin {
                 },
             };
 
-            //todo
             let mut saved_traces = match self.load_saved_traces(&ctx) {
                 Some(traces) => traces,
                 None => SavedTraces {
@@ -2376,7 +2403,6 @@ impl EthCoin {
                 } else {
                     0.into()
                 };
-                //todo
                 self.store_eth_traces(&ctx, &saved_traces);
             }
 
@@ -2435,7 +2461,6 @@ impl EthCoin {
                 saved_traces.traces.extend(to_traces_after_latest);
                 saved_traces.latest_block = current_block;
 
-                //todo
                 self.store_eth_traces(&ctx, &saved_traces);
             }
             saved_traces.traces.sort_by(|a, b| b.block_number.cmp(&a.block_number));

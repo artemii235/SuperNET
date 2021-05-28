@@ -640,7 +640,6 @@ impl ClosedState {
 fn decode_incoming(incoming: MessageEvent) -> Result<Json, String> {
     match incoming.data().dyn_into::<js_sys::JsString>() {
         Ok(txt) => {
-            // todo measure
             let txt = String::from(txt);
             json::from_str(&txt).map_err(|e| format!("Error deserializing an incoming payload: {}", e))
         },

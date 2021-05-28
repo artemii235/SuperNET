@@ -194,7 +194,7 @@ impl Qrc20Coin {
                     &[&"tx_history", &self.as_ref().conf.ticker],
                     &ERRL!("Error {} on 'save_history_to_file', stop the history loop", e),
                 );
-                break;
+                return;
             }
         }
     }
@@ -428,7 +428,7 @@ impl Qrc20Coin {
             }
         }
 
-        // `qtum_details` will be initialized once
+        // `qtum_details` will be initialized once if it's required
         let mut qtum_details = None;
 
         let mut updated = false;
