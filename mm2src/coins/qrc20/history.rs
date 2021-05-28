@@ -332,19 +332,28 @@ impl Qrc20Coin {
         let history_res = block_on(TransferHistoryBuilder::new(self.clone()).build_tx_idents());
         let history = match history_res {
             Ok(h) => h,
-            Err(e) => match &e.error {
-                JsonRpcErrorType::Transport(e) | JsonRpcErrorType::Parse(_, e) => {
+            Err(e) => match e.into_inner() {
+                UtxoRpcError::Transport(json_rpc_e) | UtxoRpcError::ResponseParseError(json_rpc_e) => {
+                    match json_rpc_e.error {
+                        JsonRpcErrorType::Response(_addr, err) => {
+                            return if HISTORY_TOO_LARGE_ERROR.eq(&err) {
+                                RequestTxHistoryResult::HistoryTooLarge
+                            } else {
+                                RequestTxHistoryResult::Retry {
+                                    error: ERRL!("Error {:?} on blockchain_contract_event_get_history", err),
+                                }
+                            }
+                        },
+                        JsonRpcErrorType::Transport(err) | JsonRpcErrorType::Parse(_, err) => {
+                            return RequestTxHistoryResult::Retry {
+                                error: ERRL!("Error {} on blockchain_contract_event_get_history", err),
+                            };
+                        },
+                    }
+                },
+                UtxoRpcError::InvalidResponse(e) | UtxoRpcError::Internal(e) => {
                     return RequestTxHistoryResult::Retry {
                         error: ERRL!("Error {} on blockchain_contract_event_get_history", e),
-                    };
-                },
-                JsonRpcErrorType::Response(_addr, err) => {
-                    return if HISTORY_TOO_LARGE_ERROR.eq(err) {
-                        RequestTxHistoryResult::HistoryTooLarge
-                    } else {
-                        RequestTxHistoryResult::Retry {
-                            error: ERRL!("Error {:?} on blockchain_contract_event_get_history", e),
-                        }
                     }
                 },
             },
@@ -574,32 +583,38 @@ impl TransferHistoryBuilder {
         self
     }
 
-    pub async fn build(self) -> Result<Vec<TxReceipt>, JsonRpcError> {
+    pub async fn build(self) -> Result<Vec<TxReceipt>, MmError<UtxoRpcError>> {
         self.coin.utxo.rpc_client.build(self.params).await
     }
 
-    pub async fn build_tx_idents(self) -> Result<Vec<(H256Json, u64)>, JsonRpcError> {
+    pub async fn build_tx_idents(self) -> Result<Vec<(H256Json, u64)>, MmError<UtxoRpcError>> {
         self.coin.utxo.rpc_client.build_tx_idents(self.params).await
     }
 }
 
 #[async_trait]
 trait BuildTransferHistory {
-    async fn build(&self, params: TransferHistoryParams) -> Result<Vec<TxReceipt>, JsonRpcError>;
+    async fn build(&self, params: TransferHistoryParams) -> Result<Vec<TxReceipt>, MmError<UtxoRpcError>>;
 
-    async fn build_tx_idents(&self, params: TransferHistoryParams) -> Result<Vec<(H256Json, u64)>, JsonRpcError>;
+    async fn build_tx_idents(
+        &self,
+        params: TransferHistoryParams,
+    ) -> Result<Vec<(H256Json, u64)>, MmError<UtxoRpcError>>;
 }
 
 #[async_trait]
 impl BuildTransferHistory for UtxoRpcClientEnum {
-    async fn build(&self, params: TransferHistoryParams) -> Result<Vec<TxReceipt>, JsonRpcError> {
+    async fn build(&self, params: TransferHistoryParams) -> Result<Vec<TxReceipt>, MmError<UtxoRpcError>> {
         match self {
             UtxoRpcClientEnum::Native(native) => native.build(params).await,
             UtxoRpcClientEnum::Electrum(electrum) => electrum.build(params).await,
         }
     }
 
-    async fn build_tx_idents(&self, params: TransferHistoryParams) -> Result<Vec<(H256Json, u64)>, JsonRpcError> {
+    async fn build_tx_idents(
+        &self,
+        params: TransferHistoryParams,
+    ) -> Result<Vec<(H256Json, u64)>, MmError<UtxoRpcError>> {
         match self {
             UtxoRpcClientEnum::Native(native) => native.build_tx_idents(params).await,
             UtxoRpcClientEnum::Electrum(electrum) => electrum.build_tx_idents(params).await,
@@ -609,7 +624,7 @@ impl BuildTransferHistory for UtxoRpcClientEnum {
 
 #[async_trait]
 impl BuildTransferHistory for ElectrumClient {
-    async fn build(&self, params: TransferHistoryParams) -> Result<Vec<TxReceipt>, JsonRpcError> {
+    async fn build(&self, params: TransferHistoryParams) -> Result<Vec<TxReceipt>, MmError<UtxoRpcError>> {
         let tx_idents = self.build_tx_idents(params).await?;
 
         let mut receipts = Vec::new();
@@ -623,7 +638,10 @@ impl BuildTransferHistory for ElectrumClient {
         Ok(receipts)
     }
 
-    async fn build_tx_idents(&self, params: TransferHistoryParams) -> Result<Vec<(H256Json, u64)>, JsonRpcError> {
+    async fn build_tx_idents(
+        &self,
+        params: TransferHistoryParams,
+    ) -> Result<Vec<(H256Json, u64)>, MmError<UtxoRpcError>> {
         let address = contract_addr_into_rpc_format(&params.address);
         let token_address = contract_addr_into_rpc_format(&params.token_address);
         let history = self
@@ -642,7 +660,7 @@ impl BuildTransferHistory for ElectrumClient {
 
 #[async_trait]
 impl BuildTransferHistory for NativeClient {
-    async fn build(&self, params: TransferHistoryParams) -> Result<Vec<TxReceipt>, JsonRpcError> {
+    async fn build(&self, params: TransferHistoryParams) -> Result<Vec<TxReceipt>, MmError<UtxoRpcError>> {
         const SEARCH_LOGS_STEP: u64 = 100;
 
         let token_address = contract_addr_into_rpc_format(&params.token_address);
@@ -680,7 +698,10 @@ impl BuildTransferHistory for NativeClient {
         Ok(result)
     }
 
-    async fn build_tx_idents(&self, params: TransferHistoryParams) -> Result<Vec<(H256Json, u64)>, JsonRpcError> {
+    async fn build_tx_idents(
+        &self,
+        params: TransferHistoryParams,
+    ) -> Result<Vec<(H256Json, u64)>, MmError<UtxoRpcError>> {
         let receipts = self.build(params).await?;
         Ok(receipts
             .into_iter()

@@ -257,6 +257,14 @@ pub trait FutureTimerExt: Future03 + Sized {
             duration,
         }
     }
+
+    fn timeout_secs(self, secs: f64) -> Timeout<Self> {
+        Timeout {
+            future: self,
+            timer: Timer::sleep(secs),
+            duration: Duration::from_secs_f64(secs),
+        }
+    }
 }
 
 impl<F: Future03 + Sized> FutureTimerExt for F {}
