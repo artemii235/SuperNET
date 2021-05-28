@@ -2545,7 +2545,7 @@ impl EthCoin {
         let mut from_block = search_from_block;
 
         loop {
-            let to_block = current_block.max(from_block + 1000);
+            let to_block = current_block.min(from_block + 1000);
 
             let spend_events = try_s!(self.spend_events(swap_contract_address, from_block, to_block).wait());
             let found = spend_events.iter().find(|event| &event.data.0[..32] == id.as_slice());

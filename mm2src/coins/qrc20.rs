@@ -505,7 +505,7 @@ impl UtxoCommonOps for Qrc20Coin {
         utxo_common::calc_interest_if_required(self, unsigned, data, my_script_pub).await
     }
 
-    fn p2sh_spending_tx(
+    async fn p2sh_spending_tx(
         &self,
         prev_transaction: UtxoTx,
         redeem_script: ScriptBytes,
@@ -523,6 +523,7 @@ impl UtxoCommonOps for Qrc20Coin {
             sequence,
             lock_time,
         )
+        .await
     }
 
     async fn ordered_mature_unspents<'a>(
@@ -566,8 +567,8 @@ impl UtxoCommonOps for Qrc20Coin {
         utxo_common::increase_dynamic_fee_by_stage(self, dynamic_fee, stage)
     }
 
-    fn p2sh_tx_locktime(&self, htlc_locktime: u32) -> u32 {
-        utxo_common::p2sh_tx_locktime(&self.utxo.conf.ticker, htlc_locktime)
+    async fn p2sh_tx_locktime(&self, htlc_locktime: u32) -> Result<u32, MmError<UtxoRpcError>> {
+        utxo_common::p2sh_tx_locktime(self, &self.utxo.conf.ticker, htlc_locktime).await
     }
 }
 

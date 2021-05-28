@@ -532,7 +532,7 @@ where
     Ok((unsigned, data))
 }
 
-pub fn p2sh_spending_tx<T>(
+pub async fn p2sh_spending_tx<T>(
     coin: &T,
     prev_transaction: UtxoTx,
     redeem_script: Bytes,
@@ -544,7 +544,7 @@ pub fn p2sh_spending_tx<T>(
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps,
 {
-    let lock_time = coin.p2sh_tx_locktime(lock_time);
+    let lock_time = try_s!(coin.p2sh_tx_locktime(lock_time).await);
     let n_time = if coin.as_ref().conf.is_pos {
         Some((now_ms() / 1000) as u32)
     } else {
@@ -728,14 +728,17 @@ where
             value: prev_tx.outputs[0].value - fee,
             script_pubkey: Builder::build_p2pkh(&coin.as_ref().key_pair.public().address_hash()).to_bytes(),
         };
-        let transaction = try_s!(coin.p2sh_spending_tx(
-            prev_tx,
-            redeem_script.into(),
-            vec![output],
-            script_data,
-            SEQUENCE_FINAL,
-            time_lock
-        ));
+        let transaction = try_s!(
+            coin.p2sh_spending_tx(
+                prev_tx,
+                redeem_script.into(),
+                vec![output],
+                script_data,
+                SEQUENCE_FINAL,
+                time_lock
+            )
+            .await
+        );
         let tx_fut = coin.as_ref().rpc_client.send_transaction(&transaction).compat();
         try_s!(tx_fut.await);
         Ok(transaction.into())
@@ -771,14 +774,17 @@ where
             value: prev_tx.outputs[0].value - fee,
             script_pubkey: Builder::build_p2pkh(&coin.as_ref().key_pair.public().address_hash()).to_bytes(),
         };
-        let transaction = try_s!(coin.p2sh_spending_tx(
-            prev_tx,
-            redeem_script.into(),
-            vec![output],
-            script_data,
-            SEQUENCE_FINAL,
-            time_lock
-        ));
+        let transaction = try_s!(
+            coin.p2sh_spending_tx(
+                prev_tx,
+                redeem_script.into(),
+                vec![output],
+                script_data,
+                SEQUENCE_FINAL,
+                time_lock
+            )
+            .await
+        );
         let tx_fut = coin.as_ref().rpc_client.send_transaction(&transaction).compat();
         try_s!(tx_fut.await);
         Ok(transaction.into())
@@ -811,14 +817,17 @@ where
             value: prev_tx.outputs[0].value - fee,
             script_pubkey: Builder::build_p2pkh(&coin.as_ref().key_pair.public().address_hash()).to_bytes(),
         };
-        let transaction = try_s!(coin.p2sh_spending_tx(
-            prev_tx,
-            redeem_script.into(),
-            vec![output],
-            script_data,
-            SEQUENCE_FINAL - 1,
-            time_lock,
-        ));
+        let transaction = try_s!(
+            coin.p2sh_spending_tx(
+                prev_tx,
+                redeem_script.into(),
+                vec![output],
+                script_data,
+                SEQUENCE_FINAL - 1,
+                time_lock,
+            )
+            .await
+        );
         let tx_fut = coin.as_ref().rpc_client.send_transaction(&transaction).compat();
         try_s!(tx_fut.await);
         Ok(transaction.into())
@@ -851,14 +860,17 @@ where
             value: prev_tx.outputs[0].value - fee,
             script_pubkey: Builder::build_p2pkh(&coin.as_ref().key_pair.public().address_hash()).to_bytes(),
         };
-        let transaction = try_s!(coin.p2sh_spending_tx(
-            prev_tx,
-            redeem_script.into(),
-            vec![output],
-            script_data,
-            SEQUENCE_FINAL - 1,
-            time_lock,
-        ));
+        let transaction = try_s!(
+            coin.p2sh_spending_tx(
+                prev_tx,
+                redeem_script.into(),
+                vec![output],
+                script_data,
+                SEQUENCE_FINAL - 1,
+                time_lock,
+            )
+            .await
+        );
         let tx_fut = coin.as_ref().rpc_client.send_transaction(&transaction).compat();
         try_s!(tx_fut.await);
         Ok(transaction.into())
@@ -2636,39 +2648,37 @@ where
     }
 }
 
-pub fn can_refund_htlc<T>(coin: &T, locktime: u64) -> Box<dyn Future<Item = CanRefundHtlc, Error = String> + Send + '_>
+pub async fn can_refund_htlc<T>(coin: &T, locktime: u64) -> Result<CanRefundHtlc, MmError<UtxoRpcError>>
 where
     T: UtxoCommonOps,
 {
     let now = now_ms() / 1000;
     if now < locktime {
         let to_wait = locktime - now + 1;
-        return Box::new(futures01::future::ok(CanRefundHtlc::HaveToWait(to_wait.max(3600))));
+        return Ok(CanRefundHtlc::HaveToWait(to_wait.max(3600)));
     }
-    let locktime = coin.p2sh_tx_locktime(locktime as u32);
-    Box::new(
-        coin.get_current_mtp()
-            .compat()
-            .map(move |mtp| {
-                let mtp = mtp;
-                if locktime < mtp {
-                    CanRefundHtlc::CanRefundNow
-                } else {
-                    let to_wait = (locktime - mtp + 1) as u64;
-                    CanRefundHtlc::HaveToWait(to_wait.max(3600))
-                }
-            })
-            .map_err(|e| ERRL!("{}", e)),
-    )
+
+    let mtp = coin.get_current_mtp().await?;
+    let locktime = coin.p2sh_tx_locktime(locktime as u32).await?;
+
+    if locktime < mtp {
+        Ok(CanRefundHtlc::CanRefundNow)
+    } else {
+        let to_wait = (locktime - mtp + 1) as u64;
+        Ok(CanRefundHtlc::HaveToWait(to_wait.max(3600)))
+    }
 }
 
-pub fn p2sh_tx_locktime(ticker: &str, htlc_locktime: u32) -> u32 {
-    let lock_time_by_now = if ticker == "KMD" {
+pub async fn p2sh_tx_locktime<T>(coin: &T, ticker: &str, htlc_locktime: u32) -> Result<u32, MmError<UtxoRpcError>>
+where
+    T: UtxoCommonOps,
+{
+    let lock_time = if ticker == "KMD" {
         (now_ms() / 1000) as u32 - 3600 + 2 * 777
     } else {
-        (now_ms() / 1000) as u32 - 3600
+        coin.get_current_mtp().await? - 1
     };
-    lock_time_by_now.max(htlc_locktime)
+    Ok(lock_time.max(htlc_locktime))
 }
 
 #[test]

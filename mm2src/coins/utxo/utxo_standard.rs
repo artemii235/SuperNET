@@ -84,7 +84,7 @@ impl UtxoCommonOps for UtxoStandardCoin {
         utxo_common::calc_interest_if_required(self, unsigned, data, my_script_pub).await
     }
 
-    fn p2sh_spending_tx(
+    async fn p2sh_spending_tx(
         &self,
         prev_transaction: UtxoTx,
         redeem_script: Bytes,
@@ -102,6 +102,7 @@ impl UtxoCommonOps for UtxoStandardCoin {
             sequence,
             lock_time,
         )
+        .await
     }
 
     async fn ordered_mature_unspents<'a>(
@@ -145,8 +146,8 @@ impl UtxoCommonOps for UtxoStandardCoin {
         utxo_common::increase_dynamic_fee_by_stage(self, dynamic_fee, stage)
     }
 
-    fn p2sh_tx_locktime(&self, htlc_locktime: u32) -> u32 {
-        utxo_common::p2sh_tx_locktime(&self.utxo_arc.conf.ticker, htlc_locktime)
+    async fn p2sh_tx_locktime(&self, htlc_locktime: u32) -> Result<u32, MmError<UtxoRpcError>> {
+        utxo_common::p2sh_tx_locktime(self, &self.utxo_arc.conf.ticker, htlc_locktime).await
     }
 }
 
@@ -328,7 +329,12 @@ impl SwapOps for UtxoStandardCoin {
     }
 
     fn can_refund_htlc(&self, locktime: u64) -> Box<dyn Future<Item = CanRefundHtlc, Error = String> + Send + '_> {
-        utxo_common::can_refund_htlc(self, locktime)
+        Box::new(
+            utxo_common::can_refund_htlc(self, locktime)
+                .boxed()
+                .map_err(|e| ERRL!("{}", e))
+                .compat(),
+        )
     }
 
     fn negotiate_swap_contract_addr(
