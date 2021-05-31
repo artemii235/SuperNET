@@ -99,6 +99,7 @@ const GAS_PRICE_APPROXIMATION_PERCENT_ON_ORDER_ISSUE: u64 = 5;
 const GAS_PRICE_APPROXIMATION_PERCENT_ON_TRADE_PREIMAGE: u64 = 7;
 
 const APPROVE_GAS_LIMIT: u64 = 50_000;
+const DEFAULT_LOGS_BLOCK_RANGE: u64 = 1000;
 
 lazy_static! {
     pub static ref SWAP_CONTRACT: Contract = Contract::load(SWAP_CONTRACT_ABI.as_bytes()).unwrap();
@@ -247,6 +248,8 @@ pub struct EthCoinImpl {
     /// Using a weak reference by default in order to avoid circular references and leaks.
     ctx: MmWeak,
     chain_id: Option<u64>,
+    /// the block range used for eth_getLogs
+    logs_block_range: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -2545,7 +2548,7 @@ impl EthCoin {
         let mut from_block = search_from_block;
 
         loop {
-            let to_block = current_block.min(from_block + 1000);
+            let to_block = current_block.min(from_block + self.logs_block_range);
 
             let spend_events = try_s!(self.spend_events(swap_contract_address, from_block, to_block).wait());
             let found = spend_events.iter().find(|event| &event.data.0[..32] == id.as_slice());
@@ -3109,6 +3112,7 @@ pub async fn eth_coin_from_conf_and_request(
         ctx: ctx.weak(),
         required_confirmations,
         chain_id: conf["chain_id"].as_u64(),
+        logs_block_range: conf["logs_block_range"].as_u64().unwrap_or(DEFAULT_LOGS_BLOCK_RANGE),
     };
     Ok(EthCoin(Arc::new(coin)))
 }

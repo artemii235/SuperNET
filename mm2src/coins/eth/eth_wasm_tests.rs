@@ -39,6 +39,8 @@ async fn test_send() {
         history_sync_state: Mutex::new(HistorySyncState::NotStarted),
         ctx: ctx.weak(),
         required_confirmations: 1.into(),
+        chain_id: None,
+        logs_block_range: DEFAULT_LOGS_BLOCK_RANGE,
     }));
     let tx = coin
         .send_maker_payment(
