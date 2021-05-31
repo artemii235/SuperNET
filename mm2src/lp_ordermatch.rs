@@ -3508,7 +3508,7 @@ pub async fn update_maker_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8
                 return ERR!("Order {} is being matched now, can't update", req.uuid);
             }
 
-            let new_change = try_s!(HistoricalOrder::build(&update_msg, &order));
+            let new_change = HistoricalOrder::build(&update_msg, &order);
             order.apply_updated(&update_msg);
             order.changes_history.get_or_insert(Vec::new()).push(new_change);
             save_maker_order_on_update(&ctx, &order);
@@ -3935,34 +3935,33 @@ struct HistoricalOrder {
 }
 
 impl HistoricalOrder {
-    fn build(new_order: &new_protocol::MakerOrderUpdated, old_order: &MakerOrder) -> Result<HistoricalOrder, String> {
-        match new_order {
-            new_protocol::MakerOrderUpdated::V1(_) => {
-                return ERR!("HistoricalOrder build function is supported only for MakerOrderUpdated::V2")
+    fn build(new_order: &new_protocol::MakerOrderUpdated, old_order: &MakerOrder) -> HistoricalOrder {
+        HistoricalOrder {
+            max_base_vol: if new_order.new_max_volume().is_some() {
+                Some(old_order.max_base_vol.clone())
+            } else {
+                None
             },
-            new_protocol::MakerOrderUpdated::V2(v2) => Ok(HistoricalOrder {
-                max_base_vol: if v2.new_max_volume.is_some() {
-                    Some(old_order.max_base_vol.clone())
-                } else {
-                    None
-                },
-                min_base_vol: if v2.new_min_volume.is_some() {
-                    Some(old_order.min_base_vol.clone())
-                } else {
-                    None
-                },
-                price: if v2.new_price.is_some() {
-                    Some(old_order.price.clone())
-                } else {
-                    None
-                },
-                updated_at: old_order.updated_at,
-                conf_settings: if v2.conf_settings == old_order.conf_settings {
+            min_base_vol: if new_order.new_min_volume().is_some() {
+                Some(old_order.min_base_vol.clone())
+            } else {
+                None
+            },
+            price: if new_order.new_price().is_some() {
+                Some(old_order.price.clone())
+            } else {
+                None
+            },
+            updated_at: old_order.updated_at,
+            conf_settings: if let Some(settings) = new_order.new_conf_settings() {
+                if Some(settings) == old_order.conf_settings {
                     None
                 } else {
                     old_order.conf_settings
-                },
-            }),
+                }
+            } else {
+                None
+            },
         }
     }
 }
