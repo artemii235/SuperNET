@@ -812,8 +812,8 @@ impl BalanceTradeFeeUpdatedHandler for BalanceUpdateOrdermatchHandler {
                         spawn(async move { maker_order_cancelled_p2p_notify(ctx, &order).await });
                         None
                     } else if new_volume < order.available_amount() {
-                        let update_msg =
-                            new_protocol::MakerOrderUpdated::new(order.uuid).with_new_max_volume(new_volume.to_ratio());
+                        let mut update_msg = new_protocol::MakerOrderUpdated::new(order.uuid);
+                        update_msg.with_new_max_volume(new_volume.to_ratio());
                         let base = order.base.to_owned();
                         let rel = order.rel.to_owned();
                         let ctx = self.ctx.clone();
@@ -2714,8 +2714,8 @@ async fn process_taker_connect(ctx: MmArc, sender_pubkey: H256Json, connect_msg:
 
         // If volume is less order will be cancelled a bit later
         if my_order.available_amount() >= my_order.min_base_vol {
-            let updated_msg = new_protocol::MakerOrderUpdated::new(my_order.uuid)
-                .with_new_max_volume(my_order.available_amount().into());
+            let mut updated_msg = new_protocol::MakerOrderUpdated::new(my_order.uuid);
+            updated_msg.with_new_max_volume(my_order.available_amount().into());
             maker_order_updated_p2p_notify(ctx.clone(), &my_order.base, &my_order.rel, updated_msg).await;
         }
         save_my_maker_order(&ctx, &my_order);
@@ -3428,13 +3428,13 @@ pub async fn update_maker_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8
     drop(my_maker_orders);
 
     let mut update_msg = new_protocol::MakerOrderUpdated::new(req.uuid);
-    update_msg = update_msg.with_new_conf_settings(updated_conf_settings);
+    update_msg.with_new_conf_settings(updated_conf_settings);
 
     // Validate and Add new_price to update_msg if new_price is found in the request
     let new_price = match req.new_price {
         Some(new_price) => {
             try_s!(validate_price(new_price.clone()));
-            update_msg = update_msg.with_new_price(new_price.clone().into());
+            update_msg.with_new_price(new_price.clone().into());
             new_price
         },
         None => original_price,
@@ -3452,13 +3452,13 @@ pub async fn update_maker_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8
             Some(min_volume),
             new_price.clone()
         ));
-        update_msg = update_msg.with_new_min_volume(actual_min_vol.into());
+        update_msg.with_new_min_volume(actual_min_vol.into());
     }
 
     // Calculate order volume and add to update_msg if new_volume is found in the request
     let new_volume = if req.max.unwrap_or(false) {
         let max_volume = try_s!(get_max_volume(&ctx, &base_coin, &rel_coin).await) + reserved_amount.clone();
-        update_msg = update_msg.with_new_max_volume(max_volume.clone().into());
+        update_msg.with_new_max_volume(max_volume.clone().into());
         max_volume
     } else if Option::is_some(&req.volume_delta) {
         let volume = original_volume + req.volume_delta.unwrap();
@@ -3477,7 +3477,7 @@ pub async fn update_maker_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8
             )
             .await
         );
-        update_msg = update_msg.with_new_max_volume(volume.clone().into());
+        update_msg.with_new_max_volume(volume.clone().into());
         volume
     } else {
         original_volume
@@ -3508,11 +3508,11 @@ pub async fn update_maker_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8
                 return ERR!("Order {} is being matched now, can't update", req.uuid);
             }
 
-            let new_change = HistoricalOrder::build(&update_msg, &order);
+            let new_change = try_s!(HistoricalOrder::build(&update_msg, &order));
             order.apply_updated(&update_msg);
             order.changes_history.get_or_insert(Vec::new()).push(new_change);
             save_maker_order_on_update(&ctx, &order);
-            update_msg = update_msg.with_new_max_volume((new_volume - reserved_amount).into());
+            update_msg.with_new_max_volume((new_volume - reserved_amount).into());
             (MakerOrderForRpc::from(&*order), order.base.as_str(), order.rel.as_str())
         },
     };
@@ -3935,29 +3935,34 @@ struct HistoricalOrder {
 }
 
 impl HistoricalOrder {
-    fn build(new_order: &new_protocol::MakerOrderUpdated, old_order: &MakerOrder) -> HistoricalOrder {
-        HistoricalOrder {
-            max_base_vol: if new_order.new_max_volume.is_some() {
-                Some(old_order.max_base_vol.clone())
-            } else {
-                None
+    fn build(new_order: &new_protocol::MakerOrderUpdated, old_order: &MakerOrder) -> Result<HistoricalOrder, String> {
+        match new_order {
+            new_protocol::MakerOrderUpdated::V1(_) => {
+                return ERR!("HistoricalOrder build function is supported only for MakerOrderUpdated::V2")
             },
-            min_base_vol: if new_order.new_min_volume.is_some() {
-                Some(old_order.min_base_vol.clone())
-            } else {
-                None
-            },
-            price: if new_order.new_price.is_some() {
-                Some(old_order.price.clone())
-            } else {
-                None
-            },
-            updated_at: old_order.updated_at,
-            conf_settings: if new_order.conf_settings == old_order.conf_settings {
-                None
-            } else {
-                old_order.conf_settings
-            },
+            new_protocol::MakerOrderUpdated::V2(v2) => Ok(HistoricalOrder {
+                max_base_vol: if v2.new_max_volume.is_some() {
+                    Some(old_order.max_base_vol.clone())
+                } else {
+                    None
+                },
+                min_base_vol: if v2.new_min_volume.is_some() {
+                    Some(old_order.min_base_vol.clone())
+                } else {
+                    None
+                },
+                price: if v2.new_price.is_some() {
+                    Some(old_order.price.clone())
+                } else {
+                    None
+                },
+                updated_at: old_order.updated_at,
+                conf_settings: if v2.conf_settings == old_order.conf_settings {
+                    None
+                } else {
+                    old_order.conf_settings
+                },
+            }),
         }
     }
 }
