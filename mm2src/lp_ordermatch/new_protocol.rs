@@ -281,11 +281,13 @@ pub struct MakerConnected {
 
 #[cfg(test)]
 mod new_protocol_tests {
+    use common::new_uuid;
+
     use super::*;
 
     #[test]
     fn check_maker_order_updated_serde() {
-        let uuid = CompactUuid::from(Uuid::new_v4());
+        let uuid = CompactUuid::from(new_uuid());
         let timestamp = now_ms() / 1000;
         let conf_settings = Some(OrderConfirmationsSettings {
             base_confs: 5,
