@@ -203,7 +203,7 @@ pub extern "C" fn mm2_test(torch: i32, log_cb: extern "C" fn(line: *const c_char
 enum StopErr {
     Ok = 0,
     NotRunning = 1,
-    ErrorStopping = 3,
+    ErrorStopping = 2,
 }
 
 /// Stop an MM2 instance or reset the static variables.
