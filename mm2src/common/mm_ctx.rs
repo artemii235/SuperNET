@@ -180,18 +180,18 @@ impl MmCtx {
         big as u16
     }
 
-    pub fn stop(&self) {
-        if self.stop.pin(true).is_ok() {
-            let mut stop_listeners = self.stop_listeners.lock().expect("Can't lock stop_listeners");
-            // NB: It is important that we `drain` the `stop_listeners` rather than simply iterating over them
-            // because otherwise there might be reference counting instances remaining in a listener
-            // that would prevent the contexts from properly `Drop`ping.
-            for mut listener in stop_listeners.drain(..) {
-                if let Err(err) = listener() {
-                    log! ({"MmCtx::stop] Listener error: {}", err})
-                }
+    pub fn stop(&self) -> Result<(), String> {
+        try_s!(self.stop.pin(true));
+        let mut stop_listeners = self.stop_listeners.lock().expect("Can't lock stop_listeners");
+        // NB: It is important that we `drain` the `stop_listeners` rather than simply iterating over them
+        // because otherwise there might be reference counting instances remaining in a listener
+        // that would prevent the contexts from properly `Drop`ping.
+        for mut listener in stop_listeners.drain(..) {
+            if let Err(err) = listener() {
+                log! ({"MmCtx::stop] Listener error: {}", err})
             }
         }
+        Ok(())
     }
 
     /// True if the MarketMaker instance needs to stop.
