@@ -203,10 +203,10 @@ pub extern "C" fn mm2_test(torch: i32, log_cb: extern "C" fn(line: *const c_char
 enum StopErr {
     Ok = 0,
     NotRunning = 1,
-    NoContext = 2,
     ErrorStopping = 3,
 }
 
+/// Stop an MM2 instance or reset the static variables.
 #[no_mangle]
 pub extern "C" fn mm2_stop() -> i8 {
     // The log callback might be initialized already, so try to use the common logs.
