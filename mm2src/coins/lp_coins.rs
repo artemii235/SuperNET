@@ -478,6 +478,8 @@ impl TransactionDetails {
         // in case of electrum returned -1 so there could be records with MAX confirmations
         self.timestamp == 0
     }
+
+    pub fn should_update_kmd_rewards(&self) -> bool { self.coin == "KMD" && self.kmd_rewards.is_none() }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

@@ -31,7 +31,7 @@ use std::sync::atomic::Ordering as AtomicOrderding;
 pub use chain::Transaction as UtxoTx;
 
 use self::rpc_clients::{electrum_script_hash, UnspentInfo, UtxoRpcClientEnum, UtxoRpcClientOps, UtxoRpcResult};
-use crate::{CanRefundHtlc, CoinBalance, TradePreimageValue, ValidateAddressResult, WithdrawResult};
+use crate::{CanRefundHtlc, CoinBalance, TradePreimageValue, TxFeeDetails, ValidateAddressResult, WithdrawResult};
 
 const MIN_BTC_TRADING_VOL: &str = "0.00777";
 
@@ -1549,9 +1549,9 @@ where
             },
         };
 
-        let need_update = history_map
-            .iter()
-            .any(|(_, tx)| tx.should_update_timestamp() || tx.should_update_block_height());
+        let need_update = history_map.iter().any(|(_, tx)| {
+            tx.should_update_timestamp() || tx.should_update_block_height() || tx.should_update_kmd_rewards()
+        });
         match (&my_balance, &actual_balance) {
             (Some(prev_balance), Some(actual_balance)) if prev_balance == actual_balance && !need_update => {
                 // my balance hasn't been changed, there is no need to reload tx_history
@@ -1606,6 +1606,8 @@ where
             0
         };
 
+        // This is the cache of the already requested transactions.
+        let mut input_transactions = HistoryUtxoTxMap::default();
         for (txid, height) in tx_ids {
             let mut updated = false;
             match history_map.entry(txid.clone()) {
@@ -1649,6 +1651,21 @@ where
 
                             e.get_mut().timestamp = tx_details.timestamp;
                             updated = true;
+                        }
+                    }
+                    if e.get().should_update_kmd_rewards() && e.get().block_height > 0 {
+                        mm_counter!(ctx.metrics, "tx.history.update.kmd_rewards", 1);
+                        match coin.update_kmd_rewards(e.get_mut(), &mut input_transactions).await {
+                            Ok(()) => updated = true,
+                            Err(e) => ctx.log.log(
+                                "😟",
+                                &[&"tx_history", &coin.as_ref().conf.ticker],
+                                &ERRL!(
+                                    "Error {:?} on updating the KMD rewards of {:?}, skipping the tx",
+                                    e,
+                                    txid
+                                ),
+                            ),
                         }
                     }
                 },
@@ -1800,14 +1817,19 @@ where
     let verbose_tx = try_s!(coin.as_ref().rpc_client.get_verbose_transaction(hash).compat().await);
     let mut tx: UtxoTx = try_s!(deserialize(verbose_tx.hex.as_slice()).map_err(|e| ERRL!("{:?}", e)));
     tx.tx_hash_algo = coin.as_ref().tx_hash_algo;
-    let mut input_transactions: HashMap<&H256, RpcTransaction> = HashMap::new();
+    let mut input_transactions = HistoryUtxoTxMap::default();
     let mut input_amount = 0;
     let mut output_amount = 0;
     let mut from_addresses = vec![];
     let mut to_addresses = vec![];
     let mut spent_by_me = 0;
     let mut received_by_me = 0;
-    let mut kmd_rewards = if ticker == "KMD" { Some(0) } else { None };
+    let kmd_rewards = if ticker == "KMD" {
+        Some(try_s!(coin.calc_interest_of_tx(&tx, &mut input_transactions).await))
+    } else {
+        None
+    };
+
     for input in tx.inputs.iter() {
         // input transaction is zero if the tx is the coinbase transaction
         if input.previous_output.hash.is_zero() {
@@ -1815,21 +1837,11 @@ where
         }
 
         let prev_tx_hash: H256Json = input.previous_output.hash.reversed().into();
-        let prev_verbose = match input_transactions.entry(&input.previous_output.hash) {
-            Entry::Vacant(e) => {
-                let prev_verbose = try_s!(
-                    coin.as_ref()
-                        .rpc_client
-                        .get_verbose_transaction(prev_tx_hash.clone())
-                        .compat()
-                        .await
-                );
-                e.insert(prev_verbose)
-            },
-            Entry::Occupied(e) => e.into_mut(),
-        };
-        let mut prev_tx: UtxoTx =
-            deserialize(prev_verbose.hex.as_slice()).map_err(|e| ERRL!("{:?}, tx: {:?}", e, prev_tx_hash))?;
+        let prev_tx = try_s!(
+            coin.get_mut_verbose_transaction_from_map_or_rpc(prev_tx_hash.clone(), &mut input_transactions)
+                .await
+        );
+        let prev_tx = &mut prev_tx.tx;
         prev_tx.tx_hash_algo = coin.as_ref().tx_hash_algo;
 
         let prev_tx_value = prev_tx.outputs[input.previous_output.index as usize].value;
@@ -1844,14 +1856,6 @@ where
             spent_by_me += prev_tx_value;
         }
         from_addresses.push(from);
-
-        if let Some(ref mut kmd_rewards) = kmd_rewards {
-            let prev_tx_locktime = prev_verbose.locktime as u64;
-            let this_tx_locktime = verbose_tx.locktime as u64;
-            if let Ok(interest) = kmd_interest(prev_verbose.height, prev_tx_value, prev_tx_locktime, this_tx_locktime) {
-                *kmd_rewards += interest;
-            }
-        }
     }
 
     for output in tx.outputs.iter() {
@@ -1907,6 +1911,103 @@ where
         timestamp: verbose_tx.time.into(),
         kmd_rewards: kmd_rewards.map(|rewards| big_decimal_from_sat_unsigned(rewards, coin.as_ref().decimals)),
     })
+}
+
+pub async fn get_mut_verbose_transaction_from_map_or_rpc<'a, 'b, T>(
+    coin: &'a T,
+    tx_hash: H256Json,
+    utxo_tx_map: &'b mut HistoryUtxoTxMap,
+) -> UtxoRpcResult<&'b mut HistoryUtxoTx>
+where
+    T: AsRef<UtxoCoinFields>,
+{
+    let tx = match utxo_tx_map.entry(tx_hash.clone()) {
+        Entry::Vacant(e) => {
+            let verbose = coin
+                .as_ref()
+                .rpc_client
+                .get_verbose_transaction(tx_hash.clone())
+                .compat()
+                .await?;
+            let tx = HistoryUtxoTx {
+                tx: deserialize(verbose.hex.as_slice())
+                    .map_to_mm(|e| UtxoRpcError::InvalidResponse(format!("{:?}, tx: {:?}", e, tx_hash)))?,
+                height: verbose.height,
+            };
+            e.insert(tx)
+        },
+        Entry::Occupied(e) => e.into_mut(),
+    };
+    Ok(tx)
+}
+
+/// This function is used when the transaction details were calculated without taking into account the KMD rewards.
+/// We know that [`TransactionDetails::fee`] was calculated by `fee = input_amount - output_amount`,
+/// where `output_amount = actual_output_amount + kmd_rewards` or `actual_output_amount = output_amount - kmd_rewards`.
+/// To calculate an actual fee amount, we have to replace `output_amount` with `actual_output_amount`:
+/// `actual_fee = input_amount - actual_output_amount` or `actual_fee = input_amount - output_amount + kmd_rewards`.
+/// Substitute [`TransactionDetails::fee`] to the last equation:
+/// `actual_fee = TransactionDetails::fee + kmd_rewards`
+pub async fn update_kmd_rewards<T>(
+    coin: &T,
+    tx_details: &mut TransactionDetails,
+    input_transactions: &mut HistoryUtxoTxMap,
+) -> Result<(), String>
+where
+    T: AsRef<UtxoCoinFields> + UtxoCommonOps + UtxoStandardOps + Send + Sync + 'static,
+{
+    if !tx_details.should_update_kmd_rewards() {
+        return ERR!("There is no need to update KMD rewards");
+    }
+    let tx: UtxoTx = deserialize(tx_details.tx_hex.as_slice()).map_err(|e| ERRL!("{:?}", e))?;
+    let kmd_rewards = try_s!(coin.calc_interest_of_tx(&tx, input_transactions).await);
+    let kmd_rewards = big_decimal_from_sat_unsigned(kmd_rewards, coin.as_ref().decimals);
+
+    if let Some(TxFeeDetails::Utxo(UtxoFeeDetails { ref amount })) = tx_details.fee_details {
+        let actual_fee_amount = amount + &kmd_rewards;
+        tx_details.fee_details = Some(TxFeeDetails::Utxo(UtxoFeeDetails {
+            amount: actual_fee_amount,
+        }));
+    }
+
+    tx_details.kmd_rewards = Some(kmd_rewards);
+    Ok(())
+}
+
+pub async fn calc_interest_of_tx<T>(
+    coin: &T,
+    tx: &UtxoTx,
+    input_transactions: &mut HistoryUtxoTxMap,
+) -> Result<u64, String>
+where
+    T: AsRef<UtxoCoinFields> + UtxoCommonOps + Send + Sync + 'static,
+{
+    if coin.as_ref().conf.ticker != "KMD" {
+        return ERR!("Expected KMD ticker");
+    }
+
+    let mut kmd_rewards = 0;
+    for input in tx.inputs.iter() {
+        // input transaction is zero if the tx is the coinbase transaction
+        if input.previous_output.hash.is_zero() {
+            continue;
+        }
+
+        let prev_tx_hash: H256Json = input.previous_output.hash.reversed().into();
+        // TODO pass input.previous_output.hash.clone()
+        let prev_tx = try_s!(
+            coin.get_mut_verbose_transaction_from_map_or_rpc(prev_tx_hash.clone(), input_transactions)
+                .await
+        );
+
+        let prev_tx_value = prev_tx.tx.outputs[input.previous_output.index as usize].value;
+        let prev_tx_locktime = prev_tx.tx.lock_time as u64;
+        let this_tx_locktime = tx.lock_time as u64;
+        if let Ok(interest) = kmd_interest(prev_tx.height, prev_tx_value, prev_tx_locktime, this_tx_locktime) {
+            kmd_rewards += interest;
+        }
+    }
+    Ok(kmd_rewards)
 }
 
 pub fn history_sync_status(coin: &UtxoCoinFields) -> HistorySyncState {

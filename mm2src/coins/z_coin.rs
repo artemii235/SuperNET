@@ -1,11 +1,12 @@
 use crate::utxo::rpc_clients::{UnspentInfo, UtxoRpcClientEnum, UtxoRpcResult};
 use crate::utxo::utxo_common::{payment_script, UtxoArcBuilder};
-use crate::utxo::{utxo_common, ActualTxFee, AdditionalTxData, Address, FeePolicy, GenerateTxResult,
-                  RecentlySpentOutPoints, UtxoArc, UtxoCoinBuilder, UtxoCoinFields, UtxoCommonOps,
+use crate::utxo::{utxo_common, ActualTxFee, AdditionalTxData, Address, FeePolicy, GenerateTxResult, HistoryUtxoTx,
+                  HistoryUtxoTxMap, RecentlySpentOutPoints, UtxoArc, UtxoCoinBuilder, UtxoCoinFields, UtxoCommonOps,
                   VerboseTransactionFrom};
 use crate::{BalanceFut, CoinBalance, FeeApproxStage, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin,
             NegotiateSwapContractAddrErr, SwapOps, TradeFee, TradePreimageFut, TradePreimageResult,
-            TradePreimageValue, TransactionEnum, TransactionFut, ValidateAddressResult, WithdrawFut, WithdrawRequest};
+            TradePreimageValue, TransactionDetails, TransactionEnum, TransactionFut, ValidateAddressResult,
+            WithdrawFut, WithdrawRequest};
 use async_trait::async_trait;
 use bitcrypto::dhash160;
 use chain::constants::SEQUENCE_FINAL;
@@ -25,6 +26,7 @@ use rpc::v1::types::{Bytes as BytesJson, Transaction as RpcTransaction, H256 as 
 use script::{Builder as ScriptBuilder, Opcode, Script, TransactionInputSigner};
 use serde_json::Value as Json;
 use serialization::deserialize;
+use std::collections::HashMap;
 use std::sync::Arc;
 use zcash_client_backend::encoding::{encode_extended_spending_key, encode_payment_address};
 use zcash_primitives::{constants::mainnet as z_mainnet_constants, sapling::PaymentAddress, zip32::ExtendedSpendingKey};
@@ -549,6 +551,23 @@ impl UtxoCommonOps for ZCoin {
         my_script_pub: Bytes,
     ) -> UtxoRpcResult<(TransactionInputSigner, AdditionalTxData)> {
         utxo_common::calc_interest_if_required(self, unsigned, data, my_script_pub).await
+    }
+
+    async fn calc_interest_of_tx(
+        &self,
+        _tx: &UtxoTx,
+        _input_transactions: &mut HistoryUtxoTxMap,
+    ) -> Result<u64, String> {
+        //TODO return Ok(None)
+        Ok(0)
+    }
+
+    async fn get_mut_verbose_transaction_from_map_or_rpc<'a, 'b>(
+        &'a self,
+        tx_hash: H256Json,
+        utxo_tx_map: &'b mut HistoryUtxoTxMap,
+    ) -> UtxoRpcResult<&'b mut HistoryUtxoTx> {
+        utxo_common::get_mut_verbose_transaction_from_map_or_rpc(self, tx_hash, utxo_tx_map).await
     }
 
     fn p2sh_spending_tx(

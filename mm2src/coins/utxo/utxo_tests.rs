@@ -2815,3 +2815,30 @@ fn test_tx_details_bch_no_rewards() {
     assert_eq!(tx_details.fee_details, Some(expected_fee));
     assert_eq!(tx_details.kmd_rewards, None);
 }
+
+#[test]
+fn test_update_kmd_rewards() {
+    // 535ffa3387d3fca14f4a4d373daf7edf00e463982755afce89bc8c48d8168024
+    const OUTDATED_TX_DETAILS: &str = r#"{"tx_hex":"0400008085202f8901afcadb73880bc1c9e7ce96b8274c2e2a4547415e649f425f98791685be009b73020000006b483045022100b8fbb77efea482b656ad16fc53c5a01d289054c2e429bf1d7bab16c3e822a83602200b87368a95c046b2ce6d0d092185138a3f234a7eb0d7f8227b196ef32358b93f012103b1e544ce2d860219bc91314b5483421a553a7b33044659eff0be9214ed58adddffffffff01dd15c293000000001976a91483762a373935ca241d557dfce89171d582b486de88ac99fe9960000000000000000000000000000000","tx_hash":"535ffa3387d3fca14f4a4d373daf7edf00e463982755afce89bc8c48d8168024","from":["RMGJ9tRST45RnwEKHPGgBLuY3moSYP7Mhk"],"to":["RMGJ9tRST45RnwEKHPGgBLuY3moSYP7Mhk"],"total_amount":"24.68539379","spent_by_me":"24.68539379","received_by_me":"24.78970333","my_balance_change":"0.10430954","block_height":2387532,"timestamp":1620705483,"fee_details":{"type":"Utxo","amount":"-0.10430954"},"coin":"KMD","internal_id":"535ffa3387d3fca14f4a4d373daf7edf00e463982755afce89bc8c48d8168024"}"#;
+
+    let electrum = electrum_client_for_test(&[
+        "electrum1.cipig.net:10001",
+        "electrum2.cipig.net:10001",
+        "electrum3.cipig.net:10001",
+    ]);
+    let mut fields = utxo_coin_fields_for_test(electrum.into(), None);
+    fields.conf.ticker = "KMD".to_owned();
+    let coin = utxo_coin_from_fields(fields);
+
+    let mut input_transactions = HistoryUtxoTxMap::default();
+    let mut tx_details: TransactionDetails = json::from_str(OUTDATED_TX_DETAILS).unwrap();
+    block_on(coin.update_kmd_rewards(&mut tx_details, &mut input_transactions)).expect("!update_kmd_rewards");
+
+    let expected_rewards = BigDecimal::from_str("0.10431954").unwrap();
+    assert_eq!(tx_details.kmd_rewards, Some(expected_rewards));
+
+    let expected_fee_details = TxFeeDetails::Utxo(UtxoFeeDetails {
+        amount: BigDecimal::from_str("0.00001").unwrap(),
+    });
+    assert_eq!(tx_details.fee_details, Some(expected_fee_details));
+}

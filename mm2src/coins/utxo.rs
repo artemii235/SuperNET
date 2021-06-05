@@ -97,6 +97,9 @@ const UTXO_DUST_AMOUNT: u64 = 1000;
 const KMD_MTP_BLOCK_COUNT: NonZeroU64 = unsafe { NonZeroU64::new_unchecked(11u64) };
 const DEFAULT_DYNAMIC_FEE_VOLATILITY_PERCENT: f64 = 0.5;
 
+pub type GenerateTxResult = Result<(TransactionInputSigner, AdditionalTxData), MmError<GenerateTxError>>;
+pub type HistoryUtxoTxMap = HashMap<H256Json, HistoryUtxoTx>;
+
 #[cfg(windows)]
 #[cfg(not(target_arch = "wasm32"))]
 fn get_special_folder_path() -> PathBuf {
@@ -166,6 +169,11 @@ impl From<UtxoRpcError> for TradePreimageError {
             UtxoRpcError::Internal(internal) => TradePreimageError::InternalError(internal),
         }
     }
+}
+
+pub struct HistoryUtxoTx {
+    pub height: Option<u64>,
+    pub tx: UtxoTx,
 }
 
 /// Additional transaction data that can't be easily got from raw transaction without calling
@@ -512,6 +520,18 @@ pub trait UtxoCommonOps {
         my_script_pub: Bytes,
     ) -> UtxoRpcResult<(TransactionInputSigner, AdditionalTxData)>;
 
+    /// If this method is used to update the transaction history,
+    /// it's recommended to call it for transactions ordered by **ascending** height for the best performance.
+    /// * `input_transactions` - the cache of the already requested transactions.
+    async fn calc_interest_of_tx(&self, tx: &UtxoTx, input_transactions: &mut HistoryUtxoTxMap) -> Result<u64, String>;
+
+    /// Try to get a `HistoryUtxoTx` transaction from `utxo_tx_map` or try to request it from Rpc client.
+    async fn get_mut_verbose_transaction_from_map_or_rpc<'a, 'b>(
+        &'a self,
+        tx_hash: H256Json,
+        utxo_tx_map: &'b mut HistoryUtxoTxMap,
+    ) -> UtxoRpcResult<&'b mut HistoryUtxoTx>;
+
     async fn p2sh_spending_tx(
         &self,
         prev_transaction: UtxoTx,
@@ -528,7 +548,7 @@ pub trait UtxoCommonOps {
         address: &Address,
     ) -> UtxoRpcResult<(Vec<UnspentInfo>, AsyncMutexGuard<'a, RecentlySpentOutPoints>)>;
 
-    /// Try load verbose transaction from cache or try to request it from Rpc client.
+    /// Try to load verbose transaction from cache or try to request it from Rpc client.
     fn get_verbose_transaction_from_cache_or_rpc(
         &self,
         txid: H256Json,
@@ -565,6 +585,15 @@ pub trait UtxoStandardOps {
     async fn tx_details_by_hash(&self, hash: &[u8]) -> Result<TransactionDetails, String>;
 
     async fn request_tx_history(&self, metrics: MetricsArc) -> RequestTxHistoryResult;
+
+    /// If this method is used to update the transaction history,
+    /// it's recommended to use this method for transactions ordered by **ascending** price for the best performance.
+    /// * `input_transactions` - the cache of the already requested transactions.
+    async fn update_kmd_rewards(
+        &self,
+        tx_details: &mut TransactionDetails,
+        input_transactions: &mut HistoryUtxoTxMap,
+    ) -> Result<(), String>;
 }
 
 #[derive(Clone, Debug)]
@@ -606,8 +635,6 @@ impl UtxoWeak {
 lazy_static! {
     pub static ref UTXO_LOCK: AsyncMutex<()> = AsyncMutex::new(());
 }
-
-pub type GenerateTxResult = Result<(TransactionInputSigner, AdditionalTxData), MmError<GenerateTxError>>;
 
 #[derive(Debug, Display)]
 pub enum GenerateTxError {
