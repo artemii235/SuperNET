@@ -26,7 +26,6 @@ use rpc::v1::types::{Bytes as BytesJson, Transaction as RpcTransaction, H256 as 
 use script::{Builder as ScriptBuilder, Opcode, Script, TransactionInputSigner};
 use serde_json::Value as Json;
 use serialization::deserialize;
-use std::collections::HashMap;
 use std::sync::Arc;
 use zcash_client_backend::encoding::{encode_extended_spending_key, encode_payment_address};
 use zcash_primitives::{constants::mainnet as z_mainnet_constants, sapling::PaymentAddress, zip32::ExtendedSpendingKey};

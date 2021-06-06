@@ -1956,7 +1956,7 @@ where
     Ok(tx)
 }
 
-/// This function is used when the transaction details were calculated without taking into account the KMD rewards.
+/// This function is used when the transaction details were calculated without considering the KMD rewards.
 /// We know that [`TransactionDetails::fee`] was calculated by `fee = input_amount - output_amount`,
 /// where `output_amount = actual_output_amount + kmd_rewards` or `actual_output_amount = output_amount - kmd_rewards`.
 /// To calculate an actual fee amount, we have to replace `output_amount` with `actual_output_amount`:

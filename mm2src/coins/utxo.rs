@@ -171,6 +171,7 @@ impl From<UtxoRpcError> for TradePreimageError {
     }
 }
 
+/// The `UtxoTx` with the block height transaction mined in.
 pub struct HistoryUtxoTx {
     pub height: Option<u64>,
     pub tx: UtxoTx,
@@ -520,9 +521,8 @@ pub trait UtxoCommonOps {
         my_script_pub: Bytes,
     ) -> UtxoRpcResult<(TransactionInputSigner, AdditionalTxData)>;
 
-    /// If this method is used to update the transaction history,
-    /// it's recommended to call it for transactions ordered by **ascending** height for the best performance.
-    /// * `input_transactions` - the cache of the already requested transactions.
+    /// Calculates interest of the specified transaction.
+    /// Please note, this method has to be used for KMD transactions only.
     async fn calc_interest_of_tx(&self, tx: &UtxoTx, input_transactions: &mut HistoryUtxoTxMap) -> UtxoRpcResult<u64>;
 
     /// Try to get a `HistoryUtxoTx` transaction from `utxo_tx_map` or try to request it from Rpc client.
@@ -582,7 +582,8 @@ pub trait UtxoCommonOps {
 #[async_trait]
 pub trait UtxoStandardOps {
     /// Gets tx details by hash requesting the coin RPC if required.
-    /// it's recommended to use this method for transactions ordered by **ascending** price for the best performance.
+    /// If you plan to call this method for multiple transactions (for example, when loading transaction history),
+    /// It's recommended to use this method for transactions ordered by **ascending** height for the best performance.
     /// * `input_transactions` - the cache of the already requested transactions.
     async fn tx_details_by_hash(
         &self,
@@ -592,9 +593,9 @@ pub trait UtxoStandardOps {
 
     async fn request_tx_history(&self, metrics: MetricsArc) -> RequestTxHistoryResult;
 
-    /// If this method is used to update the transaction history,
-    /// it's recommended to use this method for transactions ordered by **ascending** price for the best performance.
-    /// * `input_transactions` - the cache of the already requested transactions.
+    /// Calculate the KMD rewards and re-calculate the transaction fee
+    /// if the specified `tx_details` was generated without considering the KMD rewards.
+    /// Please note, this method has to be used for KMD transactions only.
     async fn update_kmd_rewards(
         &self,
         tx_details: &mut TransactionDetails,
