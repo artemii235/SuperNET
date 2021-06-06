@@ -892,7 +892,10 @@ mod tests {
         assert_eq!(transfer_map_zero_timestamp, transfer_map_expected);
 
         let value: MetricsJson = json::from_value(ctx.metrics.collect_json().unwrap()).unwrap();
-        let found = find_metrics_in_json(value, "tx.history.request.count", &[("method", "get_verbose_transaction")]);
+        let found = find_metrics_in_json(value, "tx.history.request.count", &[(
+            "method",
+            "get_verbose_transaction",
+        )]);
         match found {
             Some(MetricType::Counter { key, value, .. }) if key == "tx.history.request.count" && value == 1 => (),
             found => panic!("Found metric type: {:?}", found),
