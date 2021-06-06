@@ -599,7 +599,7 @@ pub trait UtxoStandardOps {
         &self,
         tx_details: &mut TransactionDetails,
         input_transactions: &mut HistoryUtxoTxMap,
-    ) -> Result<(), String>;
+    ) -> UtxoRpcResult<()>;
 }
 
 #[derive(Clone, Debug)]

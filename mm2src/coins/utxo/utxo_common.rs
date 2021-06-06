@@ -1967,15 +1967,21 @@ pub async fn update_kmd_rewards<T>(
     coin: &T,
     tx_details: &mut TransactionDetails,
     input_transactions: &mut HistoryUtxoTxMap,
-) -> Result<(), String>
+) -> UtxoRpcResult<()>
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps + UtxoStandardOps + Send + Sync + 'static,
 {
     if !tx_details.should_update_kmd_rewards() {
-        return ERR!("There is no need to update KMD rewards");
+        let error = "There is no need to update KMD rewards".to_owned();
+        return MmError::err(UtxoRpcError::Internal(error));
     }
-    let tx: UtxoTx = deserialize(tx_details.tx_hex.as_slice()).map_err(|e| ERRL!("{:?}", e))?;
-    let kmd_rewards = try_s!(coin.calc_interest_of_tx(&tx, input_transactions).await);
+    let tx: UtxoTx = deserialize(tx_details.tx_hex.as_slice()).map_to_mm(|e| {
+        UtxoRpcError::Internal(format!(
+            "Error deserializing the {:?} transaction hex: {:?}",
+            tx_details.tx_hash, e
+        ))
+    })?;
+    let kmd_rewards = coin.calc_interest_of_tx(&tx, input_transactions).await?;
     let kmd_rewards = big_decimal_from_sat_unsigned(kmd_rewards, coin.as_ref().decimals);
 
     if let Some(TxFeeDetails::Utxo(UtxoFeeDetails { ref amount })) = tx_details.fee_details {

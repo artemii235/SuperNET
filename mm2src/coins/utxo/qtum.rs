@@ -293,7 +293,7 @@ impl UtxoStandardOps for QtumCoin {
         &self,
         tx_details: &mut TransactionDetails,
         input_transactions: &mut HistoryUtxoTxMap,
-    ) -> Result<(), String> {
+    ) -> UtxoRpcResult<()> {
         utxo_common::update_kmd_rewards(self, tx_details, input_transactions).await
     }
 }
