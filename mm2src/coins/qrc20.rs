@@ -509,9 +509,10 @@ impl UtxoCommonOps for Qrc20Coin {
         &self,
         _tx: &UtxoTx,
         _input_transactions: &mut HistoryUtxoTxMap,
-    ) -> Result<u64, String> {
-        //TODO return Ok(None)
-        Ok(0)
+    ) -> UtxoRpcResult<u64> {
+        MmError::err(UtxoRpcError::Internal(
+            "QRC20 coin doesn't support transaction rewards".to_owned(),
+        ))
     }
 
     async fn get_mut_verbose_transaction_from_map_or_rpc<'a, 'b>(

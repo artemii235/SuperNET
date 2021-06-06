@@ -523,7 +523,7 @@ pub trait UtxoCommonOps {
     /// If this method is used to update the transaction history,
     /// it's recommended to call it for transactions ordered by **ascending** height for the best performance.
     /// * `input_transactions` - the cache of the already requested transactions.
-    async fn calc_interest_of_tx(&self, tx: &UtxoTx, input_transactions: &mut HistoryUtxoTxMap) -> Result<u64, String>;
+    async fn calc_interest_of_tx(&self, tx: &UtxoTx, input_transactions: &mut HistoryUtxoTxMap) -> UtxoRpcResult<u64>;
 
     /// Try to get a `HistoryUtxoTx` transaction from `utxo_tx_map` or try to request it from Rpc client.
     async fn get_mut_verbose_transaction_from_map_or_rpc<'a, 'b>(

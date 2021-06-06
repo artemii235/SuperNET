@@ -84,7 +84,7 @@ impl UtxoCommonOps for UtxoStandardCoin {
         utxo_common::calc_interest_if_required(self, unsigned, data, my_script_pub).await
     }
 
-    async fn calc_interest_of_tx(&self, tx: &UtxoTx, input_transactions: &mut HistoryUtxoTxMap) -> Result<u64, String> {
+    async fn calc_interest_of_tx(&self, tx: &UtxoTx, input_transactions: &mut HistoryUtxoTxMap) -> UtxoRpcResult<u64> {
         utxo_common::calc_interest_of_tx(self, tx, input_transactions).await
     }
 

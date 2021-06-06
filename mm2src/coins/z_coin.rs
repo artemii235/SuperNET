@@ -1,4 +1,4 @@
-use crate::utxo::rpc_clients::{UnspentInfo, UtxoRpcClientEnum, UtxoRpcResult};
+use crate::utxo::rpc_clients::{UnspentInfo, UtxoRpcClientEnum, UtxoRpcError, UtxoRpcResult};
 use crate::utxo::utxo_common::{payment_script, UtxoArcBuilder};
 use crate::utxo::{utxo_common, ActualTxFee, AdditionalTxData, Address, FeePolicy, GenerateTxResult, HistoryUtxoTx,
                   HistoryUtxoTxMap, RecentlySpentOutPoints, UtxoArc, UtxoCoinBuilder, UtxoCoinFields, UtxoCommonOps,
@@ -557,9 +557,10 @@ impl UtxoCommonOps for ZCoin {
         &self,
         _tx: &UtxoTx,
         _input_transactions: &mut HistoryUtxoTxMap,
-    ) -> Result<u64, String> {
-        //TODO return Ok(None)
-        Ok(0)
+    ) -> UtxoRpcResult<u64> {
+        MmError::err(UtxoRpcError::Internal(
+            "ZCoin doesn't support transaction rewards".to_owned(),
+        ))
     }
 
     async fn get_mut_verbose_transaction_from_map_or_rpc<'a, 'b>(

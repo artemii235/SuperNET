@@ -1978,12 +1978,13 @@ pub async fn calc_interest_of_tx<T>(
     coin: &T,
     tx: &UtxoTx,
     input_transactions: &mut HistoryUtxoTxMap,
-) -> Result<u64, String>
+) -> UtxoRpcResult<u64>
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps + Send + Sync + 'static,
 {
     if coin.as_ref().conf.ticker != "KMD" {
-        return ERR!("Expected KMD ticker");
+        let error = format!("Expected KMD ticker, found {}", coin.as_ref().conf.ticker);
+        return MmError::err(UtxoRpcError::Internal(error));
     }
 
     let mut kmd_rewards = 0;
@@ -1995,10 +1996,9 @@ where
 
         let prev_tx_hash: H256Json = input.previous_output.hash.reversed().into();
         // TODO pass input.previous_output.hash.clone()
-        let prev_tx = try_s!(
-            coin.get_mut_verbose_transaction_from_map_or_rpc(prev_tx_hash.clone(), input_transactions)
-                .await
-        );
+        let prev_tx = coin
+            .get_mut_verbose_transaction_from_map_or_rpc(prev_tx_hash.clone(), input_transactions)
+            .await?;
 
         let prev_tx_value = prev_tx.tx.outputs[input.previous_output.index as usize].value;
         let prev_tx_locktime = prev_tx.tx.lock_time as u64;
