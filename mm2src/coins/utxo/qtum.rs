@@ -190,7 +190,11 @@ impl UtxoCommonOps for QtumCoin {
         utxo_common::calc_interest_if_required(self, unsigned, data, my_script_pub).await
     }
 
-    async fn calc_interest_of_tx(&self, tx: &UtxoTx, input_transactions: &mut HistoryUtxoTxMap) -> UtxoRpcResult<u64> {
+    async fn calc_interest_of_tx(
+        &self,
+        _tx: &UtxoTx,
+        _input_transactions: &mut HistoryUtxoTxMap,
+    ) -> UtxoRpcResult<u64> {
         MmError::err(UtxoRpcError::Internal(
             "QTUM coin doesn't support transaction rewards".to_owned(),
         ))
@@ -273,8 +277,12 @@ impl UtxoCommonOps for QtumCoin {
 
 #[async_trait]
 impl UtxoStandardOps for QtumCoin {
-    async fn tx_details_by_hash(&self, hash: &[u8]) -> Result<TransactionDetails, String> {
-        utxo_common::tx_details_by_hash(self, hash).await
+    async fn tx_details_by_hash(
+        &self,
+        hash: &[u8],
+        input_transactions: &mut HistoryUtxoTxMap,
+    ) -> Result<TransactionDetails, String> {
+        utxo_common::tx_details_by_hash(self, hash, input_transactions).await
     }
 
     async fn request_tx_history(&self, metrics: MetricsArc) -> RequestTxHistoryResult {

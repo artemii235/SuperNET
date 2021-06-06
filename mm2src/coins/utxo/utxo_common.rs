@@ -1614,7 +1614,7 @@ where
                 Entry::Vacant(e) => {
                     mm_counter!(ctx.metrics, "tx.history.request.count", 1, "coin" => coin.as_ref().conf.ticker.clone(), "method" => "tx_detail_by_hash");
 
-                    match coin.tx_details_by_hash(&txid.0).await {
+                    match coin.tx_details_by_hash(&txid.0, &mut input_transactions).await {
                         Ok(mut tx_details) => {
                             mm_counter!(ctx.metrics, "tx.history.response.count", 1, "coin" => coin.as_ref().conf.ticker.clone(), "method" => "tx_detail_by_hash");
 
@@ -1646,7 +1646,7 @@ where
                     if e.get().should_update_timestamp() {
                         mm_counter!(ctx.metrics, "tx.history.request.count", 1, "coin" => coin.as_ref().conf.ticker.clone(), "method" => "tx_detail_by_hash");
 
-                        if let Ok(tx_details) = coin.tx_details_by_hash(&txid.0).await {
+                        if let Ok(tx_details) = coin.tx_details_by_hash(&txid.0, &mut input_transactions).await {
                             mm_counter!(ctx.metrics, "tx.history.response.count", 1, "coin" => coin.as_ref().conf.ticker.clone(), "method" => "tx_detail_by_hash");
 
                             e.get_mut().timestamp = tx_details.timestamp;
@@ -1808,16 +1808,31 @@ where
     RequestTxHistoryResult::Ok(tx_ids)
 }
 
-pub async fn tx_details_by_hash<T>(coin: &T, hash: &[u8]) -> Result<TransactionDetails, String>
+pub async fn tx_details_by_hash<T>(
+    coin: &T,
+    hash: &[u8],
+    input_transactions: &mut HistoryUtxoTxMap,
+) -> Result<TransactionDetails, String>
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps + Send + Sync + 'static,
 {
     let ticker = &coin.as_ref().conf.ticker;
     let hash = H256Json::from(hash);
-    let verbose_tx = try_s!(coin.as_ref().rpc_client.get_verbose_transaction(hash).compat().await);
+    let verbose_tx = try_s!(
+        coin.as_ref()
+            .rpc_client
+            .get_verbose_transaction(hash.clone())
+            .compat()
+            .await
+    );
     let mut tx: UtxoTx = try_s!(deserialize(verbose_tx.hex.as_slice()).map_err(|e| ERRL!("{:?}", e)));
     tx.tx_hash_algo = coin.as_ref().tx_hash_algo;
-    let mut input_transactions = HistoryUtxoTxMap::default();
+
+    input_transactions.insert(hash, HistoryUtxoTx {
+        tx: tx.clone(),
+        height: verbose_tx.height,
+    });
+
     let mut input_amount = 0;
     let mut output_amount = 0;
     let mut from_addresses = vec![];
@@ -1825,7 +1840,7 @@ where
     let mut spent_by_me = 0;
     let mut received_by_me = 0;
     let kmd_rewards = if ticker == "KMD" {
-        Some(try_s!(coin.calc_interest_of_tx(&tx, &mut input_transactions).await))
+        Some(try_s!(coin.calc_interest_of_tx(&tx, input_transactions).await))
     } else {
         None
     };
@@ -1838,7 +1853,7 @@ where
 
         let prev_tx_hash: H256Json = input.previous_output.hash.reversed().into();
         let prev_tx = try_s!(
-            coin.get_mut_verbose_transaction_from_map_or_rpc(prev_tx_hash.clone(), &mut input_transactions)
+            coin.get_mut_verbose_transaction_from_map_or_rpc(prev_tx_hash.clone(), input_transactions)
                 .await
         );
         let prev_tx = &mut prev_tx.tx;
@@ -1995,7 +2010,6 @@ where
         }
 
         let prev_tx_hash: H256Json = input.previous_output.hash.reversed().into();
-        // TODO pass input.previous_output.hash.clone()
         let prev_tx = coin
             .get_mut_verbose_transaction_from_map_or_rpc(prev_tx_hash.clone(), input_transactions)
             .await?;

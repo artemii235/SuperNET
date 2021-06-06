@@ -581,8 +581,14 @@ pub trait UtxoCommonOps {
 
 #[async_trait]
 pub trait UtxoStandardOps {
-    /// Gets tx details by hash requesting the coin RPC if required
-    async fn tx_details_by_hash(&self, hash: &[u8]) -> Result<TransactionDetails, String>;
+    /// Gets tx details by hash requesting the coin RPC if required.
+    /// it's recommended to use this method for transactions ordered by **ascending** price for the best performance.
+    /// * `input_transactions` - the cache of the already requested transactions.
+    async fn tx_details_by_hash(
+        &self,
+        hash: &[u8],
+        input_transactions: &mut HistoryUtxoTxMap,
+    ) -> Result<TransactionDetails, String>;
 
     async fn request_tx_history(&self, metrics: MetricsArc) -> RequestTxHistoryResult;
 

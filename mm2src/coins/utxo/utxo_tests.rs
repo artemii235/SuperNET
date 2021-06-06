@@ -891,7 +891,8 @@ fn get_tx_details_doge() {
         log!((block));
         let hash = hex::decode("99caab76bd025d189f10856dc649aad1a191b1cfd9b139ece457c5fedac58132").unwrap();
         loop {
-            let tx_details = coin1.tx_details_by_hash(&hash).await.unwrap();
+            let mut input_transactions = HistoryUtxoTxMap::new();
+            let tx_details = coin1.tx_details_by_hash(&hash, &mut input_transactions).await.unwrap();
             log!([tx_details]);
             Timer::sleep(1.).await;
         }
@@ -901,7 +902,8 @@ fn get_tx_details_doge() {
         log!((block));
         let hash = hex::decode("99caab76bd025d189f10856dc649aad1a191b1cfd9b139ece457c5fedac58132").unwrap();
         loop {
-            let tx_details = coin2.tx_details_by_hash(&hash).await.unwrap();
+            let mut input_transactions = HistoryUtxoTxMap::new();
+            let tx_details = coin2.tx_details_by_hash(&hash, &mut input_transactions).await.unwrap();
             log!([tx_details]);
             Timer::sleep(1.).await;
         }
@@ -928,7 +930,8 @@ fn get_tx_details_coinbase_transaction() {
         // hash of coinbase transaction https://morty.explorer.dexstats.info/tx/b59b093ed97c1798f2a88ee3375a0c11d0822b6e4468478777f899891abd34a5
         let hash = hex::decode("b59b093ed97c1798f2a88ee3375a0c11d0822b6e4468478777f899891abd34a5").unwrap();
 
-        let tx_details = coin.tx_details_by_hash(&hash).await.unwrap();
+        let mut input_transactions = HistoryUtxoTxMap::new();
+        let tx_details = coin.tx_details_by_hash(&hash, &mut input_transactions).await.unwrap();
         assert!(tx_details.from.is_empty());
     };
 
@@ -1244,7 +1247,8 @@ fn test_cashaddresses_in_tx_details_by_hash() {
 
     let hash = hex::decode("0f2f6e0c8f440c641895023782783426c3aca1acc78d7c0db7751995e8aa5751").unwrap();
     let fut = async {
-        let tx_details = coin.tx_details_by_hash(&hash).await.unwrap();
+        let mut input_transactions = HistoryUtxoTxMap::new();
+        let tx_details = coin.tx_details_by_hash(&hash, &mut input_transactions).await.unwrap();
         log!([tx_details]);
 
         assert!(tx_details
@@ -2785,8 +2789,9 @@ fn test_tx_details_kmd_rewards() {
     fields.conf.ticker = "KMD".to_owned();
     let coin = utxo_coin_from_fields(fields);
 
+    let mut input_transactions = HistoryUtxoTxMap::new();
     let hash = hex::decode("535ffa3387d3fca14f4a4d373daf7edf00e463982755afce89bc8c48d8168024").unwrap();
-    let tx_details = block_on(coin.tx_details_by_hash(&hash)).expect("!tx_details_by_hash");
+    let tx_details = block_on(coin.tx_details_by_hash(&hash, &mut input_transactions)).expect("!tx_details_by_hash");
 
     let expected_fee = TxFeeDetails::Utxo(UtxoFeeDetails {
         amount: BigDecimal::from_str("0.00001").unwrap(),
@@ -2806,8 +2811,9 @@ fn test_tx_details_bch_no_rewards() {
     ]);
     let coin = utxo_coin_for_test(electrum.into(), None);
 
+    let mut input_transactions = HistoryUtxoTxMap::new();
     let hash = hex::decode("eb13d926f15cbb896e0bcc7a1a77a4ec63504e57a1524c13a7a9b80f43ecb05c").unwrap();
-    let tx_details = block_on(coin.tx_details_by_hash(&hash)).expect("!tx_details_by_hash");
+    let tx_details = block_on(coin.tx_details_by_hash(&hash, &mut input_transactions)).expect("!tx_details_by_hash");
 
     let expected_fee = TxFeeDetails::Utxo(UtxoFeeDetails {
         amount: BigDecimal::from_str("0.00000452").unwrap(),

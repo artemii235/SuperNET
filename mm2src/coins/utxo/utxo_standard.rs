@@ -165,8 +165,12 @@ impl UtxoCommonOps for UtxoStandardCoin {
 
 #[async_trait]
 impl UtxoStandardOps for UtxoStandardCoin {
-    async fn tx_details_by_hash(&self, hash: &[u8]) -> Result<TransactionDetails, String> {
-        utxo_common::tx_details_by_hash(self, hash).await
+    async fn tx_details_by_hash(
+        &self,
+        hash: &[u8],
+        input_transactions: &mut HistoryUtxoTxMap,
+    ) -> Result<TransactionDetails, String> {
+        utxo_common::tx_details_by_hash(self, hash, input_transactions).await
     }
 
     async fn request_tx_history(&self, metrics: MetricsArc) -> RequestTxHistoryResult {
