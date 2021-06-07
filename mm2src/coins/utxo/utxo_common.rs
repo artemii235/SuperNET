@@ -1138,15 +1138,17 @@ pub fn search_for_swap_tx_spend_my(
     other_pub: &[u8],
     secret_hash: &[u8],
     tx: &[u8],
+    output_index: usize,
     search_from_block: u64,
 ) -> Result<Option<FoundSwapTxSpend>, String> {
-    block_on(search_for_swap_tx_spend(
+    block_on(search_for_swap_output_spend(
         coin,
         time_lock,
         coin.key_pair.public(),
         &try_s!(Public::from_slice(other_pub)),
         secret_hash,
         tx,
+        output_index,
         search_from_block,
     ))
 }
@@ -1157,15 +1159,17 @@ pub fn search_for_swap_tx_spend_other(
     other_pub: &[u8],
     secret_hash: &[u8],
     tx: &[u8],
+    output_index: usize,
     search_from_block: u64,
 ) -> Result<Option<FoundSwapTxSpend>, String> {
-    block_on(search_for_swap_tx_spend(
+    block_on(search_for_swap_output_spend(
         coin,
         time_lock,
         &try_s!(Public::from_slice(other_pub)),
         coin.key_pair.public(),
         secret_hash,
         tx,
+        output_index,
         search_from_block,
     ))
 }
@@ -1255,15 +1259,20 @@ pub fn wait_for_confirmations(
         .wait_for_confirmations(&tx, confirmations as u32, requires_nota, wait_until, check_every)
 }
 
-pub fn wait_for_tx_spend(coin: &UtxoCoinFields, tx_bytes: &[u8], wait_until: u64, from_block: u64) -> TransactionFut {
+pub fn wait_for_output_spend(
+    coin: &UtxoCoinFields,
+    tx_bytes: &[u8],
+    output_index: usize,
+    from_block: u64,
+    wait_until: u64,
+) -> TransactionFut {
     let mut tx: UtxoTx = try_fus!(deserialize(tx_bytes).map_err(|e| ERRL!("{:?}", e)));
     tx.tx_hash_algo = coin.tx_hash_algo;
-    let vout = 0;
     let client = coin.rpc_client.clone();
     let tx_hash_algo = coin.tx_hash_algo;
     let fut = async move {
         loop {
-            match client.find_output_spend(&tx, vout, from_block).compat().await {
+            match client.find_output_spend(&tx, output_index, from_block).compat().await {
                 Ok(Some(mut tx)) => {
                     tx.tx_hash_algo = tx_hash_algo;
                     return Ok(tx.into());
@@ -1279,7 +1288,7 @@ pub fn wait_for_tx_spend(coin: &UtxoCoinFields, tx_bytes: &[u8], wait_until: u64
                     "Waited too long until {} for transaction {:?} {} to be spent ",
                     wait_until,
                     tx,
-                    vout
+                    output_index,
                 );
             }
             Timer::sleep(10.).await;
@@ -2389,13 +2398,14 @@ where
     Box::new(fut.boxed().compat())
 }
 
-async fn search_for_swap_tx_spend(
+async fn search_for_swap_output_spend(
     coin: &UtxoCoinFields,
     time_lock: u32,
     first_pub: &Public,
     second_pub: &Public,
     secret_hash: &[u8],
     tx: &[u8],
+    output_index: usize,
     search_from_block: u64,
 ) -> Result<Option<FoundSwapTxSpend>, String> {
     let mut tx: UtxoTx = try_s!(deserialize(tx).map_err(|e| ERRL!("{:?}", e)));
@@ -2412,7 +2422,7 @@ async fn search_for_swap_tx_spend(
 
     let spend = try_s!(
         coin.rpc_client
-            .find_output_spend(&tx, 0, search_from_block)
+            .find_output_spend(&tx, output_index, search_from_block)
             .compat()
             .await
     );

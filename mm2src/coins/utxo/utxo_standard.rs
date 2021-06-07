@@ -301,6 +301,7 @@ impl SwapOps for UtxoStandardCoin {
             other_pub,
             secret_hash,
             tx,
+            0,
             search_from_block,
         )
     }
@@ -320,6 +321,7 @@ impl SwapOps for UtxoStandardCoin {
             other_pub,
             secret_hash,
             tx,
+            0,
             search_from_block,
         )
     }
@@ -383,7 +385,7 @@ impl MarketCoinOps for UtxoStandardCoin {
         from_block: u64,
         _swap_contract_address: &Option<BytesJson>,
     ) -> TransactionFut {
-        utxo_common::wait_for_tx_spend(&self.utxo_arc, transaction, wait_until, from_block)
+        utxo_common::wait_for_output_spend(&self.utxo_arc, transaction, 0, from_block, wait_until)
     }
 
     fn tx_enum_from_bytes(&self, bytes: &[u8]) -> Result<TransactionEnum, String> {
