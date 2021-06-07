@@ -6,8 +6,8 @@ use crate::utxo::utxo_common::{self, big_decimal_from_sat_unsigned, generate_tra
 use crate::utxo::utxo_standard::utxo_standard_coin_from_conf_and_request;
 use crate::utxo::{generate_and_send_tx, sat_from_big_decimal, FeePolicy, RecentlySpentOutPoints, UtxoCommonOps, UtxoTx};
 use crate::{BalanceError, BalanceFut, CoinBalance, FeeApproxStage, FoundSwapTxSpend, HistorySyncState, MarketCoinOps,
-            MmCoin, NegotiateSwapContractAddrErr, SwapOps, TradeFee, TradePreimageFut, TradePreimageValue,
-            Transaction, TransactionEnum, TransactionFut, ValidateAddressResult, WithdrawFut, WithdrawRequest};
+            MmCoin, NegotiateSwapContractAddrErr, NumConversError, SwapOps, TradeFee, TradePreimageFut,
+            TradePreimageValue, TransactionEnum, TransactionFut, ValidateAddressResult, WithdrawFut, WithdrawRequest};
 
 use bitcoin_cash_slp::{slp_send_output, SlpTokenType, TokenId};
 use bitcrypto::dhash160;
@@ -66,6 +66,22 @@ struct SlpTxPreimage<'a> {
     inputs: Vec<UnspentInfo>,
     outputs: Vec<TransactionOutput>,
     recently_spent: AsyncMutexGuard<'a, RecentlySpentOutPoints>,
+}
+
+#[derive(Debug, Display)]
+enum ValidateHtlcError {
+    TxLackOfOutputs,
+    #[display(fmt = "TxParseError: {:?}", _0)]
+    TxParseError(Error),
+    #[display(fmt = "OpReturnParseError: {:?}", _0)]
+    OpReturnParseError(Error),
+    InvalidSlpDetails,
+    NumConversionErr(NumConversError),
+    ValidatePaymentError(String),
+}
+
+impl From<NumConversError> for ValidateHtlcError {
+    fn from(err: NumConversError) -> ValidateHtlcError { ValidateHtlcError::NumConversionErr(err) }
 }
 
 impl SlpToken {
@@ -229,7 +245,7 @@ impl SlpToken {
         })
     }
 
-    pub async fn send_htlc(
+    async fn send_htlc(
         &self,
         other_pub: &Public,
         time_lock: u32,
@@ -248,6 +264,62 @@ impl SlpToken {
             preimage.recently_spent,
         )
         .await
+    }
+
+    async fn validate_htlc(
+        &self,
+        tx: &[u8],
+        other_pub: &Public,
+        time_lock: u32,
+        secret_hash: &[u8],
+        amount: BigDecimal,
+    ) -> Result<(), MmError<ValidateHtlcError>> {
+        let mut tx: UtxoTx = deserialize(tx).map_to_mm(ValidateHtlcError::TxParseError)?;
+        tx.tx_hash_algo = self.platform_utxo.as_ref().tx_hash_algo;
+        if tx.outputs.len() < 2 {
+            return MmError::err(ValidateHtlcError::TxLackOfOutputs);
+        }
+
+        let slp_tx: SlpTxDetails =
+            deserialize(tx.outputs[0].script_pubkey.as_slice()).map_to_mm(ValidateHtlcError::OpReturnParseError)?;
+
+        match slp_tx.transaction {
+            SlpTransaction::Send { token_id, amounts } => {
+                if token_id != self.token_id() {
+                    return MmError::err(ValidateHtlcError::InvalidSlpDetails);
+                }
+
+                if amounts.is_empty() {
+                    return MmError::err(ValidateHtlcError::InvalidSlpDetails);
+                }
+
+                let expected = sat_from_big_decimal(&amount, self.decimals())?;
+
+                if amounts[0] != expected {
+                    return MmError::err(ValidateHtlcError::InvalidSlpDetails);
+                }
+            },
+            _ => return MmError::err(ValidateHtlcError::InvalidSlpDetails),
+        }
+
+        let dust_decimal = big_decimal_from_sat_unsigned(self.dust(), self.platform_utxo.decimals());
+        let validate_fut = utxo_common::validate_payment(
+            self.platform_utxo.clone(),
+            tx,
+            1,
+            other_pub,
+            self.platform_utxo.my_public_key(),
+            secret_hash,
+            dust_decimal,
+            time_lock,
+        );
+
+        validate_fut
+            .compat()
+            .await
+            .map_to_mm(ValidateHtlcError::ValidatePaymentError)?;
+
+        Ok(())
     }
 
     pub async fn refund_htlc(
@@ -853,11 +925,22 @@ impl SwapOps for SlpToken {
         payment_tx: &[u8],
         time_lock: u32,
         maker_pub: &[u8],
-        priv_bn_hash: &[u8],
+        secret_hash: &[u8],
         amount: BigDecimal,
-        swap_contract_address: &Option<BytesJson>,
+        _swap_contract_address: &Option<BytesJson>,
     ) -> Box<dyn Future<Item = (), Error = String> + Send> {
-        unimplemented!()
+        let maker_pub = try_fus!(Public::from_slice(maker_pub));
+        let tx = payment_tx.to_owned();
+        let secret_hash = secret_hash.to_owned();
+        let coin = self.clone();
+        let fut = async move {
+            try_s!(
+                coin.validate_htlc(&tx, &maker_pub, time_lock, &secret_hash, amount)
+                    .await
+            );
+            Ok(())
+        };
+        Box::new(fut.boxed().compat())
     }
 
     fn validate_taker_payment(
@@ -865,11 +948,22 @@ impl SwapOps for SlpToken {
         payment_tx: &[u8],
         time_lock: u32,
         taker_pub: &[u8],
-        priv_bn_hash: &[u8],
+        secret_hash: &[u8],
         amount: BigDecimal,
-        swap_contract_address: &Option<BytesJson>,
+        _swap_contract_address: &Option<BytesJson>,
     ) -> Box<dyn Future<Item = (), Error = String> + Send> {
-        unimplemented!()
+        let taker_pub = try_fus!(Public::from_slice(taker_pub));
+        let tx = payment_tx.to_owned();
+        let secret_hash = secret_hash.to_owned();
+        let coin = self.clone();
+        let fut = async move {
+            try_s!(
+                coin.validate_htlc(&tx, &taker_pub, time_lock, &secret_hash, amount)
+                    .await
+            );
+            Ok(())
+        };
+        Box::new(fut.boxed().compat())
     }
 
     fn check_if_my_payment_sent(
@@ -877,10 +971,10 @@ impl SwapOps for SlpToken {
         time_lock: u32,
         other_pub: &[u8],
         secret_hash: &[u8],
-        search_from_block: u64,
-        swap_contract_address: &Option<BytesJson>,
+        _search_from_block: u64,
+        _swap_contract_address: &Option<BytesJson>,
     ) -> Box<dyn Future<Item = Option<TransactionEnum>, Error = String> + Send> {
-        unimplemented!()
+        utxo_common::check_if_my_payment_sent(self.platform_utxo.clone(), time_lock, other_pub, secret_hash)
     }
 
     fn search_for_swap_tx_spend_my(
@@ -1092,12 +1186,24 @@ fn send_and_spend_htlc_on_testnet() {
     let secret = [0; 32];
     let secret_hash = dhash160(&secret);
     let time_lock = (now_ms() / 1000) as u32;
+    let amount: BigDecimal = "0.1".parse().unwrap();
 
     let tx = fusd
-        .send_taker_payment(time_lock, &*keypair.public(), &*secret_hash, 1.into(), &None)
+        .send_taker_payment(time_lock, &*keypair.public(), &*secret_hash, amount.clone(), &None)
         .wait()
         .unwrap();
     println!("{}", hex::encode(tx.tx_hex()));
+
+    fusd.validate_taker_payment(
+        &tx.tx_hex(),
+        time_lock,
+        &*keypair.public(),
+        &*secret_hash,
+        amount,
+        &None,
+    )
+    .wait()
+    .unwrap();
 
     let spending_tx = fusd
         .send_maker_spends_taker_payment(&tx.tx_hex(), time_lock, &*keypair.public(), &secret, &None)

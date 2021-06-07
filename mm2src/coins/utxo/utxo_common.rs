@@ -950,7 +950,7 @@ pub fn check_all_inputs_signed_by_pub(tx: &UtxoTx, expected_pub: &[u8]) -> Resul
 
 pub fn validate_fee<T>(
     coin: T,
-    fee_tx: &TransactionEnum,
+    tx: UtxoTx,
     fee_addr: &[u8],
     sender_pubkey: &[u8],
     amount: &BigDecimal,
@@ -959,10 +959,6 @@ pub fn validate_fee<T>(
 where
     T: AsRef<UtxoCoinFields> + Send + Sync + 'static,
 {
-    let tx = match fee_tx {
-        TransactionEnum::UtxoTx(tx) => tx.clone(),
-        _ => panic!(),
-    };
     let amount = amount.clone();
     let address = try_fus!(address_from_raw_pubkey(
         fee_addr,
@@ -1038,14 +1034,18 @@ where
     T: AsRef<UtxoCoinFields> + Clone + Send + Sync + 'static,
 {
     let my_public = coin.as_ref().key_pair.public();
+    let mut tx: UtxoTx = try_fus!(deserialize(payment_tx).map_err(|e| ERRL!("{:?}", e)));
+    tx.tx_hash_algo = coin.as_ref().tx_hash_algo;
+
     validate_payment(
         coin.clone(),
-        payment_tx,
-        time_lock,
+        tx,
+        0,
         &try_fus!(Public::from_slice(maker_pub)),
         my_public,
         priv_bn_hash,
         amount,
+        time_lock,
     )
 }
 
@@ -1061,14 +1061,18 @@ where
     T: AsRef<UtxoCoinFields> + Clone + Send + Sync + 'static,
 {
     let my_public = coin.as_ref().key_pair.public();
+    let mut tx: UtxoTx = try_fus!(deserialize(payment_tx).map_err(|e| ERRL!("{:?}", e)));
+    tx.tx_hash_algo = coin.as_ref().tx_hash_algo;
+
     validate_payment(
         coin.clone(),
-        payment_tx,
-        time_lock,
+        tx,
+        0,
         &try_fus!(Public::from_slice(taker_pub)),
         my_public,
         priv_bn_hash,
         amount,
+        time_lock,
     )
 }
 
@@ -2325,28 +2329,22 @@ fn address_from_any_format(conf: &UtxoCoinConf, from: &str) -> Result<Address, S
     )
 }
 
-fn validate_payment<T>(
+pub fn validate_payment<T>(
     coin: T,
-    payment_tx: &[u8],
-    time_lock: u32,
+    tx: UtxoTx,
+    output_index: usize,
     first_pub0: &Public,
     second_pub0: &Public,
     priv_bn_hash: &[u8],
     amount: BigDecimal,
+    time_lock: u32,
 ) -> Box<dyn Future<Item = (), Error = String> + Send>
 where
     T: AsRef<UtxoCoinFields> + Send + Sync + 'static,
 {
-    let mut tx: UtxoTx = try_fus!(deserialize(payment_tx).map_err(|e| ERRL!("{:?}", e)));
-    tx.tx_hash_algo = coin.as_ref().tx_hash_algo;
     let amount = try_fus!(sat_from_big_decimal(&amount, coin.as_ref().decimals));
 
-    let expected_redeem = payment_script(
-        time_lock,
-        priv_bn_hash,
-        &try_fus!(Public::from_slice(first_pub0)),
-        &try_fus!(Public::from_slice(second_pub0)),
-    );
+    let expected_redeem = payment_script(time_lock, priv_bn_hash, first_pub0, second_pub0);
     let fut = async move {
         let mut attempts = 0;
         loop {
@@ -2385,10 +2383,11 @@ where
                 script_pubkey: Builder::build_p2sh(&dhash160(&expected_redeem)).into(),
             };
 
-            if tx.outputs[0] != expected_output {
+            let actual_output = tx.outputs.get(output_index);
+            if actual_output != Some(&expected_output) {
                 return ERR!(
                     "Provided payment tx output doesn't match expected {:?} {:?}",
-                    tx.outputs[0],
+                    actual_output,
                     expected_output
                 );
             }
