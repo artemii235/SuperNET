@@ -538,7 +538,8 @@ where
         // if interest is zero attempt to set the lowest possible lock_time to claim it later
         unsigned.lock_time = (now_ms() / 1000) as u32 - 3600 + 777 * 2;
     }
-    data.kmd_rewards = Some(interest);
+    let rewards_amount = big_decimal_from_sat_unsigned(interest, coin.as_ref().decimals);
+    data.kmd_rewards = Some(KmdRewardsDetails::claimed_by_me(rewards_amount));
     Ok((unsigned, data))
 }
 
@@ -1417,9 +1418,6 @@ where
     };
     let my_address = coin.my_address().map_to_mm(WithdrawError::InternalError)?;
     let to_address = coin.display_address(&to).map_to_mm(WithdrawError::InternalError)?;
-    let kmd_rewards = data
-        .kmd_rewards
-        .map(|rewards| big_decimal_from_sat_unsigned(rewards, decimals));
     Ok(TransactionDetails {
         from: vec![my_address],
         to: vec![to_address],
@@ -1434,7 +1432,7 @@ where
         coin: coin.as_ref().conf.ticker.clone(),
         internal_id: vec![].into(),
         timestamp: now_ms() / 1000,
-        kmd_rewards,
+        kmd_rewards: data.kmd_rewards,
     })
 }
 
@@ -1835,15 +1833,10 @@ where
 
     let mut input_amount = 0;
     let mut output_amount = 0;
-    let mut from_addresses = vec![];
-    let mut to_addresses = vec![];
+    let mut from_addresses = Vec::new();
+    let mut to_addresses = Vec::new();
     let mut spent_by_me = 0;
     let mut received_by_me = 0;
-    let kmd_rewards = if ticker == "KMD" {
-        Some(try_s!(coin.calc_interest_of_tx(&tx, input_transactions).await))
-    } else {
-        None
-    };
 
     for input in tx.inputs.iter() {
         // input transaction is zero if the tx is the coinbase transaction
@@ -1870,7 +1863,7 @@ where
         if from.contains(&coin.as_ref().my_address) {
             spent_by_me += prev_tx_value;
         }
-        from_addresses.push(from);
+        from_addresses.extend(from.into_iter());
     }
 
     for output in tx.outputs.iter() {
@@ -1879,17 +1872,26 @@ where
         if to.contains(&coin.as_ref().my_address) {
             received_by_me += output.value;
         }
-        to_addresses.push(to);
+        to_addresses.extend(to.into_iter());
     }
 
-    let fee = match kmd_rewards {
-        Some(kmd_rewards) => {
-            // `input_amount = output_amount + fee`, where `output_amount = actual_output_amount + kmd_rewards`,
-            // so to calculate an actual transaction fee, we have to subtract the `kmd_rewards` from the total `output_amount`:
-            // `fee = input_amount - actual_output_amount` or simplified `fee = input_amount - output_amount + kmd_rewards`
-            input_amount as i64 - output_amount as i64 + kmd_rewards as i64
-        },
-        None => input_amount as i64 - output_amount as i64,
+    let (fee, kmd_rewards) = if ticker == "KMD" {
+        let kmd_rewards = try_s!(coin.calc_interest_of_tx(&tx, input_transactions).await);
+        // `input_amount = output_amount + fee`, where `output_amount = actual_output_amount + kmd_rewards`,
+        // so to calculate an actual transaction fee, we have to subtract the `kmd_rewards` from the total `output_amount`:
+        // `fee = input_amount - actual_output_amount` or simplified `fee = input_amount - output_amount + kmd_rewards`
+        let fee = input_amount as i64 - output_amount as i64 + kmd_rewards as i64;
+
+        let my_address = &coin.as_ref().my_address;
+        let claimed_by_me = from_addresses.iter().all(|from| from == my_address) && to_addresses.contains(my_address);
+        let kmd_rewards_details = KmdRewardsDetails {
+            amount: big_decimal_from_sat_unsigned(kmd_rewards, coin.as_ref().decimals),
+            claimed_by_me,
+        };
+        (fee, Some(kmd_rewards_details))
+    } else {
+        let fee = input_amount as i64 - output_amount as i64;
+        (fee, None)
     };
     let fee = big_decimal_from_sat(fee, coin.as_ref().decimals);
 
@@ -1897,14 +1899,12 @@ where
     // or several outputs are sent to same address
     let mut from_addresses: Vec<String> = try_s!(from_addresses
         .into_iter()
-        .flatten()
         .map(|addr| coin.display_address(&addr))
         .collect());
     from_addresses.sort();
     from_addresses.dedup();
     let mut to_addresses: Vec<String> = try_s!(to_addresses
         .into_iter()
-        .flatten()
         .map(|addr| coin.display_address(&addr))
         .collect());
     to_addresses.sort();
@@ -1924,7 +1924,7 @@ where
         coin: ticker.clone(),
         internal_id: tx.hash().reversed().to_vec().into(),
         timestamp: verbose_tx.time.into(),
-        kmd_rewards: kmd_rewards.map(|rewards| big_decimal_from_sat_unsigned(rewards, coin.as_ref().decimals)),
+        kmd_rewards,
     })
 }
 
@@ -1969,7 +1969,7 @@ pub async fn update_kmd_rewards<T>(
     input_transactions: &mut HistoryUtxoTxMap,
 ) -> UtxoRpcResult<()>
 where
-    T: AsRef<UtxoCoinFields> + UtxoCommonOps + UtxoStandardOps + Send + Sync + 'static,
+    T: AsRef<UtxoCoinFields> + UtxoCommonOps + UtxoStandardOps + MarketCoinOps + Send + Sync + 'static,
 {
     if !tx_details.should_update_kmd_rewards() {
         let error = "There is no need to update KMD rewards".to_owned();
@@ -1991,7 +1991,13 @@ where
         }));
     }
 
-    tx_details.kmd_rewards = Some(kmd_rewards);
+    let my_address = &coin.my_address().map_to_mm(UtxoRpcError::Internal)?;
+    let claimed_by_me = tx_details.from.iter().all(|from| from == my_address) && tx_details.to.contains(my_address);
+
+    tx_details.kmd_rewards = Some(KmdRewardsDetails {
+        amount: kmd_rewards,
+        claimed_by_me,
+    });
     Ok(())
 }
 

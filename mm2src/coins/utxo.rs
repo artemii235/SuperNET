@@ -74,10 +74,10 @@ use self::rpc_clients::{ConcurrentRequestMap, NativeClient, NativeClientImpl};
 use self::rpc_clients::{ElectrumClient, ElectrumClientImpl, ElectrumRpcRequest, EstimateFeeMethod, EstimateFeeMode,
                         UnspentInfo, UtxoRpcClientEnum, UtxoRpcError, UtxoRpcResult};
 use super::{BalanceError, BalanceFut, BalanceResult, CoinTransportMetrics, CoinsContext, FeeApproxStage,
-            FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, NumConversError, NumConversResult,
-            RpcClientType, RpcTransportEventHandler, RpcTransportEventHandlerShared, TradeFee, TradePreimageError,
-            TradePreimageFut, TradePreimageResult, Transaction, TransactionDetails, TransactionEnum, TransactionFut,
-            WithdrawError, WithdrawFee, WithdrawRequest};
+            FoundSwapTxSpend, HistorySyncState, KmdRewardsDetails, MarketCoinOps, MmCoin, NumConversError,
+            NumConversResult, RpcClientType, RpcTransportEventHandler, RpcTransportEventHandlerShared, TradeFee,
+            TradePreimageError, TradePreimageFut, TradePreimageResult, Transaction, TransactionDetails,
+            TransactionEnum, TransactionFut, WithdrawError, WithdrawFee, WithdrawRequest};
 
 #[cfg(test)] pub mod utxo_tests;
 #[cfg(target_arch = "wasm32")] pub mod utxo_wasm_tests;
@@ -186,7 +186,7 @@ pub struct AdditionalTxData {
     pub spent_by_me: u64,
     pub fee_amount: u64,
     pub unused_change: Option<u64>,
-    pub kmd_rewards: Option<u64>,
+    pub kmd_rewards: Option<KmdRewardsDetails>,
 }
 
 /// The fee set from coins config
