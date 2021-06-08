@@ -951,10 +951,11 @@ pub fn check_all_inputs_signed_by_pub(tx: &UtxoTx, expected_pub: &[u8]) -> Resul
 pub fn validate_fee<T>(
     coin: T,
     tx: UtxoTx,
-    fee_addr: &[u8],
+    output_index: usize,
     sender_pubkey: &[u8],
     amount: &BigDecimal,
     min_block_number: u64,
+    fee_addr: &[u8],
 ) -> Box<dyn Future<Item = (), Error = String> + Send>
 where
     T: AsRef<UtxoCoinFields> + Send + Sync + 'static,
@@ -995,7 +996,7 @@ where
             );
         }
 
-        match tx.outputs.first() {
+        match tx.outputs.get(output_index) {
             Some(out) => {
                 let expected_script_pubkey = Builder::build_p2pkh(&address.hash).to_bytes();
                 if out.script_pubkey != expected_script_pubkey {
@@ -1014,7 +1015,7 @@ where
                 }
             },
             None => {
-                return ERR!("Provided dex fee tx {:?} has no outputs", tx);
+                return ERR!("Provided dex fee tx {:?} does not have output {}", tx, output_index);
             },
         }
         Ok(())

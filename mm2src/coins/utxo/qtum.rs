@@ -351,7 +351,7 @@ impl SwapOps for QtumCoin {
             TransactionEnum::UtxoTx(tx) => tx.clone(),
             _ => panic!(),
         };
-        utxo_common::validate_fee(self.clone(), tx, fee_addr, expected_sender, amount, min_block_number)
+        utxo_common::validate_fee(self.clone(), tx, 0, expected_sender, amount, min_block_number, fee_addr)
     }
 
     fn validate_maker_payment(

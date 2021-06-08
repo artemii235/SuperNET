@@ -84,6 +84,20 @@ impl From<NumConversError> for ValidateHtlcError {
     fn from(err: NumConversError) -> ValidateHtlcError { ValidateHtlcError::NumConversionErr(err) }
 }
 
+#[derive(Debug, Display)]
+enum ValidateDexFeeError {
+    TxLackOfOutputs,
+    #[display(fmt = "OpReturnParseError: {:?}", _0)]
+    OpReturnParseError(Error),
+    InvalidSlpDetails,
+    NumConversionErr(NumConversError),
+    ValidatePaymentError(String),
+}
+
+impl From<NumConversError> for ValidateDexFeeError {
+    fn from(err: NumConversError) -> ValidateDexFeeError { ValidateDexFeeError::NumConversionErr(err) }
+}
+
 impl SlpToken {
     pub fn new(
         decimals: u8,
@@ -523,6 +537,59 @@ impl SlpToken {
         Ok(signed)
     }
 
+    async fn validate_dex_fee(
+        &self,
+        tx: UtxoTx,
+        expected_sender: &[u8],
+        fee_addr: &[u8],
+        amount: BigDecimal,
+        min_block_number: u64,
+    ) -> Result<(), MmError<ValidateDexFeeError>> {
+        if tx.outputs.len() < 2 {
+            return MmError::err(ValidateDexFeeError::TxLackOfOutputs);
+        }
+
+        let slp_tx: SlpTxDetails =
+            deserialize(tx.outputs[0].script_pubkey.as_slice()).map_to_mm(ValidateDexFeeError::OpReturnParseError)?;
+
+        match slp_tx.transaction {
+            SlpTransaction::Send { token_id, amounts } => {
+                if token_id != self.token_id() {
+                    return MmError::err(ValidateDexFeeError::InvalidSlpDetails);
+                }
+
+                if amounts.is_empty() {
+                    return MmError::err(ValidateDexFeeError::InvalidSlpDetails);
+                }
+
+                let expected = sat_from_big_decimal(&amount, self.decimals())?;
+
+                if amounts[0] != expected {
+                    return MmError::err(ValidateDexFeeError::InvalidSlpDetails);
+                }
+            },
+            _ => return MmError::err(ValidateDexFeeError::InvalidSlpDetails),
+        }
+
+        let dust_decimal = big_decimal_from_sat_unsigned(self.dust(), self.platform_utxo.decimals());
+        let validate_fut = utxo_common::validate_fee(
+            self.platform_utxo.clone(),
+            tx,
+            1,
+            expected_sender,
+            &dust_decimal,
+            min_block_number,
+            fee_addr,
+        );
+
+        validate_fut
+            .compat()
+            .await
+            .map_to_mm(ValidateDexFeeError::ValidatePaymentError)?;
+
+        Ok(())
+    }
+
     pub fn dust(&self) -> u64 { self.platform_utxo.as_ref().dust_amount }
 
     pub fn decimals(&self) -> u8 { self.conf.decimals }
@@ -917,7 +984,23 @@ impl SwapOps for SlpToken {
         amount: &BigDecimal,
         min_block_number: u64,
     ) -> Box<dyn Future<Item = (), Error = String> + Send> {
-        unimplemented!()
+        let tx = match fee_tx {
+            TransactionEnum::UtxoTx(tx) => tx.clone(),
+            _ => panic!(),
+        };
+        let coin = self.clone();
+        let expected_sender = expected_sender.to_owned();
+        let fee_addr = fee_addr.to_owned();
+        let amount = amount.to_owned();
+
+        let fut = async move {
+            try_s!(
+                coin.validate_dex_fee(tx, &expected_sender, &fee_addr, amount, min_block_number)
+                    .await
+            );
+            Ok(())
+        };
+        Box::new(fut.boxed().compat())
     }
 
     fn validate_maker_payment(
