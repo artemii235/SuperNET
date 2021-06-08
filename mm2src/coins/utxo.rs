@@ -582,8 +582,6 @@ pub trait UtxoCommonOps {
 #[async_trait]
 pub trait UtxoStandardOps {
     /// Gets tx details by hash requesting the coin RPC if required.
-    /// If you plan to call this method for multiple transactions (for example, when loading transaction history),
-    /// It's recommended to use this method for transactions ordered by **ascending** height for the best performance.
     /// * `input_transactions` - the cache of the already requested transactions.
     async fn tx_details_by_hash(
         &self,
