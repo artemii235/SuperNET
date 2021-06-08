@@ -34,7 +34,7 @@ fn mint_slp_token() {
         .wait()
         .unwrap();
 
-    let slp = SlpToken::new(8, "ADEX".into(), tx.tx_hash().as_slice().into(), coin);
+    let slp = SlpToken::new(8, "ADEX".into(), tx.tx_hash().as_slice().into(), coin, 0);
     let balance = slp.my_balance().wait().unwrap();
     let expected = BigDecimal::from(1000);
     assert_eq!(expected, balance.spendable);
@@ -44,29 +44,9 @@ fn mint_slp_token() {
     let time_lock = (now_ms() / 1000) as u32;
     let amount = 10000;
 
-    let tx = block_on(slp.send_htlc(keypair.public(), time_lock, &*secret_hash, amount)).unwrap();
+    let tx = slp
+        .send_maker_payment(time_lock, &*keypair.public(), &*secret_hash, 1.into(), &None)
+        .wait()
+        .unwrap();
     println!("{}", hex::encode(tx.tx_hex()));
-
-    let bch_unspent = UnspentInfo {
-        outpoint: OutPoint {
-            hash: H256::from(tx.tx_hash().0.as_slice()).reversed(),
-            index: 1,
-        },
-        value: slp.dust(),
-        height: None,
-    };
-    let slp_p2sh_utxo = SlpUnspent {
-        bch_unspent,
-        slp_amount: amount,
-    };
-
-    let redeem_script = payment_script(time_lock, &*secret_hash, keypair.public(), keypair.public());
-    let script_data = Builder::default()
-        .push_data(&secret)
-        .push_opcode(Opcode::OP_0)
-        .into_script();
-
-    let spending_tx = block_on(slp.spend_p2sh(slp_p2sh_utxo, script_data, redeem_script)).unwrap();
-    println!("spend hex {}", hex::encode(spending_tx.tx_hex()));
-    println!("spend hash {}", hex::encode(spending_tx.tx_hash().0));
 }

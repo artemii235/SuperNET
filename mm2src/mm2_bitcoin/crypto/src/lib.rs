@@ -110,36 +110,37 @@ pub fn checksum(data: &[u8], sum_type: &ChecksumType) -> H32 {
 mod tests {
     use super::{checksum, dhash160, dhash256, ripemd160, sha1, sha256, siphash24};
     use primitives::bytes::Bytes;
+    use primitives::hash::{H160, H256, H32};
     use ChecksumType;
 
     #[test]
     fn test_ripemd160() {
-        let expected = "108f07b8382412612c048d07d13f814118445acd".into();
+        let expected: H160 = "108f07b8382412612c048d07d13f814118445acd".into();
         let result = ripemd160(b"hello");
         assert_eq!(result, expected);
     }
 
     #[test]
     fn test_sha1() {
-        let expected = "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d".into();
+        let expected: H160 = "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d".into();
         let result = sha1(b"hello");
         assert_eq!(result, expected);
     }
 
     #[test]
     fn test_sha256() {
-        let expected = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824".into();
+        let expected: H256 = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824".into();
         let result = sha256(b"hello");
         assert_eq!(result, expected);
     }
 
     #[test]
     fn test_dhash160() {
-        let expected = "b6a9c8c230722b7c748331a8b450f05566dc7d0f".into();
+        let expected: H160 = "b6a9c8c230722b7c748331a8b450f05566dc7d0f".into();
         let result = dhash160(b"hello");
         assert_eq!(result, expected);
 
-        let expected = "865c71bfc7e314709207ab9e7e205c6f8e453d08".into();
+        let expected: H160 = "865c71bfc7e314709207ab9e7e205c6f8e453d08".into();
         let bytes: Bytes =
             "210292be03ed9475445cc24a34a115c641a67e4ff234ccb08cb4c5cea45caa526cb26ead6ead6ead6ead6eadac".into();
         let result = dhash160(&bytes);
@@ -148,7 +149,7 @@ mod tests {
 
     #[test]
     fn test_dhash256() {
-        let expected = "9595c9df90075148eb06860365df33584b75bff782a510c6cd4883a419833d50".into();
+        let expected: H256 = "9595c9df90075148eb06860365df33584b75bff782a510c6cd4883a419833d50".into();
         let result = dhash256(b"hello");
         assert_eq!(result, expected);
     }
@@ -162,6 +163,6 @@ mod tests {
 
     #[test]
     fn test_checksum() {
-        assert_eq!(checksum(b"hello", &ChecksumType::DSHA256), "9595c9df".into());
+        assert_eq!(checksum(b"hello", &ChecksumType::DSHA256), H32::from("9595c9df"));
     }
 }
