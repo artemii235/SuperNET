@@ -2554,6 +2554,34 @@ fn btc_mtp() {
 }
 
 #[test]
+fn qtum_mtp() {
+    let electrum = electrum_client_for_test(&[
+        "electrum1.cipig.net:10050",
+        "electrum2.cipig.net:10050",
+        "electrum3.cipig.net:10050",
+    ]);
+    let mtp = electrum
+        .get_median_time_past(681659, NonZeroU64::new(11).unwrap())
+        .wait()
+        .unwrap();
+    assert_eq!(mtp, 1598854128);
+}
+
+#[test]
+fn zer_mtp() {
+    let electrum = electrum_client_for_test(&[
+        "electrum1.cipig.net:10065",
+        "electrum2.cipig.net:10065",
+        "electrum3.cipig.net:10065",
+    ]);
+    let mtp = electrum
+        .get_median_time_past(1130915, NonZeroU64::new(11).unwrap())
+        .wait()
+        .unwrap();
+    assert_eq!(mtp, 1623240214);
+}
+
+#[test]
 #[ignore]
 fn send_and_refund_dex_fee() {
     let electrum = electrum_client_for_test(&[
