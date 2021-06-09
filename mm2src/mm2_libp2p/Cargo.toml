@@ -10,6 +10,7 @@ edition = "2018"
 async-trait = "0.1"
 async-std = { version = "1.6.2", features = ["unstable"] }
 atomicdex-gossipsub = { path = "../gossipsub" }
+common = { path = "../common" }
 libp2p-floodsub = { path = "../floodsub" }
 env_logger = "0.7.1"
 futures = { version = "0.3.1", package = "futures", features = ["compat", "async-await"] }
@@ -19,7 +20,7 @@ secp256k1 = { git = "https://github.com/artemii235/rust-secp256k1.git", features
 log = "0.4.8"
 num-bigint = { version = "0.2", features = ["serde", "std"] }
 num-rational = { version = "0.2", features = ["serde", "bigint", "bigint-std"] }
-rand = { version = "0.6", features = ["std"] }
+rand = { version = "0.7.2", features = ["std"] }
 rmp-serde = "0.14.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_bytes = "0.11.5"

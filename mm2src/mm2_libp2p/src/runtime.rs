@@ -1,4 +1,4 @@
-use futures::Future;
+use futures::{Future, FutureExt};
 use lazy_static::lazy_static;
 use std::pin::Pin;
 
@@ -24,12 +24,12 @@ pub trait SwarmRuntimeOps {
 impl SwarmRuntimeOps for SwarmRuntime {
     fn new() -> Self { SwarmRuntime {} }
 
-    fn spawn<F>(&self, _future: F)
+    fn spawn<F>(&self, future: F)
     where
         F: Future + Send + 'static,
         F::Output: Send + 'static,
     {
-        todo!()
+        common::executor::spawn(future.map(|_| ()))
     }
 }
 

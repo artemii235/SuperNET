@@ -5,6 +5,7 @@ use crate::{adex_ping::AdexPing,
             runtime::{SwarmRuntimeOps, SWARM_RUNTIME}};
 use atomicdex_gossipsub::{Gossipsub, GossipsubConfigBuilder, GossipsubEvent, GossipsubMessage, MessageId, Topic,
                           TopicHash};
+use common::rand_rng;
 use futures::{channel::{mpsc::{channel, Receiver, Sender},
                         oneshot},
               future::{abortable, join_all, poll_fn, AbortHandle},
@@ -19,7 +20,8 @@ use libp2p::{core::{ConnectedPoint, Multiaddr, Transport},
              NetworkBehaviour, PeerId};
 use libp2p_floodsub::{Floodsub, FloodsubEvent, Topic as FloodsubTopic};
 use log::{debug, error, info};
-use rand::{seq::SliceRandom, thread_rng};
+use rand::seq::SliceRandom;
+use rand::Rng;
 use std::collections::HashSet;
 use std::{collections::hash_map::{DefaultHasher, HashMap},
           hash::{Hash, Hasher},
@@ -455,6 +457,7 @@ fn maintain_connection_to_relays(swarm: &mut AtomicDexSwarm, bootstrap_addresses
     let mesh_n = swarm.gossipsub.get_config().mesh_n;
     // allow 2 * mesh_n_high connections to other nodes
     let max_n = swarm.gossipsub.get_config().mesh_n_high * 2;
+    let mut rng = rand_rng();
     if connected_relays.len() < mesh_n_low {
         let to_connect_num = mesh_n - connected_relays.len();
         let to_connect = swarm
@@ -468,7 +471,7 @@ fn maintain_connection_to_relays(swarm: &mut AtomicDexSwarm, bootstrap_addresses
                 .iter()
                 .filter(|addr| !swarm.gossipsub.is_connected_to_addr(addr))
                 .collect::<Vec<_>>()
-                .choose_multiple(&mut thread_rng(), connect_bootstrap_num)
+                .choose_multiple(&mut rng, connect_bootstrap_num)
             {
                 if let Err(e) = libp2p::Swarm::dial_addr(swarm, (*addr).clone()) {
                     error!("Bootstrap addr {} dial error {}", addr, e);
@@ -488,7 +491,6 @@ fn maintain_connection_to_relays(swarm: &mut AtomicDexSwarm, bootstrap_addresses
     }
 
     if connected_relays.len() > max_n {
-        let mut rng = thread_rng();
         let to_disconnect_num = connected_relays.len() - max_n;
         let relays_mesh = swarm.gossipsub.get_relay_mesh();
         let not_in_mesh: Vec<_> = connected_relays
@@ -598,14 +600,8 @@ pub fn start_gossipsub(
     on_poll: impl Fn(&AtomicDexSwarm) + Send + 'static,
 ) -> (Sender<AdexBehaviourCmd>, AdexEventRx, PeerId, AbortHandle) {
     let i_am_relay = node_type.is_relay();
-    let local_key = match force_key {
-        Some(mut key) => {
-            let secret = identity::ed25519::SecretKey::from_bytes(&mut key).expect("Secret length is 32 bytes");
-            let keypair = identity::ed25519::Keypair::from(secret);
-            identity::Keypair::Ed25519(keypair)
-        },
-        None => identity::Keypair::generate_ed25519(),
-    };
+    let mut rng = rand_rng();
+    let local_key = generate_ed25519_keypair(&mut rng, force_key);
     let local_peer_id = PeerId::from(local_key.public());
     info!("Local peer id: {:?}", local_peer_id);
 
@@ -623,7 +619,7 @@ pub fn start_gossipsub(
         transport.or_transport(libp2p::websocket::WsConfig::new(trans_clone))
     };
 
-    let noise_keys = noise::Keypair::<noise::X25519Spec>::new()
+    let noise_keys = noise::Keypair::<noise::X25519Spec>::with_rng(&mut rng)
         .into_authentic(&local_key)
         .expect("Signing libp2p-noise static DH keypair failed.");
 
@@ -711,7 +707,7 @@ pub fn start_gossipsub(
         libp2p::Swarm::listen_on(&mut swarm, addr.parse().unwrap()).unwrap();
     }
 
-    for relay in bootstrap.choose_multiple(&mut thread_rng(), mesh_n) {
+    for relay in bootstrap.choose_multiple(&mut rng, mesh_n) {
         match libp2p::Swarm::dial_addr(&mut swarm, relay.clone()) {
             Ok(_) => info!("Dialed {}", relay),
             Err(e) => error!("Dial {:?} failed: {:?}", relay, e),
@@ -765,6 +761,20 @@ pub fn start_gossipsub(
     SWARM_RUNTIME.spawn(polling_fut);
 
     (cmd_tx, event_rx, local_peer_id, abort_handle)
+}
+
+fn generate_ed25519_keypair<R: Rng>(rng: &mut R, force_key: Option<[u8; 32]>) -> identity::Keypair {
+    let mut raw_key = match force_key {
+        Some(key) => key,
+        None => {
+            let mut key = [0; 32];
+            rng.fill_bytes(&mut key);
+            key
+        },
+    };
+    let secret = identity::ed25519::SecretKey::from_bytes(&mut raw_key).expect("Secret length is 32 bytes");
+    let keypair = identity::ed25519::Keypair::from(secret);
+    identity::Keypair::Ed25519(keypair)
 }
 
 /// If te `addr` is in the "/ip4/{addr}/tcp/{port}" format then parse the `addr` immediately to the `Multiaddr`,

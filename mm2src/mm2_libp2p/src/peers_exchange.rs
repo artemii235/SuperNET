@@ -1,4 +1,5 @@
 use crate::request_response::Codec;
+use common::rand_rng;
 use futures::StreamExt;
 use libp2p::swarm::NetworkBehaviour;
 use libp2p::{multiaddr::{Multiaddr, Protocol},
@@ -7,7 +8,7 @@ use libp2p::{multiaddr::{Multiaddr, Protocol},
              swarm::{NetworkBehaviourAction, NetworkBehaviourEventProcess, PollParameters},
              NetworkBehaviour, PeerId};
 use log::{error, info};
-use rand::{seq::SliceRandom, thread_rng};
+use rand::seq::SliceRandom;
 use serde::{de::Deserializer, ser::Serializer, Deserialize, Serialize};
 use std::collections::HashSet;
 use std::{collections::{HashMap, VecDeque},
@@ -105,7 +106,7 @@ impl PeersExchange {
 
     fn get_random_known_peers(&mut self, num: usize) -> HashMap<PeerIdSerde, PeerAddresses> {
         let mut result = HashMap::with_capacity(num);
-        let mut rng = thread_rng();
+        let mut rng = rand_rng();
         let peer_ids = self.known_peers.choose_multiple(&mut rng, num).cloned();
         for peer_id in peer_ids {
             let addresses = self.request_response.addresses_of_peer(&peer_id).into_iter().collect();
@@ -148,7 +149,7 @@ impl PeersExchange {
 
     fn maintain_known_peers(&mut self) {
         if self.known_peers.len() > MAX_PEERS {
-            let mut rng = thread_rng();
+            let mut rng = rand_rng();
             let to_remove_num = self.known_peers.len() - MAX_PEERS;
             self.known_peers.shuffle(&mut rng);
             let removed_peers: Vec<_> = self.known_peers.drain(..to_remove_num).collect();
@@ -160,7 +161,7 @@ impl PeersExchange {
     }
 
     fn request_known_peers_from_random_peer(&mut self) {
-        let mut rng = thread_rng();
+        let mut rng = rand_rng();
         if let Some(from_peer) = self.known_peers.choose(&mut rng) {
             info!("Try to request {} peers from peer {}", DEFAULT_PEERS_NUM, from_peer);
             let request = PeersExchangeRequest::GetKnownPeers { num: DEFAULT_PEERS_NUM };
@@ -174,7 +175,7 @@ impl PeersExchange {
         mut filter: impl FnMut(&PeerId) -> bool,
     ) -> HashMap<PeerId, PeerAddresses> {
         let mut result = HashMap::with_capacity(num);
-        let mut rng = thread_rng();
+        let mut rng = rand_rng();
         let peer_ids = self.known_peers.iter().filter(|peer| filter(*peer)).collect::<Vec<_>>();
         for peer_id in peer_ids.choose_multiple(&mut rng, num) {
             let addresses = self.request_response.addresses_of_peer(*peer_id).into_iter().collect();
