@@ -2746,6 +2746,7 @@ pub struct AutoBuyInput {
     rel_confs: Option<u64>,
     rel_nota: Option<bool>,
     min_volume: Option<MmNumber>,
+    save_in_history: Option<bool>,
 }
 
 pub async fn buy(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
@@ -2929,7 +2930,7 @@ pub async fn lp_auto_buy(
         order_type: order.order_type,
         min_volume: order.min_volume.clone().into(),
     } });
-    save_my_new_taker_order(ctx, &order);
+    save_my_new_taker_order(ctx, &order, input.save_in_history.unwrap_or(true));
     my_taker_orders.insert(order.request.uuid, order);
     Ok(result.to_string())
 }
@@ -3078,6 +3079,7 @@ struct SetPriceReq {
     base_nota: Option<bool>,
     rel_confs: Option<u64>,
     rel_nota: Option<bool>,
+    save_in_history: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -3091,6 +3093,7 @@ struct MakerOrderUpdateReq {
     base_nota: Option<bool>,
     rel_confs: Option<u64>,
     rel_nota: Option<bool>,
+    save_in_history: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -3371,7 +3374,7 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
     let new_order = try_s!(builder.build());
     let request_orderbook = false;
     try_s!(subscribe_to_orderbook_topic(&ctx, &new_order.base, &new_order.rel, request_orderbook).await);
-    save_my_new_maker_order(&ctx, &new_order);
+    save_my_new_maker_order(&ctx, &new_order, req.save_in_history.unwrap_or(true));
     maker_order_created_p2p_notify(ctx.clone(), &new_order).await;
     let rpc_result = MakerOrderForRpc::from(&new_order);
     let res = try_s!(json::to_vec(&json!({ "result": rpc_result })));
@@ -3511,7 +3514,7 @@ pub async fn update_maker_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8
             let new_change = HistoricalOrder::build(&update_msg, &order);
             order.apply_updated(&update_msg);
             order.changes_history.get_or_insert(Vec::new()).push(new_change);
-            save_maker_order_on_update(&ctx, &order);
+            save_maker_order_on_update(&ctx, &order, req.save_in_history.unwrap_or(true));
             update_msg.with_new_max_volume((new_volume - reserved_amount).into());
             (MakerOrderForRpc::from(&*order), order.base.as_str(), order.rel.as_str())
         },
@@ -3902,6 +3905,14 @@ fn update_order_status_in_db(ctx: &MmArc, uuid: Uuid, status: String) -> Result<
 #[cfg(target_arch = "wasm32")]
 fn update_order_status_in_db(_ctx: &MmArc, _uuid: Uuid, _status: String) -> Result<(), String> { Ok(()) }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn check_if_order_exists_in_db(ctx: &MmArc, uuid: Uuid) -> bool {
+    crate::mm2::database::my_orders::check_if_order_exists(ctx, uuid)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn check_if_order_exists_in_db(_ctx: &MmArc, _uuid: Uuid) -> bool { false }
+
 pub fn my_maker_orders_dir(ctx: &MmArc) -> PathBuf { ctx.dbdir().join("ORDERS").join("MY").join("MAKER") }
 
 fn my_taker_orders_dir(ctx: &MmArc) -> PathBuf { ctx.dbdir().join("ORDERS").join("MY").join("TAKER") }
@@ -3972,19 +3983,23 @@ fn save_my_maker_order(ctx: &MmArc, order: &MakerOrder) {
     write(&path, &content).unwrap();
 }
 
-fn save_my_new_maker_order(ctx: &MmArc, order: &MakerOrder) {
+fn save_my_new_maker_order(ctx: &MmArc, order: &MakerOrder, save_in_history: bool) {
     save_my_maker_order(ctx, order);
 
-    if let Err(e) = insert_maker_order_to_db(&ctx, order.uuid, &order) {
-        error!("Error {} on new order insertion", e);
+    if save_in_history {
+        if let Err(e) = insert_maker_order_to_db(&ctx, order.uuid, &order) {
+            error!("Error {} on new order insertion", e);
+        }
     }
 }
 
-fn save_maker_order_on_update(ctx: &MmArc, order: &MakerOrder) {
+fn save_maker_order_on_update(ctx: &MmArc, order: &MakerOrder, save_in_history: bool) {
     save_my_maker_order(ctx, order);
 
-    if let Err(e) = update_maker_order_in_db(&ctx, order.uuid, &order) {
-        error!("Error {} on order update", e);
+    if save_in_history {
+        if let Err(e) = update_maker_order_in_db(&ctx, order.uuid, &order) {
+            error!("Error {} on order update", e);
+        }
     }
 }
 
@@ -3994,10 +4009,13 @@ fn save_my_taker_order(ctx: &MmArc, order: &TakerOrder) {
     write(&path, &content).unwrap();
 }
 
-fn save_my_new_taker_order(ctx: &MmArc, order: &TakerOrder) {
+fn save_my_new_taker_order(ctx: &MmArc, order: &TakerOrder, save_in_history: bool) {
     save_my_taker_order(ctx, order);
-    if let Err(e) = insert_taker_order_to_db(&ctx, order.request.uuid, &order) {
-        error!("Error {} on new order insertion", e);
+
+    if save_in_history {
+        if let Err(e) = insert_taker_order_to_db(&ctx, order.request.uuid, &order) {
+            error!("Error {} on new order insertion", e);
+        }
     }
 }
 
@@ -4017,10 +4035,13 @@ fn delete_my_maker_order(ctx: &MmArc, order: &MakerOrder, reason: MakerOrderCanc
         Ok(_) => (),
         Err(e) => log::warn!("Could not remove order file {}, error {}", path.display(), e),
     }
-    save_my_order_in_history(ctx, &Order::Maker(order.clone()));
 
-    if let Err(e) = update_order_status_in_db(ctx, order.uuid, reason.to_string()) {
-        error!("Error {} on order update", e);
+    if check_if_order_exists_in_db(ctx, order.uuid) {
+        save_my_order_in_history(ctx, &Order::Maker(order.clone()));
+
+        if let Err(e) = update_order_status_in_db(ctx, order.uuid, reason.to_string()) {
+            error!("Error {} on order update", e);
+        }
     }
 }
 
@@ -4031,13 +4052,22 @@ fn delete_my_taker_order(ctx: &MmArc, order: &TakerOrder, reason: TakerOrderCanc
         Ok(_) => (),
         Err(e) => log::warn!("Could not remove order file {}, error {}", path.display(), e),
     }
+
+    let order_is_in_db = check_if_order_exists_in_db(ctx, order.request.uuid);
+
     match reason {
         TakerOrderCancellationReason::ToMaker => (),
-        _ => save_my_order_in_history(ctx, &Order::Taker(order.clone())),
+        _ => {
+            if order_is_in_db {
+                save_my_order_in_history(ctx, &Order::Taker(order.clone()));
+            }
+        },
     }
 
-    if let Err(e) = update_order_status_in_db(ctx, order.request.uuid, reason.to_string()) {
-        error!("Error {} on order update", e);
+    if order_is_in_db {
+        if let Err(e) = update_order_status_in_db(ctx, order.request.uuid, reason.to_string()) {
+            error!("Error {} on order update", e);
+        }
     }
 }
 

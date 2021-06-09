@@ -1,10 +1,10 @@
 /// This module contains code to work with my_orders table in MM2 SQLite DB
 use crate::mm2::lp_ordermatch::MyOrdersFilter;
 use crate::mm2::lp_ordermatch::{MakerOrder, TakerAction, TakerOrder};
-use common::log::debug;
+use common::log::{debug, error};
 use common::mm_ctx::MmArc;
 use common::now_ms;
-use common::rusqlite::{Connection, Error as SqlError, Result as SqlResult, ToSql};
+use common::rusqlite::{Connection, Error as SqlError, OptionalExtension, Result as SqlResult, ToSql};
 use sql_builder::SqlBuilder;
 use std::convert::TryInto;
 use uuid::Uuid;
@@ -36,6 +36,8 @@ const UPDATE_MY_ORDER: &str =
 const UPDATE_WAS_TAKER: &str = "UPDATE my_orders SET type = ?2, last_updated = ?3, was_taker = ?4 WHERE uuid = ?1";
 
 const UPDATE_ORDER_STATUS: &str = "UPDATE my_orders SET last_updated = ?2, status = ?3 WHERE uuid = ?1";
+
+const SELECT_ORDER_BY_UUID: &str = "SELECT id FROM my_orders WHERE uuid = ?1";
 
 pub fn insert_maker_order(ctx: &MmArc, uuid: Uuid, order: &MakerOrder) -> SqlResult<()> {
     debug!("Inserting new order {} to the SQLite database", uuid);
@@ -294,4 +296,20 @@ pub fn select_orders_by_filter(
         total_count,
         skipped,
     })
+}
+
+pub fn check_if_order_exists(ctx: &MmArc, uuid: Uuid) -> bool {
+    let params = vec![uuid.to_string()];
+    let conn = ctx.sqlite_connection();
+    let query_row = conn.query_row(SELECT_ORDER_BY_UUID, &params, |row| row.get::<_, i64>(0));
+    match query_row.optional() {
+        // order not found
+        Ok(None) => false,
+        // order exists
+        Ok(Some(_)) => true,
+        Err(e) => {
+            error!("Error {} on query {} with params {:?}", e, SELECT_ORDER_BY_UUID, params);
+            false
+        },
+    }
 }
