@@ -16,7 +16,7 @@ use futures::future::join_all;
 use mocktopus::mocking::*;
 use rpc::v1::types::H256 as H256Json;
 use script::Opcode;
-use serialization::deserialize;
+use serialization::{deserialize, CoinVariant};
 use std::thread;
 use std::time::Duration;
 
@@ -1016,7 +1016,7 @@ fn test_get_median_time_past_from_electrum_kmd() {
     ]);
 
     let mtp = client
-        .get_median_time_past(1773390, KMD_MTP_BLOCK_COUNT)
+        .get_median_time_past(1773390, KMD_MTP_BLOCK_COUNT, CoinVariant::Standard)
         .wait()
         .unwrap();
     // the MTP is block time of 1773385 in this case
@@ -1031,7 +1031,10 @@ fn test_get_median_time_past_from_electrum_btc() {
         "electrum3.cipig.net:10000",
     ]);
 
-    let mtp = client.get_median_time_past(632858, KMD_MTP_BLOCK_COUNT).wait().unwrap();
+    let mtp = client
+        .get_median_time_past(632858, KMD_MTP_BLOCK_COUNT, CoinVariant::Standard)
+        .wait()
+        .unwrap();
     assert_eq!(1591173041, mtp);
 }
 
@@ -1055,7 +1058,10 @@ fn test_get_median_time_past_from_native_has_median_in_get_block() {
         )
     });
 
-    let mtp = client.get_median_time_past(632858, KMD_MTP_BLOCK_COUNT).wait().unwrap();
+    let mtp = client
+        .get_median_time_past(632858, KMD_MTP_BLOCK_COUNT, CoinVariant::Standard)
+        .wait()
+        .unwrap();
     assert_eq!(1591173041, mtp);
 }
 
@@ -1098,7 +1104,10 @@ fn test_get_median_time_past_from_native_does_not_have_median_in_get_block() {
         MockResult::Return(Box::new(futures01::future::ok(block)))
     });
 
-    let mtp = client.get_median_time_past(632858, KMD_MTP_BLOCK_COUNT).wait().unwrap();
+    let mtp = client
+        .get_median_time_past(632858, KMD_MTP_BLOCK_COUNT, CoinVariant::Standard)
+        .wait()
+        .unwrap();
     assert_eq!(1591173041, mtp);
 }
 
@@ -2389,7 +2398,7 @@ fn doge_mtp() {
         "electrum3.cipig.net:10060",
     ]);
     let mtp = electrum
-        .get_median_time_past(3631820, NonZeroU64::new(11).unwrap())
+        .get_median_time_past(3631820, NonZeroU64::new(11).unwrap(), CoinVariant::Standard)
         .wait()
         .unwrap();
     assert_eq!(mtp, 1614849084);
@@ -2403,7 +2412,7 @@ fn firo_mtp() {
         "electrumx03.firo.org:50001",
     ]);
     let mtp = electrum
-        .get_median_time_past(356730, NonZeroU64::new(11).unwrap())
+        .get_median_time_past(356730, NonZeroU64::new(11).unwrap(), CoinVariant::Standard)
         .wait()
         .unwrap();
     assert_eq!(mtp, 1616492629);
@@ -2413,7 +2422,7 @@ fn firo_mtp() {
 fn verus_mtp() {
     let electrum = electrum_client_for_test(&["el0.verus.io:17485", "el1.verus.io:17485", "el2.verus.io:17485"]);
     let mtp = electrum
-        .get_median_time_past(1480113, NonZeroU64::new(11).unwrap())
+        .get_median_time_past(1480113, NonZeroU64::new(11).unwrap(), CoinVariant::Standard)
         .wait()
         .unwrap();
     assert_eq!(mtp, 1618579909);
@@ -2533,7 +2542,7 @@ fn sys_mtp() {
         "electrum3.cipig.net:10064",
     ]);
     let mtp = electrum
-        .get_median_time_past(1006678, NonZeroU64::new(11).unwrap())
+        .get_median_time_past(1006678, NonZeroU64::new(11).unwrap(), CoinVariant::Standard)
         .wait()
         .unwrap();
     assert_eq!(mtp, 1620019628);
@@ -2547,7 +2556,7 @@ fn btc_mtp() {
         "electrum3.cipig.net:10000",
     ]);
     let mtp = electrum
-        .get_median_time_past(681659, NonZeroU64::new(11).unwrap())
+        .get_median_time_past(681659, NonZeroU64::new(11).unwrap(), CoinVariant::Standard)
         .wait()
         .unwrap();
     assert_eq!(mtp, 1620019527);
@@ -2561,7 +2570,7 @@ fn qtum_mtp() {
         "electrum3.cipig.net:10050",
     ]);
     let mtp = electrum
-        .get_median_time_past(681659, NonZeroU64::new(11).unwrap())
+        .get_median_time_past(681659, NonZeroU64::new(11).unwrap(), CoinVariant::Qtum)
         .wait()
         .unwrap();
     assert_eq!(mtp, 1598854128);
@@ -2575,7 +2584,7 @@ fn zer_mtp() {
         "electrum3.cipig.net:10065",
     ]);
     let mtp = electrum
-        .get_median_time_past(1130915, NonZeroU64::new(11).unwrap())
+        .get_median_time_past(1130915, NonZeroU64::new(11).unwrap(), CoinVariant::Standard)
         .wait()
         .unwrap();
     assert_eq!(mtp, 1623240214);

@@ -197,7 +197,7 @@ impl Deserializable for BlockHeader {
         };
 
         let (hash_state_root, hash_utxo_root, prevout_stake, vch_block_sig_dlgt) =
-            if version == QTUM_BLOCK_HEADER_VERSION {
+            if version == QTUM_BLOCK_HEADER_VERSION && reader.coin_variant().is_qtum() {
                 (
                     Some(reader.read()?),
                     Some(reader.read()?),
@@ -241,7 +241,7 @@ mod tests {
     use block_header::{BlockHeader, BlockHeaderBits, BlockHeaderNonce, AUX_POW_VERSION_DOGE, AUX_POW_VERSION_SYS,
                        MTP_POW_VERSION, QTUM_BLOCK_HEADER_VERSION};
     use hex::FromHex;
-    use ser::{deserialize, serialize, serialize_list, Error as ReaderError, Reader, Stream};
+    use ser::{deserialize, serialize, serialize_list, CoinVariant, Error as ReaderError, Reader, Stream};
 
     #[test]
     fn test_block_header_stream() {
@@ -1873,7 +1873,7 @@ mod tests {
             226, 1, 77, 51, 114, 115, 8, 152, 211, 49, 161, 62, 190, 80, 119, 154, 30, 193, 226, 46, 248, 169, 69, 226,
             86, 134, 101, 238, 115, 14, 63, 174, 123, 30, 7, 123, 174, 60, 13, 100, 49, 23, 123,
         ];
-        let mut reader = Reader::new(headers_bytes);
+        let mut reader = Reader::new_with_coin_variant(headers_bytes, CoinVariant::Qtum);
         let headers = reader.read_list::<BlockHeader>().unwrap();
         for header in headers.iter() {
             assert_eq!(header.version, QTUM_BLOCK_HEADER_VERSION);
