@@ -3,7 +3,6 @@ use super::utxo_standard::UtxoStandardCoin;
 
 use crate::utxo::rpc_clients::{UnspentInfo, UtxoRpcClientEnum, UtxoRpcError};
 use crate::utxo::utxo_common::{self, big_decimal_from_sat_unsigned, generate_transaction, p2sh_spend, payment_script};
-use crate::utxo::utxo_standard::utxo_standard_coin_from_conf_and_request;
 use crate::utxo::{generate_and_send_tx, sat_from_big_decimal, FeePolicy, RecentlySpentOutPoints, UtxoCommonOps, UtxoTx};
 use crate::{BalanceError, BalanceFut, CoinBalance, FeeApproxStage, FoundSwapTxSpend, HistorySyncState, MarketCoinOps,
             MmCoin, NegotiateSwapContractAddrErr, NumConversError, SwapOps, TradeFee, TradePreimageFut,
@@ -13,11 +12,9 @@ use bitcoin_cash_slp::{slp_send_output, SlpTokenType, TokenId};
 use bitcrypto::dhash160;
 use chain::constants::SEQUENCE_FINAL;
 use chain::{OutPoint, TransactionOutput};
-use common::mm_ctx::{MmArc, MmCtxBuilder};
+use common::mm_ctx::MmArc;
 use common::mm_error::prelude::*;
 use common::mm_number::{BigDecimal, MmNumber};
-use common::privkey::key_pair_from_seed;
-use common::{block_on, now_ms};
 use derive_more::Display;
 use futures::compat::Future01CompatExt;
 use futures::lock::MutexGuard as AsyncMutexGuard;
@@ -459,7 +456,7 @@ impl SlpToken {
         };
         outputs.push(slp_output);
 
-        let (_, mut bch_inputs, recently_spent) = try_s!(self.slp_unspents().await);
+        let (_, mut bch_inputs, _recently_spent) = try_s!(self.slp_unspents().await);
         bch_inputs.insert(0, p2sh_utxo.bch_unspent);
         let (mut unsigned, _) = try_s!(
             generate_transaction(
@@ -491,7 +488,7 @@ impl SlpToken {
             .iter()
             .enumerate()
             .skip(1)
-            .map(|(i, input)| {
+            .map(|(i, _)| {
                 p2pkh_spend(
                     &unsigned,
                     i,
@@ -719,7 +716,6 @@ struct SlpTxDetails {
 #[derive(Debug)]
 enum ParseSlpScriptError {
     NotOpReturn,
-    NotSlp,
     DeserializeFailed(Error),
 }
 
@@ -825,7 +821,7 @@ impl MarketCoinOps for SlpToken {
 
     fn current_block(&self) -> Box<dyn Future<Item = u64, Error = String> + Send> { self.platform_utxo.current_block() }
 
-    fn address_from_pubkey_str(&self, pubkey: &str) -> Result<String, String> { unimplemented!() }
+    fn address_from_pubkey_str(&self, _pubkey: &str) -> Result<String, String> { unimplemented!() }
 
     fn display_priv_key(&self) -> String { self.platform_utxo.display_priv_key() }
 
@@ -882,7 +878,7 @@ impl SwapOps for SlpToken {
         maker_pub: &[u8],
         secret_hash: &[u8],
         amount: BigDecimal,
-        swap_contract_address: &Option<BytesJson>,
+        _swap_contract_address: &Option<BytesJson>,
     ) -> TransactionFut {
         let maker_pub = try_fus!(Public::from_slice(maker_pub));
         let amount = try_fus!(sat_from_big_decimal(&amount, self.decimals()));
@@ -902,7 +898,7 @@ impl SwapOps for SlpToken {
         time_lock: u32,
         taker_pub: &[u8],
         secret: &[u8],
-        swap_contract_address: &Option<BytesJson>,
+        _swap_contract_address: &Option<BytesJson>,
     ) -> TransactionFut {
         let tx = taker_payment_tx.to_owned();
         let taker_pub = try_fus!(Public::from_slice(taker_pub));
@@ -922,7 +918,7 @@ impl SwapOps for SlpToken {
         time_lock: u32,
         maker_pub: &[u8],
         secret: &[u8],
-        swap_contract_address: &Option<BytesJson>,
+        _swap_contract_address: &Option<BytesJson>,
     ) -> TransactionFut {
         let tx = maker_payment_tx.to_owned();
         let maker_pub = try_fus!(Public::from_slice(maker_pub));
@@ -942,7 +938,7 @@ impl SwapOps for SlpToken {
         time_lock: u32,
         maker_pub: &[u8],
         secret_hash: &[u8],
-        swap_contract_address: &Option<BytesJson>,
+        _swap_contract_address: &Option<BytesJson>,
     ) -> TransactionFut {
         let tx = taker_payment_tx.to_owned();
         let maker_pub = try_fus!(Public::from_slice(maker_pub));
@@ -1115,31 +1111,31 @@ impl SwapOps for SlpToken {
 impl MmCoin for SlpToken {
     fn is_asset_chain(&self) -> bool { false }
 
-    fn withdraw(&self, req: WithdrawRequest) -> WithdrawFut { unimplemented!() }
+    fn withdraw(&self, _req: WithdrawRequest) -> WithdrawFut { unimplemented!() }
 
     fn decimals(&self) -> u8 { self.decimals() }
 
-    fn convert_to_address(&self, from: &str, to_address_format: Json) -> Result<String, String> { unimplemented!() }
+    fn convert_to_address(&self, _from: &str, _to_address_format: Json) -> Result<String, String> { unimplemented!() }
 
-    fn validate_address(&self, address: &str) -> ValidateAddressResult { unimplemented!() }
+    fn validate_address(&self, _address: &str) -> ValidateAddressResult { unimplemented!() }
 
-    fn process_history_loop(&self, ctx: MmArc) -> Box<dyn Future<Item = (), Error = ()> + Send> { unimplemented!() }
+    fn process_history_loop(&self, _ctx: MmArc) -> Box<dyn Future<Item = (), Error = ()> + Send> { unimplemented!() }
 
     fn history_sync_status(&self) -> HistorySyncState { unimplemented!() }
 
     /// Get fee to be paid per 1 swap transaction
     fn get_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = String> + Send> { unimplemented!() }
 
-    fn get_sender_trade_fee(&self, value: TradePreimageValue, stage: FeeApproxStage) -> TradePreimageFut<TradeFee> {
+    fn get_sender_trade_fee(&self, _value: TradePreimageValue, _stage: FeeApproxStage) -> TradePreimageFut<TradeFee> {
         unimplemented!()
     }
 
-    fn get_receiver_trade_fee(&self, stage: FeeApproxStage) -> TradePreimageFut<TradeFee> { unimplemented!() }
+    fn get_receiver_trade_fee(&self, _stage: FeeApproxStage) -> TradePreimageFut<TradeFee> { unimplemented!() }
 
     fn get_fee_to_send_taker_fee(
         &self,
-        dex_fee_amount: BigDecimal,
-        stage: FeeApproxStage,
+        _dex_fee_amount: BigDecimal,
+        _stage: FeeApproxStage,
     ) -> TradePreimageFut<TradeFee> {
         unimplemented!()
     }
@@ -1157,202 +1153,215 @@ impl MmCoin for SlpToken {
     fn mature_confirmations(&self) -> Option<u32> { self.platform_utxo.mature_confirmations() }
 }
 
-// https://slp.dev/specs/slp-token-type-1/#examples
-#[test]
-fn test_parse_slp_script() {
-    // Send single output
-    let script = hex::decode("6a04534c500001010453454e4420e73b2b28c14db8ebbf97749988b539508990e1708021067f206f49d55807dbf4080000000005f5e100").unwrap();
-    let slp_data = parse_slp_script(&script).unwrap();
-    assert_eq!(slp_data.lokad_id, "SLP\0");
-    let expected_amount = 100000000u64;
-    let expected_transaction = SlpTransaction::Send {
-        token_id: "e73b2b28c14db8ebbf97749988b539508990e1708021067f206f49d55807dbf4".into(),
-        amounts: vec![expected_amount],
-    };
+#[cfg(test)]
+mod slp_tests {
+    use super::*;
+    use crate::utxo::utxo_standard::utxo_standard_coin_from_conf_and_request;
+    use common::mm_ctx::MmCtxBuilder;
+    use common::privkey::key_pair_from_seed;
+    use common::{block_on, now_ms};
 
-    assert_eq!(expected_transaction, slp_data.transaction);
+    // https://slp.dev/specs/slp-token-type-1/#examples
+    #[test]
+    fn test_parse_slp_script() {
+        // Send single output
+        let script = hex::decode("6a04534c500001010453454e4420e73b2b28c14db8ebbf97749988b539508990e1708021067f206f49d55807dbf4080000000005f5e100").unwrap();
+        let slp_data = parse_slp_script(&script).unwrap();
+        assert_eq!(slp_data.lokad_id, "SLP\0");
+        let expected_amount = 100000000u64;
+        let expected_transaction = SlpTransaction::Send {
+            token_id: "e73b2b28c14db8ebbf97749988b539508990e1708021067f206f49d55807dbf4".into(),
+            amounts: vec![expected_amount],
+        };
 
-    // Genesis
-    let script =
-        hex::decode("6a04534c500001010747454e45534953044144455804414445584c004c0001084c0008000000174876e800").unwrap();
-    let slp_data = parse_slp_script(&script).unwrap();
-    assert_eq!(slp_data.lokad_id, "SLP\0");
-    let initial_token_mint_quantity = 1000_0000_0000u64.to_be_bytes().to_vec();
-    let expected_transaction = SlpTransaction::Genesis {
-        token_ticker: "ADEX".to_string(),
-        token_name: "ADEX".to_string(),
-        token_document_url: "".to_string(),
-        token_document_hash: vec![],
-        decimals: vec![8],
-        mint_baton_vout: vec![],
-        initial_token_mint_quantity,
-    };
+        assert_eq!(expected_transaction, slp_data.transaction);
 
-    assert_eq!(expected_transaction, slp_data.transaction);
+        // Genesis
+        let script =
+            hex::decode("6a04534c500001010747454e45534953044144455804414445584c004c0001084c0008000000174876e800")
+                .unwrap();
+        let slp_data = parse_slp_script(&script).unwrap();
+        assert_eq!(slp_data.lokad_id, "SLP\0");
+        let initial_token_mint_quantity = 1000_0000_0000u64.to_be_bytes().to_vec();
+        let expected_transaction = SlpTransaction::Genesis {
+            token_ticker: "ADEX".to_string(),
+            token_name: "ADEX".to_string(),
+            token_document_url: "".to_string(),
+            token_document_hash: vec![],
+            decimals: vec![8],
+            mint_baton_vout: vec![],
+            initial_token_mint_quantity,
+        };
 
-    // Genesis from docs example
-    let script =
-        hex::decode("6a04534c500001010747454e45534953045553445423546574686572204c74642e20555320646f6c6c6172206261636b656420746f6b656e734168747470733a2f2f7465746865722e746f2f77702d636f6e74656e742f75706c6f6164732f323031362f30362f546574686572576869746550617065722e70646620db4451f11eda33950670aaf59e704da90117ff7057283b032cfaec77793139160108010208002386f26fc10000").unwrap();
-    let slp_data = parse_slp_script(&script).unwrap();
-    assert_eq!(slp_data.lokad_id, "SLP\0");
-    let initial_token_mint_quantity = 10000000000000000u64.to_be_bytes().to_vec();
-    let expected_transaction = SlpTransaction::Genesis {
-        token_ticker: "USDT".to_string(),
-        token_name: "Tether Ltd. US dollar backed tokens".to_string(),
-        token_document_url: "https://tether.to/wp-content/uploads/2016/06/TetherWhitePaper.pdf".to_string(),
-        token_document_hash: hex::decode("db4451f11eda33950670aaf59e704da90117ff7057283b032cfaec7779313916").unwrap(),
-        decimals: vec![8],
-        mint_baton_vout: vec![2],
-        initial_token_mint_quantity,
-    };
+        assert_eq!(expected_transaction, slp_data.transaction);
 
-    assert_eq!(expected_transaction, slp_data.transaction);
+        // Genesis from docs example
+        let script =
+            hex::decode("6a04534c500001010747454e45534953045553445423546574686572204c74642e20555320646f6c6c6172206261636b656420746f6b656e734168747470733a2f2f7465746865722e746f2f77702d636f6e74656e742f75706c6f6164732f323031362f30362f546574686572576869746550617065722e70646620db4451f11eda33950670aaf59e704da90117ff7057283b032cfaec77793139160108010208002386f26fc10000").unwrap();
+        let slp_data = parse_slp_script(&script).unwrap();
+        assert_eq!(slp_data.lokad_id, "SLP\0");
+        let initial_token_mint_quantity = 10000000000000000u64.to_be_bytes().to_vec();
+        let expected_transaction = SlpTransaction::Genesis {
+            token_ticker: "USDT".to_string(),
+            token_name: "Tether Ltd. US dollar backed tokens".to_string(),
+            token_document_url: "https://tether.to/wp-content/uploads/2016/06/TetherWhitePaper.pdf".to_string(),
+            token_document_hash: hex::decode("db4451f11eda33950670aaf59e704da90117ff7057283b032cfaec7779313916")
+                .unwrap(),
+            decimals: vec![8],
+            mint_baton_vout: vec![2],
+            initial_token_mint_quantity,
+        };
 
-    // Mint
-    let script =
-        hex::decode("6a04534c50000101044d494e5420550d19eb820e616a54b8a73372c4420b5a0567d8dc00f613b71c5234dc884b35010208002386f26fc10000").unwrap();
-    let slp_data = parse_slp_script(&script).unwrap();
-    assert_eq!(slp_data.lokad_id, "SLP\0");
-    let expected_transaction = SlpTransaction::Mint {
-        token_id: "550d19eb820e616a54b8a73372c4420b5a0567d8dc00f613b71c5234dc884b35".into(),
-        mint_baton_vout: vec![2],
-        additional_token_quantity: hex::decode("002386f26fc10000").unwrap(),
-    };
+        assert_eq!(expected_transaction, slp_data.transaction);
 
-    assert_eq!(expected_transaction, slp_data.transaction);
+        // Mint
+        let script =
+            hex::decode("6a04534c50000101044d494e5420550d19eb820e616a54b8a73372c4420b5a0567d8dc00f613b71c5234dc884b35010208002386f26fc10000").unwrap();
+        let slp_data = parse_slp_script(&script).unwrap();
+        assert_eq!(slp_data.lokad_id, "SLP\0");
+        let expected_transaction = SlpTransaction::Mint {
+            token_id: "550d19eb820e616a54b8a73372c4420b5a0567d8dc00f613b71c5234dc884b35".into(),
+            mint_baton_vout: vec![2],
+            additional_token_quantity: hex::decode("002386f26fc10000").unwrap(),
+        };
 
-    let script = hex::decode("6a04534c500001010453454e4420550d19eb820e616a54b8a73372c4420b5a0567d8dc00f613b71c5234dc884b350800000000000003e80800000000000003e90800000000000003ea").unwrap();
-    let token_id = "550d19eb820e616a54b8a73372c4420b5a0567d8dc00f613b71c5234dc884b35".into();
+        assert_eq!(expected_transaction, slp_data.transaction);
 
-    let slp_data = parse_slp_script(&script).unwrap();
-    assert_eq!(slp_data.lokad_id, "SLP\0");
-    let expected_transaction = SlpTransaction::Send {
-        token_id,
-        amounts: vec![1000, 1001, 1002],
-    };
-    assert_eq!(expected_transaction, slp_data.transaction);
-}
+        let script = hex::decode("6a04534c500001010453454e4420550d19eb820e616a54b8a73372c4420b5a0567d8dc00f613b71c5234dc884b350800000000000003e80800000000000003e90800000000000003ea").unwrap();
+        let token_id = "550d19eb820e616a54b8a73372c4420b5a0567d8dc00f613b71c5234dc884b35".into();
 
-#[test]
-fn send_and_spend_htlc_on_testnet() {
-    let ctx = MmCtxBuilder::default().into_mm_arc();
-    let keypair = key_pair_from_seed("BCH SLP test").unwrap();
+        let slp_data = parse_slp_script(&script).unwrap();
+        assert_eq!(slp_data.lokad_id, "SLP\0");
+        let expected_transaction = SlpTransaction::Send {
+            token_id,
+            amounts: vec![1000, 1001, 1002],
+        };
+        assert_eq!(expected_transaction, slp_data.transaction);
+    }
 
-    let conf = json!({"coin":"BCH","pubtype":0,"p2shtype":5,"mm2":1,"fork_id":"0x40","protocol":{"type":"UTXO"},
+    #[test]
+    #[ignore]
+    fn send_and_spend_htlc_on_testnet() {
+        let ctx = MmCtxBuilder::default().into_mm_arc();
+        let keypair = key_pair_from_seed("BCH SLP test").unwrap();
+
+        let conf = json!({"coin":"BCH","pubtype":0,"p2shtype":5,"mm2":1,"fork_id":"0x40","protocol":{"type":"UTXO"},
          "address_format":{"format":"cashaddress","network":"bchtest"}});
-    let req = json!({
-        "method": "electrum",
-        "coin": "BCH",
-        "servers": [{"url":"blackie.c3-soft.com:60001"},{"url":"testnet.imaginary.cash:50001"}],
-    });
-    let bch = block_on(utxo_standard_coin_from_conf_and_request(
-        &ctx,
-        "BCH",
-        &conf,
-        &req,
-        &*keypair.private().secret,
-    ))
-    .unwrap();
+        let req = json!({
+            "method": "electrum",
+            "coin": "BCH",
+            "servers": [{"url":"blackie.c3-soft.com:60001"},{"url":"testnet.imaginary.cash:50001"}],
+        });
+        let bch = block_on(utxo_standard_coin_from_conf_and_request(
+            &ctx,
+            "BCH",
+            &conf,
+            &req,
+            &*keypair.private().secret,
+        ))
+        .unwrap();
 
-    let balance = bch.my_balance().wait().unwrap();
-    println!("{}", balance.spendable);
+        let balance = bch.my_balance().wait().unwrap();
+        println!("{}", balance.spendable);
 
-    let address = bch.my_address().unwrap();
-    println!("{}", address);
+        let address = bch.my_address().unwrap();
+        println!("{}", address);
 
-    let token_id = H256::from("bb309e48930671582bea508f9a1d9b491e49b69be3d6f372dc08da2ac6e90eb7");
-    let fusd = SlpToken::new(4, "FUSD".into(), token_id, bch, 0);
+        let token_id = H256::from("bb309e48930671582bea508f9a1d9b491e49b69be3d6f372dc08da2ac6e90eb7");
+        let fusd = SlpToken::new(4, "FUSD".into(), token_id, bch, 0);
 
-    let fusd_balance = fusd.my_balance().wait().unwrap();
-    println!("FUSD {}", fusd_balance.spendable);
+        let fusd_balance = fusd.my_balance().wait().unwrap();
+        println!("FUSD {}", fusd_balance.spendable);
 
-    let secret = [0; 32];
-    let secret_hash = dhash160(&secret);
-    let time_lock = (now_ms() / 1000) as u32;
-    let amount: BigDecimal = "0.1".parse().unwrap();
+        let secret = [0; 32];
+        let secret_hash = dhash160(&secret);
+        let time_lock = (now_ms() / 1000) as u32;
+        let amount: BigDecimal = "0.1".parse().unwrap();
 
-    let tx = fusd
-        .send_taker_payment(time_lock, &*keypair.public(), &*secret_hash, amount.clone(), &None)
+        let tx = fusd
+            .send_taker_payment(time_lock, &*keypair.public(), &*secret_hash, amount.clone(), &None)
+            .wait()
+            .unwrap();
+        println!("{}", hex::encode(tx.tx_hex()));
+
+        fusd.validate_taker_payment(
+            &tx.tx_hex(),
+            time_lock,
+            &*keypair.public(),
+            &*secret_hash,
+            amount,
+            &None,
+        )
         .wait()
         .unwrap();
-    println!("{}", hex::encode(tx.tx_hex()));
 
-    fusd.validate_taker_payment(
-        &tx.tx_hex(),
-        time_lock,
-        &*keypair.public(),
-        &*secret_hash,
-        amount,
-        &None,
-    )
-    .wait()
-    .unwrap();
+        let spending_tx = fusd
+            .send_maker_spends_taker_payment(&tx.tx_hex(), time_lock, &*keypair.public(), &secret, &None)
+            .wait()
+            .unwrap();
+        println!("spend hex {}", hex::encode(spending_tx.tx_hex()));
+        println!("spend hash {}", hex::encode(spending_tx.tx_hash().0));
 
-    let spending_tx = fusd
-        .send_maker_spends_taker_payment(&tx.tx_hex(), time_lock, &*keypair.public(), &secret, &None)
-        .wait()
-        .unwrap();
-    println!("spend hex {}", hex::encode(spending_tx.tx_hex()));
-    println!("spend hash {}", hex::encode(spending_tx.tx_hash().0));
+        let wait_for_spend = fusd
+            .wait_for_tx_spend(&tx.tx_hex(), (now_ms() / 1000) + 60, 0, &None)
+            .wait()
+            .unwrap();
+        println!("spend hex {}", hex::encode(wait_for_spend.tx_hex()));
+        println!("spend hash {}", hex::encode(wait_for_spend.tx_hash().0));
 
-    let wait_for_spend = fusd
-        .wait_for_tx_spend(&tx.tx_hex(), (now_ms() / 1000) + 60, 0, &None)
-        .wait()
-        .unwrap();
-    println!("spend hex {}", hex::encode(wait_for_spend.tx_hex()));
-    println!("spend hash {}", hex::encode(wait_for_spend.tx_hash().0));
+        let secret = fusd.extract_secret(&*secret_hash, &wait_for_spend.tx_hex()).unwrap();
+        println!("{:?}", secret);
+    }
 
-    let secret = fusd.extract_secret(&*secret_hash, &wait_for_spend.tx_hex()).unwrap();
-    println!("{:?}", secret);
-}
+    #[test]
+    #[ignore]
+    fn send_and_refund_htlc_on_testnet() {
+        let ctx = MmCtxBuilder::default().into_mm_arc();
+        let keypair = key_pair_from_seed("BCH SLP test").unwrap();
 
-#[test]
-fn send_and_refund_htlc_on_testnet() {
-    let ctx = MmCtxBuilder::default().into_mm_arc();
-    let keypair = key_pair_from_seed("BCH SLP test").unwrap();
-
-    let conf = json!({"coin":"BCH","pubtype":0,"p2shtype":5,"mm2":1,"fork_id":"0x40","protocol":{"type":"UTXO"},
+        let conf = json!({"coin":"BCH","pubtype":0,"p2shtype":5,"mm2":1,"fork_id":"0x40","protocol":{"type":"UTXO"},
          "address_format":{"format":"cashaddress","network":"bchtest"}});
-    let req = json!({
-        "method": "electrum",
-        "coin": "BCH",
-        "servers": [{"url":"blackie.c3-soft.com:60001"},{"url":"testnet.imaginary.cash:50001"}],
-    });
-    let bch = block_on(utxo_standard_coin_from_conf_and_request(
-        &ctx,
-        "BCH",
-        &conf,
-        &req,
-        &*keypair.private().secret,
-    ))
-    .unwrap();
-
-    let balance = bch.my_balance().wait().unwrap();
-    println!("{}", balance.spendable);
-
-    let address = bch.my_address().unwrap();
-    println!("{}", address);
-
-    let token_id = H256::from("bb309e48930671582bea508f9a1d9b491e49b69be3d6f372dc08da2ac6e90eb7");
-    let fusd = SlpToken::new(4, "FUSD".into(), token_id, bch, 0);
-
-    let fusd_balance = fusd.my_balance().wait().unwrap();
-    println!("FUSD {}", fusd_balance.spendable);
-
-    let secret = [0; 32];
-    let secret_hash = dhash160(&secret);
-    let time_lock = (now_ms() / 1000) as u32 - 7200;
-
-    let tx = fusd
-        .send_taker_payment(time_lock, &[1; 33], &*secret_hash, 1.into(), &None)
-        .wait()
+        let req = json!({
+            "method": "electrum",
+            "coin": "BCH",
+            "servers": [{"url":"blackie.c3-soft.com:60001"},{"url":"testnet.imaginary.cash:50001"}],
+        });
+        let bch = block_on(utxo_standard_coin_from_conf_and_request(
+            &ctx,
+            "BCH",
+            &conf,
+            &req,
+            &*keypair.private().secret,
+        ))
         .unwrap();
-    println!("{}", hex::encode(tx.tx_hex()));
 
-    let refund_tx = fusd
-        .send_taker_refunds_payment(&tx.tx_hex(), time_lock, &[1; 33], &*secret_hash, &None)
-        .wait()
-        .unwrap();
-    println!("refund hex {}", hex::encode(refund_tx.tx_hex()));
-    println!("refund hash {}", hex::encode(refund_tx.tx_hash().0));
+        let balance = bch.my_balance().wait().unwrap();
+        println!("{}", balance.spendable);
+
+        let address = bch.my_address().unwrap();
+        println!("{}", address);
+
+        let token_id = H256::from("bb309e48930671582bea508f9a1d9b491e49b69be3d6f372dc08da2ac6e90eb7");
+        let fusd = SlpToken::new(4, "FUSD".into(), token_id, bch, 0);
+
+        let fusd_balance = fusd.my_balance().wait().unwrap();
+        println!("FUSD {}", fusd_balance.spendable);
+
+        let secret = [0; 32];
+        let secret_hash = dhash160(&secret);
+        let time_lock = (now_ms() / 1000) as u32 - 7200;
+
+        let tx = fusd
+            .send_taker_payment(time_lock, &[1; 33], &*secret_hash, 1.into(), &None)
+            .wait()
+            .unwrap();
+        println!("{}", hex::encode(tx.tx_hex()));
+
+        let refund_tx = fusd
+            .send_taker_refunds_payment(&tx.tx_hex(), time_lock, &[1; 33], &*secret_hash, &None)
+            .wait()
+            .unwrap();
+        println!("refund hex {}", hex::encode(refund_tx.tx_hex()));
+        println!("refund hash {}", hex::encode(refund_tx.tx_hash().0));
+    }
 }

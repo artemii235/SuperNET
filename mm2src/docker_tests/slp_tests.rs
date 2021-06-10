@@ -1,12 +1,10 @@
 use super::*;
 use bitcoin_cash_slp::{slp_genesis_output, SlpTokenType};
 use chain::TransactionOutput;
-use coins::utxo::slp::{SlpToken, SlpUnspent};
-use coins::utxo::utxo_common::{payment_script, send_outputs_from_my_address};
-use coins::Transaction;
-use keys::hash::H256;
+use coins::utxo::slp::SlpToken;
+use coins::utxo::utxo_common::send_outputs_from_my_address;
 use keys::{KeyPair, Private};
-use script::{Builder, Opcode};
+use script::Builder;
 
 #[test]
 fn mint_slp_token() {
@@ -42,7 +40,6 @@ fn mint_slp_token() {
     let secret = [0; 32];
     let secret_hash = dhash160(&secret);
     let time_lock = (now_ms() / 1000) as u32;
-    let amount = 10000;
 
     let tx = slp
         .send_maker_payment(time_lock, &*keypair.public(), &*secret_hash, 1.into(), &None)

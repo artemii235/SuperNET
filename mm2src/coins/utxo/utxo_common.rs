@@ -2330,6 +2330,7 @@ fn address_from_any_format(conf: &UtxoCoinConf, from: &str) -> Result<Address, S
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn validate_payment<T>(
     coin: T,
     tx: UtxoTx,
@@ -2398,6 +2399,7 @@ where
     Box::new(fut.boxed().compat())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn search_for_swap_output_spend(
     coin: &UtxoCoinFields,
     time_lock: u32,
