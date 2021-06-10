@@ -494,6 +494,7 @@ fn test_transfer_details_by_hash() {
         )
         .unwrap()
         .into(),
+        kmd_rewards: None,
     };
     assert_eq!(actual, expected);
 
@@ -516,6 +517,7 @@ fn test_transfer_details_by_hash() {
         )
         .unwrap()
         .into(),
+        kmd_rewards: None,
     };
     assert_eq!(actual, expected);
 
@@ -538,6 +540,7 @@ fn test_transfer_details_by_hash() {
         )
         .unwrap()
         .into(),
+        kmd_rewards: None,
     };
     assert_eq!(actual, expected);
 
@@ -560,6 +563,7 @@ fn test_transfer_details_by_hash() {
         )
         .unwrap()
         .into(),
+        kmd_rewards: None,
     };
     assert_eq!(actual, expected);
 
@@ -582,6 +586,7 @@ fn test_transfer_details_by_hash() {
         )
         .unwrap()
         .into(),
+        kmd_rewards: None,
     };
     assert_eq!(actual, expected);
     assert!(it.next().is_none());

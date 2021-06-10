@@ -74,10 +74,10 @@ use self::rpc_clients::{ConcurrentRequestMap, NativeClient, NativeClientImpl};
 use self::rpc_clients::{ElectrumClient, ElectrumClientImpl, ElectrumRpcRequest, EstimateFeeMethod, EstimateFeeMode,
                         UnspentInfo, UtxoRpcClientEnum, UtxoRpcError, UtxoRpcResult};
 use super::{BalanceError, BalanceFut, BalanceResult, CoinTransportMetrics, CoinsContext, FeeApproxStage,
-            FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, NumConversError, NumConversResult,
-            RpcClientType, RpcTransportEventHandler, RpcTransportEventHandlerShared, TradeFee, TradePreimageError,
-            TradePreimageFut, TradePreimageResult, Transaction, TransactionDetails, TransactionEnum, TransactionFut,
-            WithdrawError, WithdrawFee, WithdrawRequest};
+            FoundSwapTxSpend, HistorySyncState, KmdRewardsDetails, MarketCoinOps, MmCoin, NumConversError,
+            NumConversResult, RpcClientType, RpcTransportEventHandler, RpcTransportEventHandlerShared, TradeFee,
+            TradePreimageError, TradePreimageFut, TradePreimageResult, Transaction, TransactionDetails,
+            TransactionEnum, TransactionFut, WithdrawError, WithdrawFee, WithdrawRequest};
 
 #[cfg(test)] pub mod utxo_tests;
 #[cfg(target_arch = "wasm32")] pub mod utxo_wasm_tests;
@@ -96,6 +96,9 @@ const UTXO_DUST_AMOUNT: u64 = 1000;
 /// 11 > 0
 const KMD_MTP_BLOCK_COUNT: NonZeroU64 = unsafe { NonZeroU64::new_unchecked(11u64) };
 const DEFAULT_DYNAMIC_FEE_VOLATILITY_PERCENT: f64 = 0.5;
+
+pub type GenerateTxResult = Result<(TransactionInputSigner, AdditionalTxData), MmError<GenerateTxError>>;
+pub type HistoryUtxoTxMap = HashMap<H256Json, HistoryUtxoTx>;
 
 #[cfg(windows)]
 #[cfg(not(target_arch = "wasm32"))]
@@ -168,6 +171,12 @@ impl From<UtxoRpcError> for TradePreimageError {
     }
 }
 
+/// The `UtxoTx` with the block height transaction mined in.
+pub struct HistoryUtxoTx {
+    pub height: Option<u64>,
+    pub tx: UtxoTx,
+}
+
 /// Additional transaction data that can't be easily got from raw transaction without calling
 /// additional RPC methods, e.g. to get input amount we need to request all previous transactions
 /// and check output values
@@ -177,6 +186,7 @@ pub struct AdditionalTxData {
     pub spent_by_me: u64,
     pub fee_amount: u64,
     pub unused_change: Option<u64>,
+    pub kmd_rewards: Option<KmdRewardsDetails>,
 }
 
 /// The fee set from coins config
@@ -511,6 +521,17 @@ pub trait UtxoCommonOps {
         my_script_pub: Bytes,
     ) -> UtxoRpcResult<(TransactionInputSigner, AdditionalTxData)>;
 
+    /// Calculates interest of the specified transaction.
+    /// Please note, this method has to be used for KMD transactions only.
+    async fn calc_interest_of_tx(&self, tx: &UtxoTx, input_transactions: &mut HistoryUtxoTxMap) -> UtxoRpcResult<u64>;
+
+    /// Try to get a `HistoryUtxoTx` transaction from `utxo_tx_map` or try to request it from Rpc client.
+    async fn get_mut_verbose_transaction_from_map_or_rpc<'a, 'b>(
+        &'a self,
+        tx_hash: H256Json,
+        utxo_tx_map: &'b mut HistoryUtxoTxMap,
+    ) -> UtxoRpcResult<&'b mut HistoryUtxoTx>;
+
     async fn p2sh_spending_tx(
         &self,
         prev_transaction: UtxoTx,
@@ -527,7 +548,7 @@ pub trait UtxoCommonOps {
         address: &Address,
     ) -> UtxoRpcResult<(Vec<UnspentInfo>, AsyncMutexGuard<'a, RecentlySpentOutPoints>)>;
 
-    /// Try load verbose transaction from cache or try to request it from Rpc client.
+    /// Try to load verbose transaction from cache or try to request it from Rpc client.
     fn get_verbose_transaction_from_cache_or_rpc(
         &self,
         txid: H256Json,
@@ -560,10 +581,24 @@ pub trait UtxoCommonOps {
 
 #[async_trait]
 pub trait UtxoStandardOps {
-    /// Gets tx details by hash requesting the coin RPC if required
-    async fn tx_details_by_hash(&self, hash: &[u8]) -> Result<TransactionDetails, String>;
+    /// Gets tx details by hash requesting the coin RPC if required.
+    /// * `input_transactions` - the cache of the already requested transactions.
+    async fn tx_details_by_hash(
+        &self,
+        hash: &[u8],
+        input_transactions: &mut HistoryUtxoTxMap,
+    ) -> Result<TransactionDetails, String>;
 
     async fn request_tx_history(&self, metrics: MetricsArc) -> RequestTxHistoryResult;
+
+    /// Calculate the KMD rewards and re-calculate the transaction fee
+    /// if the specified `tx_details` was generated without considering the KMD rewards.
+    /// Please note, this method has to be used for KMD transactions only.
+    async fn update_kmd_rewards(
+        &self,
+        tx_details: &mut TransactionDetails,
+        input_transactions: &mut HistoryUtxoTxMap,
+    ) -> UtxoRpcResult<()>;
 }
 
 #[derive(Clone, Debug)]
@@ -605,8 +640,6 @@ impl UtxoWeak {
 lazy_static! {
     pub static ref UTXO_LOCK: AsyncMutex<()> = AsyncMutex::new(());
 }
-
-pub type GenerateTxResult = Result<(TransactionInputSigner, AdditionalTxData), MmError<GenerateTxError>>;
 
 #[derive(Debug, Display)]
 pub enum GenerateTxError {

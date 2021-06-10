@@ -6,8 +6,8 @@ use crate::utxo::rpc_clients::{ElectrumClient, NativeClient, UnspentInfo, UtxoRp
                                UtxoRpcError, UtxoRpcResult};
 use crate::utxo::utxo_common::{self, big_decimal_from_sat, check_all_inputs_signed_by_pub};
 use crate::utxo::{qtum, sign_tx, ActualTxFee, AdditionalTxData, FeePolicy, GenerateTxError, GenerateTxResult,
-                  RecentlySpentOutPoints, UtxoCoinBuilder, UtxoCoinFields, UtxoCommonOps, UtxoTx,
-                  VerboseTransactionFrom, UTXO_LOCK};
+                  HistoryUtxoTx, HistoryUtxoTxMap, RecentlySpentOutPoints, UtxoCoinBuilder, UtxoCoinFields,
+                  UtxoCommonOps, UtxoTx, VerboseTransactionFrom, UTXO_LOCK};
 use crate::{BalanceError, BalanceFut, CoinBalance, FeeApproxStage, FoundSwapTxSpend, HistorySyncState, MarketCoinOps,
             MmCoin, NegotiateSwapContractAddrErr, SwapOps, TradeFee, TradePreimageError, TradePreimageFut,
             TradePreimageResult, TradePreimageValue, TransactionDetails, TransactionEnum, TransactionFut,
@@ -503,6 +503,24 @@ impl UtxoCommonOps for Qrc20Coin {
         my_script_pub: ScriptBytes,
     ) -> UtxoRpcResult<(TransactionInputSigner, AdditionalTxData)> {
         utxo_common::calc_interest_if_required(self, unsigned, data, my_script_pub).await
+    }
+
+    async fn calc_interest_of_tx(
+        &self,
+        _tx: &UtxoTx,
+        _input_transactions: &mut HistoryUtxoTxMap,
+    ) -> UtxoRpcResult<u64> {
+        MmError::err(UtxoRpcError::Internal(
+            "QRC20 coin doesn't support transaction rewards".to_owned(),
+        ))
+    }
+
+    async fn get_mut_verbose_transaction_from_map_or_rpc<'a, 'b>(
+        &'a self,
+        tx_hash: H256Json,
+        utxo_tx_map: &'b mut HistoryUtxoTxMap,
+    ) -> UtxoRpcResult<&'b mut HistoryUtxoTx> {
+        utxo_common::get_mut_verbose_transaction_from_map_or_rpc(self, tx_hash, utxo_tx_map).await
     }
 
     async fn p2sh_spending_tx(
@@ -1270,6 +1288,7 @@ async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> WithdrawResult
         coin: conf.ticker.clone(),
         internal_id: vec![].into(),
         timestamp: now_ms() / 1000,
+        kmd_rewards: None,
     })
 }
 

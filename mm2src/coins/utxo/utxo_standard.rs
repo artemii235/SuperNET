@@ -84,6 +84,18 @@ impl UtxoCommonOps for UtxoStandardCoin {
         utxo_common::calc_interest_if_required(self, unsigned, data, my_script_pub).await
     }
 
+    async fn calc_interest_of_tx(&self, tx: &UtxoTx, input_transactions: &mut HistoryUtxoTxMap) -> UtxoRpcResult<u64> {
+        utxo_common::calc_interest_of_tx(self, tx, input_transactions).await
+    }
+
+    async fn get_mut_verbose_transaction_from_map_or_rpc<'a, 'b>(
+        &'a self,
+        tx_hash: H256Json,
+        utxo_tx_map: &'b mut HistoryUtxoTxMap,
+    ) -> UtxoRpcResult<&'b mut HistoryUtxoTx> {
+        utxo_common::get_mut_verbose_transaction_from_map_or_rpc(self, tx_hash, utxo_tx_map).await
+    }
+
     async fn p2sh_spending_tx(
         &self,
         prev_transaction: UtxoTx,
@@ -153,12 +165,24 @@ impl UtxoCommonOps for UtxoStandardCoin {
 
 #[async_trait]
 impl UtxoStandardOps for UtxoStandardCoin {
-    async fn tx_details_by_hash(&self, hash: &[u8]) -> Result<TransactionDetails, String> {
-        utxo_common::tx_details_by_hash(self, hash).await
+    async fn tx_details_by_hash(
+        &self,
+        hash: &[u8],
+        input_transactions: &mut HistoryUtxoTxMap,
+    ) -> Result<TransactionDetails, String> {
+        utxo_common::tx_details_by_hash(self, hash, input_transactions).await
     }
 
     async fn request_tx_history(&self, metrics: MetricsArc) -> RequestTxHistoryResult {
         utxo_common::request_tx_history(self, metrics).await
+    }
+
+    async fn update_kmd_rewards(
+        &self,
+        tx_details: &mut TransactionDetails,
+        input_transactions: &mut HistoryUtxoTxMap,
+    ) -> UtxoRpcResult<()> {
+        utxo_common::update_kmd_rewards(self, tx_details, input_transactions).await
     }
 }
 

@@ -428,6 +428,21 @@ impl Into<TxFeeDetails> for Qrc20FeeDetails {
     fn into(self: Qrc20FeeDetails) -> TxFeeDetails { TxFeeDetails::Qrc20(self) }
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct KmdRewardsDetails {
+    amount: BigDecimal,
+    claimed_by_me: bool,
+}
+
+impl KmdRewardsDetails {
+    pub fn claimed_by_me(amount: BigDecimal) -> KmdRewardsDetails {
+        KmdRewardsDetails {
+            amount,
+            claimed_by_me: true,
+        }
+    }
+}
+
 /// Transaction details
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct TransactionDetails {
@@ -459,6 +474,9 @@ pub struct TransactionDetails {
     coin: String,
     /// Internal MM2 id used for internal transaction identification, for some coins it might be equal to transaction hash
     internal_id: BytesJson,
+    /// Amount of accrued rewards.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    kmd_rewards: Option<KmdRewardsDetails>,
 }
 
 impl TransactionDetails {
@@ -475,6 +493,8 @@ impl TransactionDetails {
         // in case of electrum returned -1 so there could be records with MAX confirmations
         self.timestamp == 0
     }
+
+    pub fn should_update_kmd_rewards(&self) -> bool { self.coin == "KMD" && self.kmd_rewards.is_none() }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
