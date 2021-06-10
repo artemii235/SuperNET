@@ -1131,6 +1131,7 @@ impl<'a> TakerOrderBuilder<'a> {
             min_volume,
             order_type: self.order_type,
             timeout: self.timeout,
+            save_in_history: true,
         })
     }
 
@@ -1155,6 +1156,7 @@ impl<'a> TakerOrderBuilder<'a> {
             min_volume: Default::default(),
             order_type: Default::default(),
             timeout: self.timeout,
+            save_in_history: false,
         }
     }
 }
@@ -1190,6 +1192,7 @@ pub struct TakerOrder {
     min_volume: MmNumber,
     order_type: OrderType,
     timeout: u64,
+    save_in_history: bool,
 }
 
 /// Result of match_reserved function
@@ -1270,6 +1273,7 @@ pub struct MakerOrder {
     conf_settings: Option<OrderConfirmationsSettings>,
     #[serde(skip_serializing_if = "Option::is_none")]
     changes_history: Option<Vec<HistoricalOrder>>,
+    save_in_history: bool,
 }
 
 pub struct MakerOrderBuilder<'a> {
@@ -1488,6 +1492,7 @@ impl<'a> MakerOrderBuilder<'a> {
             uuid: new_uuid(),
             conf_settings: self.conf_settings,
             changes_history: None,
+            save_in_history: true,
         })
     }
 
@@ -1506,6 +1511,7 @@ impl<'a> MakerOrderBuilder<'a> {
             uuid: new_uuid(),
             conf_settings: self.conf_settings,
             changes_history: None,
+            save_in_history: false,
         }
     }
 }
@@ -1612,6 +1618,7 @@ impl Into<MakerOrder> for TakerOrder {
                 uuid: self.request.uuid,
                 conf_settings: self.request.conf_settings,
                 changes_history: None,
+                save_in_history: self.save_in_history,
             },
             // The "buy" taker order is recreated with reversed pair as Maker order is always considered as "sell"
             TakerAction::Buy => {
@@ -1630,6 +1637,7 @@ impl Into<MakerOrder> for TakerOrder {
                     uuid: self.request.uuid,
                     conf_settings: self.request.conf_settings.map(|s| s.reversed()),
                     changes_history: None,
+                    save_in_history: self.save_in_history,
                 }
             },
         }
@@ -2746,7 +2754,8 @@ pub struct AutoBuyInput {
     rel_confs: Option<u64>,
     rel_nota: Option<bool>,
     min_volume: Option<MmNumber>,
-    save_in_history: Option<bool>,
+    #[serde(default = "get_true")]
+    save_in_history: bool,
 }
 
 pub async fn buy(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
@@ -2918,7 +2927,8 @@ pub async fn lp_auto_buy(
     if let Some(timeout) = input.timeout {
         order_builder = order_builder.with_timeout(timeout);
     }
-    let order = try_s!(order_builder.build());
+    let mut order = try_s!(order_builder.build());
+    order.save_in_history = input.save_in_history;
     broadcast_ordermatch_message(
         &ctx,
         vec![orderbook_topic_from_base_rel(&input.base, &input.rel)],
@@ -2930,7 +2940,7 @@ pub async fn lp_auto_buy(
         order_type: order.order_type,
         min_volume: order.min_volume.clone().into(),
     } });
-    save_my_new_taker_order(ctx, &order, input.save_in_history.unwrap_or(true));
+    save_my_new_taker_order(ctx, &order);
     my_taker_orders.insert(order.request.uuid, order);
     Ok(result.to_string())
 }
@@ -3079,7 +3089,8 @@ struct SetPriceReq {
     base_nota: Option<bool>,
     rel_confs: Option<u64>,
     rel_nota: Option<bool>,
-    save_in_history: Option<bool>,
+    #[serde(default = "get_true")]
+    save_in_history: bool,
 }
 
 #[derive(Deserialize)]
@@ -3093,7 +3104,6 @@ struct MakerOrderUpdateReq {
     base_nota: Option<bool>,
     rel_confs: Option<u64>,
     rel_nota: Option<bool>,
-    save_in_history: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -3371,10 +3381,12 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
         .with_price(req.price)
         .with_conf_settings(conf_settings);
 
-    let new_order = try_s!(builder.build());
+    let mut new_order = try_s!(builder.build());
+    new_order.save_in_history = req.save_in_history;
+
     let request_orderbook = false;
     try_s!(subscribe_to_orderbook_topic(&ctx, &new_order.base, &new_order.rel, request_orderbook).await);
-    save_my_new_maker_order(&ctx, &new_order, req.save_in_history.unwrap_or(true));
+    save_my_new_maker_order(&ctx, &new_order);
     maker_order_created_p2p_notify(ctx.clone(), &new_order).await;
     let rpc_result = MakerOrderForRpc::from(&new_order);
     let res = try_s!(json::to_vec(&json!({ "result": rpc_result })));
@@ -3514,7 +3526,7 @@ pub async fn update_maker_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8
             let new_change = HistoricalOrder::build(&update_msg, &order);
             order.apply_updated(&update_msg);
             order.changes_history.get_or_insert(Vec::new()).push(new_change);
-            save_maker_order_on_update(&ctx, &order, req.save_in_history.unwrap_or(true));
+            save_maker_order_on_update(&ctx, &order);
             update_msg.with_new_max_volume((new_volume - reserved_amount).into());
             (MakerOrderForRpc::from(&*order), order.base.as_str(), order.rel.as_str())
         },
@@ -3905,14 +3917,6 @@ fn update_order_status_in_db(ctx: &MmArc, uuid: Uuid, status: String) -> Result<
 #[cfg(target_arch = "wasm32")]
 fn update_order_status_in_db(_ctx: &MmArc, _uuid: Uuid, _status: String) -> Result<(), String> { Ok(()) }
 
-#[cfg(not(target_arch = "wasm32"))]
-fn check_if_order_exists_in_db(ctx: &MmArc, uuid: Uuid) -> bool {
-    crate::mm2::database::my_orders::check_if_order_exists(ctx, uuid)
-}
-
-#[cfg(target_arch = "wasm32")]
-fn check_if_order_exists_in_db(_ctx: &MmArc, _uuid: Uuid) -> bool { false }
-
 pub fn my_maker_orders_dir(ctx: &MmArc) -> PathBuf { ctx.dbdir().join("ORDERS").join("MY").join("MAKER") }
 
 fn my_taker_orders_dir(ctx: &MmArc) -> PathBuf { ctx.dbdir().join("ORDERS").join("MY").join("TAKER") }
@@ -3983,20 +3987,20 @@ fn save_my_maker_order(ctx: &MmArc, order: &MakerOrder) {
     write(&path, &content).unwrap();
 }
 
-fn save_my_new_maker_order(ctx: &MmArc, order: &MakerOrder, save_in_history: bool) {
+fn save_my_new_maker_order(ctx: &MmArc, order: &MakerOrder) {
     save_my_maker_order(ctx, order);
 
-    if save_in_history {
+    if order.save_in_history {
         if let Err(e) = insert_maker_order_to_db(&ctx, order.uuid, &order) {
             error!("Error {} on new order insertion", e);
         }
     }
 }
 
-fn save_maker_order_on_update(ctx: &MmArc, order: &MakerOrder, save_in_history: bool) {
+fn save_maker_order_on_update(ctx: &MmArc, order: &MakerOrder) {
     save_my_maker_order(ctx, order);
 
-    if save_in_history {
+    if order.save_in_history {
         if let Err(e) = update_maker_order_in_db(&ctx, order.uuid, &order) {
             error!("Error {} on order update", e);
         }
@@ -4009,10 +4013,10 @@ fn save_my_taker_order(ctx: &MmArc, order: &TakerOrder) {
     write(&path, &content).unwrap();
 }
 
-fn save_my_new_taker_order(ctx: &MmArc, order: &TakerOrder, save_in_history: bool) {
+fn save_my_new_taker_order(ctx: &MmArc, order: &TakerOrder) {
     save_my_taker_order(ctx, order);
 
-    if save_in_history {
+    if order.save_in_history {
         if let Err(e) = insert_taker_order_to_db(&ctx, order.request.uuid, &order) {
             error!("Error {} on new order insertion", e);
         }
@@ -4036,7 +4040,7 @@ fn delete_my_maker_order(ctx: &MmArc, order: &MakerOrder, reason: MakerOrderCanc
         Err(e) => log::warn!("Could not remove order file {}, error {}", path.display(), e),
     }
 
-    if check_if_order_exists_in_db(ctx, order.uuid) {
+    if order.save_in_history {
         save_my_order_in_history(ctx, &Order::Maker(order.clone()));
 
         if let Err(e) = update_order_status_in_db(ctx, order.uuid, reason.to_string()) {
@@ -4053,18 +4057,16 @@ fn delete_my_taker_order(ctx: &MmArc, order: &TakerOrder, reason: TakerOrderCanc
         Err(e) => log::warn!("Could not remove order file {}, error {}", path.display(), e),
     }
 
-    let order_is_in_db = check_if_order_exists_in_db(ctx, order.request.uuid);
-
     match reason {
         TakerOrderCancellationReason::ToMaker => (),
         _ => {
-            if order_is_in_db {
+            if order.save_in_history {
                 save_my_order_in_history(ctx, &Order::Taker(order.clone()));
             }
         },
     }
 
-    if order_is_in_db {
+    if order.save_in_history {
         if let Err(e) = update_order_status_in_db(ctx, order.request.uuid, reason.to_string()) {
             error!("Error {} on order update", e);
         }
