@@ -938,6 +938,7 @@ pub struct TakerOrderBuilder<'a> {
     conf_settings: Option<OrderConfirmationsSettings>,
     min_volume: Option<MmNumber>,
     timeout: u64,
+    save_in_history: bool,
 }
 
 pub enum TakerOrderBuildError {
@@ -1014,6 +1015,7 @@ impl<'a> TakerOrderBuilder<'a> {
             min_volume: None,
             order_type: OrderType::GoodTillCancelled,
             timeout: TAKER_ORDER_TIMEOUT,
+            save_in_history: true,
         }
     }
 
@@ -1059,6 +1061,11 @@ impl<'a> TakerOrderBuilder<'a> {
 
     pub fn with_timeout(mut self, timeout: u64) -> Self {
         self.timeout = timeout;
+        self
+    }
+
+    pub fn with_save_in_history(mut self, save_in_history: bool) -> Self {
+        self.save_in_history = save_in_history;
         self
     }
 
@@ -1192,6 +1199,7 @@ pub struct TakerOrder {
     min_volume: MmNumber,
     order_type: OrderType,
     timeout: u64,
+    #[serde(default = "get_true")]
     save_in_history: bool,
 }
 
@@ -1273,6 +1281,7 @@ pub struct MakerOrder {
     conf_settings: Option<OrderConfirmationsSettings>,
     #[serde(skip_serializing_if = "Option::is_none")]
     changes_history: Option<Vec<HistoricalOrder>>,
+    #[serde(default = "get_true")]
     save_in_history: bool,
 }
 
@@ -1283,6 +1292,7 @@ pub struct MakerOrderBuilder<'a> {
     base_coin: &'a MmCoinEnum,
     rel_coin: &'a MmCoinEnum,
     conf_settings: Option<OrderConfirmationsSettings>,
+    save_in_history: bool,
 }
 
 pub enum MakerOrderBuildError {
@@ -1426,6 +1436,7 @@ impl<'a> MakerOrderBuilder<'a> {
             min_base_vol: None,
             price: 0.into(),
             conf_settings: None,
+            save_in_history: true,
         }
     }
 
@@ -1446,6 +1457,11 @@ impl<'a> MakerOrderBuilder<'a> {
 
     pub fn with_conf_settings(mut self, conf_settings: OrderConfirmationsSettings) -> Self {
         self.conf_settings = Some(conf_settings);
+        self
+    }
+
+    pub fn with_save_in_history(mut self, save_in_history: bool) -> Self {
+        self.save_in_history = save_in_history;
         self
     }
 
@@ -2923,12 +2939,12 @@ pub async fn lp_auto_buy(
         .with_min_volume(input.min_volume)
         .with_order_type(input.order_type)
         .with_conf_settings(conf_settings)
-        .with_sender_pubkey(H256Json::from(our_public_id.bytes));
+        .with_sender_pubkey(H256Json::from(our_public_id.bytes))
+        .with_save_in_history(input.save_in_history);
     if let Some(timeout) = input.timeout {
         order_builder = order_builder.with_timeout(timeout);
     }
-    let mut order = try_s!(order_builder.build());
-    order.save_in_history = input.save_in_history;
+    let order = try_s!(order_builder.build());
     broadcast_ordermatch_message(
         &ctx,
         vec![orderbook_topic_from_base_rel(&input.base, &input.rel)],
@@ -3379,10 +3395,10 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
         .with_max_base_vol(volume)
         .with_min_base_vol(req.min_volume)
         .with_price(req.price)
-        .with_conf_settings(conf_settings);
+        .with_conf_settings(conf_settings)
+        .with_save_in_history(req.save_in_history);
 
-    let mut new_order = try_s!(builder.build());
-    new_order.save_in_history = req.save_in_history;
+    let new_order = try_s!(builder.build());
 
     let request_orderbook = false;
     try_s!(subscribe_to_orderbook_topic(&ctx, &new_order.base, &new_order.rel, request_orderbook).await);
