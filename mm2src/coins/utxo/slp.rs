@@ -3,7 +3,8 @@ use super::utxo_standard::UtxoStandardCoin;
 
 use crate::utxo::rpc_clients::{UnspentInfo, UtxoRpcClientEnum, UtxoRpcError};
 use crate::utxo::utxo_common::{self, big_decimal_from_sat_unsigned, generate_transaction, p2sh_spend, payment_script};
-use crate::utxo::{generate_and_send_tx, sat_from_big_decimal, FeePolicy, RecentlySpentOutPoints, UtxoCommonOps, UtxoTx};
+use crate::utxo::{generate_and_send_tx, sat_from_big_decimal, FeePolicy, GenerateTxError, RecentlySpentOutPoints,
+                  UtxoCommonOps, UtxoTx};
 use crate::{BalanceError, BalanceFut, CoinBalance, FeeApproxStage, FoundSwapTxSpend, HistorySyncState, MarketCoinOps,
             MmCoin, NegotiateSwapContractAddrErr, NumConversError, SwapOps, TradeFee, TradePreimageFut,
             TradePreimageValue, TransactionEnum, TransactionFut, ValidateAddressResult, WithdrawFut, WithdrawRequest};
@@ -31,6 +32,9 @@ use serialization_derive::Deserializable;
 use std::convert::TryInto;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
+
+const SLP_SWAP_VOUT: usize = 1;
+const SLP_FEE_VOUT: usize = 1;
 
 #[derive(Debug)]
 pub struct SlpTokenConf {
@@ -95,6 +99,63 @@ impl From<NumConversError> for ValidateDexFeeError {
     fn from(err: NumConversError) -> ValidateDexFeeError { ValidateDexFeeError::NumConversionErr(err) }
 }
 
+#[derive(Debug, Display)]
+pub enum SpendP2SHError {
+    GenerateTxErr(GenerateTxError),
+    Rpc(UtxoRpcError),
+    GetUnspentsErr(SlpUnspentsErr),
+    String(String),
+}
+
+impl From<GenerateTxError> for SpendP2SHError {
+    fn from(err: GenerateTxError) -> SpendP2SHError { SpendP2SHError::GenerateTxErr(err) }
+}
+
+impl From<UtxoRpcError> for SpendP2SHError {
+    fn from(err: UtxoRpcError) -> SpendP2SHError { SpendP2SHError::Rpc(err) }
+}
+
+impl From<SlpUnspentsErr> for SpendP2SHError {
+    fn from(err: SlpUnspentsErr) -> SpendP2SHError { SpendP2SHError::GetUnspentsErr(err) }
+}
+
+impl From<String> for SpendP2SHError {
+    fn from(err: String) -> SpendP2SHError { SpendP2SHError::String(err) }
+}
+
+#[derive(Debug, Display)]
+pub enum SpendHtlcError {
+    TxLackOfOutputs,
+    #[display(fmt = "DeserializationErr: {:?}", _0)]
+    DeserializationErr(Error),
+    #[display(fmt = "PubkeyParseError: {:?}", _0)]
+    PubkeyParseErr(keys::Error),
+    InvalidSlpDetails,
+    NumConversionErr(NumConversError),
+    RpcErr(UtxoRpcError),
+    SpendP2SHErr(SpendP2SHError),
+}
+
+impl From<NumConversError> for SpendHtlcError {
+    fn from(err: NumConversError) -> SpendHtlcError { SpendHtlcError::NumConversionErr(err) }
+}
+
+impl From<Error> for SpendHtlcError {
+    fn from(err: Error) -> SpendHtlcError { SpendHtlcError::DeserializationErr(err) }
+}
+
+impl From<keys::Error> for SpendHtlcError {
+    fn from(err: keys::Error) -> SpendHtlcError { SpendHtlcError::PubkeyParseErr(err) }
+}
+
+impl From<SpendP2SHError> for SpendHtlcError {
+    fn from(err: SpendP2SHError) -> SpendHtlcError { SpendHtlcError::SpendP2SHErr(err) }
+}
+
+impl From<UtxoRpcError> for SpendHtlcError {
+    fn from(err: UtxoRpcError) -> SpendHtlcError { SpendHtlcError::RpcErr(err) }
+}
+
 impl SlpToken {
     pub fn new(
         decimals: u8,
@@ -139,11 +200,11 @@ impl SlpToken {
                 .get_transaction_bytes(unspent.outpoint.hash.reversed().into())
                 .compat()
                 .await?;
-            let prev_tx: UtxoTx = deserialize(prev_tx_bytes.0.as_slice()).map_to_mm(SlpUnspentsErr::from)?;
+            let prev_tx: UtxoTx = deserialize(prev_tx_bytes.0.as_slice())?;
             match parse_slp_script(&prev_tx.outputs[0].script_pubkey) {
                 Ok(slp_data) => match slp_data.transaction {
                     SlpTransaction::Send { token_id, amounts } => {
-                        if token_id == self.token_id() {
+                        if token_id == self.token_id() && unspent.outpoint.index > 0 {
                             match amounts.get(unspent.outpoint.index as usize - 1) {
                                 Some(slp_amount) => slp_unspents.push(SlpUnspent {
                                     bch_unspent: unspent,
@@ -317,7 +378,7 @@ impl SlpToken {
         let validate_fut = utxo_common::validate_payment(
             self.platform_utxo.clone(),
             tx,
-            1,
+            SLP_SWAP_VOUT,
             other_pub,
             self.platform_utxo.my_public_key(),
             secret_hash,
@@ -339,28 +400,31 @@ impl SlpToken {
         other_pub: &Public,
         time_lock: u32,
         secret_hash: &[u8],
-    ) -> Result<UtxoTx, String> {
-        let tx: UtxoTx = try_s!(deserialize(htlc_tx).map_err(|e| ERRL!("{:?}", e)));
-        let slp_tx: SlpTxDetails =
-            try_s!(deserialize(tx.outputs[0].script_pubkey.as_slice()).map_err(|e| ERRL!("{:?}", e)));
+    ) -> Result<UtxoTx, MmError<SpendHtlcError>> {
+        let tx: UtxoTx = deserialize(htlc_tx)?;
+        if tx.outputs.is_empty() {
+            return MmError::err(SpendHtlcError::TxLackOfOutputs);
+        }
 
-        let other_pub = try_s!(Public::from_slice(other_pub));
+        let slp_tx: SlpTxDetails = deserialize(tx.outputs[0].script_pubkey.as_slice())?;
+
+        let other_pub = Public::from_slice(other_pub)?;
         let redeem_script = payment_script(time_lock, secret_hash, self.platform_utxo.my_public_key(), &other_pub);
 
         let slp_amount = match slp_tx.transaction {
             SlpTransaction::Send { token_id, amounts } => {
                 if token_id != self.token_id() {
-                    return ERR!("Invalid token id in maker payment");
+                    return MmError::err(SpendHtlcError::InvalidSlpDetails);
                 }
-                *try_s!(amounts.get(0).ok_or(ERRL!("SLP amounts are empty")))
+                *amounts.get(0).ok_or(SpendHtlcError::InvalidSlpDetails)?
             },
-            _ => return ERR!("Maker payment must be SlpTransaction::Send, got {:?}", slp_tx),
+            _ => return MmError::err(SpendHtlcError::InvalidSlpDetails),
         };
         let slp_utxo = SlpUnspent {
             bch_unspent: UnspentInfo {
                 outpoint: OutPoint {
                     hash: tx.hash(),
-                    index: 1,
+                    index: SLP_SWAP_VOUT as u32,
                 },
                 value: tx.outputs[1].value,
                 height: None,
@@ -368,12 +432,11 @@ impl SlpToken {
             slp_amount,
         };
 
-        let tx_locktime = try_s!(self.platform_utxo.p2sh_tx_locktime(time_lock).await);
+        let tx_locktime = self.platform_utxo.p2sh_tx_locktime(time_lock).await?;
         let script_data = ScriptBuilder::default().push_opcode(Opcode::OP_1).into_script();
-        let tx = try_s!(
-            self.spend_p2sh(slp_utxo, tx_locktime, SEQUENCE_FINAL - 1, script_data, redeem_script)
-                .await
-        );
+        let tx = self
+            .spend_p2sh(slp_utxo, tx_locktime, SEQUENCE_FINAL - 1, script_data, redeem_script)
+            .await?;
         Ok(tx)
     }
 
@@ -383,12 +446,11 @@ impl SlpToken {
         other_pub: &Public,
         time_lock: u32,
         secret: &[u8],
-    ) -> Result<UtxoTx, String> {
-        let tx: UtxoTx = try_s!(deserialize(htlc_tx).map_err(|e| ERRL!("{:?}", e)));
-        let slp_tx: SlpTxDetails =
-            try_s!(deserialize(tx.outputs[0].script_pubkey.as_slice()).map_err(|e| ERRL!("{:?}", e)));
+    ) -> Result<UtxoTx, MmError<SpendHtlcError>> {
+        let tx: UtxoTx = deserialize(htlc_tx)?;
+        let slp_tx: SlpTxDetails = deserialize(tx.outputs[0].script_pubkey.as_slice())?;
 
-        let other_pub = try_s!(Public::from_slice(other_pub));
+        let other_pub = Public::from_slice(other_pub)?;
         let redeem_script = payment_script(
             time_lock,
             &*dhash160(&secret),
@@ -399,17 +461,17 @@ impl SlpToken {
         let slp_amount = match slp_tx.transaction {
             SlpTransaction::Send { token_id, amounts } => {
                 if token_id != self.token_id() {
-                    return ERR!("Invalid token id in maker payment");
+                    return MmError::err(SpendHtlcError::InvalidSlpDetails);
                 }
-                *try_s!(amounts.get(0).ok_or(ERRL!("SLP amounts are empty")))
+                *amounts.get(0).ok_or(SpendHtlcError::InvalidSlpDetails)?
             },
-            _ => return ERR!("Maker payment must be SlpTransaction::Send, got {:?}", slp_tx),
+            _ => return MmError::err(SpendHtlcError::InvalidSlpDetails),
         };
         let slp_utxo = SlpUnspent {
             bch_unspent: UnspentInfo {
                 outpoint: OutPoint {
                     hash: tx.hash(),
-                    index: 1,
+                    index: SLP_SWAP_VOUT as u32,
                 },
                 value: tx.outputs[1].value,
                 height: None,
@@ -417,15 +479,14 @@ impl SlpToken {
             slp_amount,
         };
 
-        let tx_locktime = try_s!(self.platform_utxo.p2sh_tx_locktime(time_lock).await);
+        let tx_locktime = self.platform_utxo.p2sh_tx_locktime(time_lock).await?;
         let script_data = ScriptBuilder::default()
             .push_data(secret)
             .push_opcode(Opcode::OP_0)
             .into_script();
-        let tx = try_s!(
-            self.spend_p2sh(slp_utxo, tx_locktime, SEQUENCE_FINAL, script_data, redeem_script)
-                .await
-        );
+        let tx = self
+            .spend_p2sh(slp_utxo, tx_locktime, SEQUENCE_FINAL, script_data, redeem_script)
+            .await?;
         Ok(tx)
     }
 
@@ -436,7 +497,7 @@ impl SlpToken {
         input_sequence: u32,
         script_data: Script,
         redeem_script: Script,
-    ) -> Result<UtxoTx, String> {
+    ) -> Result<UtxoTx, MmError<SpendP2SHError>> {
         let op_return = slp_send_output(
             SlpTokenType::Fungible,
             &TokenId::from_slice(self.token_id().as_slice()).unwrap(),
@@ -456,32 +517,30 @@ impl SlpToken {
         };
         outputs.push(slp_output);
 
-        let (_, mut bch_inputs, _recently_spent) = try_s!(self.slp_unspents().await);
+        let (_, mut bch_inputs, _recently_spent) = self.slp_unspents().await?;
         bch_inputs.insert(0, p2sh_utxo.bch_unspent);
-        let (mut unsigned, _) = try_s!(
-            generate_transaction(
-                &self.platform_utxo,
-                bch_inputs,
-                outputs,
-                FeePolicy::SendExact,
-                None,
-                None,
-            )
-            .await
-        );
+        let (mut unsigned, _) = generate_transaction(
+            &self.platform_utxo,
+            bch_inputs,
+            outputs,
+            FeePolicy::SendExact,
+            None,
+            None,
+        )
+        .await?;
 
         unsigned.lock_time = tx_locktime;
         unsigned.inputs[0].sequence = input_sequence;
 
-        let signed_p2sh_input = try_s!(p2sh_spend(
+        let signed_p2sh_input = p2sh_spend(
             &unsigned,
             0,
             &self.platform_utxo.as_ref().key_pair,
             script_data,
             redeem_script,
             self.platform_utxo.as_ref().conf.signature_version,
-            self.platform_utxo.as_ref().conf.fork_id
-        ));
+            self.platform_utxo.as_ref().conf.fork_id,
+        )?;
 
         let signed_inputs: Result<Vec<_>, _> = unsigned
             .inputs
@@ -500,7 +559,7 @@ impl SlpToken {
             })
             .collect();
 
-        let mut signed_inputs = try_s!(signed_inputs);
+        let mut signed_inputs = signed_inputs?;
 
         signed_inputs.insert(0, signed_p2sh_input);
 
@@ -525,12 +584,11 @@ impl SlpToken {
             tx_hash_algo: self.platform_utxo.as_ref().tx_hash_algo,
         };
 
-        let _broadcast = try_s!(
-            self.rpc()
-                .send_raw_transaction(serialize(&signed).into())
-                .compat()
-                .await
-        );
+        let _broadcast = self
+            .rpc()
+            .send_raw_transaction(serialize(&signed).into())
+            .compat()
+            .await?;
         Ok(signed)
     }
 
@@ -572,7 +630,7 @@ impl SlpToken {
         let validate_fut = utxo_common::validate_fee(
             self.platform_utxo.clone(),
             tx,
-            1,
+            SLP_FEE_VOUT,
             expected_sender,
             &dust_decimal,
             min_block_number,
@@ -732,7 +790,7 @@ fn parse_slp_script(script: &[u8]) -> Result<SlpTxDetails, MmError<ParseSlpScrip
 }
 
 #[derive(Debug, Display)]
-enum SlpUnspentsErr {
+pub enum SlpUnspentsErr {
     RpcError(UtxoRpcError),
     #[display(fmt = "TxDeserializeError: {:?}", _0)]
     TxDeserializeError(Error),
@@ -812,7 +870,13 @@ impl MarketCoinOps for SlpToken {
         from_block: u64,
         _swap_contract_address: &Option<BytesJson>,
     ) -> TransactionFut {
-        utxo_common::wait_for_output_spend(self.platform_utxo.as_ref(), transaction, 1, from_block, wait_until)
+        utxo_common::wait_for_output_spend(
+            self.platform_utxo.as_ref(),
+            transaction,
+            SLP_SWAP_VOUT,
+            from_block,
+            wait_until,
+        )
     }
 
     fn tx_enum_from_bytes(&self, bytes: &[u8]) -> Result<TransactionEnum, String> {
@@ -1071,7 +1135,7 @@ impl SwapOps for SlpToken {
             other_pub,
             secret_hash,
             tx,
-            1,
+            SLP_SWAP_VOUT,
             search_from_block,
         )
     }
@@ -1091,7 +1155,7 @@ impl SwapOps for SlpToken {
             other_pub,
             secret_hash,
             tx,
-            1,
+            SLP_SWAP_VOUT,
             search_from_block,
         )
     }

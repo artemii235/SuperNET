@@ -34,6 +34,8 @@ use self::rpc_clients::{electrum_script_hash, UnspentInfo, UtxoRpcClientEnum, Ut
 use crate::{CanRefundHtlc, CoinBalance, TradePreimageValue, TxFeeDetails, ValidateAddressResult, WithdrawResult};
 
 const MIN_BTC_TRADING_VOL: &str = "0.00777";
+pub const DEFAULT_SWAP_VOUT: usize = 0;
+pub const DEFAULT_FEE_VOUT: usize = 0;
 
 macro_rules! true_or {
     ($cond: expr, $etype: expr) => {
@@ -576,7 +578,7 @@ where
             sequence,
             previous_output: OutPoint {
                 hash: prev_transaction.hash(),
-                index: 0,
+                index: DEFAULT_SWAP_VOUT as u32,
             },
             amount: prev_transaction.outputs[0].value,
         }],
@@ -594,7 +596,7 @@ where
     };
     let signed_input = try_s!(p2sh_spend(
         &unsigned,
-        0,
+        DEFAULT_SWAP_VOUT,
         &coin.as_ref().key_pair,
         script_data,
         redeem_script.into(),
@@ -1045,7 +1047,7 @@ where
     validate_payment(
         coin.clone(),
         tx,
-        0,
+        DEFAULT_SWAP_VOUT,
         &try_fus!(Public::from_slice(maker_pub)),
         my_public,
         priv_bn_hash,
@@ -1072,7 +1074,7 @@ where
     validate_payment(
         coin.clone(),
         tx,
-        0,
+        DEFAULT_SWAP_VOUT,
         &try_fus!(Public::from_slice(taker_pub)),
         my_public,
         priv_bn_hash,

@@ -14,7 +14,6 @@ use common::{block_on, now_ms, OrdRange, DEX_FEE_ADDR_RAW_PUBKEY};
 use futures::future::join_all;
 use mocktopus::mocking::*;
 use rpc::v1::types::H256 as H256Json;
-use script::Opcode;
 use serialization::{deserialize, CoinVariant};
 use std::thread;
 use std::time::Duration;
