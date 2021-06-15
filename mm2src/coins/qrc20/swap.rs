@@ -494,7 +494,7 @@ impl Qrc20Coin {
     ) -> Qrc20ABIResult<ContractCallOutput> {
         let params = self.erc20_payment_call_bytes(id, value, time_lock, secret_hash, receiver_addr)?;
 
-        let gas_limit = QRC20_GAS_LIMIT_DEFAULT;
+        let gas_limit = QRC20_PAYMENT_GAS_LIMIT;
         let gas_price = QRC20_GAS_PRICE_DEFAULT;
         let script_pubkey = generate_contract_call_script_pubkey(
             &params, // params of the function

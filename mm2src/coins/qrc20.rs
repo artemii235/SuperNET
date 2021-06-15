@@ -54,6 +54,7 @@ mod swap;
 /// because we should pay only a fee in Qtum to send the QRC20 transaction.
 const OUTPUT_QTUM_AMOUNT: u64 = 0;
 const QRC20_GAS_LIMIT_DEFAULT: u64 = 100_000;
+const QRC20_PAYMENT_GAS_LIMIT: u64 = 200_000;
 const QRC20_GAS_PRICE_DEFAULT: u64 = 40;
 const QRC20_DUST: u64 = 0;
 // Keccak-256 hash of `Transfer` event
@@ -1029,7 +1030,7 @@ impl MmCoin for Qrc20Coin {
     /// This method is called to check our QTUM balance.
     fn get_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = String> + Send> {
         // `erc20Payment` may require two `approve` contract calls in worst case,
-        let gas_fee = 3 * QRC20_GAS_LIMIT_DEFAULT * QRC20_GAS_PRICE_DEFAULT;
+        let gas_fee = (2 * QRC20_GAS_LIMIT_DEFAULT + QRC20_PAYMENT_GAS_LIMIT) * QRC20_GAS_PRICE_DEFAULT;
 
         let selfi = self.clone();
         let fut = async move {
