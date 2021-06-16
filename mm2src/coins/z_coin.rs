@@ -423,7 +423,7 @@ impl SwapOps for ZCoin {
             other_pub,
             secret_hash,
             tx,
-            0,
+            utxo_common::DEFAULT_SWAP_VOUT,
             search_from_block,
         )
     }
@@ -443,7 +443,7 @@ impl SwapOps for ZCoin {
             other_pub,
             secret_hash,
             tx,
-            0,
+            utxo_common::DEFAULT_SWAP_VOUT,
             search_from_block,
         )
     }
