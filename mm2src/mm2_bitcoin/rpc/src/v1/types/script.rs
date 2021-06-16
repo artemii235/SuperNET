@@ -18,6 +18,7 @@ pub enum ScriptType {
     CreateSender,
     Call,
     Create,
+    LelantusMint,
 }
 
 impl From<GlobalScriptType> for ScriptType {
@@ -57,6 +58,7 @@ impl Serialize for ScriptType {
             ScriptType::CreateSender => "create_sender".serialize(serializer),
             ScriptType::Call => "call".serialize(serializer),
             ScriptType::Create => "create".serialize(serializer),
+            ScriptType::LelantusMint => "lelantusmint".serialize(serializer),
         }
     }
 }
@@ -92,6 +94,7 @@ impl<'a> Deserialize<'a> for ScriptType {
                     "create_sender" => Ok(ScriptType::CreateSender),
                     "call" => Ok(ScriptType::Call),
                     "create" => Ok(ScriptType::Create),
+                    "lelantusmint" => Ok(ScriptType::LelantusMint),
                     _ => Err(E::invalid_value(Unexpected::Str(value), &self)),
                 }
             }

@@ -2436,6 +2436,18 @@ fn firo_verbose_block_deserialize() {
 }
 
 #[test]
+fn firo_lelantus_tx() {
+    // https://explorer.firo.org/tx/06ed4b75010edcf404a315be70903473f44050c978bc37fbcee90e0b49114ba8
+    let tx_hash = "06ed4b75010edcf404a315be70903473f44050c978bc37fbcee90e0b49114ba8".into();
+    let electrum = electrum_client_for_test(&[
+        "electrumx01.firo.org:50001",
+        "electrumx02.firo.org:50001",
+        "electrumx03.firo.org:50001",
+    ]);
+    let _tx = electrum.get_verbose_transaction(tx_hash).wait().unwrap();
+}
+
+#[test]
 fn test_generate_tx_doge_fee() {
     // A tx below 1kb is always 1 doge fee yes.
     // But keep in mind that every output below 1 doge will incur and extra 1 doge dust fee
