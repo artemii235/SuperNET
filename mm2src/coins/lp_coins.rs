@@ -384,6 +384,18 @@ pub struct WithdrawRequest {
     fee: Option<WithdrawFee>,
 }
 
+impl WithdrawRequest {
+    pub fn new_max(coin: String, to: String) -> WithdrawRequest {
+        WithdrawRequest {
+            coin,
+            to,
+            amount: 0.into(),
+            max: true,
+            fee: None,
+        }
+    }
+}
+
 /// Please note that no type should have the same structure as another type,
 /// because this enum has the `untagged` deserialization.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -1231,6 +1243,16 @@ pub async fn lp_coinfind(ctx: &MmArc, ticker: &str) -> Result<Option<MmCoinEnum>
     let cctx = try_s!(CoinsContext::from_ctx(ctx));
     let coins = cctx.coins.lock().await;
     Ok(coins.get(ticker).cloned())
+}
+
+/// Attempts to find a pair of active coins returning None if one is not enabled
+pub async fn find_pair(ctx: &MmArc, base: &str, rel: &str) -> Result<Option<(MmCoinEnum, MmCoinEnum)>, String> {
+    let fut_base = lp_coinfind(ctx, base);
+    let fut_rel = lp_coinfind(ctx, rel);
+
+    futures::future::try_join(fut_base, fut_rel)
+        .map_ok(|(base, rel)| base.zip(rel))
+        .await
 }
 
 #[derive(Display)]
