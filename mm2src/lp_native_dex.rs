@@ -24,7 +24,7 @@ use rand::{random, Rng, SeedableRng};
 use serde_json::{self as json};
 use std::fs;
 use std::io::{Read, Write};
-use std::net::{IpAddr, Ipv4Addr, ToSocketAddrs};
+use std::net::{IpAddr, Ipv4Addr};
 use std::path::Path;
 use std::str;
 
@@ -44,11 +44,34 @@ use common::privkey::key_pair_from_seed;
 use common::slurp_url;
 
 const IP_PROVIDERS: [&str; 2] = ["http://checkip.amazonaws.com/", "http://api.ipify.org"];
-const NETID_7777_SEEDNODES: [&str; 3] = [
-    "seed1.defimania.live:0",
-    "seed2.defimania.live:0",
-    "seed3.defimania.live:0",
-];
+const NETID_7777_SEEDNODES: [&str; 3] = ["seed1.defimania.live", "seed2.defimania.live", "seed3.defimania.live"];
+
+#[cfg(target_arch = "wasm32")]
+fn default_seednodes(netid: u16) -> Vec<String> {
+    if netid == 7777 {
+        NETID_7777_SEEDNODES
+            .iter()
+            .map(|dns| format!("/dns/{}/tcp/{}/ws", dns, netid))
+            .collect()
+    } else {
+        Vec::new()
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn default_seednodes(netid: u16) -> Vec<String> {
+    if netid == 7777 {
+        NETID_7777_SEEDNODES
+            .iter()
+            .filter_map(|seed| {
+                let seed_url = format!("{}:0", *seed);
+                seed_to_ipv4_string(&seed_url)
+            })
+            .collect()
+    } else {
+        Vec::new()
+    }
+}
 
 pub fn lp_ports(netid: u16) -> Result<(u16, u16, u16), String> {
     const LP_RPCPORT: u16 = 7783;
@@ -306,7 +329,9 @@ fn test_ip(ctx: &MmArc, ip: IpAddr) -> Result<(), String> {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn seed_to_ipv4_string(seed: &str) -> Option<String> {
+    use std::net::ToSocketAddrs;
     match seed.to_socket_addrs() {
         Ok(mut iter) => match iter.next() {
             Some(addr) => {
@@ -503,19 +528,10 @@ async fn myipaddr(ctx: MmArc) -> Result<IpAddr, String> {
 async fn init_p2p(mypubport: u16, ctx: MmArc) -> Result<(), String> {
     let i_am_seed = ctx.conf["i_am_seed"].as_bool().unwrap_or(false);
 
-    let seednodes: Option<Vec<String>> = try_s!(json::from_value(ctx.conf["seednodes"].clone()));
-    let seednodes = match seednodes {
-        Some(s) => s,
-        None => {
-            if ctx.netid() == 7777 {
-                NETID_7777_SEEDNODES
-                    .iter()
-                    .filter_map(|seed| seed_to_ipv4_string(*seed))
-                    .collect()
-            } else {
-                vec![]
-            }
-        },
+    let seednodes: Vec<String> = if ctx.conf["seednodes"].is_null() {
+        default_seednodes(ctx.netid())
+    } else {
+        try_s!(json::from_value(ctx.conf["seednodes"].clone()))
     };
 
     let ctx_on_poll = ctx.clone();

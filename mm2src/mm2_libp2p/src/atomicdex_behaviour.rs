@@ -777,20 +777,35 @@ fn generate_ed25519_keypair<R: Rng>(rng: &mut R, force_key: Option<[u8; 32]>) ->
     identity::Keypair::Ed25519(keypair)
 }
 
-/// If te `addr` is in the "/ip4/{addr}/tcp/{port}" format then parse the `addr` immediately to the `Multiaddr`,
-/// else construct the "/ip4/{addr}/tcp/{port}" from `addr` and `port` values.
-#[cfg(test)]
+/// `addr` is expected to be either `/dns/<DOMAIN>/tcp/<PORT>` or `/ipv4/<IP_ADDR>/tcp/<PORT>` or an IPv4 address.
+#[cfg(target_arch = "wasm32")]
 fn parse_relay_address(addr: String, port: u16) -> Multiaddr {
-    if addr.contains("/ip4/") && addr.contains("/tcp/") {
-        addr.parse().unwrap()
-    } else {
-        format!("/ip4/{}/tcp/{}", addr, port).parse().unwrap()
+    let dns = addr.starts_with("/dns") && addr.contains("/tcp/");
+    let ip4 = addr.starts_with("/ip4/") && addr.contains("/tcp/");
+    if dns || ip4 {
+        return Multiaddr::from_str(&addr).unwrap();
     }
+    // check if the address is IPv4
+    std::net::Ipv4Addr::from_str(&addr).unwrap();
+    Multiaddr::from_str(&format!("/ip4/{}/tcp/{}", addr, port)).unwrap()
 }
 
-/// The addr is expected to be an IP of the relay
-#[cfg(not(test))]
-fn parse_relay_address(addr: String, port: u16) -> Multiaddr { format!("/ip4/{}/tcp/{}", addr, port).parse().unwrap() }
+/// If the `addr` is in the "/ip4/{addr}/tcp/{port}" format then parse the `addr` immediately to the `Multiaddr`,
+/// else construct the "/ip4/{addr}/tcp/{port}" from the `addr` and `port` values.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+fn parse_relay_address(addr: String, port: u16) -> Multiaddr {
+    if addr.starts_with("/ip4/") && addr.contains("/tcp/") {
+        return addr.parse().unwrap();
+    }
+
+    format!("/ip4/{}/tcp/{}", addr, port).parse().unwrap()
+}
+
+/// The `addr` is expected to be an IP of the relay.
+#[cfg(all(not(test), not(target_arch = "wasm32")))]
+fn parse_relay_address(ipv4_addr: String, port: u16) -> Multiaddr {
+    format!("/ip4/{}/tcp/{}", ipv4_addr, port).parse().unwrap()
+}
 
 /// Request the peers sequential until a `PeerResponse::Ok()` will not be received.
 async fn request_any_peer(

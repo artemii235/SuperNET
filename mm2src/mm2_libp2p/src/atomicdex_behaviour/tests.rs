@@ -3,7 +3,6 @@ use async_std::task::{block_on, spawn};
 use futures::channel::{mpsc, oneshot};
 use futures::{Future, SinkExt, StreamExt};
 use libp2p::PeerId;
-use secp256k1::SecretKey;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -11,8 +10,6 @@ use std::time::Duration;
 fn spawn_boxed(fut: Box<dyn Future<Output = ()> + Send + Unpin + 'static>) { spawn(fut); }
 
 struct Node {
-    #[allow(dead_code)]
-    secret: SecretKey,
     peer_id: PeerId,
     cmd_tx: mpsc::Sender<AdexBehaviourCmd>,
 }
@@ -24,8 +21,6 @@ impl Node {
     {
         let my_address = ip.parse().unwrap();
 
-        let mut rng = rand::thread_rng();
-        let secret = SecretKey::new(&mut rng);
         let node_type = NodeType::Relay { ip: my_address };
         let (cmd_tx, mut event_rx, peer_id, _) =
             start_gossipsub(port, 333, None, spawn_boxed, seednodes, node_type, |_| {});
@@ -45,11 +40,7 @@ impl Node {
             }
         });
 
-        Node {
-            secret,
-            peer_id,
-            cmd_tx,
-        }
+        Node { peer_id, cmd_tx }
     }
 
     async fn send_cmd(&mut self, cmd: AdexBehaviourCmd) { self.cmd_tx.send(cmd).await.unwrap(); }
