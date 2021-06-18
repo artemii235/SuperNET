@@ -1812,7 +1812,7 @@ fn broadcast_ordermatch_message(
 }
 
 /// The order is ordered by [`OrderbookItem::price`] and [`OrderbookItem::uuid`].
-#[derive(Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct OrderedByPriceOrder {
     price: MmNumber,
     uuid: Uuid,
@@ -2063,13 +2063,21 @@ impl Orderbook {
 
         let base_rel = (order.base.clone(), order.rel.clone());
 
-        self.ordered
-            .entry(base_rel.clone())
-            .or_insert_with(BTreeSet::new)
-            .insert(OrderedByPriceOrder {
-                price: order.price.clone().into(),
-                uuid: order.uuid,
-            });
+        let ordered = self.ordered.entry(base_rel.clone()).or_insert_with(BTreeSet::new);
+
+        // have to clone to drop immutable ordered borrow
+        let existing = ordered
+            .iter()
+            .find(|maybe_existing| maybe_existing.uuid == order.uuid)
+            .cloned();
+
+        if let Some(exists) = existing {
+            ordered.remove(&exists);
+        }
+        ordered.insert(OrderedByPriceOrder {
+            uuid: order.uuid,
+            price: order.price.clone().into(),
+        });
 
         self.pairs_existing_for_base
             .entry(order.base.clone())

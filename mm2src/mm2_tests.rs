@@ -6527,24 +6527,36 @@ fn test_best_orders_duplicates_after_update() {
     let expected_price: BigDecimal = "1".parse().unwrap();
     assert_eq!(expected_price, best_morty_orders[0].price);
 
-    let rc = block_on(mm_eve.rpc(json! ({
-        "userpass": mm_eve.userpass,
-        "method": "update_maker_order",
-        "uuid": eve_order.result.uuid,
-        "new_price": "1.1",
-    })))
-    .unwrap();
-    assert!(rc.0.is_success(), "!setprice: {}", rc.1);
+    for _ in 0..5 {
+        let rc = block_on(mm_eve.rpc(json!({
+            "userpass": mm_eve.userpass,
+            "method": "update_maker_order",
+            "uuid": eve_order.result.uuid,
+            "new_price": "1.1",
+        })))
+        .unwrap();
+        assert!(rc.0.is_success(), "!setprice: {}", rc.1);
+        thread::sleep(Duration::from_secs(1));
+    }
 
-    // wait a bit for order update propagation
-    thread::sleep(Duration::from_secs(2));
+    for _ in 0..5 {
+        let rc = block_on(mm_eve.rpc(json!({
+            "userpass": mm_eve.userpass,
+            "method": "update_maker_order",
+            "uuid": eve_order.result.uuid,
+            "new_price": "1.2",
+        })))
+        .unwrap();
+        assert!(rc.0.is_success(), "!setprice: {}", rc.1);
+        thread::sleep(Duration::from_secs(1));
+    }
 
     let rc = block_on(mm_alice.rpc(json! ({
         "userpass": mm_alice.userpass,
         "method": "best_orders",
         "coin": "RICK",
         "action": "buy",
-        "volume": "0.1",
+        "volume": "500",
     })))
     .unwrap();
 
@@ -6552,7 +6564,7 @@ fn test_best_orders_duplicates_after_update() {
     let response: BestOrdersResponse = json::from_str(&rc.1).unwrap();
     let best_morty_orders = response.result.get("MORTY").unwrap();
     assert_eq!(1, best_morty_orders.len());
-    let expected_price: BigDecimal = "1.1".parse().unwrap();
+    let expected_price: BigDecimal = "1.2".parse().unwrap();
     assert_eq!(expected_price, best_morty_orders[0].price);
 
     block_on(mm_bob.stop()).unwrap();
