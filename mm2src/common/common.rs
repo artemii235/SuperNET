@@ -140,6 +140,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
+pub use serde;
+pub use serde_json;
+
 cfg_native! {
     pub use gstuff::{now_float, now_ms};
     pub use rusqlite;
