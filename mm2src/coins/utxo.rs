@@ -38,7 +38,7 @@ use common::jsonrpc_client::JsonRpcError;
 use common::mm_ctx::MmArc;
 use common::mm_error::prelude::*;
 use common::mm_metrics::MetricsArc;
-use common::small_rng;
+use common::{now_ms, small_rng};
 use derive_more::Display;
 #[cfg(not(target_arch = "wasm32"))] use dirs::home_dir;
 use futures::channel::mpsc;
@@ -471,6 +471,35 @@ pub struct UtxoCoinFields {
     /// This cache helps to prevent UTXO reuse in such cases
     pub recently_spent_outpoints: AsyncMutex<RecentlySpentOutPoints>,
     pub tx_hash_algo: TxHashAlgo,
+}
+
+impl UtxoCoinFields {
+    pub fn transaction_preimage(&self) -> TransactionInputSigner {
+        let lock_time = if self.conf.ticker == "KMD" {
+            (now_ms() / 1000) as u32 - 3600 + 777 * 2
+        } else {
+            (now_ms() / 1000) as u32
+        };
+
+        TransactionInputSigner {
+            version: self.conf.tx_version,
+            n_time: None,
+            overwintered: self.conf.overwintered,
+            version_group_id: self.conf.version_group_id,
+            consensus_branch_id: self.conf.consensus_branch_id,
+            expiry_height: 0,
+            value_balance: 0,
+            inputs: vec![],
+            outputs: vec![],
+            lock_time,
+            join_splits: vec![],
+            shielded_spends: vec![],
+            shielded_outputs: vec![],
+            zcash: self.conf.zcash,
+            str_d_zeel: None,
+            hash_algo: self.tx_hash_algo.into(),
+        }
+    }
 }
 
 #[async_trait]
