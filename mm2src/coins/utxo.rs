@@ -1763,6 +1763,34 @@ pub fn p2pkh_spend(
     })
 }
 
+/// Creates signed input spending p2pkh output
+pub fn p2pk_spend(
+    signer: &TransactionInputSigner,
+    input_index: usize,
+    key_pair: &KeyPair,
+    signature_version: SignatureVersion,
+    fork_id: u32,
+) -> Result<TransactionInput, String> {
+    let script = Builder::build_p2pk(key_pair.public());
+    let sighash_type = 1 | fork_id;
+    let sighash = signer.signature_hash(
+        input_index,
+        signer.inputs[input_index].amount,
+        &script,
+        signature_version,
+        sighash_type,
+    );
+
+    let script_sig = try_s!(script_sig(&sighash, key_pair, fork_id));
+
+    Ok(TransactionInput {
+        script_sig: Builder::default().push_bytes(&script_sig).into_bytes(),
+        sequence: signer.inputs[input_index].sequence,
+        script_witness: vec![],
+        previous_output: signer.inputs[input_index].previous_output.clone(),
+    })
+}
+
 fn script_sig_with_pub(message: &H256, key_pair: &KeyPair, fork_id: u32) -> Result<Bytes, String> {
     let sig_script = try_s!(script_sig(message, key_pair, fork_id));
 

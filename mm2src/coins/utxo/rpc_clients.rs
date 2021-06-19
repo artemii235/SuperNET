@@ -181,6 +181,19 @@ pub struct UnspentInfo {
     pub height: Option<u64>,
 }
 
+impl From<ElectrumUnspent> for UnspentInfo {
+    fn from(electrum: ElectrumUnspent) -> UnspentInfo {
+        UnspentInfo {
+            outpoint: OutPoint {
+                hash: electrum.tx_hash.reversed().into(),
+                index: electrum.tx_pos,
+            },
+            value: electrum.value,
+            height: electrum.height,
+        }
+    }
+}
+
 pub type UtxoRpcResult<T> = Result<T, MmError<UtxoRpcError>>;
 pub type UtxoRpcFut<T> = Box<dyn Future<Item = T, Error = MmError<UtxoRpcError>> + Send + 'static>;
 
@@ -890,11 +903,11 @@ impl NativeClientImpl {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-struct ElectrumUnspent {
-    height: Option<u64>,
-    tx_hash: H256Json,
-    tx_pos: u32,
-    value: u64,
+pub struct ElectrumUnspent {
+    pub height: Option<u64>,
+    pub tx_hash: H256Json,
+    pub tx_pos: u32,
+    pub value: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -961,7 +974,7 @@ pub struct ElectrumTxHistoryItem {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-struct ElectrumBalance {
+pub struct ElectrumBalance {
     confirmed: i64,
     unconfirmed: i64,
 }
@@ -1395,7 +1408,7 @@ impl ElectrumClient {
     /// https://electrumx.readthedocs.io/en/latest/protocol-methods.html#blockchain-scripthash-listunspent
     /// It can return duplicates sometimes: https://github.com/artemii235/SuperNET/issues/269
     /// We should remove them to build valid transactions
-    fn scripthash_list_unspent(&self, hash: &str) -> RpcRes<Vec<ElectrumUnspent>> {
+    pub fn scripthash_list_unspent(&self, hash: &str) -> RpcRes<Vec<ElectrumUnspent>> {
         let request_fut = Box::new(rpc_func!(self, "blockchain.scripthash.listunspent", hash).and_then(
             move |unspents: Vec<ElectrumUnspent>| {
                 let mut map: HashMap<(H256Json, u32), bool> = HashMap::new();
@@ -1424,7 +1437,7 @@ impl ElectrumClient {
     }
 
     /// https://electrumx.readthedocs.io/en/latest/protocol-methods.html#blockchain-scripthash-gethistory
-    fn scripthash_get_balance(&self, hash: &str) -> RpcRes<ElectrumBalance> {
+    pub fn scripthash_get_balance(&self, hash: &str) -> RpcRes<ElectrumBalance> {
         let arc = self.clone();
         let hash = hash.to_owned();
         let fut = async move {
