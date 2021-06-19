@@ -23,8 +23,8 @@
 #[macro_use] extern crate fomat_macros;
 #[macro_use] extern crate gstuff;
 #[macro_use] extern crate lazy_static;
-#[macro_use] extern crate serde_derive;
-#[macro_use] extern crate serde_json;
+#[macro_use] pub extern crate serde_derive;
+#[macro_use] pub extern crate serde_json;
 #[cfg(test)]
 #[macro_use]
 extern crate ser_error_derive;
@@ -141,8 +141,6 @@ use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
 pub use serde;
-pub use serde_derive;
-pub use serde_json;
 
 cfg_native! {
     pub use gstuff::{now_float, now_ms};
