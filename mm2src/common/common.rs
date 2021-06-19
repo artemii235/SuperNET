@@ -141,6 +141,7 @@ use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
 pub use serde;
+pub use serde_derive;
 pub use serde_json;
 
 cfg_native! {
