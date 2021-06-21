@@ -495,6 +495,20 @@ impl TransactionDetails {
     }
 
     pub fn should_update_kmd_rewards(&self) -> bool { self.coin == "KMD" && self.kmd_rewards.is_none() }
+
+    pub fn firo_negative_fee(&self) -> bool {
+        match &self.fee_details {
+            Some(TxFeeDetails::Utxo(utxo)) => utxo.amount < 0.into() && self.coin == "FIRO",
+            _ => false,
+        }
+    }
+
+    pub fn should_update(&self) -> bool {
+        self.should_update_block_height()
+            || self.should_update_timestamp()
+            || self.should_update_kmd_rewards()
+            || self.firo_negative_fee()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

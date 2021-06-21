@@ -226,9 +226,9 @@ impl Deserializable for Bytes {
         T: io::Read,
     {
         let len = reader.read::<CompactInteger>()?;
-        // limit the len to 10000 (MAX_SCRIPT_SIZE) as invalid inputs might result to huge
+        // limit the len to 65536 as invalid inputs might result to huge
         // len being calculated causing attempt to allocate the huge amount of memory and then crash
-        if u64::from(len) > 10000 {
+        if u64::from(len) > 65536 {
             return Err(Error::MalformedData);
         }
         let mut bytes = Bytes::new_with_len(len.into());

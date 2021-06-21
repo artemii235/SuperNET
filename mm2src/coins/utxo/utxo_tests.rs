@@ -2446,6 +2446,34 @@ fn firo_lelantus_tx() {
 }
 
 #[test]
+fn firo_lelantus_tx_details() {
+    // https://explorer.firo.org/tx/06ed4b75010edcf404a315be70903473f44050c978bc37fbcee90e0b49114ba8
+    let electrum = electrum_client_for_test(&[
+        "electrumx01.firo.org:50001",
+        "electrumx02.firo.org:50001",
+        "electrumx03.firo.org:50001",
+    ]);
+    let coin = utxo_coin_for_test(electrum.into(), None);
+    let mut map = HashMap::new();
+
+    let tx_hash = hex::decode("ad812911f5cba3eab7c193b6cd7020ea02fb5c25634ae64959c3171a6bd5a74d").unwrap();
+    let tx_details = block_on(coin.tx_details_by_hash(&tx_hash, &mut map)).unwrap();
+
+    let expected_fee = TxFeeDetails::Utxo(UtxoFeeDetails {
+        amount: "0.00003793".parse().unwrap(),
+    });
+    assert_eq!(Some(expected_fee), tx_details.fee_details);
+
+    let tx_hash = hex::decode("06ed4b75010edcf404a315be70903473f44050c978bc37fbcee90e0b49114ba8").unwrap();
+    let tx_details = block_on(coin.tx_details_by_hash(&tx_hash, &mut map)).unwrap();
+
+    let expected_fee = TxFeeDetails::Utxo(UtxoFeeDetails {
+        amount: "0.00045778".parse().unwrap(),
+    });
+    assert_eq!(Some(expected_fee), tx_details.fee_details);
+}
+
+#[test]
 fn test_generate_tx_doge_fee() {
     // A tx below 1kb is always 1 doge fee yes.
     // But keep in mind that every output below 1 doge will incur and extra 1 doge dust fee

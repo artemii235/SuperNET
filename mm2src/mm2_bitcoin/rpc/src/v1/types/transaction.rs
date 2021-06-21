@@ -113,7 +113,7 @@ pub struct LelantusInput {
     #[serde(rename = "scriptSig")]
     pub script_sig: TransactionInputScript,
     #[serde(rename = "nFees")]
-    n_fees: f64,
+    pub n_fees: f64,
     serials: Vec<String>,
     sequence: u32,
 }
