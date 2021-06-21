@@ -63,7 +63,7 @@ const QRC20_PAYMENT_SENT_TOPIC: &str = "ccc9c05183599bd3135da606eaaf535daffe256e
 const QRC20_RECEIVER_SPENT_TOPIC: &str = "36c177bcb01c6d568244f05261e2946c8c977fa50822f3fa098c470770ee1f3e";
 const QRC20_SENDER_REFUNDED_TOPIC: &str = "1797d500133f8e427eb9da9523aa4a25cb40f50ebc7dbda3c7c81778973f35ba";
 
-pub type Qrc20ABIResult<T> = Result<T, MmError<Qrc20ABIError>>;
+pub type Qrc20AbiResult<T> = Result<T, MmError<Qrc20AbiError>>;
 
 struct Qrc20CoinBuilder<'a> {
     ctx: &'a MmArc,
@@ -315,33 +315,33 @@ struct GenerateQrc20TxResult {
 }
 
 #[derive(Debug, Display)]
-pub enum Qrc20ABIError {
+pub enum Qrc20AbiError {
     #[display(fmt = "Invalid QRC20 ABI params: {}", _0)]
     InvalidParams(String),
     #[display(fmt = "QRC20 ABI error: {}", _0)]
-    ABIError(String),
+    AbiError(String),
 }
 
-impl From<ethabi::Error> for Qrc20ABIError {
-    fn from(e: ethabi::Error) -> Qrc20ABIError { Qrc20ABIError::ABIError(e.to_string()) }
+impl From<ethabi::Error> for Qrc20AbiError {
+    fn from(e: ethabi::Error) -> Qrc20AbiError { Qrc20AbiError::AbiError(e.to_string()) }
 }
 
-impl From<Qrc20ABIError> for TradePreimageError {
-    fn from(e: Qrc20ABIError) -> Self {
+impl From<Qrc20AbiError> for TradePreimageError {
+    fn from(e: Qrc20AbiError) -> Self {
         // `Qrc20ABIError` is always an internal error
         TradePreimageError::InternalError(e.to_string())
     }
 }
 
-impl From<Qrc20ABIError> for WithdrawError {
-    fn from(e: Qrc20ABIError) -> Self {
+impl From<Qrc20AbiError> for WithdrawError {
+    fn from(e: Qrc20AbiError) -> Self {
         // `Qrc20ABIError` is always an internal error
         WithdrawError::InternalError(e.to_string())
     }
 }
 
-impl From<Qrc20ABIError> for UtxoRpcError {
-    fn from(e: Qrc20ABIError) -> Self {
+impl From<Qrc20AbiError> for UtxoRpcError {
+    fn from(e: Qrc20AbiError) -> Self {
         // `Qrc20ABIError` is always an internal error
         UtxoRpcError::Internal(e.to_string())
     }
@@ -420,7 +420,7 @@ impl Qrc20Coin {
         amount: U256,
         gas_limit: u64,
         gas_price: u64,
-    ) -> Qrc20ABIResult<ContractCallOutput> {
+    ) -> Qrc20AbiResult<ContractCallOutput> {
         let function = eth::ERC20_CONTRACT.function("transfer")?;
         let params = function.encode_input(&[Token::Address(to_addr), Token::Uint(amount)])?;
 

@@ -119,10 +119,16 @@ struct SlpTxDetails {
 enum ParseSlpScriptError {
     NotOpReturn,
     NotSlp,
+    DeserializingError(String),
 }
 
-fn parse_slp_script(script: &[u8]) -> Result<SlpTxDetails, ParseSlpScriptError> {
-    let details: SlpTxDetails = deserialize(script).unwrap();
+impl From<Error> for ParseSlpScriptError {
+    fn from(e: Error) -> Self { ParseSlpScriptError::DeserializingError(format!("{:?}", e)) }
+}
+
+#[allow(clippy::unnecessary_wraps)]
+fn parse_slp_script(script: &[u8]) -> Result<SlpTxDetails, MmError<ParseSlpScriptError>> {
+    let details: SlpTxDetails = deserialize(script)?;
     Ok(details)
 }
 

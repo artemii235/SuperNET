@@ -48,7 +48,7 @@ cfg_native! {
     use futures::io::Error;
     use std::pin::Pin;
     use std::task::{Context, Poll};
-    use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+    use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, ReadBuf};
     use tokio::net::TcpStream;
     use tokio_rustls::{client::TlsStream, TlsConnector};
     use tokio_rustls::webpki::DNSNameRef;
@@ -927,6 +927,7 @@ pub enum ElectrumBlockHeader {
     V14(ElectrumBlockHeaderV14),
 }
 
+#[allow(clippy::upper_case_acronyms)]
 #[derive(Debug, Deserialize, Serialize)]
 pub enum EstimateFeeMode {
     ECONOMICAL,
@@ -968,6 +969,7 @@ pub fn electrum_script_hash(script: &[u8]) -> Vec<u8> {
     result
 }
 
+#[allow(clippy::upper_case_acronyms)]
 #[derive(Debug, Deserialize, Serialize)]
 /// Deserializable Electrum protocol representation for RPC
 pub enum ElectrumProtocol {
@@ -1010,6 +1012,7 @@ pub struct ElectrumRpcRequest {
 }
 
 /// Electrum client configuration
+#[allow(clippy::upper_case_acronyms)]
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, Serialize)]
 enum ElectrumConfig {
@@ -1742,7 +1745,7 @@ impl AsRef<TcpStream> for ElectrumStream {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl AsyncRead for ElectrumStream {
-    fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
+    fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
         match self.get_mut() {
             ElectrumStream::Tcp(stream) => AsyncRead::poll_read(Pin::new(stream), cx, buf),
             ElectrumStream::Tls(stream) => AsyncRead::poll_read(Pin::new(stream), cx, buf),
@@ -1901,9 +1904,9 @@ async fn connect_loop(
         }
 
         select! {
-            last_chunk = last_chunk_f => { reset_tx_and_continue!(); },
-            recv = recv_f => { reset_tx_and_continue!(); },
-            send = send_f => { reset_tx_and_continue!(); },
+            _last_chunk = last_chunk_f => { reset_tx_and_continue!(); },
+            _recv = recv_f => { reset_tx_and_continue!(); },
+            _send = send_f => { reset_tx_and_continue!(); },
         }
     }
 }
@@ -2001,9 +2004,9 @@ async fn connect_loop(
         }
 
         select! {
-            last_chunk = last_chunk_fut => { reset_tx_and_continue!(); },
-            incoming = incoming_fut => { reset_tx_and_continue!(); },
-            outgoing = outgoing_fut => { reset_tx_and_continue!(); },
+            _last_chunk = last_chunk_fut => { reset_tx_and_continue!(); },
+            _incoming = incoming_fut => { reset_tx_and_continue!(); },
+            _outgoing = outgoing_fut => { reset_tx_and_continue!(); },
         }
     }
 }

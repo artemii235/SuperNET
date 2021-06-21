@@ -7,7 +7,7 @@ use libp2p::{multiaddr::{Multiaddr, Protocol},
                                 RequestResponseConfig, RequestResponseEvent, RequestResponseMessage},
              swarm::{NetworkBehaviourAction, NetworkBehaviourEventProcess, PollParameters},
              NetworkBehaviour, PeerId};
-use log::{error, info};
+use log::{error, info, warn};
 use rand::seq::SliceRandom;
 use serde::{de::Deserializer, ser::Serializer, Deserialize, Serialize};
 use std::collections::HashSet;
@@ -48,14 +48,14 @@ impl From<PeerId> for PeerIdSerde {
 
 impl Serialize for PeerIdSerde {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        self.0.clone().into_bytes().serialize(serializer)
+        self.0.clone().to_bytes().serialize(serializer)
     }
 }
 
 impl<'de> Deserialize<'de> for PeerIdSerde {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
-        let peer_id = PeerId::from_bytes(bytes).map_err(|_| serde::de::Error::custom("PeerId::from_bytes error"))?;
+        let peer_id = PeerId::from_bytes(&bytes).map_err(|_| serde::de::Error::custom("PeerId::from_bytes error"))?;
         Ok(PeerIdSerde(peer_id))
     }
 }
@@ -137,7 +137,7 @@ impl PeersExchange {
             }
         }
         if !self.known_peers.contains(&peer) && !addresses.is_empty() {
-            self.known_peers.push(peer.clone());
+            self.known_peers.push(*peer);
         }
         let already_known = self.request_response.addresses_of_peer(peer);
         for address in addresses {
@@ -179,7 +179,7 @@ impl PeersExchange {
         let peer_ids = self.known_peers.iter().filter(|peer| filter(*peer)).collect::<Vec<_>>();
         for peer_id in peer_ids.choose_multiple(&mut rng, num) {
             let addresses = self.request_response.addresses_of_peer(*peer_id).into_iter().collect();
-            result.insert((*peer_id).clone(), addresses);
+            result.insert(**peer_id, addresses);
         }
         result
     }
@@ -195,27 +195,21 @@ impl PeersExchange {
     fn validate_global_multiaddr(&self, address: &Multiaddr) -> bool {
         let mut components = address.iter();
         match components.next() {
-            Some(maybe_ip_v4) => match maybe_ip_v4 {
-                Protocol::Ip4(addr) => {
-                    if !addr.is_global() {
-                        return false;
-                    }
-                },
-                _ => return false,
+            Some(Protocol::Ip4(addr)) => {
+                if !addr.is_global() {
+                    return false;
+                }
             },
-            None => return false,
+            _ => return false,
         }
 
         match components.next() {
-            Some(maybe_ip_v4) => match maybe_ip_v4 {
-                Protocol::Tcp(port) => {
-                    if port != self.netid_port {
-                        return false;
-                    }
-                },
-                _ => return false,
+            Some(Protocol::Tcp(port)) => {
+                if port != self.netid_port {
+                    return false;
+                }
             },
-            None => return false,
+            _ => return false,
         }
 
         if components.next().is_some() {
@@ -273,7 +267,9 @@ impl NetworkBehaviourEventProcess<RequestResponseEvent<PeersExchangeRequest, Pee
                         let response = PeersExchangeResponse::KnownPeers {
                             peers: self.get_random_known_peers(num),
                         };
-                        self.request_response.send_response(channel, response);
+                        if let Err(_response) = self.request_response.send_response(channel, response) {
+                            warn!("Response channel has been closed already");
+                        }
                     },
                 },
                 RequestResponseMessage::Response { response, .. } => match response {
@@ -310,6 +306,7 @@ impl NetworkBehaviourEventProcess<RequestResponseEvent<PeersExchangeRequest, Pee
                     error, peer
                 );
             },
+            RequestResponseEvent::ResponseSent { .. } => (),
         }
     }
 }

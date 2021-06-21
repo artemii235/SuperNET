@@ -112,6 +112,7 @@ impl From<TransactionInput> for UnsignedTransactionInput {
     }
 }
 
+#[allow(clippy::upper_case_acronyms)]
 #[derive(Clone, Copy, Debug)]
 pub enum SignerHashAlgo {
     SHA256,
@@ -127,9 +128,9 @@ impl From<TxHashAlgo> for SignerHashAlgo {
     }
 }
 
-impl Into<TxHashAlgo> for SignerHashAlgo {
-    fn into(self) -> TxHashAlgo {
-        match self {
+impl From<SignerHashAlgo> for TxHashAlgo {
+    fn from(algo: SignerHashAlgo) -> Self {
+        match algo {
             SignerHashAlgo::DSHA256 => TxHashAlgo::DSHA256,
             SignerHashAlgo::SHA256 => TxHashAlgo::SHA256,
         }

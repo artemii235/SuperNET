@@ -14,6 +14,7 @@ use {AddressHash, CashAddrType, CashAddress, DisplayLayout, Error};
 
 /// There are two address formats currently in use.
 /// https://bitcoin.org/en/developer-reference#address-conversion
+#[allow(clippy::upper_case_acronyms)]
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Type {
     /// Pay to PubKey Hash

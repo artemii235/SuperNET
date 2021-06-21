@@ -905,17 +905,17 @@ impl TakerRequest {
     }
 }
 
-impl Into<new_protocol::OrdermatchMessage> for TakerRequest {
-    fn into(self) -> new_protocol::OrdermatchMessage {
+impl From<TakerRequest> for new_protocol::OrdermatchMessage {
+    fn from(taker_request: TakerRequest) -> Self {
         new_protocol::OrdermatchMessage::TakerRequest(new_protocol::TakerRequest {
-            base_amount: self.get_base_amount().to_ratio(),
-            rel_amount: self.get_rel_amount().to_ratio(),
-            base: self.base,
-            rel: self.rel,
-            action: self.action,
-            uuid: self.uuid.into(),
-            match_by: self.match_by.into(),
-            conf_settings: self.conf_settings.unwrap(),
+            base_amount: taker_request.get_base_amount().to_ratio(),
+            rel_amount: taker_request.get_rel_amount().to_ratio(),
+            base: taker_request.base,
+            rel: taker_request.rel,
+            action: taker_request.action,
+            uuid: taker_request.uuid.into(),
+            match_by: taker_request.match_by.into(),
+            conf_settings: taker_request.conf_settings.unwrap(),
         })
     }
 }
@@ -1596,39 +1596,39 @@ impl MakerOrder {
     }
 }
 
-impl Into<MakerOrder> for TakerOrder {
-    fn into(self) -> MakerOrder {
-        match self.request.action {
+impl From<TakerOrder> for MakerOrder {
+    fn from(taker_order: TakerOrder) -> Self {
+        match taker_order.request.action {
             TakerAction::Sell => MakerOrder {
-                price: (self.request.get_rel_amount() / self.request.get_base_amount()),
-                max_base_vol: self.request.get_base_amount().clone(),
-                min_base_vol: self.min_volume,
+                price: (taker_order.request.get_rel_amount() / taker_order.request.get_base_amount()),
+                max_base_vol: taker_order.request.get_base_amount().clone(),
+                min_base_vol: taker_order.min_volume,
                 created_at: now_ms(),
                 updated_at: Some(now_ms()),
-                base: self.request.base,
-                rel: self.request.rel,
+                base: taker_order.request.base,
+                rel: taker_order.request.rel,
                 matches: HashMap::new(),
                 started_swaps: Vec::new(),
-                uuid: self.request.uuid,
-                conf_settings: self.request.conf_settings,
+                uuid: taker_order.request.uuid,
+                conf_settings: taker_order.request.conf_settings,
                 changes_history: None,
             },
             // The "buy" taker order is recreated with reversed pair as Maker order is always considered as "sell"
             TakerAction::Buy => {
-                let price = self.request.get_base_amount() / self.request.get_rel_amount();
-                let min_base_vol = &self.min_volume / &price;
+                let price = taker_order.request.get_base_amount() / taker_order.request.get_rel_amount();
+                let min_base_vol = &taker_order.min_volume / &price;
                 MakerOrder {
                     price,
-                    max_base_vol: self.request.get_rel_amount().clone(),
+                    max_base_vol: taker_order.request.get_rel_amount().clone(),
                     min_base_vol,
                     created_at: now_ms(),
                     updated_at: Some(now_ms()),
-                    base: self.request.rel,
-                    rel: self.request.base,
+                    base: taker_order.request.rel,
+                    rel: taker_order.request.base,
                     matches: HashMap::new(),
                     started_swaps: Vec::new(),
-                    uuid: self.request.uuid,
-                    conf_settings: self.request.conf_settings.map(|s| s.reversed()),
+                    uuid: taker_order.request.uuid,
+                    conf_settings: taker_order.request.conf_settings.map(|s| s.reversed()),
                     changes_history: None,
                 }
             },
@@ -1655,11 +1655,11 @@ impl From<new_protocol::TakerConnect> for TakerConnect {
     }
 }
 
-impl Into<new_protocol::OrdermatchMessage> for TakerConnect {
-    fn into(self) -> new_protocol::OrdermatchMessage {
+impl From<TakerConnect> for new_protocol::OrdermatchMessage {
+    fn from(taker_connect: TakerConnect) -> Self {
         new_protocol::OrdermatchMessage::TakerConnect(new_protocol::TakerConnect {
-            taker_order_uuid: self.taker_order_uuid.into(),
-            maker_order_uuid: self.maker_order_uuid.into(),
+            taker_order_uuid: taker_connect.taker_order_uuid.into(),
+            maker_order_uuid: taker_connect.maker_order_uuid.into(),
         })
     }
 }
@@ -1703,16 +1703,16 @@ impl MakerReserved {
     }
 }
 
-impl Into<new_protocol::OrdermatchMessage> for MakerReserved {
-    fn into(self) -> new_protocol::OrdermatchMessage {
+impl From<MakerReserved> for new_protocol::OrdermatchMessage {
+    fn from(maker_reserved: MakerReserved) -> Self {
         new_protocol::OrdermatchMessage::MakerReserved(new_protocol::MakerReserved {
-            base_amount: self.get_base_amount().to_ratio(),
-            rel_amount: self.get_rel_amount().to_ratio(),
-            base: self.base,
-            rel: self.rel,
-            taker_order_uuid: self.taker_order_uuid.into(),
-            maker_order_uuid: self.maker_order_uuid.into(),
-            conf_settings: self.conf_settings.unwrap(),
+            base_amount: maker_reserved.get_base_amount().to_ratio(),
+            rel_amount: maker_reserved.get_rel_amount().to_ratio(),
+            base: maker_reserved.base,
+            rel: maker_reserved.rel,
+            taker_order_uuid: maker_reserved.taker_order_uuid.into(),
+            maker_order_uuid: maker_reserved.maker_order_uuid.into(),
+            conf_settings: maker_reserved.conf_settings.unwrap(),
         })
     }
 }
@@ -1738,11 +1738,11 @@ impl From<new_protocol::MakerConnected> for MakerConnected {
     }
 }
 
-impl Into<new_protocol::OrdermatchMessage> for MakerConnected {
-    fn into(self) -> new_protocol::OrdermatchMessage {
+impl From<MakerConnected> for new_protocol::OrdermatchMessage {
+    fn from(maker_connected: MakerConnected) -> Self {
         new_protocol::OrdermatchMessage::MakerConnected(new_protocol::MakerConnected {
-            taker_order_uuid: self.taker_order_uuid.into(),
-            maker_order_uuid: self.maker_order_uuid.into(),
+            taker_order_uuid: maker_connected.taker_order_uuid.into(),
+            maker_order_uuid: maker_connected.maker_order_uuid.into(),
         })
     }
 }
@@ -1887,8 +1887,10 @@ fn pubkey_state_mut<'a>(
     match state.raw_entry_mut().from_key(from_pubkey) {
         RawEntryMut::Occupied(e) => e.into_mut(),
         RawEntryMut::Vacant(e) => {
-            let mut state: OrderbookPubkeyState = Default::default();
-            state.last_keep_alive = now_ms() / 1000;
+            let state = OrderbookPubkeyState {
+                last_keep_alive: now_ms() / 1000,
+                ..OrderbookPubkeyState::default()
+            };
             e.insert(from_pubkey.to_string(), state).1
         },
     }
@@ -2195,12 +2197,12 @@ impl Orderbook {
         })
     }
 
-    fn orderbook_item_with_proof(&self, order: OrderbookItem) -> Result<OrderbookItemWithProof, ()> {
-        Ok(OrderbookItemWithProof {
+    fn orderbook_item_with_proof(&self, order: OrderbookItem) -> OrderbookItemWithProof {
+        OrderbookItemWithProof {
             order,
             last_message_payload: vec![],
             proof: vec![],
-        })
+        }
     }
 }
 
@@ -2258,8 +2260,7 @@ fn lp_connect_start_bob(ctx: MmArc, maker_match: MakerMatch, maker_order: MakerO
                 return;
             },
         };
-        let mut alice = bits256::default();
-        alice.bytes = maker_match.request.sender_pubkey.0;
+        let alice = bits256::from(maker_match.request.sender_pubkey.0);
         let maker_amount = maker_match.reserved.get_base_amount().to_decimal();
         let taker_amount = maker_match.reserved.get_rel_amount().to_decimal();
         let privkey = &ctx.secp256k1_key_pair().private().secret;
@@ -2321,8 +2322,7 @@ fn lp_connect_start_bob(ctx: MmArc, maker_match: MakerMatch, maker_order: MakerO
 fn lp_connected_alice(ctx: MmArc, taker_request: TakerRequest, taker_match: TakerMatch) {
     spawn(async move {
         // aka "taker_loop"
-        let mut maker = bits256::default();
-        maker.bytes = taker_match.reserved.sender_pubkey.0;
+        let maker = bits256::from(taker_match.reserved.sender_pubkey.0);
         let taker_coin = match lp_coinfind(&ctx, &taker_match.reserved.rel).await {
             Ok(Some(c)) => c,
             Ok(None) => {

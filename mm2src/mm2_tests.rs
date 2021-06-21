@@ -208,10 +208,8 @@ fn local_start_impl(folder: PathBuf, log_path: PathBuf, mut conf: Json) {
 /// Starts the WASM version of MM.
 #[cfg(target_arch = "wasm32")]
 fn wasm_start_impl(ctx: crate::common::mm_ctx::MmArc) {
-    let netid = ctx.conf["netid"].as_u64().unwrap_or(0) as u16;
-    let (_, pubport, _) = super::lp_ports(netid).unwrap();
     common::executor::spawn(async move {
-        super::lp_init(pubport, ctx).await.unwrap();
+        super::lp_init(ctx).await.unwrap();
     })
 }
 

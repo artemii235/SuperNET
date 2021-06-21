@@ -18,7 +18,7 @@
 //
 
 use coins::register_balance_update_handler;
-use mm2_libp2p::{start_gossipsub, NodeType};
+use mm2_libp2p::{spawn_gossipsub, NodeType};
 use rand::rngs::SmallRng;
 use rand::{random, Rng, SeedableRng};
 use serde_json::{self as json};
@@ -251,7 +251,7 @@ fn migrate_db(ctx: &MmArc) -> Result<(), String> {
     };
 
     if current_migration < 1 {
-        try_s!(migration_1(ctx));
+        migration_1(ctx);
         current_migration = 1;
     }
     try_s!(std::fs::write(&migration_num_path, &current_migration.to_le_bytes()));
@@ -259,7 +259,7 @@ fn migrate_db(ctx: &MmArc) -> Result<(), String> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn migration_1(_ctx: &MmArc) -> Result<(), String> { Ok(()) }
+fn migration_1(_ctx: &MmArc) {}
 
 /// Resets the context (most of which resides currently in `lp::G` but eventually would move into `MmCtx`).
 /// Restarts the peer connections.
@@ -356,7 +356,7 @@ fn seed_to_ipv4_string(seed: &str) -> Option<String> {
 
 #[cfg_attr(target_arch = "wasm32", allow(unused_variables))]
 /// * `ctx_cb` - callback used to share the `MmCtx` ID with the call site.
-pub async fn lp_init(mypubport: u16, ctx: MmArc) -> Result<(), String> {
+pub async fn lp_init(ctx: MmArc) -> Result<(), String> {
     info!("Version: {} DT {}", MM_VERSION, MM_DATETIME);
     try_s!(lp_passphrase_init(&ctx));
 
@@ -368,7 +368,7 @@ pub async fn lp_init(mypubport: u16, ctx: MmArc) -> Result<(), String> {
         try_s!(migrate_db(&ctx));
     }
 
-    try_s!(init_p2p(mypubport, ctx.clone()).await);
+    try_s!(init_p2p(ctx.clone()).await);
 
     let balance_update_ordermatch_handler = BalanceUpdateOrdermatchHandler::new(ctx.clone());
     register_balance_update_handler(ctx.clone(), Box::new(balance_update_ordermatch_handler)).await;
@@ -525,11 +525,12 @@ async fn myipaddr(ctx: MmArc) -> Result<IpAddr, String> {
     Ok(myipaddr)
 }
 
-async fn init_p2p(mypubport: u16, ctx: MmArc) -> Result<(), String> {
+async fn init_p2p(ctx: MmArc) -> Result<(), String> {
     let i_am_seed = ctx.conf["i_am_seed"].as_bool().unwrap_or(false);
+    let netid = ctx.netid();
 
     let seednodes: Vec<String> = if ctx.conf["seednodes"].is_null() {
-        default_seednodes(ctx.netid())
+        default_seednodes(netid)
     } else {
         try_s!(json::from_value(ctx.conf["seednodes"].clone()))
     };
@@ -542,6 +543,7 @@ async fn init_p2p(mypubport: u16, ctx: MmArc) -> Result<(), String> {
         None
     };
 
+    let (_, network_port, network_ws_port) = try_s!(lp_ports(netid));
     let node_type = if i_am_seed {
         #[cfg(target_arch = "wasm32")]
         return ERR!("'i_am_seed' is only supported in native mode");
@@ -549,27 +551,30 @@ async fn init_p2p(mypubport: u16, ctx: MmArc) -> Result<(), String> {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let ip = try_s!(myipaddr(ctx.clone()).await);
-            NodeType::Relay { ip }
+            NodeType::Relay {
+                ip,
+                network_port,
+                network_ws_port,
+            }
         }
     } else {
-        NodeType::Light
+        NodeType::Light { network_port }
     };
 
-    let (cmd_tx, event_rx, peer_id, p2p_abort) = start_gossipsub(
-        mypubport,
-        ctx.netid(),
-        force_p2p_key,
-        spawn_boxed,
-        seednodes,
-        node_type,
-        move |swarm| {
+    let (cmd_tx, event_rx, peer_id, p2p_abort) =
+        spawn_gossipsub(netid, force_p2p_key, spawn_boxed, seednodes, node_type, move |swarm| {
+            let behaviour = swarm.behaviour();
             mm_gauge!(
                 ctx_on_poll.metrics,
                 "p2p.connected_relays.len",
-                swarm.connected_relays_len() as i64
+                behaviour.connected_relays_len() as i64
             );
-            mm_gauge!(ctx_on_poll.metrics, "p2p.relay_mesh.len", swarm.relay_mesh_len() as i64);
-            let (period, received_msgs) = swarm.received_messages_in_period();
+            mm_gauge!(
+                ctx_on_poll.metrics,
+                "p2p.relay_mesh.len",
+                behaviour.relay_mesh_len() as i64
+            );
+            let (period, received_msgs) = behaviour.received_messages_in_period();
             mm_gauge!(
                 ctx_on_poll.metrics,
                 "p2p.received_messages.period_in_secs",
@@ -578,15 +583,15 @@ async fn init_p2p(mypubport: u16, ctx: MmArc) -> Result<(), String> {
 
             mm_gauge!(ctx_on_poll.metrics, "p2p.received_messages.count", received_msgs as i64);
 
-            let connected_peers_count = swarm.connected_peers_len();
+            let connected_peers_count = behaviour.connected_peers_len();
 
             mm_gauge!(
                 ctx_on_poll.metrics,
                 "p2p.connected_peers.count",
                 connected_peers_count as i64
             );
-        },
-    );
+        })
+        .await;
     let mut p2p_abort = Some(p2p_abort);
     ctx.on_stop(Box::new(move || {
         if let Some(handle) = p2p_abort.take() {

@@ -69,8 +69,8 @@ impl Builder {
     /// Appends bytes push operation to the end od script
     pub fn push_bytes(mut self, bytes: &[u8]) -> Self {
         let len = bytes.len();
-        if len < 1 || len > 75 {
-            panic!(format!("Canot push {} bytes", len));
+        if !(1..=75).contains(&len) {
+            panic!("Canot push {} bytes", len);
         }
 
         let opcode: Opcode = Opcode::from_u8(((Opcode::OP_PUSHBYTES_1 as usize) + len - 1) as u8)
@@ -109,8 +109,8 @@ impl Builder {
     /// Appends `OP_RETURN` operation to the end of script
     pub fn return_bytes(mut self, bytes: &[u8]) -> Self {
         let len = bytes.len();
-        if len < 1 || len > 75 {
-            panic!(format!("Canot push {} bytes", len));
+        if !(1..=75).contains(&len) {
+            panic!("Canot push {} bytes", len);
         }
 
         let opcode: Opcode = Opcode::from_u8(((Opcode::OP_PUSHBYTES_1 as usize) + len - 1) as u8)

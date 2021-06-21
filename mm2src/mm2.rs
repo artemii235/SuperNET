@@ -39,7 +39,7 @@ use std::ptr::null;
 use std::str;
 
 #[path = "lp_native_dex.rs"] mod lp_native_dex;
-use self::lp_native_dex::{lp_init, lp_ports};
+use self::lp_native_dex::lp_init;
 use coins::update_coins_config;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -93,14 +93,12 @@ pub async fn lp_main(params: LpMainParams, ctx_cb: &dyn Fn(u32)) -> Result<(), S
     }
 
     if conf["passphrase"].is_string() {
-        let netid = conf["netid"].as_u64().unwrap_or(0) as u16;
-        let (_, pubport, _) = try_s!(lp_ports(netid));
         let ctx = MmCtxBuilder::new()
             .with_conf(conf)
             .with_version(MM_VERSION.into())
             .into_mm_arc();
         ctx_cb(try_s!(ctx.ffi_handle()));
-        try_s!(lp_init(pubport, ctx).await);
+        try_s!(lp_init(ctx).await);
         Ok(())
     } else {
         ERR!("!passphrase")

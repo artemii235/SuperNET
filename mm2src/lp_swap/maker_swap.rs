@@ -137,6 +137,7 @@ pub struct MakerSwapData {
 pub struct MakerSwapMut {
     data: MakerSwapData,
     other_persistent_pub: H264,
+    #[allow(dead_code)]
     taker_fee: Option<TransactionIdentifier>,
     maker_payment: Option<TransactionIdentifier>,
     taker_payment: Option<TransactionIdentifier>,
@@ -183,7 +184,7 @@ impl MakerSwap {
 
     fn wait_refund_until(&self) -> u64 { self.r().data.maker_payment_lock + 3700 }
 
-    fn apply_event(&self, event: MakerSwapEvent) -> Result<(), String> {
+    fn apply_event(&self, event: MakerSwapEvent) {
         match event {
             MakerSwapEvent::Started(data) => self.w().data = data,
             MakerSwapEvent::StartFailed(err) => self.errors.lock().push(err),
@@ -223,7 +224,6 @@ impl MakerSwap {
             MakerSwapEvent::MakerPaymentRefundFailed(err) => self.errors.lock().push(err),
             MakerSwapEvent::Finished => self.finished_at.store(now_ms() / 1000, Ordering::Relaxed),
         }
-        Ok(())
     }
 
     async fn handle_command(
@@ -928,7 +928,7 @@ impl MakerSwap {
         );
         let command = saved.events.last().unwrap().get_command();
         for saved_event in saved.events {
-            try_s!(swap.apply_event(saved_event.event));
+            swap.apply_event(saved_event.event);
         }
         Ok((swap, command))
     }
@@ -1493,7 +1493,7 @@ pub async fn run_maker_swap(swap: RunMakerSwapInput, ctx: MmArc) {
                         )
                     }
                     status.status(swap_tags!(), &event.status_str());
-                    running_swap.apply_event(event).expect("!apply_event");
+                    running_swap.apply_event(event);
                 }
                 match res.0 {
                     Some(c) => {
@@ -1511,10 +1511,11 @@ pub async fn run_maker_swap(swap: RunMakerSwapInput, ctx: MmArc) {
         .fuse(),
     );
     let mut shutdown_fut = Box::pin(shutdown_rx.recv().fuse());
+    let do_nothing = (); // to fix https://rust-lang.github.io/rust-clippy/master/index.html#unused_unit
     select! {
-        swap = swap_fut => (), // swap finished normally
-        shutdown = shutdown_fut => log!("on_stop] swap " (swap_for_log.uuid) " stopped!"),
-        touch = touch_loop => unreachable!("Touch loop can not stop!"),
+        _swap = swap_fut => do_nothing, // swap finished normally
+        _shutdown = shutdown_fut => log!("on_stop] swap " (swap_for_log.uuid) " stopped!"),
+        _touch = touch_loop => unreachable!("Touch loop can not stop!"),
     };
 }
 

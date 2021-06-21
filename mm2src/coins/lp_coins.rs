@@ -416,16 +416,16 @@ impl<'de> Deserialize<'de> for TxFeeDetails {
     }
 }
 
-impl Into<TxFeeDetails> for EthTxFeeDetails {
-    fn into(self: EthTxFeeDetails) -> TxFeeDetails { TxFeeDetails::Eth(self) }
+impl From<EthTxFeeDetails> for TxFeeDetails {
+    fn from(eth_details: EthTxFeeDetails) -> Self { TxFeeDetails::Eth(eth_details) }
 }
 
-impl Into<TxFeeDetails> for UtxoFeeDetails {
-    fn into(self: UtxoFeeDetails) -> TxFeeDetails { TxFeeDetails::Utxo(self) }
+impl From<UtxoFeeDetails> for TxFeeDetails {
+    fn from(utxo_details: UtxoFeeDetails) -> Self { TxFeeDetails::Utxo(utxo_details) }
 }
 
-impl Into<TxFeeDetails> for Qrc20FeeDetails {
-    fn into(self: Qrc20FeeDetails) -> TxFeeDetails { TxFeeDetails::Qrc20(self) }
+impl From<Qrc20FeeDetails> for TxFeeDetails {
+    fn from(qrc20_details: Qrc20FeeDetails) -> Self { TxFeeDetails::Qrc20(qrc20_details) }
 }
 
 /// Transaction details
@@ -942,6 +942,7 @@ impl CoinsContext {
     }
 }
 
+#[allow(clippy::upper_case_acronyms)]
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type", content = "protocol_data")]
 pub enum CoinProtocol {

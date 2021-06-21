@@ -1413,7 +1413,7 @@ mod docker_tests {
         })))
         .unwrap();
         assert!(!rc.0.is_success(), "buy success, but should fail: {}", rc.1);
-        assert!(rc.1.contains("Not enough MYCOIN1 for swap"), rc.1);
+        assert!(rc.1.contains("Not enough MYCOIN1 for swap"), "{}", rc.1);
         block_on(mm_bob.stop()).unwrap();
         block_on(mm_alice.stop()).unwrap();
     }
@@ -1510,7 +1510,7 @@ mod docker_tests {
         })))
         .unwrap();
         assert!(!rc.0.is_success(), "sell success, but should fail: {}", rc.1);
-        assert!(rc.1.contains("Not enough MYCOIN1 for swap"), rc.1);
+        assert!(rc.1.contains("Not enough MYCOIN1 for swap"), "{}", rc.1);
         block_on(mm_bob.stop()).unwrap();
         block_on(mm_alice.stop()).unwrap();
     }

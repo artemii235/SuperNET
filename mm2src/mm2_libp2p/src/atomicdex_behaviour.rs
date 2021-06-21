@@ -22,10 +22,9 @@ use libp2p_floodsub::{Floodsub, FloodsubEvent, Topic as FloodsubTopic};
 use log::{debug, error, info};
 use rand::seq::SliceRandom;
 use rand::Rng;
-use std::collections::HashSet;
 use std::{collections::hash_map::{DefaultHasher, HashMap},
           hash::{Hash, Hasher},
-          iter::{self, FromIterator},
+          iter,
           net::IpAddr,
           str::FromStr,
           task::{Context, Poll},
@@ -289,7 +288,9 @@ impl AtomicDexBehaviour {
                 self.spawn(future);
             },
             AdexBehaviourCmd::SendResponse { res, response_channel } => {
-                self.request_response.send_response(response_channel.into(), res.into());
+                if let Err(response) = self.request_response.send_response(response_channel.into(), res.into()) {
+                    error!("Error sending response: {:?}", response);
+                }
             },
             AdexBehaviourCmd::GetPeersInfo { result_tx } => {
                 let result = self
@@ -452,15 +453,18 @@ type AtomicDexSwarm = ExpandedSwarm<
 >;
 
 fn maintain_connection_to_relays(swarm: &mut AtomicDexSwarm, bootstrap_addresses: &[Multiaddr]) {
-    let connected_relays = swarm.gossipsub.connected_relays();
-    let mesh_n_low = swarm.gossipsub.get_config().mesh_n_low;
-    let mesh_n = swarm.gossipsub.get_config().mesh_n;
+    let behaviour = swarm.behaviour();
+    let connected_relays = behaviour.gossipsub.connected_relays();
+    let mesh_n_low = behaviour.gossipsub.get_config().mesh_n_low;
+    let mesh_n = behaviour.gossipsub.get_config().mesh_n;
     // allow 2 * mesh_n_high connections to other nodes
-    let max_n = swarm.gossipsub.get_config().mesh_n_high * 2;
+    let max_n = behaviour.gossipsub.get_config().mesh_n_high * 2;
+
     let mut rng = rand_rng();
     if connected_relays.len() < mesh_n_low {
         let to_connect_num = mesh_n - connected_relays.len();
         let to_connect = swarm
+            .behaviour_mut()
             .peers_exchange
             .get_random_peers(to_connect_num, |peer| !connected_relays.contains(peer));
 
@@ -469,7 +473,7 @@ fn maintain_connection_to_relays(swarm: &mut AtomicDexSwarm, bootstrap_addresses
             let connect_bootstrap_num = to_connect_num - to_connect.len();
             for addr in bootstrap_addresses
                 .iter()
-                .filter(|addr| !swarm.gossipsub.is_connected_to_addr(addr))
+                .filter(|addr| !swarm.behaviour().gossipsub.is_connected_to_addr(addr))
                 .collect::<Vec<_>>()
                 .choose_multiple(&mut rng, connect_bootstrap_num)
             {
@@ -480,7 +484,7 @@ fn maintain_connection_to_relays(swarm: &mut AtomicDexSwarm, bootstrap_addresses
         }
         for (peer, addresses) in to_connect {
             for addr in addresses {
-                if swarm.gossipsub.is_connected_to_addr(&addr) {
+                if swarm.behaviour().gossipsub.is_connected_to_addr(&addr) {
                     continue;
                 }
                 if let Err(e) = libp2p::Swarm::dial_addr(swarm, addr.clone()) {
@@ -492,22 +496,22 @@ fn maintain_connection_to_relays(swarm: &mut AtomicDexSwarm, bootstrap_addresses
 
     if connected_relays.len() > max_n {
         let to_disconnect_num = connected_relays.len() - max_n;
-        let relays_mesh = swarm.gossipsub.get_relay_mesh();
+        let relays_mesh = swarm.behaviour().gossipsub.get_relay_mesh();
         let not_in_mesh: Vec<_> = connected_relays
             .iter()
             .filter(|peer| !relays_mesh.contains(peer))
             .collect();
         for peer in not_in_mesh.choose_multiple(&mut rng, to_disconnect_num) {
             info!("Disconnecting peer {}", peer);
-            if Swarm::disconnect_peer_id(swarm, (*peer).clone()).is_err() {
+            if Swarm::disconnect_peer_id(swarm, **peer).is_err() {
                 error!("Peer {} disconnect error", peer);
             }
         }
     }
 
     for relay in connected_relays {
-        if !swarm.peers_exchange.is_known_peer(&relay) {
-            swarm.peers_exchange.add_known_peer(relay);
+        if !swarm.behaviour().peers_exchange.is_known_peer(&relay) {
+            swarm.behaviour_mut().peers_exchange.add_known_peer(relay);
         }
     }
 }
@@ -526,7 +530,7 @@ fn announce_my_addresses(swarm: &mut AtomicDexSwarm) {
         .cloned()
         .collect();
     if !global_listeners.is_empty() {
-        swarm.announce_listeners(global_listeners);
+        swarm.behaviour_mut().announce_listeners(global_listeners);
     }
 }
 
@@ -576,12 +580,49 @@ const ALL_NETID_7777_SEEDNODES: &[(&str, &str)] = &[
 ];
 
 pub enum NodeType {
-    Light,
-    Relay { ip: IpAddr },
+    Light {
+        network_port: u16,
+    },
+    Relay {
+        ip: IpAddr,
+        network_port: u16,
+        network_ws_port: u16,
+    },
 }
 
 impl NodeType {
     pub fn is_relay(&self) -> bool { matches!(self, NodeType::Relay { .. }) }
+
+    pub fn network_port(&self) -> u16 {
+        match self {
+            NodeType::Light { network_port } | NodeType::Relay { network_port, .. } => *network_port,
+        }
+    }
+}
+
+/// Creates and spawns new AdexBehaviour Swarm returning:
+/// 1. tx to send control commands
+/// 2. rx emitting gossip events to processing side
+/// 3. our peer_id
+/// 4. abort handle to stop the P2P processing fut.
+pub async fn spawn_gossipsub(
+    netid: u16,
+    force_key: Option<[u8; 32]>,
+    spawn_fn: fn(Box<dyn Future<Output = ()> + Send + Unpin + 'static>) -> (),
+    to_dial: Vec<String>,
+    node_type: NodeType,
+    on_poll: impl Fn(&AtomicDexSwarm) + Send + 'static,
+) -> (Sender<AdexBehaviourCmd>, AdexEventRx, PeerId, AbortHandle) {
+    let (result_tx, result_rx) = futures::channel::oneshot::channel();
+    let fut = async move {
+        let (cmd_tx, event_rx, peer_id, p2p_abort) =
+            start_gossipsub(netid, force_key, spawn_fn, to_dial, node_type, on_poll);
+        result_tx.send((cmd_tx, event_rx, peer_id, p2p_abort)).unwrap();
+    };
+
+    // `Libp2p` must be spawned on the tokio runtime
+    SWARM_RUNTIME.spawn(fut);
+    result_rx.await.expect("Fatal error on starting gossipsub")
 }
 
 /// Creates and spawns new AdexBehaviour Swarm returning:
@@ -589,9 +630,12 @@ impl NodeType {
 /// 2. rx emitting gossip events to processing side
 /// 3. our peer_id
 /// 4. abort handle to stop the P2P processing fut
+///
+/// Prefer using [`spawn_gossipsub`] to make sure the Swarm is initialized and spawned on the same runtime.
+/// Otherwise, you can face the following error:
+/// `panicked at 'there is no reactor running, must be called from the context of a Tokio 1.x runtime'`.
 #[allow(clippy::too_many_arguments)]
-pub fn start_gossipsub(
-    port: u16,
+fn start_gossipsub(
     netid: u16,
     force_key: Option<[u8; 32]>,
     spawn_fn: fn(Box<dyn Future<Output = ()> + Send + Unpin + 'static>) -> (),
@@ -604,6 +648,7 @@ pub fn start_gossipsub(
     let local_key = generate_ed25519_keypair(&mut rng, force_key);
     let local_peer_id = PeerId::from(local_key.public());
     info!("Local peer id: {:?}", local_peer_id);
+    let network_port = node_type.network_port();
 
     #[cfg(target_arch = "wasm32")]
     let transport = {
@@ -614,9 +659,11 @@ pub fn start_gossipsub(
     #[cfg(not(target_arch = "wasm32"))]
     let transport = {
         let tcp = libp2p::tcp::TokioTcpConfig::new().nodelay(true);
-        let transport = libp2p::dns::DnsConfig::new(tcp).unwrap();
-        let trans_clone = transport.clone();
-        transport.or_transport(libp2p::websocket::WsConfig::new(trans_clone))
+        let dns_tcp =
+            libp2p::dns::TokioDnsConfig::custom(tcp, libp2p::dns::ResolverConfig::google(), Default::default())
+                .unwrap();
+        let ws_dns_tcp = libp2p::websocket::WsConfig::new(dns_tcp.clone());
+        dns_tcp.or_transport(ws_dns_tcp)
     };
 
     let noise_keys = noise::Keypair::<noise::X25519Spec>::with_rng(&mut rng)
@@ -628,15 +675,16 @@ pub fn start_gossipsub(
         .upgrade(libp2p::core::upgrade::Version::V1)
         .authenticate(noise::NoiseConfig::xx(noise_keys).into_authenticated())
         .multiplex(libp2p::mplex::MplexConfig::default())
+        .timeout(std::time::Duration::from_secs(20))
         .map(|(peer, muxer), _| (peer, libp2p::core::muxing::StreamMuxerBox::new(muxer)))
-        .timeout(std::time::Duration::from_secs(20));
+        .boxed();
 
     let (cmd_tx, cmd_rx) = channel(CHANNEL_BUF_SIZE);
     let (event_tx, event_rx) = channel(CHANNEL_BUF_SIZE);
 
     let bootstrap: Vec<Multiaddr> = to_dial
         .into_iter()
-        .map(|addr| parse_relay_address(addr, port))
+        .map(|addr| parse_relay_address(addr, network_port))
         .collect();
 
     let (mesh_n_low, mesh_n, mesh_n_high) = if i_am_relay { (3, 6, 8) } else { (2, 3, 4) };
@@ -665,16 +713,16 @@ pub fn start_gossipsub(
             .max_transmit_size(1024 * 1024 - 100)
             .build();
         // build a gossipsub network behaviour
-        let mut gossipsub = Gossipsub::new(local_peer_id.clone(), gossipsub_config);
+        let mut gossipsub = Gossipsub::new(local_peer_id, gossipsub_config);
 
-        let floodsub = Floodsub::new(local_peer_id.clone(), netid != NETID_7777);
+        let floodsub = Floodsub::new(local_peer_id, netid != NETID_7777);
 
-        let mut peers_exchange = PeersExchange::new(port);
+        let mut peers_exchange = PeersExchange::new(network_port);
         if netid == NETID_7777 {
             for (peer_id, address) in ALL_NETID_7777_SEEDNODES {
                 let peer_id = PeerId::from_str(peer_id).expect("valid peer id");
-                let multiaddr = parse_relay_address((*address).to_owned(), port);
-                peers_exchange.add_peer_addresses(&peer_id, HashSet::from_iter(iter::once(multiaddr)));
+                let multiaddr = parse_relay_address((*address).to_owned(), network_port);
+                peers_exchange.add_peer_addresses(&peer_id, iter::once(multiaddr).collect());
                 gossipsub.add_explicit_relay(peer_id);
             }
         }
@@ -696,15 +744,25 @@ pub fn start_gossipsub(
             ping,
             netid,
         };
-        libp2p::swarm::SwarmBuilder::new(transport, adex_behavior, local_peer_id.clone())
+        libp2p::swarm::SwarmBuilder::new(transport, adex_behavior, local_peer_id)
             .executor(Box::new(&*SWARM_RUNTIME))
             .build()
     };
-    swarm.floodsub.subscribe(FloodsubTopic::new(PEERS_TOPIC.to_owned()));
+    swarm
+        .behaviour_mut()
+        .floodsub
+        .subscribe(FloodsubTopic::new(PEERS_TOPIC.to_owned()));
 
-    if let NodeType::Relay { ip } = node_type {
-        let addr = format!("/ip4/{}/tcp/{}", ip, port);
-        libp2p::Swarm::listen_on(&mut swarm, addr.parse().unwrap()).unwrap();
+    if let NodeType::Relay {
+        ip,
+        network_port,
+        network_ws_port,
+    } = node_type
+    {
+        let dns_addr: Multiaddr = format!("/ip4/{}/tcp/{}", ip, network_port).parse().unwrap();
+        let ws_addr: Multiaddr = format!("/ip4/{}/tcp/{}/ws", ip, network_ws_port).parse().unwrap();
+        libp2p::Swarm::listen_on(&mut swarm, dns_addr).unwrap();
+        libp2p::Swarm::listen_on(&mut swarm, ws_addr).unwrap();
     }
 
     for relay in bootstrap.choose_multiple(&mut rng, mesh_n) {
@@ -722,8 +780,8 @@ pub fn start_gossipsub(
     let mut listening = false;
     let polling_fut = poll_fn(move |cx: &mut Context| {
         loop {
-            match swarm.cmd_rx.poll_next_unpin(cx) {
-                Poll::Ready(Some(cmd)) => swarm.process_cmd(cmd),
+            match swarm.behaviour_mut().cmd_rx.poll_next_unpin(cx) {
+                Poll::Ready(Some(cmd)) => swarm.behaviour_mut().process_cmd(cmd),
                 Poll::Ready(None) => return Poll::Ready(()),
                 Poll::Pending => break,
             }
@@ -737,7 +795,7 @@ pub fn start_gossipsub(
             }
         }
 
-        if swarm.gossipsub.is_relay() {
+        if swarm.behaviour().gossipsub.is_relay() {
             while let Poll::Ready(Some(())) = announce_interval.poll_next_unpin(cx) {
                 announce_my_addresses(&mut swarm);
             }
@@ -816,7 +874,7 @@ async fn request_any_peer(
 ) {
     debug!("start request_any_peer loop: peers {}", peers.len());
     for peer in peers {
-        match request_one_peer(peer.clone(), request_data.clone(), request_response_tx.clone()).await {
+        match request_one_peer(peer, request_data.clone(), request_response_tx.clone()).await {
             PeerResponse::Ok { res } => {
                 debug!("Received a response from peer {:?}, stop the request loop", peer);
                 if response_tx.send(Some((peer, res))).is_err() {
@@ -852,8 +910,8 @@ async fn request_peers(
         let request_data = request_data.clone();
         let request_response_tx = request_response_tx.clone();
         futures.push(async move {
-            let response = request_one_peer(peer.clone(), request_data, request_response_tx).await;
-            (peer.clone(), response)
+            let response = request_one_peer(peer, request_data, request_response_tx).await;
+            (peer, response)
         })
     }
 
@@ -876,7 +934,7 @@ async fn request_one_peer(peer: PeerId, req: Vec<u8>, mut request_response_tx: R
     let (internal_response_tx, internal_response_rx) = oneshot::channel();
     let request = PeerRequest { req };
     request_response_tx
-        .send((peer.clone(), request, internal_response_tx))
+        .send((peer, request, internal_response_tx))
         .await
         .unwrap();
 
