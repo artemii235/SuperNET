@@ -2,12 +2,11 @@ use super::rpc_clients::{ElectrumProtocol, ListSinceBlockRes, NetworkInfo};
 use super::*;
 use crate::utxo::qtum::{qtum_coin_from_conf_and_request, QtumCoin};
 use crate::utxo::rpc_clients::{GetAddressInfoRes, UtxoRpcClientOps, ValidateAddressRes, VerboseBlock};
-use crate::utxo::utxo_common::{dex_fee_script, generate_transaction, p2sh_spending_tx, UtxoArcBuilder};
+use crate::utxo::utxo_common::{generate_transaction, UtxoArcBuilder};
 use crate::utxo::utxo_standard::{utxo_standard_coin_from_conf_and_request, UtxoStandardCoin};
 #[cfg(not(target_arch = "wasm32"))] use crate::WithdrawFee;
-use crate::{CoinBalance, SwapOps, TradePreimageValue};
+use crate::{CoinBalance, SwapOps, TradePreimageValue, TxFeeDetails};
 use bigdecimal::BigDecimal;
-use chain::constants::SEQUENCE_FINAL;
 use chain::OutPoint;
 use common::mm_ctx::MmCtxBuilder;
 use common::privkey::key_pair_from_seed;
@@ -15,8 +14,7 @@ use common::{block_on, now_ms, OrdRange, DEX_FEE_ADDR_RAW_PUBKEY};
 use futures::future::join_all;
 use mocktopus::mocking::*;
 use rpc::v1::types::H256 as H256Json;
-use script::Opcode;
-use serialization::deserialize;
+use serialization::{deserialize, CoinVariant};
 use std::thread;
 use std::time::Duration;
 
@@ -693,6 +691,130 @@ fn test_withdraw_impl_sat_per_kb_fee_max() {
     assert_eq!(expected, tx_details.fee_details);
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn test_withdraw_kmd_rewards_impl(
+    tx_hash: &'static str,
+    tx_hex: &'static str,
+    verbose_serialized: &str,
+    current_mtp: u32,
+    expected_rewards: Option<BigDecimal>,
+) {
+    let verbose: RpcTransaction = json::from_str(verbose_serialized).unwrap();
+    let unspent_height = verbose.height;
+    UtxoStandardCoin::ordered_mature_unspents.mock_safe(move |coin, _| {
+        let tx: UtxoTx = tx_hex.into();
+        let unspents = vec![UnspentInfo {
+            outpoint: OutPoint {
+                hash: tx.hash(),
+                index: 0,
+            },
+            value: tx.outputs[0].value,
+            height: unspent_height,
+        }];
+        let cache = block_on(coin.as_ref().recently_spent_outpoints.lock());
+        MockResult::Return(Box::pin(futures::future::ok((unspents, cache))))
+    });
+    UtxoStandardCoin::get_current_mtp
+        .mock_safe(move |_fields| MockResult::Return(Box::pin(futures::future::ok(current_mtp))));
+    NativeClient::get_verbose_transaction.mock_safe(move |_coin, txid| {
+        let expected: H256Json = hex::decode(tx_hash).unwrap().as_slice().into();
+        assert_eq!(txid, expected);
+        MockResult::Return(Box::new(futures01::future::ok(verbose.clone())))
+    });
+
+    let client = NativeClient(Arc::new(NativeClientImpl::default()));
+
+    let mut fields = utxo_coin_fields_for_test(UtxoRpcClientEnum::Native(client), None);
+    fields.conf.ticker = "KMD".to_owned();
+    let coin = utxo_coin_from_fields(fields);
+
+    let withdraw_req = WithdrawRequest {
+        amount: BigDecimal::from_str("0.00001").unwrap(),
+        to: "RQq6fWoy8aGGMLjvRfMY5mBNVm2RQxJyLa".to_string(),
+        coin: "KMD".to_owned(),
+        max: false,
+        fee: None,
+    };
+    let expected_fee = TxFeeDetails::Utxo(UtxoFeeDetails {
+        amount: "0.00001".parse().unwrap(),
+    });
+    let tx_details = coin.withdraw(withdraw_req).wait().unwrap();
+    assert_eq!(tx_details.fee_details, Some(expected_fee));
+
+    let expected_rewards = expected_rewards.map(|amount| KmdRewardsDetails {
+        amount,
+        claimed_by_me: true,
+    });
+    assert_eq!(tx_details.kmd_rewards, expected_rewards);
+}
+
+/// https://kmdexplorer.io/tx/535ffa3387d3fca14f4a4d373daf7edf00e463982755afce89bc8c48d8168024
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn test_withdraw_kmd_rewards() {
+    const TX_HASH: &str = "535ffa3387d3fca14f4a4d373daf7edf00e463982755afce89bc8c48d8168024";
+    const TX_HEX: &str = "0400008085202f8901afcadb73880bc1c9e7ce96b8274c2e2a4547415e649f425f98791685be009b73020000006b483045022100b8fbb77efea482b656ad16fc53c5a01d289054c2e429bf1d7bab16c3e822a83602200b87368a95c046b2ce6d0d092185138a3f234a7eb0d7f8227b196ef32358b93f012103b1e544ce2d860219bc91314b5483421a553a7b33044659eff0be9214ed58adddffffffff01dd15c293000000001976a91483762a373935ca241d557dfce89171d582b486de88ac99fe9960000000000000000000000000000000";
+    const VERBOSE_SERIALIZED: &str = r#"{"hex":"0400008085202f8901afcadb73880bc1c9e7ce96b8274c2e2a4547415e649f425f98791685be009b73020000006b483045022100b8fbb77efea482b656ad16fc53c5a01d289054c2e429bf1d7bab16c3e822a83602200b87368a95c046b2ce6d0d092185138a3f234a7eb0d7f8227b196ef32358b93f012103b1e544ce2d860219bc91314b5483421a553a7b33044659eff0be9214ed58adddffffffff01dd15c293000000001976a91483762a373935ca241d557dfce89171d582b486de88ac99fe9960000000000000000000000000000000","txid":"535ffa3387d3fca14f4a4d373daf7edf00e463982755afce89bc8c48d8168024","hash":null,"size":null,"vsize":null,"version":4,"locktime":1620704921,"vin":[{"txid":"739b00be851679985f429f645e4147452a2e4c27b896cee7c9c10b8873dbcaaf","vout":2,"scriptSig":{"asm":"3045022100b8fbb77efea482b656ad16fc53c5a01d289054c2e429bf1d7bab16c3e822a83602200b87368a95c046b2ce6d0d092185138a3f234a7eb0d7f8227b196ef32358b93f[ALL] 03b1e544ce2d860219bc91314b5483421a553a7b33044659eff0be9214ed58addd","hex":"483045022100b8fbb77efea482b656ad16fc53c5a01d289054c2e429bf1d7bab16c3e822a83602200b87368a95c046b2ce6d0d092185138a3f234a7eb0d7f8227b196ef32358b93f012103b1e544ce2d860219bc91314b5483421a553a7b33044659eff0be9214ed58addd"},"sequence":4294967295,"txinwitness":null}],"vout":[{"value":24.78970333,"n":0,"scriptPubKey":{"asm":"OP_DUP OP_HASH160 83762a373935ca241d557dfce89171d582b486de OP_EQUALVERIFY OP_CHECKSIG","hex":"76a91483762a373935ca241d557dfce89171d582b486de88ac","reqSigs":1,"type":"pubkeyhash","addresses":["RMGJ9tRST45RnwEKHPGgBLuY3moSYP7Mhk"]}}],"blockhash":"0b438a8e50afddb38fb1c7be4536ffc7f7723b76bbc5edf7c28f2c17924dbdfa","confirmations":33186,"rawconfirmations":33186,"time":1620705483,"blocktime":1620705483,"height":2387532}"#;
+    const CURRENT_MTP: u32 = 1622724281;
+
+    let expected_rewards = BigDecimal::from_str("0.07895295").unwrap();
+    test_withdraw_kmd_rewards_impl(TX_HASH, TX_HEX, VERBOSE_SERIALIZED, CURRENT_MTP, Some(expected_rewards));
+}
+
+/// If the ticker is `KMD` AND no rewards were accrued due to a value less than 10 or for any other reasons,
+/// then `TransactionDetails::kmd_rewards` has to be `Some(0)`, not `None`.
+/// https://kmdexplorer.io/tx/8c43e5a0402648faa5d0ae3550137544507ab1553425fa1b6f481a66a53f7a2d
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn test_withdraw_kmd_rewards_zero() {
+    const TX_HASH: &str = "8c43e5a0402648faa5d0ae3550137544507ab1553425fa1b6f481a66a53f7a2d";
+    const TX_HEX: &str = "0400008085202f8901c3651b6fb9ddf372e7a9d4d829c27eeea6cdfaab4f2e6e3527905c2a14f3702b010000006a47304402206819b3e51f076841ed5946bc9a48b9d75024b60abd8e854bfe50cbdfae8a268e022001a3648d2a4b33a761090676e4a8c676ee67cb602f29fef74ea5bbb8b516a178012103832b54342019dd5ecc08f1143757fbcf4ac6c8696653d456a84b40f34653c9a8ffffffff0200e1f505000000001976a91483762a373935ca241d557dfce89171d582b486de88ac60040c35000000001976a9142b33504039790fde428e4ab084aa1baf6aee209288acb0edd45f000000000000000000000000000000";
+    const VERBOSE_SERIALIZED: &str = r#"{"hex":"0400008085202f8901c3651b6fb9ddf372e7a9d4d829c27eeea6cdfaab4f2e6e3527905c2a14f3702b010000006a47304402206819b3e51f076841ed5946bc9a48b9d75024b60abd8e854bfe50cbdfae8a268e022001a3648d2a4b33a761090676e4a8c676ee67cb602f29fef74ea5bbb8b516a178012103832b54342019dd5ecc08f1143757fbcf4ac6c8696653d456a84b40f34653c9a8ffffffff0200e1f505000000001976a91483762a373935ca241d557dfce89171d582b486de88ac60040c35000000001976a9142b33504039790fde428e4ab084aa1baf6aee209288acb0edd45f000000000000000000000000000000","txid":"8c43e5a0402648faa5d0ae3550137544507ab1553425fa1b6f481a66a53f7a2d","hash":null,"size":null,"vsize":null,"version":4,"locktime":1607790000,"vin":[{"txid":"2b70f3142a5c9027356e2e4fabfacda6ee7ec229d8d4a9e772f3ddb96f1b65c3","vout":1,"scriptSig":{"asm":"304402206819b3e51f076841ed5946bc9a48b9d75024b60abd8e854bfe50cbdfae8a268e022001a3648d2a4b33a761090676e4a8c676ee67cb602f29fef74ea5bbb8b516a178[ALL] 03832b54342019dd5ecc08f1143757fbcf4ac6c8696653d456a84b40f34653c9a8","hex":"47304402206819b3e51f076841ed5946bc9a48b9d75024b60abd8e854bfe50cbdfae8a268e022001a3648d2a4b33a761090676e4a8c676ee67cb602f29fef74ea5bbb8b516a178012103832b54342019dd5ecc08f1143757fbcf4ac6c8696653d456a84b40f34653c9a8"},"sequence":4294967295,"txinwitness":null}],"vout":[{"value":1.0,"n":0,"scriptPubKey":{"asm":"OP_DUP OP_HASH160 83762a373935ca241d557dfce89171d582b486de OP_EQUALVERIFY OP_CHECKSIG","hex":"76a91483762a373935ca241d557dfce89171d582b486de88ac","reqSigs":1,"type":"pubkeyhash","addresses":["RMGJ9tRST45RnwEKHPGgBLuY3moSYP7Mhk"]}},{"value":8.8998,"n":1,"scriptPubKey":{"asm":"OP_DUP OP_HASH160 2b33504039790fde428e4ab084aa1baf6aee2092 OP_EQUALVERIFY OP_CHECKSIG","hex":"76a9142b33504039790fde428e4ab084aa1baf6aee209288ac","reqSigs":1,"type":"pubkeyhash","addresses":["RDDcc63q27t6k95LrysuDwtwrxuAXqNiXe"]}}],"blockhash":"0000000054ed9fc7a4316430659e127eac5776ebc2d2382db0cb9be3eb970d7b","confirmations":243859,"rawconfirmations":243859,"time":1607790977,"blocktime":1607790977,"height":2177114}"#;
+    const CURRENT_MTP: u32 = 1622724281;
+
+    let expected_rewards = BigDecimal::from(0);
+    test_withdraw_kmd_rewards_impl(TX_HASH, TX_HEX, VERBOSE_SERIALIZED, CURRENT_MTP, Some(expected_rewards));
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn test_withdraw_rick_rewards_none() {
+    // https://rick.explorer.dexstats.info/tx/7181400be323acc6b5f3164240e6c4601ff4c252f40ce7649f87e81634330209
+    const TX_HEX: &str = "0400008085202f8901df8119c507aa61d32332cd246dbfeb3818a4f96e76492454c1fbba5aa097977e000000004847304402205a7e229ea6929c97fd6dde254c19e4eb890a90353249721701ae7a1c477d99c402206a8b7c5bf42b5095585731d6b4c589ce557f63c20aed69ff242eca22ecfcdc7a01feffffff02d04d1bffbc050000232102afdbba3e3c90db5f0f4064118f79cf308f926c68afd64ea7afc930975663e4c4ac402dd913000000001976a9143e17014eca06281ee600adffa34b4afb0922a22288ac2bdab86035a00e000000000000000000000000";
+
+    UtxoStandardCoin::ordered_mature_unspents.mock_safe(move |coin, _| {
+        let tx: UtxoTx = TX_HEX.into();
+        let unspents = vec![UnspentInfo {
+            outpoint: OutPoint {
+                hash: tx.hash(),
+                index: 0,
+            },
+            value: tx.outputs[0].value,
+            height: Some(1431628),
+        }];
+        let cache = block_on(coin.as_ref().recently_spent_outpoints.lock());
+        MockResult::Return(Box::pin(futures::future::ok((unspents, cache))))
+    });
+
+    let client = NativeClient(Arc::new(NativeClientImpl::default()));
+
+    let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client), None);
+
+    let withdraw_req = WithdrawRequest {
+        amount: BigDecimal::from_str("0.00001").unwrap(),
+        to: "RQq6fWoy8aGGMLjvRfMY5mBNVm2RQxJyLa".to_string(),
+        coin: "RICK".to_owned(),
+        max: false,
+        fee: None,
+    };
+    let expected_fee = TxFeeDetails::Utxo(UtxoFeeDetails {
+        amount: "0.00001".parse().unwrap(),
+    });
+    let tx_details = coin.withdraw(withdraw_req).wait().unwrap();
+    assert_eq!(tx_details.fee_details, Some(expected_fee));
+    assert_eq!(tx_details.kmd_rewards, None);
+}
+
 #[test]
 fn test_ordered_mature_unspents_without_tx_cache() {
     let client = electrum_client_for_test(&["electrum1.cipig.net:10017", "electrum2.cipig.net:10017"]);
@@ -772,7 +894,8 @@ fn get_tx_details_doge() {
         log!((block));
         let hash = hex::decode("99caab76bd025d189f10856dc649aad1a191b1cfd9b139ece457c5fedac58132").unwrap();
         loop {
-            let tx_details = coin1.tx_details_by_hash(&hash).await.unwrap();
+            let mut input_transactions = HistoryUtxoTxMap::new();
+            let tx_details = coin1.tx_details_by_hash(&hash, &mut input_transactions).await.unwrap();
             log!([tx_details]);
             Timer::sleep(1.).await;
         }
@@ -782,7 +905,8 @@ fn get_tx_details_doge() {
         log!((block));
         let hash = hex::decode("99caab76bd025d189f10856dc649aad1a191b1cfd9b139ece457c5fedac58132").unwrap();
         loop {
-            let tx_details = coin2.tx_details_by_hash(&hash).await.unwrap();
+            let mut input_transactions = HistoryUtxoTxMap::new();
+            let tx_details = coin2.tx_details_by_hash(&hash, &mut input_transactions).await.unwrap();
             log!([tx_details]);
             Timer::sleep(1.).await;
         }
@@ -809,7 +933,8 @@ fn get_tx_details_coinbase_transaction() {
         // hash of coinbase transaction https://morty.explorer.dexstats.info/tx/b59b093ed97c1798f2a88ee3375a0c11d0822b6e4468478777f899891abd34a5
         let hash = hex::decode("b59b093ed97c1798f2a88ee3375a0c11d0822b6e4468478777f899891abd34a5").unwrap();
 
-        let tx_details = coin.tx_details_by_hash(&hash).await.unwrap();
+        let mut input_transactions = HistoryUtxoTxMap::new();
+        let tx_details = coin.tx_details_by_hash(&hash, &mut input_transactions).await.unwrap();
         assert!(tx_details.from.is_empty());
     };
 
@@ -1016,7 +1141,7 @@ fn test_get_median_time_past_from_electrum_kmd() {
     ]);
 
     let mtp = client
-        .get_median_time_past(1773390, KMD_MTP_BLOCK_COUNT)
+        .get_median_time_past(1773390, KMD_MTP_BLOCK_COUNT, CoinVariant::Standard)
         .wait()
         .unwrap();
     // the MTP is block time of 1773385 in this case
@@ -1031,7 +1156,10 @@ fn test_get_median_time_past_from_electrum_btc() {
         "electrum3.cipig.net:10000",
     ]);
 
-    let mtp = client.get_median_time_past(632858, KMD_MTP_BLOCK_COUNT).wait().unwrap();
+    let mtp = client
+        .get_median_time_past(632858, KMD_MTP_BLOCK_COUNT, CoinVariant::Standard)
+        .wait()
+        .unwrap();
     assert_eq!(1591173041, mtp);
 }
 
@@ -1055,7 +1183,10 @@ fn test_get_median_time_past_from_native_has_median_in_get_block() {
         )
     });
 
-    let mtp = client.get_median_time_past(632858, KMD_MTP_BLOCK_COUNT).wait().unwrap();
+    let mtp = client
+        .get_median_time_past(632858, KMD_MTP_BLOCK_COUNT, CoinVariant::Standard)
+        .wait()
+        .unwrap();
     assert_eq!(1591173041, mtp);
 }
 
@@ -1098,7 +1229,10 @@ fn test_get_median_time_past_from_native_does_not_have_median_in_get_block() {
         MockResult::Return(Box::new(futures01::future::ok(block)))
     });
 
-    let mtp = client.get_median_time_past(632858, KMD_MTP_BLOCK_COUNT).wait().unwrap();
+    let mtp = client
+        .get_median_time_past(632858, KMD_MTP_BLOCK_COUNT, CoinVariant::Standard)
+        .wait()
+        .unwrap();
     assert_eq!(1591173041, mtp);
 }
 
@@ -1125,7 +1259,8 @@ fn test_cashaddresses_in_tx_details_by_hash() {
 
     let hash = hex::decode("0f2f6e0c8f440c641895023782783426c3aca1acc78d7c0db7751995e8aa5751").unwrap();
     let fut = async {
-        let tx_details = coin.tx_details_by_hash(&hash).await.unwrap();
+        let mut input_transactions = HistoryUtxoTxMap::new();
+        let tx_details = coin.tx_details_by_hash(&hash, &mut input_transactions).await.unwrap();
         log!([tx_details]);
 
         assert!(tx_details
@@ -2299,6 +2434,18 @@ fn firo_verbose_block_deserialize() {
 }
 
 #[test]
+fn firo_lelantus_tx() {
+    // https://explorer.firo.org/tx/06ed4b75010edcf404a315be70903473f44050c978bc37fbcee90e0b49114ba8
+    let tx_hash = "06ed4b75010edcf404a315be70903473f44050c978bc37fbcee90e0b49114ba8".into();
+    let electrum = electrum_client_for_test(&[
+        "electrumx01.firo.org:50001",
+        "electrumx02.firo.org:50001",
+        "electrumx03.firo.org:50001",
+    ]);
+    let _tx = electrum.get_verbose_transaction(tx_hash).wait().unwrap();
+}
+
+#[test]
 fn test_generate_tx_doge_fee() {
     // A tx below 1kb is always 1 doge fee yes.
     // But keep in mind that every output below 1 doge will incur and extra 1 doge dust fee
@@ -2389,7 +2536,7 @@ fn doge_mtp() {
         "electrum3.cipig.net:10060",
     ]);
     let mtp = electrum
-        .get_median_time_past(3631820, NonZeroU64::new(11).unwrap())
+        .get_median_time_past(3631820, NonZeroU64::new(11).unwrap(), CoinVariant::Standard)
         .wait()
         .unwrap();
     assert_eq!(mtp, 1614849084);
@@ -2403,7 +2550,7 @@ fn firo_mtp() {
         "electrumx03.firo.org:50001",
     ]);
     let mtp = electrum
-        .get_median_time_past(356730, NonZeroU64::new(11).unwrap())
+        .get_median_time_past(356730, NonZeroU64::new(11).unwrap(), CoinVariant::Standard)
         .wait()
         .unwrap();
     assert_eq!(mtp, 1616492629);
@@ -2413,7 +2560,7 @@ fn firo_mtp() {
 fn verus_mtp() {
     let electrum = electrum_client_for_test(&["el0.verus.io:17485", "el1.verus.io:17485", "el2.verus.io:17485"]);
     let mtp = electrum
-        .get_median_time_past(1480113, NonZeroU64::new(11).unwrap())
+        .get_median_time_past(1480113, NonZeroU64::new(11).unwrap(), CoinVariant::Standard)
         .wait()
         .unwrap();
     assert_eq!(mtp, 1618579909);
@@ -2533,7 +2680,7 @@ fn sys_mtp() {
         "electrum3.cipig.net:10064",
     ]);
     let mtp = electrum
-        .get_median_time_past(1006678, NonZeroU64::new(11).unwrap())
+        .get_median_time_past(1006678, NonZeroU64::new(11).unwrap(), CoinVariant::Standard)
         .wait()
         .unwrap();
     assert_eq!(mtp, 1620019628);
@@ -2547,110 +2694,186 @@ fn btc_mtp() {
         "electrum3.cipig.net:10000",
     ]);
     let mtp = electrum
-        .get_median_time_past(681659, NonZeroU64::new(11).unwrap())
+        .get_median_time_past(681659, NonZeroU64::new(11).unwrap(), CoinVariant::Standard)
         .wait()
         .unwrap();
     assert_eq!(mtp, 1620019527);
 }
 
 #[test]
-#[ignore]
-fn send_and_refund_dex_fee() {
+fn qtum_mtp() {
     let electrum = electrum_client_for_test(&[
-        "electrum1.cipig.net:10017",
-        "electrum2.cipig.net:10017",
-        "electrum3.cipig.net:10017",
+        "electrum1.cipig.net:10050",
+        "electrum2.cipig.net:10050",
+        "electrum3.cipig.net:10050",
     ]);
-
-    let keypair = key_pair_from_seed("dex fee script test").unwrap();
-    let coin = utxo_coin_for_test(electrum.into(), Some("dex fee script test"));
-    println!("{}", coin.my_address().unwrap());
-    println!("{:?}", coin.my_balance().wait().unwrap());
-
-    let lock_time = 1619582440;
-    let dex_fee_script = dex_fee_script([0; 16], lock_time, keypair.public(), keypair.public());
-    let output = TransactionOutput {
-        value: 10000,
-        script_pubkey: Builder::build_p2sh(&dhash160(&dex_fee_script)).into(),
-    };
-    let transaction = block_on(send_outputs_from_my_address_impl(coin.clone(), vec![output])).unwrap();
-    println!("tx hash {:?}", transaction.hash().reversed());
-
-    let script_data = Builder::default().push_opcode(Opcode::OP_1).into_script();
-    let output = TransactionOutput {
-        value: 9000,
-        script_pubkey: Builder::build_p2pkh(&keypair.public().address_hash()).into(),
-    };
-    let refund = block_on(p2sh_spending_tx(
-        &coin,
-        transaction,
-        dex_fee_script.into(),
-        vec![output],
-        script_data,
-        SEQUENCE_FINAL - 1,
-        lock_time,
-    ))
-    .unwrap();
-
-    let tx = serialize(&refund);
-    let tx_hash = coin.send_raw_tx(&hex::encode(tx.take())).wait().unwrap();
-    println!("refund {}", tx_hash);
+    let mtp = electrum
+        .get_median_time_past(681659, NonZeroU64::new(11).unwrap(), CoinVariant::Qtum)
+        .wait()
+        .unwrap();
+    assert_eq!(mtp, 1598854128);
 }
 
 #[test]
-#[ignore]
-fn send_and_redeem_dex_fee() {
+fn zer_mtp() {
     let electrum = electrum_client_for_test(&[
-        "electrum1.cipig.net:10017",
-        "electrum2.cipig.net:10017",
-        "electrum3.cipig.net:10017",
+        "electrum1.cipig.net:10065",
+        "electrum2.cipig.net:10065",
+        "electrum3.cipig.net:10065",
     ]);
+    let mtp = electrum
+        .get_median_time_past(1130915, NonZeroU64::new(11).unwrap(), CoinVariant::Standard)
+        .wait()
+        .unwrap();
+    assert_eq!(mtp, 1623240214);
+}
 
-    let keypair = key_pair_from_seed("dex fee script test").unwrap();
-    let coin = utxo_coin_for_test(electrum.into(), Some("dex fee script test"));
-    println!("{}", coin.my_address().unwrap());
-    println!("{:?}", coin.my_balance().wait().unwrap());
+#[test]
+fn test_tx_details_kmd_rewards() {
+    let electrum = electrum_client_for_test(&[
+        "electrum1.cipig.net:10001",
+        "electrum2.cipig.net:10001",
+        "electrum3.cipig.net:10001",
+    ]);
+    let mut fields = utxo_coin_fields_for_test(electrum.into(), None);
+    fields.conf.ticker = "KMD".to_owned();
+    fields.my_address = Address::from("RMGJ9tRST45RnwEKHPGgBLuY3moSYP7Mhk");
+    let coin = utxo_coin_from_fields(fields);
 
-    let lock_time = 1619582440;
-    let dex_fee_script = dex_fee_script([0; 16], lock_time, keypair.public(), keypair.public());
-    let output = TransactionOutput {
-        value: 10000,
-        script_pubkey: Builder::build_p2sh(&dhash160(&dex_fee_script)).into(),
+    let mut input_transactions = HistoryUtxoTxMap::new();
+    let hash = hex::decode("535ffa3387d3fca14f4a4d373daf7edf00e463982755afce89bc8c48d8168024").unwrap();
+    let tx_details = block_on(coin.tx_details_by_hash(&hash, &mut input_transactions)).expect("!tx_details_by_hash");
+
+    let expected_fee = TxFeeDetails::Utxo(UtxoFeeDetails {
+        amount: BigDecimal::from_str("0.00001").unwrap(),
+    });
+    assert_eq!(tx_details.fee_details, Some(expected_fee));
+
+    let expected_kmd_rewards = KmdRewardsDetails {
+        amount: BigDecimal::from_str("0.10431954").unwrap(),
+        claimed_by_me: true,
     };
+    assert_eq!(tx_details.kmd_rewards, Some(expected_kmd_rewards));
+}
 
-    let op_return = Builder::default()
-        .push_opcode(Opcode::OP_RETURN)
-        .push_data(&dex_fee_script)
-        .into_bytes();
-    let op_return_output = TransactionOutput {
-        value: 0,
-        script_pubkey: op_return,
+/// If the ticker is `KMD` AND no rewards were accrued due to a value less than 10 or for any other reasons,
+/// then `TransactionDetails::kmd_rewards` has to be `Some(0)`, not `None`.
+/// https://kmdexplorer.io/tx/f09e8894959e74c1e727ffa5a753a30bf2dc6d5d677cc1f24b7ee5bb64e32c7d
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn test_tx_details_kmd_rewards_claimed_by_other() {
+    let electrum = electrum_client_for_test(&[
+        "electrum1.cipig.net:10001",
+        "electrum2.cipig.net:10001",
+        "electrum3.cipig.net:10001",
+    ]);
+    let mut fields = utxo_coin_fields_for_test(electrum.into(), None);
+    fields.conf.ticker = "KMD".to_owned();
+    fields.my_address = Address::from("RMGJ9tRST45RnwEKHPGgBLuY3moSYP7Mhk");
+    let coin = utxo_coin_from_fields(fields);
+
+    let mut input_transactions = HistoryUtxoTxMap::new();
+    let hash = hex::decode("f09e8894959e74c1e727ffa5a753a30bf2dc6d5d677cc1f24b7ee5bb64e32c7d").unwrap();
+    let tx_details = block_on(coin.tx_details_by_hash(&hash, &mut input_transactions)).expect("!tx_details_by_hash");
+
+    let expected_fee = TxFeeDetails::Utxo(UtxoFeeDetails {
+        amount: BigDecimal::from_str("0.00001").unwrap(),
+    });
+    assert_eq!(tx_details.fee_details, Some(expected_fee));
+
+    let expected_kmd_rewards = KmdRewardsDetails {
+        amount: BigDecimal::from_str("0.00022428").unwrap(),
+        claimed_by_me: false,
     };
+    assert_eq!(tx_details.kmd_rewards, Some(expected_kmd_rewards));
+}
 
-    let transaction = block_on(send_outputs_from_my_address_impl(coin.clone(), vec![
-        output,
-        op_return_output,
-    ]))
-    .unwrap();
-    println!("tx hash {:?}", transaction.hash().reversed());
+#[test]
+fn test_tx_details_bch_no_rewards() {
+    let electrum = electrum_client_for_test(&[
+        "blackie.c3-soft.com:60001",
+        "bch0.kister.net:51001",
+        "testnet.imaginary.cash:50001",
+    ]);
+    let coin = utxo_coin_for_test(electrum.into(), None);
 
-    let script_data = Builder::default().push_opcode(Opcode::OP_0).into_script();
-    let output = TransactionOutput {
-        value: 9000,
-        script_pubkey: Builder::build_p2pkh(&keypair.public().address_hash()).into(),
+    let mut input_transactions = HistoryUtxoTxMap::new();
+    let hash = hex::decode("eb13d926f15cbb896e0bcc7a1a77a4ec63504e57a1524c13a7a9b80f43ecb05c").unwrap();
+    let tx_details = block_on(coin.tx_details_by_hash(&hash, &mut input_transactions)).expect("!tx_details_by_hash");
+
+    let expected_fee = TxFeeDetails::Utxo(UtxoFeeDetails {
+        amount: BigDecimal::from_str("0.00000452").unwrap(),
+    });
+    assert_eq!(tx_details.fee_details, Some(expected_fee));
+    assert_eq!(tx_details.kmd_rewards, None);
+}
+
+#[test]
+fn test_update_kmd_rewards() {
+    // 535ffa3387d3fca14f4a4d373daf7edf00e463982755afce89bc8c48d8168024
+    const OUTDATED_TX_DETAILS: &str = r#"{"tx_hex":"0400008085202f8901afcadb73880bc1c9e7ce96b8274c2e2a4547415e649f425f98791685be009b73020000006b483045022100b8fbb77efea482b656ad16fc53c5a01d289054c2e429bf1d7bab16c3e822a83602200b87368a95c046b2ce6d0d092185138a3f234a7eb0d7f8227b196ef32358b93f012103b1e544ce2d860219bc91314b5483421a553a7b33044659eff0be9214ed58adddffffffff01dd15c293000000001976a91483762a373935ca241d557dfce89171d582b486de88ac99fe9960000000000000000000000000000000","tx_hash":"535ffa3387d3fca14f4a4d373daf7edf00e463982755afce89bc8c48d8168024","from":["RMGJ9tRST45RnwEKHPGgBLuY3moSYP7Mhk"],"to":["RMGJ9tRST45RnwEKHPGgBLuY3moSYP7Mhk"],"total_amount":"24.68539379","spent_by_me":"24.68539379","received_by_me":"24.78970333","my_balance_change":"0.10430954","block_height":2387532,"timestamp":1620705483,"fee_details":{"type":"Utxo","amount":"-0.10430954"},"coin":"KMD","internal_id":"535ffa3387d3fca14f4a4d373daf7edf00e463982755afce89bc8c48d8168024"}"#;
+
+    let electrum = electrum_client_for_test(&[
+        "electrum1.cipig.net:10001",
+        "electrum2.cipig.net:10001",
+        "electrum3.cipig.net:10001",
+    ]);
+    let mut fields = utxo_coin_fields_for_test(electrum.into(), None);
+    fields.conf.ticker = "KMD".to_owned();
+    fields.my_address = Address::from("RMGJ9tRST45RnwEKHPGgBLuY3moSYP7Mhk");
+    let coin = utxo_coin_from_fields(fields);
+
+    let mut input_transactions = HistoryUtxoTxMap::default();
+    let mut tx_details: TransactionDetails = json::from_str(OUTDATED_TX_DETAILS).unwrap();
+    block_on(coin.update_kmd_rewards(&mut tx_details, &mut input_transactions)).expect("!update_kmd_rewards");
+
+    let expected_rewards = KmdRewardsDetails {
+        amount: BigDecimal::from_str("0.10431954").unwrap(),
+        claimed_by_me: true,
     };
-    let refund = block_on(p2sh_spending_tx(
-        &coin,
-        transaction,
-        dex_fee_script.into(),
-        vec![output],
-        script_data,
-        SEQUENCE_FINAL,
-        lock_time,
-    ))
-    .unwrap();
+    assert_eq!(tx_details.kmd_rewards, Some(expected_rewards));
 
-    let tx = serialize(&refund);
-    let tx_hash = coin.send_raw_tx(&hex::encode(tx.take())).wait().unwrap();
-    println!("redeem {}", tx_hash);
+    let expected_fee_details = TxFeeDetails::Utxo(UtxoFeeDetails {
+        amount: BigDecimal::from_str("0.00001").unwrap(),
+    });
+    assert_eq!(tx_details.fee_details, Some(expected_fee_details));
+}
+
+#[test]
+fn test_update_kmd_rewards_claimed_not_by_me() {
+    // The custom 535ffa3387d3fca14f4a4d373daf7edf00e463982755afce89bc8c48d8168024 transaction with the additional 'from' address.
+    const OUTDATED_TX_DETAILS: &str = r#"{"tx_hex":"0400008085202f8901afcadb73880bc1c9e7ce96b8274c2e2a4547415e649f425f98791685be009b73020000006b483045022100b8fbb77efea482b656ad16fc53c5a01d289054c2e429bf1d7bab16c3e822a83602200b87368a95c046b2ce6d0d092185138a3f234a7eb0d7f8227b196ef32358b93f012103b1e544ce2d860219bc91314b5483421a553a7b33044659eff0be9214ed58adddffffffff01dd15c293000000001976a91483762a373935ca241d557dfce89171d582b486de88ac99fe9960000000000000000000000000000000","tx_hash":"535ffa3387d3fca14f4a4d373daf7edf00e463982755afce89bc8c48d8168024","from":["RMGJ9tRST45RnwEKHPGgBLuY3moSYP7Mhk", "RMDc4fvQeekJwrXxuaw1R2b7CTPEuVguMP"],"to":["RMGJ9tRST45RnwEKHPGgBLuY3moSYP7Mhk"],"total_amount":"24.68539379","spent_by_me":"24.68539379","received_by_me":"24.78970333","my_balance_change":"0.10430954","block_height":2387532,"timestamp":1620705483,"fee_details":{"type":"Utxo","amount":"-0.10430954"},"coin":"KMD","internal_id":"535ffa3387d3fca14f4a4d373daf7edf00e463982755afce89bc8c48d8168024"}"#;
+
+    let electrum = electrum_client_for_test(&[
+        "electrum1.cipig.net:10001",
+        "electrum2.cipig.net:10001",
+        "electrum3.cipig.net:10001",
+    ]);
+    let mut fields = utxo_coin_fields_for_test(electrum.into(), None);
+    fields.conf.ticker = "KMD".to_owned();
+    fields.my_address = Address::from("RMGJ9tRST45RnwEKHPGgBLuY3moSYP7Mhk");
+    let coin = utxo_coin_from_fields(fields);
+
+    let mut input_transactions = HistoryUtxoTxMap::default();
+    let mut tx_details: TransactionDetails = json::from_str(OUTDATED_TX_DETAILS).unwrap();
+    block_on(coin.update_kmd_rewards(&mut tx_details, &mut input_transactions)).expect("!update_kmd_rewards");
+
+    let expected_rewards = KmdRewardsDetails {
+        amount: BigDecimal::from_str("0.10431954").unwrap(),
+        claimed_by_me: false,
+    };
+    assert_eq!(tx_details.kmd_rewards, Some(expected_rewards));
+
+    let expected_fee_details = TxFeeDetails::Utxo(UtxoFeeDetails {
+        amount: BigDecimal::from_str("0.00001").unwrap(),
+    });
+    assert_eq!(tx_details.fee_details, Some(expected_fee_details));
+}
+
+/// https://github.com/KomodoPlatform/atomicDEX-API/issues/966
+#[test]
+fn test_parse_tx_with_huge_locktime() {
+    let verbose = r#"{"hex":"0400008085202f89010c03a2b3d8f97139a623f0759224c657513752b705b5c689a256d52b8f8279f200000000d8483045022100fa07821f4739890fa3518c73ecb4917f4a8e7a1c7a803a0d0aea28f991f14f84022041ac557507d6c9786128828c7b2fca7d5c345ba57c8050e3edb29be0c1e5d2660120bdb3d550a68dfaeebe4c416e5750d20d27617bbfb29756843d605a0570ae787b004c6b63046576ba60b17521039ef1b42c635c32440099910bbe1c5e8b0c9373274c3f21cf1003750fc88d3499ac6782012088a914a4f9f1009dcb778bf1c26052258284b32c9075098821031bb83b58ec130e28e0a6d5d2acf2eb01b0d3f1670e021d47d31db8a858219da8ac68ffffffff014ddbf305000000001976a914c3f710deb7320b0efa6edb14e3ebeeb9155fa90d88acf5b98899000000000000000000000000000000","txid":"3b666753b77e28da8a4d858339825315f32516cc147fa743329c7248bd0c6902","overwintered":true,"version":4,"versiongroupid":"892f2085","locktime":2575874549,"expiryheight":0,"vin":[{"txid":"f279828f2bd556a289c6b505b752375157c6249275f023a63971f9d8b3a2030c","vout":0,"scriptSig":{"asm":"3045022100fa07821f4739890fa3518c73ecb4917f4a8e7a1c7a803a0d0aea28f991f14f84022041ac557507d6c9786128828c7b2fca7d5c345ba57c8050e3edb29be0c1e5d266[ALL]bdb3d550a68dfaeebe4c416e5750d20d27617bbfb29756843d605a0570ae787b063046576ba60b17521039ef1b42c635c32440099910bbe1c5e8b0c9373274c3f21cf1003750fc88d3499ac6782012088a914a4f9f1009dcb778bf1c26052258284b32c9075098821031bb83b58ec130e28e0a6d5d2acf2eb01b0d3f1670e021d47d31db8a858219da8ac68","hex":"483045022100fa07821f4739890fa3518c73ecb4917f4a8e7a1c7a803a0d0aea28f991f14f84022041ac557507d6c9786128828c7b2fca7d5c345ba57c8050e3edb29be0c1e5d2660120bdb3d550a68dfaeebe4c416e5750d20d27617bbfb29756843d605a0570ae787b004c6b63046576ba60b17521039ef1b42c635c32440099910bbe1c5e8b0c9373274c3f21cf1003750fc88d3499ac6782012088a914a4f9f1009dcb778bf1c26052258284b32c9075098821031bb83b58ec130e28e0a6d5d2acf2eb01b0d3f1670e021d47d31db8a858219da8ac68"},"sequence":4294967295}],"vout":[{"value":0.99867469,"valueZat":99867469,"valueSat":99867469,"n":0,"scriptPubKey":{"asm":"OP_DUPOP_HASH160c3f710deb7320b0efa6edb14e3ebeeb9155fa90dOP_EQUALVERIFYOP_CHECKSIG","hex":"76a914c3f710deb7320b0efa6edb14e3ebeeb9155fa90d88ac","reqSigs":1,"type":"pubkeyhash","addresses":["t1bjmkBWkzLWk3mHFoybXE5daGRY9pk1fxF"]}}],"vjoinsplit":[],"valueBalance":0.0,"valueBalanceZat":0,"vShieldedSpend":[],"vShieldedOutput":[],"blockhash":"0000077e33e838d9967427018a6e7049d8619ae556acb3e80c070990e90b67fc","height":1127478,"confirmations":2197,"time":1622825622,"blocktime":1622825622}"#;
+    let verbose_tx: RpcTransaction = json::from_str(verbose).expect("!json::from_str");
+    let _: UtxoTx = deserialize(verbose_tx.hex.as_slice()).unwrap();
 }

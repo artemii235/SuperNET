@@ -92,6 +92,8 @@ pub enum TransactionInputEnum {
     Coinbase(CoinbaseTransactionInput),
     /// FIRO specific
     Sigma(SigmaInput),
+    /// FIRO specific
+    Lelantus(LelantusInput),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -103,6 +105,16 @@ pub struct SigmaInput {
     value: f64,
     #[serde(rename = "valueSat")]
     value_sat: u64,
+    sequence: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct LelantusInput {
+    #[serde(rename = "scriptSig")]
+    pub script_sig: TransactionInputScript,
+    #[serde(rename = "nFees")]
+    n_fees: f64,
+    serials: Vec<String>,
     sequence: u32,
 }
 
@@ -167,7 +179,7 @@ pub struct Transaction {
     /// The version
     pub version: i32,
     /// The lock time
-    pub locktime: i32,
+    pub locktime: u32,
     /// Transaction inputs
     pub vin: Vec<TransactionInputEnum>,
     /// Transaction outputs

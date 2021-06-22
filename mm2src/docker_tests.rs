@@ -82,11 +82,13 @@ mod docker_tests {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod docker_tests {
     #[rustfmt::skip]
+    mod qrc20_tests;
+    #[rustfmt::skip]
+    mod slp_tests;
+    #[rustfmt::skip]
     mod swaps_confs_settings_sync_tests;
     #[rustfmt::skip]
     mod swaps_file_lock_tests;
-    #[rustfmt::skip]
-    mod qrc20_tests;
 
     use crate::mm2::lp_swap::dex_fee_amount;
     use crate::mm2::mm2_tests::structs::*;
@@ -333,7 +335,7 @@ mod docker_tests {
     fn generate_coin_with_random_privkey(ticker: &str, balance: BigDecimal) -> (MmArc, UtxoStandardCoin, [u8; 32]) {
         let priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
         let (ctx, coin) = utxo_coin_from_privkey(ticker, &priv_key);
-        let timeout = 30; // timeout if test takes more than 120 seconds to run
+        let timeout = 30; // timeout if test takes more than 30 seconds to run
         let my_address = coin.my_address().expect("!my_address");
         fill_address(&coin, &my_address, balance, timeout);
         (ctx, coin, priv_key)

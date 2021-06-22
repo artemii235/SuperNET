@@ -202,7 +202,8 @@ impl Qrc20Coin {
     pub async fn transfer_details_by_hash(&self, tx_hash: H256Json) -> Result<TxTransferMap, String> {
         let receipts = try_s!(self.utxo.rpc_client.get_transaction_receipts(&tx_hash).compat().await);
         // request Qtum transaction details to get a tx_hex, timestamp, block_height and calculate a miner_fee
-        let qtum_details = try_s!(utxo_common::tx_details_by_hash(self, &tx_hash.0).await);
+        let mut input_transactions = HistoryUtxoTxMap::new();
+        let qtum_details = try_s!(utxo_common::tx_details_by_hash(self, &tx_hash.0, &mut input_transactions).await);
         // Deserialize the UtxoTx to get a script pubkey
         let qtum_tx: UtxoTx = try_s!(deserialize(qtum_details.tx_hex.as_slice()).map_err(|e| ERRL!("{:?}", e)));
 
@@ -410,26 +411,32 @@ impl Qrc20Coin {
         tx_height: u64,
         transfer_map: &mut TxTransferMap,
     ) -> ProcessCachedTransferMapResult {
-        async fn tx_details_by_hash(coin: &Qrc20Coin, ctx: &MmArc, tx_hash: &H256Json) -> Option<TransactionDetails> {
-            mm_counter!(ctx.metrics, "tx.history.request.count", 1, "coin" => coin.utxo.conf.ticker.clone(), "method" => "tx_detail_by_hash");
-            match utxo_common::tx_details_by_hash(coin, &tx_hash.0).await {
+        async fn get_verbose_transaction(coin: &Qrc20Coin, ctx: &MmArc, tx_hash: H256Json) -> Option<RpcTransaction> {
+            mm_counter!(ctx.metrics, "tx.history.request.count", 1, "coin" => coin.utxo.conf.ticker.clone(), "method" => "get_verbose_transaction");
+            match coin
+                .utxo
+                .rpc_client
+                .get_verbose_transaction(tx_hash.clone())
+                .compat()
+                .await
+            {
                 Ok(d) => {
-                    mm_counter!(ctx.metrics, "tx.history.response.count", 1, "coin" => coin.utxo.conf.ticker.clone(), "method" => "tx_detail_by_hash");
+                    mm_counter!(ctx.metrics, "tx.history.response.count", 1, "coin" => coin.utxo.conf.ticker.clone(), "method" => "get_verbose_transaction");
                     Some(d)
                 },
                 Err(e) => {
                     ctx.log.log(
                         "😟",
                         &[&"tx_history", &coin.utxo.conf.ticker],
-                        &ERRL!("Error {:?} on tx_details_by_hash for {:?} tx", e, tx_hash),
+                        &ERRL!("Error {:?} on get_verbose_transaction for {:?} tx", e, tx_hash),
                     );
                     None
                 },
             }
         }
 
-        // `qtum_details` will be initialized once if it's required
-        let mut qtum_details = None;
+        // `qtum_verbose` will be initialized once if it's required
+        let mut qtum_verbose = None;
 
         let mut updated = false;
         for (id, tx) in transfer_map {
@@ -452,13 +459,13 @@ impl Qrc20Coin {
                 updated = true;
             }
             if tx.should_update_timestamp() {
-                if qtum_details.is_none() {
-                    qtum_details = tx_details_by_hash(self, ctx, tx_hash).await;
+                if qtum_verbose.is_none() {
+                    qtum_verbose = get_verbose_transaction(self, ctx, tx_hash.clone()).await;
                 }
-                if let Some(ref qtum_details) = qtum_details {
-                    tx.timestamp = qtum_details.timestamp;
+                if let Some(ref qtum_verbose) = qtum_verbose {
+                    tx.timestamp = qtum_verbose.time as u64;
                     updated = true;
-                } // else `utxo_common::tx_details_by_hash` failed for some reason
+                } // else `UtxoRpcClientEnum::get_verbose_transaction` failed for some reason
             }
         }
 
@@ -885,7 +892,10 @@ mod tests {
         assert_eq!(transfer_map_zero_timestamp, transfer_map_expected);
 
         let value: MetricsJson = json::from_value(ctx.metrics.collect_json().unwrap()).unwrap();
-        let found = find_metrics_in_json(value, "tx.history.request.count", &[("method", "tx_detail_by_hash")]);
+        let found = find_metrics_in_json(value, "tx.history.request.count", &[(
+            "method",
+            "get_verbose_transaction",
+        )]);
         match found {
             Some(MetricType::Counter { key, value, .. }) if key == "tx.history.request.count" && value == 1 => (),
             found => panic!("Found metric type: {:?}", found),

@@ -3300,6 +3300,7 @@ dependencies = [
  "async-trait",
  "atomic 0.4.6",
  "bigdecimal",
+ "bitcoin-cash-slp",
  "bitcrypto",
  "blake2",
  "bytes 0.4.12",
