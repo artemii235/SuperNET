@@ -5,7 +5,6 @@ use crate::{adex_ping::AdexPing,
             runtime::{SwarmRuntimeOps, SWARM_RUNTIME}};
 use atomicdex_gossipsub::{Gossipsub, GossipsubConfigBuilder, GossipsubEvent, GossipsubMessage, MessageId, Topic,
                           TopicHash};
-use common::rand_rng;
 use futures::{channel::{mpsc::{channel, Receiver, Sender},
                         oneshot},
               future::{abortable, join_all, poll_fn, AbortHandle},
@@ -460,7 +459,7 @@ fn maintain_connection_to_relays(swarm: &mut AtomicDexSwarm, bootstrap_addresses
     // allow 2 * mesh_n_high connections to other nodes
     let max_n = behaviour.gossipsub.get_config().mesh_n_high * 2;
 
-    let mut rng = rand_rng();
+    let mut rng = rand::thread_rng();
     if connected_relays.len() < mesh_n_low {
         let to_connect_num = mesh_n - connected_relays.len();
         let to_connect = swarm
@@ -644,7 +643,7 @@ fn start_gossipsub(
     on_poll: impl Fn(&AtomicDexSwarm) + Send + 'static,
 ) -> (Sender<AdexBehaviourCmd>, AdexEventRx, PeerId, AbortHandle) {
     let i_am_relay = node_type.is_relay();
-    let mut rng = rand_rng();
+    let mut rng = rand::thread_rng();
     let local_key = generate_ed25519_keypair(&mut rng, force_key);
     let local_peer_id = PeerId::from(local_key.public());
     info!("Local peer id: {:?}", local_peer_id);
@@ -666,7 +665,7 @@ fn start_gossipsub(
         dns_tcp.or_transport(ws_dns_tcp)
     };
 
-    let noise_keys = noise::Keypair::<noise::X25519Spec>::with_rng(&mut rng)
+    let noise_keys = noise::Keypair::<noise::X25519Spec>::new()
         .into_authentic(&local_key)
         .expect("Signing libp2p-noise static DH keypair failed.");
 

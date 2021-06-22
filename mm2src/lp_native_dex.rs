@@ -543,7 +543,6 @@ async fn init_p2p(ctx: MmArc) -> Result<(), String> {
         None
     };
 
-    let (_, network_port, network_ws_port) = try_s!(lp_ports(netid));
     let node_type = if i_am_seed {
         #[cfg(target_arch = "wasm32")]
         return ERR!("'i_am_seed' is only supported in native mode");
@@ -551,6 +550,7 @@ async fn init_p2p(ctx: MmArc) -> Result<(), String> {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let ip = try_s!(myipaddr(ctx.clone()).await);
+            let (_, network_port, network_ws_port) = try_s!(lp_ports(netid));
             NodeType::Relay {
                 ip,
                 network_port,
@@ -558,6 +558,7 @@ async fn init_p2p(ctx: MmArc) -> Result<(), String> {
             }
         }
     } else {
+        let (_, network_port, _network_ws_port) = try_s!(lp_ports(netid));
         NodeType::Light { network_port }
     };
 

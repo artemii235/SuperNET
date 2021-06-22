@@ -260,7 +260,6 @@ dependencies = [
  "base64 0.11.0",
  "byteorder 1.3.4",
  "bytes 0.5.6",
- "common",
  "env_logger",
  "fnv",
  "futures 0.3.15",
@@ -930,6 +929,7 @@ dependencies = [
  "futures 0.1.29",
  "futures 0.3.15",
  "futures-cpupool",
+ "getrandom 0.2.2",
  "gstuff",
  "hdrhistogram 7.1.0",
  "hex 0.3.2",
@@ -2599,7 +2599,7 @@ checksum = "12b8adadd720df158f4d70dfe7ccc6adb0472d7c55ca83445f6a5ab3e36f8fb6"
 [[package]]
 name = "libp2p"
 version = "0.39.0"
-source = "git+https://github.com/KomodoPlatform/rust-libp2p.git?branch=wasm32-support#15e04beb53883591e2c9bda91b8e036a64c93e96"
+source = "git+https://github.com/KomodoPlatform/rust-libp2p.git?branch=wasm32-support#798d051593273b60fc6b3a114ac414a2e3bea24c"
 dependencies = [
  "atomic 0.5.0",
  "bytes 1.0.1",
@@ -2627,7 +2627,7 @@ dependencies = [
 [[package]]
 name = "libp2p-core"
 version = "0.29.0"
-source = "git+https://github.com/KomodoPlatform/rust-libp2p.git?branch=wasm32-support#15e04beb53883591e2c9bda91b8e036a64c93e96"
+source = "git+https://github.com/KomodoPlatform/rust-libp2p.git?branch=wasm32-support#798d051593273b60fc6b3a114ac414a2e3bea24c"
 dependencies = [
  "asn1_der",
  "bs58",
@@ -2660,7 +2660,7 @@ dependencies = [
 [[package]]
 name = "libp2p-dns"
 version = "0.29.0"
-source = "git+https://github.com/KomodoPlatform/rust-libp2p.git?branch=wasm32-support#15e04beb53883591e2c9bda91b8e036a64c93e96"
+source = "git+https://github.com/KomodoPlatform/rust-libp2p.git?branch=wasm32-support#798d051593273b60fc6b3a114ac414a2e3bea24c"
 dependencies = [
  "futures 0.3.15",
  "libp2p-core",
@@ -2686,7 +2686,7 @@ dependencies = [
 [[package]]
 name = "libp2p-floodsub"
 version = "0.30.0"
-source = "git+https://github.com/KomodoPlatform/rust-libp2p.git?branch=wasm32-support#15e04beb53883591e2c9bda91b8e036a64c93e96"
+source = "git+https://github.com/KomodoPlatform/rust-libp2p.git?branch=wasm32-support#798d051593273b60fc6b3a114ac414a2e3bea24c"
 dependencies = [
  "cuckoofilter 0.5.0",
  "fnv",
@@ -2703,7 +2703,7 @@ dependencies = [
 [[package]]
 name = "libp2p-mplex"
 version = "0.29.0"
-source = "git+https://github.com/KomodoPlatform/rust-libp2p.git?branch=wasm32-support#15e04beb53883591e2c9bda91b8e036a64c93e96"
+source = "git+https://github.com/KomodoPlatform/rust-libp2p.git?branch=wasm32-support#798d051593273b60fc6b3a114ac414a2e3bea24c"
 dependencies = [
  "asynchronous-codec",
  "bytes 1.0.1",
@@ -2720,7 +2720,7 @@ dependencies = [
 [[package]]
 name = "libp2p-noise"
 version = "0.32.0"
-source = "git+https://github.com/KomodoPlatform/rust-libp2p.git?branch=wasm32-support#15e04beb53883591e2c9bda91b8e036a64c93e96"
+source = "git+https://github.com/KomodoPlatform/rust-libp2p.git?branch=wasm32-support#798d051593273b60fc6b3a114ac414a2e3bea24c"
 dependencies = [
  "bytes 1.0.1",
  "curve25519-dalek 3.0.0",
@@ -2730,7 +2730,6 @@ dependencies = [
  "log 0.4.11",
  "prost 0.7.0",
  "prost-build 0.7.0",
- "rand 0.7.3",
  "rand 0.8.4",
  "sha2 0.9.1",
  "snow",
@@ -2742,7 +2741,7 @@ dependencies = [
 [[package]]
 name = "libp2p-ping"
 version = "0.30.0"
-source = "git+https://github.com/KomodoPlatform/rust-libp2p.git?branch=wasm32-support#15e04beb53883591e2c9bda91b8e036a64c93e96"
+source = "git+https://github.com/KomodoPlatform/rust-libp2p.git?branch=wasm32-support#798d051593273b60fc6b3a114ac414a2e3bea24c"
 dependencies = [
  "futures 0.3.15",
  "libp2p-core",
@@ -2756,7 +2755,7 @@ dependencies = [
 [[package]]
 name = "libp2p-plaintext"
 version = "0.29.0"
-source = "git+https://github.com/KomodoPlatform/rust-libp2p.git?branch=wasm32-support#15e04beb53883591e2c9bda91b8e036a64c93e96"
+source = "git+https://github.com/KomodoPlatform/rust-libp2p.git?branch=wasm32-support#798d051593273b60fc6b3a114ac414a2e3bea24c"
 dependencies = [
  "asynchronous-codec",
  "bytes 1.0.1",
@@ -2772,7 +2771,7 @@ dependencies = [
 [[package]]
 name = "libp2p-request-response"
 version = "0.12.0"
-source = "git+https://github.com/KomodoPlatform/rust-libp2p.git?branch=wasm32-support#15e04beb53883591e2c9bda91b8e036a64c93e96"
+source = "git+https://github.com/KomodoPlatform/rust-libp2p.git?branch=wasm32-support#798d051593273b60fc6b3a114ac414a2e3bea24c"
 dependencies = [
  "async-trait",
  "bytes 1.0.1",
@@ -2791,7 +2790,7 @@ dependencies = [
 [[package]]
 name = "libp2p-swarm"
 version = "0.30.0"
-source = "git+https://github.com/KomodoPlatform/rust-libp2p.git?branch=wasm32-support#15e04beb53883591e2c9bda91b8e036a64c93e96"
+source = "git+https://github.com/KomodoPlatform/rust-libp2p.git?branch=wasm32-support#798d051593273b60fc6b3a114ac414a2e3bea24c"
 dependencies = [
  "either",
  "futures 0.3.15",
@@ -2806,7 +2805,7 @@ dependencies = [
 [[package]]
 name = "libp2p-swarm-derive"
 version = "0.23.0"
-source = "git+https://github.com/KomodoPlatform/rust-libp2p.git?branch=wasm32-support#15e04beb53883591e2c9bda91b8e036a64c93e96"
+source = "git+https://github.com/KomodoPlatform/rust-libp2p.git?branch=wasm32-support#798d051593273b60fc6b3a114ac414a2e3bea24c"
 dependencies = [
  "quote 1.0.7",
  "syn 1.0.72",
@@ -2815,7 +2814,7 @@ dependencies = [
 [[package]]
 name = "libp2p-tcp"
 version = "0.29.0"
-source = "git+https://github.com/KomodoPlatform/rust-libp2p.git?branch=wasm32-support#15e04beb53883591e2c9bda91b8e036a64c93e96"
+source = "git+https://github.com/KomodoPlatform/rust-libp2p.git?branch=wasm32-support#798d051593273b60fc6b3a114ac414a2e3bea24c"
 dependencies = [
  "futures 0.3.15",
  "futures-timer",
@@ -2831,7 +2830,7 @@ dependencies = [
 [[package]]
 name = "libp2p-wasm-ext"
 version = "0.29.0"
-source = "git+https://github.com/KomodoPlatform/rust-libp2p.git?branch=wasm32-support#15e04beb53883591e2c9bda91b8e036a64c93e96"
+source = "git+https://github.com/KomodoPlatform/rust-libp2p.git?branch=wasm32-support#798d051593273b60fc6b3a114ac414a2e3bea24c"
 dependencies = [
  "futures 0.3.15",
  "js-sys",
@@ -2844,7 +2843,7 @@ dependencies = [
 [[package]]
 name = "libp2p-websocket"
 version = "0.30.0"
-source = "git+https://github.com/KomodoPlatform/rust-libp2p.git?branch=wasm32-support#15e04beb53883591e2c9bda91b8e036a64c93e96"
+source = "git+https://github.com/KomodoPlatform/rust-libp2p.git?branch=wasm32-support#798d051593273b60fc6b3a114ac414a2e3bea24c"
 dependencies = [
  "either",
  "futures 0.3.15",
@@ -2861,7 +2860,7 @@ dependencies = [
 [[package]]
 name = "libp2p-yamux"
 version = "0.33.0"
-source = "git+https://github.com/KomodoPlatform/rust-libp2p.git?branch=wasm32-support#15e04beb53883591e2c9bda91b8e036a64c93e96"
+source = "git+https://github.com/KomodoPlatform/rust-libp2p.git?branch=wasm32-support#798d051593273b60fc6b3a114ac414a2e3bea24c"
 dependencies = [
  "futures 0.3.15",
  "libp2p-core",
@@ -3378,7 +3377,6 @@ dependencies = [
  "async-std",
  "async-trait",
  "atomicdex-gossipsub",
- "common",
  "env_logger",
  "futures 0.3.15",
  "getrandom 0.2.2",
@@ -3397,6 +3395,7 @@ dependencies = [
  "sha2 0.9.1",
  "tokio",
  "void",
+ "wasm-bindgen-futures",
  "wasm-timer",
 ]
 
@@ -3474,7 +3473,7 @@ checksum = "d8883adfde9756c1d30b0f519c9b8c502a94b41ac62f696453c37c7fc0a958ce"
 [[package]]
 name = "multistream-select"
 version = "0.10.3"
-source = "git+https://github.com/KomodoPlatform/rust-libp2p.git?branch=wasm32-support#15e04beb53883591e2c9bda91b8e036a64c93e96"
+source = "git+https://github.com/KomodoPlatform/rust-libp2p.git?branch=wasm32-support#798d051593273b60fc6b3a114ac414a2e3bea24c"
 dependencies = [
  "bytes 1.0.1",
  "futures 0.3.15",
@@ -6212,7 +6211,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04f8ab788026715fa63b31960869617cba39117e520eb415b0139543e325ab59"
 dependencies = [
  "cfg-if 0.1.10",
- "rand 0.7.3",
+ "rand 0.3.23",
  "static_assertions",
 ]
 

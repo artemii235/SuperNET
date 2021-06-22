@@ -29,7 +29,7 @@ impl SwarmRuntimeOps for SwarmRuntime {
         F: Future + futures::FutureExt + Send + 'static,
         F::Output: Send + 'static,
     {
-        common::executor::spawn(future.map(|_| ()))
+        wasm_bindgen_futures::spawn_local(future.map(|_| ()))
     }
 }
 

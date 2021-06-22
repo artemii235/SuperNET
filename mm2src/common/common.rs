@@ -1771,12 +1771,6 @@ pub extern "C" fn set_panic_hook() {
     }))
 }
 
-#[cfg(target_arch = "wasm32")]
-pub fn rand_rng() -> impl rand::Rng { small_rng() }
-
-#[cfg(not(target_arch = "wasm32"))]
-pub fn rand_rng() -> impl rand::Rng { rand::thread_rng() }
-
 pub fn small_rng() -> SmallRng { SmallRng::seed_from_u64(now_ms()) }
 
 /// Ask the WASM host to send HTTP request to the native helpers.

@@ -25,7 +25,6 @@ use crate::protocol::{GossipsubControlAction, GossipsubMessage, GossipsubSubscri
                       MessageId};
 use crate::time_cache::{Entry as TimeCacheEntry, TimeCache};
 use crate::topic::{Topic, TopicHash};
-use common::rand_rng;
 use futures::prelude::*;
 use libp2p_core::{connection::ConnectionId, ConnectedPoint, Multiaddr, PeerId};
 use libp2p_swarm::{NetworkBehaviour, NetworkBehaviourAction, NotifyHandler, PollParameters, ProtocolsHandler};
@@ -729,7 +728,7 @@ impl Gossipsub {
                 );
                 let excess_peer_no = peers.len() - self.config.mesh_n;
                 // shuffle the peers
-                let mut rng = rand_rng();
+                let mut rng = rand::thread_rng();
                 peers.shuffle(&mut rng);
                 // remove the first excess_peer_no peers adding them to to_prune
                 for _ in 0..excess_peer_no {
@@ -986,7 +985,7 @@ impl Gossipsub {
         }
 
         // we have more peers than needed, shuffle them and return n of them
-        let mut rng = rand_rng();
+        let mut rng = rand::thread_rng();
         gossip_peers.partial_shuffle(&mut rng, n);
 
         debug!("RANDOM PEERS: Got {:?} peers", n);
@@ -1006,7 +1005,7 @@ impl Gossipsub {
         }
 
         // we have more peers than needed, shuffle them and return n of them
-        let mut rng = rand_rng();
+        let mut rng = rand::thread_rng();
         relays.partial_shuffle(&mut rng, n);
         debug!("RANDOM RELAYS: Got {:?} peers", n);
 

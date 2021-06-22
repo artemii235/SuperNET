@@ -168,15 +168,6 @@ impl MakerSwap {
     fn w(&self) -> RwLockWriteGuard<MakerSwapMut> { self.mutable.write().unwrap() }
     fn r(&self) -> RwLockReadGuard<MakerSwapMut> { self.mutable.read().unwrap() }
 
-    #[cfg(target_arch = "wasm32")]
-    fn generate_secret(&self) -> [u8; 32] {
-        // TODO small rng uses now_ms() as seed which is completely insecure to generate the secret
-        // for swap, we must consider refactoring
-        let mut rng = common::small_rng();
-        rng.gen()
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
     fn generate_secret(&self) -> [u8; 32] {
         let mut rng = rand::thread_rng();
         rng.gen()
