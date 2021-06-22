@@ -301,7 +301,7 @@ impl AtomicDexBehaviour {
                         let peer_id = peer_id.to_base58();
                         let connected_points = connected_points
                             .into_iter()
-                            .map(|point| match point {
+                            .map(|(_conn_id, point)| match point {
                                 ConnectedPoint::Dialer { address } => address.to_string(),
                                 ConnectedPoint::Listener { send_back_addr, .. } => send_back_addr.to_string(),
                             })
