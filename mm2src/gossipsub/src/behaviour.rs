@@ -1160,7 +1160,7 @@ impl Gossipsub {
         if let Some(points) = self.peer_connections.get(&peer_id) {
             if !points.is_empty() {
                 let conn_id = points[0].0;
-                return self.notify_one(peer_id, conn_id, event.clone());
+                return self.notify_one(peer_id, conn_id, event);
             }
         }
         warn!("Expected at least one connection of the peer '{}'", peer_id);
