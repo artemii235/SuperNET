@@ -2578,7 +2578,9 @@ pub async fn lp_ordermatch_loop(ctx: MmArc) {
             }
 
             for uuid in to_cancel {
-                my_maker_orders.remove(&uuid);
+                if let Some(order) = my_maker_orders.remove(&uuid) {
+                    delete_my_maker_order(&ctx, &order, MakerOrderCancellationReason::InsufficientBalance);
+                }
             }
         }
 

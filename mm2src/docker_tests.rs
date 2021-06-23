@@ -2680,6 +2680,8 @@ mod docker_tests {
         })))
         .unwrap();
         assert!(rc.0.is_success(), "!setprice: {}", rc.1);
+        let res: SetPriceResponse = json::from_str(&rc.1).unwrap();
+        let uuid = res.result.uuid;
 
         // mm_bob using same DB dir that should kick start the order
         bob_conf["dbdir"] = mm_bob.folder.join("DB").to_str().unwrap().into();
@@ -2729,6 +2731,15 @@ mod docker_tests {
 
         let res: MyOrdersRpcResult = json::from_str(&rc.1).unwrap();
         assert!(res.result.maker_orders.is_empty(), "Bob maker orders must be empty");
+
+        let order_path = mm_bob.folder.join(format!(
+            "DB/{}/ORDERS/MY/MAKER/{}.json",
+            hex::encode(rmd160_from_priv(bob_priv_key).take()),
+            uuid
+        ));
+
+        println!("Order path {}", order_path.display());
+        assert!(!order_path.exists());
     }
 
     #[test]
