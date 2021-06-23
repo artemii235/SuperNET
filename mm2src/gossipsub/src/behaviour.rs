@@ -1157,21 +1157,14 @@ impl Gossipsub {
     /// Since `NotifyHandler::All` has been removed, the original `libp2p_gossipsub` notifies the connected peers using their primary connections.
     /// See an example: https://github.com/libp2p/rust-libp2p/blob/v0.38.0/protocols/gossipsub/src/behaviour.rs#L3013
     fn notify_primary(&mut self, peer_id: PeerId, event: Arc<GossipsubRpc>) {
-        match self.peer_connections.get(&peer_id) {
-            Some(points) if points.is_empty() => {
-                warn!("Expected at least one connection of the peer '{}'", peer_id)
-            },
-            Some(points) => {
+        if let Some(points) = self.peer_connections.get(&peer_id) {
+            if !points.is_empty() {
                 let conn_id = points[0].0;
-                self.notify_one(peer_id, conn_id, event)
-            },
-            None => {
-                warn!(
-                    "Attempt to notify a peer '{}' that is not in 'Gossipsub::peer_connections'",
-                    peer_id
-                )
-            },
+                return self.notify_one(peer_id, conn_id, event.clone());
+            }
         }
+        warn!("Expected at least one connection of the peer '{}'", peer_id);
+        self.notify_any(peer_id, event);
     }
 
     #[allow(dead_code)]
@@ -1192,7 +1185,6 @@ impl Gossipsub {
         }
     }
 
-    #[allow(dead_code)]
     fn notify_any(&mut self, peer_id: PeerId, event: Arc<GossipsubRpc>) {
         self.events.push_back(NetworkBehaviourAction::NotifyHandler {
             peer_id,
