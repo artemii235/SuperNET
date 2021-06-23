@@ -1,7 +1,7 @@
 //! Script builder
 
 use bytes::Bytes;
-use keys::AddressHash;
+use keys::{AddressHash, Public};
 use {Num, Opcode, Script};
 
 /// Script builder
@@ -18,6 +18,14 @@ impl Builder {
             .push_opcode(Opcode::OP_HASH160)
             .push_bytes(&**address)
             .push_opcode(Opcode::OP_EQUALVERIFY)
+            .push_opcode(Opcode::OP_CHECKSIG)
+            .into_script()
+    }
+
+    /// Builds p2pk script pubkey
+    pub fn build_p2pk(pubkey: &Public) -> Script {
+        Builder::default()
+            .push_bytes(&*pubkey)
             .push_opcode(Opcode::OP_CHECKSIG)
             .into_script()
     }

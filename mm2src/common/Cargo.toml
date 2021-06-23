@@ -25,7 +25,7 @@ derive_more = "0.99"
 findshlibs = "0.5"
 fomat-macros = "0.2"
 futures01 = { version = "0.1", package = "futures" }
-futures = { version = "0.3", package = "futures", features = ["compat", "async-await"] }
+futures = { version = "0.3", package = "futures", features = ["compat", "async-await", "thread-pool"] }
 futures-cpupool = "0.1"
 gstuff = { version = "0.6", features = ["nightly"] }
 hex = "0.3.2"

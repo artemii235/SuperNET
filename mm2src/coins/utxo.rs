@@ -38,7 +38,7 @@ use common::jsonrpc_client::JsonRpcError;
 use common::mm_ctx::MmArc;
 use common::mm_error::prelude::*;
 use common::mm_metrics::MetricsArc;
-use common::small_rng;
+use common::{now_ms, small_rng};
 use derive_more::Display;
 #[cfg(not(target_arch = "wasm32"))] use dirs::home_dir;
 use futures::channel::mpsc;
@@ -471,6 +471,35 @@ pub struct UtxoCoinFields {
     /// This cache helps to prevent UTXO reuse in such cases
     pub recently_spent_outpoints: AsyncMutex<RecentlySpentOutPoints>,
     pub tx_hash_algo: TxHashAlgo,
+}
+
+impl UtxoCoinFields {
+    pub fn transaction_preimage(&self) -> TransactionInputSigner {
+        let lock_time = if self.conf.ticker == "KMD" {
+            (now_ms() / 1000) as u32 - 3600 + 777 * 2
+        } else {
+            (now_ms() / 1000) as u32
+        };
+
+        TransactionInputSigner {
+            version: self.conf.tx_version,
+            n_time: None,
+            overwintered: self.conf.overwintered,
+            version_group_id: self.conf.version_group_id,
+            consensus_branch_id: self.conf.consensus_branch_id,
+            expiry_height: 0,
+            value_balance: 0,
+            inputs: vec![],
+            outputs: vec![],
+            lock_time,
+            join_splits: vec![],
+            shielded_spends: vec![],
+            shielded_outputs: vec![],
+            zcash: self.conf.zcash,
+            str_d_zeel: None,
+            hash_algo: self.tx_hash_algo.into(),
+        }
+    }
 }
 
 #[async_trait]
@@ -1757,6 +1786,34 @@ pub fn p2pkh_spend(
 
     Ok(TransactionInput {
         script_sig,
+        sequence: signer.inputs[input_index].sequence,
+        script_witness: vec![],
+        previous_output: signer.inputs[input_index].previous_output.clone(),
+    })
+}
+
+/// Creates signed input spending p2pkh output
+pub fn p2pk_spend(
+    signer: &TransactionInputSigner,
+    input_index: usize,
+    key_pair: &KeyPair,
+    signature_version: SignatureVersion,
+    fork_id: u32,
+) -> Result<TransactionInput, String> {
+    let script = Builder::build_p2pk(key_pair.public());
+    let sighash_type = 1 | fork_id;
+    let sighash = signer.signature_hash(
+        input_index,
+        signer.inputs[input_index].amount,
+        &script,
+        signature_version,
+        sighash_type,
+    );
+
+    let script_sig = try_s!(script_sig(&sighash, key_pair, fork_id));
+
+    Ok(TransactionInput {
+        script_sig: Builder::default().push_bytes(&script_sig).into_bytes(),
         sequence: signer.inputs[input_index].sequence,
         script_witness: vec![],
         previous_output: signer.inputs[input_index].previous_output.clone(),
