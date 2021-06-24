@@ -837,14 +837,14 @@ fn generate_ed25519_keypair<R: Rng>(rng: &mut R, force_key: Option<[u8; 32]>) ->
 /// `addr` is expected to be either `/dns/<DOMAIN>/tcp/<PORT>` or `/ipv4/<IP_ADDR>/tcp/<PORT>` or an IPv4 address.
 #[cfg(target_arch = "wasm32")]
 fn parse_relay_address(addr: String, port: u16) -> Multiaddr {
-    let dns = addr.starts_with("/dns") && addr.contains("/tcp/");
-    let ip4 = addr.starts_with("/ip4/") && addr.contains("/tcp/");
+    let dns = addr.starts_with("/dns") && addr.contains("/tcp/") && addr.ends_with("/ws");
+    let ip4 = addr.starts_with("/ip4/") && addr.contains("/tcp/") && addr.ends_with("/ws");
     if dns || ip4 {
         return Multiaddr::from_str(&addr).unwrap();
     }
     // check if the address is IPv4
     std::net::Ipv4Addr::from_str(&addr).unwrap();
-    Multiaddr::from_str(&format!("/ip4/{}/tcp/{}", addr, port)).unwrap()
+    Multiaddr::from_str(&format!("/ip4/{}/tcp/{}/ws", addr, port)).unwrap()
 }
 
 /// If the `addr` is in the "/ip4/{addr}/tcp/{port}" format then parse the `addr` immediately to the `Multiaddr`,
