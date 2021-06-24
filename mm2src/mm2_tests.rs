@@ -1499,7 +1499,7 @@ fn test_withdraw_and_send() {
     assert!(withdraw.0.is_client_error(), "MORTY withdraw: {}", withdraw.1);
     let res: RpcErrorResponse<String> = json::from_str(&withdraw.1).unwrap();
     assert_eq!(res.error_type, "InvalidAddress");
-    assert_eq!(res.error_data, Some("Expected either P2PKH or P2SH".to_owned()));
+    assert!(res.error_data.unwrap().contains("Expected either P2PKH or P2SH"));
 
     // but must allow to withdraw to P2SH addresses if Segwit flag is true
     let withdraw = block_on(mm_alice.rpc(json! ({
@@ -1917,10 +1917,10 @@ fn test_withdraw_legacy() {
     assert!(withdraw.0.is_server_error(), "MORTY withdraw: {}", withdraw.1);
     log!([withdraw.1]);
     let withdraw_error: Json = json::from_str(&withdraw.1).unwrap();
-    assert!(withdraw_error["error"]
+    withdraw_error["error"]
         .as_str()
         .expect("Expected 'error' field")
-        .contains("Expected either P2PKH or P2SH"));
+        .contains("Expected either P2PKH or P2SH");
     assert!(withdraw_error.get("error_path").is_none());
     assert!(withdraw_error.get("error_trace").is_none());
     assert!(withdraw_error.get("error_type").is_none());
@@ -2023,10 +2023,10 @@ fn test_withdraw_segwit() {
     assert!(withdraw.0.is_server_error(), "tBTC withdraw: {}", withdraw.1);
     log!([withdraw.1]);
     let withdraw_error: Json = json::from_str(&withdraw.1).unwrap();
-    assert!(withdraw_error["error"]
+    withdraw_error["error"]
         .as_str()
         .expect("Expected 'error' field")
-        .contains("Invalid Address"));
+        .contains("Address hrp ltc is not a valid hrp for tBTC");
     assert!(withdraw_error.get("error_path").is_none());
     assert!(withdraw_error.get("error_trace").is_none());
     assert!(withdraw_error.get("error_type").is_none());
@@ -4198,7 +4198,7 @@ fn test_withdraw_cashaddresses() {
         "userpass": mm.userpass,
         "method": "electrum",
         "coin": "BCH",
-        "servers": [{"url":"blackie.c3-soft.com:60001"},{"url":"testnet.imaginary.cash:50001"}],
+        "servers": [{"url":"blackie.c3-soft.com:60001"}, {"url":"bch0.kister.net:51001"}, {"url":"testnet.imaginary.cash:50001"}],
         "mm2": 1,
     })))
     .unwrap();
@@ -4318,7 +4318,7 @@ fn test_withdraw_cashaddresses() {
         "userpass": mm.userpass,
         "method": "electrum",
         "coin": "BCH",
-        "servers": [{"url":"blackie.c3-soft.com:60001"},{"url":"testnet.imaginary.cash:50001"}],
+        "servers": [{"url":"blackie.c3-soft.com:60001"}, {"url":"bch0.kister.net:51001"}, {"url":"testnet.imaginary.cash:50001"}],
         "address_format":{"format":"standard"},
         "mm2": 1,
     })))
@@ -4408,7 +4408,7 @@ fn test_withdraw_to_different_cashaddress_network_should_fail() {
         "userpass": mm.userpass,
         "method": "electrum",
         "coin": "BCH",
-        "servers": [{"url":"blackie.c3-soft.com:60001"},{"url":"testnet.imaginary.cash:50001"}],
+        "servers": [{"url":"blackie.c3-soft.com:60001"}, {"url":"bch0.kister.net:51001"}, {"url":"testnet.imaginary.cash:50001"}],
         "mm2": 1,
     })))
     .unwrap();
@@ -5109,7 +5109,7 @@ fn test_validateaddress() {
     assert!(!result["is_valid"].as_bool().unwrap());
     let reason = result["reason"].as_str().unwrap();
     log!((reason));
-    assert!(reason.contains("Address 1DmFp16U73RrVZtYUbo2Ectt8mAnYScpqM has invalid"));
+    assert!(reason.contains("Expected either P2PKH or P2SH prefix"));
 
     // test invalid ETH address
 

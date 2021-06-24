@@ -100,6 +100,7 @@ use tx_history_db::{TxHistoryDb, TxHistoryError, TxHistoryOps, TxHistoryResult};
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "zhtlc"))]
 pub mod z_coin;
+use crate::utxo::UnsupportedAddr;
 #[cfg(all(not(target_arch = "wasm32"), feature = "zhtlc"))]
 use z_coin::{z_coin_from_conf_and_request, ZCoin};
 
@@ -703,6 +704,10 @@ impl From<CoinFindError> for WithdrawError {
             CoinFindError::NoSuchCoin { coin } => WithdrawError::NoSuchCoin { coin },
         }
     }
+}
+
+impl From<UnsupportedAddr> for WithdrawError {
+    fn from(e: UnsupportedAddr) -> Self { WithdrawError::InvalidAddress(e.to_string()) }
 }
 
 impl WithdrawError {

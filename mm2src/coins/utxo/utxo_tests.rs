@@ -1299,18 +1299,12 @@ fn test_address_from_str_with_cashaddress_activated() {
     ))
     .unwrap();
 
-    let error = coin
-        .address_from_str("1DmFp16U73RrVZtYUbo2Ectt8mAnYScpqM")
-        .err()
-        .unwrap();
-    assert!(error.contains("Cashaddress address format requested for BCH, but legacy format used instead"));
-
     // other error on parse
     let error = coin
         .address_from_str("bitcoincash:000000000000000000000000000000000000000000")
         .err()
         .unwrap();
-    assert!(error.contains("Checksum verification failed"));
+    assert!(error.contains("Invalid address: bitcoincash:000000000000000000000000000000000000000000"));
 }
 
 #[test]
@@ -1344,7 +1338,7 @@ fn test_address_from_str_with_legacy_address_activated() {
         .address_from_str("0000000000000000000000000000000000")
         .err()
         .unwrap();
-    assert!(error.contains("Invalid Address"));
+    assert!(error.contains("Invalid address: 0000000000000000000000000000000000"));
 }
 
 #[test]

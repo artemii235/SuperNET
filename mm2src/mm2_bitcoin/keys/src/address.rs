@@ -58,6 +58,8 @@ impl AddressFormat {
     pub fn is_segwit(&self) -> bool { matches!(*self, AddressFormat::Segwit) }
 
     pub fn is_cashaddress(&self) -> bool { matches!(*self, AddressFormat::CashAddress { .. }) }
+
+    pub fn is_legacy(&self) -> bool { matches!(*self, AddressFormat::Standard) }
 }
 
 /// `AddressHash` with prefix and t addr zcash prefix
@@ -206,12 +208,7 @@ impl Address {
         checksum_type: ChecksumType,
         p2pkh_prefix: u8,
         p2sh_prefix: u8,
-        addr_format: AddressFormat,
     ) -> Result<Address, String> {
-        if addr_format == AddressFormat::Segwit {
-            return Err("Segwit address format is not supported".into());
-        }
-
         let address = CashAddress::decode(cashaddr)?;
 
         if address.hash.len() != 20 {
@@ -235,7 +232,11 @@ impl Address {
             hash,
             checksum_type,
             hrp: None,
-            addr_format,
+            addr_format: AddressFormat::CashAddress {
+                network: address.prefix.to_string(),
+                pub_addr_prefix: p2pkh_prefix,
+                p2sh_addr_prefix: p2sh_prefix,
+            },
         })
     }
 
@@ -458,11 +459,10 @@ mod tests {
         ];
 
         for i in 0..3 {
-            let actual_address =
-                Address::from_cashaddress(cashaddresses[i], ChecksumType::DSHA256, 0, 5, AddressFormat::Standard)
-                    .unwrap();
+            let actual_address = Address::from_cashaddress(cashaddresses[i], ChecksumType::DSHA256, 0, 5).unwrap();
             let expected_address: Address = expected[i].into();
-            assert_eq!(actual_address, expected_address);
+            // comparing only hashes here as Address::from_cashaddress has a different internal format from into()
+            assert_eq!(actual_address.hash, expected_address.hash);
             let actual_cashaddress = actual_address
                 .to_cashaddress("bitcoincash", 0, 5)
                 .unwrap()
@@ -481,7 +481,6 @@ mod tests {
                 ChecksumType::DSHA256,
                 0,
                 5,
-                AddressFormat::Standard
             ),
             Err("Expect 20 bytes long hash".into())
         );

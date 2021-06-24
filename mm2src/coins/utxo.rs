@@ -454,6 +454,22 @@ pub struct UtxoCoinFields {
     pub tx_hash_algo: TxHashAlgo,
 }
 
+#[derive(Debug, Display)]
+pub enum UnsupportedAddr {
+    #[display(
+        fmt = "Legacy address format requested for {}, but {} format used instead",
+        ticker,
+        format
+    )]
+    LegacyActivated { ticker: String, format: String },
+    #[display(fmt = "Expected either P2PKH or P2SH prefix")]
+    PrefixError,
+    #[display(fmt = "Address hrp {} is not a valid hrp for {}", hrp, ticker)]
+    HrpError { ticker: String, hrp: String },
+    #[display(fmt = "Segwit not activated in the config for {}", _0)]
+    SegwitNotActivated(String),
+}
+
 impl UtxoCoinFields {
     pub fn transaction_preimage(&self) -> TransactionInputSigner {
         let lock_time = if self.conf.ticker == "KMD" {
@@ -479,6 +495,50 @@ impl UtxoCoinFields {
             zcash: self.conf.zcash,
             str_d_zeel: None,
             hash_algo: self.tx_hash_algo.into(),
+        }
+    }
+
+    pub fn check_withdraw_address_supported(&self, addr: &Address) -> Result<(), MmError<UnsupportedAddr>> {
+        let conf = &self.conf;
+
+        match addr.addr_format {
+            // Considering that legacy is supported with any configured formats
+            // This can be changed depending on the coins implementation
+            UtxoAddressFormat::Standard => {
+                let is_p2pkh = addr.prefix == conf.pub_addr_prefix && addr.t_addr_prefix == conf.pub_t_addr_prefix;
+                let is_p2sh = addr.prefix == conf.p2sh_addr_prefix
+                    && addr.t_addr_prefix == conf.p2sh_t_addr_prefix
+                    && conf.segwit;
+                if !is_p2pkh && !is_p2sh {
+                    MmError::err(UnsupportedAddr::PrefixError)
+                } else {
+                    Ok(())
+                }
+            },
+            UtxoAddressFormat::Segwit => {
+                if !conf.segwit {
+                    return MmError::err(UnsupportedAddr::SegwitNotActivated(conf.ticker.clone()));
+                }
+
+                if addr.hrp != conf.bech32_hrp {
+                    MmError::err(UnsupportedAddr::HrpError {
+                        ticker: conf.ticker.clone(),
+                        hrp: addr.hrp.clone().unwrap_or_default(),
+                    })
+                } else {
+                    Ok(())
+                }
+            },
+            UtxoAddressFormat::CashAddress { .. } => {
+                if addr.addr_format == conf.default_address_format || addr.addr_format == self.my_address.addr_format {
+                    Ok(())
+                } else {
+                    MmError::err(UnsupportedAddr::LegacyActivated {
+                        ticker: conf.ticker.clone(),
+                        format: "cashaddress".into(),
+                    })
+                }
+            },
         }
     }
 }

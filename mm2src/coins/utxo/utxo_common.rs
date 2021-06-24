@@ -15,7 +15,7 @@ use futures::compat::Future01CompatExt;
 use futures::future::{FutureExt, TryFutureExt};
 use futures01::future::Either;
 use keys::bytes::Bytes;
-use keys::{Address, AddressFormat as UtxoAddressFormat, AddressHash, CashAddress, KeyPair, Public, SegwitAddress, Type};
+use keys::{Address, AddressFormat as UtxoAddressFormat, AddressHash, KeyPair, Public, SegwitAddress, Type};
 use primitives::hash::H512;
 use rpc::v1::types::{Bytes as BytesJson, H256 as H256Json};
 use script::{Builder, Opcode, Script, ScriptAddress, SignatureVersion, TransactionInputSigner,
@@ -218,59 +218,31 @@ where
     coin.my_spendable_balance()
 }
 
-pub fn address_from_str(coin: &UtxoCoinFields, address: &str) -> Result<Address, String> {
-    address_from_str_and_format(&coin.conf, address, &coin.my_address.addr_format)
+pub fn address_from_str_unchecked(coin: &UtxoCoinFields, address: &str) -> Result<Address, String> {
+    if let Ok(legacy) = Address::from_str(address) {
+        return Ok(legacy);
+    }
+
+    if let Ok(segwit) = Address::from_segwitaddress(address, coin.conf.checksum_type) {
+        return Ok(segwit);
+    }
+
+    if let Ok(cashaddress) = Address::from_cashaddress(
+        address,
+        coin.conf.checksum_type,
+        coin.conf.pub_addr_prefix,
+        coin.conf.p2sh_addr_prefix,
+    ) {
+        return Ok(cashaddress);
+    }
+
+    return ERR!("Invalid address: {}", address);
 }
 
-pub fn address_from_str_and_format(
-    conf: &UtxoCoinConf,
-    address: &str,
-    address_format: &UtxoAddressFormat,
-) -> Result<Address, String> {
-    match address_format {
-        UtxoAddressFormat::Standard => Address::from_str(address)
-            .or_else(|e| match Address::from_cashaddress(
-                &address,
-                conf.checksum_type,
-                conf.pub_addr_prefix,
-                conf.p2sh_addr_prefix,
-                UtxoAddressFormat::Standard) {
-                Ok(_) => ERR!("Legacy address format requested for {}, but cashaddress format used instead. Try to call 'convertaddress'", conf.ticker),
-                Err(_) => match Address::from_segwitaddress(&address, conf.checksum_type) {
-                    Ok(_) => ERR!("Legacy address format requested for {}, but segwit address format used instead. Try to call 'convertaddress'", conf.ticker),
-                    Err(_) => ERR!("{}", e),
-                    },
-                },
-            ),
-        UtxoAddressFormat::Segwit => Address::from_segwitaddress(address, conf.checksum_type)
-        .or_else(|e| match Address::from_str(&address) {
-            Ok(_) => ERR!("Segwit address format requested for {}, but legacy format used instead. Try to call 'convertaddress", conf.ticker),
-            Err(_) => match Address::from_cashaddress(
-                &address,
-                conf.checksum_type,
-                conf.pub_addr_prefix,
-                conf.p2sh_addr_prefix,
-                UtxoAddressFormat::Segwit) {
-                    Ok(_) => ERR!("Segwit address format requested for {}, but cashaddress format used instead.", conf.ticker),
-                    Err(_) => ERR!("{}", e),
-                },
-            },
-        ),
-        UtxoAddressFormat::CashAddress { network, pub_addr_prefix, p2sh_addr_prefix } => Address::from_cashaddress(
-            &address,
-            conf.checksum_type,
-            conf.pub_addr_prefix,
-            conf.p2sh_addr_prefix,
-            UtxoAddressFormat::CashAddress { network: network.to_string(), pub_addr_prefix: *pub_addr_prefix, p2sh_addr_prefix: *p2sh_addr_prefix})
-            .or_else(|e| match Address::from_str(&address) {
-                Ok(_) => ERR!("Cashaddress address format requested for {}, but legacy format used instead. Try to call 'convertaddress'", conf.ticker),
-                Err(_) => match Address::from_segwitaddress(&address, conf.checksum_type) {
-                    Ok(_) => ERR!("Cashaddress address format requested for {}, but segwit address format used instead.", conf.ticker),
-                    Err(_) => ERR!("{}", e),
-                    },
-                },
-            ),
-    }
+pub fn address_from_str(coin: &UtxoCoinFields, address: &str) -> Result<Address, String> {
+    let addr = try_s!(address_from_str_unchecked(coin, address));
+    try_s!(coin.check_withdraw_address_supported(&addr));
+    Ok(addr)
 }
 
 pub async fn get_current_mtp(coin: &UtxoCoinFields, coin_variant: CoinVariant) -> UtxoRpcResult<u32> {
@@ -1409,70 +1381,14 @@ where
 
     let conf = &coin.as_ref().conf;
 
-    let script_pubkey = if let Ok(to) = SegwitAddress::from_str(&req.to) {
-        if Some(to.hrp.clone()) != conf.bech32_hrp {
-            let error = format!("Address {} is not a valid bech32 address for {}", to, conf.ticker);
-            MmError::err(WithdrawError::InvalidAddress(error))
-        } else {
-            Ok(Builder::build_p2wpkh(&AddressHash::from(&to.program[..])))
-        }
-    } else {
-        // check coin supports cashaddress or not
-        let to = if conf.default_address_format.is_cashaddress() {
-            // check if to address is in cashaddress format
-            match CashAddress::from_str(&req.to) {
-                Ok(cashaddress) => {
-                    // check if to address uses the same network as the coin
-                    if let UtxoAddressFormat::CashAddress { network, .. } = &coin.as_ref().my_address.addr_format {
-                        if network != &cashaddress.prefix.to_string() {
-                            let error = "Invalid Network".to_owned();
-                            MmError::err(WithdrawError::InvalidAddress(error))?
-                        }
-                    }
-                    //convert "to" address to Address Struct
-                    address_from_str_and_format(conf, &req.to, &UtxoAddressFormat::CashAddress {
-                        network: cashaddress.prefix.to_string(),
-                        pub_addr_prefix: conf.pub_t_addr_prefix,
-                        p2sh_addr_prefix: conf.p2sh_t_addr_prefix,
-                    })
-                    .map_to_mm(WithdrawError::InvalidAddress)?
-                },
-                // Legacy BCH format case
-                Err(_) => address_from_str_and_format(conf, &req.to, &UtxoAddressFormat::Standard)
-                    .map_to_mm(WithdrawError::InvalidAddress)?,
-            }
-        } else {
-            // Normal Legacy case
-            address_from_str_and_format(conf, &req.to, &UtxoAddressFormat::Standard)
-                .map_to_mm(WithdrawError::InvalidAddress)?
-        };
+    let to = address_from_str(coin.as_ref(), &req.to).map_to_mm(WithdrawError::InvalidAddress)?;
 
-        let is_p2pkh = to.prefix == conf.pub_addr_prefix && to.t_addr_prefix == conf.pub_t_addr_prefix;
-        let is_p2sh = to.prefix == conf.p2sh_addr_prefix && to.t_addr_prefix == conf.p2sh_t_addr_prefix && conf.segwit;
-
-        if to.checksum_type != conf.checksum_type {
-            let error = format!(
-                "Address {} has invalid checksum type, it must be {:?}",
-                to,
-                coin.as_ref().conf.checksum_type
-            );
-            MmError::err(WithdrawError::InvalidAddress(error))
-        } else if is_p2pkh {
-            Ok(Builder::build_p2pkh(&to.hash))
-        } else if is_p2sh {
-            Ok(Builder::build_p2sh(&to.hash))
-        } else {
-            let error = "Expected either P2PKH or P2SH".to_owned();
-            MmError::err(WithdrawError::InvalidAddress(error))
-        }
-    }?;
+    let script_pubkey = output_script(&to).to_bytes();
 
     let signature_version = match coin.as_ref().my_address.addr_format {
         UtxoAddressFormat::Segwit => SignatureVersion::WitnessV0,
         _ => conf.signature_version,
     };
-
-    let script_pubkey = script_pubkey.to_bytes();
 
     let _utxo_lock = UTXO_LOCK.lock().await;
     let (unspents, _) = coin.ordered_mature_unspents(&coin.as_ref().my_address).await?;
@@ -2570,16 +2486,11 @@ fn address_from_any_format(conf: &UtxoCoinConf, from: &str) -> Result<Address, S
         Err(e) => e,
     };
 
-    let cashaddress_err = match Address::from_cashaddress(
-        from,
-        conf.checksum_type,
-        conf.pub_addr_prefix,
-        conf.p2sh_addr_prefix,
-        conf.default_address_format.clone(),
-    ) {
-        Ok(a) => return Ok(a),
-        Err(e) => e,
-    };
+    let cashaddress_err =
+        match Address::from_cashaddress(from, conf.checksum_type, conf.pub_addr_prefix, conf.p2sh_addr_prefix) {
+            Ok(a) => return Ok(a),
+            Err(e) => e,
+        };
 
     ERR!(
         "error on parse standard address: {:?}, error on parse cashaddress: {:?}",
