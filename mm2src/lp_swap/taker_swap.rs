@@ -1713,7 +1713,8 @@ pub async fn max_taker_vol(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, S
     };
 
     let res = try_s!(json::to_vec(&json!({
-        "result": max_vol.to_fraction()
+        "result": max_vol.to_fraction(),
+        "coin": coin.ticker(),
     })));
     Ok(try_s!(Response::builder().body(res)))
 }
