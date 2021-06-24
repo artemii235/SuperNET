@@ -1,2 +1,8 @@
 [target.wasm32-unknown-unknown]
 runner = 'wasm-bindgen-test-runner'
+
+[source.crates-kmd-io]
+registry = "https://github.com/KomodoPlatform/crates.io-index"
+
+[source.crates-io]
+replace-with = "crates-kmd-io"
