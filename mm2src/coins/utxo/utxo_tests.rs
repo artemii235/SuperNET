@@ -1331,7 +1331,7 @@ fn test_address_from_str_with_legacy_address_activated() {
         .address_from_str("bitcoincash:qzxqqt9lh4feptf0mplnk58gnajfepzwcq9f2rxk55")
         .err()
         .unwrap();
-    assert!(error.contains("Legacy address format requested for BCH, but cashaddress format used instead"));
+    assert!(error.contains("Legacy address format activated for BCH, but CashAddress format used instead"));
 
     // other error on parse
     let error = coin

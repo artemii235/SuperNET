@@ -1,10 +1,9 @@
 //! Bitcoin keys.
 
-#[macro_use] extern crate gstuff;
-
 extern crate base58;
 extern crate bech32;
 extern crate bitcrypto as crypto;
+extern crate derive_more;
 extern crate primitives;
 extern crate rustc_hex as hex;
 extern crate secp256k1;

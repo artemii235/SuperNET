@@ -7,6 +7,7 @@
 
 use base58::{FromBase58, ToBase58};
 use crypto::{checksum, dgroestl512, dhash256, keccak256, ChecksumType};
+use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::ops::Deref;
@@ -27,12 +28,13 @@ pub enum Type {
     P2SH,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Display, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "format")]
 pub enum AddressFormat {
     /// Standard UTXO address format.
     /// In Bitcoin Cash context the standard format also known as 'legacy'.
     #[serde(rename = "standard")]
+    #[display(fmt = "Legacy")]
     Standard,
     /// Segwit Address
     /// https://github.com/bitcoin/bips/blob/master/bip-0173.mediawiki
@@ -41,6 +43,7 @@ pub enum AddressFormat {
     /// Bitcoin Cash specific address format.
     /// https://github.com/bitcoincashorg/bitcoincash.org/blob/master/spec/cashaddr.md
     #[serde(rename = "cashaddress")]
+    #[display(fmt = "CashAddress")]
     CashAddress {
         network: String,
         #[serde(default)]
@@ -79,6 +82,7 @@ pub struct Address {
     pub addr_format: AddressFormat,
 }
 
+// Todo: add segwit checksum detection
 pub fn detect_checksum(data: &[u8], checksum: &[u8]) -> Result<ChecksumType, Error> {
     if checksum == &dhash256(data)[0..4] {
         return Ok(ChecksumType::DSHA256);
@@ -190,7 +194,7 @@ impl Address {
             AddressFormat::Standard => Ok(self.to_string()),
             AddressFormat::Segwit => match &self.hrp {
                 Some(hrp) => Ok(SegwitAddress::new(&self.hash, hrp.clone()).to_string()),
-                None => ERR!("Cannot display segwit address for a coin with no bech32_hrp in config"),
+                None => Err("Cannot display segwit address for a coin with no bech32_hrp in config".into()),
             },
 
             AddressFormat::CashAddress {

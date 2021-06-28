@@ -457,11 +457,16 @@ pub struct UtxoCoinFields {
 #[derive(Debug, Display)]
 pub enum UnsupportedAddr {
     #[display(
-        fmt = "Legacy address format requested for {}, but {} format used instead",
+        fmt = "{} address format activated for {}, but {} format used instead",
+        activated_format,
         ticker,
-        format
+        used_format
     )]
-    LegacyActivated { ticker: String, format: String },
+    FormatMismatch {
+        ticker: String,
+        activated_format: String,
+        used_format: String,
+    },
     #[display(fmt = "Expected either P2PKH or P2SH prefix")]
     PrefixError,
     #[display(fmt = "Address hrp {} is not a valid hrp for {}", hrp, ticker)]
@@ -533,9 +538,10 @@ impl UtxoCoinFields {
                 if addr.addr_format == conf.default_address_format || addr.addr_format == self.my_address.addr_format {
                     Ok(())
                 } else {
-                    MmError::err(UnsupportedAddr::LegacyActivated {
+                    MmError::err(UnsupportedAddr::FormatMismatch {
                         ticker: conf.ticker.clone(),
-                        format: "cashaddress".into(),
+                        activated_format: self.my_address.addr_format.to_string(),
+                        used_format: addr.addr_format.to_string(),
                     })
                 }
             },

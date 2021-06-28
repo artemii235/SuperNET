@@ -5085,7 +5085,7 @@ fn test_validateaddress() {
     assert!(!result["is_valid"].as_bool().unwrap());
     let reason = result["reason"].as_str().unwrap();
     log!((reason));
-    assert!(reason.contains("Legacy address format requested for RICK, but cashaddress format used instead"));
+    assert!(reason.contains("Legacy address format activated for RICK, but CashAddress format used instead"));
 
     // test invalid RICK address (invalid prefixes)
 
