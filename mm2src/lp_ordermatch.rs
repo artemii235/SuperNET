@@ -3581,7 +3581,7 @@ struct OrderStatusReq {
 struct OrderForRpcWithCancellationReason<'a> {
     #[serde(flatten)]
     order: OrderForRpc<'a>,
-    cancellation_reason: &'a String,
+    cancellation_reason: &'a str,
 }
 
 #[cfg(target_arch = "wasm32")]
