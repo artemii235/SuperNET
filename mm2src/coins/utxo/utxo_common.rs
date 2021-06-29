@@ -930,7 +930,7 @@ fn pubkey_from_witness_script(witness_script: &[Bytes]) -> Result<H264, String> 
 
     let signature = witness_script[0].clone().take();
     if signature.is_empty() {
-        return ERR!("Empty signature data is witness script");
+        return ERR!("Empty signature data in witness script");
     }
     try_s!(Signature::parse_der(&signature[..signature.len() - 1]));
 
