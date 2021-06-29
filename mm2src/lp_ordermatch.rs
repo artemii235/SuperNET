@@ -3577,7 +3577,28 @@ struct OrderStatusReq {
     uuid: Uuid,
 }
 
+#[derive(Serialize)]
+struct OrderForRpcWithCancellationReason<'a> {
+    #[serde(flatten)]
+    order: OrderForRpc<'a>,
+    cancellation_reason: &'a str,
+}
+
+#[cfg(target_arch = "wasm32")]
 pub async fn order_status(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
+    let res = json!({
+        "error": format!("'order_status' is only supported in native mode"),
+    });
+    Response::builder()
+        .status(404)
+        .body(json::to_vec(&res).expect("Serialization failed"))
+        .map_err(|e| ERRL!("{}", e))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn order_status(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
+    use crate::mm2::database::my_orders::select_status_by_uuid;
+
     let req: OrderStatusReq = try_s!(json::from_value(req));
 
     let ordermatch_ctx = try_s!(OrdermatchContext::from_ctx(&ctx));
@@ -3606,8 +3627,13 @@ pub async fn order_status(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, St
     let order_path = my_orders_history_dir(&ctx).join(req.uuid.to_string() + ".json");
 
     if let Ok(order) = json::from_slice::<Order>(&slurp(&order_path)) {
+        let cancellation_reason = &try_s!(select_status_by_uuid(&ctx.sqlite_connection(), &req.uuid));
+        let res = json!(OrderForRpcWithCancellationReason {
+            order: OrderForRpc::from(&order),
+            cancellation_reason,
+        });
         return Response::builder()
-            .body(json::to_vec(&OrderForRpc::from(&order)).expect("Serialization failed"))
+            .body(json::to_vec(&res).expect("Serialization failed"))
             .map_err(|e| ERRL!("{}", e));
     }
 

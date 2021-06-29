@@ -17,7 +17,7 @@ use futures01::future::Either;
 use keys::bytes::Bytes;
 use keys::{Address, AddressHash, KeyPair, Public, SegwitAddress, Type};
 use primitives::hash::H512;
-use rpc::v1::types::{Bytes as BytesJson, H256 as H256Json};
+use rpc::v1::types::{Bytes as BytesJson, TransactionInputEnum, H256 as H256Json};
 use script::{Builder, Opcode, Script, ScriptAddress, SignatureVersion, TransactionInputSigner,
              UnsignedTransactionInput};
 use secp256k1::{PublicKey, Signature};
@@ -1563,9 +1563,7 @@ where
             },
         };
 
-        let need_update = history_map.iter().any(|(_, tx)| {
-            tx.should_update_timestamp() || tx.should_update_block_height() || tx.should_update_kmd_rewards()
-        });
+        let need_update = history_map.iter().any(|(_, tx)| tx.should_update());
         match (&my_balance, &actual_balance) {
             (Some(prev_balance), Some(actual_balance)) if prev_balance == actual_balance && !need_update => {
                 // my balance hasn't been changed, there is no need to reload tx_history
@@ -1657,13 +1655,13 @@ where
                         e.get_mut().block_height = height;
                         updated = true;
                     }
-                    if e.get().should_update_timestamp() {
+                    if e.get().should_update_timestamp() || e.get().firo_negative_fee() {
                         mm_counter!(ctx.metrics, "tx.history.request.count", 1, "coin" => coin.as_ref().conf.ticker.clone(), "method" => "tx_detail_by_hash");
 
                         if let Ok(tx_details) = coin.tx_details_by_hash(&txid.0, &mut input_transactions).await {
                             mm_counter!(ctx.metrics, "tx.history.response.count", 1, "coin" => coin.as_ref().conf.ticker.clone(), "method" => "tx_detail_by_hash");
-
-                            e.get_mut().timestamp = tx_details.timestamp;
+                            // replace with new tx details in case we need to update any data
+                            e.insert(tx_details);
                             updated = true;
                         }
                     }
@@ -1904,12 +1902,23 @@ where
             amount: big_decimal_from_sat_unsigned(kmd_rewards, coin.as_ref().decimals),
             claimed_by_me,
         };
-        (fee, Some(kmd_rewards_details))
+        (
+            big_decimal_from_sat(fee, coin.as_ref().decimals),
+            Some(kmd_rewards_details),
+        )
+    } else if input_amount == 0 {
+        let fee = verbose_tx.vin.iter().fold(0., |cur, input| {
+            let fee = match input {
+                TransactionInputEnum::Lelantus(lelantus) => lelantus.n_fees,
+                _ => 0.,
+            };
+            cur + fee
+        });
+        (fee.into(), None)
     } else {
         let fee = input_amount as i64 - output_amount as i64;
-        (fee, None)
+        (big_decimal_from_sat(fee, coin.as_ref().decimals), None)
     };
-    let fee = big_decimal_from_sat(fee, coin.as_ref().decimals);
 
     // remove address duplicates in case several inputs were spent from same address
     // or several outputs are sent to same address

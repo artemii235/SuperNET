@@ -500,6 +500,7 @@ impl TradePreimageResponse {
 #[serde(deny_unknown_fields)]
 pub struct MaxTakerVolResponse {
     pub result: Fraction,
+    pub coin: String,
 }
 
 #[derive(Debug, Deserialize)]

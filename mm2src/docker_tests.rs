@@ -2234,12 +2234,13 @@ mod docker_tests {
         })))
         .unwrap();
         assert!(rc.0.is_success(), "!max_taker_vol: {}", rc.1);
-        let json: Json = json::from_str(&rc.1).unwrap();
+        let json: MaxTakerVolResponse = json::from_str(&rc.1).unwrap();
         // the result of equation `max_vol + max_vol / 777 + 0.00002 = 1`
         // derived from `max_vol = balance - locked - trade_fee - fee_to_send_taker_fee - dex_fee(max_vol)`
         // where balance = 1, locked = 0, trade_fee = fee_to_send_taker_fee = 0.00001, dex_fee = max_vol / 777
-        assert_eq!(json["result"]["numer"], Json::from("38849223"));
-        assert_eq!(json["result"]["denom"], Json::from("38900000"));
+        let expected = MmNumber::from((38849223, 38900000)).to_fraction();
+        assert_eq!(json.result, expected);
+        assert_eq!(json.coin, "MYCOIN1");
 
         let rc = block_on(mm_alice.rpc(json! ({
             "userpass": mm_alice.userpass,
@@ -2247,10 +2248,7 @@ mod docker_tests {
             "base": "MYCOIN1",
             "rel": "MYCOIN",
             "price": 1,
-            "volume": {
-                "numer": json["result"]["numer"],
-                "denom": json["result"]["denom"],
-            }
+            "volume": json.result,
         })))
         .unwrap();
         assert!(rc.0.is_success(), "!sell: {}", rc.1);
