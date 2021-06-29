@@ -527,7 +527,7 @@ impl UtxoCommonOps for ZCoin {
     fn my_public_key(&self) -> &Public { self.utxo_arc.key_pair.public() }
 
     fn address_from_str(&self, address: &str) -> Result<Address, String> {
-        utxo_common::address_from_str(&self.utxo_arc.conf, address)
+        utxo_common::checked_address_from_str(&self.utxo_arc.conf, address)
     }
 
     async fn get_current_mtp(&self) -> UtxoRpcResult<u32> { utxo_common::get_current_mtp(&self.utxo_arc).await }

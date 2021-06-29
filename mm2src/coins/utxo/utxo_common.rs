@@ -239,7 +239,7 @@ pub fn address_from_str_unchecked(coin: &UtxoCoinFields, address: &str) -> Resul
     return ERR!("Invalid address: {}", address);
 }
 
-pub fn address_from_str(coin: &UtxoCoinFields, address: &str) -> Result<Address, String> {
+pub fn checked_address_from_str(coin: &UtxoCoinFields, address: &str) -> Result<Address, String> {
     let addr = try_s!(address_from_str_unchecked(coin, address));
     try_s!(coin.check_withdraw_address_supported(&addr));
     Ok(addr)
@@ -929,6 +929,9 @@ fn pubkey_from_witness_script(witness_script: &[Bytes]) -> Result<H264, String> 
     }
 
     let signature = witness_script[0].clone().take();
+    if signature.is_empty() {
+        return ERR!("Empty signature data is witness script");
+    }
     try_s!(Signature::parse_der(&signature[..signature.len() - 1]));
 
     let pubkey = try_s!(PublicKey::parse_slice(&witness_script[1], None));
@@ -1381,7 +1384,7 @@ where
 
     let conf = &coin.as_ref().conf;
 
-    let to = address_from_str(coin.as_ref(), &req.to).map_to_mm(WithdrawError::InvalidAddress)?;
+    let to = checked_address_from_str(coin.as_ref(), &req.to).map_to_mm(WithdrawError::InvalidAddress)?;
 
     let script_pubkey = output_script(&to).to_bytes();
 

@@ -473,7 +473,7 @@ impl UtxoCommonOps for Qrc20Coin {
     fn my_public_key(&self) -> &Public { self.utxo.key_pair.public() }
 
     fn address_from_str(&self, address: &str) -> Result<UtxoAddress, String> {
-        utxo_common::address_from_str(&self.utxo, address)
+        utxo_common::checked_address_from_str(&self.utxo, address)
     }
 
     async fn get_current_mtp(&self) -> UtxoRpcResult<u32> {
