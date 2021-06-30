@@ -1384,7 +1384,9 @@ where
 
     let conf = &coin.as_ref().conf;
 
-    let to = checked_address_from_str(coin.as_ref(), &req.to).map_to_mm(WithdrawError::InvalidAddress)?;
+    let to = coin
+        .address_from_str(&req.to)
+        .map_to_mm(WithdrawError::InvalidAddress)?;
 
     let script_pubkey = output_script(&to).to_bytes();
 
