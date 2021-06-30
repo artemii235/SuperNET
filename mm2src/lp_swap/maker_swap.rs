@@ -785,7 +785,7 @@ impl MakerSwap {
 
     async fn confirm_taker_payment_spend(&self) -> Result<(Option<MakerSwapCommand>, Vec<MakerSwapEvent>), String> {
         // we should wait for only one confirmation to make sure our spend transaction is not failed
-        let confirmations = 1;
+        let confirmations = std::cmp::min(1, self.r().data.taker_payment_confirmations);
         let requires_nota = false;
         let wait_fut = self.taker_coin.wait_for_confirmations(
             &self.r().taker_payment_spend.clone().unwrap().tx_hex,

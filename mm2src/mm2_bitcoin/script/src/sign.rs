@@ -99,6 +99,7 @@ pub struct UnsignedTransactionInput {
     pub previous_output: OutPoint,
     pub sequence: u32,
     pub amount: u64,
+    pub witness: Vec<Vec<u8>>,
 }
 
 /// Used for resigning and loading test transactions
@@ -108,6 +109,7 @@ impl From<TransactionInput> for UnsignedTransactionInput {
             previous_output: i.previous_output,
             sequence: i.sequence,
             amount: 0,
+            witness: i.script_witness.into_iter().map(Vec::from).collect(),
         }
     }
 }
@@ -624,6 +626,7 @@ mod tests {
                 hash: previous_tx_hash,
             },
             amount: 0,
+            witness: vec![Vec::new()],
         };
 
         let output = TransactionOutput {

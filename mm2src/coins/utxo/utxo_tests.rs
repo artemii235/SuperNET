@@ -70,6 +70,8 @@ fn utxo_coin_fields_for_test(rpc_client: UtxoRpcClientEnum, force_seed: Option<&
         hash: key_pair.public().address_hash(),
         t_addr_prefix: 0,
         checksum_type,
+        hrp: None,
+        addr_format: UtxoAddressFormat::Standard,
     };
     let my_script_pubkey = Builder::build_p2pkh(&my_address.hash).to_bytes();
 
@@ -80,7 +82,7 @@ fn utxo_coin_fields_for_test(rpc_client: UtxoRpcClientEnum, force_seed: Option<&
             overwintered: true,
             segwit: false,
             tx_version: 4,
-            address_format: UtxoAddressFormat::Standard,
+            default_address_format: UtxoAddressFormat::Standard,
             asset_chain: true,
             p2sh_addr_prefix: 85,
             p2sh_t_addr_prefix: 0,
@@ -1297,23 +1299,12 @@ fn test_address_from_str_with_cashaddress_activated() {
     ))
     .unwrap();
 
-    assert_eq!(
-        coin.address_from_str("bitcoincash:qzxqqt9lh4feptf0mplnk58gnajfepzwcq9f2rxk55"),
-        Ok("1DmFp16U73RrVZtYUbo2Ectt8mAnYScpqM".into())
-    );
-
-    let error = coin
-        .address_from_str("1DmFp16U73RrVZtYUbo2Ectt8mAnYScpqM")
-        .err()
-        .unwrap();
-    assert!(error.contains("Cashaddress address format activated for BCH, but legacy format used instead"));
-
     // other error on parse
     let error = coin
         .address_from_str("bitcoincash:000000000000000000000000000000000000000000")
         .err()
         .unwrap();
-    assert!(error.contains("Checksum verification failed"));
+    assert!(error.contains("Invalid address: bitcoincash:000000000000000000000000000000000000000000"));
 }
 
 #[test]
@@ -1336,30 +1327,18 @@ fn test_address_from_str_with_legacy_address_activated() {
     ))
     .unwrap();
 
-    let expected = Address::from_cashaddress(
-        "bitcoincash:qzxqqt9lh4feptf0mplnk58gnajfepzwcq9f2rxk55",
-        coin.as_ref().conf.checksum_type,
-        coin.as_ref().conf.pub_addr_prefix,
-        coin.as_ref().conf.p2sh_addr_prefix,
-    )
-    .unwrap();
-    assert_eq!(
-        coin.address_from_str("1DmFp16U73RrVZtYUbo2Ectt8mAnYScpqM"),
-        Ok(expected)
-    );
-
     let error = coin
         .address_from_str("bitcoincash:qzxqqt9lh4feptf0mplnk58gnajfepzwcq9f2rxk55")
         .err()
         .unwrap();
-    assert!(error.contains("Legacy address format activated for BCH, but cashaddress format used instead"));
+    assert!(error.contains("Legacy address format activated for BCH, but CashAddress format used instead"));
 
     // other error on parse
     let error = coin
         .address_from_str("0000000000000000000000000000000000")
         .err()
         .unwrap();
-    assert!(error.contains("Invalid Address"));
+    assert!(error.contains("Invalid address: 0000000000000000000000000000000000"));
 }
 
 #[test]

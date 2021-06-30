@@ -92,7 +92,7 @@ use uuid::Uuid;
 #[path = "lp_swap/check_balance.rs"] mod check_balance;
 #[path = "lp_swap/trade_preimage.rs"] mod trade_preimage;
 
-pub use check_balance::check_other_coin_balance_for_swap;
+pub use check_balance::{check_other_coin_balance_for_swap, CheckBalanceError};
 pub use maker_swap::{calc_max_maker_vol, check_balance_for_maker_swap, maker_swap_trade_preimage, run_maker_swap,
                      stats_maker_swap_dir, MakerSavedSwap, MakerSwap, MakerTradePreimage, RunMakerSwapInput};
 use maker_swap::{stats_maker_swap_file_path, MakerSwapEvent};

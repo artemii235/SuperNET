@@ -2556,10 +2556,12 @@ dependencies = [
  "base58",
  "bech32",
  "bitcrypto",
+ "derive_more",
  "libsecp256k1 0.2.2",
  "primitives",
  "rustc-hex 2.1.0",
  "serde",
+ "serde_derive",
 ]
 
 [[package]]

@@ -465,19 +465,15 @@ impl UtxoCommonOps for Qrc20Coin {
     async fn get_htlc_spend_fee(&self) -> UtxoRpcResult<u64> { utxo_common::get_htlc_spend_fee(self).await }
 
     fn addresses_from_script(&self, script: &Script) -> Result<Vec<UtxoAddress>, String> {
-        utxo_common::addresses_from_script(&self.utxo.conf, script)
+        utxo_common::addresses_from_script(&self.utxo, script)
     }
 
     fn denominate_satoshis(&self, satoshi: i64) -> f64 { utxo_common::denominate_satoshis(&self.utxo, satoshi) }
 
     fn my_public_key(&self) -> &Public { self.utxo.key_pair.public() }
 
-    fn display_address(&self, address: &UtxoAddress) -> Result<String, String> {
-        utxo_common::display_address(&self.utxo.conf, address)
-    }
-
     fn address_from_str(&self, address: &str) -> Result<UtxoAddress, String> {
-        utxo_common::address_from_str(&self.utxo.conf, address)
+        utxo_common::checked_address_from_str(&self.utxo, address)
     }
 
     async fn get_current_mtp(&self) -> UtxoRpcResult<u32> {
@@ -1266,7 +1262,7 @@ async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> WithdrawResult
 
     // [`MarketCoinOps::my_address`] and [`UtxoCommonOps::display_address`] shouldn't fail
     let my_address = coin.my_address().map_to_mm(WithdrawError::InternalError)?;
-    let to_address = coin.display_address(&to_addr).map_to_mm(WithdrawError::InternalError)?;
+    let to_address = to_addr.display_address().map_to_mm(WithdrawError::InternalError)?;
 
     let fee_details = Qrc20FeeDetails {
         // QRC20 fees are paid in base platform currency (in particular Qtum)
