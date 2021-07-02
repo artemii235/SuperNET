@@ -1,6 +1,7 @@
 use super::lp_protocol::{MmRpcBuilder, MmRpcRequest};
 use super::{DispatcherError, DispatcherResult, PUBLIC_METHODS};
 use crate::mm2::lp_swap::trade_preimage_rpc;
+use coins::get_raw_transaction;
 use coins::withdraw;
 use common::log::{error, warn};
 use common::mm_ctx::MmArc;
@@ -85,6 +86,7 @@ async fn dispatcher(request: MmRpcRequest, ctx: MmArc) -> DispatcherResult<Respo
     match request.method.as_str() {
         "withdraw" => handle_mmrpc(ctx, request, withdraw).await,
         "trade_preimage" => handle_mmrpc(ctx, request, trade_preimage_rpc).await,
+        "get_raw_transaction" => handle_mmrpc(ctx, request, get_raw_transaction).await,
         _ => MmError::err(DispatcherError::NoSuchMethod { method: request.method }),
     }
 }
