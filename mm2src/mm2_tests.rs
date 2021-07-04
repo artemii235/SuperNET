@@ -5409,12 +5409,13 @@ fn test_get_raw_transaction() {
     assert_eq!(res.result.tx_hex, expected_hex);
 
     // invalid coin
+    let zombi_coin = String::from("ZOMBI");
     let raw = block_on(mm.rpc(json! ({
         "mmrpc": "2.0",
         "userpass": mm.userpass,
         "method": "get_raw_transaction",
         "params": {
-            "coin": "ZOMBI",
+            "coin": zombi_coin,
             "tx_hash": "0xbdef3970c00752b0dc811cd93faadfd75a7a52e6b8e0b608c5519edcad801359",
         },
         "id": 1,
@@ -5425,15 +5426,23 @@ fn test_get_raw_transaction() {
         "get_raw_transaction should have failed, but got: {}",
         raw.1
     );
+    let error: RpcErrorResponse<raw_transaction_error::InvalidCoin> = json::from_str(&raw.1).unwrap();
+    let expected_error = raw_transaction_error::InvalidCoin {
+        coin: zombi_coin,
+    };
+    assert_eq!(error.error_type, "NoSuchCoin");
+    assert_eq!(error.error_data, Some(expected_error));
+
 
     // invalid hash
+    let invalid_hash = String::from("xxx");
     let raw = block_on(mm.rpc(json! ({
         "mmrpc": "2.0",
         "userpass": mm.userpass,
         "method": "get_raw_transaction",
         "params": {
             "coin": "ETH",
-            "tx_hash": "xxx",
+            "tx_hash": invalid_hash,
         },
         "id": 2,
     })))
@@ -5443,15 +5452,19 @@ fn test_get_raw_transaction() {
         "get_raw_transaction should have failed, but got: {}",
         raw.1
     );
+    let error: RpcErrorResponse<String> = json::from_str(&raw.1).unwrap();
+    assert_eq!(error.error_type, "InvalidHashError");
+    assert_eq!(error.error_data, Some(invalid_hash));
 
     // valid hash but not found
+    let not_found_hash = String::from( "0xbdef3970c00752b0dc811cd93faadfd75a7a52e6b8e0b608c000000000000000");
     let raw = block_on(mm.rpc(json! ({
         "mmrpc": "2.0",
         "userpass": mm.userpass,
         "method": "get_raw_transaction",
         "params": {
             "coin": "ETH",
-            "tx_hash": "0xbdef3970c00752b0dc811cd93faadfd75a7a52e6b8e0b608c000000000000000",
+            "tx_hash": not_found_hash,
         },
         "id": 3,
     })))
@@ -5461,6 +5474,10 @@ fn test_get_raw_transaction() {
         "get_raw_transaction should have failed, but got: {}",
         raw.1
     );
+    let error: RpcErrorResponse<String> = json::from_str(&raw.1).unwrap();
+    assert_eq!(error.error_type, "HashNotFound");
+    assert_eq!(error.error_data, Some(not_found_hash));
+
 }
 
 #[test]
