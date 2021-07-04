@@ -148,7 +148,6 @@ impl From<CoinFindError> for RawTransactionError {
     }
 }
 
-// my code
 #[derive(Deserialize)]
 pub struct RawTransactionRequest {
     pub coin: String,
