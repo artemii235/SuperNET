@@ -1391,7 +1391,7 @@ where
         Ok(hex) => Ok(RawTransactionRes { tx_hex: hex }),
         Err(err) => {
             log!("Error: get_transaction_bytes "[err]);
-            return MmError::err(RawTransactionError::HashNotFound(req.tx_hash));
+            return MmError::err(RawTransactionError::Transport(req.tx_hash));
         },
     }
 }

@@ -485,13 +485,13 @@ async fn get_raw_transaction_impl(coin: EthCoin, req: RawTransactionRequest) -> 
         Ok(tx) => tx,
         Err(err) => {
             log!("Error: transaction not found "[err]);
-            return MmError::err(RawTransactionError::HashNotFound(req.tx_hash));
+            return MmError::err(RawTransactionError::Transport(req.tx_hash));
         },
     };
     let web3_tx = match web3_tx {
         Some(t) => t,
         None => {
-            return MmError::err(RawTransactionError::HashNotFound(req.tx_hash));
+            return MmError::err(RawTransactionError::Transport(req.tx_hash));
         },
     };
     let raw = signed_tx_from_web3_tx(web3_tx).unwrap();

@@ -9,10 +9,10 @@ use crate::utxo::{qtum, sign_tx, ActualTxFee, AdditionalTxData, FeePolicy, Gener
                   HistoryUtxoTx, HistoryUtxoTxMap, RecentlySpentOutPoints, UtxoCoinBuilder, UtxoCoinFields,
                   UtxoCommonOps, UtxoTx, VerboseTransactionFrom, UTXO_LOCK};
 use crate::{BalanceError, BalanceFut, CoinBalance, FeeApproxStage, FoundSwapTxSpend, HistorySyncState, MarketCoinOps,
-            MmCoin, NegotiateSwapContractAddrErr, RawTransactionFut, RawTransactionRequest, SwapOps, TradeFee, 
-            TradePreimageError, TradePreimageFut,
-            TradePreimageResult, TradePreimageValue, TransactionDetails, TransactionEnum, TransactionFut,
-            ValidateAddressResult, WithdrawError, WithdrawFee, WithdrawFut, WithdrawRequest, WithdrawResult};
+            MmCoin, NegotiateSwapContractAddrErr, RawTransactionFut, RawTransactionRequest, SwapOps, TradeFee,
+            TradePreimageError, TradePreimageFut, TradePreimageResult, TradePreimageValue, TransactionDetails,
+            TransactionEnum, TransactionFut, ValidateAddressResult, WithdrawError, WithdrawFee, WithdrawFut,
+            WithdrawRequest, WithdrawResult};
 use async_trait::async_trait;
 use bigdecimal::BigDecimal;
 use bitcrypto::{dhash160, sha256};

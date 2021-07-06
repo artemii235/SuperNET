@@ -5427,12 +5427,9 @@ fn test_get_raw_transaction() {
         raw.1
     );
     let error: RpcErrorResponse<raw_transaction_error::InvalidCoin> = json::from_str(&raw.1).unwrap();
-    let expected_error = raw_transaction_error::InvalidCoin {
-        coin: zombi_coin,
-    };
+    let expected_error = raw_transaction_error::InvalidCoin { coin: zombi_coin };
     assert_eq!(error.error_type, "NoSuchCoin");
     assert_eq!(error.error_data, Some(expected_error));
-
 
     // invalid hash
     let invalid_hash = String::from("xxx");
@@ -5456,8 +5453,8 @@ fn test_get_raw_transaction() {
     assert_eq!(error.error_type, "InvalidHashError");
     assert_eq!(error.error_data, Some(invalid_hash));
 
-    // valid hash but not found
-    let not_found_hash = String::from( "0xbdef3970c00752b0dc811cd93faadfd75a7a52e6b8e0b608c000000000000000");
+    // valid hash but transport error
+    let not_found_hash = String::from("0xbdef3970c00752b0dc811cd93faadfd75a7a52e6b8e0b608c000000000000000");
     let raw = block_on(mm.rpc(json! ({
         "mmrpc": "2.0",
         "userpass": mm.userpass,
@@ -5475,9 +5472,8 @@ fn test_get_raw_transaction() {
         raw.1
     );
     let error: RpcErrorResponse<String> = json::from_str(&raw.1).unwrap();
-    assert_eq!(error.error_type, "HashNotFound");
+    assert_eq!(error.error_type, "Transport");
     assert_eq!(error.error_data, Some(not_found_hash));
-
 }
 
 #[test]

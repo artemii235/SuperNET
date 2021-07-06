@@ -84,9 +84,9 @@ fn auth(request: &MmRpcRequest, ctx: &MmArc) -> DispatcherResult<()> {
 
 async fn dispatcher(request: MmRpcRequest, ctx: MmArc) -> DispatcherResult<Response<Vec<u8>>> {
     match request.method.as_str() {
-        "withdraw" => handle_mmrpc(ctx, request, withdraw).await,
-        "trade_preimage" => handle_mmrpc(ctx, request, trade_preimage_rpc).await,
         "get_raw_transaction" => handle_mmrpc(ctx, request, get_raw_transaction).await,
+        "trade_preimage" => handle_mmrpc(ctx, request, trade_preimage_rpc).await,
+        "withdraw" => handle_mmrpc(ctx, request, withdraw).await,
         _ => MmError::err(DispatcherError::NoSuchMethod { method: request.method }),
     }
 }

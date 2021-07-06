@@ -125,8 +125,8 @@ pub enum RawTransactionError {
     NoSuchCoin { coin: String },
     #[display(fmt = "Invalid  hash: {}", _0)]
     InvalidHashError(String),
-    #[display(fmt = "Hash not found: {}", _0)]
-    HashNotFound(String),
+    #[display(fmt = "Transport error: {}", _0)]
+    Transport(String),
 }
 
 impl HttpStatusCode for RawTransactionError {
@@ -135,7 +135,7 @@ impl HttpStatusCode for RawTransactionError {
             RawTransactionError::NoSuchCoin { .. } | RawTransactionError::InvalidHashError(_) => {
                 StatusCode::BAD_REQUEST
             },
-            RawTransactionError::HashNotFound(_) => StatusCode::BAD_REQUEST,
+            RawTransactionError::Transport(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 }
