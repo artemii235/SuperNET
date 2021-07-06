@@ -31,7 +31,8 @@ use std::sync::atomic::Ordering as AtomicOrderding;
 pub use chain::Transaction as UtxoTx;
 
 use self::rpc_clients::{electrum_script_hash, UnspentInfo, UtxoRpcClientEnum, UtxoRpcClientOps, UtxoRpcResult};
-use crate::{CanRefundHtlc, CoinBalance, TradePreimageValue, TxFeeDetails, ValidateAddressResult, WithdrawResult};
+use crate::{CanRefundHtlc, CoinBalance, RawTransactionRequest, RawTransactionRes, TradePreimageValue, TxFeeDetails,
+            ValidateAddressResult, WithdrawResult};
 
 const MIN_BTC_TRADING_VOL: &str = "0.00777";
 pub const DEFAULT_SWAP_VOUT: usize = 0;
@@ -1375,6 +1376,25 @@ pub fn min_trading_vol(coin: &UtxoCoinFields) -> MmNumber {
 }
 
 pub fn is_asset_chain(coin: &UtxoCoinFields) -> bool { coin.conf.asset_chain }
+
+pub async fn get_raw_transaction<T>(coin: T, req: RawTransactionRequest) -> RawTransactionResult
+where
+    T: AsRef<UtxoCoinFields> + UtxoCommonOps + MarketCoinOps,
+{
+    let hash = match H256Json::from_str(&req.tx_hash) {
+        Ok(h) => h,
+        Err(_) => {
+            return MmError::err(RawTransactionError::InvalidHashError(req.tx_hash));
+        },
+    };
+    match coin.as_ref().rpc_client.get_transaction_bytes(hash).compat().await {
+        Ok(hex) => Ok(RawTransactionRes { tx_hex: hex }),
+        Err(err) => {
+            log!("Error: get_transaction_bytes "[err]);
+            return MmError::err(RawTransactionError::HashNotFound(req.tx_hash));
+        },
+    }
+}
 
 pub async fn withdraw<T>(coin: T, req: WithdrawRequest) -> WithdrawResult
 where
