@@ -9,8 +9,8 @@ use crate::utxo::{qtum, sign_tx, ActualTxFee, AdditionalTxData, FeePolicy, Gener
                   HistoryUtxoTx, HistoryUtxoTxMap, RecentlySpentOutPoints, UtxoCoinBuilder, UtxoCoinFields,
                   UtxoCommonOps, UtxoTx, VerboseTransactionFrom, UTXO_LOCK};
 use crate::{BalanceError, BalanceFut, CoinBalance, FeeApproxStage, FoundSwapTxSpend, HistorySyncState, MarketCoinOps,
-            MmCoin, NegotiateSwapContractAddrErr, RawTransactionError, RawTransactionFut, RawTransactionRequest,
-            RawTransactionRes, RawTransactionResult, SwapOps, TradeFee, TradePreimageError, TradePreimageFut,
+            MmCoin, NegotiateSwapContractAddrErr, RawTransactionFut, RawTransactionRequest, SwapOps, TradeFee, 
+            TradePreimageError, TradePreimageFut,
             TradePreimageResult, TradePreimageValue, TransactionDetails, TransactionEnum, TransactionFut,
             ValidateAddressResult, WithdrawError, WithdrawFee, WithdrawFut, WithdrawRequest, WithdrawResult};
 use async_trait::async_trait;
@@ -1011,7 +1011,7 @@ impl MmCoin for Qrc20Coin {
     }
 
     fn get_raw_transaction(&self, req: RawTransactionRequest) -> RawTransactionFut {
-        Box::new(qrc20_get_raw_transaction(self.clone(), req).boxed().compat())
+        Box::new(utxo_common::get_raw_transaction(self.clone(), req).boxed().compat())
     }
 
     fn decimals(&self) -> u8 { utxo_common::decimals(&self.utxo) }
@@ -1194,22 +1194,6 @@ pub struct Qrc20FeeDetails {
     gas_price: u64,
     /// Total used gas.
     total_gas_fee: BigDecimal,
-}
-
-async fn qrc20_get_raw_transaction(coin: Qrc20Coin, req: RawTransactionRequest) -> RawTransactionResult {
-    let hash = match H256Json::from_str(&req.tx_hash) {
-        Ok(h) => h,
-        Err(_) => {
-            return MmError::err(RawTransactionError::InvalidHashError(req.tx_hash));
-        },
-    };
-    match coin.utxo.rpc_client.get_transaction_bytes(hash).compat().await {
-        Ok(hex) => Ok(RawTransactionRes { tx_hex: hex }),
-        Err(err) => {
-            log!("Error: get_transaction_bytes "[err]);
-            return MmError::err(RawTransactionError::HashNotFound(req.tx_hash));
-        },
-    }
 }
 
 async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> WithdrawResult {
