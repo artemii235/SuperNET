@@ -1241,8 +1241,10 @@ pub trait UtxoCoinBuilder {
             *p2sh_addr_prefix = self.p2sh_address_prefix();
         }
 
-        if address_format.is_segwit() && !self.conf()["segwit"].as_bool().unwrap_or(false) {
-            ERR!("Cannot use Segwit address format for coin without segwit support")
+        if address_format.is_segwit()
+            && (!self.conf()["segwit"].as_bool().unwrap_or(false) || self.conf()["bech32_hrp"].is_null())
+        {
+            ERR!("Cannot use Segwit address format for coin without segwit support or bech32_hrp in config")
         } else {
             Ok(address_format)
         }

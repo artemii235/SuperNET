@@ -560,7 +560,10 @@ impl JsonRpcClient for NativeClientImpl {
 impl UtxoRpcClientOps for NativeClient {
     fn list_unspent(&self, address: &Address, decimals: u8) -> UtxoRpcFut<Vec<UnspentInfo>> {
         let addresses = match address.addr_format {
-            UtxoAddressFormat::Segwit => vec![address.to_segwitaddress().unwrap().to_string()],
+            UtxoAddressFormat::Segwit => vec![address
+                .to_segwitaddress()
+                .expect("to_segwitaddress should not fail for UtxoAddressFormat::Segwit")
+                .to_string()],
             _ => vec![address.to_string()],
         };
         let fut = self
@@ -613,7 +616,10 @@ impl UtxoRpcClientOps for NativeClient {
 
     fn display_balance(&self, address: Address, _decimals: u8) -> RpcRes<BigDecimal> {
         let addresses = match address.addr_format {
-            UtxoAddressFormat::Segwit => vec![address.to_segwitaddress().unwrap().to_string()],
+            UtxoAddressFormat::Segwit => vec![address
+                .to_segwitaddress()
+                .expect("to_segwitaddress should not fail for UtxoAddressFormat::Segwit")
+                .to_string()],
             _ => vec![address.to_string()],
         };
         Box::new(self.list_unspent_impl(0, std::i32::MAX, addresses).map(|unspents| {
