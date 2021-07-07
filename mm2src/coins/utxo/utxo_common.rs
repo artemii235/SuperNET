@@ -1381,12 +1381,7 @@ pub async fn get_raw_transaction<T>(coin: T, req: RawTransactionRequest) -> RawT
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps + MarketCoinOps,
 {
-    let hash = match H256Json::from_str(&req.tx_hash) {
-        Ok(h) => h,
-        Err(_) => {
-            return MmError::err(RawTransactionError::InvalidHashError(req.tx_hash));
-        },
-    };
+    let hash = H256Json::from_str(&req.tx_hash).map_to_mm(|e| RawTransactionError::InvalidHashError(e.to_string()))?;
     match coin.as_ref().rpc_client.get_transaction_bytes(hash).compat().await {
         Ok(hex) => Ok(RawTransactionRes { tx_hex: hex }),
         Err(err) => {
