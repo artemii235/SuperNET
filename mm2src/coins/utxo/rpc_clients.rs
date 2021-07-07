@@ -616,14 +616,11 @@ impl UtxoRpcClientOps for NativeClient {
             UtxoAddressFormat::Segwit => vec![address.to_segwitaddress().unwrap().to_string()],
             _ => vec![address.to_string()],
         };
-        Box::new(
-            self.list_unspent_impl(0, std::i32::MAX, addresses)
-                .map(|unspents| {
-                    unspents
-                        .iter()
-                        .fold(BigDecimal::from(0), |sum, unspent| sum + unspent.amount.to_decimal())
-                }),
-        )
+        Box::new(self.list_unspent_impl(0, std::i32::MAX, addresses).map(|unspents| {
+            unspents
+                .iter()
+                .fold(BigDecimal::from(0), |sum, unspent| sum + unspent.amount.to_decimal())
+        }))
     }
 
     fn estimate_fee_sat(
