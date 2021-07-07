@@ -612,8 +612,12 @@ impl UtxoRpcClientOps for NativeClient {
     }
 
     fn display_balance(&self, address: Address, _decimals: u8) -> RpcRes<BigDecimal> {
+        let addresses = match address.addr_format {
+            UtxoAddressFormat::Segwit => vec![address.to_segwitaddress().unwrap().to_string()],
+            _ => vec![address.to_string()],
+        };
         Box::new(
-            self.list_unspent_impl(0, std::i32::MAX, vec![address.to_string()])
+            self.list_unspent_impl(0, std::i32::MAX, addresses)
                 .map(|unspents| {
                     unspents
                         .iter()
