@@ -5432,14 +5432,13 @@ fn test_get_raw_transaction() {
     assert_eq!(error.error_data, Some(expected_error));
 
     // invalid hash
-    let invalid_hash = String::from("xxx");
     let raw = block_on(mm.rpc(json! ({
         "mmrpc": "2.0",
         "userpass": mm.userpass,
         "method": "get_raw_transaction",
         "params": {
             "coin": "ETH",
-            "tx_hash": invalid_hash,
+            "tx_hash": "xxx",
         },
         "id": 2,
     })))
@@ -5451,29 +5450,26 @@ fn test_get_raw_transaction() {
     );
     let error: RpcErrorResponse<String> = json::from_str(&raw.1).unwrap();
     assert_eq!(error.error_type, "InvalidHashError");
-    assert_eq!(error.error_data, Some(invalid_hash));
 
     // valid hash but transport error
-    let not_found_hash = String::from("0xbdef3970c00752b0dc811cd93faadfd75a7a52e6b8e0b608c000000000000000");
     let raw = block_on(mm.rpc(json! ({
         "mmrpc": "2.0",
         "userpass": mm.userpass,
         "method": "get_raw_transaction",
         "params": {
             "coin": "ETH",
-            "tx_hash": not_found_hash,
+            "tx_hash": "0xbdef3970c00752b0dc811cd93faadfd75a7a52e6b8e0b608c000000000000000",
         },
         "id": 3,
     })))
     .unwrap();
     assert!(
-        raw.0.is_client_error(),
+        raw.0.is_server_error(),
         "get_raw_transaction should have failed, but got: {}",
         raw.1
     );
     let error: RpcErrorResponse<String> = json::from_str(&raw.1).unwrap();
     assert_eq!(error.error_type, "Transport");
-    assert_eq!(error.error_data, Some(not_found_hash));
 }
 
 #[test]
