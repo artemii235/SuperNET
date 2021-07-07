@@ -475,12 +475,8 @@ impl EthCoinImpl {
 }
 
 async fn get_raw_transaction_impl(coin: EthCoin, req: RawTransactionRequest) -> RawTransactionResult {
-    let hash = match H256::from_str(&req.tx_hash[2..req.tx_hash.len()]) {
-        Ok(h) => h,
-        Err(_) => {
-            return MmError::err(RawTransactionError::InvalidHashError(req.tx_hash));
-        },
-    };
+    let hash = H256::from_str(&req.tx_hash[2..req.tx_hash.len()])
+        .map_to_mm(|e| RawTransactionError::InvalidHashError(e.to_string()))?;
     let web3_tx = match coin.web3.eth().transaction(TransactionId::Hash(hash)).compat().await {
         Ok(tx) => tx,
         Err(err) => {
