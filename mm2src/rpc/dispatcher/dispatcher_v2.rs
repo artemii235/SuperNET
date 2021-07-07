@@ -1,8 +1,7 @@
 use super::lp_protocol::{MmRpcBuilder, MmRpcRequest};
 use super::{DispatcherError, DispatcherResult, PUBLIC_METHODS};
 use crate::mm2::lp_swap::trade_preimage_rpc;
-use coins::get_raw_transaction;
-use coins::withdraw;
+use coins::{get_raw_transaction, withdraw};
 use common::log::{error, warn};
 use common::mm_ctx::MmArc;
 use common::mm_error::prelude::*;
