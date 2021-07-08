@@ -26,7 +26,7 @@ use futures01::{Future, Sink, Stream};
 use http::header::AUTHORIZATION;
 use http::Uri;
 use http::{Request, StatusCode};
-use keys::{Address, AddressFormat as UtxoAddressFormat};
+use keys::Address;
 #[cfg(test)] use mocktopus::macros::*;
 use rpc::v1::types::{Bytes as BytesJson, Transaction as RpcTransaction, H256 as H256Json};
 use serde_json::{self as json, Value as Json};
