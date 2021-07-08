@@ -2510,10 +2510,16 @@ fn address_from_any_format(conf: &UtxoCoinConf, from: &str) -> Result<Address, S
             Err(e) => e,
         };
 
+    let segwit_err = match Address::from_segwitaddress(from, conf.checksum_type) {
+        Ok(a) => return Ok(a),
+        Err(e) => e,
+    };
+
     ERR!(
-        "error on parse standard address: {:?}, error on parse cashaddress: {:?}",
+        "error on parse standard address: {:?}, error on parse cashaddress: {:?}, error on parse segwit address: {:?}",
         standard_err,
         cashaddress_err,
+        segwit_err,
     )
 }
 
