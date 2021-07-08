@@ -172,9 +172,11 @@ impl DisplayLayout for Address {
 impl fmt::Display for Address {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match &self.addr_format {
-            AddressFormat::Segwit => SegwitAddress::new(&self.hash, self.hrp.clone().unwrap_or_default())
-                .to_string()
-                .fmt(f),
+            AddressFormat::Segwit => {
+                SegwitAddress::new(&self.hash, self.hrp.clone().expect("Segwit address should have an hrp"))
+                    .to_string()
+                    .fmt(f)
+            },
             _ => self.layout().to_base58().fmt(f),
         }
     }

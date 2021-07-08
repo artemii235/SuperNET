@@ -1647,8 +1647,8 @@ fn test_withdraw_and_send_from_segwit() {
         0.00001,
     );
 
-    // Wait 5 seconds to avoid double spending
-    thread::sleep(Duration::from_secs(5));
+    // Wait 10 seconds to avoid double spending
+    thread::sleep(Duration::from_secs(10));
 
     // Send from Segwit Address to Legacy Address
     withdraw_and_send(
