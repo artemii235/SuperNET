@@ -1477,9 +1477,12 @@ where
 {
     let to_address_format: UtxoAddressFormat =
         json::from_value(to_address_format).map_err(|e| ERRL!("Error on parse UTXO address format {:?}", e))?;
-    let from_address = try_s!(address_from_any_format(&coin.as_ref().conf, from));
+    let mut from_address = try_s!(address_from_any_format(&coin.as_ref().conf, from));
     match to_address_format {
-        UtxoAddressFormat::Standard => Ok(from_address.to_string()),
+        UtxoAddressFormat::Standard => {
+            from_address.addr_format = UtxoAddressFormat::Standard;
+            Ok(from_address.to_string())
+        },
         UtxoAddressFormat::Segwit => {
             let bech32_hrp = &coin.as_ref().conf.bech32_hrp;
             match bech32_hrp {
