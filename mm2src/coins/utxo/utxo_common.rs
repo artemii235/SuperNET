@@ -1517,8 +1517,9 @@ where
     let is_p2sh = address.prefix == coin.as_ref().conf.p2sh_addr_prefix
         && address.t_addr_prefix == coin.as_ref().conf.p2sh_t_addr_prefix
         && coin.as_ref().conf.segwit;
+    let is_segwit = address.hrp.is_some() && address.hrp == coin.as_ref().conf.bech32_hrp && coin.as_ref().conf.segwit;
 
-    if is_p2pkh || is_p2sh {
+    if is_p2pkh || is_p2sh || is_segwit {
         ValidateAddressResult {
             is_valid: true,
             reason: None,

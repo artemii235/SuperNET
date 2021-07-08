@@ -559,15 +559,8 @@ impl JsonRpcClient for NativeClientImpl {
 #[cfg_attr(test, mockable)]
 impl UtxoRpcClientOps for NativeClient {
     fn list_unspent(&self, address: &Address, decimals: u8) -> UtxoRpcFut<Vec<UnspentInfo>> {
-        let addresses = match address.addr_format {
-            UtxoAddressFormat::Segwit => vec![address
-                .to_segwitaddress()
-                .expect("to_segwitaddress should not fail for UtxoAddressFormat::Segwit")
-                .to_string()],
-            _ => vec![address.to_string()],
-        };
         let fut = self
-            .list_unspent_impl(0, std::i32::MAX, addresses)
+            .list_unspent_impl(0, std::i32::MAX, vec![address.to_string()])
             .map_to_mm_fut(UtxoRpcError::from)
             .and_then(move |unspents| {
                 let unspents: UtxoRpcResult<Vec<_>> = unspents
@@ -615,18 +608,14 @@ impl UtxoRpcClientOps for NativeClient {
     }
 
     fn display_balance(&self, address: Address, _decimals: u8) -> RpcRes<BigDecimal> {
-        let addresses = match address.addr_format {
-            UtxoAddressFormat::Segwit => vec![address
-                .to_segwitaddress()
-                .expect("to_segwitaddress should not fail for UtxoAddressFormat::Segwit")
-                .to_string()],
-            _ => vec![address.to_string()],
-        };
-        Box::new(self.list_unspent_impl(0, std::i32::MAX, addresses).map(|unspents| {
-            unspents
-                .iter()
-                .fold(BigDecimal::from(0), |sum, unspent| sum + unspent.amount.to_decimal())
-        }))
+        Box::new(
+            self.list_unspent_impl(0, std::i32::MAX, vec![address.to_string()])
+                .map(|unspents| {
+                    unspents
+                        .iter()
+                        .fold(BigDecimal::from(0), |sum, unspent| sum + unspent.amount.to_decimal())
+                }),
+        )
     }
 
     fn estimate_fee_sat(
