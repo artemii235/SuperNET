@@ -59,13 +59,30 @@ pub trait QtumBasedCoin: AsRef<UtxoCoinFields> + UtxoCommonOps + MarketCoinOps {
             },
             Err(e) => e.to_string(),
         };
+        let utxo_segwit_err = match Address::from_segwitaddress(
+            from,
+            self.as_ref().conf.checksum_type,
+            self.as_ref().my_address.prefix,
+            self.as_ref().my_address.t_addr_prefix,
+        ) {
+            Ok(addr) => {
+                let is_segwit =
+                    addr.hrp.is_some() && addr.hrp == self.as_ref().conf.bech32_hrp && self.as_ref().conf.segwit;
+                if is_segwit {
+                    return Ok(addr);
+                }
+                "Address has invalid hrp".to_string()
+            },
+            Err(e) => e,
+        };
         let contract_err = match contract_addr_from_str(from) {
             Ok(contract_addr) => return Ok(self.utxo_addr_from_contract_addr(contract_addr)),
             Err(e) => e,
         };
         ERR!(
-            "error on parse wallet address: {:?}, error on parse contract address: {:?}",
+            "error on parse wallet address: {:?}, {:?}, error on parse contract address: {:?}",
             utxo_err,
+            utxo_segwit_err,
             contract_err,
         )
     }

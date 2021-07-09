@@ -223,7 +223,12 @@ pub fn address_from_str_unchecked(coin: &UtxoCoinFields, address: &str) -> Resul
         return Ok(legacy);
     }
 
-    if let Ok(segwit) = Address::from_segwitaddress(address, coin.conf.checksum_type) {
+    if let Ok(segwit) = Address::from_segwitaddress(
+        address,
+        coin.conf.checksum_type,
+        coin.my_address.prefix,
+        coin.my_address.t_addr_prefix,
+    ) {
         return Ok(segwit);
     }
 
@@ -232,6 +237,7 @@ pub fn address_from_str_unchecked(coin: &UtxoCoinFields, address: &str) -> Resul
         coin.conf.checksum_type,
         coin.conf.pub_addr_prefix,
         coin.conf.p2sh_addr_prefix,
+        coin.my_address.t_addr_prefix,
     ) {
         return Ok(cashaddress);
     }
@@ -1477,7 +1483,7 @@ where
 {
     let to_address_format: UtxoAddressFormat =
         json::from_value(to_address_format).map_err(|e| ERRL!("Error on parse UTXO address format {:?}", e))?;
-    let mut from_address = try_s!(address_from_any_format(&coin.as_ref().conf, from));
+    let mut from_address = try_s!(coin.address_from_str(from));
     match to_address_format {
         UtxoAddressFormat::Standard => {
             from_address.addr_format = UtxoAddressFormat::Standard;
@@ -2495,32 +2501,6 @@ pub fn address_from_raw_pubkey(
         hrp,
         addr_format,
     })
-}
-
-/// Try to parse address from either cashaddress or standard UTXO address format.
-fn address_from_any_format(conf: &UtxoCoinConf, from: &str) -> Result<Address, String> {
-    let standard_err = match Address::from_str(from) {
-        Ok(a) => return Ok(a),
-        Err(e) => e,
-    };
-
-    let cashaddress_err =
-        match Address::from_cashaddress(from, conf.checksum_type, conf.pub_addr_prefix, conf.p2sh_addr_prefix) {
-            Ok(a) => return Ok(a),
-            Err(e) => e,
-        };
-
-    let segwit_err = match Address::from_segwitaddress(from, conf.checksum_type) {
-        Ok(a) => return Ok(a),
-        Err(e) => e,
-    };
-
-    ERR!(
-        "error on parse standard address: {:?}, error on parse cashaddress: {:?}, error on parse segwit address: {:?}",
-        standard_err,
-        cashaddress_err,
-        segwit_err,
-    )
 }
 
 #[allow(clippy::too_many_arguments)]

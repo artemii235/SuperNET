@@ -1329,6 +1329,7 @@ fn trade_test_electrum_and_eth_coins() {
 }
 
 #[test]
+#[ignore]
 #[cfg(not(target_arch = "wasm32"))]
 fn trade_test_electrum_and_maker_segwit() {
     let pairs: &[_] = &[("tBTC", "RICK")];
@@ -1336,6 +1337,7 @@ fn trade_test_electrum_and_maker_segwit() {
 }
 
 #[test]
+#[ignore]
 #[cfg(not(target_arch = "wasm32"))]
 fn trade_test_electrum_and_taker_segwit() {
     let pairs: &[_] = &[("RICK", "tBTC")];
@@ -1564,6 +1566,7 @@ fn test_withdraw_and_send() {
 }
 
 #[test]
+#[ignore]
 #[cfg(not(target_arch = "wasm32"))]
 fn test_withdraw_and_send_from_segwit() {
     let seed = "spice describe gravity federal blast come thank unfair canal monkey style afraid";
@@ -4523,7 +4526,8 @@ fn test_common_cashaddresses() {
 #[cfg(not(target_arch = "wasm32"))]
 fn test_convert_utxo_address() {
     let coins = json!([
-        {"coin":"BCH","pubtype":0,"p2shtype":5,"mm2":1,"protocol":{"type":"UTXO"}},
+        {"coin":"BCH","pubtype":0,"p2shtype":5,"mm2":1,"fork_id": "0x40","protocol":{"type":"UTXO"},
+         "address_format":{"format":"cashaddress","network":"bitcoincash"}},
     ]);
 
     let mm = MarketMakerIt::start(
@@ -4545,9 +4549,9 @@ fn test_convert_utxo_address() {
     log!({ "log path: {}", mm.log_path.display() });
 
     let _electrum = block_on(enable_electrum(&mm, "BCH", false, &[
-        "electrum1.cipig.net:10017",
-        "electrum2.cipig.net:10017",
-        "electrum3.cipig.net:10017",
+        "blackie.c3-soft.com:60001",
+        "bch0.kister.net:51001",
+        "testnet.imaginary.cash:50001",
     ]));
 
     // test standard to cashaddress
@@ -4636,6 +4640,136 @@ fn test_convert_utxo_address() {
         "!convertaddress success but should be error: {}",
         rc.1
     );
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn test_convert_segwit_address() {
+    let coins = json! ([
+        {
+            "coin": "tBTC",
+            "name": "tbitcoin",
+            "fname": "tBitcoin",
+            "rpcport": 18332,
+            "pubtype": 111,
+            "p2shtype": 196,
+            "wiftype": 239,
+            "segwit": true,
+            "bech32_hrp": "tb",
+            "txfee": 1000,
+            "mm2": 1,
+            "required_confirmations": 0,
+            "protocol": {
+                "type": "UTXO"
+            }
+        }
+    ]);
+
+    let mm = MarketMakerIt::start(
+        json! ({
+            "gui": "nogui",
+            "netid": 9998,
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "passphrase": "face pin block number add byte put seek mime test note password sin tab multiple",
+            "coins": coins,
+            "i_am_seed": true,
+            "rpc_password": "pass",
+        }),
+        "pass".into(),
+        local_start!("bob"),
+    )
+    .unwrap();
+    let (_dump_log, _dump_dashboard) = mm.mm_dump();
+    log!({ "log path: {}", mm.log_path.display() });
+
+    let _electrum = block_on(enable_electrum(&mm, "tBTC", false, &[
+        "electrum1.cipig.net:10068",
+        "electrum2.cipig.net:10068",
+        "electrum3.cipig.net:10068",
+    ]));
+
+    // test standard to segwit
+    let rc = block_on(mm.rpc(json! ({
+        "userpass": mm.userpass,
+        "method": "convertaddress",
+        "coin": "tBTC",
+        "from": "mqWYEGxLeK843n3xMTe8EWTFPyoSZjtUXb",
+        "to_address_format":{"format":"segwit"},
+    })))
+    .unwrap();
+    assert_eq!(
+        rc.0,
+        StatusCode::OK,
+        "RPC «convertaddress» failed with status «{}»",
+        rc.0
+    );
+    let actual: Json = json::from_str(&rc.1).unwrap();
+
+    let expected = json!({
+        "result": {
+            "address": "tb1qdkwjk42dw6pryvs9sl0ht3pn3mxghuma64jst5",
+        },
+    });
+    assert_eq!(actual, expected);
+
+    // test segwit to standard
+    let rc = block_on(mm.rpc(json! ({
+        "userpass": mm.userpass,
+        "method": "convertaddress",
+        "coin": "tBTC",
+        "from": "tb1qdkwjk42dw6pryvs9sl0ht3pn3mxghuma64jst5",
+        "to_address_format":{"format":"standard"},
+    })))
+    .unwrap();
+    assert_eq!(
+        rc.0,
+        StatusCode::OK,
+        "RPC «convertaddress» failed with status «{}»",
+        rc.0
+    );
+    let actual: Json = json::from_str(&rc.1).unwrap();
+
+    let expected = json!({
+        "result": {
+            "address": "mqWYEGxLeK843n3xMTe8EWTFPyoSZjtUXb",
+        },
+    });
+    assert_eq!(actual, expected);
+
+    // test invalid tBTC standard address
+    let rc = block_on(mm.rpc(json! ({
+        "userpass": mm.userpass,
+        "method": "convertaddress",
+        "coin": "tBTC",
+        "from": "1AzawDsMqHgoGfaLdtfkQbEvXzCjk5oyFx",
+        "to_address_format":{"format":"segwit"},
+    })))
+    .unwrap();
+    assert!(
+        rc.0.is_server_error(),
+        "!convertaddress success but should be error: {}",
+        rc.1
+    );
+    assert!(rc.1.contains("Expected a valid P2PKH or P2SH prefix for tBTC"));
+
+    // test invalid tBTC segwit address
+    let rc = block_on(mm.rpc(json! ({
+        "userpass": mm.userpass,
+        "method": "convertaddress",
+        "coin": "tBTC",
+        "from": "ltc1qdkwjk42dw6pryvs9sl0ht3pn3mxghuma64jst5",
+        "to_address_format":{"format":"standard"},
+    })))
+    .unwrap();
+    assert!(
+        rc.0.is_server_error(),
+        "!convertaddress success but should be error: {}",
+        rc.1
+    );
+    assert!(rc
+        .1
+        .contains("Invalid address: ltc1qdkwjk42dw6pryvs9sl0ht3pn3mxghuma64jst5"));
 }
 
 #[test]
@@ -5104,7 +5238,7 @@ fn test_validateaddress() {
     assert!(!result["is_valid"].as_bool().unwrap());
     let reason = result["reason"].as_str().unwrap();
     log!((reason));
-    assert!(reason.contains("Expected either P2PKH or P2SH prefix"));
+    assert!(reason.contains("Expected a valid P2PKH or P2SH prefix"));
 
     // test invalid ETH address
 

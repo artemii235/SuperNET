@@ -467,8 +467,8 @@ pub enum UnsupportedAddr {
         activated_format: String,
         used_format: String,
     },
-    #[display(fmt = "Expected either P2PKH or P2SH prefix")]
-    PrefixError,
+    #[display(fmt = "Expected a valid P2PKH or P2SH prefix for {}", _0)]
+    PrefixError(String),
     #[display(fmt = "Address hrp {} is not a valid hrp for {}", hrp, ticker)]
     HrpError { ticker: String, hrp: String },
     #[display(fmt = "Segwit not activated in the config for {}", _0)]
@@ -515,7 +515,7 @@ impl UtxoCoinFields {
                     && addr.t_addr_prefix == conf.p2sh_t_addr_prefix
                     && conf.segwit;
                 if !is_p2pkh && !is_p2sh {
-                    MmError::err(UnsupportedAddr::PrefixError)
+                    MmError::err(UnsupportedAddr::PrefixError(conf.ticker.clone()))
                 } else {
                     Ok(())
                 }
