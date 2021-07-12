@@ -405,15 +405,15 @@ fn trade_base_rel((base, rel): (&str, &str)) {
     /// Generate a wallet with the random private key and fill the wallet with Qtum (required by gas_fee) and specified in `ticker` coin.
     fn generate_and_fill_priv_key(ticker: &str) -> [u8; 32] {
         let timeout = 30; // timeout if test takes more than 30 seconds to run
-        if ticker == "QTUM" {
-            //Segwit QTUM
-            wait_for_estimate_smart_fee(timeout).expect("!wait_for_estimate_smart_fee");
-            let (_ctx, _coin, priv_key) = generate_segwit_qtum_coin_with_random_privkey("QTUM", 10.into(), Some(0));
-
-            return priv_key;
-        }
 
         match ticker {
+            "QTUM" => {
+                //Segwit QTUM
+                wait_for_estimate_smart_fee(timeout).expect("!wait_for_estimate_smart_fee");
+                let (_ctx, _coin, priv_key) = generate_segwit_qtum_coin_with_random_privkey("QTUM", 10.into(), Some(0));
+
+                return priv_key;
+            },
             "QICK" | "QORTY" => {
                 let priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
                 let (_ctx, coin) = qrc20_coin_from_privkey(ticker, &priv_key);
