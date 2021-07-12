@@ -1382,13 +1382,14 @@ where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps + MarketCoinOps,
 {
     let hash = H256Json::from_str(&req.tx_hash).map_to_mm(|e| RawTransactionError::InvalidHashError(e.to_string()))?;
-    match coin.as_ref().rpc_client.get_transaction_bytes(hash).compat().await {
-        Ok(hex) => Ok(RawTransactionRes { tx_hex: hex }),
-        Err(err) => {
-            log!("Error: get_transaction_bytes "[err]);
-            return MmError::err(RawTransactionError::Transport(req.tx_hash));
-        },
-    }
+    let hex = coin
+        .as_ref()
+        .rpc_client
+        .get_transaction_bytes(hash)
+        .compat()
+        .await
+        .map_err(|e| RawTransactionError::Transport(e.to_string()))?;
+    Ok(RawTransactionRes { tx_hex: hex })
 }
 
 pub async fn withdraw<T>(coin: T, req: WithdrawRequest) -> WithdrawResult
