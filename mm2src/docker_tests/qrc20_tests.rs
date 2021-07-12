@@ -404,27 +404,27 @@ fn qrc20_coin_conf_item(ticker: &str) -> Json {
 fn trade_base_rel((base, rel): (&str, &str)) {
     /// Generate a wallet with the random private key and fill the wallet with Qtum (required by gas_fee) and specified in `ticker` coin.
     fn generate_and_fill_priv_key(ticker: &str) -> [u8; 32] {
+        let timeout = 30; // timeout if test takes more than 30 seconds to run
         if ticker == "QTUM" {
             //Segwit QTUM
-            wait_for_estimate_smart_fee(30).expect("!wait_for_estimate_smart_fee");
-            let qtum_balance = MmNumber::from("10").to_decimal();
-            let (_ctx, _coin, priv_key) =
-                generate_segwit_qtum_coin_with_random_privkey("QTUM", qtum_balance.clone(), Some(0));
+            wait_for_estimate_smart_fee(timeout).expect("!wait_for_estimate_smart_fee");
+            let (_ctx, _coin, priv_key) = generate_segwit_qtum_coin_with_random_privkey("QTUM", 10.into(), Some(0));
 
             return priv_key;
         }
 
-        let timeout = 30; // timeout if test takes more than 30 seconds to run
-        let priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
-
         match ticker {
             "QICK" | "QORTY" => {
+                let priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
                 let (_ctx, coin) = qrc20_coin_from_privkey(ticker, &priv_key);
                 let my_address = coin.my_address().expect("!my_address");
                 fill_address(&coin, &my_address, 10.into(), timeout);
                 fill_qrc20_address(&coin, 10.into(), timeout);
+
+                return priv_key;
             },
             "MYCOIN" | "MYCOIN1" => {
+                let priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
                 let (_ctx, coin) = utxo_coin_from_privkey(ticker, &priv_key);
                 let my_address = coin.my_address().expect("!my_address");
                 fill_address(&coin, &my_address, 10.into(), timeout);
@@ -432,11 +432,11 @@ fn trade_base_rel((base, rel): (&str, &str)) {
                 let (_ctx, coin) = qrc20_coin_from_privkey("QICK", &priv_key);
                 let my_address = coin.my_address().expect("!my_address");
                 fill_address(&coin, &my_address, 10.into(), timeout);
+
+                return priv_key;
             },
             _ => panic!("Expected either QICK or QORTY or MYCOIN or MYCOIN1, found {}", ticker),
         }
-
-        priv_key
     }
 
     let bob_priv_key = generate_and_fill_priv_key(base);
@@ -1653,8 +1653,7 @@ fn test_trade_preimage_deduct_fee_from_output_failed() {
 fn test_segwit_native_balance() {
     wait_for_estimate_smart_fee(30).expect("!wait_for_estimate_smart_fee");
     // generate QTUM coin with the dynamic fee and fill the wallet by 0.5 Qtums
-    let qtum_balance = MmNumber::from("0.5").to_decimal();
-    let (_ctx, _coin, priv_key) = generate_segwit_qtum_coin_with_random_privkey("QTUM", qtum_balance.clone(), Some(0));
+    let (_ctx, _coin, priv_key) = generate_segwit_qtum_coin_with_random_privkey("QTUM", 0.5.into(), Some(0));
 
     let confpath = unsafe { QTUM_CONF_PATH.as_ref().expect("Qtum config is not set yet") };
     let coins = json! ([
@@ -1678,7 +1677,9 @@ fn test_segwit_native_balance() {
     let (_alice_dump_log, _alice_dump_dashboard) = mm_dump(&mm.log_path);
     block_on(mm.wait_for_log(22., |log| log.contains(">>>>>>>>> DEX stats "))).unwrap();
 
-    log!([block_on(enable_native(&mm, "QTUM", &[]))]);
+    let enable_res = block_on(enable_native(&mm, "QTUM", &[]));
+    let balance = enable_res["balance"].as_str().unwrap();
+    assert_eq!(balance, "0.5");
 
     let my_balance = block_on(mm.rpc(json!({
         "userpass": mm.userpass,
@@ -1697,8 +1698,7 @@ fn test_segwit_native_balance() {
 fn test_withdraw_and_send_from_segwit() {
     wait_for_estimate_smart_fee(30).expect("!wait_for_estimate_smart_fee");
     // generate QTUM coin with the dynamic fee and fill the wallet by 0.5 Qtums
-    let qtum_balance = MmNumber::from("0.5").to_decimal();
-    let (_ctx, _coin, priv_key) = generate_segwit_qtum_coin_with_random_privkey("QTUM", qtum_balance.clone(), Some(0));
+    let (_ctx, _coin, priv_key) = generate_segwit_qtum_coin_with_random_privkey("QTUM", 0.5.into(), Some(0));
 
     let confpath = unsafe { QTUM_CONF_PATH.as_ref().expect("Qtum config is not set yet") };
     let coins = json! ([
@@ -1737,8 +1737,7 @@ fn test_withdraw_and_send_from_segwit() {
 fn test_withdraw_and_send_legacy_to_segwit() {
     wait_for_estimate_smart_fee(30).expect("!wait_for_estimate_smart_fee");
     // generate QTUM coin with the dynamic fee and fill the wallet by 0.5 Qtums
-    let qtum_balance = MmNumber::from("0.5").to_decimal();
-    let (_ctx, _coin, priv_key) = generate_qtum_coin_with_random_privkey("QTUM", qtum_balance.clone(), Some(0));
+    let (_ctx, _coin, priv_key) = generate_qtum_coin_with_random_privkey("QTUM", 0.5.into(), Some(0));
 
     let confpath = unsafe { QTUM_CONF_PATH.as_ref().expect("Qtum config is not set yet") };
     let coins = json! ([
