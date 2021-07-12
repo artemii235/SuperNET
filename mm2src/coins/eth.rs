@@ -477,19 +477,14 @@ impl EthCoinImpl {
 async fn get_raw_transaction_impl(coin: EthCoin, req: RawTransactionRequest) -> RawTransactionResult {
     let hash = H256::from_str(&req.tx_hash[2..req.tx_hash.len()])
         .map_to_mm(|e| RawTransactionError::InvalidHashError(e.to_string()))?;
-    let web3_tx = match coin.web3.eth().transaction(TransactionId::Hash(hash)).compat().await {
-        Ok(tx) => tx,
-        Err(err) => {
-            log!("Error: transaction not found "[err]);
-            return MmError::err(RawTransactionError::Transport(req.tx_hash));
-        },
-    };
-    let web3_tx = match web3_tx {
-        Some(t) => t,
-        None => {
-            return MmError::err(RawTransactionError::Transport(req.tx_hash));
-        },
-    };
+    let web3_tx = coin
+        .web3
+        .eth()
+        .transaction(TransactionId::Hash(hash))
+        .compat()
+        .await
+        .map_err(|e| RawTransactionError::InvalidHashError(e.to_string()))?;
+    let web3_tx = web3_tx.or_mm_err(|| RawTransactionError::Transport(req.tx_hash))?;
     let raw = signed_tx_from_web3_tx(web3_tx).unwrap();
     return Ok(RawTransactionRes {
         tx_hex: BytesJson(rlp::encode(&raw)),
