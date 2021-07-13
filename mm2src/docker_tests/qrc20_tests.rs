@@ -412,7 +412,7 @@ fn trade_base_rel((base, rel): (&str, &str)) {
                 wait_for_estimate_smart_fee(timeout).expect("!wait_for_estimate_smart_fee");
                 let (_ctx, _coin, priv_key) = generate_segwit_qtum_coin_with_random_privkey("QTUM", 10.into(), Some(0));
 
-                return priv_key;
+                priv_key
             },
             "QICK" | "QORTY" => {
                 let priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
@@ -421,7 +421,7 @@ fn trade_base_rel((base, rel): (&str, &str)) {
                 fill_address(&coin, &my_address, 10.into(), timeout);
                 fill_qrc20_address(&coin, 10.into(), timeout);
 
-                return priv_key;
+                priv_key
             },
             "MYCOIN" | "MYCOIN1" => {
                 let priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
@@ -433,7 +433,7 @@ fn trade_base_rel((base, rel): (&str, &str)) {
                 let my_address = coin.my_address().expect("!my_address");
                 fill_address(&coin, &my_address, 10.into(), timeout);
 
-                return priv_key;
+                priv_key
             },
             _ => panic!("Expected either QICK or QORTY or MYCOIN or MYCOIN1, found {}", ticker),
         }
