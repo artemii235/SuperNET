@@ -44,19 +44,15 @@ impl UtxoCommonOps for UtxoStandardCoin {
     async fn get_htlc_spend_fee(&self) -> UtxoRpcResult<u64> { utxo_common::get_htlc_spend_fee(self).await }
 
     fn addresses_from_script(&self, script: &Script) -> Result<Vec<Address>, String> {
-        utxo_common::addresses_from_script(&self.utxo_arc.conf, script)
+        utxo_common::addresses_from_script(&self.utxo_arc, script)
     }
 
     fn denominate_satoshis(&self, satoshi: i64) -> f64 { utxo_common::denominate_satoshis(&self.utxo_arc, satoshi) }
 
     fn my_public_key(&self) -> &Public { self.utxo_arc.key_pair.public() }
 
-    fn display_address(&self, address: &Address) -> Result<String, String> {
-        utxo_common::display_address(&self.utxo_arc.conf, address)
-    }
-
     fn address_from_str(&self, address: &str) -> Result<Address, String> {
-        utxo_common::address_from_str(&self.utxo_arc.conf, address)
+        utxo_common::checked_address_from_str(&self.utxo_arc, address)
     }
 
     async fn get_current_mtp(&self) -> UtxoRpcResult<u32> {
@@ -85,6 +81,18 @@ impl UtxoCommonOps for UtxoStandardCoin {
         my_script_pub: Bytes,
     ) -> UtxoRpcResult<(TransactionInputSigner, AdditionalTxData)> {
         utxo_common::calc_interest_if_required(self, unsigned, data, my_script_pub).await
+    }
+
+    async fn calc_interest_of_tx(&self, tx: &UtxoTx, input_transactions: &mut HistoryUtxoTxMap) -> UtxoRpcResult<u64> {
+        utxo_common::calc_interest_of_tx(self, tx, input_transactions).await
+    }
+
+    async fn get_mut_verbose_transaction_from_map_or_rpc<'a, 'b>(
+        &'a self,
+        tx_hash: H256Json,
+        utxo_tx_map: &'b mut HistoryUtxoTxMap,
+    ) -> UtxoRpcResult<&'b mut HistoryUtxoTx> {
+        utxo_common::get_mut_verbose_transaction_from_map_or_rpc(self, tx_hash, utxo_tx_map).await
     }
 
     async fn p2sh_spending_tx(
@@ -156,12 +164,24 @@ impl UtxoCommonOps for UtxoStandardCoin {
 
 #[async_trait]
 impl UtxoStandardOps for UtxoStandardCoin {
-    async fn tx_details_by_hash(&self, hash: &[u8]) -> Result<TransactionDetails, String> {
-        utxo_common::tx_details_by_hash(self, hash).await
+    async fn tx_details_by_hash(
+        &self,
+        hash: &[u8],
+        input_transactions: &mut HistoryUtxoTxMap,
+    ) -> Result<TransactionDetails, String> {
+        utxo_common::tx_details_by_hash(self, hash, input_transactions).await
     }
 
     async fn request_tx_history(&self, metrics: MetricsArc) -> RequestTxHistoryResult {
         utxo_common::request_tx_history(self, metrics).await
+    }
+
+    async fn update_kmd_rewards(
+        &self,
+        tx_details: &mut TransactionDetails,
+        input_transactions: &mut HistoryUtxoTxMap,
+    ) -> UtxoRpcResult<()> {
+        utxo_common::update_kmd_rewards(self, tx_details, input_transactions).await
     }
 }
 
@@ -244,13 +264,18 @@ impl SwapOps for UtxoStandardCoin {
         amount: &BigDecimal,
         min_block_number: u64,
     ) -> Box<dyn Future<Item = (), Error = String> + Send> {
+        let tx = match fee_tx {
+            TransactionEnum::UtxoTx(tx) => tx.clone(),
+            _ => panic!(),
+        };
         utxo_common::validate_fee(
             self.clone(),
-            fee_tx,
-            fee_addr,
+            tx,
+            utxo_common::DEFAULT_FEE_VOUT,
             expected_sender,
             amount,
             min_block_number,
+            fee_addr,
         )
     }
 
@@ -304,6 +329,7 @@ impl SwapOps for UtxoStandardCoin {
             other_pub,
             secret_hash,
             tx,
+            utxo_common::DEFAULT_SWAP_VOUT,
             search_from_block,
         )
     }
@@ -323,6 +349,7 @@ impl SwapOps for UtxoStandardCoin {
             other_pub,
             secret_hash,
             tx,
+            utxo_common::DEFAULT_SWAP_VOUT,
             search_from_block,
         )
     }
@@ -386,7 +413,13 @@ impl MarketCoinOps for UtxoStandardCoin {
         from_block: u64,
         _swap_contract_address: &Option<BytesJson>,
     ) -> TransactionFut {
-        utxo_common::wait_for_tx_spend(&self.utxo_arc, transaction, wait_until, from_block)
+        utxo_common::wait_for_output_spend(
+            &self.utxo_arc,
+            transaction,
+            utxo_common::DEFAULT_SWAP_VOUT,
+            from_block,
+            wait_until,
+        )
     }
 
     fn tx_enum_from_bytes(&self, bytes: &[u8]) -> Result<TransactionEnum, String> {

@@ -46,9 +46,9 @@ impl From<SuperMatchBy> for MatchBy {
     }
 }
 
-impl Into<SuperMatchBy> for MatchBy {
-    fn into(self) -> SuperMatchBy {
-        match self {
+impl From<MatchBy> for SuperMatchBy {
+    fn from(match_by: MatchBy) -> Self {
+        match match_by {
             MatchBy::Any => SuperMatchBy::Any,
             MatchBy::Orders(uuids) => SuperMatchBy::Orders(uuids.into_iter().map(|uuid| uuid.into()).collect()),
             MatchBy::Pubkeys(pubkeys) => {
@@ -73,8 +73,8 @@ mod compact_uuid {
         fn from(uuid: Uuid) -> Self { CompactUuid(uuid) }
     }
 
-    impl Into<Uuid> for CompactUuid {
-        fn into(self) -> Uuid { self.0 }
+    impl From<CompactUuid> for Uuid {
+        fn from(compact: CompactUuid) -> Self { compact.0 }
     }
 
     impl FromStr for CompactUuid {

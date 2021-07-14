@@ -37,6 +37,8 @@ const UPDATE_WAS_TAKER: &str = "UPDATE my_orders SET type = ?2, last_updated = ?
 
 const UPDATE_ORDER_STATUS: &str = "UPDATE my_orders SET last_updated = ?2, status = ?3 WHERE uuid = ?1";
 
+const SELECT_STATUS_BY_UUID: &str = "SELECT status FROM my_orders WHERE uuid = ?1";
+
 pub fn insert_maker_order(ctx: &MmArc, uuid: Uuid, order: &MakerOrder) -> SqlResult<()> {
     debug!("Inserting new order {} to the SQLite database", uuid);
     let params = vec![
@@ -294,4 +296,9 @@ pub fn select_orders_by_filter(
         total_count,
         skipped,
     })
+}
+
+pub fn select_status_by_uuid(conn: &Connection, uuid: &Uuid) -> Result<String, SqlError> {
+    let params = vec![uuid.to_string()];
+    conn.query_row(SELECT_STATUS_BY_UUID, &params, |row| row.get::<_, String>(0))
 }

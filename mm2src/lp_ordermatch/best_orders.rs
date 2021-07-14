@@ -76,13 +76,9 @@ pub async fn process_best_orders_p2p_request(
                         BestOrdersAction::Buy => o.max_volume.clone(),
                         BestOrdersAction::Sell => &o.max_volume * &o.price,
                     };
-                    match orderbook.orderbook_item_with_proof(o.clone()) {
-                        Ok(order_w_proof) => best_orders.push(order_w_proof),
-                        Err(e) => {
-                            log::error!("Error {:?} on proof generation for order {:?}", e, o);
-                            continue;
-                        },
-                    };
+                    let order_w_proof = orderbook.orderbook_item_with_proof(o.clone());
+                    best_orders.push(order_w_proof);
+
                     collected_volume += max_volume;
                     if collected_volume >= required_volume {
                         break;

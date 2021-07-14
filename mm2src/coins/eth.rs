@@ -600,6 +600,7 @@ async fn withdraw_impl(ctx: MmArc, coin: EthCoin, req: WithdrawRequest) -> Withd
         coin: coin.ticker.clone(),
         internal_id: vec![].into(),
         timestamp: now_ms() / 1000,
+        kmd_rewards: None,
     })
 }
 
@@ -1258,7 +1259,7 @@ async fn sign_and_send_transaction_impl(
         () => {
             &[&"sign-and-send"]
         };
-    };
+    }
     let _nonce_lock = NONCE_LOCK
         .lock(|start, now| {
             if ctx.is_stopping() {
@@ -2194,6 +2195,7 @@ impl EthCoin {
                     tx_hex: BytesJson(rlp::encode(&raw)),
                     internal_id: BytesJson(internal_id.to_vec()),
                     timestamp: block.timestamp.into(),
+                    kmd_rewards: None,
                 };
 
                 existing_history.push(details);
@@ -2562,6 +2564,7 @@ impl EthCoin {
                     tx_hex: BytesJson(rlp::encode(&raw)),
                     internal_id,
                     timestamp: block.timestamp.into(),
+                    kmd_rewards: None,
                 };
 
                 existing_history.push(details);

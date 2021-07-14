@@ -9,6 +9,7 @@ use mocktopus::mocking::{MockResult, Mockable};
 
 const EXPECTED_TX_FEE: i64 = 1000;
 const CONTRACT_CALL_GAS_FEE: i64 = (QRC20_GAS_LIMIT_DEFAULT * QRC20_GAS_PRICE_DEFAULT) as i64;
+const SWAP_PAYMENT_GAS_FEE: i64 = (QRC20_PAYMENT_GAS_LIMIT * QRC20_GAS_PRICE_DEFAULT) as i64;
 
 pub fn qrc20_coin_for_test(priv_key: &[u8], fallback_swap: Option<&str>) -> (MmArc, Qrc20Coin) {
     let conf = json!({
@@ -494,6 +495,7 @@ fn test_transfer_details_by_hash() {
         )
         .unwrap()
         .into(),
+        kmd_rewards: None,
     };
     assert_eq!(actual, expected);
 
@@ -516,6 +518,7 @@ fn test_transfer_details_by_hash() {
         )
         .unwrap()
         .into(),
+        kmd_rewards: None,
     };
     assert_eq!(actual, expected);
 
@@ -538,6 +541,7 @@ fn test_transfer_details_by_hash() {
         )
         .unwrap()
         .into(),
+        kmd_rewards: None,
     };
     assert_eq!(actual, expected);
 
@@ -560,6 +564,7 @@ fn test_transfer_details_by_hash() {
         )
         .unwrap()
         .into(),
+        kmd_rewards: None,
     };
     assert_eq!(actual, expected);
 
@@ -582,6 +587,7 @@ fn test_transfer_details_by_hash() {
         )
         .unwrap()
         .into(),
+        kmd_rewards: None,
     };
     assert_eq!(actual, expected);
     assert!(it.next().is_none());
@@ -599,8 +605,10 @@ fn test_get_trade_fee() {
     check_tx_fee(&coin, ActualTxFee::Fixed(EXPECTED_TX_FEE as u64));
 
     let actual_trade_fee = coin.get_trade_fee().wait().unwrap();
-    let expected_trade_fee_amount =
-        big_decimal_from_sat((3 * CONTRACT_CALL_GAS_FEE + EXPECTED_TX_FEE) as i64, coin.utxo.decimals);
+    let expected_trade_fee_amount = big_decimal_from_sat(
+        (2 * CONTRACT_CALL_GAS_FEE + SWAP_PAYMENT_GAS_FEE + EXPECTED_TX_FEE) as i64,
+        coin.utxo.decimals,
+    );
     let expected = TradeFee {
         coin: "QTUM".into(),
         amount: expected_trade_fee_amount.into(),
@@ -626,8 +634,10 @@ fn test_sender_trade_preimage_zero_allowance() {
     let allowance = block_on(coin.allowance(coin.swap_contract_address)).expect("!allowance");
     assert_eq!(allowance, 0.into());
 
-    let erc20_payment_fee_with_one_approve =
-        big_decimal_from_sat(2 * CONTRACT_CALL_GAS_FEE + EXPECTED_TX_FEE, coin.utxo.decimals);
+    let erc20_payment_fee_with_one_approve = big_decimal_from_sat(
+        CONTRACT_CALL_GAS_FEE + SWAP_PAYMENT_GAS_FEE + EXPECTED_TX_FEE,
+        coin.utxo.decimals,
+    );
     let sender_refund_fee = big_decimal_from_sat(CONTRACT_CALL_GAS_FEE + EXPECTED_TX_FEE, coin.utxo.decimals);
 
     let actual = coin
@@ -662,9 +672,11 @@ fn test_sender_trade_preimage_with_allowance() {
     assert_eq!(allowance, 300_000_000.into());
 
     let erc20_payment_fee_without_approve =
-        big_decimal_from_sat(CONTRACT_CALL_GAS_FEE + EXPECTED_TX_FEE, coin.utxo.decimals);
-    let erc20_payment_fee_with_two_approves =
-        big_decimal_from_sat(3 * CONTRACT_CALL_GAS_FEE + EXPECTED_TX_FEE, coin.utxo.decimals);
+        big_decimal_from_sat(SWAP_PAYMENT_GAS_FEE + EXPECTED_TX_FEE, coin.utxo.decimals);
+    let erc20_payment_fee_with_two_approves = big_decimal_from_sat(
+        2 * CONTRACT_CALL_GAS_FEE + SWAP_PAYMENT_GAS_FEE + EXPECTED_TX_FEE,
+        coin.utxo.decimals,
+    );
     let sender_refund_fee = big_decimal_from_sat(CONTRACT_CALL_GAS_FEE + EXPECTED_TX_FEE, coin.utxo.decimals);
 
     let actual = coin

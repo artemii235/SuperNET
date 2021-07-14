@@ -6,8 +6,8 @@ use crate::utxo::rpc_clients::{ElectrumClient, NativeClient, UnspentInfo, UtxoRp
                                UtxoRpcError, UtxoRpcResult};
 use crate::utxo::utxo_common::{self, big_decimal_from_sat, check_all_inputs_signed_by_pub};
 use crate::utxo::{qtum, sign_tx, ActualTxFee, AdditionalTxData, FeePolicy, GenerateTxError, GenerateTxResult,
-                  RecentlySpentOutPoints, UtxoCoinBuilder, UtxoCoinFields, UtxoCommonOps, UtxoTx,
-                  VerboseTransactionFrom, UTXO_LOCK};
+                  HistoryUtxoTx, HistoryUtxoTxMap, RecentlySpentOutPoints, UtxoCoinBuilder, UtxoCoinFields,
+                  UtxoCommonOps, UtxoTx, VerboseTransactionFrom, UTXO_LOCK};
 use crate::{BalanceError, BalanceFut, CoinBalance, FeeApproxStage, FoundSwapTxSpend, HistorySyncState, MarketCoinOps,
             MmCoin, NegotiateSwapContractAddrErr, SwapOps, TradeFee, TradePreimageError, TradePreimageFut,
             TradePreimageResult, TradePreimageValue, TransactionDetails, TransactionEnum, TransactionFut,
@@ -54,6 +54,7 @@ mod swap;
 /// because we should pay only a fee in Qtum to send the QRC20 transaction.
 const OUTPUT_QTUM_AMOUNT: u64 = 0;
 const QRC20_GAS_LIMIT_DEFAULT: u64 = 100_000;
+const QRC20_PAYMENT_GAS_LIMIT: u64 = 200_000;
 const QRC20_GAS_PRICE_DEFAULT: u64 = 40;
 const QRC20_DUST: u64 = 0;
 // Keccak-256 hash of `Transfer` event
@@ -62,7 +63,7 @@ const QRC20_PAYMENT_SENT_TOPIC: &str = "ccc9c05183599bd3135da606eaaf535daffe256e
 const QRC20_RECEIVER_SPENT_TOPIC: &str = "36c177bcb01c6d568244f05261e2946c8c977fa50822f3fa098c470770ee1f3e";
 const QRC20_SENDER_REFUNDED_TOPIC: &str = "1797d500133f8e427eb9da9523aa4a25cb40f50ebc7dbda3c7c81778973f35ba";
 
-pub type Qrc20ABIResult<T> = Result<T, MmError<Qrc20ABIError>>;
+pub type Qrc20AbiResult<T> = Result<T, MmError<Qrc20AbiError>>;
 
 struct Qrc20CoinBuilder<'a> {
     ctx: &'a MmArc,
@@ -314,33 +315,33 @@ struct GenerateQrc20TxResult {
 }
 
 #[derive(Debug, Display)]
-pub enum Qrc20ABIError {
+pub enum Qrc20AbiError {
     #[display(fmt = "Invalid QRC20 ABI params: {}", _0)]
     InvalidParams(String),
     #[display(fmt = "QRC20 ABI error: {}", _0)]
-    ABIError(String),
+    AbiError(String),
 }
 
-impl From<ethabi::Error> for Qrc20ABIError {
-    fn from(e: ethabi::Error) -> Qrc20ABIError { Qrc20ABIError::ABIError(e.to_string()) }
+impl From<ethabi::Error> for Qrc20AbiError {
+    fn from(e: ethabi::Error) -> Qrc20AbiError { Qrc20AbiError::AbiError(e.to_string()) }
 }
 
-impl From<Qrc20ABIError> for TradePreimageError {
-    fn from(e: Qrc20ABIError) -> Self {
+impl From<Qrc20AbiError> for TradePreimageError {
+    fn from(e: Qrc20AbiError) -> Self {
         // `Qrc20ABIError` is always an internal error
         TradePreimageError::InternalError(e.to_string())
     }
 }
 
-impl From<Qrc20ABIError> for WithdrawError {
-    fn from(e: Qrc20ABIError) -> Self {
+impl From<Qrc20AbiError> for WithdrawError {
+    fn from(e: Qrc20AbiError) -> Self {
         // `Qrc20ABIError` is always an internal error
         WithdrawError::InternalError(e.to_string())
     }
 }
 
-impl From<Qrc20ABIError> for UtxoRpcError {
-    fn from(e: Qrc20ABIError) -> Self {
+impl From<Qrc20AbiError> for UtxoRpcError {
+    fn from(e: Qrc20AbiError) -> Self {
         // `Qrc20ABIError` is always an internal error
         UtxoRpcError::Internal(e.to_string())
     }
@@ -419,7 +420,7 @@ impl Qrc20Coin {
         amount: U256,
         gas_limit: u64,
         gas_price: u64,
-    ) -> Qrc20ABIResult<ContractCallOutput> {
+    ) -> Qrc20AbiResult<ContractCallOutput> {
         let function = eth::ERC20_CONTRACT.function("transfer")?;
         let params = function.encode_input(&[Token::Address(to_addr), Token::Uint(amount)])?;
 
@@ -464,19 +465,15 @@ impl UtxoCommonOps for Qrc20Coin {
     async fn get_htlc_spend_fee(&self) -> UtxoRpcResult<u64> { utxo_common::get_htlc_spend_fee(self).await }
 
     fn addresses_from_script(&self, script: &Script) -> Result<Vec<UtxoAddress>, String> {
-        utxo_common::addresses_from_script(&self.utxo.conf, script)
+        utxo_common::addresses_from_script(&self.utxo, script)
     }
 
     fn denominate_satoshis(&self, satoshi: i64) -> f64 { utxo_common::denominate_satoshis(&self.utxo, satoshi) }
 
     fn my_public_key(&self) -> &Public { self.utxo.key_pair.public() }
 
-    fn display_address(&self, address: &UtxoAddress) -> Result<String, String> {
-        utxo_common::display_address(&self.utxo.conf, address)
-    }
-
     fn address_from_str(&self, address: &str) -> Result<UtxoAddress, String> {
-        utxo_common::address_from_str(&self.utxo.conf, address)
+        utxo_common::checked_address_from_str(&self.utxo, address)
     }
 
     async fn get_current_mtp(&self) -> UtxoRpcResult<u32> {
@@ -504,6 +501,24 @@ impl UtxoCommonOps for Qrc20Coin {
         my_script_pub: ScriptBytes,
     ) -> UtxoRpcResult<(TransactionInputSigner, AdditionalTxData)> {
         utxo_common::calc_interest_if_required(self, unsigned, data, my_script_pub).await
+    }
+
+    async fn calc_interest_of_tx(
+        &self,
+        _tx: &UtxoTx,
+        _input_transactions: &mut HistoryUtxoTxMap,
+    ) -> UtxoRpcResult<u64> {
+        MmError::err(UtxoRpcError::Internal(
+            "QRC20 coin doesn't support transaction rewards".to_owned(),
+        ))
+    }
+
+    async fn get_mut_verbose_transaction_from_map_or_rpc<'a, 'b>(
+        &'a self,
+        tx_hash: H256Json,
+        utxo_tx_map: &'b mut HistoryUtxoTxMap,
+    ) -> UtxoRpcResult<&'b mut HistoryUtxoTx> {
+        utxo_common::get_mut_verbose_transaction_from_map_or_rpc(self, tx_hash, utxo_tx_map).await
     }
 
     async fn p2sh_spending_tx(
@@ -1011,7 +1026,7 @@ impl MmCoin for Qrc20Coin {
     /// This method is called to check our QTUM balance.
     fn get_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = String> + Send> {
         // `erc20Payment` may require two `approve` contract calls in worst case,
-        let gas_fee = 3 * QRC20_GAS_LIMIT_DEFAULT * QRC20_GAS_PRICE_DEFAULT;
+        let gas_fee = (2 * QRC20_GAS_LIMIT_DEFAULT + QRC20_PAYMENT_GAS_LIMIT) * QRC20_GAS_PRICE_DEFAULT;
 
         let selfi = self.clone();
         let fut = async move {
@@ -1247,7 +1262,7 @@ async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> WithdrawResult
 
     // [`MarketCoinOps::my_address`] and [`UtxoCommonOps::display_address`] shouldn't fail
     let my_address = coin.my_address().map_to_mm(WithdrawError::InternalError)?;
-    let to_address = coin.display_address(&to_addr).map_to_mm(WithdrawError::InternalError)?;
+    let to_address = to_addr.display_address().map_to_mm(WithdrawError::InternalError)?;
 
     let fee_details = Qrc20FeeDetails {
         // QRC20 fees are paid in base platform currency (in particular Qtum)
@@ -1271,6 +1286,7 @@ async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> WithdrawResult
         coin: conf.ticker.clone(),
         internal_id: vec![].into(),
         timestamp: now_ms() / 1000,
+        kmd_rewards: None,
     })
 }
 

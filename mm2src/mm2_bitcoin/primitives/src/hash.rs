@@ -95,6 +95,14 @@ macro_rules! impl_hash {
             }
         }
 
+        impl cmp::PartialEq<&$name> for $name {
+            fn eq(&self, other: &&Self) -> bool {
+                let self_ref: &[u8] = &self.0;
+                let other_ref: &[u8] = &other.0;
+                self_ref == other_ref
+            }
+        }
+
         impl cmp::PartialOrd for $name {
             fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
                 let self_ref: &[u8] = &self.0;
@@ -117,6 +125,8 @@ macro_rules! impl_hash {
 
         impl $name {
             pub fn take(self) -> [u8; $size] { self.0 }
+
+            pub fn as_slice(&self) -> &[u8] { &self.0 }
 
             pub fn reversed(&self) -> Self {
                 let mut result = self.clone();

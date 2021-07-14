@@ -99,6 +99,7 @@ pub struct UnsignedTransactionInput {
     pub previous_output: OutPoint,
     pub sequence: u32,
     pub amount: u64,
+    pub witness: Vec<Vec<u8>>,
 }
 
 /// Used for resigning and loading test transactions
@@ -108,10 +109,12 @@ impl From<TransactionInput> for UnsignedTransactionInput {
             previous_output: i.previous_output,
             sequence: i.sequence,
             amount: 0,
+            witness: i.script_witness.into_iter().map(Vec::from).collect(),
         }
     }
 }
 
+#[allow(clippy::upper_case_acronyms)]
 #[derive(Clone, Copy, Debug)]
 pub enum SignerHashAlgo {
     SHA256,
@@ -127,9 +130,9 @@ impl From<TxHashAlgo> for SignerHashAlgo {
     }
 }
 
-impl Into<TxHashAlgo> for SignerHashAlgo {
-    fn into(self) -> TxHashAlgo {
-        match self {
+impl From<SignerHashAlgo> for TxHashAlgo {
+    fn from(algo: SignerHashAlgo) -> Self {
+        match algo {
             SignerHashAlgo::DSHA256 => TxHashAlgo::DSHA256,
             SignerHashAlgo::SHA256 => TxHashAlgo::SHA256,
         }
@@ -611,7 +614,7 @@ mod tests {
         let previous_output = "76a914df3bd30160e6c6145baaf2c88a8844c13a00d1d588ac".into();
         let current_output: Bytes = "76a914c8e90996c7c6080ee06284600c684ed904d14c5c88ac".into();
         let value = 91234;
-        let expected_signature_hash = "5fda68729a6312e17e641e9a49fac2a4a6a680126610af573caab270d232f850".into();
+        let expected_signature_hash: H256 = "5fda68729a6312e17e641e9a49fac2a4a6a680126610af573caab270d232f850".into();
 
         // this is irrelevant
         assert_eq!(&current_output[3..23], &*to.hash);
@@ -623,6 +626,7 @@ mod tests {
                 hash: previous_tx_hash,
             },
             amount: 0,
+            witness: vec![Vec::new()],
         };
 
         let output = TransactionOutput {

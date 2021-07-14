@@ -31,6 +31,7 @@ fn test_match_maker_order_and_taker_request() {
         uuid: Uuid::new_v4(),
         conf_settings: None,
         changes_history: None,
+        save_in_history: false,
     };
 
     let request = TakerRequest {
@@ -63,6 +64,7 @@ fn test_match_maker_order_and_taker_request() {
         uuid: Uuid::new_v4(),
         conf_settings: None,
         changes_history: None,
+        save_in_history: false,
     };
 
     let request = TakerRequest {
@@ -95,6 +97,7 @@ fn test_match_maker_order_and_taker_request() {
         uuid: Uuid::new_v4(),
         conf_settings: None,
         changes_history: None,
+        save_in_history: false,
     };
 
     let request = TakerRequest {
@@ -127,6 +130,7 @@ fn test_match_maker_order_and_taker_request() {
         uuid: Uuid::new_v4(),
         conf_settings: None,
         changes_history: None,
+        save_in_history: false,
     };
 
     let request = TakerRequest {
@@ -159,6 +163,7 @@ fn test_match_maker_order_and_taker_request() {
         uuid: Uuid::new_v4(),
         conf_settings: None,
         changes_history: None,
+        save_in_history: false,
     };
 
     let request = TakerRequest {
@@ -191,6 +196,7 @@ fn test_match_maker_order_and_taker_request() {
         uuid: Uuid::new_v4(),
         conf_settings: None,
         changes_history: None,
+        save_in_history: false,
     };
 
     let request = TakerRequest {
@@ -256,6 +262,7 @@ fn test_maker_order_available_amount() {
         uuid: Uuid::new_v4(),
         conf_settings: None,
         changes_history: None,
+        save_in_history: false,
     };
     maker.matches.insert(Uuid::new_v4(), MakerMatch {
         request: TakerRequest {
@@ -343,6 +350,7 @@ fn test_taker_match_reserved() {
         order_type: OrderType::GoodTillCancelled,
         min_volume: 0.into(),
         timeout: 30,
+        save_in_history: false,
     };
 
     let reserved = MakerReserved {
@@ -379,6 +387,7 @@ fn test_taker_match_reserved() {
         order_type: OrderType::GoodTillCancelled,
         min_volume: 0.into(),
         timeout: 30,
+        save_in_history: false,
     };
 
     let reserved = MakerReserved {
@@ -415,6 +424,7 @@ fn test_taker_match_reserved() {
         order_type: OrderType::GoodTillCancelled,
         min_volume: 0.into(),
         timeout: 30,
+        save_in_history: false,
     };
 
     let reserved = MakerReserved {
@@ -451,6 +461,7 @@ fn test_taker_match_reserved() {
         order_type: OrderType::GoodTillCancelled,
         min_volume: 0.into(),
         timeout: 30,
+        save_in_history: false,
     };
 
     let reserved = MakerReserved {
@@ -487,6 +498,7 @@ fn test_taker_match_reserved() {
         order_type: OrderType::GoodTillCancelled,
         min_volume: 0.into(),
         timeout: 30,
+        save_in_history: false,
     };
 
     let reserved = MakerReserved {
@@ -523,6 +535,7 @@ fn test_taker_match_reserved() {
         order_type: OrderType::GoodTillCancelled,
         min_volume: 0.into(),
         timeout: 30,
+        save_in_history: false,
     };
 
     let reserved = MakerReserved {
@@ -559,6 +572,7 @@ fn test_taker_match_reserved() {
         order_type: OrderType::GoodTillCancelled,
         min_volume: 0.into(),
         timeout: 30,
+        save_in_history: false,
     };
 
     let reserved = MakerReserved {
@@ -595,6 +609,7 @@ fn test_taker_match_reserved() {
         order_type: OrderType::GoodTillCancelled,
         min_volume: 0.into(),
         timeout: 30,
+        save_in_history: false,
     };
 
     let reserved = MakerReserved {
@@ -631,6 +646,7 @@ fn test_taker_match_reserved() {
         order_type: OrderType::GoodTillCancelled,
         min_volume: 0.into(),
         timeout: 30,
+        save_in_history: false,
     };
 
     let reserved = MakerReserved {
@@ -670,6 +686,7 @@ fn test_taker_order_cancellable() {
         order_type: OrderType::GoodTillCancelled,
         min_volume: 0.into(),
         timeout: 30,
+        save_in_history: false,
     };
 
     assert!(order.is_cancellable());
@@ -694,6 +711,7 @@ fn test_taker_order_cancellable() {
         order_type: OrderType::GoodTillCancelled,
         min_volume: 0.into(),
         timeout: 30,
+        save_in_history: false,
     };
 
     order.matches.insert(Uuid::new_v4(), TakerMatch {
@@ -743,6 +761,7 @@ fn prepare_for_cancel_by(ctx: &MmArc) -> mpsc::Receiver<AdexBehaviourCmd> {
         started_swaps: vec![],
         conf_settings: None,
         changes_history: None,
+        save_in_history: false,
     });
     maker_orders.insert(Uuid::from_bytes([1; 16]), MakerOrder {
         uuid: Uuid::from_bytes([1; 16]),
@@ -757,6 +776,7 @@ fn prepare_for_cancel_by(ctx: &MmArc) -> mpsc::Receiver<AdexBehaviourCmd> {
         started_swaps: vec![],
         conf_settings: None,
         changes_history: None,
+        save_in_history: false,
     });
     maker_orders.insert(Uuid::from_bytes([2; 16]), MakerOrder {
         uuid: Uuid::from_bytes([2; 16]),
@@ -771,6 +791,7 @@ fn prepare_for_cancel_by(ctx: &MmArc) -> mpsc::Receiver<AdexBehaviourCmd> {
         started_swaps: vec![],
         conf_settings: None,
         changes_history: None,
+        save_in_history: false,
     });
     taker_orders.insert(Uuid::from_bytes([3; 16]), TakerOrder {
         matches: HashMap::new(),
@@ -790,6 +811,7 @@ fn prepare_for_cancel_by(ctx: &MmArc) -> mpsc::Receiver<AdexBehaviourCmd> {
         order_type: OrderType::GoodTillCancelled,
         min_volume: 0.into(),
         timeout: 30,
+        save_in_history: false,
     });
     rx
 }
@@ -888,6 +910,7 @@ fn test_taker_order_match_by() {
         order_type: OrderType::GoodTillCancelled,
         min_volume: 0.into(),
         timeout: 30,
+        save_in_history: false,
     };
 
     let reserved = MakerReserved {
