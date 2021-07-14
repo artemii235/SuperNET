@@ -1770,14 +1770,76 @@ fn test_withdraw_and_send_legacy_to_segwit() {
 }
 
 #[test]
+fn test_search_for_segwit_swap_tx_spend_native_was_refunded_maker() {
+    wait_for_estimate_smart_fee(30).expect("!wait_for_estimate_smart_fee");
+    let timeout = (now_ms() / 1000) + 120; // timeout if test takes more than 120 seconds to run
+    let (_ctx, coin, _priv_key) = generate_segwit_qtum_coin_with_random_privkey("QTUM", 1000.into(), Some(0));
+
+    let time_lock = (now_ms() / 1000) as u32 - 3600;
+    let tx = coin
+        .send_maker_payment(time_lock, &*coin.my_public_key(), &[0; 20], 1.into(), &None)
+        .wait()
+        .unwrap();
+
+    coin.wait_for_confirmations(&tx.tx_hex(), 1, false, timeout, 1)
+        .wait()
+        .unwrap();
+
+    let refund_tx = coin
+        .send_maker_refunds_payment(&tx.tx_hex(), time_lock, &*coin.my_public_key(), &[0; 20], &None)
+        .wait()
+        .unwrap();
+
+    coin.wait_for_confirmations(&refund_tx.tx_hex(), 1, false, timeout, 1)
+        .wait()
+        .unwrap();
+
+    let found = coin
+        .search_for_swap_tx_spend_my(time_lock, &*coin.my_public_key(), &[0; 20], &tx.tx_hex(), 0, &None)
+        .unwrap()
+        .unwrap();
+    assert_eq!(FoundSwapTxSpend::Refunded(refund_tx), found);
+}
+
+#[test]
+fn test_search_for_segwit_swap_tx_spend_native_was_refunded_taker() {
+    wait_for_estimate_smart_fee(30).expect("!wait_for_estimate_smart_fee");
+    let timeout = (now_ms() / 1000) + 120; // timeout if test takes more than 120 seconds to run
+    let (_ctx, coin, _priv_key) = generate_segwit_qtum_coin_with_random_privkey("QTUM", 1000.into(), Some(0));
+
+    let time_lock = (now_ms() / 1000) as u32 - 3600;
+    let tx = coin
+        .send_taker_payment(time_lock, &*coin.my_public_key(), &[0; 20], 1.into(), &None)
+        .wait()
+        .unwrap();
+
+    coin.wait_for_confirmations(&tx.tx_hex(), 1, false, timeout, 1)
+        .wait()
+        .unwrap();
+
+    let refund_tx = coin
+        .send_taker_refunds_payment(&tx.tx_hex(), time_lock, &*coin.my_public_key(), &[0; 20], &None)
+        .wait()
+        .unwrap();
+
+    coin.wait_for_confirmations(&refund_tx.tx_hex(), 1, false, timeout, 1)
+        .wait()
+        .unwrap();
+
+    let found = coin
+        .search_for_swap_tx_spend_my(time_lock, &*coin.my_public_key(), &[0; 20], &tx.tx_hex(), 0, &None)
+        .unwrap()
+        .unwrap();
+    assert_eq!(FoundSwapTxSpend::Refunded(refund_tx), found);
+}
+
+#[test]
 fn test_trade_qrc20() { trade_base_rel(("QICK", "QORTY")); }
 
 #[test]
 fn trade_test_with_maker_segwit() { trade_base_rel(("QTUM", "MYCOIN")); }
 
-// Ignored for now until fill_mempool_loop in qtum_docker_regtest is solved or we use another RPC API in find_output_spend
 #[test]
-#[ignore]
 fn trade_test_with_taker_segwit() { trade_base_rel(("MYCOIN", "QTUM")); }
 
 #[test]
