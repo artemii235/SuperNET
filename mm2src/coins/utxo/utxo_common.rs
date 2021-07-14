@@ -2673,19 +2673,13 @@ where
         script_pubkey: op_return_script,
     };
 
-    let addr_format = match coin.as_ref().my_address.addr_format.clone() {
-        // Standard payment address is used for segwit swap payments
-        UtxoAddressFormat::Segwit => UtxoAddressFormat::Standard,
-        other_format => other_format,
-    };
-
     let payment_address = Address {
         checksum_type: coin.as_ref().conf.checksum_type,
         hash: redeem_script_hash,
         prefix: coin.as_ref().conf.p2sh_addr_prefix,
         t_addr_prefix: coin.as_ref().conf.p2sh_t_addr_prefix,
         hrp: coin.as_ref().conf.bech32_hrp.clone(),
-        addr_format,
+        addr_format: UtxoAddressFormat::Standard,
     };
     let result = SwapPaymentOutputsResult {
         payment_address,
