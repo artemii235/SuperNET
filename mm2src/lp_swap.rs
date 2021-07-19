@@ -66,7 +66,7 @@ use common::{bits256, block_on, calc_total_pages,
              log::{error, info},
              mm_ctx::{from_ctx, MmArc},
              mm_number::MmNumber,
-             now_ms, read_dir, rpc_response, slurp, var, write, HyRes};
+             now_ms, rpc_response, var, HyRes};
 use futures::future::{abortable, AbortHandle, TryFutureExt};
 use http::Response;
 use mm2_libp2p::{decode_signed, encode_and_sign, pub_sub_topic, TopicPrefix};
@@ -75,12 +75,10 @@ use primitives::hash::{H160, H264};
 use rpc::v1::types::{Bytes as BytesJson, H256 as H256Json};
 use serde_json::{self as json, Value as Json};
 use std::collections::{HashMap, HashSet};
-use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex, Weak};
 use std::thread;
-use std::time::Duration;
 use uuid::Uuid;
 
 #[path = "lp_swap/maker_swap.rs"] mod maker_swap;
@@ -92,19 +90,35 @@ use uuid::Uuid;
 #[path = "lp_swap/check_balance.rs"] mod check_balance;
 #[path = "lp_swap/trade_preimage.rs"] mod trade_preimage;
 
+#[path = "lp_swap/saved_swap.rs"] mod saved_swap;
+#[path = "lp_swap/swap_lock.rs"] mod swap_lock;
+
+#[cfg(target_arch = "wasm32")]
+#[path = "lp_swap/swap_db.rs"]
+mod swap_db;
+
 pub use check_balance::{check_other_coin_balance_for_swap, CheckBalanceError};
+use maker_swap::MakerSwapEvent;
 pub use maker_swap::{calc_max_maker_vol, check_balance_for_maker_swap, maker_swap_trade_preimage, run_maker_swap,
-                     stats_maker_swap_dir, MakerSavedSwap, MakerSwap, MakerTradePreimage, RunMakerSwapInput};
-use maker_swap::{stats_maker_swap_file_path, MakerSwapEvent};
+                     MakerSavedSwap, MakerSwap, MakerTradePreimage, RunMakerSwapInput};
 use pubkey_banning::BanReason;
 pub use pubkey_banning::{ban_pubkey_rpc, is_pubkey_banned, list_banned_pubkeys_rpc, unban_pubkeys_rpc};
+pub use saved_swap::{SavedSwap, SavedSwapError, SavedSwapIo, SavedSwapResult};
+use taker_swap::TakerSwapEvent;
 pub use taker_swap::{calc_max_taker_vol, check_balance_for_taker_swap, max_taker_vol, max_taker_vol_from_available,
-                     run_taker_swap, stats_taker_swap_dir, taker_swap_trade_preimage, RunTakerSwapInput,
-                     TakerSavedSwap, TakerSwap, TakerSwapPreparedParams, TakerTradePreimage};
-use taker_swap::{stats_taker_swap_file_path, TakerSwapEvent};
+                     run_taker_swap, taker_swap_trade_preimage, RunTakerSwapInput, TakerSavedSwap, TakerSwap,
+                     TakerSwapPreparedParams, TakerTradePreimage};
 pub use trade_preimage::trade_preimage_rpc;
 
 pub const SWAP_PREFIX: TopicPrefix = "swap";
+
+cfg_wasm32! {
+    use common::indexed_db::{ConstructibleDb, DbLocked, DbNamespaceId};
+    use futures::lock::Mutex as AsyncMutex;
+    use swap_db::{InitDbResult, SwapDb};
+
+    pub type SwapDbLocked<'a> = DbLocked<'a, SwapDb>;
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum SwapMsg {
@@ -164,7 +178,7 @@ pub fn broadcast_swap_message(ctx: &MmArc, topic: String, msg: SwapMsg) {
     broadcast_p2p_msg(ctx, vec![topic], encoded_msg);
 }
 
-pub fn process_msg(ctx: MmArc, topic: &str, msg: &[u8]) {
+pub async fn process_msg(ctx: MmArc, topic: &str, msg: &[u8]) {
     let uuid = match Uuid::from_str(topic) {
         Ok(u) => u,
         Err(_) => return,
@@ -172,13 +186,20 @@ pub fn process_msg(ctx: MmArc, topic: &str, msg: &[u8]) {
     let msg = match decode_signed::<SwapMsg>(msg) {
         Ok(m) => m,
         Err(swap_msg_err) => {
+            #[cfg(not(target_arch = "wasm32"))]
             match json::from_slice::<SwapStatus>(msg) {
-                Ok(status) => save_stats_swap(&ctx, &status.data).unwrap(),
+                Ok(status) => {
+                    if let Err(e) = save_stats_swap(&ctx, &status.data).await {
+                        error!("Error saving the swap {} status: {}", status.data.uuid(), e);
+                    }
+                },
                 Err(swap_status_err) => {
                     error!("Couldn't deserialize 'SwapMsg': {:?}", swap_msg_err);
                     error!("Couldn't deserialize 'SwapStatus': {:?}", swap_status_err);
                 },
             };
+            // Drop it to avoid dead_code warning
+            drop(swap_msg_err);
             return;
         },
     };
@@ -294,6 +315,8 @@ struct SwapsContext {
     /// Very unpleasant consequences
     shutdown_rx: async_std_sync::Receiver<()>,
     swap_msgs: Mutex<HashMap<Uuid, SwapMsgStore>>,
+    #[cfg(target_arch = "wasm32")]
+    swap_db: ConstructibleDb<SwapDb>,
 }
 
 impl SwapsContext {
@@ -317,8 +340,10 @@ impl SwapsContext {
             Ok(SwapsContext {
                 running_swaps: Mutex::new(vec![]),
                 banned_pubkeys: Mutex::new(HashMap::new()),
-                swap_msgs: Mutex::new(HashMap::new()),
                 shutdown_rx,
+                swap_msgs: Mutex::new(HashMap::new()),
+                #[cfg(target_arch = "wasm32")]
+                swap_db: ConstructibleDb::from_ctx(ctx),
             })
         })))
     }
@@ -327,6 +352,9 @@ impl SwapsContext {
         let store = SwapMsgStore::new(accept_only_from);
         self.swap_msgs.lock().unwrap().insert(uuid, store);
     }
+
+    #[cfg(target_arch = "wasm32")]
+    pub async fn swap_db(&self) -> InitDbResult<SwapDbLocked<'_>> { Ok(self.swap_db.get_or_initialize().await?) }
 }
 
 /// Get total amount of selected coin locked by all currently ongoing swaps
@@ -635,30 +663,11 @@ fn add_swap_to_db_index(ctx: &MmArc, swap: &SavedSwap) {
     crate::mm2::database::stats_swaps::add_swap_to_index(&ctx.sqlite_connection(), swap)
 }
 
-#[cfg(target_arch = "wasm32")]
-fn add_swap_to_db_index(_ctx: &MmArc, _swap: &SavedSwap) {}
-
-fn save_stats_swap(ctx: &MmArc, swap: &SavedSwap) -> Result<(), String> {
-    let (path, content) = match &swap {
-        SavedSwap::Maker(maker_swap) => (
-            stats_maker_swap_file_path(ctx, &maker_swap.uuid),
-            try_s!(json::to_vec(&maker_swap)),
-        ),
-        SavedSwap::Taker(taker_swap) => (
-            stats_taker_swap_file_path(ctx, &taker_swap.uuid),
-            try_s!(json::to_vec(&taker_swap)),
-        ),
-    };
-    try_s!(write(&path, &content));
+#[cfg(not(target_arch = "wasm32"))]
+async fn save_stats_swap(ctx: &MmArc, swap: &SavedSwap) -> Result<(), String> {
+    try_s!(swap.save_to_stats_db(ctx).await);
     add_swap_to_db_index(ctx, swap);
     Ok(())
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type")]
-pub enum SavedSwap {
-    Maker(MakerSavedSwap),
-    Taker(TakerSavedSwap),
 }
 
 /// The helper structure that makes easier to parse the response for GUI devs
@@ -670,88 +679,6 @@ pub struct MySwapInfo {
     my_amount: BigDecimal,
     other_amount: BigDecimal,
     pub started_at: u64,
-}
-
-impl SavedSwap {
-    fn is_finished(&self) -> bool {
-        match self {
-            SavedSwap::Maker(swap) => swap.is_finished(),
-            SavedSwap::Taker(swap) => swap.is_finished(),
-        }
-    }
-
-    pub fn uuid(&self) -> &Uuid {
-        match self {
-            SavedSwap::Maker(swap) => &swap.uuid,
-            SavedSwap::Taker(swap) => &swap.uuid,
-        }
-    }
-
-    pub fn maker_coin_ticker(&self) -> Result<String, String> {
-        match self {
-            SavedSwap::Maker(swap) => swap.maker_coin(),
-            SavedSwap::Taker(swap) => swap.maker_coin(),
-        }
-    }
-
-    pub fn taker_coin_ticker(&self) -> Result<String, String> {
-        match self {
-            SavedSwap::Maker(swap) => swap.taker_coin(),
-            SavedSwap::Taker(swap) => swap.taker_coin(),
-        }
-    }
-
-    pub fn get_my_info(&self) -> Option<MySwapInfo> {
-        match self {
-            SavedSwap::Maker(swap) => swap.get_my_info(),
-            SavedSwap::Taker(swap) => swap.get_my_info(),
-        }
-    }
-
-    fn recover_funds(self, ctx: MmArc) -> Result<RecoveredSwap, String> {
-        let maker_ticker = try_s!(self.maker_coin_ticker());
-        // Should remove `block_on` when recover_funds is async.
-        let maker_coin = match block_on(lp_coinfind(&ctx, &maker_ticker)) {
-            Ok(Some(c)) => c,
-            Ok(None) => return ERR!("Coin {} is not activated", maker_ticker),
-            Err(e) => return ERR!("Error {} on {} coin find attempt", e, maker_ticker),
-        };
-
-        let taker_ticker = try_s!(self.taker_coin_ticker());
-        // Should remove `block_on` when recover_funds is async.
-        let taker_coin = match block_on(lp_coinfind(&ctx, &taker_ticker)) {
-            Ok(Some(c)) => c,
-            Ok(None) => return ERR!("Coin {} is not activated", taker_ticker),
-            Err(e) => return ERR!("Error {} on {} coin find attempt", e, taker_ticker),
-        };
-        match self {
-            SavedSwap::Maker(saved) => {
-                let (maker_swap, _) = try_s!(MakerSwap::load_from_saved(ctx, maker_coin, taker_coin, saved));
-                Ok(try_s!(maker_swap.recover_funds()))
-            },
-            SavedSwap::Taker(saved) => {
-                let (taker_swap, _) = try_s!(TakerSwap::load_from_saved(ctx, maker_coin, taker_coin, saved));
-                Ok(try_s!(taker_swap.recover_funds()))
-            },
-        }
-    }
-
-    fn is_recoverable(&self) -> bool {
-        match self {
-            SavedSwap::Maker(saved) => saved.is_recoverable(),
-            SavedSwap::Taker(saved) => saved.is_recoverable(),
-        }
-    }
-
-    fn save_to_db(&self, ctx: &MmArc) -> Result<(), String> {
-        let path = my_swap_file_path(ctx, self.uuid());
-        if path.exists() {
-            return ERR!("File already exists");
-        };
-        let content = try_s!(json::to_vec(self));
-        try_s!(std::fs::write(path, &content));
-        Ok(())
-    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
@@ -815,66 +742,44 @@ impl<'a> From<&'a SavedSwap> for MySwapStatusResponse<'a> {
 }
 
 /// Returns the status of swap performed on `my` node
-pub fn my_swap_status(ctx: MmArc, req: Json) -> HyRes {
-    let uuid: Uuid = try_h!(json::from_value(req["params"]["uuid"].clone()));
-    let path = my_swap_file_path(&ctx, &uuid);
-    let content = try_h!(slurp(&path));
-    if content.is_empty() {
-        return rpc_response(
-            404,
-            json!({
-                "error": "swap data is not found"
-            })
-            .to_string(),
-        );
-    }
-    let status: SavedSwap = try_h!(json::from_slice(&content));
+pub async fn my_swap_status(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
+    let uuid: Uuid = try_s!(json::from_value(req["params"]["uuid"].clone()));
+    let status = match SavedSwap::load_my_swap_from_db(&ctx, uuid).await {
+        Ok(Some(status)) => status,
+        Ok(None) => return Err("swap data is not found".to_owned()),
+        Err(e) => return ERR!("{}", e),
+    };
 
-    rpc_response(
-        200,
-        json!({ "result": MySwapStatusResponse::from(&status) }).to_string(),
-    )
+    let res_js = json!({ "result": MySwapStatusResponse::from(&status) });
+    let res = try_s!(json::to_vec(&res_js));
+    Ok(try_s!(Response::builder().body(res)))
+}
+
+#[cfg(target_arch = "wasm32")]
+pub async fn stats_swap_status(_ctx: MmArc, _req: Json) -> Result<Response<Vec<u8>>, String> {
+    ERR!("'stats_swap_status' is only supported in native mode")
 }
 
 /// Returns the status of requested swap, typically performed by other nodes and saved by `save_stats_swap_status`
-pub fn stats_swap_status(ctx: MmArc, req: Json) -> HyRes {
-    let uuid: Uuid = try_h!(json::from_value(req["params"]["uuid"].clone()));
-    let maker_path = stats_maker_swap_file_path(&ctx, &uuid);
-    let taker_path = stats_taker_swap_file_path(&ctx, &uuid);
-    let maker_content = try_h!(slurp(&maker_path));
-    let taker_content = try_h!(slurp(&taker_path));
-    let maker_status: Option<MakerSavedSwap> = if maker_content.is_empty() {
-        None
-    } else {
-        Some(try_h!(json::from_slice(&maker_content)))
-    };
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn stats_swap_status(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
+    let uuid: Uuid = try_s!(json::from_value(req["params"]["uuid"].clone()));
 
-    let taker_status: Option<TakerSavedSwap> = if taker_content.is_empty() {
-        None
-    } else {
-        Some(try_h!(json::from_slice(&taker_content)))
-    };
+    let maker_status = try_s!(SavedSwap::load_from_maker_stats_db(&ctx, uuid).await);
+    let taker_status = try_s!(SavedSwap::load_from_taker_stats_db(&ctx, uuid).await);
 
     if maker_status.is_none() && taker_status.is_none() {
-        return rpc_response(
-            404,
-            json!({
-                "error": "swap data is not found"
-            })
-            .to_string(),
-        );
+        return ERR!("swap data is not found");
     }
 
-    rpc_response(
-        200,
-        json!({
-            "result": {
-                "maker": maker_status,
-                "taker": taker_status,
-            }
-        })
-        .to_string(),
-    )
+    let res_js = json!({
+        "result": {
+            "maker": maker_status,
+            "taker": taker_status,
+        }
+    });
+    let res = try_s!(json::to_vec(&res_js));
+    Ok(try_s!(Response::builder().body(res)))
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -884,21 +789,25 @@ struct SwapStatus {
 }
 
 /// Broadcasts `my` swap status to P2P network
-fn broadcast_my_swap_status(uuid: &Uuid, ctx: &MmArc) -> Result<(), String> {
-    let path = my_swap_file_path(ctx, uuid);
-    let content = try_s!(slurp(&path));
-    let mut status: SavedSwap = try_s!(json::from_slice(&content));
-    match &mut status {
+async fn broadcast_my_swap_status(ctx: &MmArc, uuid: Uuid) -> Result<(), String> {
+    let mut status = match try_s!(SavedSwap::load_my_swap_from_db(ctx, uuid).await) {
+        Some(status) => status,
+        None => return ERR!("swap data is not found"),
+    };
+    match status {
         SavedSwap::Taker(_) => (), // do nothing for taker
         SavedSwap::Maker(ref mut swap) => swap.hide_secret(),
     };
-    try_s!(save_stats_swap(ctx, &status));
+
+    #[cfg(not(target_arch = "wasm32"))]
+    try_s!(save_stats_swap(ctx, &status).await);
+
     let status = SwapStatus {
         method: "swapstatus".into(),
         data: status,
     };
     let msg = json::to_vec(&status).expect("Swap status ser should never fail");
-    broadcast_p2p_msg(ctx, vec![swap_topic(uuid)], msg);
+    broadcast_p2p_msg(ctx, vec![swap_topic(&uuid)], msg);
     Ok(())
 }
 
@@ -952,161 +861,166 @@ pub struct MyRecentSwapsReq {
     filter: MySwapsFilter,
 }
 
+/// TODO the last step in adding support this function to the wasm32 is to add integration 'my_swaps' DB.
 #[cfg(target_arch = "wasm32")]
-pub fn my_recent_swaps(_ctx: MmArc, _req: Json) -> HyRes {
-    Box::new(futures01::future::err::<Response<Vec<u8>>, String>(ERRL!(
-        "'my_recent_swaps' is only supported in native mode yet"
-    )))
+pub async fn my_recent_swaps(_ctx: MmArc, _req: Json) -> Result<Response<Vec<u8>>, String> {
+    ERR!("'my_recent_swaps' is only supported in native mode yet")
 }
 
 /// Returns the data of recent swaps of `my` node.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn my_recent_swaps(ctx: MmArc, req: Json) -> HyRes {
+pub async fn my_recent_swaps(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
     use crate::mm2::database::my_swaps::select_uuids_by_my_swaps_filter;
 
-    let req: MyRecentSwapsReq = try_h!(json::from_value(req));
-    let db_result = try_h!(select_uuids_by_my_swaps_filter(
+    let req: MyRecentSwapsReq = try_s!(json::from_value(req));
+    let db_result = try_s!(select_uuids_by_my_swaps_filter(
         &ctx.sqlite_connection(),
         &req.filter,
         Some(&req.paging_options),
     ));
 
     // iterate over uuids trying to parse the corresponding files content and add to result vector
-    let swaps: Vec<Json> = db_result
-        .uuids
-        .iter()
-        .map(|uuid| {
-            let path = my_swap_file_path(&ctx, uuid);
-            match json::from_slice::<SavedSwap>(&slurp(&path).unwrap()) {
-                Ok(swap) => json::to_value(MySwapStatusResponse::from(&swap)).unwrap(),
-                Err(e) => {
-                    error!("Error {} parsing JSON from {}", e, path.display());
-                    Json::Null
-                },
-            }
-        })
-        .collect();
-
-    rpc_response(
-        200,
-        json!({
-            "result": {
-                "swaps": swaps,
-                "from_uuid": req.paging_options.from_uuid,
-                "skipped": db_result.skipped,
-                "limit": req.paging_options.limit,
-                "total": db_result.total_count,
-                "page_number": req.paging_options.page_number,
-                "total_pages": calc_total_pages(db_result.total_count, req.paging_options.limit),
-                "found_records": db_result.uuids.len(),
+    let mut swaps = Vec::with_capacity(db_result.uuids.len());
+    for uuid in db_result.uuids.iter() {
+        let swap_json = match SavedSwap::load_my_swap_from_db(&ctx, *uuid).await {
+            Ok(Some(swap)) => json::to_value(MySwapStatusResponse::from(&swap)).unwrap(),
+            Ok(None) => {
+                error!("No such swap with the uuid '{}'", uuid);
+                Json::Null
             },
-        })
-        .to_string(),
-    )
+            Err(e) => {
+                error!("Error loading a swap with the uuid '{}': {}", uuid, e);
+                Json::Null
+            },
+        };
+        swaps.push(swap_json);
+    }
+
+    let res_js = json!({
+        "result": {
+            "swaps": swaps,
+            "from_uuid": req.paging_options.from_uuid,
+            "skipped": db_result.skipped,
+            "limit": req.paging_options.limit,
+            "total": db_result.total_count,
+            "page_number": req.paging_options.page_number,
+            "total_pages": calc_total_pages(db_result.total_count, req.paging_options.limit),
+            "found_records": db_result.uuids.len(),
+        },
+    });
+    let res = try_s!(json::to_vec(&res_js));
+    Ok(try_s!(Response::builder().body(res)))
 }
 
 /// Find out the swaps that need to be kick-started, continue from the point where swap was interrupted
 /// Return the tickers of coins that must be enabled for swaps to continue
-pub fn swap_kick_starts(ctx: MmArc) -> HashSet<String> {
+pub async fn swap_kick_starts(ctx: MmArc) -> Result<HashSet<String>, String> {
     let mut coins = HashSet::new();
-    let entries: Vec<PathBuf> = read_dir(&my_swaps_dir(&ctx))
-        .unwrap()
-        .into_iter()
-        .filter_map(|(_lm, path)| {
-            if path.extension() == Some(OsStr::new("json")) {
-                Some(path)
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    entries.iter().for_each(|path| {
-        if let Ok(swap) = json::from_slice::<SavedSwap>(&slurp(&path).unwrap()) {
-            if !swap.is_finished() {
-                info!("Kick starting the swap {}", swap.uuid());
-                let maker_coin_ticker = match swap.maker_coin_ticker() {
-                    Ok(t) => t,
-                    Err(e) => {
-                        error!("Error {} getting maker coin of swap: {}", e, swap.uuid());
-                        return;
-                    },
-                };
-                let taker_coin_ticker = match swap.taker_coin_ticker() {
-                    Ok(t) => t,
-                    Err(e) => {
-                        error!("Error {} getting taker coin of swap {}", e, swap.uuid());
-                        return;
-                    },
-                };
-                coins.insert(maker_coin_ticker.clone());
-                coins.insert(taker_coin_ticker.clone());
-                thread::spawn({
-                    let ctx = ctx.clone();
-                    move || {
-                        let taker_coin = loop {
-                            match block_on(lp_coinfind(&ctx, &taker_coin_ticker)) {
-                                Ok(Some(c)) => break c,
-                                Ok(None) => {
-                                    info!(
-                                        "Can't kickstart the swap {} until the coin {} is activated",
-                                        swap.uuid(),
-                                        taker_coin_ticker
-                                    );
-                                    thread::sleep(Duration::from_secs(5));
-                                },
-                                Err(e) => {
-                                    error!("Error {} on {} find attempt", e, taker_coin_ticker);
-                                    return;
-                                },
-                            };
-                        };
-
-                        let maker_coin = loop {
-                            match block_on(lp_coinfind(&ctx, &maker_coin_ticker)) {
-                                Ok(Some(c)) => break c,
-                                Ok(None) => {
-                                    info!(
-                                        "Can't kickstart the swap {} until the coin {} is activated",
-                                        swap.uuid(),
-                                        maker_coin_ticker
-                                    );
-                                    thread::sleep(Duration::from_secs(5));
-                                },
-                                Err(e) => {
-                                    error!("Error {} on {} find attempt", e, maker_coin_ticker);
-                                    return;
-                                },
-                            };
-                        };
-                        match swap {
-                            SavedSwap::Maker(saved_swap) => {
-                                block_on(run_maker_swap(
-                                    RunMakerSwapInput::KickStart {
-                                        maker_coin,
-                                        taker_coin,
-                                        swap_uuid: saved_swap.uuid,
-                                    },
-                                    ctx,
-                                ));
-                            },
-                            SavedSwap::Taker(saved_swap) => {
-                                block_on(run_taker_swap(
-                                    RunTakerSwapInput::KickStart {
-                                        maker_coin,
-                                        taker_coin,
-                                        swap_uuid: saved_swap.uuid,
-                                    },
-                                    ctx,
-                                ));
-                            },
-                        }
-                    }
-                });
-            }
+    let swaps = try_s!(SavedSwap::load_all_my_swaps_from_db(&ctx).await);
+    for swap in swaps {
+        if swap.is_finished() {
+            continue;
         }
-    });
-    coins
+
+        info!("Kick starting the swap {}", swap.uuid());
+        let maker_coin_ticker = match swap.maker_coin_ticker() {
+            Ok(t) => t,
+            Err(e) => {
+                error!("Error {} getting maker coin of swap: {}", e, swap.uuid());
+                continue;
+            },
+        };
+        let taker_coin_ticker = match swap.taker_coin_ticker() {
+            Ok(t) => t,
+            Err(e) => {
+                error!("Error {} getting taker coin of swap {}", e, swap.uuid());
+                continue;
+            },
+        };
+        coins.insert(maker_coin_ticker.clone());
+        coins.insert(taker_coin_ticker.clone());
+
+        let ctx = ctx.clone();
+
+        // kick-start the swap in a separate thread.
+        #[cfg(not(target_arch = "wasm32"))]
+        thread::spawn(move || {
+            block_on(kickstart_thread_handler(
+                ctx.clone(),
+                swap,
+                maker_coin_ticker,
+                taker_coin_ticker,
+            ))
+        });
+
+        #[cfg(target_arch = "wasm32")]
+        common::executor::spawn(async move {
+            kickstart_thread_handler(ctx, swap, maker_coin_ticker, taker_coin_ticker).await
+        });
+    }
+    Ok(coins)
+}
+
+async fn kickstart_thread_handler(ctx: MmArc, swap: SavedSwap, maker_coin_ticker: String, taker_coin_ticker: String) {
+    let taker_coin = loop {
+        match lp_coinfind(&ctx, &taker_coin_ticker).await {
+            Ok(Some(c)) => break c,
+            Ok(None) => {
+                info!(
+                    "Can't kickstart the swap {} until the coin {} is activated",
+                    swap.uuid(),
+                    taker_coin_ticker
+                );
+                Timer::sleep(5.).await;
+            },
+            Err(e) => {
+                error!("Error {} on {} find attempt", e, taker_coin_ticker);
+                return;
+            },
+        };
+    };
+
+    let maker_coin = loop {
+        match lp_coinfind(&ctx, &maker_coin_ticker).await {
+            Ok(Some(c)) => break c,
+            Ok(None) => {
+                info!(
+                    "Can't kickstart the swap {} until the coin {} is activated",
+                    swap.uuid(),
+                    maker_coin_ticker
+                );
+                Timer::sleep(5.).await;
+            },
+            Err(e) => {
+                error!("Error {} on {} find attempt", e, maker_coin_ticker);
+                return;
+            },
+        };
+    };
+    match swap {
+        SavedSwap::Maker(saved_swap) => {
+            run_maker_swap(
+                RunMakerSwapInput::KickStart {
+                    maker_coin,
+                    taker_coin,
+                    swap_uuid: saved_swap.uuid,
+                },
+                ctx,
+            )
+            .await;
+        },
+        SavedSwap::Taker(saved_swap) => {
+            run_taker_swap(
+                RunTakerSwapInput::KickStart {
+                    maker_coin,
+                    taker_coin,
+                    swap_uuid: saved_swap.uuid,
+                },
+                ctx,
+            )
+            .await;
+        },
+    }
 }
 
 pub async fn coins_needed_for_kick_start(ctx: MmArc) -> Result<Response<Vec<u8>>, String> {
@@ -1118,15 +1032,13 @@ pub async fn coins_needed_for_kick_start(ctx: MmArc) -> Result<Response<Vec<u8>>
 
 pub async fn recover_funds_of_swap(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
     let uuid: Uuid = try_s!(json::from_value(req["params"]["uuid"].clone()));
-    let path = my_swap_file_path(&ctx, &uuid);
-    let content = try_s!(slurp(&path));
-    if content.is_empty() {
-        return ERR!("swap data is not found");
-    }
+    let swap = match SavedSwap::load_my_swap_from_db(&ctx, uuid).await {
+        Ok(Some(swap)) => swap,
+        Ok(None) => return ERR!("swap data is not found"),
+        Err(e) => return ERR!("{}", e),
+    };
 
-    let swap: SavedSwap = try_s!(json::from_slice(&content));
-
-    let recover_data = try_s!(swap.recover_funds(ctx));
+    let recover_data = try_s!(swap.recover_funds(ctx).await);
     let res = try_s!(json::to_vec(&json!({
         "result": {
             "action": recover_data.action,
@@ -1143,7 +1055,7 @@ pub async fn import_swaps(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, St
     let mut imported = vec![];
     let mut skipped = HashMap::new();
     for swap in swaps {
-        match swap.save_to_db(&ctx) {
+        match swap.save_to_db(&ctx).await {
             Ok(_) => {
                 if let Some(info) = swap.get_my_info() {
                     if let Err(e) = insert_new_swap_to_db(
@@ -1159,7 +1071,7 @@ pub async fn import_swaps(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, St
                 imported.push(swap.uuid().to_owned());
             },
             Err(e) => {
-                skipped.insert(swap.uuid().to_owned(), e);
+                skipped.insert(swap.uuid().to_owned(), ERRL!("{}", e));
             },
         }
     }
@@ -1190,21 +1102,11 @@ pub async fn active_swaps_rpc(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>
     let statuses = if req.include_status {
         let mut map = HashMap::new();
         for uuid in uuids.iter() {
-            let path = my_swap_file_path(&ctx, &uuid);
-            let content = match slurp(&path) {
-                Ok(c) => c,
+            let status = match SavedSwap::load_my_swap_from_db(&ctx, *uuid).await {
+                Ok(Some(status)) => status,
+                Ok(None) => continue,
                 Err(e) => {
-                    error!("Error {} on slurp({})", e, path.display());
-                    continue;
-                },
-            };
-            if content.is_empty() {
-                continue;
-            }
-            let status: SavedSwap = match json::from_slice(&content) {
-                Ok(s) => s,
-                Err(e) => {
-                    error!("Error {} on deserializing the content {:?}", e, content);
+                    error!("Error on loading_from_db: {}", e);
                     continue;
                 },
             };

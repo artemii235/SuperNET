@@ -1,12 +1,13 @@
 use super::check_balance::{check_base_coin_balance_for_swap, check_my_coin_balance_for_swap, CheckBalanceError,
                            CheckBalanceResult};
 use super::pubkey_banning::ban_pubkey_on_failed_swap;
+use super::swap_lock::{SwapLock, SwapLockOps};
 use super::trade_preimage::{TradePreimageRequest, TradePreimageRpcError, TradePreimageRpcResult};
 use super::{broadcast_my_swap_status, broadcast_swap_message_every, check_other_coin_balance_for_swap,
-            dex_fee_amount_from_taker_coin, get_locked_amount, my_swap_file_path, my_swaps_dir, recv_swap_msg,
-            swap_topic, AtomicSwap, LockedAmount, MySwapInfo, NegotiationDataMsg, NegotiationDataV2, RecoveredSwap,
-            RecoveredSwapAction, SavedSwap, SavedTradeFee, SwapConfirmationsSettings, SwapError, SwapMsg,
-            SwapsContext, TransactionIdentifier, WAIT_CONFIRM_INTERVAL};
+            dex_fee_amount_from_taker_coin, get_locked_amount, recv_swap_msg, swap_topic, AtomicSwap, LockedAmount,
+            MySwapInfo, NegotiationDataMsg, NegotiationDataV2, RecoveredSwap, RecoveredSwapAction, SavedSwap,
+            SavedSwapIo, SavedTradeFee, SwapConfirmationsSettings, SwapError, SwapMsg, SwapsContext,
+            TransactionIdentifier, WAIT_CONFIRM_INTERVAL};
 
 use crate::mm2::lp_network::subscribe_to_topic;
 use crate::mm2::lp_ordermatch::{MakerOrderBuilder, OrderConfirmationsSettings};
@@ -15,16 +16,15 @@ use atomic::Atomic;
 use bigdecimal::BigDecimal;
 use bitcrypto::dhash160;
 use coins::{CanRefundHtlc, FeeApproxStage, FoundSwapTxSpend, MmCoinEnum, TradeFee, TradePreimageValue, TransactionEnum};
+use common::log::{error, warn};
 use common::mm_error::prelude::*;
-use common::{bits256, executor::Timer, file_lock::FileLock, log::error, mm_ctx::MmArc, mm_number::MmNumber, now_ms,
-             slurp, write, DEX_FEE_ADDR_RAW_PUBKEY};
+use common::{bits256, executor::Timer, mm_ctx::MmArc, mm_number::MmNumber, now_ms, DEX_FEE_ADDR_RAW_PUBKEY};
 use futures::{compat::Future01CompatExt, select, FutureExt};
 use futures01::Future;
 use parking_lot::Mutex as PaMutex;
 use primitives::hash::H264;
 use rand::Rng;
 use rpc::v1::types::{Bytes as BytesJson, H160 as H160Json, H256 as H256Json, H264 as H264Json};
-use serde_json as json;
 use std::path::PathBuf;
 use std::sync::{atomic::Ordering, Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use uuid::Uuid;
@@ -35,11 +35,10 @@ pub fn stats_maker_swap_file_path(ctx: &MmArc, uuid: &Uuid) -> PathBuf {
     stats_maker_swap_dir(ctx).join(format!("{}.json", uuid))
 }
 
-fn save_my_maker_swap_event(ctx: &MmArc, swap: &MakerSwap, event: MakerSavedEvent) -> Result<(), String> {
-    let path = my_swap_file_path(ctx, &swap.uuid);
-    let content = try_s!(slurp(&path));
-    let swap: SavedSwap = if content.is_empty() {
-        SavedSwap::Maker(MakerSavedSwap {
+async fn save_my_maker_swap_event(ctx: &MmArc, swap: &MakerSwap, event: MakerSavedEvent) -> Result<(), String> {
+    let swap = match SavedSwap::load_my_swap_from_db(ctx, swap.uuid).await {
+        Ok(Some(swap)) => swap,
+        Ok(None) => SavedSwap::Maker(MakerSavedSwap {
             uuid: swap.uuid,
             my_order_uuid: swap.my_order_uuid,
             maker_amount: Some(swap.maker_amount.clone()),
@@ -77,19 +76,17 @@ fn save_my_maker_swap_event(ctx: &MmArc, swap: &MakerSwap, event: MakerSavedEven
                 "MakerPaymentRefunded".into(),
                 "MakerPaymentRefundFailed".into(),
             ],
-        })
-    } else {
-        try_s!(json::from_slice(&content))
+        }),
+        Err(e) => return ERR!("{}", e),
     };
 
     if let SavedSwap::Maker(mut maker_swap) = swap {
         maker_swap.events.push(event);
         let new_swap = SavedSwap::Maker(maker_swap);
-        let new_content = try_s!(json::to_vec(&new_swap));
-        try_s!(write(&path, &new_content));
+        try_s!(new_swap.save_to_db(ctx).await);
         Ok(())
     } else {
-        ERR!("Expected SavedSwap::Maker at {}, got {:?}", path.display(), swap)
+        ERR!("Expected SavedSwap::Maker, got {:?}", swap)
     }
 }
 
@@ -853,14 +850,17 @@ impl MakerSwap {
         ]))
     }
 
-    pub fn load_from_db_by_uuid(
+    pub async fn load_from_db_by_uuid(
         ctx: MmArc,
         maker_coin: MmCoinEnum,
         taker_coin: MmCoinEnum,
         swap_uuid: &Uuid,
     ) -> Result<(Self, Option<MakerSwapCommand>), String> {
-        let path = my_swap_file_path(&ctx, swap_uuid);
-        let saved: SavedSwap = try_s!(json::from_slice(&try_s!(slurp(&path))));
+        let saved = match SavedSwap::load_my_swap_from_db(&ctx, *swap_uuid).await {
+            Ok(Some(saved)) => saved,
+            Ok(None) => return ERR!("Couldn't find a swap with the uuid '{}'", swap_uuid),
+            Err(e) => return ERR!("{}", e),
+        };
         let saved = match saved {
             SavedSwap::Maker(swap) => swap,
             SavedSwap::Taker(_) => return ERR!("Can not load MakerSwap from SavedSwap::Taker uuid: {}", swap_uuid),
@@ -1388,14 +1388,16 @@ impl RunMakerSwapInput {
 /// Every produced event is saved to local DB. Swap status is broadcasted to P2P network after completion.
 pub async fn run_maker_swap(swap: RunMakerSwapInput, ctx: MmArc) {
     let uuid = swap.uuid().to_owned();
-    let lock_path = my_swaps_dir(&ctx).join(fomat!((uuid) ".lock"));
     let mut attempts = 0;
-    let file_lock = loop {
-        match FileLock::lock(&lock_path, 40.) {
+    let swap_lock = loop {
+        match SwapLock::lock(&ctx, uuid, 40.).await {
             Ok(Some(l)) => break l,
             Ok(None) => {
                 if attempts >= 1 {
-                    log!("Swap " (uuid) " file lock is acquired by another process/thread, aborting");
+                    warn!(
+                        "Swap {} file lock is acquired by another process/thread, aborting",
+                        uuid
+                    );
                     return;
                 } else {
                     attempts += 1;
@@ -1403,7 +1405,7 @@ pub async fn run_maker_swap(swap: RunMakerSwapInput, ctx: MmArc) {
                 }
             },
             Err(e) => {
-                log!("Swap " (uuid) " file lock error " (e));
+                error!("Swap {} file lock error: {}", uuid, e);
                 return;
             },
         };
@@ -1415,7 +1417,7 @@ pub async fn run_maker_swap(swap: RunMakerSwapInput, ctx: MmArc) {
             maker_coin,
             taker_coin,
             swap_uuid,
-        } => match MakerSwap::load_from_db_by_uuid(ctx, maker_coin, taker_coin, &swap_uuid) {
+        } => match MakerSwap::load_from_db_by_uuid(ctx, maker_coin, taker_coin, &swap_uuid).await {
             Ok((swap, command)) => match command {
                 Some(c) => {
                     log!("Swap " (uuid) " kick started.");
@@ -1436,9 +1438,9 @@ pub async fn run_maker_swap(swap: RunMakerSwapInput, ctx: MmArc) {
     let mut touch_loop = Box::pin(
         async move {
             loop {
-                match file_lock.touch() {
+                match swap_lock.touch().await {
                     Ok(_) => (),
-                    Err(e) => log!("Warning, touch error " (e) " for swap " (uuid)),
+                    Err(e) => warn!("Swap {} file lock error: {}", uuid, e),
                 };
                 Timer::sleep(30.).await;
             }
@@ -1474,7 +1476,9 @@ pub async fn run_maker_swap(swap: RunMakerSwapInput, ctx: MmArc) {
                         event: event.clone(),
                     };
 
-                    save_my_maker_swap_event(&ctx, &running_swap, to_save).expect("!save_my_maker_swap_event");
+                    save_my_maker_swap_event(&ctx, &running_swap, to_save)
+                        .await
+                        .expect("!save_my_maker_swap_event");
                     if event.should_ban_taker() {
                         ban_pubkey_on_failed_swap(
                             &ctx,
@@ -1491,7 +1495,7 @@ pub async fn run_maker_swap(swap: RunMakerSwapInput, ctx: MmArc) {
                         command = c;
                     },
                     None => {
-                        if let Err(e) = broadcast_my_swap_status(&uuid, &ctx) {
+                        if let Err(e) = broadcast_my_swap_status(&ctx, uuid).await {
                             log!("!broadcast_my_swap_status(" (uuid) "): " (e));
                         }
                         break;
@@ -1688,6 +1692,7 @@ mod maker_swap_tests {
     use common::mm_ctx::MmCtxBuilder;
     use common::privkey::key_pair_from_seed;
     use mocktopus::mocking::*;
+    use serde_json as json;
 
     fn eth_tx_for_test() -> SignedEthTx {
         // raw transaction bytes of https://etherscan.io/tx/0x0869be3e5d4456a29d488a533ad6c118620fef450f36778aecf31d356ff8b41f

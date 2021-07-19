@@ -38,6 +38,7 @@ pub use wasm_log::{LogLevel, WasmCallback, WasmLoggerBuilder};
 mod native_log;
 #[cfg(not(target_arch = "wasm32"))]
 pub use native_log::{FfiCallback, LogLevel, UnifiedLoggerBuilder};
+use std::str::FromStr;
 
 lazy_static! {
     /// If this C callback is present then all the logging output should happen through it
@@ -184,6 +185,48 @@ macro_rules! log {
     }}
 }
 
+/// Log to the `ctx` dashboard with single tags, or key-value tags, or without any tags.
+///
+/// # Examples
+///
+/// ## With single and key-value tags
+///
+/// ```rust
+/// log_tag!(
+///   ctx,
+///   "😅",
+///   "tx_history",
+///   "coin" => coin.as_ref().conf.ticker;
+///   fmt = "Some message: {}",
+///   any_message
+/// );
+/// ```
+///
+/// ## Without any tags
+///
+/// ```rust
+/// log_tag!(ctx, "😅"; fmt = "Some message: {}", any_message);
+/// ```
+///
+/// # Important
+///
+/// Don't forget to separate tags and message formatting using `;` symbol.
+#[macro_export]
+macro_rules! log_tag {
+    ($ctx:expr, $emotion:literal $(, $tag_key:expr $(=> $tag_val:expr)? )* ; fmt = $($arg:tt)*) => {{
+        let tags: &[&dyn $crate::log::TagParam] = &[
+            $(
+                &(
+                    $tag_key.to_string()
+                    $(, $tag_val.to_string())?
+                )
+            ),*
+        ];
+        let line = ERRL!($($arg)*);
+        $ctx.log.log($emotion, tags, &line);
+    }};
+}
+
 pub trait TagParam<'a> {
     fn key(&self) -> String;
     fn val(&self) -> Option<String>;
@@ -212,6 +255,11 @@ impl<'a> TagParam<'a> for (String, &'a str) {
 impl<'a> TagParam<'a> for (&'a str, i32) {
     fn key(&self) -> String { String::from(self.0) }
     fn val(&self) -> Option<String> { Some(fomat!((self.1))) }
+}
+
+impl<'a> TagParam<'a> for (String, String) {
+    fn key(&self) -> String { self.0.clone() }
+    fn val(&self) -> Option<String> { Some(self.1.clone()) }
 }
 
 #[derive(Clone, Eq, Hash, PartialEq)]
@@ -871,6 +919,25 @@ impl Drop for LogState {
             }
         } else {
             log!("LogState] Bye!");
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct UnknownLogLevel(String);
+
+impl FromStr for LogLevel {
+    type Err = UnknownLogLevel;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "off" => Ok(LogLevel::Off),
+            "error" => Ok(LogLevel::Error),
+            "warn" => Ok(LogLevel::Warn),
+            "info" => Ok(LogLevel::Info),
+            "debug" => Ok(LogLevel::Debug),
+            "trace" => Ok(LogLevel::Trace),
+            _ => Err(UnknownLogLevel(s.to_owned())),
         }
     }
 }

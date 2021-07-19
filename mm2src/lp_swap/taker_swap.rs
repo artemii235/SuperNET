@@ -1,12 +1,13 @@
 use super::check_balance::{check_my_coin_balance_for_swap, CheckBalanceError, CheckBalanceResult,
                            TakerFeeAdditionalInfo};
 use super::pubkey_banning::ban_pubkey_on_failed_swap;
+use super::swap_lock::{SwapLock, SwapLockOps};
 use super::trade_preimage::{TradePreimageRequest, TradePreimageRpcError, TradePreimageRpcResult};
 use super::{broadcast_my_swap_status, broadcast_swap_message_every, check_other_coin_balance_for_swap,
-            dex_fee_amount_from_taker_coin, dex_fee_rate, dex_fee_threshold, get_locked_amount, my_swap_file_path,
-            my_swaps_dir, recv_swap_msg, swap_topic, AtomicSwap, LockedAmount, MySwapInfo, NegotiationDataMsg,
-            NegotiationDataV2, RecoveredSwap, RecoveredSwapAction, SavedSwap, SavedTradeFee,
-            SwapConfirmationsSettings, SwapError, SwapMsg, SwapsContext, TransactionIdentifier, WAIT_CONFIRM_INTERVAL};
+            dex_fee_amount_from_taker_coin, dex_fee_rate, dex_fee_threshold, get_locked_amount, recv_swap_msg,
+            swap_topic, AtomicSwap, LockedAmount, MySwapInfo, NegotiationDataMsg, NegotiationDataV2, RecoveredSwap,
+            RecoveredSwapAction, SavedSwap, SavedSwapIo, SavedTradeFee, SwapConfirmationsSettings, SwapError, SwapMsg,
+            SwapsContext, TransactionIdentifier, WAIT_CONFIRM_INTERVAL};
 use crate::mm2::lp_network::subscribe_to_topic;
 use crate::mm2::lp_ordermatch::{MatchBy, OrderConfirmationsSettings, TakerAction, TakerOrderBuilder};
 use crate::mm2::MM_VERSION;
@@ -18,7 +19,7 @@ use common::log::{debug, error, warn};
 use common::mm_ctx::MmArc;
 use common::mm_error::prelude::*;
 use common::mm_number::MmNumber;
-use common::{bits256, file_lock::FileLock, now_ms, slurp, write, DEX_FEE_ADDR_RAW_PUBKEY};
+use common::{bits256, now_ms, DEX_FEE_ADDR_RAW_PUBKEY};
 use futures::{compat::Future01CompatExt, select, FutureExt};
 use futures01::Future;
 use http::Response;
@@ -36,11 +37,10 @@ pub fn stats_taker_swap_file_path(ctx: &MmArc, uuid: &Uuid) -> PathBuf {
     stats_taker_swap_dir(ctx).join(format!("{}.json", uuid))
 }
 
-fn save_my_taker_swap_event(ctx: &MmArc, swap: &TakerSwap, event: TakerSavedEvent) -> Result<(), String> {
-    let path = my_swap_file_path(ctx, &swap.uuid);
-    let content = try_s!(slurp(&path));
-    let swap: SavedSwap = if content.is_empty() {
-        SavedSwap::Taker(TakerSavedSwap {
+async fn save_my_taker_swap_event(ctx: &MmArc, swap: &TakerSwap, event: TakerSavedEvent) -> Result<(), String> {
+    let swap = match SavedSwap::load_my_swap_from_db(ctx, swap.uuid).await {
+        Ok(Some(swap)) => swap,
+        Ok(None) => SavedSwap::Taker(TakerSavedSwap {
             uuid: swap.uuid,
             my_order_uuid: swap.my_order_uuid,
             maker_amount: Some(swap.maker_amount.to_decimal()),
@@ -77,19 +77,17 @@ fn save_my_taker_swap_event(ctx: &MmArc, swap: &TakerSwap, event: TakerSavedEven
                 "TakerPaymentRefunded".into(),
                 "TakerPaymentRefundFailed".into(),
             ],
-        })
-    } else {
-        try_s!(json::from_slice(&content))
+        }),
+        Err(e) => return ERR!("{}", e),
     };
 
     if let SavedSwap::Taker(mut taker_swap) = swap {
         taker_swap.events.push(event);
         let new_swap = SavedSwap::Taker(taker_swap);
-        let new_content = try_s!(json::to_vec(&new_swap));
-        try_s!(write(&path, &new_content));
+        try_s!(new_swap.save_to_db(ctx).await);
         Ok(())
     } else {
-        ERR!("Expected SavedSwap::Taker at {}, got {:?}", path.display(), swap)
+        ERR!("Expected SavedSwap::Taker, got {:?}", swap)
     }
 }
 
@@ -270,14 +268,16 @@ impl RunTakerSwapInput {
 /// Every produced event is saved to local DB. Swap status is broadcast to P2P network after completion.
 pub async fn run_taker_swap(swap: RunTakerSwapInput, ctx: MmArc) {
     let uuid = swap.uuid().to_owned();
-    let lock_path = my_swaps_dir(&ctx).join(fomat!((uuid) ".lock"));
     let mut attempts = 0;
-    let file_lock = loop {
-        match FileLock::lock(&lock_path, 40.) {
+    let swap_lock = loop {
+        match SwapLock::lock(&ctx, uuid, 40.).await {
             Ok(Some(l)) => break l,
             Ok(None) => {
                 if attempts >= 1 {
-                    log!("Swap " (uuid) " file lock is acquired by another process/thread, aborting");
+                    warn!(
+                        "Swap {} file lock is acquired by another process/thread, aborting",
+                        uuid
+                    );
                     return;
                 } else {
                     attempts += 1;
@@ -285,10 +285,10 @@ pub async fn run_taker_swap(swap: RunTakerSwapInput, ctx: MmArc) {
                 }
             },
             Err(e) => {
-                log!("Swap " (uuid) " file lock error " (e));
+                error!("Swap {} file lock error: {}", uuid, e);
                 return;
             },
-        };
+        }
     };
 
     let (swap, mut command) = match swap {
@@ -297,7 +297,7 @@ pub async fn run_taker_swap(swap: RunTakerSwapInput, ctx: MmArc) {
             maker_coin,
             taker_coin,
             swap_uuid,
-        } => match TakerSwap::load_from_db_by_uuid(ctx, maker_coin, taker_coin, &swap_uuid) {
+        } => match TakerSwap::load_from_db_by_uuid(ctx, maker_coin, taker_coin, &swap_uuid).await {
             Ok((swap, command)) => match command {
                 Some(c) => {
                     log!("Swap " (uuid) " kick started.");
@@ -318,9 +318,9 @@ pub async fn run_taker_swap(swap: RunTakerSwapInput, ctx: MmArc) {
     let mut touch_loop = Box::pin(
         async move {
             loop {
-                match file_lock.touch() {
+                match swap_lock.touch().await {
                     Ok(_) => (),
-                    Err(e) => log!("Warning, touch error " (e) " for swap " (uuid)),
+                    Err(e) => warn!("Swap {} file lock error: {}", uuid, e),
                 };
                 Timer::sleep(30.).await;
             }
@@ -352,7 +352,9 @@ pub async fn run_taker_swap(swap: RunTakerSwapInput, ctx: MmArc) {
                         event: event.clone(),
                     };
 
-                    save_my_taker_swap_event(&ctx, &running_swap, to_save).expect("!save_my_taker_swap_event");
+                    save_my_taker_swap_event(&ctx, &running_swap, to_save)
+                        .await
+                        .expect("!save_my_taker_swap_event");
                     if event.should_ban_maker() {
                         ban_pubkey_on_failed_swap(
                             &ctx,
@@ -369,7 +371,7 @@ pub async fn run_taker_swap(swap: RunTakerSwapInput, ctx: MmArc) {
                         command = c;
                     },
                     None => {
-                        if let Err(e) = broadcast_my_swap_status(&running_swap.uuid, &ctx) {
+                        if let Err(e) = broadcast_my_swap_status(&ctx, running_swap.uuid).await {
                             log!("!broadcast_my_swap_status(" (uuid) "): " (e));
                         }
                         break;
@@ -1233,14 +1235,17 @@ impl TakerSwap {
         ]))
     }
 
-    pub fn load_from_db_by_uuid(
+    pub async fn load_from_db_by_uuid(
         ctx: MmArc,
         maker_coin: MmCoinEnum,
         taker_coin: MmCoinEnum,
         swap_uuid: &Uuid,
     ) -> Result<(Self, Option<TakerSwapCommand>), String> {
-        let path = my_swap_file_path(&ctx, swap_uuid);
-        let saved: SavedSwap = try_s!(json::from_slice(&try_s!(slurp(&path))));
+        let saved = match SavedSwap::load_my_swap_from_db(&ctx, *swap_uuid).await {
+            Ok(Some(saved)) => saved,
+            Ok(None) => return ERR!("Couldn't find a swap with the uuid '{}'", swap_uuid),
+            Err(e) => return ERR!("{}", e),
+        };
         let saved = match saved {
             SavedSwap::Taker(swap) => swap,
             SavedSwap::Maker(_) => return ERR!("Can not load TakerSwap from SavedSwap::Maker uuid: {}", swap_uuid),

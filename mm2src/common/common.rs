@@ -102,7 +102,9 @@ pub mod privkey;
 pub mod seri;
 #[path = "patterns/state_machine.rs"] pub mod state_machine;
 
-#[cfg(target_arch = "wasm32")] pub mod wasm_indexed_db;
+#[cfg(target_arch = "wasm32")]
+#[path = "indexed_db/indexed_db.rs"]
+pub mod indexed_db;
 #[cfg(target_arch = "wasm32")] pub mod wasm_rpc;
 #[cfg(target_arch = "wasm32")]
 #[path = "transport/wasm_ws.rs"]
@@ -134,6 +136,7 @@ use std::mem::{forget, size_of, zeroed};
 use std::net::SocketAddr;
 use std::ops::{Add, Deref, Div, RangeInclusive};
 use std::os::raw::{c_char, c_void};
+use std::panic::{set_hook, PanicInfo};
 use std::path::{Path, PathBuf};
 use std::ptr::read_volatile;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -493,14 +496,24 @@ fn output_pc_mem_addr(output: &mut dyn FnMut(&str)) {
     });
 }
 
+/// Set up a panic hook that prints the panic location, the message and the backtrace.
+/// (The default Rust handler doesn't have the means to print the message).
+#[cfg(target_arch = "wasm32")]
+pub fn set_panic_hook() {
+    set_hook(Box::new(|info: &PanicInfo| {
+        let mut trace = String::new();
+        stack_trace(&mut stack_trace_frame, &mut |l| trace.push_str(l));
+        console_err!("{}", info);
+        console_err!("backtrace\n{}", trace);
+    }))
+}
+
 /// Sets our own panic handler using patched backtrace crate. It was discovered that standard Rust panic
 /// handlers print only "unknown" in Android backtraces which is not helpful.
 /// Using custom hook with patched backtrace version solves this issue.
 /// NB: https://github.com/rust-lang/backtrace-rs/issues/227
 #[cfg(not(target_arch = "wasm32"))]
 pub fn set_panic_hook() {
-    use std::panic::{set_hook, PanicInfo};
-
     thread_local! {static ENTERED: Atomic<bool> = Atomic::new (false);}
 
     set_hook(Box::new(|info: &PanicInfo| {
@@ -1130,6 +1143,12 @@ pub mod executor {
                 till_utc: now_float() + seconds,
             }
         }
+        pub fn sleep_ms(ms: u32) -> Timer {
+            let seconds = gstuff::duration_to_float(Duration::from_millis(ms as u64));
+            Timer {
+                till_utc: now_float() + seconds,
+            }
+        }
         pub fn till_utc(&self) -> f64 { self.till_utc }
     }
 
@@ -1594,6 +1613,27 @@ pub fn write(path: &dyn AsRef<Path>, contents: &dyn AsRef<[u8]>) -> Result<(), S
     Ok(())
 }
 
+/// Read a folder asynchronously and return a list of files.
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn read_dir_async<P: AsRef<Path>>(dir: P) -> Result<Vec<PathBuf>, String> {
+    use futures::StreamExt;
+
+    let mut result = Vec::new();
+    let mut entries = try_s!(async_std::fs::read_dir(dir.as_ref()).await);
+
+    while let Some(entry) = entries.next().await {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(e) => {
+                log::error!("Error '{}' reading from dir {}", e, dir.as_ref().display());
+                continue;
+            },
+        };
+        result.push(entry.path().into());
+    }
+    Ok(result)
+}
+
 /// Read a folder and return a list of files with their last-modified ms timestamps.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn read_dir(dir: &dyn AsRef<Path>) -> Result<Vec<(u64, PathBuf)>, String> {
@@ -1756,21 +1796,6 @@ pub fn writeln(line: &str) {
     use web_sys::console;
     console::log_1(&line.into());
     append_log_tail(line);
-}
-
-/// Set up a panic hook that prints the panic location and the message.  
-/// (The default Rust handler doesn't have the means to print the message.
-///  Note that we're also getting the stack trace from Node.js and rustfilt).
-#[cfg(target_arch = "wasm32")]
-#[no_mangle]
-pub extern "C" fn set_panic_hook() {
-    use std::panic::{set_hook, PanicInfo};
-
-    set_hook(Box::new(|info: &PanicInfo| {
-        let mut msg = String::with_capacity(256);
-        let _ = wite!(&mut msg, (info));
-        writeln(&msg)
-    }))
 }
 
 pub fn small_rng() -> SmallRng { SmallRng::seed_from_u64(now_ms()) }

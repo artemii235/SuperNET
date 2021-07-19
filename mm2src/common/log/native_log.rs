@@ -3,6 +3,7 @@ use log::Record;
 use log4rs::encode::pattern;
 use log4rs::{append, config};
 use std::os::raw::c_char;
+use std::str::FromStr;
 
 const DEFAULT_CONSOLE_FORMAT: &str = "[{d(%Y-%m-%d %H:%M:%S %Z)(utc)} {h({l})} {M}:{f}:{L}] {m}\n";
 const DEFAULT_LEVEL_FILTER: LogLevel = LogLevel::Info;
@@ -25,15 +26,8 @@ pub enum LogLevel {
 
 impl LogLevel {
     pub fn from_env() -> Option<LogLevel> {
-        match std::env::var("RUST_LOG").ok()?.to_lowercase().as_str() {
-            "off" => Some(LogLevel::Off),
-            "error" => Some(LogLevel::Error),
-            "warn" => Some(LogLevel::Warn),
-            "info" => Some(LogLevel::Info),
-            "debug" => Some(LogLevel::Debug),
-            "trace" => Some(LogLevel::Trace),
-            _ => None,
-        }
+        let env_val = std::env::var("RUST_LOG").ok()?;
+        LogLevel::from_str(&env_val).ok()
     }
 }
 

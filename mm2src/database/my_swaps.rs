@@ -1,10 +1,8 @@
 /// This module contains code to work with my_swaps table in MM2 SQLite DB
-use crate::mm2::lp_swap::{my_swaps_dir, MySwapsFilter, SavedSwap};
-use common::log::{debug, error};
+use crate::mm2::lp_swap::{MySwapsFilter, SavedSwap, SavedSwapIo};
+use common::log::debug;
 use common::mm_ctx::MmArc;
 use common::rusqlite::{Connection, Error as SqlError, Result as SqlResult, ToSql};
-use common::{read_dir, slurp};
-use serde_json::{self as json};
 use sql_builder::SqlBuilder;
 use std::convert::TryInto;
 use uuid::Uuid;
@@ -37,26 +35,9 @@ pub fn insert_new_swap(ctx: &MmArc, my_coin: &str, other_coin: &str, uuid: &str,
 }
 
 /// Returns SQL statements to initially fill my_swaps table using existing DB with JSON files
-pub fn fill_my_swaps_from_json_statements(ctx: &MmArc) -> Vec<(&'static str, Vec<String>)> {
-    let swap_files = read_dir(&my_swaps_dir(&ctx)).expect("Reading swaps dir should not fail at this point");
-    let mut result = vec![];
-    for (_, file) in swap_files {
-        let content = slurp(&file).expect("slurp should not fail at this point");
-        match json::from_slice::<SavedSwap>(&content) {
-            Ok(swap) => {
-                if let Some(sql_with_params) = insert_saved_swap_sql(swap) {
-                    result.push(sql_with_params);
-                }
-            },
-            Err(e) => error!(
-                "Error {} on file {} content {:?} deserialization to SavedSwap",
-                e,
-                file.display(),
-                content
-            ),
-        }
-    }
-    result
+pub async fn fill_my_swaps_from_json_statements(ctx: &MmArc) -> Vec<(&'static str, Vec<String>)> {
+    let swaps = SavedSwap::load_all_my_swaps_from_db(ctx).await.unwrap_or_default();
+    swaps.into_iter().filter_map(insert_saved_swap_sql).collect()
 }
 
 fn insert_saved_swap_sql(swap: SavedSwap) -> Option<(&'static str, Vec<String>)> {

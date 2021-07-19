@@ -108,7 +108,7 @@ async fn process_p2p_message(
                 }
             },
             Some(lp_swap::SWAP_PREFIX) => {
-                lp_swap::process_msg(ctx.clone(), split.next().unwrap_or_default(), &message.data);
+                lp_swap::process_msg(ctx.clone(), split.next().unwrap_or_default(), &message.data).await;
                 to_propagate = true;
             },
             None | Some(_) => (),
