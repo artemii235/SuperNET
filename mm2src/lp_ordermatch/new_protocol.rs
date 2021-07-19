@@ -108,7 +108,7 @@ mod compact_uuid {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, Deserialize, PartialEq, Serialize)]
 pub struct MakerOrderCreated {
     pub uuid: CompactUuid,
     pub base: String,
@@ -122,6 +122,12 @@ pub struct MakerOrderCreated {
     /// This is timestamp of message
     pub timestamp: u64,
     pub pair_trie_root: H64,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_protocol_info: Option<Vec<u8>>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rel_protocol_info: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -254,6 +260,12 @@ pub struct TakerRequest {
     pub uuid: CompactUuid,
     pub match_by: MatchBy,
     pub conf_settings: OrderConfirmationsSettings,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_protocol_info: Option<Vec<u8>>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rel_protocol_info: Option<Vec<u8>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -265,6 +277,12 @@ pub struct MakerReserved {
     pub taker_order_uuid: CompactUuid,
     pub maker_order_uuid: CompactUuid,
     pub conf_settings: OrderConfirmationsSettings,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_protocol_info: Option<Vec<u8>>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rel_protocol_info: Option<Vec<u8>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -282,6 +300,7 @@ pub struct MakerConnected {
 #[cfg(test)]
 mod new_protocol_tests {
     use common::new_uuid;
+    use serde_json::{self as json};
 
     use super::*;
 
@@ -362,5 +381,38 @@ mod new_protocol_tests {
         let deserialized: MakerOrderUpdated = rmp_serde::from_read_ref(serialized.as_slice()).unwrap();
 
         assert_eq!(deserialized, v2);
+    }
+
+    #[test]
+    fn check_maker_order_created_serde() {
+        let uuid = Uuid::parse_str("fe5144b8-cb21-4bb8-b235-97211023abd6").unwrap();
+        let compact_uuid = CompactUuid::from(uuid);
+        let conf_settings = OrderConfirmationsSettings {
+            base_confs: 5,
+            base_nota: true,
+            rel_confs: 5,
+            rel_nota: true,
+        };
+        // New format should be serialized to old format when protocol_info is None
+        let maker_order_created_new = MakerOrderCreated {
+            uuid: compact_uuid,
+            base: "BASE".into(),
+            rel: "REL".into(),
+            price: BigRational::from_integer(2.into()),
+            max_volume: BigRational::from_integer(3.into()),
+            min_volume: BigRational::from_integer(1.into()),
+            created_at: 1626639468,
+            conf_settings,
+            timestamp: 1626639468,
+            pair_trie_root: H64::default(),
+            base_protocol_info: None,
+            rel_protocol_info: None,
+        };
+
+        let old_format_str = r#"{"uuid":[254,81,68,184,203,33,75,184,178,53,151,33,16,35,171,214],"base":"BASE","rel":"REL","price":[[1,[2]],[1,[1]]],"max_volume":[[1,[3]],[1,[1]]],"min_volume":[[1,[1]],[1,[1]]],"created_at":1626639468,"conf_settings":{"base_confs":5,"base_nota":true,"rel_confs":5,"rel_nota":true},"timestamp":1626639468,"pair_trie_root":[0,0,0,0,0,0,0,0]}"#;
+
+        let new_format_str = json::to_string(&maker_order_created_new).unwrap();
+
+        assert_eq!(new_format_str, old_format_str);
     }
 }

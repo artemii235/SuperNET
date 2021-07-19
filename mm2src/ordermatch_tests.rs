@@ -45,6 +45,8 @@ fn test_match_maker_order_and_taker_request() {
         action: TakerAction::Buy,
         match_by: MatchBy::Any,
         conf_settings: None,
+        base_protocol_info: None,
+        rel_protocol_info: None,
     };
 
     let actual = maker.match_with_request(&request);
@@ -78,6 +80,8 @@ fn test_match_maker_order_and_taker_request() {
         action: TakerAction::Buy,
         match_by: MatchBy::Any,
         conf_settings: None,
+        base_protocol_info: None,
+        rel_protocol_info: None,
     };
 
     let actual = maker.match_with_request(&request);
@@ -111,6 +115,8 @@ fn test_match_maker_order_and_taker_request() {
         action: TakerAction::Buy,
         match_by: MatchBy::Any,
         conf_settings: None,
+        base_protocol_info: None,
+        rel_protocol_info: None,
     };
 
     let actual = maker.match_with_request(&request);
@@ -144,6 +150,8 @@ fn test_match_maker_order_and_taker_request() {
         action: TakerAction::Sell,
         match_by: MatchBy::Any,
         conf_settings: None,
+        base_protocol_info: None,
+        rel_protocol_info: None,
     };
 
     let actual = maker.match_with_request(&request);
@@ -177,6 +185,8 @@ fn test_match_maker_order_and_taker_request() {
         action: TakerAction::Sell,
         match_by: MatchBy::Any,
         conf_settings: None,
+        base_protocol_info: None,
+        rel_protocol_info: None,
     };
 
     let actual = maker.match_with_request(&request);
@@ -210,6 +220,8 @@ fn test_match_maker_order_and_taker_request() {
         action: TakerAction::Sell,
         match_by: MatchBy::Any,
         conf_settings: None,
+        base_protocol_info: None,
+        rel_protocol_info: None,
     };
 
     let actual = maker.match_with_request(&request);
@@ -276,6 +288,8 @@ fn test_maker_order_available_amount() {
             action: TakerAction::Buy,
             match_by: MatchBy::Any,
             conf_settings: None,
+            base_protocol_info: None,
+            rel_protocol_info: None,
         },
         reserved: MakerReserved {
             base: "BASE".into(),
@@ -287,6 +301,8 @@ fn test_maker_order_available_amount() {
             maker_order_uuid: Uuid::new_v4(),
             taker_order_uuid: Uuid::new_v4(),
             conf_settings: None,
+            base_protocol_info: None,
+            rel_protocol_info: None,
         },
         connect: None,
         connected: None,
@@ -304,6 +320,8 @@ fn test_maker_order_available_amount() {
             action: TakerAction::Buy,
             match_by: MatchBy::Any,
             conf_settings: None,
+            base_protocol_info: None,
+            rel_protocol_info: None,
         },
         reserved: MakerReserved {
             base: "BASE".into(),
@@ -315,6 +333,8 @@ fn test_maker_order_available_amount() {
             maker_order_uuid: Uuid::new_v4(),
             taker_order_uuid: Uuid::new_v4(),
             conf_settings: None,
+            base_protocol_info: None,
+            rel_protocol_info: None,
         },
         connect: None,
         connected: None,
@@ -341,6 +361,8 @@ fn test_taker_match_reserved() {
         action: TakerAction::Buy,
         match_by: MatchBy::Any,
         conf_settings: None,
+        base_protocol_info: None,
+        rel_protocol_info: None,
     };
 
     let order = TakerOrder {
@@ -363,6 +385,8 @@ fn test_taker_match_reserved() {
         maker_order_uuid: Uuid::new_v4(),
         taker_order_uuid: uuid,
         conf_settings: None,
+        base_protocol_info: None,
+        rel_protocol_info: None,
     };
 
     assert_eq!(MatchReservedResult::Matched, order.match_reserved(&reserved));
@@ -378,6 +402,8 @@ fn test_taker_match_reserved() {
         action: TakerAction::Sell,
         match_by: MatchBy::Any,
         conf_settings: None,
+        base_protocol_info: None,
+        rel_protocol_info: None,
     };
 
     let order = TakerOrder {
@@ -400,6 +426,8 @@ fn test_taker_match_reserved() {
         maker_order_uuid: Uuid::new_v4(),
         taker_order_uuid: uuid,
         conf_settings: None,
+        base_protocol_info: None,
+        rel_protocol_info: None,
     };
 
     assert_eq!(MatchReservedResult::Matched, order.match_reserved(&reserved));
@@ -415,6 +443,8 @@ fn test_taker_match_reserved() {
         action: TakerAction::Sell,
         match_by: MatchBy::Any,
         conf_settings: None,
+        base_protocol_info: None,
+        rel_protocol_info: None,
     };
 
     let order = TakerOrder {
@@ -437,6 +467,8 @@ fn test_taker_match_reserved() {
         maker_order_uuid: Uuid::new_v4(),
         taker_order_uuid: uuid,
         conf_settings: None,
+        base_protocol_info: None,
+        rel_protocol_info: None,
     };
 
     assert_eq!(MatchReservedResult::Matched, order.match_reserved(&reserved));
@@ -452,6 +484,8 @@ fn test_taker_match_reserved() {
         action: TakerAction::Sell,
         match_by: MatchBy::Any,
         conf_settings: None,
+        base_protocol_info: None,
+        rel_protocol_info: None,
     };
 
     let order = TakerOrder {
@@ -474,6 +508,8 @@ fn test_taker_match_reserved() {
         maker_order_uuid: Uuid::new_v4(),
         taker_order_uuid: uuid,
         conf_settings: None,
+        base_protocol_info: None,
+        rel_protocol_info: None,
     };
 
     assert_eq!(MatchReservedResult::NotMatched, order.match_reserved(&reserved));
@@ -489,6 +525,8 @@ fn test_taker_match_reserved() {
         action: TakerAction::Buy,
         match_by: MatchBy::Any,
         conf_settings: None,
+        base_protocol_info: None,
+        rel_protocol_info: None,
     };
 
     let order = TakerOrder {
@@ -511,6 +549,8 @@ fn test_taker_match_reserved() {
         maker_order_uuid: Uuid::new_v4(),
         taker_order_uuid: uuid,
         conf_settings: None,
+        base_protocol_info: None,
+        rel_protocol_info: None,
     };
 
     assert_eq!(MatchReservedResult::Matched, order.match_reserved(&reserved));
@@ -526,6 +566,8 @@ fn test_taker_match_reserved() {
         action: TakerAction::Buy,
         match_by: MatchBy::Any,
         conf_settings: None,
+        base_protocol_info: None,
+        rel_protocol_info: None,
     };
 
     let order = TakerOrder {
@@ -548,6 +590,8 @@ fn test_taker_match_reserved() {
         maker_order_uuid: Uuid::new_v4(),
         taker_order_uuid: uuid,
         conf_settings: None,
+        base_protocol_info: None,
+        rel_protocol_info: None,
     };
 
     assert_eq!(MatchReservedResult::Matched, order.match_reserved(&reserved));
@@ -563,6 +607,8 @@ fn test_taker_match_reserved() {
         action: TakerAction::Buy,
         match_by: MatchBy::Any,
         conf_settings: None,
+        base_protocol_info: None,
+        rel_protocol_info: None,
     };
 
     let order = TakerOrder {
@@ -585,6 +631,8 @@ fn test_taker_match_reserved() {
         maker_order_uuid: Uuid::new_v4(),
         taker_order_uuid: uuid,
         conf_settings: None,
+        base_protocol_info: None,
+        rel_protocol_info: None,
     };
 
     assert_eq!(MatchReservedResult::Matched, order.match_reserved(&reserved));
@@ -600,6 +648,8 @@ fn test_taker_match_reserved() {
         action: TakerAction::Buy,
         match_by: MatchBy::Any,
         conf_settings: None,
+        base_protocol_info: None,
+        rel_protocol_info: None,
     };
 
     let order = TakerOrder {
@@ -622,6 +672,8 @@ fn test_taker_match_reserved() {
         maker_order_uuid: Uuid::new_v4(),
         taker_order_uuid: uuid,
         conf_settings: None,
+        base_protocol_info: None,
+        rel_protocol_info: None,
     };
 
     assert_eq!(MatchReservedResult::NotMatched, order.match_reserved(&reserved));
@@ -641,6 +693,8 @@ fn test_taker_match_reserved() {
             dest_pub_key: H256Json::default(),
             match_by: MatchBy::Any,
             conf_settings: None,
+            base_protocol_info: None,
+            rel_protocol_info: None,
         },
         matches: HashMap::new(),
         order_type: OrderType::GoodTillCancelled,
@@ -659,6 +713,8 @@ fn test_taker_match_reserved() {
         sender_pubkey: H256Json::default(),
         dest_pub_key: H256Json::default(),
         conf_settings: None,
+        base_protocol_info: None,
+        rel_protocol_info: None,
     };
 
     assert_eq!(MatchReservedResult::Matched, order.match_reserved(&reserved));
@@ -677,6 +733,8 @@ fn test_taker_order_cancellable() {
         action: TakerAction::Buy,
         match_by: MatchBy::Any,
         conf_settings: None,
+        base_protocol_info: None,
+        rel_protocol_info: None,
     };
 
     let order = TakerOrder {
@@ -702,6 +760,8 @@ fn test_taker_order_cancellable() {
         action: TakerAction::Buy,
         match_by: MatchBy::Any,
         conf_settings: None,
+        base_protocol_info: None,
+        rel_protocol_info: None,
     };
 
     let mut order = TakerOrder {
@@ -726,6 +786,8 @@ fn test_taker_order_cancellable() {
             maker_order_uuid: Uuid::new_v4(),
             taker_order_uuid: Uuid::new_v4(),
             conf_settings: None,
+            base_protocol_info: None,
+            rel_protocol_info: None,
         },
         connect: TakerConnect {
             sender_pubkey: H256Json::default(),
@@ -807,6 +869,8 @@ fn prepare_for_cancel_by(ctx: &MmArc) -> mpsc::Receiver<AdexBehaviourCmd> {
             sender_pubkey: H256Json::default(),
             match_by: MatchBy::Any,
             conf_settings: None,
+            base_protocol_info: None,
+            rel_protocol_info: None,
         },
         order_type: OrderType::GoodTillCancelled,
         min_volume: 0.into(),
@@ -901,6 +965,8 @@ fn test_taker_order_match_by() {
         action: TakerAction::Buy,
         match_by: MatchBy::Orders(not_matching_uuids),
         conf_settings: None,
+        base_protocol_info: None,
+        rel_protocol_info: None,
     };
 
     let mut order = TakerOrder {
@@ -923,6 +989,8 @@ fn test_taker_order_match_by() {
         maker_order_uuid: Uuid::new_v4(),
         taker_order_uuid: uuid,
         conf_settings: None,
+        base_protocol_info: None,
+        rel_protocol_info: None,
     };
 
     assert_eq!(MatchReservedResult::NotMatched, order.match_reserved(&reserved));
@@ -1380,6 +1448,8 @@ fn make_random_orders(pubkey: String, _secret: &[u8; 32], base: String, rel: Str
             created_at: now_ms() / 1000,
             timestamp: now_ms() / 1000,
             pair_trie_root: H64::default(),
+            base_protocol_info: None,
+            rel_protocol_info: None,
         };
 
         orders.push((order, pubkey.clone()).into());

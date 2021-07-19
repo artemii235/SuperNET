@@ -32,7 +32,7 @@ use futures::lock::MutexGuard as AsyncMutexGuard;
 use futures::{FutureExt, TryFutureExt};
 use futures01::Future;
 use keys::bytes::Bytes as ScriptBytes;
-use keys::{Address as UtxoAddress, Address, Public};
+use keys::{Address as UtxoAddress, Address, AddressFormat, Public};
 #[cfg(test)] use mocktopus::macros::*;
 use rpc::v1::types::{Bytes as BytesJson, Transaction as RpcTransaction, H160 as H160Json, H256 as H256Json};
 use script::{Builder as ScriptBuilder, Opcode, Script, TransactionInputSigner};
@@ -988,8 +988,8 @@ impl MarketCoinOps for Qrc20Coin {
         utxo_common::current_block(&self.utxo)
     }
 
-    fn address_from_pubkey_str(&self, pubkey: &str) -> Result<String, String> {
-        utxo_common::address_from_pubkey_str(self, pubkey)
+    fn address_from_pubkey_str(&self, pubkey: &str, addr_format: &str) -> Result<String, String> {
+        utxo_common::address_from_pubkey_str(self, pubkey, addr_format)
     }
 
     fn display_priv_key(&self) -> String { utxo_common::display_priv_key(&self.utxo) }
@@ -1166,6 +1166,17 @@ impl MmCoin for Qrc20Coin {
     }
 
     fn mature_confirmations(&self) -> Option<u32> { Some(self.utxo.conf.mature_confirmations) }
+
+    fn coin_protocol_info(&self) -> Option<Vec<u8>> {
+        Some(serde_json::to_vec(&self.utxo.my_address.addr_format).unwrap())
+    }
+
+    fn is_coin_protocol_supported(&self, info: &Option<Vec<u8>>) -> bool {
+        match info {
+            Some(format) => json::from_slice::<AddressFormat>(format).is_ok(),
+            None => !&self.utxo.my_address.addr_format.is_segwit(),
+        }
+    }
 }
 
 pub fn qrc20_swap_id(time_lock: u32, secret_hash: &[u8]) -> Vec<u8> {

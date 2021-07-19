@@ -186,7 +186,7 @@ impl MarketCoinOps for ZCoin {
         utxo_common::current_block(&self.utxo_arc)
     }
 
-    fn address_from_pubkey_str(&self, _pubkey: &str) -> Result<String, String> { todo!() }
+    fn address_from_pubkey_str(&self, _pubkey: &str, _addr_format: &str) -> Result<String, String> { todo!() }
 
     fn display_priv_key(&self) -> String {
         encode_extended_spending_key(
@@ -510,6 +510,17 @@ impl MmCoin for ZCoin {
     fn swap_contract_address(&self) -> Option<BytesJson> { utxo_common::swap_contract_address() }
 
     fn mature_confirmations(&self) -> Option<u32> { Some(self.utxo_arc.conf.mature_confirmations) }
+
+    fn coin_protocol_info(&self) -> Option<Vec<u8>> {
+        Some(serde_json::to_vec(&self.utxo_arc.my_address.addr_format).unwrap())
+    }
+
+    fn is_coin_protocol_supported(&self, info: &Option<Vec<u8>>) -> bool {
+        match info {
+            Some(format) => json::from_slice::<AddressFormat>(format).is_ok(),
+            None => !&self.utxo_arc.my_address.addr_format.is_segwit(),
+        }
+    }
 }
 
 #[async_trait]
