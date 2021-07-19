@@ -5,7 +5,7 @@ use futures::channel::{mpsc, oneshot};
 use futures::io::{AsyncRead, AsyncWrite};
 use futures::task::{Context, Poll};
 use futures::StreamExt;
-use libp2p::core::upgrade::{read_one, write_one};
+use libp2p::core::upgrade::{read_length_prefixed, write_length_prefixed};
 use libp2p::request_response::handler::RequestProtocol;
 use libp2p::request_response::{ProtocolName, ProtocolSupport, RequestId, RequestResponse, RequestResponseCodec,
                                RequestResponseConfig, RequestResponseEvent, RequestResponseMessage, ResponseChannel};
@@ -299,7 +299,7 @@ where
     T: AsyncRead + Unpin + Send,
     M: DeserializeOwned,
 {
-    match read_one(io, MAX_BUFFER_SIZE).await {
+    match read_length_prefixed(io, MAX_BUFFER_SIZE).await {
         Ok(data) => Ok(try_io!(decode_message(&data))),
         Err(e) => Err(io::Error::new(io::ErrorKind::InvalidData, e)),
     }
@@ -317,5 +317,5 @@ where
             "Try to send data size over maximum",
         ));
     }
-    write_one(io, data).await
+    write_length_prefixed(io, data).await
 }

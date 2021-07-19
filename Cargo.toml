@@ -47,7 +47,6 @@ debug = false
 [dependencies]
 async-std = { version = "1.5", features = ["unstable"] }
 async-trait = "0.1"
-atomic = "0.4"
 bigdecimal = { version = "0.1", features = ["serde"] }
 bitcrypto = { path = "mm2src/mm2_bitcoin/crypto" }
 blake2 = "0.9.1"
@@ -66,7 +65,7 @@ fomat-macros = "0.2"
 futures01 = { version = "0.1", package = "futures" }
 futures-cpupool = "0.1"
 futures = { version = "0.3.1", package = "futures", features = ["compat", "async-await"] }
-gstuff = { version = "0.6", features = ["nightly"] }
+gstuff = { version = "0.7", features = ["nightly"] }
 hash256-std-hasher = "0.15.2"
 hash-db = "0.15.2"
 hex = "0.3.2"
@@ -82,7 +81,7 @@ num-rational = { version = "0.2", features = ["serde", "bigint", "bigint-std"] }
 num-traits = "0.2"
 rpc = { path = "mm2src/mm2_bitcoin/rpc" }
 parking_lot = { version = "0.11", features = ["nightly"] }
-parity-util-mem = "0.7"
+parity-util-mem = "0.9"
 # AP: portfolio RPCs are not documented and not used as of now
 # so the crate is disabled to speed up the entire removal of C code
 # portfolio = { path = "mm2src/portfolio" }
@@ -101,14 +100,15 @@ ser_error = { path = "mm2src/derives/ser_error" }
 ser_error_derive = { path = "mm2src/derives/ser_error_derive" }
 serialization = { path = "mm2src/mm2_bitcoin/serialization" }
 serialization_derive = { path = "mm2src/mm2_bitcoin/serialization_derive" }
-sp-trie = "2.0.0"
+sp-runtime-interface = { version = "3.0.0", default-features = false, features = ["disable_target_static_assertions"] }
+sp-trie = { version = "3.0", default-features = false }
 sql-builder = "3.1.1"
 
 # Pin `term` to 0.5.1 because `dirs` is not portable, cf.
 # https://github.com/Stebalien/term/commit/84cfdb51775b327fedf21784749d862fdffa10b4#diff-80398c5faae3c069e4e6aa2ed11b28c0
 term = "=0.5.1"
 
-trie-db = "0.22.1"
+trie-db = { version = "0.22.6", default-features = false }
 trie-root = "0.16.0"
 uuid = { version = "0.7", features = ["serde", "v4"] }
 wasm-timer = "0.2.4"
@@ -135,7 +135,7 @@ winapi = "0.3"
 
 [build-dependencies]
 chrono = "0.4"
-gstuff = { version = "0.6", features = ["nightly", "term"] }
+gstuff = { version = "0.7", features = ["nightly"] }
 regex = "1"
 
 [workspace]

@@ -11,13 +11,12 @@
 //!                   binary
 
 #![allow(uncommon_codepoints)]
-#![feature(non_ascii_idents, integer_atomics, panic_info_message)]
+#![feature(integer_atomics, panic_info_message)]
 #![feature(async_closure)]
 #![feature(hash_raw_entry)]
 #![feature(negative_impls)]
 #![feature(auto_traits)]
 #![feature(drain_filter)]
-#![feature(const_fn)]
 
 #[macro_use] extern crate arrayref;
 #[macro_use] extern crate fomat_macros;
@@ -108,7 +107,6 @@ pub mod seri;
 #[path = "transport/wasm_ws.rs"]
 pub mod wasm_ws;
 
-use atomic::Atomic;
 use bigdecimal::BigDecimal;
 use futures::compat::Future01CompatExt;
 use futures::future::FutureExt;
@@ -136,7 +134,7 @@ use std::ops::{Add, Deref, Div, RangeInclusive};
 use std::os::raw::{c_char, c_void};
 use std::path::{Path, PathBuf};
 use std::ptr::read_volatile;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
@@ -501,7 +499,7 @@ fn output_pc_mem_addr(output: &mut dyn FnMut(&str)) {
 pub fn set_panic_hook() {
     use std::panic::{set_hook, PanicInfo};
 
-    thread_local! {static ENTERED: Atomic<bool> = Atomic::new (false);}
+    thread_local! {static ENTERED: AtomicBool = AtomicBool::new(false);}
 
     set_hook(Box::new(|info: &PanicInfo| {
         // Stack tracing and logging might panic (in `println!` for example).

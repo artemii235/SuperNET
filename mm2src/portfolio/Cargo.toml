@@ -16,7 +16,7 @@ common = { path = "../common" }
 coins = { path = "../coins" }
 fomat-macros = "0.2"
 futures01 = { version = "0.1", package = "futures" }
-gstuff = { version = "0.6", features = ["nightly"] }
+gstuff = { version = "0.7", features = ["nightly"] }
 hex = "0.3.2"
 http = "0.1"
 lazy_static = "1.3"

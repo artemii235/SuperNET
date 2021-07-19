@@ -33,7 +33,6 @@ cfg_native! {
     use regex::Regex;
     use std::env;
     use std::fs;
-    use std::io::Write;
     use std::process::Command;
     use std::thread;
     use std::time::Duration;

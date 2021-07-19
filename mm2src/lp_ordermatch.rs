@@ -40,11 +40,9 @@ use mm2_libp2p::{decode_signed, encode_and_sign, encode_message, pub_sub_topic, 
 #[cfg(test)] use mocktopus::macros::*;
 use num_rational::BigRational;
 use num_traits::identities::Zero;
-use order_requests_tracker::OrderRequestsTracker;
 use rpc::v1::types::H256 as H256Json;
 use serde_json::{self as json, Value as Json};
-use sp_trie::{delta_trie_root, DBValue, HashDBT, MemoryDB, Trie, TrieConfiguration, TrieDB, TrieDBMut, TrieHash,
-              TrieMut};
+use sp_trie::{delta_trie_root, MemoryDB, Trie, TrieConfiguration, TrieDB, TrieDBMut, TrieHash, TrieMut};
 use std::collections::hash_map::{Entry, HashMap, RawEntryMut};
 use std::collections::{BTreeSet, HashSet};
 use std::convert::TryInto;
@@ -1920,7 +1918,7 @@ fn get_trie_mut<'a>(
     if *root == H64::default() {
         Ok(TrieDBMut::new(mem_db, root))
     } else {
-        TrieDBMut::from_existing(mem_db, root).map_err(|e| ERRL!("{}", e))
+        TrieDBMut::from_existing(mem_db, root).map_err(|e| ERRL!("{:?}", e))
     }
 }
 
@@ -1955,19 +1953,6 @@ fn pair_history_mut<'a>(
         RawEntryMut::Occupied(e) => e.into_mut(),
         RawEntryMut::Vacant(e) => e.insert(pair.to_owned(), Default::default()).1,
     }
-}
-
-#[allow(dead_code)]
-fn populate_trie<'db, T: TrieConfiguration>(
-    db: &'db mut dyn HashDBT<T::Hash, DBValue>,
-    root: &'db mut TrieHash<T>,
-    v: &[(Vec<u8>, Vec<u8>)],
-) -> Result<TrieDBMut<'db, T>, String> {
-    let mut t = TrieDBMut::<T>::new(db, root);
-    for (key, val) in v {
-        try_s!(t.insert(key, val));
-    }
-    Ok(t)
 }
 
 /// `parity_util_mem::malloc_size` crushes for some reason on wasm32
@@ -2057,7 +2042,7 @@ impl Orderbook {
         let order_bytes = rmp_serde::to_vec(&order).expect("Serialization should never fail");
         if let Err(e) = pair_trie.insert(order.uuid.as_bytes(), &order_bytes) {
             log::error!(
-                "Error {} on insertion to trie. Key {}, value {:?}",
+                "Error {:?} on insertion to trie. Key {}, value {:?}",
                 e,
                 order.uuid,
                 order_bytes
@@ -2264,7 +2249,6 @@ struct OrdermatchContext {
     pub my_taker_orders: AsyncMutex<HashMap<Uuid, TakerOrder>>,
     pub my_cancelled_orders: AsyncMutex<HashMap<Uuid, MakerOrder>>,
     pub orderbook: AsyncMutex<Orderbook>,
-    pub order_requests_tracker: AsyncMutex<OrderRequestsTracker>,
     pub inactive_orders: AsyncMutex<HashMap<Uuid, OrderbookItem>>,
 }
 

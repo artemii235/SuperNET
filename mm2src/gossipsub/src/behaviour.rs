@@ -1456,8 +1456,8 @@ impl NetworkBehaviour for Gossipsub {
                 NetworkBehaviourAction::ReportObservedAddr { address, score } => {
                     return Poll::Ready(NetworkBehaviourAction::ReportObservedAddr { address, score });
                 },
-                NetworkBehaviourAction::DisconnectPeer { peer_id, handler } => {
-                    return Poll::Ready(NetworkBehaviourAction::DisconnectPeer { peer_id, handler });
+                NetworkBehaviourAction::CloseConnection { peer_id, connection } => {
+                    return Poll::Ready(NetworkBehaviourAction::CloseConnection { peer_id, connection });
                 },
             }
         }

@@ -11,7 +11,6 @@ use super::{broadcast_my_swap_status, broadcast_swap_message_every, check_other_
 use crate::mm2::lp_network::subscribe_to_topic;
 use crate::mm2::lp_ordermatch::{MakerOrderBuilder, OrderConfirmationsSettings};
 use crate::mm2::MM_VERSION;
-use atomic::Atomic;
 use bigdecimal::BigDecimal;
 use bitcrypto::dhash160;
 use coins::{CanRefundHtlc, FeeApproxStage, FoundSwapTxSpend, MmCoinEnum, TradeFee, TradePreimageValue, TransactionEnum};
@@ -26,7 +25,8 @@ use rand::Rng;
 use rpc::v1::types::{Bytes as BytesJson, H160 as H160Json, H256 as H256Json, H264 as H264Json};
 use serde_json as json;
 use std::path::PathBuf;
-use std::sync::{atomic::Ordering, Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use uuid::Uuid;
 
 pub fn stats_maker_swap_dir(ctx: &MmArc) -> PathBuf { ctx.dbdir().join("SWAPS").join("STATS").join("MAKER") }
@@ -155,10 +155,10 @@ pub struct MakerSwap {
     taker: bits256,
     uuid: Uuid,
     my_order_uuid: Option<Uuid>,
-    taker_payment_lock: Atomic<u64>,
-    taker_payment_confirmed: Atomic<bool>,
+    taker_payment_lock: AtomicU64,
+    taker_payment_confirmed: AtomicBool,
     errors: PaMutex<Vec<SwapError>>,
-    finished_at: Atomic<u64>,
+    finished_at: AtomicU64,
     mutable: RwLock<MakerSwapMut>,
     conf_settings: SwapConfirmationsSettings,
     payment_locktime: u64,
@@ -259,10 +259,10 @@ impl MakerSwap {
             taker,
             uuid,
             my_order_uuid,
-            taker_payment_lock: Atomic::new(0),
+            taker_payment_lock: AtomicU64::new(0),
             errors: PaMutex::new(Vec::new()),
-            finished_at: Atomic::new(0),
-            taker_payment_confirmed: Atomic::new(false),
+            finished_at: AtomicU64::new(0),
+            taker_payment_confirmed: AtomicBool::new(false),
             conf_settings,
             payment_locktime,
             mutable: RwLock::new(MakerSwapMut {

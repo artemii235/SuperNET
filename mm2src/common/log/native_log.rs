@@ -126,7 +126,7 @@ impl UnifiedLoggerBuilder {
 struct MmLogAppender;
 
 impl append::Append for MmLogAppender {
-    fn append(&self, record: &Record) -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
+    fn append(&self, record: &Record) -> anyhow::Result<()> {
         let as_string = format_record(record);
         let level = LogLevel::from(record.metadata().level());
         chunk2log(as_string, level);

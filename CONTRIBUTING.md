@@ -16,12 +16,12 @@ and we use [rustfmt](https://github.com/rust-lang/rustfmt) to make our code clea
 
 1. Install these tools (only once):
     ```
-    rustup component add rustfmt --toolchain nightly-2020-02-01
+    rustup component add rustfmt
     rustup component add clippy
     ```
 1. Format the code using rustfmt:
     ```
-    cargo +nightly fmt
+    cargo fmt
     ```
 1. Make sure there are no warnings and errors. Run the Clippy:
     ```

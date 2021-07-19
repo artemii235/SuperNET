@@ -4,7 +4,6 @@
 #![test_runner(docker_tests_runner)]
 #![feature(drain_filter)]
 #![feature(hash_raw_entry)]
-#![feature(non_ascii_idents)]
 #![feature(map_first_last)]
 #![recursion_limit = "512"]
 

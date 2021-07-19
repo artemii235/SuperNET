@@ -3,7 +3,6 @@
 use super::duplex_mutex::DuplexMutex;
 use super::executor::{spawn, Timer};
 use super::{now_ms, writeln};
-use atomic::Atomic;
 use chrono::format::strftime::StrftimeItems;
 use chrono::format::DelayedFormat;
 use chrono::{Local, TimeZone, Utc};
@@ -21,7 +20,7 @@ use std::hash::{Hash, Hasher};
 use std::mem::swap;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 use std::thread;
 
@@ -246,10 +245,10 @@ pub struct Status {
     pub tags: DuplexMutex<Vec<Tag>>,
     pub line: DuplexMutex<String>,
     /// The time, in milliseconds since UNIX epoch, when the tracked operation started.
-    pub start: Atomic<u64>,
+    pub start: AtomicU64,
     /// Expected time limit of the tracked operation, in milliseconds since UNIX epoch.  
     /// 0 if no deadline is set.
-    pub deadline: Atomic<u64>,
+    pub deadline: AtomicU64,
 }
 
 impl Clone for Status {
@@ -259,8 +258,8 @@ impl Clone for Status {
         Status {
             tags: DuplexMutex::new(tags),
             line: DuplexMutex::new(line),
-            start: Atomic::new(self.start.load(Ordering::Relaxed)),
-            deadline: Atomic::new(self.deadline.load(Ordering::Relaxed)),
+            start: AtomicU64::new(self.start.load(Ordering::Relaxed)),
+            deadline: AtomicU64::new(self.deadline.load(Ordering::Relaxed)),
         }
     }
 }
@@ -382,8 +381,8 @@ impl StatusHandle {
             let status = Arc::new(Status {
                 tags: DuplexMutex::new(tagsʹ),
                 line: DuplexMutex::new(line.into()),
-                start: Atomic::new(now_ms()),
-                deadline: Atomic::new(0),
+                start: AtomicU64::new(now_ms()),
+                deadline: AtomicU64::new(0),
             });
             self.status = Some(status.clone());
             self.dashboard.spinlock(77).unwrap().push(status);
@@ -509,17 +508,17 @@ impl LogWeak {
 /// The state used to periodically log the dashboard.
 struct DashboardLogging {
     /// The time when the dashboard was last printed into the log.
-    last_log_ms: Atomic<u64>,
+    last_log_ms: AtomicU64,
     /// Checksum of the dashboard that was last printed into the log.  
     /// Allows us to detect whether the dashboard has changed since then.
-    last_hash: Atomic<u64>,
+    last_hash: AtomicU64,
 }
 
 impl Default for DashboardLogging {
     fn default() -> DashboardLogging {
         DashboardLogging {
-            last_log_ms: Atomic::new(0),
-            last_hash: Atomic::new(0),
+            last_log_ms: AtomicU64::new(0),
+            last_hash: AtomicU64::new(0),
         }
     }
 }

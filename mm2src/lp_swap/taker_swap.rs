@@ -10,7 +10,6 @@ use super::{broadcast_my_swap_status, broadcast_swap_message_every, check_other_
 use crate::mm2::lp_network::subscribe_to_topic;
 use crate::mm2::lp_ordermatch::{MatchBy, OrderConfirmationsSettings, TakerAction, TakerOrderBuilder};
 use crate::mm2::MM_VERSION;
-use atomic::Atomic;
 use bigdecimal::BigDecimal;
 use coins::{lp_coinfind, CanRefundHtlc, FeeApproxStage, FoundSwapTxSpend, MmCoinEnum, TradeFee, TradePreimageValue};
 use common::executor::Timer;
@@ -27,7 +26,8 @@ use primitives::hash::H264;
 use rpc::v1::types::{Bytes as BytesJson, H160 as H160Json, H256 as H256Json, H264 as H264Json};
 use serde_json::{self as json, Value as Json};
 use std::path::PathBuf;
-use std::sync::{atomic::Ordering, Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use uuid::Uuid;
 
 pub fn stats_taker_swap_dir(ctx: &MmArc) -> PathBuf { ctx.dbdir().join("SWAPS").join("STATS").join("TAKER") }
@@ -446,10 +446,10 @@ pub struct TakerSwap {
     maker: bits256,
     uuid: Uuid,
     my_order_uuid: Option<Uuid>,
-    maker_payment_lock: Atomic<u64>,
-    maker_payment_confirmed: Atomic<bool>,
+    maker_payment_lock: AtomicU64,
+    maker_payment_confirmed: AtomicBool,
     errors: PaMutex<Vec<SwapError>>,
-    finished_at: Atomic<u64>,
+    finished_at: AtomicU64,
     mutable: RwLock<TakerSwapMut>,
     conf_settings: SwapConfirmationsSettings,
     payment_locktime: u64,
@@ -668,9 +668,9 @@ impl TakerSwap {
             maker,
             uuid,
             my_order_uuid,
-            maker_payment_confirmed: Atomic::new(false),
-            finished_at: Atomic::new(0),
-            maker_payment_lock: Atomic::new(0),
+            maker_payment_confirmed: AtomicBool::new(false),
+            finished_at: AtomicU64::new(0),
+            maker_payment_lock: AtomicU64::new(0),
             errors: PaMutex::new(Vec::new()),
             conf_settings,
             payment_locktime,

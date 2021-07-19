@@ -12,7 +12,6 @@ doctest = false
 [dependencies]
 arrayref = "0.3"
 async-std = { version = "1.5", features = ["unstable"] }
-atomic = { version = "^0.4.6", features = ["nightly"] }
 async-trait = "0.1"
 backtrace = "0.3"
 base64 = "0.10.0"
@@ -27,7 +26,7 @@ fomat-macros = "0.2"
 futures01 = { version = "0.1", package = "futures" }
 futures = { version = "0.3", package = "futures", features = ["compat", "async-await", "thread-pool"] }
 futures-cpupool = "0.1"
-gstuff = { version = "0.6", features = ["nightly"] }
+gstuff = { version = "0.7", features = ["crossterm", "nightly"] }
 hex = "0.3.2"
 http = "0.2"
 http-body = "0.1"
@@ -66,6 +65,7 @@ wasm-bindgen-test = { version = "0.3.2" }
 web-sys = { version = "0.3.4", features = ["console", "CloseEvent", "DomException", "ErrorEvent", "IdbDatabase", "IdbFactory", "IdbIndex", "IdbIndexParameters", "IdbObjectStore", "IdbObjectStoreParameters", "IdbOpenDbRequest", "IdbTransaction", "IdbTransactionMode", "IdbVersionChangeEvent", "MessageEvent", "WebSocket"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+anyhow = "1.0"
 chrono = "0.4"
 hdrhistogram = { version = "7.0", default-features = false, features = ["sync"] }
 hyper = { version = "0.14", features = ["client", "http2", "server", "tcp"] }
@@ -73,7 +73,7 @@ hyper = { version = "0.14", features = ["client", "http2", "server", "tcp"] }
 # got "invalid certificate: UnknownIssuer" for https://ropsten.infura.io on iOS using default-features
 hyper-rustls = { version = "0.22", default-features = false, features = ["webpki-tokio"] }
 libc = { version = "0.2" }
-log4rs = { version = "0.13" }
+log4rs = { version = "1.0" }
 metrics = { version = "0.12" }
 metrics-runtime = { version = "0.13", default-features = false, features = ["metrics-observer-prometheus"] }
 metrics-core = { version = "0.5" }
@@ -84,4 +84,4 @@ tokio = { version = "1.7", features = ["io-util", "rt-multi-thread", "net"] }
 [build-dependencies]
 cc = "1.0"
 fomat-macros = "0.3"
-gstuff = { version = "0.6", features = ["nightly", "term"] }
+gstuff = { version = "0.7", features = ["nightly"] }
