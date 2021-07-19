@@ -98,7 +98,7 @@ impl RequestResponseBehaviour {
         request: PeerRequest,
         response_tx: oneshot::Sender<PeerResponse>,
     ) -> RequestId {
-        let request_id = self.inner.send_request(&peer_id, request);
+        let request_id = self.inner.send_request(peer_id, request);
         let pending_request = PendingRequest {
             tx: response_tx,
             initiated_at: Instant::now(),

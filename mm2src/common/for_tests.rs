@@ -249,7 +249,7 @@ impl MarketMakerIt {
                 if attempts > 128 {
                     return ERR!("Out of local IPs?");
                 }
-                let ip: IpAddr = ip4.clone().into();
+                let ip: IpAddr = ip4.into();
                 let mut mm_ips = try_s!(MM_IPS.lock());
                 if mm_ips.contains_key(&ip) {
                     attempts += 1;

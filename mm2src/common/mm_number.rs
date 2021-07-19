@@ -146,7 +146,7 @@ impl<'de> Deserialize<'de> for MmNumber {
     {
         let raw: Box<RawValue> = Deserialize::deserialize(deserializer)?;
 
-        if let Ok(dec) = BigDecimal::from_str(&raw.get().trim_matches('"')) {
+        if let Ok(dec) = BigDecimal::from_str(raw.get().trim_matches('"')) {
             return Ok(MmNumber(from_dec_to_ratio(&dec)));
         };
 

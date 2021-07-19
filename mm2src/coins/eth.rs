@@ -350,7 +350,7 @@ impl EthCoinImpl {
     #[cfg(not(target_arch = "wasm32"))]
     fn store_eth_traces(&self, ctx: &MmArc, traces: &SavedTraces) {
         let content = json::to_vec(traces).unwrap();
-        let tmp_file = format!("{}.tmp", self.eth_traces_path(&ctx).display());
+        let tmp_file = format!("{}.tmp", self.eth_traces_path(ctx).display());
         std::fs::write(&tmp_file, content).unwrap();
         std::fs::rename(tmp_file, self.eth_traces_path(&ctx)).unwrap();
     }
@@ -2252,7 +2252,7 @@ impl EthCoin {
                 break;
             };
             {
-                let coins_ctx = CoinsContext::from_ctx(&ctx).unwrap();
+                let coins_ctx = CoinsContext::from_ctx(ctx).unwrap();
                 let coins = coins_ctx.coins.lock().await;
                 if !coins.contains_key(&self.ticker) {
                     ctx.log.log("", &[&"tx_history", &self.ticker], "Loop stopped");
@@ -2273,7 +2273,7 @@ impl EthCoin {
                 },
             };
 
-            let mut saved_traces = match self.load_saved_traces(&ctx) {
+            let mut saved_traces = match self.load_saved_traces(ctx) {
                 Some(traces) => traces,
                 None => SavedTraces {
                     traces: vec![],
@@ -2365,7 +2365,7 @@ impl EthCoin {
                 } else {
                     0.into()
                 };
-                self.store_eth_traces(&ctx, &saved_traces);
+                self.store_eth_traces(ctx, &saved_traces);
             }
 
             if current_block > saved_traces.latest_block {
@@ -2423,7 +2423,7 @@ impl EthCoin {
                 saved_traces.traces.extend(to_traces_after_latest);
                 saved_traces.latest_block = current_block;
 
-                self.store_eth_traces(&ctx, &saved_traces);
+                self.store_eth_traces(ctx, &saved_traces);
             }
             saved_traces.traces.sort_by(|a, b| b.block_number.cmp(&a.block_number));
             for trace in saved_traces.traces {
@@ -2499,7 +2499,7 @@ impl EthCoin {
                     },
                 };
                 let fee_coin = match &self.coin_type {
-                    EthCoinType::Eth => &self.ticker(),
+                    EthCoinType::Eth => self.ticker(),
                     EthCoinType::Erc20 { platform, .. } => platform.as_str(),
                 };
                 let fee_details: Option<EthTxFeeDetails> = match receipt {
@@ -2578,7 +2578,7 @@ impl EthCoin {
                     }
                 });
 
-                if let Err(e) = self.save_history_to_file(&ctx, existing_history.clone()).compat().await {
+                if let Err(e) = self.save_history_to_file(ctx, existing_history.clone()).compat().await {
                     ctx.log.log(
                         "",
                         &[&"tx_history", &self.ticker],

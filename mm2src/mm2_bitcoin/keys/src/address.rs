@@ -212,7 +212,7 @@ impl Address {
                 pub_addr_prefix,
                 p2sh_addr_prefix,
             } => self
-                .to_cashaddress(&network, *pub_addr_prefix, *p2sh_addr_prefix)
+                .to_cashaddress(network, *pub_addr_prefix, *p2sh_addr_prefix)
                 .and_then(|cashaddress| cashaddress.encode()),
         }
     }

@@ -516,7 +516,7 @@ fn maintain_connection_to_relays(swarm: &mut AtomicDexSwarm, bootstrap_addresses
 }
 
 fn announce_my_addresses(swarm: &mut AtomicDexSwarm) {
-    let global_listeners: PeerAddresses = Swarm::listeners(&swarm)
+    let global_listeners: PeerAddresses = Swarm::listeners(swarm)
         .filter(|listener| {
             for protocol in listener.iter() {
                 if let Protocol::Ip4(ip) = protocol {
