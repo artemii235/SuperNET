@@ -346,6 +346,36 @@ fn remove_and_purge_pubkey_pair_orders(orderbook: &mut Orderbook, pubkey: &str, 
     }
 }
 
+pub async fn address_from_pubkey_str_and_protocol_info(
+    ctx: &MmArc,
+    ticker: &str,
+    protocol_info: Vec<u8>,
+    pubkey: &str,
+) -> Result<String, String> {
+    let coin = match lp_coinfind(ctx, ticker).await {
+        Ok(Some(c)) => c,
+        Ok(None) => {
+            return ERR!("Coin {} is not found/enabled", ticker);
+        },
+        Err(e) => {
+            return ERR!("!lp_coinfind({}): {}", ticker, e);
+        },
+    };
+    let addr_format = match String::from_utf8(protocol_info) {
+        Ok(format) => format,
+        Err(e) => {
+            return ERR!("!Can't parse address format from protocol info: {}", e);
+        },
+    };
+    let address = match coin.address_from_pubkey_str(pubkey, &addr_format) {
+        Ok(addr) => addr,
+        Err(e) => {
+            return ERR!("!Can't get address from pubkey and format: {}", e);
+        },
+    };
+    Ok(address)
+}
+
 /// Attempts to decode a message and process it returning whether the message is valid and worth rebroadcasting
 pub async fn process_msg(ctx: MmArc, _topics: Vec<String>, from_peer: String, msg: &[u8], i_am_relay: bool) -> bool {
     match decode_signed::<new_protocol::OrdermatchMessage>(msg) {
@@ -356,8 +386,26 @@ pub async fn process_msg(ctx: MmArc, _topics: Vec<String>, from_peer: String, ms
             }
             match message {
                 new_protocol::OrdermatchMessage::MakerOrderCreated(created_msg) => {
-                    let order: OrderbookItem = (created_msg, hex::encode(pubkey.to_bytes().as_slice())).into();
+                    let pubkey_str = hex::encode(pubkey.to_bytes().as_slice());
+                    let order: OrderbookItem = (created_msg.clone(), pubkey_str.clone()).into();
                     insert_or_update_order(&ctx, order).await;
+                    if let Some(protocol_info) = created_msg.base_protocol_info {
+                        let address = address_from_pubkey_str_and_protocol_info(
+                            &ctx,
+                            &created_msg.base,
+                            protocol_info,
+                            &pubkey_str,
+                        )
+                        .await;
+                        if let Ok(addr) = address {
+                            log::info!(
+                                "Maker order created for {}/{} from address: {}",
+                                created_msg.base,
+                                created_msg.rel,
+                                addr
+                            );
+                        }
+                    }
                     true
                 },
                 new_protocol::OrdermatchMessage::PubkeyKeepAlive(keep_alive) => {
@@ -725,6 +773,30 @@ fn test_parse_orderbook_pair_from_topic() {
 
 async fn maker_order_created_p2p_notify(ctx: MmArc, order: &MakerOrder) {
     let topic = orderbook_topic_from_base_rel(&order.base, &order.rel);
+    let base_coin = match lp_coinfind(&ctx, &order.base).await {
+        Ok(Some(c)) => c,
+        Ok(None) => {
+            log::error!("Coin {} is not found/enabled", order.base);
+            return;
+        },
+        Err(e) => {
+            log::error!("!lp_coinfind({}): {}", order.base, e);
+            return;
+        },
+    };
+    let base_protocol_info = base_coin.coin_protocol_info();
+    let rel_coin = match lp_coinfind(&ctx, &order.rel).await {
+        Ok(Some(c)) => c,
+        Ok(None) => {
+            log::error!("Coin {} is not found/enabled", order.rel);
+            return;
+        },
+        Err(e) => {
+            log::error!("!lp_coinfind({}): {}", order.rel, e);
+            return;
+        },
+    };
+    let rel_protocol_info = rel_coin.coin_protocol_info();
     let message = new_protocol::MakerOrderCreated {
         uuid: order.uuid.into(),
         base: order.base.clone(),
@@ -736,6 +808,8 @@ async fn maker_order_created_p2p_notify(ctx: MmArc, order: &MakerOrder) {
         created_at: now_ms() / 1000,
         timestamp: now_ms() / 1000,
         pair_trie_root: H64::default(),
+        base_protocol_info,
+        rel_protocol_info,
     };
 
     let key_pair = ctx.secp256k1_key_pair.or(&&|| panic!());
@@ -871,6 +945,12 @@ pub struct TakerRequest {
     #[serde(default)]
     match_by: MatchBy,
     conf_settings: Option<OrderConfirmationsSettings>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_protocol_info: Option<Vec<u8>>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rel_protocol_info: Option<Vec<u8>>,
 }
 
 impl TakerRequest {
@@ -889,6 +969,8 @@ impl TakerRequest {
             dest_pub_key: Default::default(),
             match_by: message.match_by.into(),
             conf_settings: Some(message.conf_settings),
+            base_protocol_info: message.base_protocol_info,
+            rel_protocol_info: message.rel_protocol_info,
         }
     }
 
@@ -918,6 +1000,8 @@ impl From<TakerRequest> for new_protocol::OrdermatchMessage {
             uuid: taker_request.uuid.into(),
             match_by: taker_request.match_by.into(),
             conf_settings: taker_request.conf_settings.unwrap(),
+            base_protocol_info: taker_request.base_protocol_info,
+            rel_protocol_info: taker_request.rel_protocol_info,
         })
     }
 }
@@ -1135,6 +1219,8 @@ impl<'a> TakerOrderBuilder<'a> {
                 dest_pub_key: Default::default(),
                 match_by: self.match_by,
                 conf_settings: self.conf_settings,
+                base_protocol_info: self.base_coin.coin_protocol_info(),
+                rel_protocol_info: self.rel_coin.coin_protocol_info(),
             },
             matches: Default::default(),
             min_volume,
@@ -1160,6 +1246,8 @@ impl<'a> TakerOrderBuilder<'a> {
                 dest_pub_key: Default::default(),
                 match_by: self.match_by,
                 conf_settings: self.conf_settings,
+                base_protocol_info: self.base_coin.coin_protocol_info(),
+                rel_protocol_info: self.rel_coin.coin_protocol_info(),
             },
             matches: HashMap::new(),
             min_volume: Default::default(),
@@ -1720,6 +1808,12 @@ pub struct MakerReserved {
     sender_pubkey: H256Json,
     dest_pub_key: H256Json,
     conf_settings: Option<OrderConfirmationsSettings>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_protocol_info: Option<Vec<u8>>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rel_protocol_info: Option<Vec<u8>>,
 }
 
 impl MakerReserved {
@@ -1743,6 +1837,8 @@ impl MakerReserved {
             sender_pubkey,
             dest_pub_key: Default::default(),
             conf_settings: Some(message.conf_settings),
+            base_protocol_info: message.base_protocol_info,
+            rel_protocol_info: message.rel_protocol_info,
         }
     }
 }
@@ -1757,6 +1853,8 @@ impl From<MakerReserved> for new_protocol::OrdermatchMessage {
             taker_order_uuid: maker_reserved.taker_order_uuid.into(),
             maker_order_uuid: maker_reserved.maker_order_uuid.into(),
             conf_settings: maker_reserved.conf_settings.unwrap(),
+            base_protocol_info: maker_reserved.base_protocol_info,
+            rel_protocol_info: maker_reserved.rel_protocol_info,
         })
     }
 }
@@ -2610,9 +2708,21 @@ async fn process_maker_reserved(ctx: MmArc, from_pubkey: H256Json, reserved_msg:
         Entry::Occupied(entry) => entry.into_mut(),
     };
 
+    let base_coin = match lp_coinfind(&ctx, &my_order.request.base).await {
+        Ok(Some(c)) => c,
+        _ => return, // attempt to match with deactivated coin
+    };
+    let rel_coin = match lp_coinfind(&ctx, &my_order.request.rel).await {
+        Ok(Some(c)) => c,
+        _ => return, // attempt to match with deactivated coin
+    };
+
     // send "connect" message if reserved message targets our pubkey AND
     // reserved amounts match our order AND order is NOT reserved by someone else (empty matches)
-    if my_order.match_reserved(&reserved_msg) == MatchReservedResult::Matched && my_order.matches.is_empty() {
+    if (my_order.match_reserved(&reserved_msg) == MatchReservedResult::Matched && my_order.matches.is_empty())
+        && base_coin.is_coin_protocol_supported(&reserved_msg.base_protocol_info)
+        && rel_coin.is_coin_protocol_supported(&reserved_msg.rel_protocol_info)
+    {
         let connect = TakerConnect {
             sender_pubkey: H256Json::from(our_public_id.bytes),
             dest_pub_key: reserved_msg.sender_pubkey.clone(),
@@ -2698,7 +2808,10 @@ async fn process_taker_request(ctx: MmArc, from_pubkey: H256Json, taker_request:
                 _ => return, // attempt to match with deactivated coin
             };
 
-            if !order.matches.contains_key(&taker_request.uuid) {
+            if !order.matches.contains_key(&taker_request.uuid)
+                && base_coin.is_coin_protocol_supported(&taker_request.base_protocol_info)
+                && rel_coin.is_coin_protocol_supported(&taker_request.rel_protocol_info)
+            {
                 let reserved = MakerReserved {
                     dest_pub_key: taker_request.sender_pubkey.clone(),
                     sender_pubkey: our_public_id,
@@ -2716,6 +2829,8 @@ async fn process_taker_request(ctx: MmArc, from_pubkey: H256Json, taker_request:
                             rel_nota: rel_coin.requires_notarization(),
                         })
                     }),
+                    base_protocol_info: base_coin.coin_protocol_info(),
+                    rel_protocol_info: rel_coin.coin_protocol_info(),
                 };
                 let topic = orderbook_topic_from_base_rel(&order.base, &order.rel);
                 log::debug!("Request matched sending reserved {:?}", reserved);

@@ -1218,7 +1218,9 @@ impl MarketCoinOps for EthCoin {
         )
     }
 
-    fn address_from_pubkey_str(&self, pubkey: &str) -> Result<String, String> { addr_from_pubkey_str(pubkey) }
+    fn address_from_pubkey_str(&self, pubkey: &str, _addr_format: &str) -> Result<String, String> {
+        addr_from_pubkey_str(pubkey)
+    }
 
     fn display_priv_key(&self) -> String { format!("{:#02x}", self.key_pair.secret()) }
 
@@ -2917,6 +2919,10 @@ impl MmCoin for EthCoin {
     }
 
     fn mature_confirmations(&self) -> Option<u32> { None }
+
+    fn coin_protocol_info(&self) -> Option<Vec<u8>> { None }
+
+    fn is_coin_protocol_supported(&self, _info: &Option<Vec<u8>>) -> bool { true }
 }
 
 pub trait TryToAddress {

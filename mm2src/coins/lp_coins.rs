@@ -341,7 +341,7 @@ pub trait MarketCoinOps {
 
     fn current_block(&self) -> Box<dyn Future<Item = u64, Error = String> + Send>;
 
-    fn address_from_pubkey_str(&self, pubkey: &str) -> Result<String, String>;
+    fn address_from_pubkey_str(&self, pubkey: &str, addr_format: &str) -> Result<String, String>;
 
     fn display_priv_key(&self) -> String;
 
@@ -887,6 +887,12 @@ pub trait MmCoin: SwapOps + MarketCoinOps + fmt::Debug + Send + Sync + 'static {
 
     /// The minimum number of confirmations at which a transaction is considered mature.
     fn mature_confirmations(&self) -> Option<u32>;
+
+    /// Get some of the coin config info in serialized format for p2p messaging.
+    fn coin_protocol_info(&self) -> Option<Vec<u8>>;
+
+    /// Check if serialized coin protocol info is supported by current version.
+    fn is_coin_protocol_supported(&self, info: &Option<Vec<u8>>) -> bool;
 }
 
 #[derive(Clone, Debug)]

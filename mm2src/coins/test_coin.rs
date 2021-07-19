@@ -64,7 +64,7 @@ impl MarketCoinOps for TestCoin {
 
     fn current_block(&self) -> Box<dyn Future<Item = u64, Error = String> + Send> { unimplemented!() }
 
-    fn address_from_pubkey_str(&self, pubkey: &str) -> Result<String, String> { unimplemented!() }
+    fn address_from_pubkey_str(&self, pubkey: &str, addr_format: &str) -> Result<String, String> { unimplemented!() }
 
     fn display_priv_key(&self) -> String { unimplemented!() }
 
@@ -269,4 +269,8 @@ impl MmCoin for TestCoin {
     fn swap_contract_address(&self) -> Option<BytesJson> { unimplemented!() }
 
     fn mature_confirmations(&self) -> Option<u32> { unimplemented!() }
+
+    fn coin_protocol_info(&self) -> Option<Vec<u8>> { None }
+
+    fn is_coin_protocol_supported(&self, _info: &Option<Vec<u8>>) -> bool { true }
 }

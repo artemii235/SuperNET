@@ -887,7 +887,7 @@ impl MarketCoinOps for SlpToken {
 
     fn current_block(&self) -> Box<dyn Future<Item = u64, Error = String> + Send> { self.platform_utxo.current_block() }
 
-    fn address_from_pubkey_str(&self, _pubkey: &str) -> Result<String, String> { unimplemented!() }
+    fn address_from_pubkey_str(&self, _pubkey: &str, _addr_format: &str) -> Result<String, String> { unimplemented!() }
 
     fn display_priv_key(&self) -> String { self.platform_utxo.display_priv_key() }
 
@@ -1217,6 +1217,10 @@ impl MmCoin for SlpToken {
     fn swap_contract_address(&self) -> Option<BytesJson> { None }
 
     fn mature_confirmations(&self) -> Option<u32> { self.platform_utxo.mature_confirmations() }
+
+    fn coin_protocol_info(&self) -> Option<Vec<u8>> { unimplemented!() }
+
+    fn is_coin_protocol_supported(&self, _info: &Option<Vec<u8>>) -> bool { unimplemented!() }
 }
 
 #[cfg(test)]

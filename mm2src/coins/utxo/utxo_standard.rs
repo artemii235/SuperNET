@@ -4,6 +4,7 @@ use crate::{CanRefundHtlc, CoinBalance, NegotiateSwapContractAddrErr, SwapOps, T
 use common::mm_metrics::MetricsArc;
 use common::mm_number::MmNumber;
 use futures::{FutureExt, TryFutureExt};
+use keys::AddressFormat;
 use serialization::CoinVariant;
 
 #[derive(Clone, Debug)]
@@ -430,8 +431,8 @@ impl MarketCoinOps for UtxoStandardCoin {
         utxo_common::current_block(&self.utxo_arc)
     }
 
-    fn address_from_pubkey_str(&self, pubkey: &str) -> Result<String, String> {
-        utxo_common::address_from_pubkey_str(self, pubkey)
+    fn address_from_pubkey_str(&self, pubkey: &str, addr_format: &str) -> Result<String, String> {
+        utxo_common::address_from_pubkey_str(self, pubkey, addr_format)
     }
 
     fn display_priv_key(&self) -> String { utxo_common::display_priv_key(&self.utxo_arc) }
@@ -502,4 +503,15 @@ impl MmCoin for UtxoStandardCoin {
     fn swap_contract_address(&self) -> Option<BytesJson> { utxo_common::swap_contract_address() }
 
     fn mature_confirmations(&self) -> Option<u32> { Some(self.utxo_arc.conf.mature_confirmations) }
+
+    fn coin_protocol_info(&self) -> Option<Vec<u8>> {
+        Some(serde_json::to_vec(&self.utxo_arc.my_address.addr_format).unwrap())
+    }
+
+    fn is_coin_protocol_supported(&self, info: &Option<Vec<u8>>) -> bool {
+        match info {
+            Some(format) => json::from_slice::<AddressFormat>(format).is_ok(),
+            None => !&self.utxo_arc.my_address.addr_format.is_segwit(),
+        }
+    }
 }
