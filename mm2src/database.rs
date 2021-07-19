@@ -88,7 +88,7 @@ pub fn migrate_sqlite_database(ctx: &MmArc, conn: &Connection, mut current_migra
     while let Some(statements_with_params) = statements_for_migration(ctx, current_migration) {
         for (statement, params) in statements_with_params {
             debug!("Executing SQL statement {:?} with params {:?}", statement, params);
-            transaction.execute(&statement, params)?;
+            transaction.execute(statement, params)?;
         }
         current_migration += 1;
         transaction.execute("INSERT INTO migration (current_migration) VALUES (?1);", &[

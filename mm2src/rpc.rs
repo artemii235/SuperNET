@@ -147,7 +147,7 @@ async fn process_json_request(ctx: MmArc, req_json: Json, client: SocketAddr) ->
 #[cfg(not(target_arch = "wasm32"))]
 async fn process_json_request(ctx: MmArc, req_json: Json, client: SocketAddr) -> Result<Response<Vec<u8>>, String> {
     if let Some(requests) = req_json.as_array() {
-        let response = try_s!(process_json_batch_requests(ctx, &requests, client).await);
+        let response = try_s!(process_json_batch_requests(ctx, requests, client).await);
         let res = try_s!(json::to_vec(&response));
         return Ok(try_s!(Response::builder().body(res)));
     }
@@ -187,7 +187,7 @@ async fn process_single_request(ctx: MmArc, req: Json, client: SocketAddr) -> Re
         Ok(response) => Ok(response),
         Err(e) => {
             // return always serialized response
-            return Ok(response_from_dispatcher_error(e, version, id));
+            Ok(response_from_dispatcher_error(e, version, id))
         },
     }
 }

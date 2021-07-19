@@ -1377,7 +1377,7 @@ impl RunMakerSwapInput {
     fn uuid(&self) -> &Uuid {
         match self {
             RunMakerSwapInput::StartNew(swap) => &swap.uuid,
-            RunMakerSwapInput::KickStart { swap_uuid, .. } => &swap_uuid,
+            RunMakerSwapInput::KickStart { swap_uuid, .. } => swap_uuid,
         }
     }
 }
@@ -1569,7 +1569,7 @@ pub async fn maker_swap_trade_preimage(
     let rel_coin_ticker = rel_coin.ticker();
     let volume = if req.max {
         let balance = base_coin.my_spendable_balance().compat().await?;
-        calc_max_maker_vol(&ctx, &base_coin, &balance, FeeApproxStage::TradePreimage).await?
+        calc_max_maker_vol(ctx, &base_coin, &balance, FeeApproxStage::TradePreimage).await?
     } else {
         let threshold = base_coin.min_trading_vol().to_decimal();
         if req.volume.is_zero() {
@@ -2048,7 +2048,7 @@ mod maker_swap_tests {
         let maker_coin = MmCoinEnum::Test(TestCoin::default());
         let taker_coin = MmCoinEnum::Test(TestCoin::default());
         let (maker_swap, _) =
-            MakerSwap::load_from_saved(ctx.clone(), maker_coin, taker_coin, maker_saved_swap).unwrap();
+            MakerSwap::load_from_saved(ctx, maker_coin, taker_coin, maker_saved_swap).unwrap();
 
         assert_eq!(unsafe { SWAP_CONTRACT_ADDRESS_CALLED }, 2);
         assert_eq!(
@@ -2080,7 +2080,7 @@ mod maker_swap_tests {
         let maker_coin = MmCoinEnum::Test(TestCoin::default());
         let taker_coin = MmCoinEnum::Test(TestCoin::default());
         let (maker_swap, _) =
-            MakerSwap::load_from_saved(ctx.clone(), maker_coin, taker_coin, maker_saved_swap).unwrap();
+            MakerSwap::load_from_saved(ctx, maker_coin, taker_coin, maker_saved_swap).unwrap();
 
         assert_eq!(unsafe { SWAP_CONTRACT_ADDRESS_CALLED }, 1);
         let expected_addr = addr_from_str("0xa09ad3cd7e96586ebd05a2607ee56b56fb2db8fd").unwrap();

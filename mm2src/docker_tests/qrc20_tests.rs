@@ -81,7 +81,7 @@ impl QtumDockerOps {
 }
 
 pub fn qtum_docker_node(docker: &Cli, port: u16) -> UtxoDockerNode {
-    let args = vec!["-p".into(), format!("127.0.0.1:{}:{}", port, port).into()];
+    let args = vec!["-p".into(), format!("127.0.0.1:{}:{}", port, port)];
     let image = GenericImage::new(QTUM_REGTEST_DOCKER_IMAGE)
         .with_args(args)
         .with_env_var("CLIENTS", "2")
@@ -122,18 +122,15 @@ fn qrc20_coin_from_privkey(ticker: &str, priv_key: &[u8]) -> (MmArc, Qrc20Coin) 
     let (contract_address, swap_contract_address) = unsafe {
         let contract_address = match ticker {
             "QICK" => QICK_TOKEN_ADDRESS
-                .expect("QICK_TOKEN_ADDRESS must be set already")
-                .clone(),
+                .expect("QICK_TOKEN_ADDRESS must be set already"),
             "QORTY" => QORTY_TOKEN_ADDRESS
-                .expect("QORTY_TOKEN_ADDRESS must be set already")
-                .clone(),
+                .expect("QORTY_TOKEN_ADDRESS must be set already"),
             _ => panic!("Expected QICK or QORTY ticker"),
         };
         (
             contract_address,
             QRC20_SWAP_CONTRACT_ADDRESS
-                .expect("QRC20_SWAP_CONTRACT_ADDRESS must be set already")
-                .clone(),
+                .expect("QRC20_SWAP_CONTRACT_ADDRESS must be set already"),
         )
     };
     let platform = "QTUM";
@@ -163,7 +160,7 @@ fn qrc20_coin_from_privkey(ticker: &str, priv_key: &[u8]) -> (MmArc, Qrc20Coin) 
         platform,
         &conf,
         &req,
-        &priv_key,
+        priv_key,
         contract_address,
     ))
     .unwrap();
@@ -317,7 +314,6 @@ pub async fn enable_qrc20_native(mm: &MarketMakerIt, coin: &str) -> Json {
     let swap_contract_address = unsafe {
         QRC20_SWAP_CONTRACT_ADDRESS
             .expect("QRC20_SWAP_CONTRACT_ADDRESS must be set already")
-            .clone()
     };
 
     let native = mm
@@ -377,11 +373,9 @@ fn qrc20_coin_conf_item(ticker: &str) -> Json {
     let contract_address = unsafe {
         match ticker {
             "QICK" => QICK_TOKEN_ADDRESS
-                .expect("QICK_TOKEN_ADDRESS must be set already")
-                .clone(),
+                .expect("QICK_TOKEN_ADDRESS must be set already"),
             "QORTY" => QORTY_TOKEN_ADDRESS
-                .expect("QORTY_TOKEN_ADDRESS must be set already")
-                .clone(),
+                .expect("QORTY_TOKEN_ADDRESS must be set already"),
             _ => panic!("Expected either QICK or QORTY ticker, found {}", ticker),
         }
     };
@@ -930,7 +924,7 @@ fn test_check_if_my_payment_sent() {
             timelock,
             &taker_pub,
             secret_hash,
-            amount.clone(),
+            amount,
             &coin.swap_contract_address(),
         )
         .wait()
@@ -979,7 +973,7 @@ fn test_search_for_swap_tx_spend_taker_spent() {
             timelock,
             taker_pub,
             secret_hash,
-            amount.clone(),
+            amount,
             &maker_coin.swap_contract_address(),
         )
         .wait()
@@ -1045,7 +1039,7 @@ fn test_search_for_swap_tx_spend_maker_refunded() {
             timelock,
             &taker_pub,
             secret_hash,
-            amount.clone(),
+            amount,
             &maker_coin.swap_contract_address(),
         )
         .wait()
@@ -1111,7 +1105,7 @@ fn test_search_for_swap_tx_spend_not_spent() {
             timelock,
             &taker_pub,
             secret_hash,
-            amount.clone(),
+            amount,
             &maker_coin.swap_contract_address(),
         )
         .wait()
@@ -1159,7 +1153,7 @@ fn test_wait_for_tx_spend() {
             timelock,
             taker_pub,
             secret_hash,
-            amount.clone(),
+            amount,
             &maker_coin.swap_contract_address(),
         )
         .wait()

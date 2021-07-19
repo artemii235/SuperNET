@@ -38,7 +38,7 @@ pub fn insert_new_swap(ctx: &MmArc, my_coin: &str, other_coin: &str, uuid: &str,
 
 /// Returns SQL statements to initially fill my_swaps table using existing DB with JSON files
 pub fn fill_my_swaps_from_json_statements(ctx: &MmArc) -> Vec<(&'static str, Vec<String>)> {
-    let swap_files = read_dir(&my_swaps_dir(&ctx)).expect("Reading swaps dir should not fail at this point");
+    let swap_files = read_dir(&my_swaps_dir(ctx)).expect("Reading swaps dir should not fail at this point");
     let mut result = vec![];
     for (_, file) in swap_files {
         let content = slurp(&file).expect("slurp should not fail at this point");

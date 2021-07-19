@@ -246,7 +246,7 @@ async fn request_and_fill_orderbook(ctx: &MmArc, base: &str, rel: &str) -> Resul
         None => return Ok(()),
     };
 
-    let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
+    let ordermatch_ctx = OrdermatchContext::from_ctx(ctx).unwrap();
     let mut orderbook = ordermatch_ctx.orderbook.lock().await;
 
     let alb_pair = alb_ordered_pair(base, rel);
@@ -276,13 +276,13 @@ async fn request_and_fill_orderbook(ctx: &MmArc, base: &str, rel: &str) -> Resul
 /// Insert or update an order `req`.
 /// Note this function locks the [`OrdermatchContext::orderbook`] async mutex.
 async fn insert_or_update_order(ctx: &MmArc, item: OrderbookItem) {
-    let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).expect("from_ctx failed");
+    let ordermatch_ctx = OrdermatchContext::from_ctx(ctx).expect("from_ctx failed");
     let mut orderbook = ordermatch_ctx.orderbook.lock().await;
     orderbook.insert_or_update_order_update_trie(item)
 }
 
 async fn delete_order(ctx: &MmArc, pubkey: &str, uuid: Uuid) {
-    let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).expect("from_ctx failed");
+    let ordermatch_ctx = OrdermatchContext::from_ctx(ctx).expect("from_ctx failed");
 
     let mut inactive = ordermatch_ctx.inactive_orders.lock().await;
     match inactive.get(&uuid) {
@@ -306,7 +306,7 @@ async fn delete_order(ctx: &MmArc, pubkey: &str, uuid: Uuid) {
 }
 
 async fn delete_my_order(ctx: &MmArc, uuid: Uuid) {
-    let ordermatch_ctx: Arc<OrdermatchContext> = OrdermatchContext::from_ctx(&ctx).expect("from_ctx failed");
+    let ordermatch_ctx: Arc<OrdermatchContext> = OrdermatchContext::from_ctx(ctx).expect("from_ctx failed");
     let mut orderbook = ordermatch_ctx.orderbook.lock().await;
     orderbook.remove_order_trie_update(uuid);
 }
@@ -745,7 +745,7 @@ async fn maker_order_created_p2p_notify(ctx: MmArc, order: &MakerOrder) {
 }
 
 async fn process_my_maker_order_updated(ctx: &MmArc, message: &new_protocol::MakerOrderUpdated) {
-    let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).expect("from_ctx failed");
+    let ordermatch_ctx = OrdermatchContext::from_ctx(ctx).expect("from_ctx failed");
     let mut orderbook = ordermatch_ctx.orderbook.lock().await;
 
     let uuid = message.uuid();
@@ -2614,7 +2614,7 @@ async fn process_maker_reserved(ctx: MmArc, from_pubkey: H256Json, reserved_msg:
         my_order
             .matches
             .insert(taker_match.reserved.maker_order_uuid, taker_match);
-        save_my_taker_order(&ctx, &my_order);
+        save_my_taker_order(&ctx, my_order);
     }
 }
 
@@ -2649,7 +2649,7 @@ async fn process_maker_connected(ctx: MmArc, from_pubkey: H256Json, connected: M
     // alice
     lp_connected_alice(ctx.clone(), my_order_entry.get().request.clone(), order_match.clone());
     // remove the matched order immediately
-    delete_my_taker_order(&ctx, &my_order_entry.get(), TakerOrderCancellationReason::Fulfilled);
+    delete_my_taker_order(&ctx, my_order_entry.get(), TakerOrderCancellationReason::Fulfilled);
     my_order_entry.remove();
 }
 
@@ -2712,7 +2712,7 @@ async fn process_taker_request(ctx: MmArc, from_pubkey: H256Json, taker_request:
                     last_updated: now_ms(),
                 };
                 order.matches.insert(maker_match.request.uuid, maker_match);
-                save_my_maker_order(&ctx, &order);
+                save_my_maker_order(&ctx, order);
             }
             return;
         }
@@ -2768,7 +2768,7 @@ async fn process_taker_connect(ctx: MmArc, sender_pubkey: H256Json, connect_msg:
             updated_msg.with_new_max_volume(my_order.available_amount().into());
             maker_order_updated_p2p_notify(ctx.clone(), &my_order.base, &my_order.rel, updated_msg).await;
         }
-        save_my_maker_order(&ctx, &my_order);
+        save_my_maker_order(&ctx, my_order);
     }
 }
 
@@ -2946,8 +2946,8 @@ pub async fn lp_auto_buy(
         _ => return ERR!("Auto buy must be called only from buy/sell RPC methods"),
     };
     let request_orderbook = false;
-    try_s!(subscribe_to_orderbook_topic(&ctx, &input.base, &input.rel, request_orderbook).await);
-    let ordermatch_ctx = try_s!(OrdermatchContext::from_ctx(&ctx));
+    try_s!(subscribe_to_orderbook_topic(ctx, &input.base, &input.rel, request_orderbook).await);
+    let ordermatch_ctx = try_s!(OrdermatchContext::from_ctx(ctx));
     let mut my_taker_orders = ordermatch_ctx.my_taker_orders.lock().await;
     let our_public_id = try_s!(ctx.public_id());
     let rel_volume = &input.volume * &input.price;
@@ -2972,7 +2972,7 @@ pub async fn lp_auto_buy(
     }
     let order = try_s!(order_builder.build());
     broadcast_ordermatch_message(
-        &ctx,
+        ctx,
         vec![orderbook_topic_from_base_rel(&input.base, &input.rel)],
         order.request.clone().into(),
     );
@@ -3296,7 +3296,7 @@ impl<'a> From<&'a MakerOrder> for MakerOrderForRpc<'a> {
 /// https://github.com/KomodoPlatform/atomicDEX-API/issues/794
 async fn cancel_orders_on_error<T, E>(ctx: &MmArc, req: &SetPriceReq, error: E) -> Result<T, E> {
     if req.cancel_previous {
-        let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
+        let ordermatch_ctx = OrdermatchContext::from_ctx(ctx).unwrap();
         let mut my_orders = ordermatch_ctx.my_maker_orders.lock().await;
 
         let mut cancelled = vec![];
@@ -3309,7 +3309,7 @@ async fn cancel_orders_on_error<T, E>(ctx: &MmArc, req: &SetPriceReq, error: E) 
             .filter_map(|(uuid, order)| {
                 let to_delete = order.base == req.base && order.rel == req.rel;
                 if to_delete {
-                    delete_my_maker_order(&ctx, &order, MakerOrderCancellationReason::Cancelled);
+                    delete_my_maker_order(ctx, &order, MakerOrderCancellationReason::Cancelled);
                     cancelled.push(order);
                     None
                 } else {
@@ -3333,11 +3333,11 @@ async fn get_max_volume(ctx: &MmArc, my_coin: &MmCoinEnum, other_coin: &MmCoinEn
             .compat()
             .await
     );
-    try_s!(check_other_coin_balance_for_swap(&ctx, &other_coin, None, other_coin_trade_fee).await);
+    try_s!(check_other_coin_balance_for_swap(ctx, other_coin, None, other_coin_trade_fee).await);
     // calculate max maker volume
     // note the `calc_max_maker_vol` returns [`CheckBalanceError::NotSufficientBalance`] error if the balance of `base_coin` is not sufficient
     Ok(try_s!(
-        calc_max_maker_vol(&ctx, &my_coin, &my_balance, FeeApproxStage::OrderIssue).await
+        calc_max_maker_vol(ctx, my_coin, &my_balance, FeeApproxStage::OrderIssue).await
     ))
 }
 
@@ -3565,10 +3565,10 @@ pub async fn update_maker_order(ctx: MmArc, req: Json) -> Result<Response<Vec<u8
                 return ERR!("Order {} is being matched now, can't update", req.uuid);
             }
 
-            let new_change = HistoricalOrder::build(&update_msg, &order);
+            let new_change = HistoricalOrder::build(&update_msg, order);
             order.apply_updated(&update_msg);
             order.changes_history.get_or_insert(Vec::new()).push(new_change);
-            save_maker_order_on_update(&ctx, &order);
+            save_maker_order_on_update(&ctx, order);
             update_msg.with_new_max_volume((new_volume - reserved_amount).into());
             (MakerOrderForRpc::from(&*order), order.base.as_str(), order.rel.as_str())
         },
@@ -4059,7 +4059,7 @@ fn save_my_new_maker_order(ctx: &MmArc, order: &MakerOrder) {
     save_my_maker_order(ctx, order);
 
     if order.save_in_history {
-        if let Err(e) = insert_maker_order_to_db(&ctx, order.uuid, &order) {
+        if let Err(e) = insert_maker_order_to_db(ctx, order.uuid, order) {
             error!("Error {} on new order insertion", e);
         }
     }
@@ -4069,7 +4069,7 @@ fn save_maker_order_on_update(ctx: &MmArc, order: &MakerOrder) {
     save_my_maker_order(ctx, order);
 
     if order.save_in_history {
-        if let Err(e) = update_maker_order_in_db(&ctx, order.uuid, &order) {
+        if let Err(e) = update_maker_order_in_db(ctx, order.uuid, order) {
             error!("Error {} on order update", e);
         }
     }
@@ -4085,7 +4085,7 @@ fn save_my_new_taker_order(ctx: &MmArc, order: &TakerOrder) {
     save_my_taker_order(ctx, order);
 
     if order.save_in_history {
-        if let Err(e) = insert_taker_order_to_db(&ctx, order.request.uuid, &order) {
+        if let Err(e) = insert_taker_order_to_db(ctx, order.request.uuid, order) {
             error!("Error {} on new order insertion", e);
         }
     }
@@ -4145,7 +4145,7 @@ pub async fn orders_kick_start(ctx: &MmArc) -> Result<HashSet<String>, String> {
     let mut coins = HashSet::new();
     let ordermatch_ctx = try_s!(OrdermatchContext::from_ctx(ctx));
     let mut maker_orders = ordermatch_ctx.my_maker_orders.lock().await;
-    let maker_entries = try_s!(json_dir_entries(&my_maker_orders_dir(&ctx)));
+    let maker_entries = try_s!(json_dir_entries(&my_maker_orders_dir(ctx)));
 
     maker_entries.iter().for_each(|entry| {
         if let Ok(order) = json::from_slice::<MakerOrder>(&slurp(&entry.path())) {
@@ -4156,7 +4156,7 @@ pub async fn orders_kick_start(ctx: &MmArc) -> Result<HashSet<String>, String> {
     });
 
     let mut taker_orders = ordermatch_ctx.my_taker_orders.lock().await;
-    let taker_entries: Vec<DirEntry> = try_s!(json_dir_entries(&my_taker_orders_dir(&ctx)));
+    let taker_entries: Vec<DirEntry> = try_s!(json_dir_entries(&my_taker_orders_dir(ctx)));
 
     taker_entries.iter().for_each(|entry| {
         if let Ok(order) = json::from_slice::<TakerOrder>(&slurp(&entry.path())) {
@@ -4308,7 +4308,7 @@ pub(self) async fn subscribe_to_orderbook_topic(
                 e.insert(OrderbookRequestingState::NotRequested {
                     subscribed_at: current_timestamp,
                 });
-                subscribe_to_topic(&ctx, topic.clone()).await;
+                subscribe_to_topic(ctx, topic.clone()).await;
                 // orderbook is not filled
                 false
             },
@@ -4334,7 +4334,7 @@ pub(self) async fn subscribe_to_orderbook_topic(
     };
 
     if !is_orderbook_filled && request_orderbook {
-        try_s!(request_and_fill_orderbook(&ctx, base, rel).await);
+        try_s!(request_and_fill_orderbook(ctx, base, rel).await);
     }
 
     Ok(())

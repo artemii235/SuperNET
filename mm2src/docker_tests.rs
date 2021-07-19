@@ -273,7 +273,7 @@ mod docker_tests {
             "-v".into(),
             format!("{}:/data/.zcash-params", zcash_params_path().display()),
             "-p".into(),
-            format!("127.0.0.1:{}:{}", port, port).into(),
+            format!("127.0.0.1:{}:{}", port, port),
         ];
         let image = GenericImage::new(UTXO_ASSET_DOCKER_IMAGE)
             .with_args(args)
@@ -1631,8 +1631,8 @@ mod docker_tests {
         let my_coin1_total = TotalTradeFeeForTest::new("MYCOIN1", "0.00002", "0");
 
         let expected = TradePreimageResult::MakerPreimage(MakerPreimage {
-            base_coin_fee: base_coin_fee.clone(),
-            rel_coin_fee: rel_coin_fee.clone(),
+            base_coin_fee: base_coin_fee,
+            rel_coin_fee: rel_coin_fee,
             volume: Some(volume.to_decimal()),
             volume_rat: Some(volume.to_ratio()),
             volume_fraction: Some(volume.to_fraction()),
@@ -1667,8 +1667,8 @@ mod docker_tests {
         let my_coin_total = TotalTradeFeeForTest::new("MYCOIN", "0.00001", "0");
         let my_coin1_total = TotalTradeFeeForTest::new("MYCOIN1", "0.00002", "0.00002");
         let expected = TradePreimageResult::MakerPreimage(MakerPreimage {
-            base_coin_fee: base_coin_fee.clone(),
-            rel_coin_fee: rel_coin_fee.clone(),
+            base_coin_fee: base_coin_fee,
+            rel_coin_fee: rel_coin_fee,
             volume: Some(volume.to_decimal()),
             volume_rat: Some(volume.to_ratio()),
             volume_fraction: Some(volume.to_fraction()),
@@ -1702,8 +1702,8 @@ mod docker_tests {
         let total_my_coin1 = TotalTradeFeeForTest::new("MYCOIN1", "0.00002", "0.00002");
 
         let expected = TradePreimageResult::MakerPreimage(MakerPreimage {
-            base_coin_fee: base_coin_fee.clone(),
-            rel_coin_fee: rel_coin_fee.clone(),
+            base_coin_fee: base_coin_fee,
+            rel_coin_fee: rel_coin_fee,
             volume: None,
             volume_rat: None,
             volume_fraction: None,

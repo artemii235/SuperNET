@@ -259,7 +259,7 @@ impl RunTakerSwapInput {
     fn uuid(&self) -> &Uuid {
         match self {
             RunTakerSwapInput::StartNew(swap) => &swap.uuid,
-            RunTakerSwapInput::KickStart { swap_uuid, .. } => &swap_uuid,
+            RunTakerSwapInput::KickStart { swap_uuid, .. } => swap_uuid,
         }
     }
 }
@@ -1758,7 +1758,7 @@ pub async fn calc_max_taker_vol(
         .get_sender_trade_fee(preimage_value, stage.clone())
         .compat()
         .await
-        .mm_err(|e| CheckBalanceError::from_trade_preimage_error(e, &my_coin))?;
+        .mm_err(|e| CheckBalanceError::from_trade_preimage_error(e, my_coin))?;
 
     let max_vol = if my_coin == max_trade_fee.coin {
         // second case
@@ -1768,7 +1768,7 @@ pub async fn calc_max_taker_vol(
             .get_fee_to_send_taker_fee(max_dex_fee.to_decimal(), stage)
             .compat()
             .await
-            .mm_err(|e| CheckBalanceError::from_trade_preimage_error(e, &my_coin))?;
+            .mm_err(|e| CheckBalanceError::from_trade_preimage_error(e, my_coin))?;
         let min_max_possible = &max_possible_2 - &max_fee_to_send_taker_fee.amount;
 
         debug!(
@@ -2133,7 +2133,7 @@ mod taker_swap_tests {
         let maker_coin = MmCoinEnum::Test(TestCoin::default());
         let taker_coin = MmCoinEnum::Test(TestCoin::default());
         let (taker_swap, _) =
-            TakerSwap::load_from_saved(ctx.clone(), maker_coin, taker_coin, taker_saved_swap).unwrap();
+            TakerSwap::load_from_saved(ctx, maker_coin, taker_coin, taker_saved_swap).unwrap();
 
         assert_eq!(unsafe { SWAP_CONTRACT_ADDRESS_CALLED }, 2);
         assert_eq!(
@@ -2165,7 +2165,7 @@ mod taker_swap_tests {
         let maker_coin = MmCoinEnum::Test(TestCoin::default());
         let taker_coin = MmCoinEnum::Test(TestCoin::default());
         let (taker_swap, _) =
-            TakerSwap::load_from_saved(ctx.clone(), maker_coin, taker_coin, taker_saved_swap).unwrap();
+            TakerSwap::load_from_saved(ctx, maker_coin, taker_coin, taker_saved_swap).unwrap();
 
         assert_eq!(unsafe { SWAP_CONTRACT_ADDRESS_CALLED }, 1);
         let expected_addr = addr_from_str("0xa09ad3cd7e96586ebd05a2607ee56b56fb2db8fd").unwrap();

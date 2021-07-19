@@ -76,7 +76,7 @@ const SELECT_ID_BY_UUID: &str = "SELECT id FROM stats_swaps WHERE uuid = ?1";
 /// Returns SQL statements to initially fill stats_swaps table using existing DB with JSON files
 pub fn create_and_fill_stats_swaps_from_json_statements(ctx: &MmArc) -> Vec<(&'static str, Vec<String>)> {
     let maker_swap_files =
-        read_dir(&stats_maker_swap_dir(&ctx)).expect("Reading swaps dir should not fail at this point");
+        read_dir(&stats_maker_swap_dir(ctx)).expect("Reading swaps dir should not fail at this point");
     let mut result = vec![(CREATE_STATS_SWAPS_TABLE, vec![])];
     let mut inserted_maker_uuids = HashSet::with_capacity(maker_swap_files.len());
     for (_, file) in maker_swap_files {
@@ -98,7 +98,7 @@ pub fn create_and_fill_stats_swaps_from_json_statements(ctx: &MmArc) -> Vec<(&'s
     }
 
     let taker_swap_files =
-        read_dir(&stats_taker_swap_dir(&ctx)).expect("Reading swaps dir should not fail at this point");
+        read_dir(&stats_taker_swap_dir(ctx)).expect("Reading swaps dir should not fail at this point");
     for (_, file) in taker_swap_files {
         let os_file_name = match file.file_stem() {
             Some(name) => name,

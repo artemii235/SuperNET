@@ -289,7 +289,7 @@ fn alice_can_see_the_active_order_after_connection() {
 
     let bob_orderbook: OrderbookResponse = json::from_str(&rc.1).unwrap();
     log!("Bob orderbook "[bob_orderbook]);
-    assert!(bob_orderbook.asks.len() > 0, "Bob RICK/MORTY asks are empty");
+    assert!(!bob_orderbook.asks.is_empty(), "Bob RICK/MORTY asks are empty");
     assert_eq!(BigDecimal::from_str("0.9").unwrap(), bob_orderbook.asks[0].max_volume);
 
     // start eve and immediately place the order
@@ -1240,7 +1240,7 @@ async fn trade_base_rel_electrum(
         log!("Checking alice/taker status..");
         check_my_swap_status(
             &mm_alice,
-            &uuid,
+            uuid,
             &TAKER_SUCCESS_EVENTS,
             &TAKER_ERROR_EVENTS,
             volume.into(),
@@ -1251,7 +1251,7 @@ async fn trade_base_rel_electrum(
         log!("Checking bob/maker status..");
         check_my_swap_status(
             &mm_bob,
-            &uuid,
+            uuid,
             &MAKER_SUCCESS_EVENTS,
             &MAKER_ERROR_EVENTS,
             volume.into(),
@@ -1265,10 +1265,10 @@ async fn trade_base_rel_electrum(
 
     for uuid in uuids.iter() {
         log!("Checking alice status..");
-        check_stats_swap_status(&mm_alice, &uuid, &MAKER_SUCCESS_EVENTS, &TAKER_SUCCESS_EVENTS).await;
+        check_stats_swap_status(&mm_alice, uuid, &MAKER_SUCCESS_EVENTS, &TAKER_SUCCESS_EVENTS).await;
 
         log!("Checking bob status..");
-        check_stats_swap_status(&mm_bob, &uuid, &MAKER_SUCCESS_EVENTS, &TAKER_SUCCESS_EVENTS).await;
+        check_stats_swap_status(&mm_bob, uuid, &MAKER_SUCCESS_EVENTS, &TAKER_SUCCESS_EVENTS).await;
     }
 
     log!("Checking alice recent swaps..");
@@ -3677,7 +3677,7 @@ fn set_price_with_cancel_previous_should_broadcast_cancelled_message() {
     assert_eq!(asks.len(), 1, "Alice RICK/MORTY orderbook must have exactly 1 ask");
 
     log!("Issue sell request again on Bob side by setting base/rel price…");
-    let rc = block_on(mm_bob.rpc(set_price_json.clone())).unwrap();
+    let rc = block_on(mm_bob.rpc(set_price_json)).unwrap();
     assert!(rc.0.is_success(), "!setprice: {}", rc.1);
 
     let pause = 2;
@@ -3846,7 +3846,7 @@ fn test_metrics_method() {
 #[cfg(not(target_arch = "wasm32"))]
 fn test_electrum_tx_history() {
     fn get_tx_history_request_count(mm: &MarketMakerIt) -> u64 {
-        let metrics = request_metrics(&mm);
+        let metrics = request_metrics(mm);
         match find_metrics_in_json(metrics, "tx.history.request.count", &[
             ("coin", "RICK"),
             ("method", "blockchain.scripthash.get_history"),
@@ -6278,7 +6278,7 @@ fn test_update_maker_order_fail() {
     assert!(rc.0.is_success(), "!batch: {}", rc.1);
     log!((rc.1));
     let responses = json::from_str::<Vec<Json>>(&rc.1).unwrap();
-    if responses[1]["result"] == Json::from("success") {
+    if responses[1]["result"] == *"success" {
         assert_eq!(responses[0].get("result"), None);
     }
 }
