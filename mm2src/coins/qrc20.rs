@@ -743,7 +743,7 @@ impl SwapOps for Qrc20Coin {
             _ => panic!("Unexpected TransactionEnum"),
         };
         let fee_tx_hash = fee_tx.hash().reversed().into();
-        if !try_fus!(check_all_inputs_signed_by_pub(&fee_tx, expected_sender)) {
+        if !try_fus!(check_all_inputs_signed_by_pub(fee_tx, expected_sender)) {
             return Box::new(futures01::future::err(ERRL!("The dex fee was sent from wrong address")));
         }
         let fee_addr = try_fus!(self.contract_address_from_raw_pubkey(fee_addr));

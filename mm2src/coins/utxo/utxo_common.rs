@@ -2140,7 +2140,7 @@ where
     match tx_fee {
         ActualTxFee::Fixed(fee_amount) => {
             let amount = big_decimal_from_sat(fee_amount as i64, decimals);
-            return Ok(amount);
+            Ok(amount)
         },
         // if it's a dynamic fee, we should generate a swap transaction to get an actual trade fee
         ActualTxFee::Dynamic(fee) => {
@@ -2429,7 +2429,7 @@ pub async fn cache_transaction_if_possible(coin: &UtxoCoinFields, tx: &RpcTransa
         None => return Ok(()),
     }
 
-    tx_cache::cache_transaction(&tx_cache_path, &tx)
+    tx_cache::cache_transaction(&tx_cache_path, tx)
         .await
         .map_err(|e| ERRL!("Error {:?} on caching transaction {:?}", e, tx.txid))
 }
@@ -2746,7 +2746,7 @@ pub fn p2sh_spend(
         1 | fork_id,
     );
 
-    let sig = try_s!(script_sig(&sighash, &key_pair, fork_id));
+    let sig = try_s!(script_sig(&sighash, key_pair, fork_id));
 
     let mut resulting_script = Builder::default().push_data(&sig).into_bytes();
     if !script_data.is_empty() {

@@ -1870,7 +1870,7 @@ async fn connect_loop(
         *connection_tx.lock().await = Some(tx);
         let rx = rx_to_stream(rx).inspect(|data| {
             // measure the length of each sent packet
-            event_handlers.on_outgoing_request(&data);
+            event_handlers.on_outgoing_request(data);
         });
 
         let (read, mut write) = tokio::io::split(stream);

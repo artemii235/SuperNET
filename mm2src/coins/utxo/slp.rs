@@ -455,7 +455,7 @@ impl SlpToken {
         let other_pub = Public::from_slice(other_pub)?;
         let redeem_script = payment_script(
             time_lock,
-            &*dhash160(&secret),
+            &*dhash160(secret),
             &other_pub,
             self.platform_utxo.my_public_key(),
         );

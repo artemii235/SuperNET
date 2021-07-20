@@ -791,7 +791,7 @@ pub trait MmCoin: SwapOps + MarketCoinOps + fmt::Debug + Send + Sync + 'static {
 
     /// The coin can be initialized, but it cannot participate in the swaps.
     fn wallet_only(&self, ctx: &MmArc) -> bool {
-        let coin_conf = coin_conf(&ctx, &self.ticker());
+        let coin_conf = coin_conf(ctx, self.ticker());
         coin_conf["wallet_only"].as_bool().unwrap_or(false)
     }
 
@@ -839,7 +839,7 @@ pub trait MmCoin: SwapOps + MarketCoinOps + fmt::Debug + Send + Sync + 'static {
     }
 
     fn save_history_to_file(&self, ctx: &MmArc, history: Vec<TransactionDetails>) -> TxHistoryFut<()> {
-        let coins_ctx = CoinsContext::from_ctx(&ctx).unwrap();
+        let coins_ctx = CoinsContext::from_ctx(ctx).unwrap();
         let ticker = self.ticker().to_owned();
         let my_address = self.my_address().unwrap_or_default();
 
@@ -1207,10 +1207,9 @@ pub async fn lp_coininit(ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoin
             platform,
             contract_address,
         } => {
-            let contract_address = try_s!(qtum::contract_addr_from_str(&contract_address));
+            let contract_address = try_s!(qtum::contract_addr_from_str(contract_address));
             try_s!(
-                qrc20_coin_from_conf_and_request(ctx, ticker, &platform, &coins_en, req, secret, contract_address)
-                    .await
+                qrc20_coin_from_conf_and_request(ctx, ticker, platform, &coins_en, req, secret, contract_address).await
             )
             .into()
         },
@@ -1368,7 +1367,7 @@ pub async fn send_raw_transaction(ctx: MmArc, req: Json) -> Result<Response<Vec<
         Err(err) => return ERR!("!lp_coinfind({}): {}", ticker, err),
     };
     let bytes_string = try_s!(req["tx_hex"].as_str().ok_or("No 'tx_hex' field"));
-    let res = try_s!(coin.send_raw_tx(&bytes_string).compat().await);
+    let res = try_s!(coin.send_raw_tx(bytes_string).compat().await);
     let body = try_s!(json::to_vec(&json!({ "tx_hash": res })));
     Ok(try_s!(Response::builder().body(body)))
 }
@@ -1503,7 +1502,7 @@ pub async fn get_enabled_coins(ctx: MmArc) -> Result<Response<Vec<u8>>, String> 
 }
 
 pub async fn disable_coin(ctx: &MmArc, ticker: &str) -> Result<(), String> {
-    let coins_ctx = try_s!(CoinsContext::from_ctx(&ctx));
+    let coins_ctx = try_s!(CoinsContext::from_ctx(ctx));
     let mut coins = coins_ctx.coins.lock().await;
     match coins.remove(ticker) {
         Some(_) => Ok(()),
