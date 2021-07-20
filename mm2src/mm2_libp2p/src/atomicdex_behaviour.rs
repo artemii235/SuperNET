@@ -736,12 +736,12 @@ fn start_gossipsub(
             event_tx,
             spawn_fn,
             cmd_rx,
-            gossipsub,
+            netid,
             floodsub,
+            gossipsub,
             request_response,
             peers_exchange,
             ping,
-            netid,
         };
         libp2p::swarm::SwarmBuilder::new(transport, adex_behavior, local_peer_id)
             .executor(Box::new(&*SWARM_RUNTIME))

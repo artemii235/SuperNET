@@ -30,6 +30,7 @@ impl Compact {
 
     pub fn max_value() -> Self { U256::max_value().into() }
 
+    #[allow(clippy::wrong_self_convention)]
     /// Computes the target [0, T] that a blockhash must land in to be valid
     /// Returns value in error, if there is an overflow or its negative value
     pub fn to_u256(&self) -> Result<U256, U256> {
@@ -72,6 +73,7 @@ impl Compact {
         Compact(compact | (size << 24) as u32)
     }
 
+    #[allow(clippy::wrong_self_convention)]
     pub fn to_f64(&self) -> f64 {
         let max_body = f64::from(0x00ffff).ln();
         let scaland = f64::from(256).ln();

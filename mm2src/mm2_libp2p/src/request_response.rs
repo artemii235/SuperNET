@@ -39,13 +39,13 @@ pub fn build_request_response_behaviour() -> RequestResponseBehaviour {
     let timeout_interval = Interval::new(Duration::from_secs(1));
 
     RequestResponseBehaviour {
-        tx,
         rx,
+        tx,
         pending_requests,
         events,
-        inner,
         timeout,
         timeout_interval,
+        inner,
     }
 }
 

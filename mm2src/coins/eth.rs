@@ -1281,11 +1281,11 @@ async fn sign_and_send_transaction_impl(
     let gas_price = try_s!(coin.get_gas_price().compat().await);
     let tx = UnSignedEthTx {
         nonce,
-        value,
-        action,
-        data,
-        gas,
         gas_price,
+        gas,
+        action,
+        value,
+        data,
     };
     let signed = tx.sign(coin.key_pair.secret(), coin.chain_id);
     let bytes = web3::types::Bytes(rlp::encode(&signed).to_vec());
