@@ -379,14 +379,5 @@ mod tests {
             .expect_err("Expected an error");
         assert_eq!(mm_err.etype, 8);
         assert_eq!(mm_err.trace, vec![TraceLocation::new("mm_error", into_mm_line)]);
-
-        fn returns_err() -> Result<(), ()> { Err(()) }
-
-        fn use_returns_err() -> Result<(), ()> {
-            let res = returns_err()?;
-            Ok(res)
-        }
-
-        use_returns_err().unwrap();
     }
 }
